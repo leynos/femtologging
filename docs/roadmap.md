@@ -1,6 +1,6 @@
 # Roadmap: Port picologging to Rust/PyO3
 
-- [ ] Review picologging codebase and isolate core logging features
+- [x] Review picologging codebase and isolate core logging features
 - [ ] Evaluate dependencies and identify Rust equivalents
 - [ ] Design Rust crate layout and expose PyO3 bindings
 - [ ] Implement basic logger in Rust with matching Python API
