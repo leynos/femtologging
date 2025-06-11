@@ -1,0 +1,33 @@
+[project]
+name = "femtologging"
+version = "0.1.0"
+description = "femtologging package"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pyright"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+strict = true
+include = ["femtologging"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.uv]
+package = true
+
+
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+[tool.maturin]
+manifest-path = "rust_extension/Cargo.toml"
+python-source = "rust_pkg"
+module-name = "rust_pkg._rust_pkg_rs"
+python-packages = ["femtologging"]
+
