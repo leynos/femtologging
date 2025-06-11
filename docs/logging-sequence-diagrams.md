@@ -1,5 +1,5 @@
 Below are five **Mermaid sequence diagrams** that trace the *happy-path* control-flow inside CPython’s `logging` package (main branch, June 2025).\
-I have interpreted your “`letLogger()`” as the canonical `logging.getLogger()`—there is no function named *letLogger* in the standard library.\
+
 All call-stacks have been pared down to the routines and objects that perform real work, using the current source code for reference ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
 ---
@@ -118,6 +118,92 @@ sequenceDiagram
 
 ---
 
+### 6  `Logger.warning()` with Filter + Formatter
+
+```mermaid
+sequenceDiagram
+    participant App           as User code
+    participant Logger        as Logger
+    participant LogFilter     as Logger-level Filter
+    participant Handler       as Stream/File/etc. Handler
+    participant HdlrFilter    as Handler-level Filter
+    participant Formatter     as Formatter
+    participant Output        as I/O destination
+
+    %% entry
+    App        ->> Logger: warning("msg", *args, **kw)
+    Logger     ->> Logger: isEnabledFor(WARNING=30) ✔
+    Logger     ->> Logger: _log()
+    Logger     ->> Logger: makeRecord()
+    Logger     ->> LogFilter: filter(record)
+    alt filter returns False
+        LogFilter  -->> Logger: False
+        Logger     -->> App: return (dropped)
+    else passes (possibly mutating)
+        LogFilter  -->> Logger: record
+        Logger     ->> Handler: handle(record)
+        Handler    ->> HdlrFilter: filter(record)
+        alt handler filter blocks
+            HdlrFilter -->> Handler: False
+            Handler  -->> Logger: return
+        else allowed
+            HdlrFilter -->> Handler: record
+            Handler    ->> Handler: acquire() lock
+            Handler    ->> Formatter: format(record)
+            Formatter  -->> Handler: "text line"
+            Handler    ->> Output: write("text line\\n")
+            Handler    ->> Handler: release() lock
+            Handler    -->> Logger: emitted
+        end
+        Logger     -->> App: return
+    end
+```
+
+*Key code points*
+
+* `Logger.warning()` short-circuits on level then calls `_log()`.
+* `Handler.handle()` applies its own filters, formats the record and calls `emit()` under a lock.
+
+---
+
+### 7  `logging.config.dictConfig()` – dictionary-driven configuration
+
+```mermaid
+sequenceDiagram
+    participant App          as User code
+    participant CfgMod       as logging.config
+    participant DictConf     as DictConfigurator
+    participant Formats      as _install_formatters()
+    participant Filters      as _install_filters()
+    participant Handlers     as _install_handlers()
+    participant Loggers      as _install_loggers()
+    participant Root         as root Logger
+
+    App      ->> CfgMod: dictConfig(config_dict)
+    CfgMod   ->> DictConf: __init__(config_dict)
+    CfgMod   ->> DictConf: configure()
+    DictConf ->> DictConf: validate & extract version, incremental, …
+    DictConf ->> Formats: build Formatter objects
+    Formats  -->> DictConf: dict of formatters
+    DictConf ->> Filters: build Filter objects
+    Filters  -->> DictConf: dict of filters
+    DictConf ->> Handlers: build Handler objects<br/>(attach formatters/filters, set levels)
+    Handlers -->> DictConf: dict of handlers
+    DictConf ->> Loggers: configure named loggers (level, handlers, propagate)
+    Loggers  -->> DictConf
+    DictConf ->> Root: configure root logger (level, handlers)
+    DictConf ->> DictConf: _handle_existing_loggers()
+    DictConf -->> CfgMod: return
+    CfgMod   -->> App: logging configured
+```
+
+*Key code points*
+
+* `dictConfig(config)` simply instantiates `DictConfigurator` and calls its `configure()` method.
+* Inside `DictConfigurator.configure()` the helper routines `_install_formatters`, `_install_filters`, `_install_handlers`, `_install_loggers`, and `configure_root` are invoked in that order (see start of file for these helpers), before the clean-up call `_handle_existing_loggers`.
+
+---
+
 #### Reading the diagrams
 
 - *Participants* are real objects or modules as they appear in the current source.
@@ -125,5 +211,3 @@ sequenceDiagram
 - `alt`/`else` blocks show mutually exclusive paths; `loop` indicates iteration.
 
 - Only logically significant calls are shown—locks, internal helpers and error handling are omitted unless essential to the behaviour being described.
-
-Drop any of these diagrams straight into a Mermaid-enabled Markdown viewer (e.g. GitHub) and they will render inline.
