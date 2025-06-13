@@ -1,6 +1,13 @@
-Below are five **Mermaid sequence diagrams** that trace the *happy-path* control-flow inside CPython’s `logging` package (main branch, June 2025).\\
+Below are five **Mermaid sequence diagrams** that trace the *happy-path*
+control-flow inside CPython’s `logging` package (main branch, June 2025).\\
 
-All call-stacks have been pared down to the routines and objects that perform real work, using the current source code for reference ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
+All call-stacks have been pared down to the routines and objects that perform
+real work, using the current source code for reference
+([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
+[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
+[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
+[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
+[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
 ______________________________________________________________________
 
@@ -90,7 +97,8 @@ sequenceDiagram
     Logger  --> Client: return
 ```
 
-The message propagates to every handler whose own level permits it; only one generic handler is shown for brevity.
+The message propagates to every handler whose own level permits it; only one
+generic handler is shown for brevity.
 
 ______________________________________________________________________
 
@@ -114,7 +122,9 @@ sequenceDiagram
     LoggingM --> Client: return
 ```
 
-`shutdown()` is automatically registered with `atexit`, so normal interpreter termination flushes and closes all live handlers ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
+`shutdown()` is automatically registered with `atexit`, so normal interpreter
+termination flushes and closes all live handlers
+([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
 ______________________________________________________________________
 
@@ -162,7 +172,8 @@ sequenceDiagram
 *Key code points*
 
 - `Logger.warning()` short-circuits on level then calls `_log()`.
-- `Handler.handle()` applies its own filters, formats the record and calls `emit()` under a lock.
+- `Handler.handle()` applies its own filters, formats the record and calls
+  `emit()` under a lock.
 
 ______________________________________________________________________
 
@@ -199,15 +210,22 @@ sequenceDiagram
 
 *Key code points*
 
-- `dictConfig(config)` simply instantiates `DictConfigurator` and calls its `configure()` method.
-- Inside `DictConfigurator.configure()` the helper routines `_install_formatters`, `_install_filters`, `_install_handlers`, `_install_loggers`, and `configure_root` are invoked in that order (see start of file for these helpers), before the clean-up call `_handle_existing_loggers`.
+- `dictConfig(config)` simply instantiates `DictConfigurator` and calls its
+  `configure()` method.
+- Inside `DictConfigurator.configure()` the helper routines
+  `_install_formatters`, `_install_filters`, `_install_handlers`,
+  `_install_loggers`, and `configure_root` are invoked in that order (see start
+  of file for these helpers), before the clean-up call
+  `_handle_existing_loggers`.
 
 ______________________________________________________________________
 
 #### Reading the diagrams
 
-- *Participants* are real objects or modules as they appear in the current source.
+- *Participants* are real objects or modules as they appear in the current
+  source.
 
 - `alt`/`else` blocks show mutually exclusive paths; `loop` indicates iteration.
 
-- Only logically significant calls are shown—locks, internal helpers and error handling are omitted unless essential to the behaviour being described.
+- Only logically significant calls are shown—locks, internal helpers and error
+  handling are omitted unless essential to the behaviour being described.

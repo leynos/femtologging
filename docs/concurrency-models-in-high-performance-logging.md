@@ -1,38 +1,82 @@
 ## Concurrency Models in High-Performance Logging: An Architectural Analysis
 
-This document synthesizes an analysis of concurrency mechanisms within logging libraries, using Microsoft's `picologging` as a primary case study. It examines the library's existing model, which blends fine-grained locks with reliance on Python's Global Interpreter Lock (GIL). It then explores how a language with a sophisticated compile-time ownership model, such as Rust, could offer enhanced safety guarantees. Finally, it delves into asynchronous architectures that decouple log creation from I/O-bound emission, a critical pattern for high-throughput applications.
+This document synthesizes an analysis of concurrency mechanisms within logging
+libraries, using Microsoft's `picologging` as a primary case study. It examines
+the library's existing model, which blends fine-grained locks with reliance on
+Python's Global Interpreter Lock (GIL). It then explores how a language with a
+sophisticated compile-time ownership model, such as Rust, could offer enhanced
+safety guarantees. Finally, it delves into asynchronous architectures that
+decouple log creation from I/O-bound emission, a critical pattern for
+high-throughput applications.
 
 ### 1. The `picologging` Concurrency Model: A Hybrid Approach
 
-`picologging` achieves its performance by implementing critical paths in C++ and making deliberate trade-offs in its concurrency strategy. It eschews the single, global module lock found in CPython's standard `logging` library in favour of a more granular approach.
+`picologging` achieves its performance by implementing critical paths in C++ and
+making deliberate trade-offs in its concurrency strategy. It eschews the single,
+global module lock found in CPython's standard `logging` library in favour of a
+more granular approach.
 
 #### Fine-Grained Locking at the Handler Level
 
-The most performance-critical aspect of concurrent logging is ensuring that multiple threads can write log messages without corrupting the output stream (e.g., a file or `stderr`). `picologging` addresses this with per-handler locking.
+The most performance-critical aspect of concurrent logging is ensuring that
+multiple threads can write log messages without corrupting the output stream
+(e.g., a file or `stderr`). `picologging` addresses this with per-handler
+locking.
 
-- **Mechanism**: Each `Handler` instance contains its own C++ `std::recursive_mutex`. This lock is acquired at the beginning of the `handle` method and released upon completion.
+- **Mechanism**: Each `Handler` instance contains its own C++
+  `std::recursive_mutex`. This lock is acquired at the beginning of the `handle`
+  method and released upon completion.
 
-- **Implementation**: The `Handler` struct definition in `src/picologging/handler.hxx` includes the `lock` member. The `Handler_handle` function in `src/picologging/handler.cxx` orchestrates the lock acquisition and release around the call to the `emit` method.
+- **Implementation**: The `Handler` struct definition in
+  `src/picologging/handler.hxx` includes the `lock` member. The `Handler_handle`
+  function in `src/picologging/handler.cxx` orchestrates the lock acquisition
+  and release around the call to the `emit` method.
 
-- **Rationale**: This ensures that the process of formatting a log record and writing it to its destination is an atomic operation for each handler. By keeping the locks fine-grained (one per handler), threads writing to different destinations (e.g., one to a file, another to the console) do not contend with each other.
+- **Rationale**: This ensures that the process of formatting a log record and
+  writing it to its destination is an atomic operation for each handler. By
+  keeping the locks fine-grained (one per handler), threads writing to different
+  destinations (e.g., one to a file, another to the console) do not contend with
+  each other.
 
-A crucial detail of this implementation is the sequence of operations within the `handle` method: filtering occurs *before* the lock is acquired. This is an important optimisation, as it prevents the cost of filtering out a message from contributing to lock contention. However, the work of formatting the message via the `Formatter` occurs *inside* the locked region, as it is part of the `emit` call chain.
+A crucial detail of this implementation is the sequence of operations within the
+`handle` method: filtering occurs *before* the lock is acquired. This is an
+important optimisation, as it prevents the cost of filtering out a message from
+contributing to lock contention. However, the work of formatting the message via
+the `Formatter` occurs *inside* the locked region, as it is part of the `emit`
+call chain.
 
 #### Reliance on the GIL for Global State
 
-For managing the global state—specifically the hierarchy of loggers stored in the `Manager`'s `loggerDict`—`picologging` forgoes an explicit global lock. Instead, it relies on the protection afforded by Python's **Global Interpreter Lock (GIL)**.
+For managing the global state—specifically the hierarchy of loggers stored in
+the `Manager`'s `loggerDict`—`picologging` forgoes an explicit global lock.
+Instead, it relies on the protection afforded by Python's **Global Interpreter
+Lock (GIL)**.
 
-- **Mechanism**: Operations that modify the shared logger hierarchy, such as `getLogger` creating a new logger instance or `_fixupParents` linking it into the tree, are not guarded by a specific lock within `picologging`. Their thread safety is a consequence of the GIL ensuring that only one thread can execute Python bytecode at any given time.
+- **Mechanism**: Operations that modify the shared logger hierarchy, such as
+  `getLogger` creating a new logger instance or `_fixupParents` linking it into
+  the tree, are not guarded by a specific lock within `picologging`. Their
+  thread safety is a consequence of the GIL ensuring that only one thread can
+  execute Python bytecode at any given time.
 
-- **Rationale**: This design decision is predicated on the assumption that logger configuration is a relatively infrequent operation, often performed during application start-up in a single-threaded context. By avoiding an explicit global lock, `picologging` eliminates a potential point of contention for the far more frequent operation of emitting log messages, thereby prioritising runtime performance \[cite: `logging-cpython-picologging-comparison.md`\].
+- **Rationale**: This design decision is predicated on the assumption that
+  logger configuration is a relatively infrequent operation, often performed
+  during application start-up in a single-threaded context. By avoiding an
+  explicit global lock, `picologging` eliminates a potential point of contention
+  for the far more frequent operation of emitting log messages, thereby
+  prioritising runtime performance \[cite:
+  `logging-cpython-picologging-comparison.md`\].
 
 ### 2. A Rust Implementation: The Power of Compile-Time Safety
 
-Translating this architecture to Rust highlights the profound difference between runtime concurrency checks (mutexes, GIL) and compile-time guarantees provided by an ownership model and borrow checker.
+Translating this architecture to Rust highlights the profound difference between
+runtime concurrency checks (mutexes, GIL) and compile-time guarantees provided
+by an ownership model and borrow checker.
 
 #### Guaranteed Handler Safety with `Mutex`
 
-In a Rust version, the handler's shared mutable state (the output stream) would be wrapped in `std::sync::Mutex` and shared across threads using an `Arc` (Atomic Reference Counter).
+In a Rust version, the handler's shared mutable state (the output stream) would
+be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
+(Atomic Reference Counter).
 
 ```
 use std::io::{self, Write};
@@ -59,15 +103,22 @@ impl Handler for StreamHandler {
 
 The borrow checker provides two unshakable guarantees:
 
-1. **Exclusive Access**: It is a compile-time error to attempt to access the stream data without first acquiring the lock via `.lock()`.
+1. **Exclusive Access**: It is a compile-time error to attempt to access the
+   stream data without first acquiring the lock via `.lock()`.
 
-1. **No Deadlocks from Forgetfulness**: The RAII (Resource Acquisition Is Initialization) pattern, where the lock is tied to the lifetime of the `MutexGuard`, makes it impossible to forget to release the lock.
+2. **No Deadlocks from Forgetfulness**: The RAII (Resource Acquisition Is
+   Initialization) pattern, where the lock is tied to the lifetime of the
+   `MutexGuard`, makes it impossible to forget to release the lock.
 
-This transforms a runtime convention into a compile-time proof of correctness, eliminating an entire class of potential data race bugs.
+This transforms a runtime convention into a compile-time proof of correctness,
+eliminating an entire class of potential data race bugs.
 
 #### Granular Registry Safety with `RwLock`
 
-For the global logger registry, Rust's `std::sync::RwLock` (Read-Write Lock) provides a more granular and explicit alternative to relying on the GIL. Since looking up existing loggers is far more common than creating new ones, an `RwLock` is ideal.
+For the global logger registry, Rust's `std::sync::RwLock` (Read-Write Lock)
+provides a more granular and explicit alternative to relying on the GIL. Since
+looking up existing loggers is far more common than creating new ones, an
+`RwLock` is ideal.
 
 ```
 use std::collections::HashMap;
@@ -97,32 +148,55 @@ fn get_logger(name: &str) -> Arc<Logger> {
 
 ```
 
-Here, the borrow checker enforces that you can only get immutable access with a read lock and mutable access with a write lock, again preventing data races at compile time.
+Here, the borrow checker enforces that you can only get immutable access with a
+read lock and mutable access with a write lock, again preventing data races at
+compile time.
 
 ### 3. Asynchronous Architecture: Decoupling for Maximum Throughput
 
-For applications where logging latency is absolutely critical, the optimal solution is to decouple the fast, thread-local work of record creation from the slow, I/O-bound work of emission.
+For applications where logging latency is absolutely critical, the optimal
+solution is to decouple the fast, thread-local work of record creation from the
+slow, I/O-bound work of emission.
 
-This is achieved with a producer-consumer pattern, where application threads ("producers") place log records onto a queue, and a dedicated background thread ("consumer") processes them.
+This is achieved with a producer-consumer pattern, where application threads
+("producers") place log records onto a queue, and a dedicated background thread
+("consumer") processes them.
 
 #### `picologging`'s Asynchronous Support
 
-`picologging` natively supports this architecture via its `QueueHandler` and `QueueListener` classes \[cite: `microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`\].
+`picologging` natively supports this architecture via its `QueueHandler` and
+`QueueListener` classes \[cite:
+`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`\].
 
-1. `QueueHandler`: Configured on the primary loggers, its only job is to take a `LogRecord` and place it on a `queue.Queue`. This is a very low-latency operation.
+1. `QueueHandler`: Configured on the primary loggers, its only job is to take a
+   `LogRecord` and place it on a `queue.Queue`. This is a very low-latency
+   operation.
 
-1. `QueueListener`: Running in its own thread, it watches the queue, dequeues records, and passes them to its *own* set of downstream, blocking handlers (e.g., a `FileHandler`).
+2. `QueueListener`: Running in its own thread, it watches the queue, dequeues
+   records, and passes them to its *own* set of downstream, blocking handlers
+   (e.g., a `FileHandler`).
 
-This effectively moves all blocking I/O off the application's critical path, ensuring log calls have minimal impact on performance.
+This effectively moves all blocking I/O off the application's critical path,
+ensuring log calls have minimal impact on performance.
 
 #### The Idiomatic Rust Pattern: MPSC Channels
 
-In Rust, this asynchronous model is best implemented not with a `Mutex<VecDeque>` (which still involves a shared lock), but with a **Multi-Producer, Single-Consumer (MPSC) channel** from the standard library.
+In Rust, this asynchronous model is best implemented not with a
+`Mutex<VecDeque>` (which still involves a shared lock), but with a
+**Multi-Producer, Single-Consumer (MPSC) channel** from the standard library.
 
 This pattern is the definitive solution for this use case:
 
-- **Multiple Producers (**`Sender`**)**: Each application thread holds a lightweight, cloneable `Sender`. Sending a message is a highly optimized, lock-free (or very low contention) operation.
+- **Multiple Producers (**`Sender`**)**: Each application thread holds a
+  lightweight, cloneable `Sender`. Sending a message is a highly optimized,
+  lock-free (or very low contention) operation.
 
-- **Single Consumer (**`Receiver`**)**: A single background thread owns the `Receiver`. Because it is the sole owner, it can call the final I/O-bound handlers **without any locks whatsoever**. The channel's design guarantees serial, thread-safe delivery to this single consumer.
+- **Single Consumer (**`Receiver`**)**: A single background thread owns the
+  `Receiver`. Because it is the sole owner, it can call the final I/O-bound
+  handlers **without any locks whatsoever**. The channel's design guarantees
+  serial, thread-safe delivery to this single consumer.
 
-This architecture achieves the ultimate goal: the hot path (log creation) is parallel and minimally contentious, while the cold path (I/O) is handled serially by a dedicated worker, eliminating lock contention where it is most expensive.
+This architecture achieves the ultimate goal: the hot path (log creation) is
+parallel and minimally contentious, while the cold path (I/O) is handled
+serially by a dedicated worker, eliminating lock contention where it is most
+expensive.
