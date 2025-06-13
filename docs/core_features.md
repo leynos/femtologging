@@ -1,7 +1,7 @@
 # Picologging Core Features
 
-This document summarizes the key features of the `picologging` library.
-Items are ordered by priority for the Rust port.
+This document summarizes the key features of the `picologging` library. Items
+are ordered by priority for the Rust port.
 
 ## 1. Logging API Compatibility
 
