@@ -1,3 +1,5 @@
+# Logging Sequence Diagrams
+
 Below are five **Mermaid sequence diagrams** that trace the *happy-path*
 control-flow inside CPython’s `logging` package (main branch, June 2025).\\
 
@@ -11,7 +13,7 @@ real work, using the current source code for reference
 
 ______________________________________________________________________
 
-### 1 `getLogger(name)` – retrieve or create a logger
+## 1 `getLogger(name)` – retrieve or create a logger
 
 ```mermaid
 sequenceDiagram
@@ -35,7 +37,7 @@ sequenceDiagram
 
 ______________________________________________________________________
 
-### 2 `basicConfig(...)` – one-shot root logger configuration
+## 2 `basicConfig(...)` – one-shot root logger configuration
 
 ```mermaid
 sequenceDiagram
@@ -61,7 +63,7 @@ sequenceDiagram
 
 ______________________________________________________________________
 
-### 3 `logger.info()` when *effective level = WARNING*
+## 3 `logger.info()` when *effective level = WARNING*
 
 ```mermaid
 sequenceDiagram
@@ -78,7 +80,7 @@ The `INFO` record never reaches `_log()` because the short-circuit guard fails.
 
 ______________________________________________________________________
 
-### 4 `logger.warning()` when *effective level = WARNING*
+## 4 `logger.warning()` when *effective level = WARNING*
 
 ```mermaid
 sequenceDiagram
@@ -102,7 +104,7 @@ generic handler is shown for brevity.
 
 ______________________________________________________________________
 
-### 5 `shutdown()` – orderly shutdown at process exit
+## 5 `shutdown()` – orderly shutdown at process exit
 
 ```mermaid
 sequenceDiagram
@@ -128,7 +130,7 @@ termination flushes and closes all live handlers
 
 ______________________________________________________________________
 
-### 6 `Logger.warning()` with Filter + Formatter
+## 6 `Logger.warning()` with Filter + Formatter
 
 ```mermaid
 sequenceDiagram
@@ -169,7 +171,7 @@ sequenceDiagram
     end
 ```
 
-*Key code points*
+### Key code points for `Logger.warning()`
 
 - `Logger.warning()` short-circuits on level then calls `_log()`.
 - `Handler.handle()` applies its own filters, formats the record and calls
@@ -177,7 +179,7 @@ sequenceDiagram
 
 ______________________________________________________________________
 
-### 7 `logging.config.dictConfig()` – dictionary-driven configuration
+## 7 `logging.config.dictConfig()` – dictionary-driven configuration
 
 ```mermaid
 sequenceDiagram
@@ -208,7 +210,7 @@ sequenceDiagram
     CfgMod   -->> App: logging configured
 ```
 
-*Key code points*
+### Key code points for `dictConfig()`
 
 - `dictConfig(config)` simply instantiates `DictConfigurator` and calls its
   `configure()` method.

@@ -1,3 +1,5 @@
+# Logging Class Overview
+
 Below is a condensed inheritance / composition view of the `logging` package’s
 class hierarchy in CPython (main branch, June 2025).\
 It focuses on the public classes defined in `logging/__init__.py` and
@@ -78,7 +80,7 @@ classDiagram
     BufferingFormatter --> Formatter   : composes
 ```
 
-### Notes & coverage
+## Notes & coverage
 
 - `Filterer` is a mix-in providing support for `Filter` objects; both `Logger`
   and every `Handler` subclass inherit from it to gain
