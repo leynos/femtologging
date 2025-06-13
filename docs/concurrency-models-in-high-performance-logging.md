@@ -61,7 +61,7 @@ The borrow checker provides two unshakable guarantees:
 
 1. **Exclusive Access**: It is a compile-time error to attempt to access the stream data without first acquiring the lock via `.lock()`.
 
-2. **No Deadlocks from Forgetfulness**: The RAII (Resource Acquisition Is Initialization) pattern, where the lock is tied to the lifetime of the `MutexGuard`, makes it impossible to forget to release the lock.
+1. **No Deadlocks from Forgetfulness**: The RAII (Resource Acquisition Is Initialization) pattern, where the lock is tied to the lifetime of the `MutexGuard`, makes it impossible to forget to release the lock.
 
 This transforms a runtime convention into a compile-time proof of correctness, eliminating an entire class of potential data race bugs.
 
@@ -111,7 +111,7 @@ This is achieved with a producer-consumer pattern, where application threads ("p
 
 1. `QueueHandler`: Configured on the primary loggers, its only job is to take a `LogRecord` and place it on a `queue.Queue`. This is a very low-latency operation.
 
-2. `QueueListener`: Running in its own thread, it watches the queue, dequeues records, and passes them to its *own* set of downstream, blocking handlers (e.g., a `FileHandler`).
+1. `QueueListener`: Running in its own thread, it watches the queue, dequeues records, and passes them to its *own* set of downstream, blocking handlers (e.g., a `FileHandler`).
 
 This effectively moves all blocking I/O off the application's critical path, ensuring log calls have minimal impact on performance.
 

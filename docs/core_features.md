@@ -42,9 +42,9 @@ Items are ordered by priority for the Rust port.
 ## Prioritization for Rust Port
 
 1. **Logging API Compatibility** – essential drop‑in behavior
-2. **Core Data Structures** – backbone of the system
-3. **StreamHandler** and **FileHandler** – basic output paths
-4. **Formatter** and styles – human‑readable logs
-5. **Rotating** and **TimedRotating** handlers – common operations
-6. **Queue** and **Buffering** handlers – high‑throughput support
-7. **SocketHandler** and **WatchedFileHandler** – lower priority
+1. **Core Data Structures** – backbone of the system
+1. **StreamHandler** and **FileHandler** – basic output paths
+1. **Formatter** and styles – human‑readable logs
+1. **Rotating** and **TimedRotating** handlers – common operations
+1. **Queue** and **Buffering** handlers – high‑throughput support
+1. **SocketHandler** and **WatchedFileHandler** – lower priority

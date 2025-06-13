@@ -1,8 +1,8 @@
-Below are five **Mermaid sequence diagrams** that trace the *happy-path* control-flow inside CPython’s `logging` package (main branch, June 2025).\
+Below are five **Mermaid sequence diagrams** that trace the *happy-path* control-flow inside CPython’s `logging` package (main branch, June 2025).\\
 
 All call-stacks have been pared down to the routines and objects that perform real work, using the current source code for reference ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py), [github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
----
+______________________________________________________________________
 
 ### 1 `getLogger(name)` – retrieve or create a logger
 
@@ -26,7 +26,7 @@ sequenceDiagram
     LoggingMod  --> Client: Logger
 ```
 
----
+______________________________________________________________________
 
 ### 2 `basicConfig(...)` – one-shot root logger configuration
 
@@ -52,7 +52,7 @@ sequenceDiagram
     end
 ```
 
----
+______________________________________________________________________
 
 ### 3 `logger.info()` when *effective level = WARNING*
 
@@ -63,13 +63,13 @@ sequenceDiagram
 
     Client  ->> Logger: info("hello")
     Logger  ->> Logger: isEnabledFor(INFO=20)
-    note right of Logger: returns **False** :contentReference[oaicite:1]{index=1}
+    note right of Logger: returns **False**
     Logger  --> Client: return (message dropped)
 ```
 
 The `INFO` record never reaches `_log()` because the short-circuit guard fails.
 
----
+______________________________________________________________________
 
 ### 4 `logger.warning()` when *effective level = WARNING*
 
@@ -92,7 +92,7 @@ sequenceDiagram
 
 The message propagates to every handler whose own level permits it; only one generic handler is shown for brevity.
 
----
+______________________________________________________________________
 
 ### 5 `shutdown()` – orderly shutdown at process exit
 
@@ -116,9 +116,9 @@ sequenceDiagram
 
 `shutdown()` is automatically registered with `atexit`, so normal interpreter termination flushes and closes all live handlers ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
----
+______________________________________________________________________
 
-### 6  `Logger.warning()` with Filter + Formatter
+### 6 `Logger.warning()` with Filter + Formatter
 
 ```mermaid
 sequenceDiagram
@@ -161,12 +161,12 @@ sequenceDiagram
 
 *Key code points*
 
-* `Logger.warning()` short-circuits on level then calls `_log()`.
-* `Handler.handle()` applies its own filters, formats the record and calls `emit()` under a lock.
+- `Logger.warning()` short-circuits on level then calls `_log()`.
+- `Handler.handle()` applies its own filters, formats the record and calls `emit()` under a lock.
 
----
+______________________________________________________________________
 
-### 7  `logging.config.dictConfig()` – dictionary-driven configuration
+### 7 `logging.config.dictConfig()` – dictionary-driven configuration
 
 ```mermaid
 sequenceDiagram
@@ -187,10 +187,10 @@ sequenceDiagram
     Formats  -->> DictConf: dict of formatters
     DictConf ->> Filters: build Filter objects
     Filters  -->> DictConf: dict of filters
-    DictConf ->> Handlers: build Handler objects<br/>(attach formatters/filters, set levels)
+    DictConf ->> Handlers: build Handler objects\n(attach formatters/filters, set levels)
     Handlers -->> DictConf: dict of handlers
     DictConf ->> Loggers: configure named loggers (level, handlers, propagate)
-    Loggers  -->> DictConf
+    Loggers  -->> DictConf: configured
     DictConf ->> Root: configure root logger (level, handlers)
     DictConf ->> DictConf: _handle_existing_loggers()
     DictConf -->> CfgMod: return
@@ -199,10 +199,10 @@ sequenceDiagram
 
 *Key code points*
 
-* `dictConfig(config)` simply instantiates `DictConfigurator` and calls its `configure()` method.
-* Inside `DictConfigurator.configure()` the helper routines `_install_formatters`, `_install_filters`, `_install_handlers`, `_install_loggers`, and `configure_root` are invoked in that order (see start of file for these helpers), before the clean-up call `_handle_existing_loggers`.
+- `dictConfig(config)` simply instantiates `DictConfigurator` and calls its `configure()` method.
+- Inside `DictConfigurator.configure()` the helper routines `_install_formatters`, `_install_filters`, `_install_handlers`, `_install_loggers`, and `configure_root` are invoked in that order (see start of file for these helpers), before the clean-up call `_handle_existing_loggers`.
 
----
+______________________________________________________________________
 
 #### Reading the diagrams
 

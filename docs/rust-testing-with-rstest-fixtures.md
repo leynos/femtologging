@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 MD040 -->
 # Mastering Test Fixtures in Rust with `rstest`
 
 Testing is an indispensable part of modern software development, ensuring code reliability, maintainability, and correctness. In the Rust ecosystem, while the built-in testing framework provides a solid foundation, managing test dependencies and creating parameterized tests can become verbose. The `rstest` crate (`github.com/la10736/rstest`) emerges as a powerful solution, offering a sophisticated fixture-based and parameterized testing framework that significantly simplifies these tasks through the use of procedural macros.1 This document provides a comprehensive exploration of `rstest`, from fundamental concepts to advanced techniques, enabling Rust developers to write cleaner, more expressive, and robust tests.
@@ -112,17 +113,17 @@ Here are a few examples illustrating different kinds of fixtures:
 
   ```
   use rstest::*;
-  
+
   #[fixture]
   fn default_username() -> String {
       "test_user".to_string()
   }
-  
+
   #[rstest]
   fn test_username_length(default_username: String) {
       assert!(default_username.len() > 0);
   }
-  
+
   ```
 
 - **Fixture returning a struct:**
@@ -131,12 +132,12 @@ Here are a few examples illustrating different kinds of fixtures:
 
   ```
   use rstest::*;
-  
+
   struct User {
       id: u32,
       name: String,
   }
-  
+
   #[fixture]
   fn sample_user() -> User {
       User {
@@ -144,12 +145,12 @@ Here are a few examples illustrating different kinds of fixtures:
           name: "Alice".to_string(),
       }
   }
-  
+
   #[rstest]
   fn test_sample_user_id(sample_user: User) {
       assert_eq!(sample_user.id, 1);
   }
-  
+
   ```
 
 - **Fixture performing setup and returning a resource (e.g., a mock repository):**
@@ -159,40 +160,40 @@ Here are a few examples illustrating different kinds of fixtures:
   ```
   use rstest::*;
   use std::collections::HashMap;
-  
+
   // A simple trait for a repository
   trait Repository {
       fn add_item(&mut self, id: &str, name: &str);
       fn get_item_name(&self, id: &str) -> Option<String>;
   }
-  
+
   // A mock implementation
   #
   struct MockRepository {
       data: HashMap<String, String>,
   }
-  
+
   impl Repository for MockRepository {
       fn add_item(&mut self, id: &str, name: &str) {
           self.data.insert(id.to_string(), name.to_string());
       }
-  
+
       fn get_item_name(&self, id: &str) -> Option<String> {
           self.data.get(id).cloned()
       }
   }
-  
+
   #[fixture]
   fn empty_repository() -> impl Repository {
       MockRepository::default()
   }
-  
+
   #[rstest]
   fn test_add_to_repository(mut empty_repository: impl Repository) {
       empty_repository.add_item("item1", "Test Item");
       assert_eq!(empty_repository.get_item_name("item1"), Some("Test Item".to_string()));
   }
-  
+
   ```
 
   This example, adapted from concepts in 1 and 1, demonstrates a fixture providing a mutable `Repository` implementation.
@@ -383,7 +384,7 @@ fn test_once_2(expensive_setup: &'static AtomicUsize) {
 When using `#[once]`, there are critical caveats 12:
 
 1. **Resource Lifetime:** The value returned by an `#[once]` fixture is effectively promoted to a `static` lifetime and is **never dropped**. This means any resources it holds (e.g., file handles, network connections) that require explicit cleanup via `Drop` will not be cleaned up automatically at the end of the test suite. This makes `#[once]` fixtures best suited for truly passive data or resources whose cleanup is managed by the operating system upon process exit.
-2. **Functional Limitations:** `#[once]` fixtures cannot be `async` functions and cannot be generic functions (neither with generic type parameters nor using `impl Trait` in arguments or return types).
+1. **Functional Limitations:** `#[once]` fixtures cannot be `async` functions and cannot be generic functions (neither with generic type parameters nor using `impl Trait` in arguments or return types).
 
 The "never dropped" behavior arises because `rstest` typically creates a `static` variable to hold the result of the `#[once]` fixture. `static` variables in Rust live for the entire duration of the program, and their `Drop` implementations are not usually called at program exit. This is a crucial consideration for resource management.
 
@@ -872,9 +873,13 @@ The following table summarizes key differences:
 
 **Table 1:** `rstest` **vs. Standard Rust** `#[test]` **for Fixture Management and Parameterization**
 
-<table class="not-prose border-collapse table-auto w-full" style="min-width: 75px">
-<colgroup><col style="min-width: 25px"><col style="min-width: 25px"><col style="min-width: 25px"></colgroup><tbody><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Feature</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Standard #[test] Approach</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>rstest Approach</strong></p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Fixture Injection</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Manual calls to setup functions within each test.</p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Fixture name as argument in <code class="code-inline">#[rstest]</code> function; fixture defined with <code class="code-inline">#[fixture]</code>.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Parameterized Tests (Specific Cases)</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Loop inside one test, or multiple distinct <code class="code-inline">#[test]</code> functions.</p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[case(...)]</code> attributes on <code class="code-inline">#[rstest]</code> function.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Parameterized Tests (Value Combinations)</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Nested loops inside one test, or complex manual generation.</p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[values(...)]</code> attributes on arguments of <code class="code-inline">#[rstest]</code> function.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Async Fixture Setup</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Manual <code class="code-inline">async</code> block and <code class="code-inline">.await</code> calls inside test.</p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">async fn</code> fixtures, with <code class="code-inline">#[future]</code> and <code class="code-inline">#[awt]</code> for ergonomic <code class="code-inline">.await</code>ing.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Reusing Parameter Sets</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Manual duplication of cases or custom helper macros.</p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">rstest_reuse</code> crate with <code class="code-inline">#[template]</code> and <code class="code-inline">#[apply]</code> attributes.</p></td></tr></tbody>
-</table>
+| Feature                                      | Standard `#[test]` Approach                                     | `rstest` Approach                                                                    |
+|----------------------------------------------|-----------------------------------------------------------------|--------------------------------------------------------------------------------------|
+| **Fixture Injection**                        | Manual calls to setup functions within each test.               | Fixture name as argument in `#[rstest]` function; fixture defined with `#[fixture]`. |
+| **Parameterized Tests (Specific Cases)**     | Loop inside one test, or multiple distinct `#[test]` functions. | `#[case(...)]` attributes on `#[rstest]` function.                                   |
+| **Parameterized Tests (Value Combinations)** | Nested loops inside one test, or complex manual generation.     | `#[values(...)]` attributes on arguments of `#[rstest]` function.                    |
+| **Async Fixture Setup**                      | Manual `async` block and `.await` calls inside test.            | `async fn` fixtures, with `#[future]` and `#[awt]` for ergonomic `.await`ing.        |
+| **Reusing Parameter Sets**                   | Manual duplication of cases or custom helper macros.            | `rstest_reuse` crate with `#[template]` and `#[apply]` attributes.                   |
 
 This comparison highlights how `rstest`'s attribute-based, declarative approach streamlines common testing patterns, reducing manual effort and improving the clarity of test intentions.
 
@@ -941,8 +946,19 @@ The following table provides a quick reference to some of the key attributes pro
 
 **Table 2: Key** `rstest` **Attributes Quick Reference**
 
-<table class="not-prose border-collapse table-auto w-full" style="min-width: 50px">
-<colgroup><col style="min-width: 25px"><col style="min-width: 25px"></colgroup><tbody><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Attribute</strong></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><strong>Core Purpose</strong></p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[rstest]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Marks a function as an <code class="code-inline">rstest</code> test; enables fixture injection and parameterization.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[fixture]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Defines a function that provides a test fixture (setup data or services).</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[case(...)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Defines a single parameterized test case with specific input values.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[values(...)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Defines a list of values for an argument, generating tests for each value or combination.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[once]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Marks a fixture to be initialized only once and shared (as a static reference) across tests.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[future]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Simplifies async argument types by removing <code class="code-inline">impl Future</code> boilerplate.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[awt]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>(Function or argument level) Automatically <code class="code-inline">.await</code>s future arguments in async tests.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[from(original_name)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Allows renaming an injected fixture argument in the test function.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[with(...)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Overrides default arguments of a fixture for a specific test.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[default(...)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Provides default values for arguments within a fixture function.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[timeout(...)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Sets a timeout for an asynchronous test.</p></td></tr><tr><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p><code class="code-inline">#[files("glob_pattern",...)]</code></p></td><td class="border border-neutral-300 dark:border-neutral-600 p-1.5" colspan="1" rowspan="1"><p>Injects file paths (or contents, with <code class="code-inline">mode=</code>) matching a glob pattern as test arguments.</p></td></tr></tbody>
-</table>
+| Attribute                       | Core Purpose                                                                                 |
+|---------------------------------|----------------------------------------------------------------------------------------------|
+| `#[rstest]`                     | Marks a function as an `rstest` test; enables fixture injection and parameterization.        |
+| `#[fixture]`                    | Defines a function that provides a test fixture (setup data or services).                    |
+| `#[case(...)]`                  | Defines a single parameterized test case with specific input values.                         |
+| `#[values(...)]`                | Defines a list of values for an argument, generating tests for each value or combination.    |
+| `#[once]`                       | Marks a fixture to be initialized only once and shared (as a static reference) across tests. |
+| `#[future]`                     | Simplifies async argument types by removing `impl Future` boilerplate.                       |
+| `#[awt]`                        | (Function or argument level) Automatically `.await`s future arguments in async tests.        |
+| `#[from(original_name)]`        | Allows renaming an injected fixture argument in the test function.                           |
+| `#[with(...)]`                  | Overrides default arguments of a fixture for a specific test.                                |
+| `#[default(...)]`               | Provides default values for arguments within a fixture function.                             |
+| `#[timeout(...)]`               | Sets a timeout for an asynchronous test.                                                     |
+| `#[files("glob_pattern", ...)]` | Injects file paths (or contents, with `mode=`) matching a glob pattern as test arguments.    |
 
 By mastering `rstest`, Rust developers can significantly elevate the quality and efficiency of their testing practices, leading to more reliable and maintainable software.
