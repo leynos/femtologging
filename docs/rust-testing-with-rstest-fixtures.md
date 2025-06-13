@@ -107,9 +107,7 @@ linked when running tests, not when building the main application or library.
 Add the following lines to your `Cargo.toml` under the `[dev-dependencies]`
 section:
 
-Ini, TOML
-
-```
+```toml
 [dev-dependencies]
 rstest = "0.18" # Or the latest version available on crates.io
 # rstest_macros may also be needed explicitly depending on usage or version
@@ -132,9 +130,8 @@ attribute.
 
 Consider a simple fixture that provides a numeric value:
 
-Rust
+```rust
 
-```
 use rstest::fixture; // Or use rstest::*;
 
 #[fixture]
@@ -161,9 +158,8 @@ an argument in the test function with the same name as the fixture function.
 
 Here’s how to use the `answer_to_life` fixture in a test:
 
-Rust
+```rust
 
-```
 use rstest::{fixture, rstest}; // Or use rstest::*;
 
 #[fixture]
@@ -335,9 +331,8 @@ values must also be annotated with `#[case]`.
 
 A classic example is testing the Fibonacci sequence 1:
 
-Rust
+```rust
 
-```
 use rstest::rstest;
 
 fn fibonacci(n: u32) -> u32 {
@@ -379,9 +374,8 @@ parameters or ensuring comprehensive coverage across various input states.1
 Consider testing a state machine's transition logic based on current state and
 an incoming event:
 
-Rust
+```rust
 
-```
 use rstest::rstest;
 
 #
@@ -439,9 +433,8 @@ can be used together, mixing fixture variables, fixed cases, and value lists.9
 For example, a test might use a fixture to obtain a database connection and then
 use `#[case]` arguments to test operations with different user IDs:
 
-Rust
+```rust
 
-```
 use rstest::*;
 
 // Assume UserDb and User types are defined elsewhere
@@ -475,9 +468,8 @@ dependency graph, ensuring that prerequisite fixtures are evaluated first. This
 allows for the construction of complex setup logic from smaller, modular, and
 reusable fixture components.4
 
-Rust
+```rust
 
-```
 use rstest::*;
 
 #[fixture]
@@ -518,9 +510,8 @@ For fixtures that are expensive to create or represent read-only shared data,
 initialized only a single time, and all tests using it will receive a static
 reference to this shared instance.9
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -571,9 +562,8 @@ or different name is preferred for the argument in a test or another fixture.
 The `#[from(original_fixture_name)]` attribute on an argument allows renaming.12
 This is particularly useful when destructuring the result of a fixture.
 
-Rust
+```rust
 
-```
 use rstest::*;
 
 #[fixture]
@@ -610,9 +600,8 @@ override these defaults on a per-test basis.
   argument within another fixture) to supply specific values to the parameters
   of the invoked fixture, overriding any defaults.4
 
-Rust
+```rust
 
-```
 use rstest::*;
 
 struct User { name: String, age: u8, role: String }
@@ -673,9 +662,8 @@ can often automatically convert string literals provided in `#[case]` or
 
 An example is converting string literals to `std::net::SocketAddr`:
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::net::SocketAddr;
 
@@ -710,9 +698,8 @@ Creating an asynchronous fixture is straightforward: simply define the fixture
 function as an `async fn`.12 `rstest` will recognize it as an async fixture and
 handle its execution accordingly when used in an async test.
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::time::Duration;
 
@@ -739,9 +726,8 @@ popular async runtimes like Tokio or Actix. This is typically done by adding the
 runtime's specific test attribute (e.g., `#[tokio::test]` or
 `#[actix_rt::test]`) alongside `#[rstest]`.4
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::time::Duration;
 
@@ -784,9 +770,8 @@ To improve the ergonomics of working with async fixtures and values in tests,
   (`#[future(awt)]`), tells `rstest` to automatically insert `.await` calls for
   those futures.
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::time::Duration;
 
@@ -838,9 +823,8 @@ indefinitely. `rstest` provides a `#[timeout(...)]` attribute to set a maximum
 execution time for async tests.10 This feature typically relies on the
 `async-timeout` feature of `rstest`, which is enabled by default.1
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::time::Duration;
 
@@ -886,9 +870,8 @@ provide its path or handle to the test, and ensure cleanup (often via RAII).
 
 Here's an illustrative example using the `tempfile` crate:
 
-Rust
+```rust
 
-```
 use rstest::*;
 use tempfile::{tempdir, TempDir}; // Add tempfile = "3" to [dev-dependencies]
 use std::fs::File;
@@ -952,9 +935,8 @@ examples with fakes or mocks like `empty_repository` and `string_processor`.1
 
 A conceptual example using a hypothetical mocking library:
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::sync::Arc;
 
@@ -1040,9 +1022,8 @@ as `&str` or `&[u8]` by specifying a mode, e.g.,
 `#[base_dir = "..."]` can specify a base directory for the glob, and
 `#[exclude("regex")]` can filter out paths matching a regular expression.10
 
-Rust
+```rust
 
-```
 use rstest::*;
 use std::path::PathBuf;
 use std::fs;
@@ -1094,9 +1075,8 @@ definition of reusable test templates.9
 - `#[apply(template_name)]`: Used on a test function to apply a previously
   defined template, effectively injecting its attributes.
 
-Rust
+```rust
 
-```
 // Add to Cargo.toml: rstest_reuse = "0.7" (or latest)
 // In your test module or lib.rs/main.rs for crate-wide visibility if needed:
 // #[cfg(test)]
