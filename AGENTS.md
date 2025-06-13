@@ -61,7 +61,9 @@ When implementing changes, adhere to the following testing procedures:
   
   * For Markdown files (`.md` only):
     * **Linting:** Passes lint checks (`markdownlint filename.md` or integrated editor linting).
-    * **Mermaid diagrams:** Passes validation using nixie (`nixie filename.md`)
+    * **Mermaid diagrams:** Pass validation using the `nixie` command-line
+      application (`nixie filename.md`). `nixie` is a standalone CLI binary, not
+      an npm package.
 * **Committing:**
   * Only changes that meet all the quality gates above should be committed.
   * Write clear, descriptive commit messages summarizing the change, following these formatting guidelines:
