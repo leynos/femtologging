@@ -25,4 +25,4 @@ relevant libraries. Use the links below to explore each topic.
 - [rust-testing-with-rstest-fixtures.md](./rust-testing-with-rstest-fixtures.md)
   - Explains how to use the `rstest` crate for fixture-based tests.
 - [dependency-analysis.md](./dependency-analysis.md)
-  - Summarises third-party crates chosen for the Rust implementation.
+  - Summarizes third-party crates chosen for the Rust implementation.

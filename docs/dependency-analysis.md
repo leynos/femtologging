@@ -16,9 +16,11 @@ CPython implementation:
 
 - **PyO3** provides bindings so the Rust library can be imported from
   Python. It replaces the C++ extension used by picologging.
-- **crossbeam-channel** is recommended as the baseline synchronous
+- **crossbeam-channel** (v0.5.15) is recommended as the baseline synchronous
   multi-producer, single-consumer queue for handler threads. Alternatives
-  like `flume` or `tokio::sync::mpsc` may be benchmarked later.
+  like `flume` or `tokio::sync::mpsc` may be benchmarked later. Version
+  0.5.15 avoids the double-free vulnerability disclosed in
+  RUSTSEC-2025-0024.
 - **serde** will power any structured data serialization needed for
   network handlers or configuration files. This crate is not yet listed in
   `Cargo.toml` because serialization features are planned for a later phase.
@@ -26,5 +28,5 @@ CPython implementation:
   `FemtoLogRecord`. These dependencies will be added once timestamp
   formatting is implemented.
 
-These choices prioritise crates with strong community adoption and good
+These choices prioritize crates with strong community adoption and good
 performance characteristics.
