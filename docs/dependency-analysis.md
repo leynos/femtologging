@@ -20,9 +20,11 @@ CPython implementation:
   multi-producer, single-consumer queue for handler threads. Alternatives
   like `flume` or `tokio::sync::mpsc` may be benchmarked later.
 - **serde** will power any structured data serialization needed for
-  network handlers or configuration files.
+  network handlers or configuration files. This crate is not yet listed in
+  `Cargo.toml` because serialization features are planned for a later phase.
 - **chrono** or `time` will supply timestamp utilities for
-  `FemtoLogRecord`.
+  `FemtoLogRecord`. These dependencies will be added once timestamp
+  formatting is implemented.
 
 These choices prioritise crates with strong community adoption and good
 performance characteristics.

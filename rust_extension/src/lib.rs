@@ -1,8 +1,7 @@
-#![allow(non_local_definitions)]
-
 use pyo3::prelude::*;
 
 mod log_record;
+#[allow(non_local_definitions)]
 mod logger;
 
 use logger::FemtoLogger;
