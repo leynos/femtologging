@@ -26,3 +26,5 @@ relevant libraries. Use the links below to explore each topic.
   - Explains how to use the `rstest` crate for fixture-based tests.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
+- [dev-workflow.md](./dev-workflow.md)
+  - Describes Makefile commands for building, linting, formatting and tests.
