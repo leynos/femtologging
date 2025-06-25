@@ -8,6 +8,7 @@ class FemtoLogger:
         self.name = name
 
     def log(self, level: str, message: str) -> str:
+        """Return the formatted log message."""
         return f"{self.name}: {level} - {message}"
 
 

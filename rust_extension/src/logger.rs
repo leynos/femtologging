@@ -13,7 +13,6 @@ pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
     tx: Option<Sender<FemtoLogRecord>>,
-    #[allow(dead_code)]
     handle: Option<JoinHandle<()>>,
 }
 
@@ -45,7 +44,9 @@ impl FemtoLogger {
         let record = FemtoLogRecord::new(level, message);
         let msg = format!("{}: {}", self.name, record);
         if let Some(tx) = &self.tx {
-            let _ = tx.send(record);
+            if tx.send(record).is_err() {
+                eprintln!("Warning: failed to send log record to background thread");
+            }
         }
         msg
     }
