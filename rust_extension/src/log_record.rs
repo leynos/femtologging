@@ -2,10 +2,28 @@
 ///
 /// This struct is intentionally minimal for now. Additional fields such as a
 /// timestamp may be added as functionality grows.
-#[derive(Debug)]
-pub struct FemtoLogRecord<'a> {
-    /// The log level as a string slice (e.g. "INFO" or "ERROR").
-    pub level: &'a str,
+use std::fmt;
+
+#[derive(Clone, Debug)]
+pub struct FemtoLogRecord {
+    /// The log level as a string (e.g. "INFO" or "ERROR").
+    pub level: String,
     /// The log message content.
-    pub message: &'a str,
+    pub message: String,
+}
+
+impl FemtoLogRecord {
+    /// Construct a new log record from `level` and `message` arguments.
+    pub fn new(level: &str, message: &str) -> Self {
+        Self {
+            level: level.to_owned(),
+            message: message.to_owned(),
+        }
+    }
+}
+
+impl fmt::Display for FemtoLogRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} - {}", self.level, self.message)
+    }
 }
