@@ -2,7 +2,6 @@
 ///
 /// This struct is intentionally minimal for now. Additional fields such as a
 /// timestamp may be added as functionality grows.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct FemtoLogRecord<'a> {
     /// The log level as a string slice (e.g. "INFO" or "ERROR").

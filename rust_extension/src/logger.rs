@@ -21,6 +21,6 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
         let record = FemtoLogRecord { level, message };
-        format!("{}: {:?}", self.name, record)
+        format!("{} - {} - {}", self.name, record.level, record.message)
     }
 }
