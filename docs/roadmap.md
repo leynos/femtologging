@@ -12,8 +12,8 @@ that design.
 - [x] Review picologging codebase and isolate core logging features
 - [x] Evaluate dependencies and identify Rust equivalents
 - [x] Design Rust crate layout and expose PyO3 bindings
-- [ ] Implement basic logger in Rust with matching Python API
-- [ ] Integrate Rust extension into Python packaging workflow
+- [x] Implement basic logger in Rust with matching Python API
+- [x] Integrate Rust extension into Python packaging workflow
 - [ ] Port formatting and handler components to Rust
 - [ ] Add concurrency support and thread safety guarantees
 - [ ] Benchmark against picologging and optimise hot paths

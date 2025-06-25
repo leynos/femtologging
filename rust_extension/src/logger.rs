@@ -2,6 +2,9 @@
 
 use pyo3::prelude::*;
 
+use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::thread::{self, JoinHandle};
+
 use crate::log_record::FemtoLogRecord;
 
 /// Basic logger used for early experimentation.
@@ -9,6 +12,9 @@ use crate::log_record::FemtoLogRecord;
 pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
+    tx: Option<Sender<FemtoLogRecord>>,
+    #[allow(dead_code)]
+    handle: Option<JoinHandle<()>>,
 }
 
 #[pymethods]
@@ -17,7 +23,17 @@ impl FemtoLogger {
     #[new]
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> Self {
-        Self { name }
+        let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) = unbounded();
+        let handle = thread::spawn(move || {
+            for record in rx {
+                println!("{}", record);
+            }
+        });
+        Self {
+            name,
+            tx: Some(tx),
+            handle: Some(handle),
+        }
     }
 
     /// Format a message at the provided level and return it.
@@ -27,6 +43,19 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
         let record = FemtoLogRecord::new(level, message);
-        format!("{}: {}", self.name, record)
+        let msg = format!("{}: {}", self.name, record);
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(record);
+        }
+        msg
+    }
+}
+
+impl Drop for FemtoLogger {
+    fn drop(&mut self) {
+        self.tx.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }

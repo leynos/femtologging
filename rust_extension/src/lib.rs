@@ -3,7 +3,8 @@ use pyo3::prelude::*;
 mod log_record;
 mod logger;
 
-use logger::FemtoLogger;
+pub use log_record::FemtoLogRecord;
+pub use logger::FemtoLogger;
 
 #[pyfunction]
 fn hello() -> &'static str {
