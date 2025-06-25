@@ -10,8 +10,8 @@ that design.
 ## Initial Setup Tasks
 
 - [x] Review picologging codebase and isolate core logging features
-- [ ] Evaluate dependencies and identify Rust equivalents
-- [ ] Design Rust crate layout and expose PyO3 bindings
+- [x] Evaluate dependencies and identify Rust equivalents
+- [x] Design Rust crate layout and expose PyO3 bindings
 - [ ] Implement basic logger in Rust with matching Python API
 - [ ] Integrate Rust extension into Python packaging workflow
 - [ ] Port formatting and handler components to Rust
