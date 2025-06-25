@@ -7,7 +7,10 @@ This note tracks third-party libraries required for the Rust port of
 
 The current Python package has no runtime dependencies. Development
 tools are `pytest`, `ruff` and `pyright` as configured in
-`pyproject.toml`.
+`pyproject.toml`. Static type checking uses the `ty` CLI. A
+`Makefile` in the project root wraps these tools with convenient
+targets (`fmt`, `check-fmt`, `lint`, `test`, `build` and `release`).
+The `tools` target ensures commands like `ruff` and `ty` are present.
 
 ## Rust ecosystem
 
