@@ -2,10 +2,12 @@
 
 use pyo3::prelude::*;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::log_record::FemtoLogRecord;
+
+const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -22,7 +24,10 @@ impl FemtoLogger {
     #[new]
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> Self {
-        let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) = unbounded();
+        // Use a bounded channel to prevent unbounded memory growth if log
+        // producers outpace the consumer thread.
+        let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) =
+            bounded(DEFAULT_CHANNEL_CAPACITY);
         let handle = thread::spawn(move || {
             for record in rx {
                 println!("{}", record);

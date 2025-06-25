@@ -255,6 +255,10 @@ instance, `crossbeam-channel` is a popular choice, but alternatives like `flume`
 claim higher performance in some scenarios and offer asynchronous capabilities
 8, while `thingbuf` focuses on lock-free MPSC channels built on a lock-free
 queue.7 The selection directly impacts throughput and latency.
+For the early experimental release, `femtologging` defaults to a bounded
+`crossbeam-channel` with a capacity of 1024 records. This guards against
+unbounded memory growth when producers outpace the consumer thread. Later
+versions may expose the channel type and capacity as configuration options.
 
 ## 4. Leveraging Rust's Strengths
 
