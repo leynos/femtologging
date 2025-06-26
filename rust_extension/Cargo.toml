@@ -10,3 +10,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 pyo3 = { version = "0.20", features = ["extension-module"] }
 crossbeam-channel = "0.5.15"
+
+[dev-dependencies]
+rstest = "0.18"

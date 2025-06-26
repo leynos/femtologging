@@ -2,13 +2,20 @@
 
 use pyo3::prelude::*;
 
+use crossbeam_channel::{bounded, Receiver, Sender};
+use std::thread::{self, JoinHandle};
+
 use crate::log_record::FemtoLogRecord;
+
+const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
 pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
+    tx: Option<Sender<FemtoLogRecord>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 #[pymethods]
@@ -17,7 +24,20 @@ impl FemtoLogger {
     #[new]
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> Self {
-        Self { name }
+        // Use a bounded channel to prevent unbounded memory growth if log
+        // producers outpace the consumer thread.
+        let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) =
+            bounded(DEFAULT_CHANNEL_CAPACITY);
+        let handle = thread::spawn(move || {
+            for record in rx {
+                println!("{}", record);
+            }
+        });
+        Self {
+            name,
+            tx: Some(tx),
+            handle: Some(handle),
+        }
     }
 
     /// Format a message at the provided level and return it.
@@ -27,6 +47,21 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
         let record = FemtoLogRecord::new(level, message);
-        format!("{}: {}", self.name, record)
+        let msg = format!("{}: {}", self.name, record);
+        if let Some(tx) = &self.tx {
+            if tx.send(record).is_err() {
+                eprintln!("Warning: failed to send log record to background thread");
+            }
+        }
+        msg
+    }
+}
+
+impl Drop for FemtoLogger {
+    fn drop(&mut self) {
+        self.tx.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }
