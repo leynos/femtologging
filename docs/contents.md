@@ -28,3 +28,5 @@ relevant libraries. Use the links below to explore each topic.
   - Summarizes third-party crates chosen for the Rust implementation.
 - [dev-workflow.md](./dev-workflow.md)
   - Describes Makefile commands for building, linting, formatting and tests.
+- [formatters-and-handlers-rust-port.md](./formatters-and-handlers-rust-port.md)
+  - Design for moving formatter and handler logic to Rust with thread safety.
