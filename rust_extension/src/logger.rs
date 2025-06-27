@@ -34,7 +34,7 @@ impl FemtoLogger {
         let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) =
             bounded(DEFAULT_CHANNEL_CAPACITY);
 
-        // Default to a simple formatter mirroring Python's "name: level - message" format.
+        // Default to a simple formatter using the "name [LEVEL] message" style.
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
         let thread_formatter = Arc::clone(&formatter);
 

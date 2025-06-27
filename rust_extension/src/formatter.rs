@@ -14,6 +14,6 @@ pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        format!("{}: {} - {}", record.logger, record.level, record.message)
+        format!("{} [{}] {}", record.logger, record.level, record.message)
     }
 }

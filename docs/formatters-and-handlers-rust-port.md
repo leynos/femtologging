@@ -18,9 +18,10 @@ formatting and handler components from Python to Rust. It complements the
 
 ## FemtoFormatter Trait
 
-`FemtoFormatter` defines how a `FemtoLogRecord` becomes a string. A
-simple default formatter mirrors the current Python behaviour by
-combining the logger name, level, and message:
+`FemtoFormatter` defines how a `FemtoLogRecord` becomes a string. The
+default implementation is intentionally simple and follows a common
+"logger [LEVEL] message" convention:
+
 ```rust
 pub trait FemtoFormatter: Send + Sync {
     fn format(&self, record: &FemtoLogRecord) -> String;
@@ -30,7 +31,7 @@ pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        format!("{}: {} - {}", record.logger, record.level, record.message)
+        format!("{} [{}] {}", record.logger, record.level, record.message)
     }
 }
 ```
