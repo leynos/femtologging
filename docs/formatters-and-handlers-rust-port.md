@@ -21,6 +21,7 @@ formatting and handler components from Python to Rust. It complements the
 `FemtoFormatter` defines how a `FemtoLogRecord` becomes a string. A
 simple default formatter mirrors the current Python behaviour by
 combining the logger name, level, and message:
+
 ```rust
 pub trait FemtoFormatter: Send + Sync {
     fn format(&self, record: &FemtoLogRecord) -> String;
@@ -59,6 +60,24 @@ The consumer thread receives `FemtoLogRecord` values, formats them using
 its `FemtoFormatter`, and writes via a mutex‑protected `Write` object to
 avoid interleaving. This mirrors the locking described in
 [`concurrency-models-in-high-performance-logging.md`](./concurrency-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-a-hybrid-approach).
+
+#### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant FemtoStreamHandler
+    participant Channel
+    participant WorkerThread
+    participant Stream
+
+    Caller->>FemtoStreamHandler: handle(FemtoLogRecord)
+    FemtoStreamHandler->>Channel: send(record)
+    Note right of Channel: (Non-blocking, async)
+    WorkerThread-->>Channel: receive(record)
+    WorkerThread->>Stream: format + write(record)
+    WorkerThread->>Stream: flush()
+```
 
 ### FileHandler
 
