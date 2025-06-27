@@ -5,7 +5,10 @@ use pyo3::prelude::*;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::{formatter::{DefaultFormatter, FemtoFormatter}, log_record::FemtoLogRecord};
+use crate::{
+    formatter::{DefaultFormatter, FemtoFormatter},
+    log_record::FemtoLogRecord,
+};
 use std::sync::Arc;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
