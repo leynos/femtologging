@@ -24,9 +24,10 @@ fn stream_handler_multiple_records() {
     drop(handler);
 
     let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
-    assert!(output.contains("core: INFO - first"));
-    assert!(output.contains("core: WARN - second"));
-    assert!(output.contains("core: ERROR - third"));
+    assert_eq!(
+        output,
+        "core: INFO - first\ncore: WARN - second\ncore: ERROR - third\n"
+    );
 }
 
 #[rstest]
@@ -58,9 +59,25 @@ fn stream_handler_concurrent_usage() {
 }
 
 #[rstest]
+fn stream_handler_trait_object_usage() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler: Box<dyn FemtoHandler> = Box::new(FemtoStreamHandler::new(
+        Arc::clone(&buffer),
+        Arc::new(DefaultFormatter),
+    ));
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "trait"));
+    drop(handler);
+
+    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    assert_eq!(output, "core: INFO - trait\n");
+}
+
+#[rstest]
 fn stream_handler_poisoned_mutex() {
     // Poison the mutex by panicking while holding the lock
     let buffer = Arc::new(Mutex::new(Vec::new()));
+    let test_buffer = Arc::clone(&buffer);
     {
         let b = Arc::clone(&buffer);
         let _ = std::panic::catch_unwind(move || {
@@ -72,4 +89,10 @@ fn stream_handler_poisoned_mutex() {
     let handler = FemtoStreamHandler::new(Arc::clone(&buffer), Arc::new(DefaultFormatter));
     handler.handle(FemtoLogRecord::new("core", "INFO", "ok"));
     drop(handler);
+
+    // The buffer should remain poisoned; handler must not panic
+    assert!(
+        test_buffer.lock().is_err(),
+        "Buffer mutex should remain poisoned"
+    );
 }
