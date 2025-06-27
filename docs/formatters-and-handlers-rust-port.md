@@ -48,10 +48,14 @@ thread. Application code holds the sender cloned from the channel.
 Handlers implement a common trait:
 
 ```rust
-pub trait FemtoHandler: Send {
+pub trait FemtoHandler: Send + Sync {
     fn handle(&self, record: FemtoLogRecord);
 }
 ```
+
+Implementations should forward the record to an internal queue with
+`try_send` so the caller never blocks. If the queue is full the record is
+silently dropped and a warning is written to `stderr`.
 
 ### StreamHandler
 

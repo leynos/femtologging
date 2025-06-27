@@ -17,9 +17,11 @@ fn hello() -> &'static str {
     "hello from Rust"
 }
 
+#[allow(deprecated)]
 #[pymodule]
-fn _femtologging_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _femtologging_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
+    m.add_class::<FemtoStreamHandler>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     Ok(())
 }

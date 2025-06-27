@@ -5,6 +5,7 @@ use std::{
 };
 
 use crossbeam_channel::{bounded, Sender};
+use pyo3::prelude::*;
 
 use crate::handler::FemtoHandler;
 use crate::{
@@ -19,9 +20,30 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 /// Each instance owns a background thread which receives records via a
 /// channel and writes them to the provided stream. The stream is protected
 /// by a `Mutex` to avoid interleaved writes when shared across threads.
+#[pyclass]
 pub struct FemtoStreamHandler {
     tx: Option<Sender<FemtoLogRecord>>,
     handle: Option<JoinHandle<()>>,
+}
+
+#[pymethods]
+impl FemtoStreamHandler {
+    #[new]
+    fn py_new() -> Self {
+        Self::stderr()
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "stdout")]
+    fn py_stdout() -> Self {
+        Self::stdout()
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "stderr")]
+    fn py_stderr() -> Self {
+        Self::stderr()
+    }
 }
 
 impl FemtoStreamHandler {
@@ -91,8 +113,8 @@ impl FemtoStreamHandler {
 impl FemtoHandler for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
-            if tx.send(record).is_err() {
-                eprintln!("FemtoStreamHandler: failed to send record, handler may be shut down");
+            if tx.try_send(record).is_err() {
+                eprintln!("FemtoStreamHandler: queue full or shutting down, dropping record");
             }
         }
     }

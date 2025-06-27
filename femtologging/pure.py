@@ -17,4 +17,11 @@ def hello() -> str:
     return "hello from Python"
 
 
-__all__ = ["FemtoLogger", "hello"]
+class FemtoStreamHandler:
+    """Placeholder used when the Rust extension is unavailable."""
+
+    def __init__(self) -> None:  # pragma: no cover - simple stub
+        pass
+
+
+__all__ = ["FemtoLogger", "FemtoStreamHandler", "hello"]
