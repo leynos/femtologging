@@ -3,17 +3,17 @@
 This directory holds design notes for `femtologging` and references to
 relevant libraries. Use the links below to explore each topic.
 
-- [concurrency-models-in-high-performance-logging.md](./concurrency-models-in-high-performance-logging.md)
-  - Examines picologging's hybrid lock strategy and contrasts it with
-    Rust's compile-time safety and asynchronous patterns.
-- [core_features.md](./core_features.md)
-  - Summarizes picologging's key features prioritized for the Rust port.
-- [dependency-analysis.md](./dependency-analysis.md)
-  - Summarizes third-party crates chosen for the Rust implementation.
+## Setup and Workflow
+
 - [dev-workflow.md](./dev-workflow.md)
   - Describes Makefile commands for building, linting, formatting and tests.
-- [formatters-and-handlers-rust-port.md](./formatters-and-handlers-rust-port.md)
-  - Design for moving formatter and handler logic to Rust with thread safety.
+- [dependency-analysis.md](./dependency-analysis.md)
+  - Summarizes third-party crates chosen for the Rust implementation.
+- [roadmap.md](./roadmap.md)
+  - Lists milestones for porting picologging to a Rust/PyO3 implementation.
+
+## Logging Architecture
+
 - [logging-class-overview.md](./logging-class-overview.md)
   - Presents a Mermaid class diagram showing CPython logging's hierarchy.
 - [logging-cpython-picologging-comparison.md](./logging-cpython-picologging-comparison.md)
@@ -21,8 +21,16 @@ relevant libraries. Use the links below to explore each topic.
     performance trade-offs.
 - [logging-sequence-diagrams.md](./logging-sequence-diagrams.md)
   - Contains sequence diagrams illustrating logging call flows.
-- [roadmap.md](./roadmap.md)
-  - Lists milestones for porting picologging to a Rust/PyO3 implementation.
+
+## Rust Port Design Notes
+
+- [concurrency-models-in-high-performance-logging.md](./concurrency-models-in-high-performance-logging.md)
+  - Examines picologging's hybrid lock strategy and contrasts it with
+    Rust's compile-time safety and asynchronous patterns.
+- [core_features.md](./core_features.md)
+  - Summarizes picologging's key features prioritized for the Rust port.
+- [formatters-and-handlers-rust-port.md](./formatters-and-handlers-rust-port.md)
+  - Design for moving formatter and handler logic to Rust with thread safety.
 - [rust-extension.md](./rust-extension.md)
   - Describes the small PyO3-based Rust extension shipped in the project.
 - [rust-multithreaded-logging-framework-for-python-design.md](./rust-multithreaded-logging-framework-for-python-design.md)
