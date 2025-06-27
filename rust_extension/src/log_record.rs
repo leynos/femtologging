@@ -6,6 +6,8 @@ use std::fmt;
 
 #[derive(Clone, Debug)]
 pub struct FemtoLogRecord {
+    /// Name of the logger that created this record.
+    pub logger: String,
     /// The log level as a string (e.g. "INFO" or "ERROR").
     pub level: String,
     /// The log message content.
@@ -13,9 +15,10 @@ pub struct FemtoLogRecord {
 }
 
 impl FemtoLogRecord {
-    /// Construct a new log record from `level` and `message` arguments.
-    pub fn new(level: &str, message: &str) -> Self {
+    /// Construct a new log record from logger `name`, `level`, and `message`.
+    pub fn new(logger: &str, level: &str, message: &str) -> Self {
         Self {
+            logger: logger.to_owned(),
             level: level.to_owned(),
             message: message.to_owned(),
         }
