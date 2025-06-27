@@ -13,3 +13,63 @@ fn stream_handler_writes_to_buffer() {
     let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
     assert_eq!(output, "core: INFO - hello\n");
 }
+
+#[rstest]
+fn stream_handler_multiple_records() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler = FemtoStreamHandler::new(Arc::clone(&buffer), Arc::new(DefaultFormatter));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler.handle(FemtoLogRecord::new("core", "WARN", "second"));
+    handler.handle(FemtoLogRecord::new("core", "ERROR", "third"));
+    drop(handler);
+
+    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    assert!(output.contains("core: INFO - first"));
+    assert!(output.contains("core: WARN - second"));
+    assert!(output.contains("core: ERROR - third"));
+}
+
+#[rstest]
+fn stream_handler_concurrent_usage() {
+    use std::thread;
+
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler = Arc::new(FemtoStreamHandler::new(
+        Arc::clone(&buffer),
+        Arc::new(DefaultFormatter),
+    ));
+
+    let mut handles = vec![];
+    for i in 0..10 {
+        let h = Arc::clone(&handler);
+        handles.push(thread::spawn(move || {
+            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+    drop(handler);
+
+    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    for i in 0..10 {
+        assert!(output.contains(&format!("core: INFO - msg{}", i)));
+    }
+}
+
+#[rstest]
+fn stream_handler_poisoned_mutex() {
+    // Poison the mutex by panicking while holding the lock
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    {
+        let b = Arc::clone(&buffer);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = b.lock().unwrap();
+            panic!("poison");
+        });
+    }
+
+    let handler = FemtoStreamHandler::new(Arc::clone(&buffer), Arc::new(DefaultFormatter));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "ok"));
+    drop(handler);
+}

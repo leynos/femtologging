@@ -41,21 +41,42 @@ impl FemtoStreamHandler {
         )
     }
 
-    /// Create a new handler from an arbitrary writer and formatter.
+    /// Create a new handler from an arbitrary writer and formatter using the default capacity.
     pub fn new<W>(writer: Arc<Mutex<W>>, formatter: Arc<dyn FemtoFormatter>) -> Self
     where
         W: Write + Send + 'static,
     {
-        let (tx, rx) = bounded(DEFAULT_CHANNEL_CAPACITY);
+        Self::with_capacity(writer, formatter, DEFAULT_CHANNEL_CAPACITY)
+    }
+
+    /// Create a new handler with a custom channel capacity.
+    pub fn with_capacity<W>(
+        writer: Arc<Mutex<W>>,
+        formatter: Arc<dyn FemtoFormatter>,
+        capacity: usize,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+    {
+        let (tx, rx) = bounded(capacity);
         let thread_writer = Arc::clone(&writer);
         let thread_formatter = formatter;
 
         let handle = thread::spawn(move || {
             for record in rx {
                 let msg = thread_formatter.format(&record);
-                if let Ok(mut w) = thread_writer.lock() {
-                    let _ = writeln!(w, "{}", msg);
-                    let _ = w.flush();
+                match thread_writer.lock() {
+                    Ok(mut w) => {
+                        if let Err(e) = writeln!(w, "{}", msg) {
+                            eprintln!("FemtoStreamHandler write error: {}", e);
+                        }
+                        if let Err(e) = w.flush() {
+                            eprintln!("FemtoStreamHandler flush error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("FemtoStreamHandler lock error: {}", e);
+                    }
                 }
             }
         });
@@ -70,7 +91,9 @@ impl FemtoStreamHandler {
 impl FemtoHandler for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
-            let _ = tx.send(record);
+            if tx.send(record).is_err() {
+                eprintln!("FemtoStreamHandler: failed to send record, handler may be shut down");
+            }
         }
     }
 }
@@ -78,7 +101,9 @@ impl FemtoHandler for FemtoStreamHandler {
 impl Drop for FemtoStreamHandler {
     fn drop(&mut self) {
         // Dropping the sender signals the consumer thread to finish.
-        self.tx.take();
+        if let Some(sender) = self.tx.take() {
+            drop(sender);
+        }
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

@@ -60,6 +60,9 @@ The consumer thread receives `FemtoLogRecord` values, formats them using
 its `FemtoFormatter`, and writes via a mutex‑protected `Write` object to
 avoid interleaving. This mirrors the locking described in
 [`concurrency-models-in-high-performance-logging.md`](./concurrency-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-a-hybrid-approach).
+The default bounded queue size is 1024 records, but
+`FemtoStreamHandler::with_capacity` lets callers configure a custom
+capacity when needed.
 
 #### Sequence Diagram
 
