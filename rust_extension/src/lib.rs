@@ -18,7 +18,7 @@ fn hello() -> &'static str {
 }
 
 #[pymodule]
-fn _femtologging_rs(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _femtologging_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     Ok(())
