@@ -9,9 +9,9 @@ formatting and handler components from Python to Rust. It complements the
 
 - Provide Rust implementations of formatting and handler logic
   equivalent to CPython's `logging` module, keeping API familiarity.
-- Ensure all components satisfy `Send`/`Sync` so they can operate across
+- Ensure all components satisfy `Send`/`Sync`, so they can operate across
   threads without unsafe code.
-- Maintain a producer–consumer model for handlers so application threads
+- Maintain a producer–consumer model for handlers, so application threads
   are never blocked by I/O.
 - Use `crossbeam-channel` as the initial MPSC queue, consistent with
   [`dependency-analysis.md`](./dependency-analysis.md).
@@ -31,7 +31,7 @@ pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        format!("{} - {}", record.level, record.message)
+        format!("{}: {} - {}", record.logger, record.level, record.message)
     }
 }
 ```
