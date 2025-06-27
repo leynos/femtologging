@@ -1,12 +1,16 @@
 use pyo3::prelude::*;
 
 mod formatter;
+mod handler;
 mod log_record;
 mod logger;
+mod stream_handler;
 
 pub use formatter::{DefaultFormatter, FemtoFormatter};
+pub use handler::FemtoHandler;
 pub use log_record::FemtoLogRecord;
 pub use logger::FemtoLogger;
+pub use stream_handler::FemtoStreamHandler;
 
 #[pyfunction]
 fn hello() -> &'static str {
