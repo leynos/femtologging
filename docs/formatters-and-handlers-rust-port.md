@@ -68,6 +68,11 @@ The default bounded queue size is 1024 records, but
 `FemtoStreamHandler::with_capacity` lets callers configure a custom
 capacity when needed.
 
+Dropping a handler closes its channel and waits briefly for the worker
+thread to finish flushing. If the thread does not exit within one
+second a warning is printed and the drop continues, preventing
+deadlocks during shutdown.
+
 #### Sequence Diagram
 
 ```mermaid

@@ -1,7 +1,8 @@
 use std::{
     io::{self, Write},
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use crossbeam_channel::{bounded, Sender};
@@ -127,7 +128,14 @@ impl Drop for FemtoStreamHandler {
             drop(sender);
         }
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            // Joining may block if the worker misbehaves. Spawn a helper
+            // thread so drop returns even if the worker is stuck.
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = handle.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(Duration::from_secs(1));
         }
     }
 }
