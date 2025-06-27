@@ -46,7 +46,7 @@ impl FemtoLogger {
     /// name with the level and message.
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
-        let record = FemtoLogRecord::new(level, message);
+        let record = FemtoLogRecord::new(&self.name, level, message);
         let msg = format!("{}: {}", self.name, record);
         if let Some(tx) = &self.tx {
             if tx.send(record).is_err() {

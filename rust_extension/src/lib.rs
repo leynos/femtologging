@@ -1,8 +1,10 @@
 use pyo3::prelude::*;
 
+mod formatter;
 mod log_record;
 mod logger;
 
+pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use log_record::FemtoLogRecord;
 pub use logger::FemtoLogger;
 
