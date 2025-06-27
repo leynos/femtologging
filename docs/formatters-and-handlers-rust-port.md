@@ -20,8 +20,7 @@ formatting and handler components from Python to Rust. It complements the
 
 `FemtoFormatter` defines how a `FemtoLogRecord` becomes a string. A
 simple default formatter mirrors the current Python behaviour by
-combining the logger name, level and message:
-
+combining the logger name, level, and message:
 ```rust
 pub trait FemtoFormatter: Send + Sync {
     fn format(&self, record: &FemtoLogRecord) -> String;
