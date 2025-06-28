@@ -2,10 +2,11 @@ use _femtologging_rs::FemtoLogger;
 use rstest::rstest;
 
 #[rstest]
-#[case("core", "INFO", "hello", "core: INFO - hello")]
-#[case("sys", "ERROR", "fail", "sys: ERROR - fail")]
-#[case("", "INFO", "", ": INFO - ")]
-#[case("core", "WARN", "⚠", "core: WARN - ⚠")]
+#[case("core", "INFO", "hello", "core [INFO] hello")]
+#[case("sys", "ERROR", "fail", "sys [ERROR] fail")]
+#[case("", "INFO", "", " [INFO] ")]
+#[case("core", "WARN", "⚠", "core [WARN] ⚠")]
+#[case("i18n", "INFO", "こんにちは世界", "i18n [INFO] こんにちは世界")]
 fn log_formats_message(
     #[case] name: &str,
     #[case] level: &str,
@@ -14,4 +15,16 @@ fn log_formats_message(
 ) {
     let logger = FemtoLogger::new(name.to_string());
     assert_eq!(logger.log(level, message), expected);
+}
+
+#[rstest]
+#[case(0)]
+#[case(1024)]
+#[case(65536)]
+#[case(1_048_576)]
+fn log_formats_long_messages(#[case] length: usize) {
+    let msg = "x".repeat(length);
+    let logger = FemtoLogger::new("long".to_string());
+    let expected = format!("long [INFO] {}", msg);
+    assert_eq!(logger.log("INFO", &msg), expected);
 }

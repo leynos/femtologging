@@ -9,7 +9,7 @@ class FemtoLogger:
 
     def log(self, level: str, message: str) -> str:
         """Return the formatted log message."""
-        return f"{self.name}: {level} - {message}"
+        return f"{self.name} [{level}] {message}"
 
 
 def hello() -> str:
