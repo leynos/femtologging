@@ -7,7 +7,7 @@ mod logger;
 mod stream_handler;
 
 pub use formatter::{DefaultFormatter, FemtoFormatter};
-pub use handler::FemtoHandler;
+pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use log_record::FemtoLogRecord;
 pub use logger::FemtoLogger;
 pub use stream_handler::FemtoStreamHandler;
@@ -21,6 +21,7 @@ fn hello() -> &'static str {
 #[pymodule]
 fn _femtologging_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
+    m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     Ok(())

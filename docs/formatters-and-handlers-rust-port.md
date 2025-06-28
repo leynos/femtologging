@@ -48,9 +48,13 @@ thread. Application code holds the sender cloned from the channel.
 Handlers implement a common trait:
 
 ```rust
-pub trait FemtoHandler: Send + Sync {
+pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord);
 }
+
+/// Base Python-exposed class. Methods are no-ops by default.
+#[pyclass(name = "FemtoHandler", subclass)]
+pub struct FemtoHandler;
 ```
 
 Implementations should forward the record to an internal queue with

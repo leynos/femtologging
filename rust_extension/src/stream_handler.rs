@@ -8,7 +8,7 @@ use std::{
 use crossbeam_channel::{bounded, Sender};
 use pyo3::prelude::*;
 
-use crate::handler::FemtoHandler;
+use crate::handler::FemtoHandlerTrait;
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -95,7 +95,7 @@ impl FemtoStreamHandler {
     }
 }
 
-impl FemtoHandler for FemtoStreamHandler {
+impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) {
         if self.tx.try_send(record).is_err() {
             eprintln!("FemtoStreamHandler: queue full or shutting down, dropping record");

@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use _femtologging_rs::{DefaultFormatter, FemtoHandler, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
 use rstest::rstest;
 
 #[derive(Clone)]
@@ -74,7 +74,7 @@ fn stream_handler_concurrent_usage() {
 #[rstest]
 fn stream_handler_trait_object_usage() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler: Box<dyn FemtoHandler> = Box::new(FemtoStreamHandler::new(
+    let handler: Box<dyn FemtoHandlerTrait> = Box::new(FemtoStreamHandler::new(
         SharedBuf(Arc::clone(&buffer)),
         DefaultFormatter,
     ));

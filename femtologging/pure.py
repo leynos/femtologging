@@ -24,4 +24,11 @@ class FemtoStreamHandler:
         pass
 
 
-__all__ = ["FemtoLogger", "FemtoStreamHandler", "hello"]
+class FemtoHandler:
+    """Base class placeholder when the Rust extension is missing."""
+
+    def handle(self, _record: object) -> None:  # pragma: no cover - stub
+        pass
+
+
+__all__ = ["FemtoHandler", "FemtoLogger", "FemtoStreamHandler", "hello"]
