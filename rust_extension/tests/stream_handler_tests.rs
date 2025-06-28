@@ -91,9 +91,10 @@ fn stream_handler_trait_object_usage(
 }
 
 #[rstest]
-fn stream_handler_poisoned_mutex() {
+fn stream_handler_poisoned_mutex(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
     // Poison the mutex by panicking while holding the lock
-    let buffer = Arc::new(Mutex::new(Vec::new()));
     let test_buffer = Arc::clone(&buffer);
     {
         let b = Arc::clone(&buffer);
@@ -103,13 +104,12 @@ fn stream_handler_poisoned_mutex() {
         });
     }
 
-    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     handler.handle(FemtoLogRecord::new("core", "INFO", "ok"));
     drop(handler);
 
     // The buffer should remain poisoned; handler must not panic
     assert!(
         test_buffer.lock().is_err(),
-        "Buffer mutex should remain poisoned"
+        "Buffer mutex should remain poisoned",
     );
 }
