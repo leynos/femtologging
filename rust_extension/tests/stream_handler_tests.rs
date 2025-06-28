@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,17 +20,20 @@ impl Write for SharedBuf {
 }
 
 #[derive(Clone)]
-struct SlowBuf(Arc<Mutex<Vec<u8>>>);
+struct BlockingBuf {
+    buf: Arc<Mutex<Vec<u8>>>,
+    barrier: Arc<Barrier>,
+}
 
-impl Write for SlowBuf {
+impl Write for BlockingBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        thread::sleep(Duration::from_secs(2));
-        self.0.lock().unwrap().write(buf)
+        self.buf.lock().unwrap().write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        thread::sleep(Duration::from_secs(2));
-        self.0.lock().unwrap().flush()
+        // Block until the test thread releases the barrier
+        self.barrier.wait();
+        self.buf.lock().unwrap().flush()
     }
 }
 
@@ -136,9 +139,18 @@ fn stream_handler_poisoned_mutex(
 /// second timeout even if the stream flush takes longer.
 fn stream_handler_drop_timeout() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = FemtoStreamHandler::new(SlowBuf(Arc::clone(&buffer)), DefaultFormatter);
+    let barrier = Arc::new(Barrier::new(2));
+    let handler = FemtoStreamHandler::new(
+        BlockingBuf {
+            buf: Arc::clone(&buffer),
+            barrier: Arc::clone(&barrier),
+        },
+        DefaultFormatter,
+    );
     handler.handle(FemtoLogRecord::new("core", "INFO", "slow"));
     let start = Instant::now();
     drop(handler);
-    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(start.elapsed() < Duration::from_millis(1500));
+    // Allow the worker thread to finish
+    barrier.wait();
 }

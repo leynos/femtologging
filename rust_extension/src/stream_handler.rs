@@ -1,11 +1,11 @@
 use std::{
     io::{self, Write},
-    sync::mpsc,
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
+use log::warn;
 use pyo3::prelude::*;
 
 use crate::handler::FemtoHandlerTrait;
@@ -25,6 +25,7 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub struct FemtoStreamHandler {
     tx: Sender<FemtoLogRecord>,
     handle: Option<JoinHandle<()>>,
+    done_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -74,6 +75,7 @@ impl FemtoStreamHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let (tx, rx) = bounded(capacity);
+        let (done_tx, done_rx) = bounded(1);
         let handle = thread::spawn(move || {
             let mut writer = writer;
             let formatter = formatter;
@@ -83,14 +85,16 @@ impl FemtoStreamHandler {
                     .and_then(|_| writer.flush())
                     .is_err()
                 {
-                    eprintln!("FemtoStreamHandler write error");
+                    warn!("FemtoStreamHandler write error");
                 }
             }
+            let _ = done_tx.send(());
         });
 
         Self {
             tx,
             handle: Some(handle),
+            done_rx,
         }
     }
 }
@@ -98,7 +102,7 @@ impl FemtoStreamHandler {
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) {
         if self.tx.try_send(record).is_err() {
-            eprintln!("FemtoStreamHandler: queue full or shutting down, dropping record");
+            warn!("FemtoStreamHandler: queue full or shutting down, dropping record");
         }
     }
 }
@@ -106,15 +110,13 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
 impl Drop for FemtoStreamHandler {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            // Joining may block if the worker misbehaves. Spawn a helper
-            // thread so drop returns even if the worker is stuck.
-            let (tx, rx) = mpsc::channel();
-            thread::spawn(move || {
-                let _ = handle.join();
-                let _ = tx.send(());
-            });
-            if rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                eprintln!("FemtoStreamHandler: worker thread did not shut down within 1s");
+            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
+                warn!("FemtoStreamHandler: worker thread did not shut down within 1s");
+                // Detach the thread so shutdown continues
+                return;
+            }
+            if handle.join().is_err() {
+                warn!("FemtoStreamHandler: worker thread panicked");
             }
         }
     }
