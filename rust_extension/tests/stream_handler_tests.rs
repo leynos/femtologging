@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 use _femtologging_rs::{DefaultFormatter, FemtoHandler, FemtoLogRecord, FemtoStreamHandler};
 use rstest::rstest;
@@ -32,8 +33,6 @@ fn stream_handler_multiple_records() {
 
 #[rstest]
 fn stream_handler_concurrent_usage() {
-    use std::thread;
-
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = Arc::new(FemtoStreamHandler::new(
         Arc::clone(&buffer),

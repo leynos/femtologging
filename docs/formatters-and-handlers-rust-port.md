@@ -54,7 +54,7 @@ pub trait FemtoHandler: Send + Sync {
 ```
 
 Implementations should forward the record to an internal queue with
-`try_send` so the caller never blocks. If the queue is full the record is
+`try_send` so the caller never blocks. If the queue is full, the record is
 silently dropped and a warning is written to `stderr`.
 
 ### StreamHandler
@@ -70,7 +70,7 @@ capacity when needed.
 
 Dropping a handler closes its channel and waits briefly for the worker
 thread to finish flushing. If the thread does not exit within one
-second a warning is printed and the drop continues, preventing
+second, a warning is printed and the drop continues, preventing
 deadlocks during shutdown.
 
 #### Sequence Diagram

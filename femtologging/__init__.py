@@ -10,6 +10,6 @@ try:  # pragma: no cover - Rust optional
     FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
     FemtoStreamHandler = rust.FemtoStreamHandler  # type: ignore[attr-defined]
 except ModuleNotFoundError:  # pragma: no cover - Python fallback
-    from .pure import FemtoLogger, hello
+    from .pure import FemtoLogger, FemtoStreamHandler, hello
 
 __all__ = ["FemtoLogger", "FemtoStreamHandler", "hello"]
