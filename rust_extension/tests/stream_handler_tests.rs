@@ -1,13 +1,27 @@
+use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use _femtologging_rs::{DefaultFormatter, FemtoHandler, FemtoLogRecord, FemtoStreamHandler};
 use rstest::rstest;
 
+#[derive(Clone)]
+struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+impl Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
 #[rstest]
 fn stream_handler_writes_to_buffer() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = FemtoStreamHandler::new(Arc::clone(&buffer), Arc::new(DefaultFormatter));
+    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     handler.handle(FemtoLogRecord::new("core", "INFO", "hello"));
     drop(handler); // ensure thread completes
 
@@ -18,7 +32,7 @@ fn stream_handler_writes_to_buffer() {
 #[rstest]
 fn stream_handler_multiple_records() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = FemtoStreamHandler::new(Arc::clone(&buffer), Arc::new(DefaultFormatter));
+    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
     handler.handle(FemtoLogRecord::new("core", "WARN", "second"));
     handler.handle(FemtoLogRecord::new("core", "ERROR", "third"));
@@ -35,8 +49,8 @@ fn stream_handler_multiple_records() {
 fn stream_handler_concurrent_usage() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = Arc::new(FemtoStreamHandler::new(
-        Arc::clone(&buffer),
-        Arc::new(DefaultFormatter),
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
     ));
 
     let mut handles = vec![];
@@ -61,8 +75,8 @@ fn stream_handler_concurrent_usage() {
 fn stream_handler_trait_object_usage() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler: Box<dyn FemtoHandler> = Box::new(FemtoStreamHandler::new(
-        Arc::clone(&buffer),
-        Arc::new(DefaultFormatter),
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
     ));
 
     handler.handle(FemtoLogRecord::new("core", "INFO", "trait"));
@@ -85,7 +99,7 @@ fn stream_handler_poisoned_mutex() {
         });
     }
 
-    let handler = FemtoStreamHandler::new(Arc::clone(&buffer), Arc::new(DefaultFormatter));
+    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     handler.handle(FemtoLogRecord::new("core", "INFO", "ok"));
     drop(handler);
 

@@ -60,9 +60,9 @@ silently dropped and a warning is written to `stderr`.
 ### StreamHandler
 
 `FemtoStreamHandler` writes formatted records to `stdout` or `stderr`.
-The consumer thread receives `FemtoLogRecord` values, formats them using
-its `FemtoFormatter`, and writes via a mutex‑protected `Write` object to
-avoid interleaving. This mirrors the locking described in
+The consumer thread receives `FemtoLogRecord` values, moves the writer and
+formatter into the worker thread, and writes directly without locking.
+This mirrors the design in
 [`concurrency-models-in-high-performance-logging.md`](./concurrency-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-a-hybrid-approach).
 The default bounded queue size is 1024 records, but
 `FemtoStreamHandler::with_capacity` lets callers configure a custom
@@ -84,7 +84,7 @@ sequenceDiagram
     participant Stream
 
     Caller->>FemtoStreamHandler: handle(FemtoLogRecord)
-    FemtoStreamHandler->>Channel: send(record)
+    FemtoStreamHandler->>Channel: try_send(record)
     Note right of Channel: (Non-blocking, async)
     WorkerThread-->>Channel: receive(record)
     WorkerThread->>Stream: format + write(record)
