@@ -12,4 +12,4 @@ pyo3 = { version = "0.21.2", features = ["extension-module"] }
 crossbeam-channel = "0.5.15"
 
 [dev-dependencies]
-rstest = "0.18"
+rstest = "0.25"
