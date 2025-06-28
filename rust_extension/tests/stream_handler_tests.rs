@@ -1,6 +1,7 @@
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
 use rstest::*;
@@ -15,6 +16,24 @@ impl Write for SharedBuf {
 
     fn flush(&mut self) -> io::Result<()> {
         self.0.lock().unwrap().flush()
+    }
+}
+
+#[derive(Clone)]
+struct BlockingBuf {
+    buf: Arc<Mutex<Vec<u8>>>,
+    barrier: Arc<Barrier>,
+}
+
+impl Write for BlockingBuf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buf.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Block until the test thread releases the barrier
+        self.barrier.wait();
+        self.buf.lock().unwrap().flush()
     }
 }
 
@@ -112,4 +131,29 @@ fn stream_handler_poisoned_mutex(
         test_buffer.lock().is_err(),
         "Buffer mutex should remain poisoned",
     );
+}
+
+#[rstest]
+/// Ensure dropping a handler with a slow writer doesn't block
+/// indefinitely. The worker thread should exit after the one
+/// second timeout even if the stream flush takes longer. The test
+/// allows a 500ms buffer to accommodate scheduling jitter.
+fn stream_handler_drop_timeout() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let barrier = Arc::new(Barrier::new(2));
+    let handler = FemtoStreamHandler::new(
+        BlockingBuf {
+            buf: Arc::clone(&buffer),
+            barrier: Arc::clone(&barrier),
+        },
+        DefaultFormatter,
+    );
+    handler.handle(FemtoLogRecord::new("core", "INFO", "slow"));
+    let start = Instant::now();
+    drop(handler);
+    assert!(start.elapsed() < Duration::from_millis(1500));
+    // The extra half second gives the test leeway for scheduler jitter
+    // while still proving the drop doesn't hang indefinitely.
+    // Allow the worker thread to finish
+    barrier.wait();
 }
