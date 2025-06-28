@@ -113,7 +113,9 @@ impl Drop for FemtoStreamHandler {
                 let _ = handle.join();
                 let _ = tx.send(());
             });
-            let _ = rx.recv_timeout(Duration::from_secs(1));
+            if rx.recv_timeout(Duration::from_secs(1)).is_err() {
+                eprintln!("FemtoStreamHandler: worker thread did not shut down within 1s");
+            }
         }
     }
 }
