@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
-use rstest::rstest;
+use rstest::*;
 
 #[derive(Clone)]
 struct SharedBuf(Arc<Mutex<Vec<u8>>>);
@@ -18,7 +18,8 @@ impl Write for SharedBuf {
     }
 }
 
-fn make_handler() -> (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler) {
+#[fixture]
+fn handler_tuple() -> (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler) {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     (buffer, handler)
@@ -29,12 +30,13 @@ fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
 }
 
 #[rstest]
-fn stream_handler_writes_to_buffer() {
-    let (buffer, handler) = make_handler();
+fn stream_handler_writes_to_buffer(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
     handler.handle(FemtoLogRecord::new("core", "INFO", "hello"));
     drop(handler); // ensure thread completes
 
-    assert_eq!(read_output(&buffer), "core: INFO - hello\n");
+    assert_eq!(read_output(&buffer), "core [INFO] hello\n");
 }
 
 #[rstest]
@@ -49,7 +51,7 @@ fn stream_handler_multiple_records() {
     let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
     assert_eq!(
         output,
-        "core: INFO - first\ncore: WARN - second\ncore: ERROR - third\n"
+        "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
     );
 }
 
@@ -75,18 +77,19 @@ fn stream_handler_concurrent_usage() {
 
     let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
     for i in 0..10 {
-        assert!(output.contains(&format!("core: INFO - msg{}", i)));
+        assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }
 }
 
 #[rstest]
-fn stream_handler_trait_object_usage() {
-    let (buffer, handler) = make_handler();
+fn stream_handler_trait_object_usage(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
     let handler: Box<dyn FemtoHandlerTrait> = Box::new(handler);
     handler.handle(FemtoLogRecord::new("core", "INFO", "trait"));
     drop(handler);
 
-    assert_eq!(read_output(&buffer), "core: INFO - trait\n");
+    assert_eq!(read_output(&buffer), "core [INFO] trait\n");
 }
 
 #[rstest]
