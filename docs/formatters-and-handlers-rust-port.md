@@ -48,18 +48,52 @@ thread. Application code holds the sender cloned from the channel.
 Handlers implement a common trait:
 
 ```rust
-pub trait FemtoHandler: Send {
+pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord);
 }
+
+/// Base Python-exposed class. Methods are no-ops by default.
+#[pyclass(name = "FemtoHandler", subclass)]
+pub struct FemtoHandler;
 ```
+
+Implementations should forward the record to an internal queue with
+`try_send` so the caller never blocks. If the queue is full, the record is
+silently dropped and a warning is written to `stderr`.
 
 ### StreamHandler
 
 `FemtoStreamHandler` writes formatted records to `stdout` or `stderr`.
-The consumer thread receives `FemtoLogRecord` values, formats them using
-its `FemtoFormatter`, and writes via a mutex‑protected `Write` object to
-avoid interleaving. This mirrors the locking described in
+The consumer thread receives `FemtoLogRecord` values, moves the writer and
+formatter into the worker thread, and writes directly without locking.
+This mirrors the design in
 [`concurrency-models-in-high-performance-logging.md`](./concurrency-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-a-hybrid-approach).
+The default bounded queue size is 1024 records, but
+`FemtoStreamHandler::with_capacity` lets callers configure a custom
+capacity when needed.
+
+Dropping a handler closes its channel and waits briefly for the worker
+thread to finish flushing. If the thread does not exit within one
+second, a warning is printed and the drop continues, preventing
+deadlocks during shutdown.
+
+#### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant FemtoStreamHandler
+    participant Channel
+    participant WorkerThread
+    participant Stream
+
+    Caller->>FemtoStreamHandler: handle(FemtoLogRecord)
+    FemtoStreamHandler->>Channel: try_send(record)
+    Note right of Channel: (Non-blocking, async)
+    WorkerThread-->>Channel: receive(record)
+    WorkerThread->>Stream: format + write(record)
+    WorkerThread->>Stream: flush()
+```
 
 ### FileHandler
 

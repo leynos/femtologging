@@ -8,7 +8,9 @@ try:  # pragma: no cover - Rust optional
     rust = __import__(f"_{PACKAGE_NAME}_rs")
     hello = rust.hello  # type: ignore[attr-defined]
     FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
+    FemtoHandler = rust.FemtoHandler  # type: ignore[attr-defined]
+    FemtoStreamHandler = rust.FemtoStreamHandler  # type: ignore[attr-defined]
 except ModuleNotFoundError:  # pragma: no cover - Python fallback
-    from .pure import FemtoLogger, hello
+    from .pure import FemtoHandler, FemtoLogger, FemtoStreamHandler, hello
 
-__all__ = ["FemtoLogger", "hello"]
+__all__ = ["FemtoHandler", "FemtoLogger", "FemtoStreamHandler", "hello"]

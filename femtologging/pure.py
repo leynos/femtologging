@@ -17,4 +17,18 @@ def hello() -> str:
     return "hello from Python"
 
 
-__all__ = ["FemtoLogger", "hello"]
+class FemtoStreamHandler:
+    """Placeholder used when the Rust extension is unavailable."""
+
+    def __init__(self) -> None:  # pragma: no cover - simple stub
+        pass
+
+
+class FemtoHandler:
+    """Base class placeholder when the Rust extension is missing."""
+
+    def handle(self, _record: object) -> None:  # pragma: no cover - stub
+        pass
+
+
+__all__ = ["FemtoHandler", "FemtoLogger", "FemtoStreamHandler", "hello"]
