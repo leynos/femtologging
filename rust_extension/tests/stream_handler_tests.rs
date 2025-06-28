@@ -40,15 +40,15 @@ fn stream_handler_writes_to_buffer(
 }
 
 #[rstest]
-fn stream_handler_multiple_records() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+fn stream_handler_multiple_records(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
     handler.handle(FemtoLogRecord::new("core", "WARN", "second"));
     handler.handle(FemtoLogRecord::new("core", "ERROR", "third"));
     drop(handler);
 
-    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    let output = read_output(&buffer);
     assert_eq!(
         output,
         "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
@@ -56,12 +56,10 @@ fn stream_handler_multiple_records() {
 }
 
 #[rstest]
-fn stream_handler_concurrent_usage() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buffer)),
-        DefaultFormatter,
-    ));
+fn stream_handler_concurrent_usage(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    let handler = Arc::new(handler);
 
     let mut handles = vec![];
     for i in 0..10 {
@@ -75,7 +73,7 @@ fn stream_handler_concurrent_usage() {
     }
     drop(handler);
 
-    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+    let output = read_output(&buffer);
     for i in 0..10 {
         assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }
