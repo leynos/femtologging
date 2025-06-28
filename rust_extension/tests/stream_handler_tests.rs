@@ -18,15 +18,23 @@ impl Write for SharedBuf {
     }
 }
 
-#[rstest]
-fn stream_handler_writes_to_buffer() {
+fn make_handler() -> (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler) {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    (buffer, handler)
+}
+
+fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
+    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+}
+
+#[rstest]
+fn stream_handler_writes_to_buffer() {
+    let (buffer, handler) = make_handler();
     handler.handle(FemtoLogRecord::new("core", "INFO", "hello"));
     drop(handler); // ensure thread completes
 
-    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
-    assert_eq!(output, "core: INFO - hello\n");
+    assert_eq!(read_output(&buffer), "core: INFO - hello\n");
 }
 
 #[rstest]
@@ -73,17 +81,12 @@ fn stream_handler_concurrent_usage() {
 
 #[rstest]
 fn stream_handler_trait_object_usage() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler: Box<dyn FemtoHandlerTrait> = Box::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buffer)),
-        DefaultFormatter,
-    ));
-
+    let (buffer, handler) = make_handler();
+    let handler: Box<dyn FemtoHandlerTrait> = Box::new(handler);
     handler.handle(FemtoLogRecord::new("core", "INFO", "trait"));
     drop(handler);
 
-    let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
-    assert_eq!(output, "core: INFO - trait\n");
+    assert_eq!(read_output(&buffer), "core: INFO - trait\n");
 }
 
 #[rstest]
