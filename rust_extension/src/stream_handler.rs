@@ -1,3 +1,10 @@
+//! Stream-based logging handler implementation.
+//!
+//! This module defines `FemtoStreamHandler`, which formats log records and
+//! writes them to a stream on a background thread. The handler forwards
+//! `FemtoLogRecord` values over a bounded channel so the producer never blocks
+//! on I/O.
+
 use std::{
     io::{self, Write},
     thread::{self, JoinHandle},
