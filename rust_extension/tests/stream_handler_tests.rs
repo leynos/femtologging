@@ -136,7 +136,8 @@ fn stream_handler_poisoned_mutex(
 #[rstest]
 /// Ensure dropping a handler with a slow writer doesn't block
 /// indefinitely. The worker thread should exit after the one
-/// second timeout even if the stream flush takes longer.
+/// second timeout even if the stream flush takes longer. The test
+/// allows a 500ms buffer to accommodate scheduling jitter.
 fn stream_handler_drop_timeout() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(2));
@@ -151,6 +152,8 @@ fn stream_handler_drop_timeout() {
     let start = Instant::now();
     drop(handler);
     assert!(start.elapsed() < Duration::from_millis(1500));
+    // The extra half second gives the test leeway for scheduler jitter
+    // while still proving the drop doesn't hang indefinitely.
     // Allow the worker thread to finish
     barrier.wait();
 }
