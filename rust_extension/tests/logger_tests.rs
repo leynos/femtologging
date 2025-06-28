@@ -17,10 +17,14 @@ fn log_formats_message(
     assert_eq!(logger.log(level, message), expected);
 }
 
-#[test]
-fn log_formats_very_long_message() {
-    let long_msg = "x".repeat(1024);
+#[rstest]
+#[case(0)]
+#[case(1024)]
+#[case(65536)]
+#[case(1_048_576)]
+fn log_formats_long_messages(#[case] length: usize) {
+    let msg = "x".repeat(length);
     let logger = FemtoLogger::new("long".to_string());
-    let expected = format!("long [INFO] {}", long_msg);
-    assert_eq!(logger.log("INFO", &long_msg), expected);
+    let expected = format!("long [INFO] {}", msg);
+    assert_eq!(logger.log("INFO", &msg), expected);
 }
