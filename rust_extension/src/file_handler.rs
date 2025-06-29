@@ -141,10 +141,7 @@ impl FemtoFileHandler {
                 match cmd {
                     FileCommand::Record(record) => {
                         let msg = formatter.format(&record);
-                        if writeln!(file, "{}", msg)
-                            .and_then(|_| file.flush())
-                            .is_err()
-                        {
+                        if writeln!(file, "{msg}").and_then(|_| file.flush()).is_err() {
                             warn!("FemtoFileHandler write error");
                         } else {
                             writes += 1;
