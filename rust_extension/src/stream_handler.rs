@@ -94,7 +94,7 @@ impl FemtoStreamHandler {
             let formatter = formatter;
             for record in rx {
                 let msg = formatter.format(&record);
-                if writeln!(writer, "{}", msg)
+                if writeln!(writer, "{msg}")
                     .and_then(|_| writer.flush())
                     .is_err()
                 {
