@@ -106,6 +106,13 @@ logic inside their consumer threads.
 drain pending records and stop the background thread explicitly. Dropping
 the handler still performs this cleanup if the methods aren't invoked.
 
+By default the file handler flushes the underlying file after every record
+to maximize durability. To reduce syscall overhead in high-volume
+scenarios, `FemtoFileHandler.with_capacity_flush()` accepts a
+`flush_interval` parameter controlling how many records are written before
+the worker thread flushes. Passing `0` disables periodic flushing and
+flushes only when the handler shuts down.
+
 All handlers spawn their consumer threads on creation and expose a
 `snd: Sender<FemtoLogRecord>` to the logger. The logger clones this
 sender when created, ensuring log messages are dispatched without

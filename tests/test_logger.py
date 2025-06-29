@@ -1,8 +1,9 @@
+# pyright: reportMissingImports=false
 """Tests for :class:`FemtoLogger`."""
 
 from __future__ import annotations
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from femtologging import FemtoLogger
 
 
