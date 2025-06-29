@@ -1,5 +1,5 @@
 .PHONY: help all clean build release lint fmt check-fmt markdownlint \
-tools nixie test
+tools nixie test typecheck
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -10,7 +10,7 @@ NIXIE ?= nixie
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST)
+        PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install -e .
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
@@ -37,12 +37,11 @@ fmt: tools ## Format sources
 
 check-fmt: ## Verify formatting
 	ruff format --check
-	$(CARGO) fmt --manifest-path $(RUST_MANIFEST) -- --check
+	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 
 lint: ## Run linters
 	ruff check
-	ty check
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
 
 markdownlint: ## Lint Markdown files
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT)
@@ -50,11 +49,14 @@ markdownlint: ## Lint Markdown files
 nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)
 
-test: ## Run tests
+test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST) $(BUILD_JOBS)
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
 	pytest -q
+
+typecheck: build ## Static type analysis
+	ty check --extra-search-path=/root/.pyenv/versions/3.13.3/lib/python3.13/site-packages
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
