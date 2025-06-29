@@ -674,7 +674,36 @@ potential future enhancement.
 
   ```
 
-- File-Based Configuration (Considerations):
+- Python
+
+  Because Python is the primary target language for femtologging, a
+  builder-style configuration API will also be exposed in the Python package.
+  This mirrors the Rust builder semantics so developers can switch between
+  languages without relearning the configuration model. The Python builder sits
+  alongside helpers that replicate `basicConfig`, `dictConfig`, and
+  `fileConfig`, but it remains the recommended approach for new applications.
+
+  ```python
+  from femtologging import Config, FileHandler, Formatter
+
+  def setup_logging() -> None:
+      (
+          Config.builder()
+          .default_level("INFO")
+          .add_handler(
+              "file_handler_1",
+              FileHandler.builder()
+              .path("application.log")
+              .formatter(Formatter("%(message)s"))
+              .level("DEBUG")
+              .build(),
+          )
+          .add_logger_config("my_app.network", "TRACE", ["file_handler_1"])
+          .build_and_init()
+      )
+  ```
+
+  - File-Based Configuration (Considerations):
 
   CPython's logging module supports fileConfig (using an INI-like format) and
   dictConfig (often from JSON or YAML).20 In the Rust ecosystem, YAML (used by
