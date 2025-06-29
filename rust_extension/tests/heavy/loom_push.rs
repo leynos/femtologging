@@ -1,3 +1,8 @@
+//! Concurrency tests using Loom to verify push delivery order.
+//!
+//! These tests model concurrent logging via the `FemtoStreamHandler` to ensure
+//! there are no race conditions when multiple threads push records.
+
 use loom::sync::{Arc, Mutex};
 use loom::thread;
 use std::io::{self, Write};
@@ -9,7 +14,10 @@ struct LoomBuf(Arc<Mutex<Vec<u8>>>);
 
 impl Write for LoomBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut lock = self.0.lock().unwrap();
+        let mut lock = self
+            .0
+            .lock()
+            .expect("Failed to acquire lock for LoomBuf write");
         lock.extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -20,7 +28,11 @@ impl Write for LoomBuf {
 }
 
 fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+    let data = buffer
+        .lock()
+        .expect("Failed to acquire lock for reading output")
+        .clone();
+    String::from_utf8(data).expect("Failed to convert buffer contents to UTF-8")
 }
 
 #[test]
@@ -37,7 +49,7 @@ fn loom_stream_push_delivery() {
             h.handle(FemtoLogRecord::new("core", "INFO", "msg"));
         });
         handler.handle(FemtoLogRecord::new("core", "INFO", "msg2"));
-        t.join().unwrap();
+        t.join().expect("Thread panicked");
         drop(handler);
         let mut lines: Vec<_> = read_output(&buffer).lines().collect();
         lines.sort();

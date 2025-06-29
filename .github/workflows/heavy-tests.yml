@@ -14,10 +14,14 @@ jobs:
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
-      - run: pip install maturin pytest
-      - run: PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --manifest-path rust_extension/Cargo.toml
+      - run: pip install maturin==1.4.0 pytest==7.4.4
+      - run: maturin develop --manifest-path rust_extension/Cargo.toml
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - run: |
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path rust_extension/Cargo.toml -- --ignored
+          cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
+          cargo test --manifest-path rust_extension/Cargo.toml -- --ignored
           pytest -q
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
