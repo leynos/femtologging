@@ -50,6 +50,8 @@ def test_file_handler_concurrent_usage(tmp_path: Path) -> None:
 
 
 def test_file_handler_flush(tmp_path: Path) -> None:
+    """Test that ``flush()`` writes pending records immediately."""
+
     path = tmp_path / "flush.log"
     handler = FemtoFileHandler(str(path))
 
