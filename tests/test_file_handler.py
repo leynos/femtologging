@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """Tests for the FemtoFileHandler."""
 
 from __future__ import annotations
@@ -6,7 +7,7 @@ from pathlib import Path
 import threading
 
 from femtologging import FemtoFileHandler
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 
 def test_file_handler_writes_to_file(tmp_path: Path) -> None:
@@ -71,3 +72,16 @@ def test_file_handler_open_failure(tmp_path: Path) -> None:
     path = bad_dir / "out.log"
     with pytest.raises(OSError):
         FemtoFileHandler(str(path))
+
+
+def test_file_handler_custom_flush_interval(tmp_path: Path) -> None:
+    path = tmp_path / "interval.log"
+    handler = FemtoFileHandler.with_capacity_flush(str(path), 8, 2)
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")
+    del handler
+    gc.collect()
+    assert path.read_text() == (
+        "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    )

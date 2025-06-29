@@ -52,6 +52,18 @@ impl FemtoFileHandler {
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
     }
 
+    /// Create a handler with a custom flush interval.
+    #[staticmethod]
+    #[pyo3(name = "with_capacity_flush")]
+    fn py_with_capacity_flush(
+        path: String,
+        capacity: usize,
+        flush_interval: usize,
+    ) -> PyResult<Self> {
+        Self::with_capacity_flush_interval(path, DefaultFormatter, capacity, flush_interval)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+    }
+
     /// Dispatch a log record created from the provided parameters.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
@@ -86,14 +98,32 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
+        Self::with_capacity_flush_interval(path, formatter, capacity, 1)
+    }
+
+    /// Create a new handler with custom capacity and flush interval.
+    ///
+    /// `flush_interval` determines how many records are written before the
+    /// worker thread flushes the file. A value of `0` disables periodic flushes
+    /// and only flushes on shutdown.
+    pub fn with_capacity_flush_interval<P, F>(
+        path: P,
+        formatter: F,
+        capacity: usize,
+        flush_interval: usize,
+    ) -> io::Result<Self>
+    where
+        P: AsRef<Path>,
+        F: FemtoFormatter + Send + 'static,
+    {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(Self::from_file(file, formatter, capacity))
+        Ok(Self::from_file(file, formatter, capacity, flush_interval))
     }
 
     /// Build a handler using an already opened `File` and custom formatter.
     ///
     /// This is primarily used by `with_capacity` after opening the file.
-    fn from_file<F>(file: File, formatter: F, capacity: usize) -> Self
+    fn from_file<F>(file: File, formatter: F, capacity: usize, flush_interval: usize) -> Self
     where
         F: FemtoFormatter + Send + 'static,
     {
@@ -102,6 +132,7 @@ impl FemtoFileHandler {
         let handle = thread::spawn(move || {
             let mut file = file;
             let formatter = formatter;
+            let mut writes = 0usize;
             for cmd in rx {
                 match cmd {
                     FileCommand::Record(record) => {
@@ -111,15 +142,25 @@ impl FemtoFileHandler {
                             .is_err()
                         {
                             warn!("FemtoFileHandler write error");
+                        } else {
+                            writes += 1;
+                            if flush_interval != 0 && writes % flush_interval == 0 && file.flush().is_err()
+                            {
+                                warn!("FemtoFileHandler flush error");
+                            }
                         }
                     }
                     FileCommand::Flush(ack) => {
                         if file.flush().is_err() {
                             warn!("FemtoFileHandler flush error");
                         }
+                        writes = 0;
                         let _ = ack.send(());
                     }
                 }
+            }
+            if file.flush().is_err() {
+                warn!("FemtoFileHandler flush error");
             }
             let _ = done_tx.send(());
         });
