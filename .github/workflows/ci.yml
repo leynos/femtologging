@@ -35,7 +35,7 @@ jobs:
         run: make check-fmt
       - name: Lint
         run: make lint
-      - name Typecheck
+      - name: Typecheck
         run: make typecheck
       - name: Test
         run: make test
