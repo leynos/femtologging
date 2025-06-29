@@ -174,4 +174,4 @@ collaboration easier.
 
 ## Python Development Guidelines
 
-See \`.rules/python-\*.mdc for guidance on Python development.
+See `.rules/python-*.mdc` for guidance on Python development.
