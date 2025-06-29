@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 from pathlib import Path
 import threading
 
@@ -14,8 +13,8 @@ def test_file_handler_writes_to_file(tmp_path: Path) -> None:
     path = tmp_path / "out.log"
     handler = FemtoFileHandler(str(path))
     handler.handle("core", "INFO", "hello")
-    del handler
-    gc.collect()
+    assert handler.flush() is True
+    handler.close()
     assert path.read_text() == "core [INFO] hello\n"
 
 
@@ -25,8 +24,7 @@ def test_file_handler_multiple_records(tmp_path: Path) -> None:
     handler.handle("core", "INFO", "first")
     handler.handle("core", "WARN", "second")
     handler.handle("core", "ERROR", "third")
-    del handler
-    gc.collect()
+    handler.close()
     assert (
         path.read_text()
         == "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
@@ -45,11 +43,27 @@ def test_file_handler_concurrent_usage(tmp_path: Path) -> None:
         t.start()
     for t in threads:
         t.join()
-    del handler
-    gc.collect()
+    handler.close()
     data = path.read_text()
     for i in range(10):
         assert f"core [INFO] msg{i}" in data
+
+
+def test_file_handler_flush(tmp_path: Path) -> None:
+    """Test that ``flush()`` writes pending records immediately."""
+
+    path = tmp_path / "flush.log"
+    handler = FemtoFileHandler(str(path))
+
+    def send(msg: str) -> None:
+        handler.handle("core", "INFO", msg)
+        assert handler.flush() is True
+
+    send("one")
+    assert path.read_text() == "core [INFO] one\n"
+    send("two")
+    assert path.read_text() == "core [INFO] one\ncore [INFO] two\n"
+    handler.close()
 
 
 def test_file_handler_open_failure(tmp_path: Path) -> None:

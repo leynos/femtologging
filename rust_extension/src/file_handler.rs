@@ -24,9 +24,14 @@ use crate::{
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Handler that writes formatted log records to a file on a background thread.
+enum FileCommand {
+    Record(FemtoLogRecord),
+    Flush(Sender<()>),
+}
+
 #[pyclass]
 pub struct FemtoFileHandler {
-    tx: Sender<FemtoLogRecord>,
+    tx: Option<Sender<FileCommand>>,
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
 }
@@ -51,6 +56,18 @@ impl FemtoFileHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+    }
+
+    /// Flush pending log records without shutting down the worker thread.
+    #[pyo3(name = "flush")]
+    fn py_flush(&self) -> bool {
+        self.flush()
+    }
+
+    /// Close the handler and wait for the worker thread to finish.
+    #[pyo3(name = "close")]
+    fn py_close(&mut self) {
+        self.close();
     }
 }
 
@@ -85,22 +102,58 @@ impl FemtoFileHandler {
         let handle = thread::spawn(move || {
             let mut file = file;
             let formatter = formatter;
-            for record in rx {
-                let msg = formatter.format(&record);
-                if writeln!(file, "{}", msg)
-                    .and_then(|_| file.flush())
-                    .is_err()
-                {
-                    warn!("FemtoFileHandler write error");
+            for cmd in rx {
+                match cmd {
+                    FileCommand::Record(record) => {
+                        let msg = formatter.format(&record);
+                        if writeln!(file, "{}", msg)
+                            .and_then(|_| file.flush())
+                            .is_err()
+                        {
+                            warn!("FemtoFileHandler write error");
+                        }
+                    }
+                    FileCommand::Flush(ack) => {
+                        if file.flush().is_err() {
+                            warn!("FemtoFileHandler flush error");
+                        }
+                        let _ = ack.send(());
+                    }
                 }
             }
             let _ = done_tx.send(());
         });
 
         Self {
-            tx,
+            tx: Some(tx),
             handle: Some(handle),
             done_rx,
+        }
+    }
+
+    /// Flush any pending log records.
+    pub fn flush(&self) -> bool {
+        if let Some(tx) = &self.tx {
+            let (ack_tx, ack_rx) = bounded(1);
+            if tx.send(FileCommand::Flush(ack_tx)).is_err() {
+                return false;
+            }
+            return ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        }
+        false
+    }
+
+    /// Close the handler and wait for the worker thread to exit.
+    pub fn close(&mut self) {
+        self.tx.take();
+        if let Some(handle) = self.handle.take() {
+            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
+                warn!("FemtoFileHandler: worker thread did not shut down within 1s");
+                return;
+            }
+            if handle.join().is_err() {
+                warn!("FemtoFileHandler: worker thread panicked");
+            }
         }
     }
 }
@@ -111,8 +164,12 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     /// The call never blocks. If the queue is full, the record is dropped and a
     /// warning is emitted via the `log` crate.
     fn handle(&self, record: FemtoLogRecord) {
-        if self.tx.try_send(record).is_err() {
-            warn!("FemtoFileHandler: queue full or shutting down, dropping record");
+        if let Some(tx) = &self.tx {
+            if tx.try_send(FileCommand::Record(record)).is_err() {
+                warn!("FemtoFileHandler: queue full or shutting down, dropping record");
+            }
+        } else {
+            warn!("FemtoFileHandler: handle called after close");
         }
     }
 }
@@ -123,14 +180,6 @@ impl Drop for FemtoFileHandler {
     /// If the thread does not confirm shutdown within one second, a warning is
     /// logged and the handler drops without joining the thread.
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-                return;
-            }
-            if handle.join().is_err() {
-                warn!("FemtoFileHandler: worker thread panicked");
-            }
-        }
+        self.close();
     }
 }
