@@ -89,3 +89,9 @@ fn file_handler_concurrent_usage(mut temp_log_file: NamedTempFile) {
         assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }
 }
+#[rstest]
+fn file_handler_open_failure() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let path = dir.path().join("missing").join("file.log");
+    assert!(FemtoFileHandler::new(&path).is_err());
+}

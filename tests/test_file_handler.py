@@ -1,3 +1,5 @@
+"""Tests for the FemtoFileHandler."""
+
 from __future__ import annotations
 
 import gc

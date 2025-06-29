@@ -1,10 +1,7 @@
 //! File-based logging handler implemented with a producer-consumer model.
-//!
 //! A background thread owns the file handle and formatter, receiving
 //! `FemtoLogRecord` values over a bounded channel and writing them
 //! asynchronously.
-
-//!
 
 use std::{
     fs::{File, OpenOptions},
