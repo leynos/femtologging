@@ -27,8 +27,8 @@ that design.
 - [ ] Define the `FemtoLogRecord` structure and implement core `FemtoLogger`
   logic, including efficient level checking and logging macros.
 - [ ] Implement the `FemtoFormatter` trait with a default formatter.
-- [ ] Select and integrate an MPSC channel for producer‑consumer queues.
-- [ ] Create `FemtoStreamHandler` and `FemtoFileHandler`, each running in a
+- [x] Select and integrate an MPSC channel for producer‑consumer queues.
+- [x] Create `FemtoStreamHandler` and `FemtoFileHandler`, each running in a
   dedicated consumer thread.
 - [ ] Provide a programmatic configuration API using the builder pattern.
 - [ ] Add compile‑time log level filtering via Cargo features.
@@ -58,5 +58,5 @@ that design.
 
 These phases will lead to a robust Rust implementation that matches the
 performance goals of picologging while leveraging Rust's safety guarantees.
-Development should start with Phase&nbsp;1 to deliver a minimal, testable
+Development should start with Phase 1 to deliver a minimal, testable
 product and iterate from there.
