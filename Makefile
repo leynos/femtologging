@@ -10,7 +10,7 @@ NIXIE ?= nixie
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-        PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install -e .
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install -e .
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
