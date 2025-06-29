@@ -53,6 +53,12 @@ impl FemtoStreamHandler {
     fn py_stderr() -> Self {
         Self::stderr()
     }
+
+    /// Dispatch a log record to the handler's worker thread.
+    #[pyo3(name = "handle")]
+    fn py_handle(&self, logger: &str, level: &str, message: &str) {
+        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+    }
 }
 
 impl FemtoStreamHandler {
