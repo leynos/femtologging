@@ -18,6 +18,7 @@ FileHandlerFactory = cabc.Callable[
 def test_file_handler_writes_to_file(
     tmp_path: Path, file_handler_factory: FileHandlerFactory
 ) -> None:
+    """A single record should persist to disk."""
     path = tmp_path / "out.log"
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "hello")
@@ -27,6 +28,7 @@ def test_file_handler_writes_to_file(
 def test_file_handler_multiple_records(
     tmp_path: Path, file_handler_factory: FileHandlerFactory
 ) -> None:
+    """Records are appended in the order they are handled."""
     path = tmp_path / "multi.log"
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "first")
@@ -41,6 +43,7 @@ def test_file_handler_multiple_records(
 def test_file_handler_concurrent_usage(
     tmp_path: Path, file_handler_factory: FileHandlerFactory
 ) -> None:
+    """Concurrent writes should not lose messages."""
     path = tmp_path / "concurrent.log"
     with file_handler_factory(path, 8, 1) as handler:
 
@@ -75,6 +78,7 @@ def test_file_handler_flush(tmp_path: Path) -> None:
 
 
 def test_file_handler_open_failure(tmp_path: Path) -> None:
+    """Creating a handler in a missing directory raises ``OSError``."""
     bad_dir = tmp_path / "does_not_exist"
     path = bad_dir / "out.log"
     with pytest.raises(OSError):
@@ -85,6 +89,7 @@ def test_file_handler_custom_flush_interval(
     tmp_path: Path,
     file_handler_factory: FileHandlerFactory,
 ) -> None:
+    """Flush only after ``flush_interval`` records."""
     path = tmp_path / "interval.log"
     with file_handler_factory(path, 8, 2) as handler:
         handler.handle("core", "INFO", "first")
