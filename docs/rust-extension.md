@@ -8,7 +8,8 @@ core handler implementations as well:
 - `FemtoStreamHandler` writes log records to `stdout` or `stderr` on a
   background thread.
 - `FemtoFileHandler` persists records to a file, also using a dedicated
-  worker thread.
+  worker thread. It now provides `flush()` and `close()` to deterministically
+  manage that thread.
 
 Packaging is handled by [maturin](https://maturin.rs/). The
 `[tool.maturin]` section in `pyproject.toml` declares the extension module as
