@@ -10,11 +10,6 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pyright"]
 
-[tool.pyright]
-pythonVersion = "3.13"
-typeCheckingMode = "strict"
-include = ["femtologging"]
-
 [tool.ruff]
 line-length = 88
 
