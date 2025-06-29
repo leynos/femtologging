@@ -14,16 +14,19 @@ struct LoomBuf(Arc<Mutex<Vec<u8>>>);
 
 impl Write for LoomBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut lock = self
+        self
             .0
             .lock()
-            .expect("Failed to acquire lock for LoomBuf write");
-        lock.extend_from_slice(buf);
-        Ok(buf.len())
+            .expect("Failed to acquire lock for LoomBuf write")
+            .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        self
+            .0
+            .lock()
+            .expect("Failed to acquire lock for LoomBuf flush")
+            .flush()
     }
 }
 

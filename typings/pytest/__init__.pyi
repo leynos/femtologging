@@ -12,6 +12,10 @@ from typing import (
 P = ParamSpec("P")
 R = TypeVar("R", bound=BaseException)
 
+# Pytest exposes a decorator with many optional parameters. We mirror
+# the real signature here for accurate type checking even though it
+# exceeds the usual argument count threshold.
+
 @overload
 def fixture(func: Callable[P, R]) -> Callable[P, R]: ...
 @overload
