@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 from pathlib import Path
 import threading
+import typing
 
 from femtologging import FemtoFileHandler
 import pytest  # pyright: ignore[reportMissingImports]
 
+FileHandlerFactory = cabc.Callable[
+    [Path, int, int], typing.ContextManager[FemtoFileHandler]
+]
 
-def test_file_handler_writes_to_file(tmp_path: Path, file_handler_factory) -> None:
+
+def test_file_handler_writes_to_file(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
     path = tmp_path / "out.log"
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "hello")
     assert path.read_text() == "core [INFO] hello\n"
 
 
-def test_file_handler_multiple_records(tmp_path: Path, file_handler_factory) -> None:
+def test_file_handler_multiple_records(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
     path = tmp_path / "multi.log"
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "first")
@@ -28,7 +38,9 @@ def test_file_handler_multiple_records(tmp_path: Path, file_handler_factory) -> 
     )
 
 
-def test_file_handler_concurrent_usage(tmp_path: Path, file_handler_factory) -> None:
+def test_file_handler_concurrent_usage(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
     path = tmp_path / "concurrent.log"
     with file_handler_factory(path, 8, 1) as handler:
 
@@ -70,7 +82,8 @@ def test_file_handler_open_failure(tmp_path: Path) -> None:
 
 
 def test_file_handler_custom_flush_interval(
-    tmp_path: Path, file_handler_factory
+    tmp_path: Path,
+    file_handler_factory: FileHandlerFactory,
 ) -> None:
     path = tmp_path / "interval.log"
     with file_handler_factory(path, 8, 2) as handler:
@@ -82,7 +95,9 @@ def test_file_handler_custom_flush_interval(
     )
 
 
-def test_file_handler_flush_interval_zero(tmp_path: Path, file_handler_factory) -> None:
+def test_file_handler_flush_interval_zero(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
     """Periodic flushing is disabled when flush_interval is zero."""
     path = tmp_path / "flush_zero.log"
     with file_handler_factory(path, 8, 0) as handler:
@@ -90,7 +105,9 @@ def test_file_handler_flush_interval_zero(tmp_path: Path, file_handler_factory) 
     assert path.read_text() == "core [INFO] message\n"
 
 
-def test_file_handler_flush_interval_one(tmp_path: Path, file_handler_factory) -> None:
+def test_file_handler_flush_interval_one(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
     """Records flush after every write when flush_interval is one."""
     path = tmp_path / "flush_one.log"
     with file_handler_factory(path, 8, 1) as handler:
