@@ -1,0 +1,23 @@
+name: heavy-tests
+
+on:
+  schedule:
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+
+jobs:
+  heavy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pip install maturin pytest
+      - run: PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --manifest-path rust_extension/Cargo.toml
+      - run: |
+          cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path rust_extension/Cargo.toml -- --ignored
+          pytest -q
