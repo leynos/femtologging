@@ -3,75 +3,74 @@
 //! These cover single-record writes, multi-record writes, queue overflow
 //! handling and concurrent usage from multiple threads.
 
-use std::fs::File;
-use std::io::Read;
+use std::fs;
 use std::sync::Arc;
 use std::thread;
 
 use _femtologging_rs::{DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord};
-use rstest::*;
 use tempfile::NamedTempFile;
 
-#[fixture]
-fn temp_log_file() -> NamedTempFile {
-    NamedTempFile::new().expect("Failed to create temporary file")
+/// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
+/// and return whatever the handler wrote.
+///
+/// `capacity` is forwarded to `FemtoFileHandler::with_capacity`.
+pub fn with_temp_file_handler<F>(capacity: usize, f: F) -> String
+where
+    F: FnOnce(&FemtoFileHandler),
+{
+    let tmp = NamedTempFile::new().expect("failed to create temp file");
+    let path = tmp.path().to_path_buf();
+    {
+        let handler = FemtoFileHandler::with_capacity(&path, DefaultFormatter, capacity)
+            .expect("failed to create file handler");
+        f(&handler);
+    }
+    fs::read_to_string(&path).expect("failed to read log output")
 }
 
-fn read_file(path: &std::path::Path) -> String {
-    let mut contents = String::new();
-    File::open(path)
-        .expect("Failed to open test file")
-        .read_to_string(&mut contents)
-        .expect("Failed to read test file contents");
-    contents
+#[test]
+fn file_handler_writes_to_file() {
+    let output = with_temp_file_handler(10, |h| {
+        h.handle(FemtoLogRecord::new("core", "INFO", "hello"));
+    });
+
+    assert_eq!(output, "core [INFO] hello\n");
 }
 
-#[rstest]
-fn file_handler_writes_to_file(mut temp_log_file: NamedTempFile) {
-    let path = temp_log_file.path().to_path_buf();
-    let handler = FemtoFileHandler::new(&path).expect("Failed to create file handler");
-    handler.handle(FemtoLogRecord::new("core", "INFO", "hello"));
-    drop(handler);
-    assert_eq!(read_file(&path), "core [INFO] hello\n");
-}
+#[test]
+fn multiple_records_are_serialised() {
+    let output = with_temp_file_handler(10, |h| {
+        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
+        h.handle(FemtoLogRecord::new("core", "WARN", "second"));
+        h.handle(FemtoLogRecord::new("core", "ERROR", "third"));
+    });
 
-#[rstest]
-fn file_handler_multiple_records(mut temp_log_file: NamedTempFile) {
-    let path = temp_log_file.path().to_path_buf();
-    let handler = FemtoFileHandler::with_capacity(&path, DefaultFormatter, 10)
-        .expect("Failed to create file handler");
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.handle(FemtoLogRecord::new("core", "WARN", "second"));
-    handler.handle(FemtoLogRecord::new("core", "ERROR", "third"));
-    drop(handler);
-    let output = read_file(&path);
     assert_eq!(
         output,
-        "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
+        "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n",
     );
 }
 
-#[rstest]
-fn file_handler_queue_overflow_drops_excess_records(mut temp_log_file: NamedTempFile) {
-    let path = temp_log_file.path().to_path_buf();
-    let handler = FemtoFileHandler::with_capacity(&path, DefaultFormatter, 3)
-        .expect("Failed to create file handler");
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.handle(FemtoLogRecord::new("core", "WARN", "second"));
-    handler.handle(FemtoLogRecord::new("core", "ERROR", "third"));
-    handler.handle(FemtoLogRecord::new("core", "DEBUG", "fourth"));
-    handler.handle(FemtoLogRecord::new("core", "TRACE", "fifth"));
-    drop(handler);
-    let output = read_file(&path);
+#[test]
+fn queue_overflow_drops_excess_records() {
+    let output = with_temp_file_handler(3, |h| {
+        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
+        h.handle(FemtoLogRecord::new("core", "WARN", "second"));
+        h.handle(FemtoLogRecord::new("core", "ERROR", "third"));
+        h.handle(FemtoLogRecord::new("core", "DEBUG", "fourth"));
+        h.handle(FemtoLogRecord::new("core", "TRACE", "fifth"));
+    });
+
     assert_eq!(
         output,
-        "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
+        "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n",
     );
 }
 
-#[rstest]
-fn file_handler_concurrent_usage(mut temp_log_file: NamedTempFile) {
-    let path = temp_log_file.path().to_path_buf();
+#[test]
+fn file_handler_concurrent_usage() {
+    let tmp = NamedTempFile::new().expect("failed to create temp file");
+    let path = tmp.path().to_path_buf();
     let handler = Arc::new(FemtoFileHandler::new(&path).expect("Failed to create file handler"));
     let mut handles = vec![];
     for i in 0..10 {
@@ -84,12 +83,12 @@ fn file_handler_concurrent_usage(mut temp_log_file: NamedTempFile) {
         h.join().expect("Thread panicked");
     }
     drop(handler);
-    let output = read_file(&path);
+    let output = fs::read_to_string(&path).expect("failed to read log output");
     for i in 0..10 {
         assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }
 }
-#[rstest]
+#[test]
 fn file_handler_open_failure() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let path = dir.path().join("missing").join("file.log");
