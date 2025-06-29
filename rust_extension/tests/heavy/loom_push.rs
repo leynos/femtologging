@@ -39,6 +39,8 @@ fn loom_stream_push_delivery() {
         handler.handle(FemtoLogRecord::new("core", "INFO", "msg2"));
         t.join().unwrap();
         drop(handler);
-        assert_eq!(read_output(&buffer), "core [INFO] msg\ncore [INFO] msg2\n");
+        let mut lines: Vec<_> = read_output(&buffer).lines().collect();
+        lines.sort();
+        assert_eq!(lines, vec!["core [INFO] msg", "core [INFO] msg2"]);
     });
 }
