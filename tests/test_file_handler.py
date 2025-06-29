@@ -52,11 +52,14 @@ def test_file_handler_concurrent_usage(tmp_path: Path) -> None:
 def test_file_handler_flush(tmp_path: Path) -> None:
     path = tmp_path / "flush.log"
     handler = FemtoFileHandler(str(path))
-    handler.handle("core", "INFO", "one")
-    assert handler.flush() is True
+
+    def send(msg: str) -> None:
+        handler.handle("core", "INFO", msg)
+        assert handler.flush() is True
+
+    send("one")
     assert path.read_text() == "core [INFO] one\n"
-    handler.handle("core", "INFO", "two")
-    assert handler.flush() is True
+    send("two")
     assert path.read_text() == "core [INFO] one\ncore [INFO] two\n"
     handler.close()
 
