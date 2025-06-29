@@ -14,21 +14,7 @@ use tempfile::NamedTempFile;
 /// and return whatever the handler wrote.
 ///
 /// `capacity` is forwarded to `FemtoFileHandler::with_capacity`.
-pub fn with_temp_file_handler<F>(capacity: usize, f: F) -> String
-where
-    F: FnOnce(&FemtoFileHandler),
-{
-    let tmp = NamedTempFile::new().expect("failed to create temp file");
-    let path = tmp.path().to_path_buf();
-    {
-        let handler = FemtoFileHandler::with_capacity(&path, DefaultFormatter, capacity)
-            .expect("failed to create file handler");
-        f(&handler);
-    }
-    fs::read_to_string(&path).expect("failed to read log output")
-}
-
-pub fn with_temp_file_handler_flush<F>(capacity: usize, flush_interval: usize, f: F) -> String
+fn with_temp_file_handler_generic<F>(capacity: usize, flush_interval: usize, f: F) -> String
 where
     F: FnOnce(&FemtoFileHandler),
 {
@@ -45,6 +31,20 @@ where
         f(&handler);
     }
     fs::read_to_string(&path).expect("failed to read log output")
+}
+
+pub fn with_temp_file_handler<F>(capacity: usize, f: F) -> String
+where
+    F: FnOnce(&FemtoFileHandler),
+{
+    with_temp_file_handler_generic(capacity, 1, f)
+}
+
+pub fn with_temp_file_handler_flush<F>(capacity: usize, flush_interval: usize, f: F) -> String
+where
+    F: FnOnce(&FemtoFileHandler),
+{
+    with_temp_file_handler_generic(capacity, flush_interval, f)
 }
 
 #[test]
@@ -126,4 +126,20 @@ fn file_handler_custom_flush_interval() {
         output,
         "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n",
     );
+}
+
+#[test]
+fn file_handler_flush_interval_zero() {
+    let output = with_temp_file_handler_flush(8, 0, |h| {
+        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
+    });
+    assert_eq!(output, "core [INFO] message\n");
+}
+
+#[test]
+fn file_handler_flush_interval_one() {
+    let output = with_temp_file_handler_flush(8, 1, |h| {
+        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
+    });
+    assert_eq!(output, "core [INFO] message\n");
 }

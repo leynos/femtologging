@@ -85,3 +85,23 @@ def test_file_handler_custom_flush_interval(tmp_path: Path) -> None:
     assert path.read_text() == (
         "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
     )
+
+
+def test_file_handler_flush_interval_zero(tmp_path: Path) -> None:
+    """Periodic flushing is disabled when flush_interval is zero."""
+    path = tmp_path / "flush_zero.log"
+    handler = FemtoFileHandler.with_capacity_flush(str(path), 8, 0)
+    handler.handle("core", "INFO", "message")
+    del handler
+    gc.collect()
+    assert path.read_text() == "core [INFO] message\n"
+
+
+def test_file_handler_flush_interval_one(tmp_path: Path) -> None:
+    """Records flush after every write when flush_interval is one."""
+    path = tmp_path / "flush_one.log"
+    handler = FemtoFileHandler.with_capacity_flush(str(path), 8, 1)
+    handler.handle("core", "INFO", "message")
+    del handler
+    gc.collect()
+    assert path.read_text() == "core [INFO] message\n"

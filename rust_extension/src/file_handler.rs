@@ -53,6 +53,10 @@ impl FemtoFileHandler {
     }
 
     /// Create a handler with a custom flush interval.
+    ///
+    /// `flush_interval` controls how often the worker thread flushes the
+    /// underlying file. A value of `0` disables periodic flushing and only
+    /// flushes when the handler shuts down.
     #[staticmethod]
     #[pyo3(name = "with_capacity_flush")]
     fn py_with_capacity_flush(
