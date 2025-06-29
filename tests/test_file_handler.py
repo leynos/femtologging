@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 
 from femtologging import FemtoFileHandler
+import pytest
 
 
 def test_file_handler_writes_to_file(tmp_path: Path) -> None:
@@ -47,3 +48,10 @@ def test_file_handler_concurrent_usage(tmp_path: Path) -> None:
     data = path.read_text()
     for i in range(10):
         assert f"core [INFO] msg{i}" in data
+
+
+def test_file_handler_open_failure(tmp_path: Path) -> None:
+    bad_dir = tmp_path / "does_not_exist"
+    path = bad_dir / "out.log"
+    with pytest.raises(OSError):
+        FemtoFileHandler(str(path))

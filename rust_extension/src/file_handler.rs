@@ -78,8 +78,7 @@ impl FemtoFileHandler {
 
     /// Build a handler using an already opened `File` and custom formatter.
     ///
-    /// This is primarily used by `with_capacity` after opening the file but is
-    /// public so tests can supply in-memory `File` implementations.
+    /// This is primarily used by `with_capacity` after opening the file.
     fn from_file<F>(file: File, formatter: F, capacity: usize) -> Self
     where
         F: FemtoFormatter + Send + 'static,
