@@ -26,7 +26,13 @@ that design.
 
 - [ ] Define the `FemtoLogRecord` structure and implement core `FemtoLogger`
   logic, including efficient level checking and logging macros.
-- [ ] Implement the `FemtoFormatter` trait with a default formatter.
+  - [ ] Expand `FemtoLogRecord` with timestamp and source location.
+    Thread info and structured key‑values should also be stored.
+  - [ ] Add a `FemtoLevel` enum and per‑logger level checks.
+  - [ ] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
+    source location.
+  - [ ] Route records to all configured handlers.
+- [x] Implement the `FemtoFormatter` trait with a default formatter.
 - [x] Select and integrate an MPSC channel for producer‑consumer queues.
 - [x] Create `FemtoStreamHandler` and `FemtoFileHandler`, each running in a
   dedicated consumer thread.
