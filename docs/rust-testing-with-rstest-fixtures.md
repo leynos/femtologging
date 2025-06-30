@@ -1185,13 +1185,13 @@ The following table summarizes key differences:
 **Table 1:** `rstest` **vs. Standard Rust** `#[test]` **for Fixture Management
 and Parameterization**
 
-| Feature                                      | Standard `#[test]` Approach                                    | `rstest` Approach                                                                    |
-| -------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Fixture Injection**                        | Manual calls to setup functions within each test.              | Fixture name as argument in `#[rstest]` function; fixture defined with `#[fixture]`. |
-| **Parameterized Tests (Specific Cases)**     | Loop inside one test or multiple distinct `#[test]` functions. | `#[case(...)]` attributes on `#[rstest]` function.                                   |
-| **Parameterized Tests (Value Combinations)** | Nested loops inside one test or complex manual generation.     | `#[values(...)]` attributes on arguments of `#[rstest]` function.                    |
-| **Async Fixture Setup**                      | Manual `async` block and `.await` calls inside test.           | `async fn` fixtures with `#[future]` and `#[awt]` for ergonomic `.await`ing.         |
-| **Reusing Parameter Sets**                   | Manual duplication of cases or custom helper macros.           | `rstest_reuse` crate with `#[template]` and `#[apply]` attributes.                   |
+| Feature                                                        | Standard `#[test]` Approach                                    | `rstest` Approach                                                                    |
+| -------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Fixture Injection**                                          | Manual calls to setup functions within each test.              | Fixture name as argument in `#[rstest]` function; fixture defined with `#[fixture]`. |
+| **Parameterized Tests (Specific Cases)**                       | Loop inside one test or multiple distinct `#[test]` functions. | `#[case(...)]` attributes on `#[rstest]` function.                                   |
+| **Parameterized Tests (Value Combinations)**                   | Nested loops inside one test or complex manual generation.     | `#[values(...)]` attributes on arguments of `#[rstest]` function.                    |
+| **Async Fixture Setup**                                        | Manual `async` block and `.await` calls inside test.           | `async fn` fixtures with `#[future]` and `#[awt]` for ergonomic `.await`ing.         |
+| **Reusing Parameter Sets**                                     | Manual duplication of cases or custom helper macros.           | `rstest_reuse` crate with `#[template]` and `#[apply]` attributes.                   |
 
 This comparison highlights how `rstest`'s attribute-based, declarative approach
 streamlines common testing patterns, reducing manual effort and improving the

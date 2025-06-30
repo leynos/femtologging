@@ -21,10 +21,12 @@ implementation:
   replaces the C++ extension used by picologging.
 - **crossbeam-channel** (v0.5.15) is recommended as the baseline synchronous
   multi-producer, single-consumer queue for handler threads. Alternatives like
-`flume` or `tokio::sync::mpsc` may be benchmarked later. Version 0.5.15 avoids
-the double-free vulnerability disclosed in RUSTSEC-2025-0024. The current
-implementation uses a bounded channel with a capacity of 1024 messages so that
-log producers cannot exhaust memory if the consumer thread stalls.
+  `flume` or `tokio::sync::mpsc` may be benchmarked later. Version 0.5.15 avoids
+  the double-free vulnerability disclosed in RUSTSEC-2025-0024. The current
+  implementation uses a bounded channel with a capacity of 1024 messages so that
+  log producers cannot exhaust memory if the consumer thread stalls. Overflow is
+  handled according to an `OverflowPolicy` (`Drop`, `Block`, or `Timeout`), with
+  `Drop` as the default.
 - **rstest** is used as a development dependency to provide concise test
   fixtures and parameterized tests.
 - **serde** will power any structured data serialization needed for network

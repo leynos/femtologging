@@ -26,8 +26,8 @@ that design.
 
 - [ ] Define the `FemtoLogRecord` structure and implement core `FemtoLogger`
   logic, including efficient level checking and logging macros.
-  - [ ] Expand `FemtoLogRecord` with timestamp and source location.
-    Thread info and structured key‑values should also be stored.
+  - [ ] Expand `FemtoLogRecord` with timestamp and source location. Thread info
+    and structured key‑values should also be stored.
   - [ ] Add a `FemtoLevel` enum and per‑logger level checks.
   - [ ] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
     source location.
@@ -64,5 +64,5 @@ that design.
 
 These phases will lead to a robust Rust implementation that matches the
 performance goals of picologging while leveraging Rust's safety guarantees.
-Development should start with Phase 1 to deliver a minimal, testable
-product and iterate from there.
+Development should start with Phase 1 to deliver a minimal, testable product and
+iterate from there.
