@@ -55,8 +55,10 @@ test: build ## Run tests
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
 	pytest -q
 
+PYTHON_SITE_PACKAGES := $(shell python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+
 typecheck: build ## Static type analysis
-	ty check --extra-search-path=/root/.pyenv/versions/3.13.3/lib/python3.13/site-packages
+	ty check --extra-search-path=$(PYTHON_SITE_PACKAGES)
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
