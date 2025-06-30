@@ -145,7 +145,9 @@ impl FemtoFileHandler {
                             warn!("FemtoFileHandler write error");
                         } else {
                             writes += 1;
-                            if flush_interval != 0 && writes % flush_interval == 0 && file.flush().is_err()
+                            if flush_interval != 0
+                                && writes % flush_interval == 0
+                                && file.flush().is_err()
                             {
                                 warn!("FemtoFileHandler flush error");
                             }
