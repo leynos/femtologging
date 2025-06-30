@@ -151,7 +151,8 @@ This repository is written in Rust and uses Cargo for building and dependency
 management. Contributors should follow these best practices when working on the
 project:
 
-- Run `make fmt`, `make lint`, `make typecheck`, and `make test` before committing.
+- Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
+  committing.
 - Clippy warnings MUST be disallowed.
 - Where a function is too long, extract meaningfully named helper functions
   adhering to separation of concerns and CQRS.
