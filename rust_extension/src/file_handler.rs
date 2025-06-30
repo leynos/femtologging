@@ -34,6 +34,8 @@ pub struct FemtoFileHandler {
     tx: Option<Sender<FileCommand>>,
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
+    ack_tx: Sender<()>,
+    ack_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -133,6 +135,7 @@ impl FemtoFileHandler {
     {
         let (tx, rx) = bounded(capacity);
         let (done_tx, done_rx) = bounded(1);
+        let (ack_tx, ack_rx) = bounded(1);
         let handle = thread::spawn(move || {
             let mut file = file;
             let formatter = formatter;
@@ -145,7 +148,9 @@ impl FemtoFileHandler {
                             warn!("FemtoFileHandler write error");
                         } else {
                             writes += 1;
-                            if flush_interval != 0 && writes % flush_interval == 0 && file.flush().is_err()
+                            if flush_interval != 0
+                                && writes % flush_interval == 0
+                                && file.flush().is_err()
                             {
                                 warn!("FemtoFileHandler flush error");
                             }
@@ -170,17 +175,19 @@ impl FemtoFileHandler {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
+            ack_tx,
+            ack_rx,
         }
     }
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
         if let Some(tx) = &self.tx {
-            let (ack_tx, ack_rx) = bounded(1);
-            if tx.send(FileCommand::Flush(ack_tx)).is_err() {
+            while self.ack_rx.try_recv().is_ok() {}
+            if tx.send(FileCommand::Flush(self.ack_tx.clone())).is_err() {
                 return false;
             }
-            return ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+            return self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
         }
         false
     }
