@@ -127,6 +127,9 @@ sender signals the consumer to finish once the queue is drained.
 - Handler state (stream, file, formatter) is encapsulated inside the consumer
   thread. Only the `Sender` is shared with producer threads, eliminating the
   need for additional locks.
+- `flush()` reuses a persistent acknowledgement channel. Stale responses are
+  drained before each send so the returned signal always corresponds to the
+  latest flush request, preserving ordering without new allocations.
 - The default bounded capacity of 1024 records from
   [`dependency-analysis.md`](./dependency-analysis.md) prevents unbounded memory
   usage if a consumer stalls.

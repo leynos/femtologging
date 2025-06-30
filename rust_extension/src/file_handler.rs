@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
 use log::warn;
 use pyo3::prelude::*;
 
@@ -183,11 +183,23 @@ impl FemtoFileHandler {
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
         if let Some(tx) = &self.tx {
+            // Drain any leftover acknowledgements so the next `recv` matches the
+            // flush request we're about to send. Without this loop, a stale ack
+            // from a prior flush could falsely succeed.
             while self.ack_rx.try_recv().is_ok() {}
+
             if tx.send(FileCommand::Flush(self.ack_tx.clone())).is_err() {
                 return false;
             }
-            return self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+
+            return match self.ack_rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(_) => true,
+                Err(RecvTimeoutError::Timeout) => {
+                    warn!("FemtoFileHandler: flush acknowledgement timed out");
+                    false
+                }
+                Err(_) => false,
+            };
         }
         false
     }
