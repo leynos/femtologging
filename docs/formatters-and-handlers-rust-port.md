@@ -57,8 +57,8 @@ pub trait FemtoHandlerTrait: Send + Sync {
 pub struct FemtoHandler;
 ```
 
-Implementations forward the record to an internal queue. By default the caller
-never blocks: if the queue is full the record is dropped and a warning is
+Implementations forward the record to an internal queue. By default, the caller
+never blocks: if the queue is full, the record is dropped and a warning is
 emitted to `stderr`. Advanced consumers can choose an overflow policy to block
 until space is available or wait with a timeout before dropping the record.
 

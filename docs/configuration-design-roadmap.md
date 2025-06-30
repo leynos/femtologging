@@ -271,7 +271,7 @@ same interface as `logging.basicConfig`.
   - If `filename` is provided, a `FileHandlerBuilder` will be created with
     `path=filename`, `mode=filemode` (default 'a'), and `encoding`.
 
-  - Otherwise, a `StreamHandlerBuilder` will be created writing to `stderr`
+  - Otherwise, a `StreamHandlerBuilder` will be created that writes to `stderr`
     (default).
 
   - A `FormatterBuilder` will be created using `format` and `datefmt` (if
@@ -294,7 +294,7 @@ same interface as `logging.basicConfig`.
 ### 2.2. `dictConfig`
 
 `femtologging.dictConfig(config: dict)` will support dictionary-based
-configuration as specified by `logging.config.dictConfig`.
+configuration, as specified by `logging.config.dictConfig`.
 
 - **Functionality:** This will allow users to define their entire logging
   configuration (loggers, handlers, formatters, filters) using a Python

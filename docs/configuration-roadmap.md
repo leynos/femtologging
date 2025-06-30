@@ -59,7 +59,9 @@ expanded with specifics for the configuration design.
 - [ ] Expand test coverage and start benchmarking for the configuration system
   and `basicConfig`/`dictConfig` compatibility.
 
-## Phase 3 – Advanced Features & Ecosystem Integration (Configuration-related tasks)
+## Phase 3 – Advanced Features & Ecosystem Integration
+
+(Configuration-related tasks)
 
 - [ ] **Implement** `femtologging.fileConfig()` **in Python:**
 

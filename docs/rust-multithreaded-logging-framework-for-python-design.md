@@ -70,10 +70,10 @@ this pattern universal,
 `femtologging` aims for consistent high performance and robustness across all
 handler types.
 
-### . Uncompromising Performance
+### 2.3 Uncompromising Performance
 
 Inspired by `picologging`'s significant performance gains over standard Python
-logging ,
+logging,
 
 `femtologging` will strive for similar or even greater efficiency. This will be
 achieved through several Rust-specific avenues:
@@ -565,7 +565,6 @@ A common consideration in Rust logging libraries is the "global vs. instance"
 logger pattern. CPython's `logging.getLogger()` provides access to a global (or,
 more accurately, hierarchical) logger registry. In Rust, global mutable state is
 often discouraged for reasons of explicitness and testability. Libraries like
-
 `slog` encourage passing `Logger` instances explicitly, which can be verbose.
 Conversely,
 

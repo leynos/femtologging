@@ -31,6 +31,8 @@ pub enum OverflowPolicy {
     /// Block the caller until space is available.
     Block,
     /// Block for a duration then drop if still full.
+    ///
+    /// A non-positive duration results in an immediate drop with no blocking.
     Timeout(Duration),
 }
 
@@ -268,8 +270,19 @@ impl FemtoHandlerTrait for FemtoFileHandler {
                     tx.send_timeout(FileCommand::Record(record), dur).is_err()
                 }
             };
+
             if failed {
-                warn!("FemtoFileHandler: queue full or shutting down, dropping record");
+                match self.policy {
+                    OverflowPolicy::Drop => {
+                        warn!("FemtoFileHandler: queue full or shutting down, dropping record")
+                    }
+                    OverflowPolicy::Block => warn!(
+                        "FemtoFileHandler: failed to enqueue record after blocking; queue may be shutting down"
+                    ),
+                    OverflowPolicy::Timeout(_) => warn!(
+                        "FemtoFileHandler: failed to enqueue record after timeout; queue may be full or shutting down"
+                    ),
+                }
             }
         } else {
             warn!("FemtoFileHandler: handle called after close");
