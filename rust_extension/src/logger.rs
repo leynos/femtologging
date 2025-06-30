@@ -77,9 +77,7 @@ impl Drop for FemtoLogger {
         self.tx.take();
         if let Some(handle) = self.handle.take() {
             if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                eprintln!("FemtoLogger: worker thread did not shut down within 1s");
-                drop(handle); // detach
-                return;
+                eprintln!("FemtoLogger: worker thread did not shut down within 1s, forcing join");
             }
             if handle.join().is_err() {
                 eprintln!("FemtoLogger: worker thread panicked");
@@ -88,6 +86,7 @@ impl Drop for FemtoLogger {
     }
 }
 
+/// Tests for the FemtoLogger shutdown functionality.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,7 +96,11 @@ mod tests {
     #[test]
     fn drop_with_extra_sender() {
         let logger = FemtoLogger::new("test".to_string());
-        let tx = logger.tx.as_ref().unwrap().clone();
+        let tx = logger
+            .tx
+            .as_ref()
+            .expect("logger should have a sender available")
+            .clone();
         let handle = thread::spawn(move || {
             thread::sleep(Duration::from_millis(200));
             drop(tx);
@@ -105,6 +108,8 @@ mod tests {
         let start = Instant::now();
         drop(logger);
         assert!(start.elapsed() < Duration::from_secs(1));
-        handle.join().unwrap();
+        handle
+            .join()
+            .expect("spawned thread should complete successfully");
     }
 }
