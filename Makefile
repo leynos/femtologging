@@ -4,14 +4,14 @@ tools nixie test typecheck
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
 BUILD_JOBS ?=
-PYTHON ?= python3
+PYTHON ?= python3.12
 MDLINT ?= markdownlint
 NIXIE ?= nixie
 
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-        PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(PYTHON) -m pip install -e .
+        PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(PYTHON) -m uv pip install --system -e .
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
@@ -50,17 +50,19 @@ markdownlint: ## Lint Markdown files
 nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)
 
-test: build ## Run tests
+test: ## Run tests
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(PYTHON) -m uv pip install --system --break-system-packages -e .[dev]
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
-	pytest -q
+	$(PYTHON) -m pytest -q
 
 PYTHON_SITE_PACKAGES := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
 
-typecheck: build ## Static type analysis
+typecheck: ## Static type analysis
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(PYTHON) -m uv pip install --system --break-system-packages -e .[dev]
 	ty check --extra-search-path="$(PYTHON_SITE_PACKAGES)"
-
+	
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
 awk 'BEGIN {FS=":"; printf "Available targets:\n"} {printf "  %-20s %s\n", $$1, $$2}'

@@ -13,6 +13,6 @@ handler implementations as well:
 
 Packaging is handled by [maturin](https://maturin.rs/). The `[tool.maturin]`
 section in `pyproject.toml` declares the extension module as
-`femtologging._femtologging_rs`, so running `pip install .` automatically builds
-the Rust code. Windows users may need the MSVC build tools installed, or may
-need to run maturin with the `--compatibility windows` flag.
+`femtologging._femtologging_rs`, so running `uv pip install --system -e .`
+automatically builds the Rust code. Windows users may need the MSVC build tools
+installed, or may need to run maturin with the `--compatibility windows` flag.
