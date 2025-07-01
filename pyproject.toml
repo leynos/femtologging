@@ -8,7 +8,7 @@ license = { text = "MIT" }
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest", "ruff", "pyright"]
+dev = ["pytest"]
 
 [tool.ruff]
 line-length = 88
