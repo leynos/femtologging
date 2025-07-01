@@ -10,8 +10,8 @@ NIXIE ?= nixie
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-        uv venv
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 uv sync
+	uv venv
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 uv sync --group dev
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
