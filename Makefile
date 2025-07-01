@@ -4,13 +4,14 @@ tools nixie test typecheck
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
 BUILD_JOBS ?=
+PYTHON ?= python3
 MDLINT ?= markdownlint
 NIXIE ?= nixie
 
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install -e .
+        PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(PYTHON) -m pip install -e .
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
@@ -55,10 +56,10 @@ test: build ## Run tests
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
 	pytest -q
 
-PYTHON_SITE_PACKAGES := $(shell python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+PYTHON_SITE_PACKAGES := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
 
 typecheck: build ## Static type analysis
-	ty check --extra-search-path=$(PYTHON_SITE_PACKAGES)
+	ty check --extra-search-path="$(PYTHON_SITE_PACKAGES)"
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
