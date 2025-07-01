@@ -7,25 +7,33 @@ use std::fs;
 use std::sync::Arc;
 use std::thread;
 
-use _femtologging_rs::{DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, OverflowPolicy,
+};
 use tempfile::NamedTempFile;
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
 ///
 /// `capacity` is forwarded to `FemtoFileHandler::with_capacity`.
-fn with_temp_file_handler_generic<F>(capacity: usize, flush_interval: usize, f: F) -> String
+fn with_temp_file_handler_generic<F>(
+    capacity: usize,
+    flush_interval: usize,
+    policy: OverflowPolicy,
+    f: F,
+) -> String
 where
     F: FnOnce(&FemtoFileHandler),
 {
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     {
-        let handler = FemtoFileHandler::with_capacity_flush_interval(
+        let handler = FemtoFileHandler::with_capacity_policy(
             &path,
             DefaultFormatter,
             capacity,
             flush_interval,
+            policy,
         )
         .expect("failed to create file handler");
         f(&handler);
@@ -37,14 +45,21 @@ pub fn with_temp_file_handler<F>(capacity: usize, f: F) -> String
 where
     F: FnOnce(&FemtoFileHandler),
 {
-    with_temp_file_handler_generic(capacity, 1, f)
+    with_temp_file_handler_generic(capacity, 1, OverflowPolicy::Drop, f)
 }
 
 pub fn with_temp_file_handler_flush<F>(capacity: usize, flush_interval: usize, f: F) -> String
 where
     F: FnOnce(&FemtoFileHandler),
 {
-    with_temp_file_handler_generic(capacity, flush_interval, f)
+    with_temp_file_handler_generic(capacity, flush_interval, OverflowPolicy::Drop, f)
+}
+
+fn with_temp_file_handler_blocking<F>(capacity: usize, f: F) -> String
+where
+    F: FnOnce(&FemtoFileHandler),
+{
+    with_temp_file_handler_generic(capacity, 1, OverflowPolicy::Block, f)
 }
 
 #[test]
@@ -84,6 +99,19 @@ fn queue_overflow_drops_excess_records() {
         output,
         "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n",
     );
+}
+
+#[test]
+fn blocking_policy_persists_records() {
+    let output = with_temp_file_handler_blocking(1, |h| {
+        for i in 0..5 {
+            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
+        }
+    });
+
+    for i in 0..5 {
+        assert!(output.contains(&format!("core [INFO] msg{}", i)));
+    }
 }
 
 #[test]

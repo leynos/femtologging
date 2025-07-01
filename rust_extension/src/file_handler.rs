@@ -23,6 +23,19 @@ use crate::{
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Strategy for handling queue overflows.
+#[derive(Clone, Copy)]
+pub enum OverflowPolicy {
+    /// Drop the record and emit a warning.
+    Drop,
+    /// Block the caller until space is available.
+    Block,
+    /// Block for a duration then drop if still full.
+    ///
+    /// A non-positive duration results in an immediate drop with no blocking.
+    Timeout(Duration),
+}
+
 /// Handler that writes formatted log records to a file on a background thread.
 enum FileCommand {
     Record(FemtoLogRecord),
@@ -34,6 +47,7 @@ pub struct FemtoFileHandler {
     tx: Option<Sender<FileCommand>>,
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
+    policy: OverflowPolicy,
 }
 
 #[pymethods]
@@ -90,7 +104,13 @@ impl FemtoFileHandler {
 impl FemtoFileHandler {
     /// Convenience constructor using the default formatter and queue capacity.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
+        Self::with_capacity_policy(
+            path,
+            DefaultFormatter,
+            DEFAULT_CHANNEL_CAPACITY,
+            1,
+            OverflowPolicy::Drop,
+        )
     }
 
     /// Create a new handler with a custom formatter and bounded queue size.
@@ -102,7 +122,7 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
-        Self::with_capacity_flush_interval(path, formatter, capacity, 1)
+        Self::with_capacity_policy(path, formatter, capacity, 1, OverflowPolicy::Drop)
     }
 
     /// Create a new handler with custom capacity and flush interval.
@@ -120,14 +140,47 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
+        Self::with_capacity_policy(
+            path,
+            formatter,
+            capacity,
+            flush_interval,
+            OverflowPolicy::Drop,
+        )
+    }
+
+    /// Fully configurable constructor specifying an overflow policy.
+    pub fn with_capacity_policy<P, F>(
+        path: P,
+        formatter: F,
+        capacity: usize,
+        flush_interval: usize,
+        policy: OverflowPolicy,
+    ) -> io::Result<Self>
+    where
+        P: AsRef<Path>,
+        F: FemtoFormatter + Send + 'static,
+    {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(Self::from_file(file, formatter, capacity, flush_interval))
+        Ok(Self::from_file(
+            file,
+            formatter,
+            capacity,
+            flush_interval,
+            policy,
+        ))
     }
 
     /// Build a handler using an already opened `File` and custom formatter.
     ///
     /// This is primarily used by `with_capacity` after opening the file.
-    fn from_file<F>(file: File, formatter: F, capacity: usize, flush_interval: usize) -> Self
+    fn from_file<F>(
+        file: File,
+        formatter: F,
+        capacity: usize,
+        flush_interval: usize,
+        policy: OverflowPolicy,
+    ) -> Self
     where
         F: FemtoFormatter + Send + 'static,
     {
@@ -172,6 +225,7 @@ impl FemtoFileHandler {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
+            policy,
         }
     }
 
@@ -209,8 +263,26 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     /// warning is emitted via the `log` crate.
     fn handle(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
-            if tx.try_send(FileCommand::Record(record)).is_err() {
-                warn!("FemtoFileHandler: queue full or shutting down, dropping record");
+            let failed = match self.policy {
+                OverflowPolicy::Drop => tx.try_send(FileCommand::Record(record)).is_err(),
+                OverflowPolicy::Block => tx.send(FileCommand::Record(record)).is_err(),
+                OverflowPolicy::Timeout(dur) => {
+                    tx.send_timeout(FileCommand::Record(record), dur).is_err()
+                }
+            };
+
+            if failed {
+                match self.policy {
+                    OverflowPolicy::Drop => {
+                        warn!("FemtoFileHandler: queue full or shutting down, dropping record")
+                    }
+                    OverflowPolicy::Block => warn!(
+                        "FemtoFileHandler: failed to enqueue record after blocking; queue may be shutting down"
+                    ),
+                    OverflowPolicy::Timeout(_) => warn!(
+                        "FemtoFileHandler: failed to enqueue record after timeout; queue may be full or shutting down"
+                    ),
+                }
             }
         } else {
             warn!("FemtoFileHandler: handle called after close");
