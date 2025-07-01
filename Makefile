@@ -28,6 +28,7 @@ tools:
 	$(call ensure_tool,mdformat-all)
 	$(call ensure_tool,$(CARGO))
 	$(call ensure_tool,rustfmt)
+	$(call ensure_tool,uv)
 	$(call ensure_tool,ruff)
 	$(call ensure_tool,ty)
 
