@@ -271,7 +271,7 @@ same interface as `logging.basicConfig`.
   - If `filename` is provided, a `FileHandlerBuilder` will be created with
     `path=filename`, `mode=filemode` (default 'a'), and `encoding`.
 
-  - Otherwise, a `StreamHandlerBuilder` will be created writing to `stderr`
+  - Otherwise, a `StreamHandlerBuilder` will be created, writing to `stderr`
     (default).
 
   - A `FormatterBuilder` will be created using `format` and `datefmt` (if
