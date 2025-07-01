@@ -1,9 +1,8 @@
-#![allow(non_local_definitions)]
-
 use pyo3::prelude::*;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
@@ -13,7 +12,6 @@ use std::sync::Arc;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
-/// Basic logger used for early experimentation.
 #[pyclass]
 pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
@@ -21,6 +19,7 @@ pub struct FemtoLogger {
     formatter: Arc<dyn FemtoFormatter>,
     tx: Option<Sender<FemtoLogRecord>>,
     handle: Option<JoinHandle<()>>,
+    done_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -33,6 +32,7 @@ impl FemtoLogger {
         // producers outpace the consumer thread.
         let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) =
             bounded(DEFAULT_CHANNEL_CAPACITY);
+        let (done_tx, done_rx) = bounded(1);
 
         // Default to a simple formatter using the "name [LEVEL] message" style.
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
@@ -42,6 +42,7 @@ impl FemtoLogger {
             for record in rx {
                 println!("{}", thread_formatter.format(&record));
             }
+            let _ = done_tx.send(());
         });
 
         Self {
@@ -49,6 +50,7 @@ impl FemtoLogger {
             formatter,
             tx: Some(tx),
             handle: Some(handle),
+            done_rx,
         }
     }
 
@@ -71,9 +73,43 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
+        // Drop the sender so the worker thread exits when all clones are gone.
         self.tx.take();
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
+                eprintln!("FemtoLogger: worker thread did not shut down within 1s, forcing join");
+            }
+            if handle.join().is_err() {
+                eprintln!("FemtoLogger: worker thread panicked");
+            }
         }
+    }
+}
+
+/// Tests for the FemtoLogger shutdown functionality.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn drop_with_extra_sender() {
+        let logger = FemtoLogger::new("test".to_string());
+        let tx = logger
+            .tx
+            .as_ref()
+            .expect("logger should have a sender available")
+            .clone();
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            drop(tx);
+        });
+        let start = Instant::now();
+        drop(logger);
+        assert!(start.elapsed() < Duration::from_secs(1));
+        handle
+            .join()
+            .expect("spawned thread should complete successfully");
     }
 }
