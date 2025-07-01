@@ -10,7 +10,8 @@ NIXIE ?= nixie
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install -e .
+        uv venv
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 uv sync
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
@@ -53,10 +54,10 @@ test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
-	pytest -q
+	uv run pytest -q
 
 typecheck: build ## Static type analysis
-	ty check --extra-search-path=/root/.pyenv/versions/3.13.3/lib/python3.13/site-packages
+	ty check
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
