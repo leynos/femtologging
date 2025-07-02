@@ -190,9 +190,8 @@ impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
 
 The Python API will mirror the Rust builder's semantics, providing a familiar
 and idiomatic Python interface. This will involve exposing builder classes and
-methods via `PyO3` bindings. Type hints will be used for clarity.
 
-Python
+methods via `PyO3` bindings. Type hints will be used for clarity.
 
 ```python
 # In femtologging.config

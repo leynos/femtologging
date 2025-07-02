@@ -37,7 +37,7 @@ impl FemtoFormatter for DefaultFormatter {
 ```
 
 Formatters are `Send + Sync` so a handler thread can hold them without
-synchronisation. Custom formatters may store additional configuration, such as
+synchronization. Custom formatters may store additional configuration, such as
 timestamp layouts. Future extensions can include structured output with `serde`
 when network handlers are introduced.
 
@@ -74,7 +74,7 @@ when needed.
 
 Dropping a handler closes its channel and waits briefly for the worker thread to
 finish flushing. If the thread does not exit within one second, a warning is
-printed and the drop continues, preventing deadlocks during shutdown.
+printed, and the drop continues, preventing deadlocks during shutdown.
 
 #### Sequence Diagram
 
