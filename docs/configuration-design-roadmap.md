@@ -194,7 +194,7 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 
 Python
 
-```rust
+```python
 # In femtologging.config
 from typing import List, Optional, Union
 from .levels import Level  # Assuming an enum or similar for levels
