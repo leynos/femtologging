@@ -294,7 +294,7 @@ same interface as `logging.basicConfig`.
 ### 2.2. `dictConfig`
 
 `femtologging.dictConfig(config: dict)` will support dictionary-based
-configuration as specified by `logging.config.dictConfig`.
+configuration, as specified by `logging.config.dictConfig`.
 
 - **Functionality:** This will allow users to define their entire logging
   configuration (loggers, handlers, formatters, filters) using a Python
@@ -431,7 +431,7 @@ configuration files, as per `logging.config.fileConfig`.
 
 - **Dynamic Log Level Updates:** As outlined in the design document \[cite:
   uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-  dynamic log level changes for loggers will be a core feature, utilising atomic
+  Dynamic log-level changes for loggers will be a core feature, utilizing atomic
   operations in Rust for thread-safe updates. This will be exposed via methods
   on `FemtoLogger` instances (e.g., `logger.set_level()`).
 

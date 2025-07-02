@@ -100,7 +100,7 @@ sequenceDiagram
 variants (`FemtoRotatingFileHandler`, `FemtoTimedRotatingFileHandler`) build on
 this by performing rotation logic inside their consumer threads.
 
-`FemtoFileHandler` exposes `flush()` and `close()` methods so callers can drain
+`FemtoFileHandler` exposes `flush()` and `close()` methods, so callers can drain
 pending records and stop the background thread explicitly. Dropping the handler
 still performs this cleanup if the methods aren't invoked.
 
