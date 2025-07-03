@@ -2,8 +2,8 @@
 
 This note outlines the work required to add flexible logger/handler wiring to
 `femtologging`. The current prototype assumes each logger owns exactly one
-handler and that handlers are not shared. To match the capabilities of CPython's
-`logging`, the following features must be implemented:
+handler and that handlers are not shared. To match the capabilities of
+CPython's `logging`, the following features must be implemented:
 
 - multiple handlers per logger
 - multiple loggers targeting the same handler safely
@@ -24,7 +24,8 @@ handler and that handlers are not shared. To match the capabilities of CPython's
 3. **Support handler sharing**
    - Wrap handlers in `Arc` so they can be referenced by multiple loggers.
    - Ensure the internal MPSC sender is cloned for each logger.
-   - Document that handlers must be `Send + Sync`.
+   - Document that handlers must be `Send + Sync + 'static` and stored as
+     `Arc<dyn FemtoHandlerTrait + Send + Sync + 'static>`.
 
 4. **Implement propagation across the hierarchy**
    - Each logger gains a `propagate` flag (default `True`).
@@ -42,7 +43,7 @@ handler and that handlers are not shared. To match the capabilities of CPython's
 
 - Unit tests should verify that records are emitted once per handler even when
   shared between loggers.
-- Behavioural tests must cover propagation rules, ensuring child loggers inherit
-  levels and handlers from their parents unless explicitly overridden.
+- Behavioural tests must cover propagation rules to ensure child loggers
+  inherit levels and handlers from their parents unless explicitly overridden.
 - Concurrency tests should create several loggers writing to the same file
   handler from multiple threads and assert no data loss.

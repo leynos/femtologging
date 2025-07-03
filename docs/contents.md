@@ -31,6 +31,9 @@ libraries. Use the links below to explore each topic.
   - Summarizes picologging's key features prioritized for the Rust port.
 - [formatters-and-handlers-rust-port.md](./formatters-and-handlers-rust-port.md)
   - Design for moving formatter and handler logic to Rust with thread safety.
+- [logger-hierarchy-and-multi-handler.md](./logger-hierarchy-and-multi-handler.md)
+  - Describes how loggers share handlers and inherit configuration via dotted
+    names.
 - [rust-extension.md](./rust-extension.md)
   - Describes the small PyO3-based Rust extension shipped in the project.
 - [rust-multithreaded-logging-framework-for-python-design.md](./rust-multithreaded-logging-framework-for-python-design.md)
