@@ -14,6 +14,9 @@ handler and that handlers are not shared. To match the capabilities of CPython's
 1. **Introduce a Manager registry**
 
    - Maintain a global `Manager` struct storing all loggers by name.
+   - Protect the registry with a `parking_lot::RwLock` wrapped in a
+     `once_cell::sync::Lazy` so multiple threads can read the HashMap
+     concurrently while writes are serialized.
    - Each logger records its parent based on dotted name segments.
    - The root logger is created on first use and acts as the top of the tree.
 
@@ -32,7 +35,7 @@ handler and that handlers are not shared. To match the capabilities of CPython's
 
 4. **Implement propagation across the hierarchy**
 
-   - Each logger gains a `propagate` flag (default `True`).
+   - Each logger gains a `propagate` flag (default `true`).
    - When a logger handles a record, it first passes it to its own handlers,
      then forwards it to the parent logger if `propagate` is enabled.
    - Effective log level is computed by walking up the hierarchy.
@@ -41,8 +44,10 @@ handler and that handlers are not shared. To match the capabilities of CPython's
 
    - Extend the builder API to attach multiple handler IDs per logger.
    - Allow handlers defined once to be referenced from several loggers.
-   - Implement a `get_logger(name)` function in Python that mirrors CPython's
-     semantics and returns existing instances from the registry.
+   - Implement a `get_logger(name)` helper exposed through the Python bindings.
+     It mirrors CPython's semantics and returns existing instances from the
+     registry. Provide a camelCase alias `getLogger()` for backwards
+     compatibility, though new code should prefer the snake_case form.
 
 ## Testing Considerations
 
