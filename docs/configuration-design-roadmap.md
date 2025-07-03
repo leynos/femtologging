@@ -11,7 +11,6 @@ safety (especially in Rust), and discoverability.
 The Rust configuration will expose a `ConfigBuilder` struct, allowing for a
 programmatic and type-safe setup of the logging system.
 
-
 ```rust
 // In femtologging::config::ConfigBuilder
 pub struct ConfigBuilder {
