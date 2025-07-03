@@ -56,3 +56,68 @@ handler and that handlers are not shared. To match the capabilities of CPython's
   guaranteed, but records emitted by a single logger should appear in the order
   they were produced. Tests must also check for duplicate records when a handler
   is shared across threads.
+
+## Architecture Diagrams
+
+<!-- markdownlint-disable MD013 -->
+
+```mermaid
+erDiagram
+    MANAGER ||--o{ LOGGER : manages
+    LOGGER }o--o{ HANDLER : references
+    LOGGER }o--|| LOGGER : parent
+    HANDLER ||--o{ RECORD : receives
+```
+
+```mermaid
+classDiagram
+    class Manager {
+        +loggers: HashMap<String, FemtoLogger>
+        +get_logger(name: String): FemtoLogger
+    }
+    class FemtoLogger {
+        +name: String
+        +parent: FemtoLogger
+        +handlers: Vec<Arc<FemtoHandlerTrait>>
+        +propagate: bool
+        +add_handler(handler: Arc<FemtoHandlerTrait>)
+        +remove_handler(handler_id: HandlerId)
+    }
+    class FemtoHandlerTrait {
+        <<trait>>
+    }
+    class FemtoStreamHandler {
+        +sender: MpscSender<Record>
+    }
+    class FemtoFileHandler {
+        +sender: MpscSender<Record>
+    }
+    Manager "1" -- "*" FemtoLogger : manages
+    FemtoLogger "*" -- "*" FemtoHandlerTrait : references (Arc)
+    FemtoStreamHandler ..|> FemtoHandlerTrait
+    FemtoFileHandler ..|> FemtoHandlerTrait
+    FemtoLogger "1" -- "0..1" FemtoLogger : parent
+```
+
+```mermaid
+classDiagram
+    class Frame {
+        +u32 0
+        +Debug
+        +PartialEq
+        +bincode::Encode
+        +bincode::BorrowDecode
+    }
+    class Response {
+        <<generic>>
+        +Stream(Pin<Box<dyn Stream<Item=Result<T, E>>>>)
+    }
+    Frame <.. Response : used as generic
+    class stream_response {
+        +stream_response() Response<Frame, ()>
+    }
+    stream_response ..> Response : returns
+    stream_response ..> Frame : yields
+```
+
+<!-- markdownlint-enable MD013 -->
