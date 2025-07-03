@@ -14,10 +14,13 @@ expanded with specifics for the configuration design.
 - [ ] **Implement** `femtologging::handlers::FileHandlerBuilder` **and**
   `femtologging::handlers::StreamHandlerBuilder` **in Rust, implementing**
   `HandlerBuilderTrait`**.**
+
 - [ ] **Enable multiple handler IDs to be attached to a single logger in the
   builder API.**
+
 - [ ] **Store handlers in an `Arc` so that several loggers can share one
   instance safely.**
+
 - [ ] **Introduce a `Manager` registry with dotted-name hierarchy support and a
   root logger configuration.**
 

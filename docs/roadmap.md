@@ -34,8 +34,8 @@ that design.
 - [ ] Route records to all configured handlers.
 - [ ] Support attaching multiple handlers to a single logger.
 - [ ] Allow a handler instance to be shared by multiple loggers safely.
-- [ ] Build a `Manager` registry, so `get_logger(name)` returns existing
-  loggers and establishes parent relationships based on dotted names.
+- [ ] Build a `Manager` registry, so `get_logger(name)` returns existing loggers
+  and establishes parent relationships based on dotted names.
 - [ ] Implement `propagate` behaviour so loggers inherit configuration from
   their parents up to the root logger.
 - [x] Implement the `FemtoFormatter` trait with a default formatter.
