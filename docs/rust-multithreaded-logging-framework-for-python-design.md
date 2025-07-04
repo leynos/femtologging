@@ -219,6 +219,29 @@ metadata to be added without altering the core API.
 This structure ensures that all relevant information is captured once and passed
 efficiently to consumer threads.
 
+```mermaid
+classDiagram
+    class FemtoLogRecord {
+        +String logger
+        +String level
+        +String message
+        +RecordMetadata metadata
+        +new(logger: &str, level: &str, message: &str) FemtoLogRecord
+        +with_metadata(logger: &str, level: &str, message: &str, metadata: RecordMetadata) FemtoLogRecord
+    }
+    class RecordMetadata {
+        +String module_path
+        +String filename
+        +u32 line_number
+        +SystemTime timestamp
+        +ThreadId thread_id
+        +Option~String~ thread_name
+        +BTreeMap~String, String~ key_values
+        +default() RecordMetadata
+    }
+    FemtoLogRecord --> RecordMetadata : has a
+```
+
 ### 3.4 Handler Implementation Strategy
 
 `femtologging` will provide Rust equivalents for common CPython `logging`

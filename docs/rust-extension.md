@@ -20,3 +20,5 @@ to run maturin with `--compatibility windows`.
 `FemtoLogRecord` now groups its contextual fields into a `RecordMetadata`
 struct. Each record stores a timestamp, source file and line, module path,
 thread ID, thread name if available, and a map of structured key‑value pairs.
+Use `FemtoLogRecord::new` for default metadata or
+`FemtoLogRecord::with_metadata` to supply explicit values.
