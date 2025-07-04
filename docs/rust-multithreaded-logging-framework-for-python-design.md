@@ -212,6 +212,10 @@ A `FemtoLogRecord` will contain at least the following fields:
 - `key_values`: A collection of structured key-value pairs provided at the log
   call site.
 
+These contextual fields are grouped within a `RecordMetadata` struct that each
+`FemtoLogRecord` owns. This keeps the main record lightweight and allows future
+metadata to be added without altering the core API.
+
 This structure ensures that all relevant information is captured once and passed
 efficiently to consumer threads.
 
