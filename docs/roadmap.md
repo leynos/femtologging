@@ -31,7 +31,13 @@ that design.
   - [ ] Add a `FemtoLevel` enum and per‑logger level checks.
   - [ ] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
     source location.
-  - [ ] Route records to all configured handlers.
+- [ ] Route records to all configured handlers.
+- [ ] Support attaching multiple handlers to a single logger.
+- [ ] Allow a handler instance to be shared by multiple loggers safely.
+- [ ] Build a `Manager` registry, so `get_logger(name)` returns existing loggers
+  and establishes parent relationships based on dotted names.
+- [ ] Implement `propagate` behaviour so loggers inherit configuration from
+  their parents up to the root logger.
 - [x] Implement the `FemtoFormatter` trait with a default formatter.
 - [x] Select and integrate an MPSC channel for producer‑consumer queues.
 - [x] Create `FemtoStreamHandler` and `FemtoFileHandler`, each running in a
