@@ -28,16 +28,28 @@ pub struct RecordMetadata {
     pub key_values: BTreeMap<String, String>,
 }
 
+impl RecordMetadata {
+    /// Capture timestamp and thread info from the current execution context.
+    fn capture_runtime() -> (SystemTime, ThreadId, Option<String>) {
+        let current = thread::current();
+        (
+            SystemTime::now(),
+            current.id(),
+            current.name().map(ToString::to_string),
+        )
+    }
+}
+
 impl Default for RecordMetadata {
     fn default() -> Self {
-        let current = thread::current();
+        let (timestamp, thread_id, thread_name) = Self::capture_runtime();
         Self {
             module_path: String::new(),
             filename: String::new(),
             line_number: 0,
-            timestamp: SystemTime::now(),
-            thread_id: current.id(),
-            thread_name: current.name().map(ToString::to_string),
+            timestamp,
+            thread_id,
+            thread_name,
             key_values: BTreeMap::new(),
         }
     }
@@ -71,8 +83,12 @@ impl FemtoLogRecord {
         logger: &str,
         level: &str,
         message: &str,
-        metadata: RecordMetadata,
+        mut metadata: RecordMetadata,
     ) -> Self {
+        let (timestamp, thread_id, thread_name) = RecordMetadata::capture_runtime();
+        metadata.timestamp = timestamp;
+        metadata.thread_id = thread_id;
+        metadata.thread_name = thread_name;
         Self {
             logger: logger.to_owned(),
             level: level.to_owned(),
