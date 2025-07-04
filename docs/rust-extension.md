@@ -16,3 +16,9 @@ section in `pyproject.toml` declares the extension module as
 `femtologging._femtologging_rs`, so running `pip install .` automatically builds
 the Rust code. Windows users may need the MSVC build tools installed or may need
 to run maturin with `--compatibility windows`.
+
+`FemtoLogRecord` now groups its contextual fields into a `RecordMetadata`
+struct. Each record stores a timestamp, source file and line, module path and
+thread ID. The thread name is included when available, along with any structured
+key‑value pairs. Use `FemtoLogRecord::new` for default metadata or
+`FemtoLogRecord::with_metadata` to supply explicit values.

@@ -16,6 +16,10 @@ handler components from Python to Rust. It complements the
 - Use `crossbeam-channel` as the initial MPSC queue, consistent with
   [`dependency-analysis.md`](./dependency-analysis.md).
 
+`FemtoLogRecord` bundles these fields into a `RecordMetadata` struct. The struct
+contains timestamp, source location, thread data and structured key‑value pairs.
+Formatters read this metadata to produce fully detailed messages.
+
 ## FemtoFormatter Trait
 
 `FemtoFormatter` defines how a `FemtoLogRecord` becomes a string. The default

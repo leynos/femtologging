@@ -10,7 +10,7 @@ mod stream_handler;
 pub use file_handler::FemtoFileHandler;
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
-pub use log_record::FemtoLogRecord;
+pub use log_record::{FemtoLogRecord, RecordMetadata};
 pub use logger::FemtoLogger;
 pub use stream_handler::FemtoStreamHandler;
 
