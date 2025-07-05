@@ -1,5 +1,9 @@
-#![allow(non_local_definitions)]
+//! Core logger implementation for the FemtoLogger system.
+//!
+//! This module provides the [`FemtoLogger`] struct which handles log message
+//! filtering, formatting, and asynchronous output via a background thread.
 
+// FIXME: Track PyO3 issue for proper fix
 use pyo3::prelude::*;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -24,7 +28,7 @@ pub struct FemtoLogger {
     name: String,
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
-    tx: Option<Sender<FemtoLogRecord>>,
+    tx: Option<Sender<String>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -36,16 +40,13 @@ impl FemtoLogger {
     pub fn new(name: String) -> Self {
         // Use a bounded channel to prevent unbounded memory growth if log
         // producers outpace the consumer thread.
-        let (tx, rx): (Sender<FemtoLogRecord>, Receiver<FemtoLogRecord>) =
-            bounded(DEFAULT_CHANNEL_CAPACITY);
+        let (tx, rx): (Sender<String>, Receiver<String>) = bounded(DEFAULT_CHANNEL_CAPACITY);
 
         // Default to a simple formatter using the "name [LEVEL] message" style.
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
-        let thread_formatter = Arc::clone(&formatter);
-
         let handle = thread::spawn(move || {
-            for record in rx {
-                println!("{}", thread_formatter.format(&record));
+            for msg in rx {
+                println!("{msg}");
             }
         });
 
@@ -72,7 +73,7 @@ impl FemtoLogger {
         let record = FemtoLogRecord::new(&self.name, level, message);
         let msg = self.formatter.format(&record);
         if let Some(tx) = &self.tx {
-            if tx.send(record).is_err() {
+            if tx.send(msg.clone()).is_err() {
                 eprintln!("Warning: failed to send log record to background thread");
             }
         }
@@ -80,6 +81,10 @@ impl FemtoLogger {
     }
 
     /// Update the logger's minimum level.
+    ///
+    /// `level` accepts "TRACE", "DEBUG", "INFO", "WARN", "ERROR", or
+    /// "CRITICAL". The update is thread‑safe because the level is stored in an
+    /// `AtomicU8`.
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: &str) {
         let lvl = FemtoLevel::parse_or_warn(level);
