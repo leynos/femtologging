@@ -26,4 +26,5 @@ key‑value pairs. Use `FemtoLogRecord::new` for default metadata or
 `FemtoLevel` defines the standard logging levels (`TRACE`, `DEBUG`, `INFO`,
 `WARN`, `ERROR`, `CRITICAL`). Each `FemtoLogger` holds a current level and drops
 messages below that threshold. The `set_level()` method updates the logger's
-minimum level from Python or Rust code.
+minimum level from Python or Rust code. The `log()` method returns the formatted
+string or `None` when a message is filtered out.

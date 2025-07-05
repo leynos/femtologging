@@ -10,7 +10,10 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
@@ -20,7 +23,7 @@ pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
     formatter: Arc<dyn FemtoFormatter>,
-    level: FemtoLevel,
+    level: AtomicU8,
     tx: Option<Sender<FemtoLogRecord>>,
     handle: Option<JoinHandle<()>>,
 }
@@ -49,7 +52,7 @@ impl FemtoLogger {
         Self {
             name,
             formatter,
-            level: FemtoLevel::Info,
+            level: AtomicU8::new(FemtoLevel::Info as u8),
             tx: Some(tx),
             handle: Some(handle),
         }
@@ -60,10 +63,11 @@ impl FemtoLogger {
     /// This method currently builds a simple string combining the logger's
     /// name with the level and message.
     #[pyo3(text_signature = "(self, level, message)")]
-    pub fn log(&self, level: &str, message: &str) -> String {
-        let record_level = FemtoLevel::parse_or_info(level);
-        if record_level < self.level {
-            return String::new();
+    pub fn log(&self, level: &str, message: &str) -> Option<String> {
+        let record_level = FemtoLevel::parse_or_warn(level);
+        let threshold = self.level.load(Ordering::Relaxed);
+        if (record_level as u8) < threshold {
+            return None;
         }
         let record = FemtoLogRecord::new(&self.name, level, message);
         let msg = self.formatter.format(&record);
@@ -72,13 +76,14 @@ impl FemtoLogger {
                 eprintln!("Warning: failed to send log record to background thread");
             }
         }
-        msg
+        Some(msg)
     }
 
     /// Update the logger's minimum level.
     #[pyo3(text_signature = "(self, level)")]
-    pub fn set_level(&mut self, level: &str) {
-        self.level = FemtoLevel::parse_or_info(level);
+    pub fn set_level(&self, level: &str) {
+        let lvl = FemtoLevel::parse_or_warn(level);
+        self.level.store(lvl as u8, Ordering::Relaxed);
     }
 }
 

@@ -1,7 +1,14 @@
+//! Log severity levels used by [`FemtoLogger`].
+//!
+//! This module defines the [`FemtoLevel`] enum and helper functions for
+//! converting between strings and numeric representations so loggers can
+//! efficiently filter records.
+
 use std::fmt;
 use std::str::FromStr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
 pub enum FemtoLevel {
     Trace,
     Debug,
@@ -48,7 +55,36 @@ impl FromStr for FemtoLevel {
 }
 
 impl FemtoLevel {
-    pub fn parse_or_info(s: &str) -> Self {
-        s.parse().unwrap_or(Self::Info)
+    /// Parse a string into a level, warning on invalid input.
+    pub fn parse_or_warn(s: &str) -> Self {
+        match s.parse() {
+            Ok(lvl) => lvl,
+            Err(_) => {
+                eprintln!("Warning: unrecognised log level '{s}', defaulting to INFO");
+                Self::Info
+            }
+        }
+    }
+}
+
+impl From<FemtoLevel> for u8 {
+    fn from(level: FemtoLevel) -> Self {
+        level as u8
+    }
+}
+
+impl TryFrom<u8> for FemtoLevel {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, <Self as TryFrom<u8>>::Error> {
+        match value {
+            0 => Ok(Self::Trace),
+            1 => Ok(Self::Debug),
+            2 => Ok(Self::Info),
+            3 => Ok(Self::Warn),
+            4 => Ok(Self::Error),
+            5 => Ok(Self::Critical),
+            _ => Err(()),
+        }
     }
 }
