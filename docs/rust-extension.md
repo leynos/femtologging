@@ -22,3 +22,8 @@ struct. Each record stores a timestamp, source file and line, module path and
 thread ID. The thread name is included when available, along with any structured
 key‑value pairs. Use `FemtoLogRecord::new` for default metadata or
 `FemtoLogRecord::with_metadata` to supply explicit values.
+
+`FemtoLevel` defines the standard logging levels (`TRACE`, `DEBUG`, `INFO`,
+`WARN`, `ERROR`, `CRITICAL`). Each `FemtoLogger` holds a current level and drops
+messages below that threshold. The `set_level()` method updates the logger's
+minimum level from Python or Rust code.

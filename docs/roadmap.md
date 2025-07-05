@@ -28,7 +28,7 @@ that design.
   logic, including efficient level checking and logging macros.
   - [x] Expand `FemtoLogRecord` with timestamp and source location. Thread info
     and structured key‑values are stored on each record.
-  - [ ] Add a `FemtoLevel` enum and per‑logger level checks.
+  - [x] Add a `FemtoLevel` enum and per‑logger level checks.
   - [ ] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
     source location.
 - [ ] Route records to all configured handlers.

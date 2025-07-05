@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
+    level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
 use std::sync::Arc;
@@ -19,6 +20,7 @@ pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
     formatter: Arc<dyn FemtoFormatter>,
+    level: FemtoLevel,
     tx: Option<Sender<FemtoLogRecord>>,
     handle: Option<JoinHandle<()>>,
 }
@@ -47,6 +49,7 @@ impl FemtoLogger {
         Self {
             name,
             formatter,
+            level: FemtoLevel::Info,
             tx: Some(tx),
             handle: Some(handle),
         }
@@ -58,6 +61,10 @@ impl FemtoLogger {
     /// name with the level and message.
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
+        let record_level = FemtoLevel::parse_or_info(level);
+        if record_level < self.level {
+            return String::new();
+        }
         let record = FemtoLogRecord::new(&self.name, level, message);
         let msg = self.formatter.format(&record);
         if let Some(tx) = &self.tx {
@@ -66,6 +73,12 @@ impl FemtoLogger {
             }
         }
         msg
+    }
+
+    /// Update the logger's minimum level.
+    #[pyo3(text_signature = "(self, level)")]
+    pub fn set_level(&mut self, level: &str) {
+        self.level = FemtoLevel::parse_or_info(level);
     }
 }
 

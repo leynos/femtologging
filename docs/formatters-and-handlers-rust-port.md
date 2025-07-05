@@ -13,6 +13,8 @@ handler components from Python to Rust. It complements the
   threads without unsafe code.
 - Maintain a producer–consumer model for handlers, so application threads are
   never blocked by I/O.
+- Introduce a `FemtoLevel` enum so loggers can efficiently filter messages
+  before records reach handlers.
 - Use `crossbeam-channel` as the initial MPSC queue, consistent with
   [`dependency-analysis.md`](./dependency-analysis.md).
 

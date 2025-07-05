@@ -28,3 +28,11 @@ fn log_formats_long_messages(#[case] length: usize) {
     let expected = format!("long [INFO] {}", msg);
     assert_eq!(logger.log("INFO", &msg), expected);
 }
+
+#[test]
+fn logger_filters_levels() {
+    let mut logger = FemtoLogger::new("core".to_string());
+    logger.set_level("ERROR");
+    assert_eq!(logger.log("INFO", "ignored"), "");
+    assert_eq!(logger.log("ERROR", "processed"), "core [ERROR] processed");
+}
