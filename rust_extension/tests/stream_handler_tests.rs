@@ -3,7 +3,9 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+};
 use rstest::*;
 
 #[derive(Clone)]
@@ -52,7 +54,7 @@ fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
 fn stream_handler_writes_to_buffer(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    handler.handle(FemtoLogRecord::new("core", "INFO", "hello"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
     drop(handler); // ensure thread completes
 
     assert_eq!(read_output(&buffer), "core [INFO] hello\n");
@@ -62,9 +64,9 @@ fn stream_handler_writes_to_buffer(
 fn stream_handler_multiple_records(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.handle(FemtoLogRecord::new("core", "WARN", "second"));
-    handler.handle(FemtoLogRecord::new("core", "ERROR", "third"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Warn, "second"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Error, "third"));
     drop(handler);
 
     let output = read_output(&buffer);
@@ -84,7 +86,11 @@ fn stream_handler_concurrent_usage(
     for i in 0..10 {
         let h = Arc::clone(&handler);
         handles.push(thread::spawn(move || {
-            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
+            h.handle(FemtoLogRecord::new(
+                "core",
+                FemtoLevel::Info,
+                &format!("msg{}", i),
+            ));
         }));
     }
     for h in handles {
@@ -103,7 +109,7 @@ fn stream_handler_trait_object_usage(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
     let handler: Box<dyn FemtoHandlerTrait> = Box::new(handler);
-    handler.handle(FemtoLogRecord::new("core", "INFO", "trait"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "trait"));
     drop(handler);
 
     assert_eq!(read_output(&buffer), "core [INFO] trait\n");
@@ -123,7 +129,7 @@ fn stream_handler_poisoned_mutex(
         });
     }
 
-    handler.handle(FemtoLogRecord::new("core", "INFO", "ok"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "ok"));
     drop(handler);
 
     // The buffer should remain poisoned; handler must not panic
@@ -148,7 +154,7 @@ fn stream_handler_drop_timeout() {
         },
         DefaultFormatter,
     );
-    handler.handle(FemtoLogRecord::new("core", "INFO", "slow"));
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "slow"));
     let start = Instant::now();
     drop(handler);
     assert!(start.elapsed() < Duration::from_millis(1500));

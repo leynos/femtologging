@@ -12,7 +12,7 @@ fn default_formatter_formats(
     #[case] message: &str,
     #[case] expected: &str,
 ) {
-    let record = FemtoLogRecord::new(logger, level, message);
+    let record = FemtoLogRecord::new(logger, level.parse().unwrap(), message);
     let formatter = DefaultFormatter;
     assert_eq!(formatter.format(&record), expected);
 }

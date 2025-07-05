@@ -1,4 +1,4 @@
-use _femtologging_rs::FemtoLogRecord;
+use _femtologging_rs::{FemtoLevel, FemtoLogRecord};
 use std::collections::BTreeMap;
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -6,9 +6,9 @@ use std::time::{Duration, SystemTime};
 #[test]
 fn new_populates_metadata() {
     let before = SystemTime::now();
-    let record = FemtoLogRecord::new("core", "INFO", "hello");
+    let record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
     assert_eq!(record.logger, "core");
-    assert_eq!(record.level, "INFO");
+    assert_eq!(record.level, FemtoLevel::Info);
     assert_eq!(record.message, "hello");
     let now = SystemTime::now();
     assert!(
@@ -41,9 +41,9 @@ fn with_metadata_sets_fields() {
         key_values: kvs.clone(),
         .._femtologging_rs::RecordMetadata::default()
     };
-    let record = FemtoLogRecord::with_metadata("core", "ERROR", "fail", metadata.clone());
+    let record = FemtoLogRecord::with_metadata("core", FemtoLevel::Error, "fail", metadata.clone());
     assert_eq!(record.logger, "core");
-    assert_eq!(record.level, "ERROR");
+    assert_eq!(record.level, FemtoLevel::Error);
     assert_eq!(record.message, "fail");
     assert!(record.metadata.timestamp > SystemTime::UNIX_EPOCH);
     assert_eq!(record.metadata.module_path, "mod::path");

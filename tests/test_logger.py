@@ -14,19 +14,19 @@ from femtologging import FemtoLogger
         ("sys", "ERROR", "fail", "sys [ERROR] fail"),
         # Edge cases:
         ("", "INFO", "empty name", " [INFO] empty name"),
-        ("core", "", "empty level", "core [] empty level"),
+        ("core", "", "empty level", "core [INFO] empty level"),
         ("core", "INFO", "", "core [INFO] "),
-        ("", "", "", " [] "),
+        ("", "", "", " [INFO] "),
         # Non-ASCII characters
-        ("核", "信息", "你好", "核 [信息] 你好"),
+        ("核", "信息", "你好", "核 [INFO] 你好"),
         ("core", "INFO", "¡Hola!", "core [INFO] ¡Hola!"),
-        ("система", "ОШИБКА", "не удалось", "система [ОШИБКА] не удалось"),
+        ("система", "ОШИБКА", "не удалось", "система [INFO] не удалось"),
         # Very long strings
         (
             "n" * 1000,
             "L" * 1000,
             "m" * 1000,
-            f"{'n' * 1000} [{'L' * 1000}] {'m' * 1000}",
+            f"{'n' * 1000} [INFO] {'m' * 1000}",
         ),
     ],
 )

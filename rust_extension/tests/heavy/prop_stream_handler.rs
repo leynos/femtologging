@@ -6,7 +6,12 @@
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler, FemtoLogRecord};
+use _femtologging_rs::{
+    DefaultFormatter,
+    FemtoStreamHandler,
+    FemtoLogRecord,
+    FemtoLevel,
+};
 use itertools::iproduct;
 use proptest::prelude::*;
 
@@ -60,7 +65,7 @@ proptest! {
 
         let mut expected = String::new();
         for (logger, level, msg) in iproduct!(logger_names, log_levels, messages) {
-            handler.handle(FemtoLogRecord::new(logger, level, msg));
+            handler.handle(FemtoLogRecord::new(logger, level.parse().unwrap_or(FemtoLevel::Info), msg));
             expected.push_str(&format!("{} [{}] {}\n", logger, level, msg));
         }
         drop(handler);

@@ -188,8 +188,8 @@ The logging process will follow these steps:
 
 A `FemtoLogRecord` will contain at least the following fields:
 
-- `level`: The severity level of the log message (e.g., `DEBUG`, `INFO`,
-  `WARNING`, `ERROR`, `CRITICAL`).
+- `level`: The severity level of the log message as a `FemtoLevel` (`Trace`,
+  `Debug`, `Info`, `Warn`, `Error`, `Critical`).
 
 - `message_template`: The raw format string or message.
 
@@ -223,11 +223,11 @@ efficiently to consumer threads.
 classDiagram
     class FemtoLogRecord {
         +String logger
-        +String level
+        +FemtoLevel level
         +String message
         +RecordMetadata metadata
-        +new(logger: &str, level: &str, message: &str) FemtoLogRecord
-        +with_metadata(logger: &str, level: &str, message: &str, metadata: RecordMetadata) FemtoLogRecord
+        +new(logger: &str, level: FemtoLevel, message: &str) FemtoLogRecord
+        +with_metadata(logger: &str, level: FemtoLevel, message: &str, metadata: RecordMetadata) FemtoLogRecord
     }
     class RecordMetadata {
         +String module_path

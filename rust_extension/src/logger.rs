@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
+    level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
 use std::sync::Arc;
@@ -19,6 +20,7 @@ pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
     formatter: Arc<dyn FemtoFormatter>,
+    level: FemtoLevel,
     tx: Option<Sender<FemtoLogRecord>>,
     handle: Option<JoinHandle<()>>,
 }
@@ -47,6 +49,7 @@ impl FemtoLogger {
         Self {
             name,
             formatter,
+            level: FemtoLevel::Info,
             tx: Some(tx),
             handle: Some(handle),
         }
@@ -58,7 +61,11 @@ impl FemtoLogger {
     /// name with the level and message.
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
-        let record = FemtoLogRecord::new(&self.name, level, message);
+        let lvl = level.parse().unwrap_or(FemtoLevel::Info);
+        if !self.is_enabled_for(lvl) {
+            return String::new();
+        }
+        let record = FemtoLogRecord::new(&self.name, lvl, message);
         let msg = self.formatter.format(&record);
         if let Some(tx) = &self.tx {
             if tx.send(record).is_err() {
@@ -66,6 +73,20 @@ impl FemtoLogger {
             }
         }
         msg
+    }
+
+    /// Set the minimum level for this logger.
+    #[pyo3(name = "set_level")]
+    pub fn set_level(&mut self, level: &str) {
+        if let Ok(lvl) = level.parse() {
+            self.level = lvl;
+        }
+    }
+
+    /// Determine if the logger accepts the provided level.
+    #[pyo3(name = "is_enabled_for")]
+    pub fn is_enabled_for_py(&self, level: &str) -> bool {
+        level.parse().is_ok_and(|lvl| self.is_enabled_for(lvl))
     }
 }
 
@@ -75,5 +96,12 @@ impl Drop for FemtoLogger {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+impl FemtoLogger {
+    /// Internal helper used by logging macros and methods.
+    fn is_enabled_for(&self, level: FemtoLevel) -> bool {
+        level >= self.level
     }
 }

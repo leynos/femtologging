@@ -9,6 +9,8 @@ use std::fmt;
 use std::thread::{self, ThreadId};
 use std::time::SystemTime;
 
+use crate::level::FemtoLevel;
+
 /// Additional context associated with a log record.
 #[derive(Clone, Debug)]
 pub struct RecordMetadata {
@@ -59,8 +61,8 @@ impl Default for RecordMetadata {
 pub struct FemtoLogRecord {
     /// Name of the logger that created this record.
     pub logger: String,
-    /// The log level as a string (e.g. "INFO" or "ERROR").
-    pub level: String,
+    /// The severity level of the record.
+    pub level: FemtoLevel,
     /// The log message content.
     pub message: String,
     /// Contextual metadata for the record.
@@ -69,10 +71,10 @@ pub struct FemtoLogRecord {
 
 impl FemtoLogRecord {
     /// Construct a new log record from logger `name`, `level`, and `message`.
-    pub fn new(logger: &str, level: &str, message: &str) -> Self {
+    pub fn new(logger: &str, level: FemtoLevel, message: &str) -> Self {
         Self {
             logger: logger.to_owned(),
-            level: level.to_owned(),
+            level,
             message: message.to_owned(),
             metadata: RecordMetadata::default(),
         }
@@ -81,7 +83,7 @@ impl FemtoLogRecord {
     /// Construct a log record with explicit source location and key-values.
     pub fn with_metadata(
         logger: &str,
-        level: &str,
+        level: FemtoLevel,
         message: &str,
         mut metadata: RecordMetadata,
     ) -> Self {
@@ -91,7 +93,7 @@ impl FemtoLogRecord {
         metadata.thread_name = thread_name;
         Self {
             logger: logger.to_owned(),
-            level: level.to_owned(),
+            level,
             message: message.to_owned(),
             metadata,
         }

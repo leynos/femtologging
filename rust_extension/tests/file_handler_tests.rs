@@ -7,7 +7,9 @@ use std::fs;
 use std::sync::Arc;
 use std::thread;
 
-use _femtologging_rs::{DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord,
+};
 use tempfile::NamedTempFile;
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
@@ -50,7 +52,7 @@ where
 #[test]
 fn file_handler_writes_to_file() {
     let output = with_temp_file_handler(10, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "hello"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
     });
 
     assert_eq!(output, "core [INFO] hello\n");
@@ -59,9 +61,9 @@ fn file_handler_writes_to_file() {
 #[test]
 fn multiple_records_are_serialised() {
     let output = with_temp_file_handler(10, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
-        h.handle(FemtoLogRecord::new("core", "WARN", "second"));
-        h.handle(FemtoLogRecord::new("core", "ERROR", "third"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Warn, "second"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Error, "third"));
     });
 
     assert_eq!(
@@ -73,11 +75,11 @@ fn multiple_records_are_serialised() {
 #[test]
 fn queue_overflow_drops_excess_records() {
     let output = with_temp_file_handler(3, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
-        h.handle(FemtoLogRecord::new("core", "WARN", "second"));
-        h.handle(FemtoLogRecord::new("core", "ERROR", "third"));
-        h.handle(FemtoLogRecord::new("core", "DEBUG", "fourth"));
-        h.handle(FemtoLogRecord::new("core", "TRACE", "fifth"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Warn, "second"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Error, "third"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Debug, "fourth"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Trace, "fifth"));
     });
 
     assert_eq!(
@@ -95,7 +97,11 @@ fn file_handler_concurrent_usage() {
     for i in 0..10 {
         let h = Arc::clone(&handler);
         handles.push(thread::spawn(move || {
-            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
+            h.handle(FemtoLogRecord::new(
+                "core",
+                FemtoLevel::Info,
+                &format!("msg{}", i),
+            ));
         }));
     }
     for h in handles {
@@ -117,9 +123,9 @@ fn file_handler_open_failure() {
 #[test]
 fn file_handler_custom_flush_interval() {
     let output = with_temp_file_handler_flush(8, 2, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
-        h.handle(FemtoLogRecord::new("core", "INFO", "second"));
-        h.handle(FemtoLogRecord::new("core", "INFO", "third"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "third"));
     });
 
     assert_eq!(
@@ -131,7 +137,7 @@ fn file_handler_custom_flush_interval() {
 #[test]
 fn file_handler_flush_interval_zero() {
     let output = with_temp_file_handler_flush(8, 0, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"));
     });
     assert_eq!(output, "core [INFO] message\n");
 }
@@ -139,7 +145,7 @@ fn file_handler_flush_interval_zero() {
 #[test]
 fn file_handler_flush_interval_one() {
     let output = with_temp_file_handler_flush(8, 1, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
+        h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"));
     });
     assert_eq!(output, "core [INFO] message\n");
 }

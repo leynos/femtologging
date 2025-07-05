@@ -18,6 +18,7 @@ use pyo3::prelude::*;
 use crate::handler::FemtoHandlerTrait;
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
+    level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
 
@@ -71,7 +72,8 @@ impl FemtoFileHandler {
     /// Dispatch a log record created from the provided parameters.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
-        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+        let lvl = level.parse().unwrap_or(FemtoLevel::Info);
+        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, lvl, message));
     }
 
     /// Flush pending log records without shutting down the worker thread.

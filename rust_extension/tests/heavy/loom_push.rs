@@ -7,7 +7,7 @@ use loom::sync::{Arc, Mutex};
 use loom::thread;
 use std::io::{self, Write};
 
-use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler, FemtoLogRecord};
+use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler, FemtoLogRecord, FemtoLevel};
 
 #[derive(Clone)]
 struct LoomBuf(Arc<Mutex<Vec<u8>>>);
@@ -49,9 +49,9 @@ fn loom_stream_push_delivery() {
         ));
         let h = Arc::clone(&handler);
         let t = thread::spawn(move || {
-            h.handle(FemtoLogRecord::new("core", "INFO", "msg"));
+            h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg"));
         });
-        handler.handle(FemtoLogRecord::new("core", "INFO", "msg2"));
+        handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg2"));
         t.join().expect("Thread panicked");
         drop(handler);
         let mut lines: Vec<_> = read_output(&buffer).lines().collect();

@@ -28,3 +28,16 @@ fn log_formats_long_messages(#[case] length: usize) {
     let expected = format!("long [INFO] {}", msg);
     assert_eq!(logger.log("INFO", &msg), expected);
 }
+
+#[test]
+fn logger_skips_disabled_levels() {
+    let logger = FemtoLogger::new("core".to_string());
+    assert_eq!(logger.log("DEBUG", "hidden"), "");
+}
+
+#[test]
+fn logger_respects_set_level() {
+    let mut logger = FemtoLogger::new("core".to_string());
+    logger.set_level("DEBUG");
+    assert_eq!(logger.log("DEBUG", "shown"), "core [DEBUG] shown");
+}

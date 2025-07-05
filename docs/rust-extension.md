@@ -21,4 +21,7 @@ to run maturin with `--compatibility windows`.
 struct. Each record stores a timestamp, source file and line, module path and
 thread ID. The thread name is included when available, along with any structured
 key‑value pairs. Use `FemtoLogRecord::new` for default metadata or
-`FemtoLogRecord::with_metadata` to supply explicit values.
+`FemtoLogRecord::with_metadata` to supply explicit values. Log levels are
+represented by the `FemtoLevel` enum, and each `FemtoLogger` tracks its own
+threshold. Messages below this level are ignored before reaching handler
+threads.
