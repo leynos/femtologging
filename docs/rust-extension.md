@@ -23,4 +23,6 @@ thread ID. The thread name is included when available, along with any structured
 key‑value pairs. Use `FemtoLogRecord::new` for default metadata or
 `FemtoLogRecord::with_metadata` to supply explicit values. Log levels are
 represented by the `FemtoLevel` enum, and each `FemtoLogger` tracks a threshold.
-Messages below this level are ignored before reaching handler threads.
+Messages below this level are ignored before reaching handler threads. The enum
+is exposed to Python so users can import `FemtoLevel` from `femtologging` and
+reference levels directly in their code.

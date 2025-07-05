@@ -25,6 +25,7 @@ fn hello() -> &'static str {
 #[pymodule]
 fn _femtologging_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
+    m.add_class::<FemtoLevel>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;

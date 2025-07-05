@@ -10,11 +10,13 @@ FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
 FemtoHandler = rust.FemtoHandler  # type: ignore[attr-defined]
 FemtoStreamHandler = rust.FemtoStreamHandler  # type: ignore[attr-defined]
 FemtoFileHandler = rust.FemtoFileHandler  # type: ignore[attr-defined]
+FemtoLevel = rust.FemtoLevel  # type: ignore[attr-defined]
 
 __all__ = [
     "FemtoHandler",
     "FemtoLogger",
     "FemtoStreamHandler",
     "FemtoFileHandler",
+    "FemtoLevel",
     "hello",
 ]

@@ -4,10 +4,12 @@
 //! severity levels for log records, providing type-safe parsing and
 //! formatting.
 
+use pyo3::prelude::*;
 use std::fmt;
 use std::str::FromStr;
 
 /// Severity levels for log records.
+#[pyclass]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum FemtoLevel {

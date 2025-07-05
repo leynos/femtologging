@@ -6,12 +6,13 @@ RUST_MANIFEST ?= rust_extension/Cargo.toml
 BUILD_JOBS ?=
 MDLINT ?= markdownlint
 NIXIE ?= nixie
+UV_PYTHON := python3.12
 
 all: release ## Build the release artifact
 
 build: ## Build debug artifact
-	uv venv
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 uv sync --group dev
+	uv venv -p $(UV_PYTHON)
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 uv sync -p $(UV_PYTHON) --group dev
 
 release: ## Build release artifact
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
@@ -43,7 +44,7 @@ check-fmt: ## Verify formatting
 
 lint: ## Run linters
 	ruff check
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 PYO3_PYTHON=$(UV_PYTHON) cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
 
 markdownlint: ## Lint Markdown files
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT)
@@ -53,9 +54,9 @@ nixie: ## Validate Mermaid diagrams
 
 test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
-	uv run pytest -q
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 PYO3_PYTHON=$(UV_PYTHON) cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 PYO3_PYTHON=$(UV_PYTHON) cargo test --manifest-path $(RUST_MANIFEST)
+	uv run -p $(UV_PYTHON) pytest -q
 
 typecheck: build ## Static type analysis
 	ty check
