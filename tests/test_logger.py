@@ -35,3 +35,23 @@ def test_log_formats_message(
 ) -> None:
     logger = FemtoLogger(name)
     assert logger.log(level, message) == expected
+
+
+def test_log_respects_logger_level() -> None:
+    """Messages below the logger level should be ignored."""
+    logger = FemtoLogger("core")
+    logger.set_level("ERROR")
+    assert logger.log("INFO", "ignored") is None
+    assert logger.log("ERROR", "processed") == "core [ERROR] processed"
+
+
+def test_level_parsing_and_filtering() -> None:
+    """Verify log level parsing and filtering across variants."""
+    logger = FemtoLogger("core")
+    for lvl in ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"]:
+        logger.set_level(lvl)
+        assert logger.log(lvl, "ok") is not None
+
+    logger.set_level("ERROR")
+    assert logger.log("WARN", "drop") is None
+    assert logger.log("bogus", "drop") is None
