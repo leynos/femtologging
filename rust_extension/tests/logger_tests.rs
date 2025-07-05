@@ -53,3 +53,76 @@ fn level_parsing_and_filtering() {
     // Invalid strings default to INFO with warning
     assert!(logger.log("bogus", "drop").is_none());
 }
+#[derive(Clone)]
+struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+fn read_output(buf: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>) -> String {
+    String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+}
+
+#[test]
+fn logger_dispatches_to_multiple_handlers() {
+    use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoStreamHandler};
+    use std::sync::{Arc, Mutex};
+    let buf1 = Arc::new(Mutex::new(Vec::new()));
+    let buf2 = Arc::new(Mutex::new(Vec::new()));
+    let h1 = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf1)),
+        DefaultFormatter,
+    ));
+    let h2 = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf2)),
+        DefaultFormatter,
+    ));
+
+    let mut logger = FemtoLogger::new("core".to_string());
+    let h1_trait: Arc<dyn FemtoHandlerTrait> = h1.clone();
+    let h2_trait: Arc<dyn FemtoHandlerTrait> = h2.clone();
+    logger.add_handler(h1_trait);
+    logger.add_handler(h2_trait);
+
+    logger.log("INFO", "hello");
+    drop(logger);
+    drop(h1);
+    drop(h2);
+
+    assert_eq!(read_output(&buf1), "core [INFO] hello\n");
+    assert_eq!(read_output(&buf2), "core [INFO] hello\n");
+}
+
+#[test]
+fn shared_handler_between_loggers() {
+    use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoStreamHandler};
+    use std::sync::{Arc, Mutex};
+    let buf = Arc::new(Mutex::new(Vec::new()));
+    let handler = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf)),
+        DefaultFormatter,
+    ));
+
+    let mut l1 = FemtoLogger::new("one".to_string());
+    let mut l2 = FemtoLogger::new("two".to_string());
+    let handler_trait: Arc<dyn FemtoHandlerTrait> = handler.clone();
+    l1.add_handler(handler_trait.clone());
+    l2.add_handler(handler_trait);
+
+    l1.log("INFO", "first");
+    l2.log("INFO", "second");
+    drop(l1);
+    drop(l2);
+    drop(handler);
+
+    let output = read_output(&buf);
+    assert!(output.contains("one [INFO] first"));
+    assert!(output.contains("two [INFO] second"));
+    assert_eq!(output.lines().count(), 2);
+}

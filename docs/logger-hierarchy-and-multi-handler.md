@@ -20,17 +20,18 @@ handler and that handlers are not shared. To match the capabilities of CPython's
    - Each logger records its parent based on dotted name segments.
    - The root logger is created on first use and acts as the top of the tree.
 
-2. **Allow multiple handlers per logger**
+2. **Allow multiple handlers per logger (implemented)**
 
-   - Change `FemtoLogger` to hold a `Vec<Arc<dyn FemtoHandlerTrait>>`.
-   - Expose `add_handler()` and `remove_handler()` APIs.
-   - Update logging macros to dispatch each record to every configured handler.
+   - `FemtoLogger` now holds a `Vec<Arc<dyn FemtoHandlerTrait>>`.
+   - `add_handler()` attaches a new handler.
+   - Each log call dispatches the record to every configured handler.
 
-3. **Support handler sharing**
+3. **Support handler sharing (implemented)**
 
-   - Wrap handlers in `Arc` so they can be referenced by multiple loggers.
-   - Ensure the internal MPSC sender is cloned for each logger.
-   - Document that handlers must be `Send + Sync + 'static` and stored as
+   - Handlers are wrapped in `Arc` so they can be referenced by multiple
+     loggers.
+   - The internal MPSC sender is cloned for each logger.
+   - Handlers must be `Send + Sync + 'static` and stored as
      `Arc<dyn FemtoHandlerTrait + Send + Sync + 'static>`.
 
 4. **Implement propagation across the hierarchy**

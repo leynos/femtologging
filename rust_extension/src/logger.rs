@@ -6,20 +6,15 @@
 // FIXME: Track PyO3 issue for proper fix
 use pyo3::prelude::*;
 
-use crossbeam_channel::{bounded, Receiver, Sender};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
 
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
+    handler::FemtoHandlerTrait,
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use std::sync::{
-    atomic::{AtomicU8, Ordering},
-    Arc,
-};
-
-const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -28,8 +23,7 @@ pub struct FemtoLogger {
     name: String,
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
-    tx: Option<Sender<String>>,
-    handle: Option<JoinHandle<()>>,
+    handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
 }
 
 #[pymethods]
@@ -38,24 +32,14 @@ impl FemtoLogger {
     #[new]
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> Self {
-        // Use a bounded channel to prevent unbounded memory growth if log
-        // producers outpace the consumer thread.
-        let (tx, rx): (Sender<String>, Receiver<String>) = bounded(DEFAULT_CHANNEL_CAPACITY);
-
         // Default to a simple formatter using the "name [LEVEL] message" style.
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
-        let handle = thread::spawn(move || {
-            for msg in rx {
-                println!("{msg}");
-            }
-        });
 
         Self {
             name,
             formatter,
             level: AtomicU8::new(FemtoLevel::Info as u8),
-            tx: Some(tx),
-            handle: Some(handle),
+            handlers: Vec::new(),
         }
     }
 
@@ -71,12 +55,10 @@ impl FemtoLogger {
             return None;
         }
         let record = FemtoLogRecord::new(&self.name, level, message);
-        let msg = self.formatter.format(&record);
-        if let Some(tx) = &self.tx {
-            if tx.send(msg.clone()).is_err() {
-                eprintln!("Warning: failed to send log record to background thread");
-            }
+        for h in &self.handlers {
+            h.handle(record.clone());
         }
+        let msg = self.formatter.format(&record);
         Some(msg)
     }
 
@@ -94,9 +76,13 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
-        self.tx.take();
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        self.handlers.clear();
+    }
+}
+
+impl FemtoLogger {
+    /// Attach a handler to this logger.
+    pub fn add_handler(&mut self, handler: Arc<dyn FemtoHandlerTrait>) {
+        self.handlers.push(handler);
     }
 }
