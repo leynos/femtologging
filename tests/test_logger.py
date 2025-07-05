@@ -52,3 +52,8 @@ def test_is_enabled_for_invalid_raises() -> None:
 def test_invalid_level_defaults_to_info() -> None:
     logger = FemtoLogger("core")
     assert logger.log("BAD", "msg") == "core [INFO] msg"
+
+
+def test_debug_below_default_is_ignored() -> None:
+    logger = FemtoLogger("core")
+    assert logger.log("DEBUG", "msg") == ""

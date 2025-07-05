@@ -53,9 +53,9 @@ nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)
 
 test: build ## Run tests
-	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
+		cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 PYO3_PYTHON=$(UV_PYTHON) cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
-	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 PYO3_PYTHON=$(UV_PYTHON) cargo test --manifest-path $(RUST_MANIFEST)
+	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0 PYO3_PYTHON=$(UV_PYTHON) cargo test --manifest-path $(RUST_MANIFEST)
 	uv run -p $(UV_PYTHON) pytest -q
 
 typecheck: build ## Static type analysis
