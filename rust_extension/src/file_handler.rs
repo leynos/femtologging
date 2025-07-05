@@ -71,9 +71,12 @@ impl FemtoFileHandler {
 
     /// Dispatch a log record created from the provided parameters.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) {
-        let lvl = level.parse().unwrap_or(FemtoLevel::Info);
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        let lvl = level.parse::<FemtoLevel>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid log level: {level}"))
+        })?;
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, lvl, message));
+        Ok(())
     }
 
     /// Flush pending log records without shutting down the worker thread.

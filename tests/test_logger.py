@@ -35,3 +35,20 @@ def test_log_formats_message(
 ) -> None:
     logger = FemtoLogger(name)
     assert logger.log(level, message) == expected
+
+
+def test_set_level_invalid_raises() -> None:
+    logger = FemtoLogger("core")
+    with pytest.raises(ValueError):
+        logger.set_level("BAD")
+
+
+def test_is_enabled_for_invalid_raises() -> None:
+    logger = FemtoLogger("core")
+    with pytest.raises(ValueError):
+        logger.is_enabled_for("BAD")
+
+
+def test_invalid_level_defaults_to_info() -> None:
+    logger = FemtoLogger("core")
+    assert logger.log("BAD", "msg") == "core [INFO] msg"

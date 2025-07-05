@@ -61,7 +61,7 @@ impl FemtoLogger {
     /// name with the level and message.
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: &str, message: &str) -> String {
-        let lvl = level.parse().unwrap_or(FemtoLevel::Info);
+        let lvl = Self::parse_level(level).unwrap_or(FemtoLevel::Info);
         if !self.is_enabled_for(lvl) {
             return String::new();
         }
@@ -77,16 +77,15 @@ impl FemtoLogger {
 
     /// Set the minimum level for this logger.
     #[pyo3(name = "set_level")]
-    pub fn set_level(&mut self, level: &str) {
-        if let Ok(lvl) = level.parse() {
-            self.level = lvl;
-        }
+    pub fn set_level(&mut self, level: &str) -> PyResult<()> {
+        self.level = Self::parse_level(level)?;
+        Ok(())
     }
 
     /// Determine if the logger accepts the provided level.
     #[pyo3(name = "is_enabled_for")]
-    pub fn is_enabled_for_py(&self, level: &str) -> bool {
-        level.parse().is_ok_and(|lvl| self.is_enabled_for(lvl))
+    pub fn is_enabled_for_py(&self, level: &str) -> PyResult<bool> {
+        Ok(self.is_enabled_for(Self::parse_level(level)?))
     }
 }
 
@@ -103,5 +102,12 @@ impl FemtoLogger {
     /// Internal helper used by logging macros and methods.
     fn is_enabled_for(&self, level: FemtoLevel) -> bool {
         level >= self.level
+    }
+
+    /// Parse a log level string or return a ``PyValueError``.
+    fn parse_level(level: &str) -> PyResult<FemtoLevel> {
+        level.parse::<FemtoLevel>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid log level: '{level}'"))
+        })
     }
 }

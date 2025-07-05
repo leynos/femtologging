@@ -1,3 +1,9 @@
+//! Log severity levels for the femtologging framework.
+//!
+//! This module defines the `FemtoLevel` enum which represents different
+//! severity levels for log records, providing type-safe parsing and
+//! formatting.
+
 use std::fmt;
 use std::str::FromStr;
 

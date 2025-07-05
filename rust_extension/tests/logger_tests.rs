@@ -38,6 +38,12 @@ fn logger_skips_disabled_levels() {
 #[test]
 fn logger_respects_set_level() {
     let mut logger = FemtoLogger::new("core".to_string());
-    logger.set_level("DEBUG");
+    logger.set_level("DEBUG").unwrap();
     assert_eq!(logger.log("DEBUG", "shown"), "core [DEBUG] shown");
+}
+
+#[test]
+fn logger_invalid_level_defaults_to_info() {
+    let logger = FemtoLogger::new("core".to_string());
+    assert_eq!(logger.log("BAD", "msg"), "core [INFO] msg");
 }

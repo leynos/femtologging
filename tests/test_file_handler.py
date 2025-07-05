@@ -118,3 +118,11 @@ def test_file_handler_flush_interval_one(
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "message")
     assert path.read_text() == "core [INFO] message\n"
+
+
+def test_file_handler_invalid_level_raises(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.log"
+    handler = FemtoFileHandler(str(path))
+    with pytest.raises(ValueError):
+        handler.handle("core", "BAD", "msg")
+    handler.close()
