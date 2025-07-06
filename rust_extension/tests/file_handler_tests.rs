@@ -73,16 +73,14 @@ fn multiple_records_are_serialised() {
 #[test]
 fn queue_overflow_drops_excess_records() {
     let output = with_temp_file_handler(3, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
-        h.handle(FemtoLogRecord::new("core", "WARN", "second"));
-        h.handle(FemtoLogRecord::new("core", "ERROR", "third"));
-        h.handle(FemtoLogRecord::new("core", "DEBUG", "fourth"));
-        h.handle(FemtoLogRecord::new("core", "TRACE", "fifth"));
+        for i in 0..10 {
+            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")));
+        }
     });
 
     assert_eq!(
         output,
-        "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n",
+        "core [INFO] msg0\ncore [INFO] msg1\ncore [INFO] msg2\n",
     );
 }
 

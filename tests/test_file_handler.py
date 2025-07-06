@@ -77,6 +77,27 @@ def test_file_handler_flush(tmp_path: Path) -> None:
     handler.close()
 
 
+def test_file_handler_flush_concurrent(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
+    """Concurrent ``flush()`` calls should each succeed."""
+
+    path = tmp_path / "flush_concurrent.log"
+    with file_handler_factory(path, 8, 1) as handler:
+
+        def send_and_flush() -> None:
+            handler.handle("core", "INFO", "msg")
+            assert handler.flush() is True
+
+        threads = [threading.Thread(target=send_and_flush) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert len(path.read_text().splitlines()) == 5
+
+
 def test_file_handler_open_failure(tmp_path: Path) -> None:
     """Creating a handler in a missing directory raises ``OSError``."""
     bad_dir = tmp_path / "does_not_exist"
