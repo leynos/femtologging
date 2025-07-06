@@ -36,7 +36,7 @@ handler reference. When `log()` creates a `FemtoLogRecord`, it sends a clone to
 each configured handler, ensuring thread‑safe routing via the handlers' MPSC
 queues.
 
-Currently `add_handler()` is only available from Rust code. Python users still
+Currently, `add_handler()` is only available from Rust code. Python users still
 create a logger with a single default handler. Support for attaching additional
 handlers from Python will be added once the trait objects can be safely
 transferred across the FFI boundary.

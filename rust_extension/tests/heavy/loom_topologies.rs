@@ -8,7 +8,7 @@ use loom::thread;
 use std::io::{self, Write};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoLogger, FemtoHandlerTrait, FemtoStreamHandler, FemtoLogRecord,
+    DefaultFormatter, FemtoLogger, FemtoHandlerTrait, FemtoStreamHandler,
 };
 
 #[derive(Clone)]
