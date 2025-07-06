@@ -128,6 +128,18 @@ def test_blocking_policy_basic(tmp_path: Path) -> None:
     assert path.read_text() == "core [INFO] first\n"
 
 
+def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
+    path = tmp_path / "block_over.log"
+    handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 2, 1)
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")
+    handler.close()
+    assert (
+        path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    )
+
+
 def test_timeout_policy_basic(tmp_path: Path) -> None:
     path = tmp_path / "timeout.log"
     handler = FemtoFileHandler.with_capacity_flush_timeout(
@@ -136,3 +148,17 @@ def test_timeout_policy_basic(tmp_path: Path) -> None:
     handler.handle("core", "INFO", "first")
     handler.close()
     assert path.read_text() == "core [INFO] first\n"
+
+
+def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
+    path = tmp_path / "timeout_over.log"
+    handler = FemtoFileHandler.with_capacity_flush_timeout(
+        str(path), 2, 1, timeout_ms=100
+    )
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")
+    handler.close()
+    assert (
+        path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    )

@@ -7,6 +7,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     path::Path,
+    sync::{Arc, Barrier},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -24,7 +25,7 @@ use crate::{
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Determines how `FemtoFileHandler` reacts when its queue is full.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverflowPolicy {
     /// Drop new records, preserving existing ones. Current default behaviour.
     Drop,
@@ -157,9 +158,65 @@ impl FemtoFileHandler {
         self.close();
     }
 }
-
 impl FemtoFileHandler {
     /// Convenience constructor using the default formatter and queue capacity.
+    /// Spawn the worker thread that processes file commands.
+    fn spawn_worker<W, F>(
+        writer: W,
+        formatter: F,
+        capacity: usize,
+        flush_interval: usize,
+        _overflow_policy: OverflowPolicy,
+        start_barrier: Option<Arc<Barrier>>,
+    ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
+    where
+        W: Write + Send + 'static,
+        F: FemtoFormatter + Send + 'static,
+    {
+        let (tx, rx) = bounded(capacity);
+        let (done_tx, done_rx) = bounded(1);
+        let handle = thread::spawn(move || {
+            if let Some(b) = start_barrier {
+                b.wait();
+            }
+            let mut writer = writer;
+            let formatter = formatter;
+            let mut writes = 0usize;
+            for cmd in rx {
+                match cmd {
+                    FileCommand::Record(record) => {
+                        let msg = formatter.format(&record);
+                        if writeln!(writer, "{msg}")
+                            .and_then(|_| writer.flush())
+                            .is_err()
+                        {
+                            warn!("FemtoFileHandler write error");
+                        } else {
+                            writes += 1;
+                            if flush_interval != 0
+                                && writes % flush_interval == 0
+                                && writer.flush().is_err()
+                            {
+                                warn!("FemtoFileHandler flush error");
+                            }
+                        }
+                    }
+                    FileCommand::Flush(ack) => {
+                        if writer.flush().is_err() {
+                            warn!("FemtoFileHandler flush error");
+                        }
+                        writes = 0;
+                        let _ = ack.send(());
+                    }
+                }
+            }
+            if writer.flush().is_err() {
+                warn!("FemtoFileHandler flush error");
+            }
+            let _ = done_tx.send(());
+        });
+        (tx, done_rx, handle)
+    }
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
     }
@@ -235,43 +292,14 @@ impl FemtoFileHandler {
     where
         F: FemtoFormatter + Send + 'static,
     {
-        let (tx, rx) = bounded(capacity);
-        let (done_tx, done_rx) = bounded(1);
-        let handle = thread::spawn(move || {
-            let mut file = file;
-            let formatter = formatter;
-            let mut writes = 0usize;
-            for cmd in rx {
-                match cmd {
-                    FileCommand::Record(record) => {
-                        let msg = formatter.format(&record);
-                        if writeln!(file, "{msg}").and_then(|_| file.flush()).is_err() {
-                            warn!("FemtoFileHandler write error");
-                        } else {
-                            writes += 1;
-                            if flush_interval != 0
-                                && writes % flush_interval == 0
-                                && file.flush().is_err()
-                            {
-                                warn!("FemtoFileHandler flush error");
-                            }
-                        }
-                    }
-                    FileCommand::Flush(ack) => {
-                        if file.flush().is_err() {
-                            warn!("FemtoFileHandler flush error");
-                        }
-                        writes = 0;
-                        let _ = ack.send(());
-                    }
-                }
-            }
-            if file.flush().is_err() {
-                warn!("FemtoFileHandler flush error");
-            }
-            let _ = done_tx.send(());
-        });
-
+        let (tx, done_rx, handle) = Self::spawn_worker(
+            file,
+            formatter,
+            capacity,
+            flush_interval,
+            overflow_policy,
+            None,
+        );
         Self {
             tx: Some(tx),
             handle: Some(handle),
@@ -314,15 +342,22 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     /// warning is emitted via the `log` crate.
     fn handle(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
-            let failed = match self.overflow_policy {
-                OverflowPolicy::Drop => tx.try_send(FileCommand::Record(record)).is_err(),
-                OverflowPolicy::Block => tx.send(FileCommand::Record(record)).is_err(),
-                OverflowPolicy::Timeout(dur) => {
-                    tx.send_timeout(FileCommand::Record(record), dur).is_err()
-                }
+            let (failed, reason) = match self.overflow_policy {
+                OverflowPolicy::Drop => (
+                    tx.try_send(FileCommand::Record(record)).is_err(),
+                    "queue full or shutting down",
+                ),
+                OverflowPolicy::Block => (
+                    tx.send(FileCommand::Record(record)).is_err(),
+                    "queue full or shutting down",
+                ),
+                OverflowPolicy::Timeout(dur) => (
+                    tx.send_timeout(FileCommand::Record(record), dur).is_err(),
+                    "timeout while sending to queue",
+                ),
             };
             if failed {
-                warn!("FemtoFileHandler: queue full or shutting down, dropping record");
+                warn!("FemtoFileHandler: {reason}, dropping record");
             }
         } else {
             warn!("FemtoFileHandler: handle called after close");
@@ -354,49 +389,14 @@ impl FemtoFileHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        let (tx, rx) = bounded(capacity);
-        let (done_tx, done_rx) = bounded(1);
-        let handle = thread::spawn(move || {
-            if let Some(b) = start_barrier {
-                b.wait();
-            }
-            let mut writer = writer;
-            let formatter = formatter;
-            let mut writes = 0usize;
-            for cmd in rx {
-                match cmd {
-                    FileCommand::Record(record) => {
-                        let msg = formatter.format(&record);
-                        if writeln!(writer, "{msg}")
-                            .and_then(|_| writer.flush())
-                            .is_err()
-                        {
-                            warn!("FemtoFileHandler write error");
-                        } else {
-                            writes += 1;
-                            if flush_interval != 0
-                                && writes % flush_interval == 0
-                                && writer.flush().is_err()
-                            {
-                                warn!("FemtoFileHandler flush error");
-                            }
-                        }
-                    }
-                    FileCommand::Flush(ack) => {
-                        if writer.flush().is_err() {
-                            warn!("FemtoFileHandler flush error");
-                        }
-                        writes = 0;
-                        let _ = ack.send(());
-                    }
-                }
-            }
-            if writer.flush().is_err() {
-                warn!("FemtoFileHandler flush error");
-            }
-            let _ = done_tx.send(());
-        });
-
+        let (tx, done_rx, handle) = Self::spawn_worker(
+            writer,
+            formatter,
+            capacity,
+            flush_interval,
+            overflow_policy,
+            start_barrier,
+        );
         Self {
             tx: Some(tx),
             handle: Some(handle),
