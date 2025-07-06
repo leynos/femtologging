@@ -9,6 +9,7 @@ is implementing hierarchical configuration using dotted names with propagation.
 - [x] multiple handlers per logger
 - [x] multiple loggers targeting the same handler safely
 - hierarchical logger configuration using dotted names with propagation
+- add_handler is currently only exposed in Rust; Python APIs will follow
 
 ## Steps to Implement
 
