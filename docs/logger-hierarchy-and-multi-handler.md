@@ -1,13 +1,15 @@
 # Logger Hierarchy and Handler Relationships
 
-This note outlines the work required to add flexible logger/handler wiring to
-`femtologging`. The current prototype assumes each logger owns exactly one
-handler and that handlers are not shared. To match the capabilities of CPython's
-`logging`, the following features must be implemented:
+This note outlines the remaining work to add flexible logger/handler wiring to
+`femtologging`. The prototype originally assumed each logger owned a single
+handler and that handlers were not shared. The codebase now supports multiple
+handlers per logger and safely sharing a handler between loggers. The next step
+is implementing hierarchical configuration using dotted names with propagation.
 
-- multiple handlers per logger
-- multiple loggers targeting the same handler safely
+- [x] multiple handlers per logger
+- [x] multiple loggers targeting the same handler safely
 - hierarchical logger configuration using dotted names with propagation
+- add_handler is currently only exposed in Rust; Python APIs will follow
 
 ## Steps to Implement
 

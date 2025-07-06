@@ -1,5 +1,25 @@
 use _femtologging_rs::FemtoLogger;
+use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoStreamHandler};
 use rstest::rstest;
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+impl Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
+    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+}
 
 #[rstest]
 #[case("core", "INFO", "hello", "core [INFO] hello")]
@@ -52,4 +72,48 @@ fn level_parsing_and_filtering() {
     assert!(logger.log("WARN", "drop").is_none());
     // Invalid strings default to INFO with warning
     assert!(logger.log("bogus", "drop").is_none());
+}
+
+#[test]
+fn logger_routes_to_multiple_handlers() {
+    let buf1 = Arc::new(Mutex::new(Vec::new()));
+    let buf2 = Arc::new(Mutex::new(Vec::new()));
+    let handler1 = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf1)),
+        DefaultFormatter,
+    ));
+    let handler2 = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf2)),
+        DefaultFormatter,
+    ));
+    let mut logger = FemtoLogger::new("core".to_string());
+    logger.add_handler(handler1.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger.add_handler(handler2.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger.log("INFO", "hello");
+    drop(logger);
+    drop(handler1);
+    drop(handler2);
+    assert_eq!(read_output(&buf1), "core [INFO] hello\n");
+    assert_eq!(read_output(&buf2), "core [INFO] hello\n");
+}
+
+#[test]
+fn shared_handler_across_loggers() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
+    ));
+    let mut l1 = FemtoLogger::new("a".to_string());
+    let mut l2 = FemtoLogger::new("b".to_string());
+    l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    l1.log("INFO", "one");
+    l2.log("INFO", "two");
+    drop(l1);
+    drop(l2);
+    drop(handler);
+    let out = read_output(&buffer);
+    assert!(out.contains("a [INFO] one"));
+    assert!(out.contains("b [INFO] two"));
 }
