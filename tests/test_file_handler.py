@@ -118,3 +118,21 @@ def test_file_handler_flush_interval_one(
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "message")
     assert path.read_text() == "core [INFO] message\n"
+
+
+def test_blocking_policy_basic(tmp_path: Path) -> None:
+    path = tmp_path / "block.log"
+    handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 1, 1)
+    handler.handle("core", "INFO", "first")
+    handler.close()
+    assert path.read_text() == "core [INFO] first\n"
+
+
+def test_timeout_policy_basic(tmp_path: Path) -> None:
+    path = tmp_path / "timeout.log"
+    handler = FemtoFileHandler.with_capacity_flush_timeout(
+        str(path), 1, 1, timeout_ms=10
+    )
+    handler.handle("core", "INFO", "first")
+    handler.close()
+    assert path.read_text() == "core [INFO] first\n"

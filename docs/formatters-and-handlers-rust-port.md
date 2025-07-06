@@ -65,7 +65,13 @@ pub struct FemtoHandler;
 
 Implementations should forward the record to an internal queue with `try_send`
 so the caller never blocks. If the queue is full, the record is silently dropped
-and a warning is written to `stderr`.
+and a warning is written to `stderr`. Advanced use cases can specify an overflow
+policy when constructing a handler:
+
+- **Drop** – current default; new records are discarded when the queue is full.
+- **Block** – the call blocks until space becomes available.
+- **Timeout** – wait for a fixed duration before giving up and dropping the
+  record.
 
 ### StreamHandler
 

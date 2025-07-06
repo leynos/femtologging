@@ -8,7 +8,7 @@ mod log_record;
 mod logger;
 mod stream_handler;
 
-pub use file_handler::FemtoFileHandler;
+pub use file_handler::{FemtoFileHandler, OverflowPolicy};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use level::FemtoLevel;
