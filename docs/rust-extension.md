@@ -28,3 +28,10 @@ key‑value pairs. Use `FemtoLogRecord::new` for default metadata or
 messages below that threshold. The `set_level()` method updates the logger's
 minimum level from Python or Rust code. The `log()` method returns the formatted
 string or `None` when a message is filtered out.
+
+`FemtoLogger` can now dispatch a record to multiple handlers. Handlers implement
+`FemtoHandlerTrait` and run their I/O on worker threads. A logger holds a
+`Vec<Arc<dyn FemtoHandlerTrait>>`; calling `add_handler()` stores another
+handler reference. When `log()` creates a `FemtoLogRecord`, it sends a clone to
+each configured handler, ensuring thread‑safe routing via the handlers' MPSC
+queues.
