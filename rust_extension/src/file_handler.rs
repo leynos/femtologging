@@ -342,22 +342,28 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     /// warning is emitted via the `log` crate.
     fn handle(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
-            let (failed, reason) = match self.overflow_policy {
-                OverflowPolicy::Drop => (
-                    tx.try_send(FileCommand::Record(record)).is_err(),
-                    "queue full or shutting down",
-                ),
-                OverflowPolicy::Block => (
-                    tx.send(FileCommand::Record(record)).is_err(),
-                    "queue full or shutting down",
-                ),
-                OverflowPolicy::Timeout(dur) => (
-                    tx.send_timeout(FileCommand::Record(record), dur).is_err(),
-                    "timeout while sending to queue",
-                ),
-            };
-            if failed {
-                warn!("FemtoFileHandler: {reason}, dropping record");
+            match self.overflow_policy {
+                OverflowPolicy::Drop => {
+                    if tx.try_send(FileCommand::Record(record)).is_err() {
+                        warn!(
+                            "FemtoFileHandler (Drop): queue full or shutting down, dropping record"
+                        );
+                    }
+                }
+                OverflowPolicy::Block => {
+                    if tx.send(FileCommand::Record(record)).is_err() {
+                        warn!(
+                            "FemtoFileHandler (Block): queue full or shutting down, dropping record"
+                        );
+                    }
+                }
+                OverflowPolicy::Timeout(dur) => {
+                    if tx.send_timeout(FileCommand::Record(record), dur).is_err() {
+                        warn!(
+                            "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
+                        );
+                    }
+                }
             }
         } else {
             warn!("FemtoFileHandler: handle called after close");
@@ -377,6 +383,7 @@ impl Drop for FemtoFileHandler {
 
 impl FemtoFileHandler {
     /// Construct a handler from an arbitrary writer for testing.
+    #[cfg(feature = "test-util")]
     pub fn with_writer_for_test<W, F>(
         writer: W,
         formatter: F,

@@ -121,6 +121,7 @@ def test_file_handler_flush_interval_one(
 
 
 def test_blocking_policy_basic(tmp_path: Path) -> None:
+    """Verify flushing and writing when using the blocking policy."""
     path = tmp_path / "block.log"
     handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 1, 1)
     handler.handle("core", "INFO", "first")
@@ -141,6 +142,7 @@ def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
 
 
 def test_timeout_policy_basic(tmp_path: Path) -> None:
+    """Test basic functionality of timeout policy in FemtoFileHandler."""
     path = tmp_path / "timeout.log"
     handler = FemtoFileHandler.with_capacity_flush_timeout(
         str(path), 1, 1, timeout_ms=10
