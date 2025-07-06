@@ -26,12 +26,13 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 /// Handler that writes formatted log records to a file on a background thread.
 enum FileCommand {
     Record(FemtoLogRecord),
-    Flush(Sender<()>),
+    Flush,
 }
 
 #[pyclass]
 pub struct FemtoFileHandler {
     tx: Option<Sender<FileCommand>>,
+    ack_rx: Receiver<()>,
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
 }
@@ -132,6 +133,7 @@ impl FemtoFileHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let (tx, rx) = bounded(capacity);
+        let (flush_tx, flush_rx) = bounded(1);
         let (done_tx, done_rx) = bounded(1);
         let handle = thread::spawn(move || {
             let mut file = file;
@@ -153,12 +155,12 @@ impl FemtoFileHandler {
                             }
                         }
                     }
-                    FileCommand::Flush(ack) => {
+                    FileCommand::Flush => {
                         if file.flush().is_err() {
                             warn!("FemtoFileHandler flush error");
                         }
                         writes = 0;
-                        let _ = ack.send(());
+                        let _ = flush_tx.send(());
                     }
                 }
             }
@@ -170,6 +172,7 @@ impl FemtoFileHandler {
 
         Self {
             tx: Some(tx),
+            ack_rx: flush_rx,
             handle: Some(handle),
             done_rx,
         }
@@ -178,11 +181,10 @@ impl FemtoFileHandler {
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
         if let Some(tx) = &self.tx {
-            let (ack_tx, ack_rx) = bounded(1);
-            if tx.send(FileCommand::Flush(ack_tx)).is_err() {
+            if tx.send(FileCommand::Flush).is_err() {
                 return false;
             }
-            return ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+            return self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
         }
         false
     }
