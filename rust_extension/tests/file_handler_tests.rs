@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
     DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, OverflowPolicy,
+    TestConfig,
 };
 use tempfile::NamedTempFile;
 
@@ -164,14 +165,12 @@ fn file_handler_flush_interval_one() {
 fn blocking_policy_waits_for_space() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let start = Arc::new(Barrier::new(2));
-    let handler = Arc::new(FemtoFileHandler::with_writer_for_test(
-        SharedBuf(Arc::clone(&buffer)),
-        DefaultFormatter,
-        1,
-        1,
-        OverflowPolicy::Block,
-        Some(Arc::clone(&start)),
-    ));
+    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    cfg.capacity = 1;
+    cfg.flush_interval = 1;
+    cfg.overflow_policy = OverflowPolicy::Block;
+    cfg.start_barrier = Some(Arc::clone(&start));
+    let handler = Arc::new(FemtoFileHandler::with_writer_for_test(cfg));
 
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
     let h = Arc::clone(&handler);
@@ -188,14 +187,12 @@ fn blocking_policy_waits_for_space() {
 fn timeout_policy_gives_up() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let start = Arc::new(Barrier::new(2));
-    let handler = FemtoFileHandler::with_writer_for_test(
-        SharedBuf(Arc::clone(&buffer)),
-        DefaultFormatter,
-        1,
-        1,
-        OverflowPolicy::Timeout(Duration::from_millis(50)),
-        Some(Arc::clone(&start)),
-    );
+    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    cfg.capacity = 1;
+    cfg.flush_interval = 1;
+    cfg.overflow_policy = OverflowPolicy::Timeout(Duration::from_millis(50));
+    cfg.start_barrier = Some(Arc::clone(&start));
+    let handler = FemtoFileHandler::with_writer_for_test(cfg);
 
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
     let start_time = Instant::now();
