@@ -35,6 +35,25 @@ sequenceDiagram
     LoggingMod  --> Client: Logger
 ```
 
+## `Manager.get_logger()` – femtologging
+
+```mermaid
+sequenceDiagram
+    participant PythonAPI as Python API
+    participant Manager
+    participant FemtoLogger
+
+    PythonAPI->>Manager: get_logger(py, name)
+    alt logger exists
+        Manager-->>PythonAPI: return existing FemtoLogger
+    else logger does not exist
+        Manager->>Manager: determine parent (dotted-name logic)
+        Manager->>FemtoLogger: FemtoLogger::with_parent(name, parent)
+        Manager->>Manager: store logger in registry
+        Manager-->>PythonAPI: return new FemtoLogger
+    end
+```
+
 ______________________________________________________________________
 
 ## 2 `basicConfig(...)` – one-shot root logger configuration

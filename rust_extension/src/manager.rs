@@ -1,7 +1,12 @@
+//! Global registry mapping logger names to instances.
+//!
+//! Access is guarded by a `parking_lot::RwLock` and must only occur while the
+//! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
+
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use crate::logger::FemtoLogger;
 
@@ -12,27 +17,42 @@ struct Manager {
 
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Retrieve an existing logger or create one with a dotted-name parent.
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.ends_with('.')
+        || name.split('.').any(|s| s.is_empty())
     {
-        let mgr = MANAGER.read();
-        if let Some(logger) = mgr.loggers.get(name) {
-            return Ok(logger.clone_ref(py));
-        }
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "invalid logger name",
+        ));
     }
 
-    let parent_name = if let Some((parent, _)) = name.rsplit_once('.') {
-        Some(parent.to_string())
-    } else if name != "root" {
-        Some("root".to_string())
-    } else {
-        None
-    };
-
-    let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
     let mut mgr = MANAGER.write();
-    let entry = mgr
-        .loggers
-        .entry(name.to_string())
-        .or_insert_with(|| logger.clone_ref(py));
-    Ok(entry.clone_ref(py))
+
+    if !mgr.loggers.contains_key("root") {
+        let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
+        mgr.loggers.insert("root".to_string(), root);
+    }
+
+    match mgr.loggers.entry(name.to_string()) {
+        Entry::Occupied(o) => Ok(o.get().clone_ref(py)),
+        Entry::Vacant(v) => {
+            let parent_name = name
+                .rsplit_once('.')
+                .map(|(p, _)| p.to_string())
+                .or_else(|| (name != "root").then(|| "root".to_string()));
+
+            let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
+            v.insert(logger.clone_ref(py));
+            Ok(logger)
+        }
+    }
+}
+
+#[pyfunction]
+pub fn reset_manager() {
+    let mut mgr = MANAGER.write();
+    mgr.loggers.clear();
 }

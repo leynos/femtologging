@@ -15,7 +15,7 @@ pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 pub use logger::FemtoLogger;
-use manager::get_logger as manager_get_logger;
+use manager::{get_logger as manager_get_logger, reset_manager};
 pub use stream_handler::FemtoStreamHandler;
 
 #[pyfunction]
@@ -28,6 +28,11 @@ fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     manager_get_logger(py, name)
 }
 
+#[pyfunction]
+fn reset_manager_py() {
+    reset_manager();
+}
+
 #[allow(deprecated)]
 #[pymodule]
 fn _femtologging_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
@@ -37,5 +42,6 @@ fn _femtologging_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<FemtoFileHandler>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
+    m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
     Ok(())
 }
