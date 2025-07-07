@@ -21,7 +21,7 @@ expanded with specifics for the configuration design.
 - [ ] **Store handlers in an `Arc` so that several loggers can share one
   instance safely.**
 
-- [ ] **Introduce a `Manager` registry with dotted-name hierarchy support and a
+- [x] **Introduce a `Manager` registry with dotted-name hierarchy support and a
   root logger configuration.**
 
 - [ ] **Expose a mirroring** `femtologging.ConfigBuilder` **in Python via**

@@ -104,6 +104,8 @@ dependencies = [
  "itertools",
  "log",
  "loom",
+ "once_cell",
+ "parking_lot",
  "proptest",
  "pyo3",
  "rstest",

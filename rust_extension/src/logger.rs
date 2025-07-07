@@ -23,6 +23,9 @@ use std::sync::{
 pub struct FemtoLogger {
     /// Identifier used to distinguish log messages from different loggers.
     name: String,
+    /// Parent logger name for dotted hierarchy.
+    #[pyo3(get)]
+    parent: Option<String>,
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
     handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
@@ -34,15 +37,7 @@ impl FemtoLogger {
     #[new]
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> Self {
-        // Default to a simple formatter using the "name [LEVEL] message" style.
-        let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
-
-        Self {
-            name,
-            formatter,
-            level: AtomicU8::new(FemtoLevel::Info as u8),
-            handlers: Vec::new(),
-        }
+        Self::with_parent(name, None)
     }
 
     /// Format a message at the provided level and return it.
@@ -80,5 +75,18 @@ impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&mut self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.push(handler);
+    }
+
+    /// Create a logger with an explicit parent name.
+    pub fn with_parent(name: String, parent: Option<String>) -> Self {
+        let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
+
+        Self {
+            name,
+            parent,
+            formatter,
+            level: AtomicU8::new(FemtoLevel::Info as u8),
+            handlers: Vec::new(),
+        }
     }
 }
