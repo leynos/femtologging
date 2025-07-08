@@ -179,6 +179,15 @@ fn blocking_policy_waits_for_space() {
     assert!(!t.is_finished());
     start.wait();
     t.join().unwrap();
+    assert!(handler.flush());
+
+    let buf = buffer.lock().unwrap();
+    let output = String::from_utf8_lossy(&buf);
+    assert!(output.contains("core [INFO] first"));
+    assert!(output.contains("core [INFO] second"));
+    let first_idx = output.find("core [INFO] first").unwrap();
+    let second_idx = output.find("core [INFO] second").unwrap();
+    assert!(first_idx < second_idx);
 }
 
 #[test]

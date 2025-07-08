@@ -62,7 +62,7 @@ impl<W, F> TestConfig<W, F> {
         Self {
             writer,
             formatter,
-            capacity: 16,
+            capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_interval: 1,
             overflow_policy: OverflowPolicy::Drop,
             start_barrier: None,
@@ -84,7 +84,6 @@ impl Default for HandlerConfig {
 struct WorkerConfig {
     capacity: usize,
     flush_interval: usize,
-    _overflow_policy: OverflowPolicy,
     start_barrier: Option<Arc<Barrier>>,
 }
 
@@ -93,7 +92,6 @@ impl Default for WorkerConfig {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_interval: 1,
-            _overflow_policy: OverflowPolicy::Drop,
             start_barrier: None,
         }
     }
@@ -113,9 +111,17 @@ impl FlushTracker {
         }
     }
 
+    fn flush_interval(&self) -> Option<usize> {
+        if self.flush_interval == 0 {
+            None
+        } else {
+            Some(self.flush_interval)
+        }
+    }
+
     fn record_write<W: Write>(&mut self, writer: &mut W) -> bool {
         self.writes += 1;
-        if self.flush_interval != 0 && self.writes % self.flush_interval == 0 {
+        if self.flush_interval > 1 && self.writes % self.flush_interval == 0 {
             if writer.flush().is_err() {
                 warn!("FemtoFileHandler flush error");
             }
@@ -156,32 +162,26 @@ impl FemtoFileHandler {
     #[staticmethod]
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity(path: String, capacity: usize) -> PyResult<Self> {
-        Self::with_capacity(path, DefaultFormatter, capacity)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+        Self::build_py_handler(path, capacity, None, OverflowPolicy::Drop)
     }
 
     /// Create a blocking handler that waits when the queue is full.
     #[staticmethod]
     #[pyo3(name = "with_capacity_blocking")]
     fn py_with_capacity_blocking(path: String, capacity: usize) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
-            path,
-            capacity,
-            None,
-            OverflowPolicy::Block,
-        ))
+        Self::build_py_handler(path, capacity, None, OverflowPolicy::Block)
     }
 
     /// Create a timeout-based handler. `timeout_ms` specifies how long to wait for space.
     #[staticmethod]
     #[pyo3(name = "with_capacity_timeout")]
     fn py_with_capacity_timeout(path: String, capacity: usize, timeout_ms: u64) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
+        Self::build_py_handler(
             path,
             capacity,
             None,
             OverflowPolicy::Timeout(Duration::from_millis(timeout_ms)),
-        ))
+        )
     }
 
     /// Create a handler with a custom flush interval.
@@ -196,12 +196,7 @@ impl FemtoFileHandler {
         capacity: usize,
         flush_interval: usize,
     ) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
-            path,
-            capacity,
-            Some(flush_interval),
-            OverflowPolicy::Drop,
-        ))
+        Self::build_py_handler(path, capacity, Some(flush_interval), OverflowPolicy::Drop)
     }
 
     /// Blocking variant of `with_capacity_flush`.
@@ -212,12 +207,7 @@ impl FemtoFileHandler {
         capacity: usize,
         flush_interval: usize,
     ) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
-            path,
-            capacity,
-            Some(flush_interval),
-            OverflowPolicy::Block,
-        ))
+        Self::build_py_handler(path, capacity, Some(flush_interval), OverflowPolicy::Block)
     }
 
     /// Timeout variant of `with_capacity_flush`.
@@ -229,12 +219,12 @@ impl FemtoFileHandler {
         flush_interval: usize,
         timeout_ms: u64,
     ) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
+        Self::build_py_handler(
             path,
             capacity,
             Some(flush_interval),
             OverflowPolicy::Timeout(Duration::from_millis(timeout_ms)),
-        ))
+        )
     }
 
     /// Dispatch a log record created from the provided parameters.
@@ -331,6 +321,20 @@ impl FemtoFileHandler {
         Self::with_capacity_flush_policy(path, DefaultFormatter, cfg)
     }
 
+    fn build_py_handler(
+        path: String,
+        capacity: usize,
+        flush_interval: Option<usize>,
+        overflow_policy: OverflowPolicy,
+    ) -> PyResult<Self> {
+        Self::handle_io_result(Self::create_with_policy(
+            path,
+            capacity,
+            flush_interval,
+            overflow_policy,
+        ))
+    }
+
     /// Write a single log record to the provided writer.
     fn write_record<W, F>(
         writer: &mut W,
@@ -342,10 +346,16 @@ impl FemtoFileHandler {
         F: FemtoFormatter,
     {
         let msg = formatter.format(&record);
-        if writeln!(writer, "{msg}")
-            .and_then(|_| writer.flush())
-            .is_err()
-        {
+        let write_result = writeln!(writer, "{msg}");
+        let should_flush = flush_tracker.flush_interval() == Some(1);
+
+        let flush_result = if should_flush {
+            write_result.and_then(|_| writer.flush())
+        } else {
+            write_result
+        };
+
+        if flush_result.is_err() {
             warn!("FemtoFileHandler write error");
             return;
         }
@@ -411,7 +421,6 @@ impl FemtoFileHandler {
         let worker_cfg = WorkerConfig {
             capacity: config.capacity,
             flush_interval: config.flush_interval,
-            _overflow_policy: config.overflow_policy,
             start_barrier: None,
         };
         let (tx, done_rx, handle) = Self::spawn_worker(file, formatter, worker_cfg);
@@ -517,7 +526,6 @@ impl FemtoFileHandler {
         let worker_cfg = WorkerConfig {
             capacity,
             flush_interval,
-            _overflow_policy: overflow_policy,
             start_barrier,
         };
         let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg);
