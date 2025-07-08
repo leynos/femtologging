@@ -7,14 +7,9 @@ and packaged using [maturin](https://maturin.rs/). Ensure the
 [Rust tool‑chain](https://www.rust-lang.org/tools/install) is installed, then
 run `pip install .` or `make build` to compile the extension.
 
-## Usage
-
 ```python
-from femtologging import FemtoFileHandler
+from femtologging import get_logger
 
-handler = FemtoFileHandler.with_capacity_flush_timeout(
-    "app.log", capacity=32, flush_interval=1, timeout_ms=200
-)
-handler.handle("core", "INFO", "hello")
-handler.close()
+log = get_logger("demo")
+log.log("INFO", "hello from femtologging")
 ```
