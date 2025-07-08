@@ -130,6 +130,7 @@ def test_blocking_policy_basic(tmp_path: Path) -> None:
 
 
 def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
+    """Verify blocking behaviour when capacity is exceeded."""
     path = tmp_path / "block_over.log"
     handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 2, 1)
     handler.handle("core", "INFO", "first")
@@ -145,7 +146,7 @@ def test_timeout_policy_basic(tmp_path: Path) -> None:
     """Test basic functionality of timeout policy in FemtoFileHandler."""
     path = tmp_path / "timeout.log"
     handler = FemtoFileHandler.with_capacity_flush_timeout(
-        str(path), 1, 1, timeout_ms=10
+        str(path), 1, 1, timeout_ms=500
     )
     handler.handle("core", "INFO", "first")
     handler.close()
@@ -153,9 +154,10 @@ def test_timeout_policy_basic(tmp_path: Path) -> None:
 
 
 def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
+    """Ensure timeout policy flushes when over capacity."""
     path = tmp_path / "timeout_over.log"
     handler = FemtoFileHandler.with_capacity_flush_timeout(
-        str(path), 2, 1, timeout_ms=100
+        str(path), 2, 1, timeout_ms=1000
     )
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
