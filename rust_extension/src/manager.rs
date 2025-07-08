@@ -28,11 +28,6 @@ fn is_invalid_logger_name(name: &str) -> bool {
         || name.split('.').any(|s| s.is_empty())
 }
 
-/// Return `true` when the provided name passes validation.
-fn is_valid_logger_name(name: &str) -> bool {
-    !is_invalid_logger_name(name)
-}
-
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
         let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
@@ -49,9 +44,9 @@ fn calculate_parent_name(name: &str) -> Option<String> {
 
 /// Retrieve an existing logger or create one with a dotted-name parent.
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
-    if !is_valid_logger_name(name) {
+    if is_invalid_logger_name(name) {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "invalid logger name",
+            "logger name cannot be empty, start or end with '.', or contain consecutive dots",
         ));
     }
 
