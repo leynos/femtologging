@@ -4,11 +4,28 @@
 //! handling and concurrent usage from multiple threads.
 
 use std::fs;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
-use _femtologging_rs::{DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, OverflowPolicy,
+    TestConfig,
+};
 use tempfile::NamedTempFile;
+
+#[derive(Clone)]
+struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
@@ -140,4 +157,44 @@ fn file_handler_flush_interval_one() {
         h.handle(FemtoLogRecord::new("core", "INFO", "message"));
     });
     assert_eq!(output, "core [INFO] message\n");
+}
+
+#[test]
+fn blocking_policy_waits_for_space() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let start = Arc::new(Barrier::new(2));
+    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    cfg.capacity = 1;
+    cfg.flush_interval = 1;
+    cfg.overflow_policy = OverflowPolicy::Block;
+    cfg.start_barrier = Some(Arc::clone(&start));
+    let handler = Arc::new(FemtoFileHandler::with_writer_for_test(cfg));
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    let h = Arc::clone(&handler);
+    let t = thread::spawn(move || {
+        h.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert!(!t.is_finished());
+    start.wait();
+    t.join().unwrap();
+}
+
+#[test]
+fn timeout_policy_gives_up() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let start = Arc::new(Barrier::new(2));
+    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    cfg.capacity = 1;
+    cfg.flush_interval = 1;
+    cfg.overflow_policy = OverflowPolicy::Timeout(Duration::from_millis(50));
+    cfg.start_barrier = Some(Arc::clone(&start));
+    let handler = FemtoFileHandler::with_writer_for_test(cfg);
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    let start_time = Instant::now();
+    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    assert!(start_time.elapsed() >= Duration::from_millis(50));
+    start.wait();
 }
