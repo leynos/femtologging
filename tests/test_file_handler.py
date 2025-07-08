@@ -77,6 +77,27 @@ def test_file_handler_flush(tmp_path: Path) -> None:
     handler.close()
 
 
+def test_file_handler_flush_concurrent(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
+    """Concurrent ``flush()`` calls should each succeed."""
+
+    path = tmp_path / "flush_concurrent.log"
+    with file_handler_factory(path, 8, 1) as handler:
+
+        def send_and_flush() -> None:
+            handler.handle("core", "INFO", "msg")
+            assert handler.flush() is True
+
+        threads = [threading.Thread(target=send_and_flush) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert len(path.read_text().splitlines()) == 5
+
+
 def test_file_handler_open_failure(tmp_path: Path) -> None:
     """Creating a handler in a missing directory raises ``OSError``."""
     bad_dir = tmp_path / "does_not_exist"
@@ -118,3 +139,51 @@ def test_file_handler_flush_interval_one(
     with file_handler_factory(path, 8, 1) as handler:
         handler.handle("core", "INFO", "message")
     assert path.read_text() == "core [INFO] message\n"
+
+
+def test_blocking_policy_basic(tmp_path: Path) -> None:
+    """Verify flushing and writing when using the blocking policy."""
+    path = tmp_path / "block.log"
+    handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 1, 1)
+    handler.handle("core", "INFO", "first")
+    handler.close()
+    assert path.read_text() == "core [INFO] first\n"
+
+
+def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
+    """Verify blocking behaviour when capacity is exceeded."""
+    path = tmp_path / "block_over.log"
+    handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 2, 1)
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")
+    handler.close()
+    assert (
+        path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    )
+
+
+def test_timeout_policy_basic(tmp_path: Path) -> None:
+    """Test basic functionality of timeout policy in FemtoFileHandler."""
+    path = tmp_path / "timeout.log"
+    handler = FemtoFileHandler.with_capacity_flush_timeout(
+        str(path), 1, 1, timeout_ms=500
+    )
+    handler.handle("core", "INFO", "first")
+    handler.close()
+    assert path.read_text() == "core [INFO] first\n"
+
+
+def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
+    """Ensure timeout policy flushes when over capacity."""
+    path = tmp_path / "timeout_over.log"
+    handler = FemtoFileHandler.with_capacity_flush_timeout(
+        str(path), 2, 1, timeout_ms=1000
+    )
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")
+    handler.close()
+    assert (
+        path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    )
