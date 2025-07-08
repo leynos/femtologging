@@ -111,23 +111,13 @@ impl FlushTracker {
         }
     }
 
-    fn flush_interval(&self) -> Option<usize> {
-        if self.flush_interval == 0 {
-            None
-        } else {
-            Some(self.flush_interval)
-        }
-    }
-
-    fn record_write<W: Write>(&mut self, writer: &mut W) -> bool {
+    fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
-        if self.flush_interval > 1 && self.writes % self.flush_interval == 0 {
-            if writer.flush().is_err() {
-                warn!("FemtoFileHandler flush error");
-            }
-            true
+
+        if self.flush_interval > 0 && self.writes % self.flush_interval == 0 {
+            writer.flush()
         } else {
-            false
+            Ok(())
         }
     }
 
@@ -346,20 +336,13 @@ impl FemtoFileHandler {
         F: FemtoFormatter,
     {
         let msg = formatter.format(&record);
-        let write_result = writeln!(writer, "{msg}");
-        let should_flush = flush_tracker.flush_interval() == Some(1);
 
-        let flush_result = if should_flush {
-            write_result.and_then(|_| writer.flush())
-        } else {
-            write_result
-        };
-
-        if flush_result.is_err() {
+        if writeln!(writer, "{msg}")
+            .and_then(|_| flush_tracker.record_write(writer))
+            .is_err()
+        {
             warn!("FemtoFileHandler write error");
-            return;
         }
-        flush_tracker.record_write(writer);
     }
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
