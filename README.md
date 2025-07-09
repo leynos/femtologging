@@ -4,8 +4,8 @@
 library for Python using Rust. The project ports core ideas from
 [picologging](https://github.com/microsoft/picologging) and exposes them through
 a small [PyO3](https://pyo3.rs/) extension. Log records travel over
-`crossbeam-channel` queues to dedicated worker threads so your application stays
-responsive even when log output is slow.
+`crossbeam-channel` queues to dedicated worker threads, ensuring the application
+remains responsive even when log output is slow.
 
 The goals are:
 
@@ -28,8 +28,8 @@ run:
 pip install .
 ```
 
-This compiles the extension with [maturin](https://maturin.rs/). You can also use
-`make build` for the same result.
+This compiles the extension with [maturin](https://maturin.rs/). Alternatively,
+running `make build` yields the same result.
 
 ## Quick example
 
@@ -41,7 +41,7 @@ log.log("INFO", "hello from femtologging")
 ```
 
 `FemtoStreamHandler` and `FemtoFileHandler` are available for basic output. Each
-runs its I/O in a separate thread so logging calls return immediately.
+runs its I/O in a separate thread, so logging calls return immediately.
 
 ## Development
 
