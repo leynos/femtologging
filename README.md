@@ -15,6 +15,7 @@ The goals are:
 
 For a deeper dive into the architecture and the crates involved, see the
 documents in [`docs/`](./docs), especially
+<!-- markdownlint-disable-next-line MD013 -->
 [`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-multithreaded-logging-framework-for-python-design.md)
 and [`dependency-analysis.md`](docs/dependency-analysis.md).
 
