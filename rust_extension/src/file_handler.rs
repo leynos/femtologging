@@ -1,7 +1,8 @@
-//! File-based logging handler implemented with a producer-consumer model.
-//! A background thread owns the file handle and formatter, receiving
-//! `FemtoLogRecord` values over a bounded channel and writing them
-//! asynchronously.
+//! Asynchronous file handler used by `femtologging`.
+//!
+//! A dedicated worker thread receives `FemtoLogRecord` values over a bounded
+//! channel and writes them to disk. Python constructors map onto the Rust
+//! APIs via PyO3 wrappers defined below.
 
 use std::{
     fs::{File, OpenOptions},
@@ -115,10 +116,12 @@ impl FlushTracker {
         self.writes += 1;
 
         if self.flush_interval > 0 && self.writes % self.flush_interval == 0 {
-            writer.flush()
-        } else {
-            Ok(())
+            if let Err(e) = writer.flush() {
+                warn!("FemtoFileHandler flush error: {e}");
+                return Err(e);
+            }
         }
+        Ok(())
     }
 
     fn reset(&mut self) {
@@ -236,6 +239,22 @@ impl FemtoFileHandler {
     }
 }
 impl FemtoFileHandler {
+    /// Helper used by the Python constructors to build a handler while
+    /// translating I/O errors into `OSError` for Python callers.
+    fn build_py_handler(
+        path: String,
+        capacity: usize,
+        flush_interval: Option<usize>,
+        overflow_policy: OverflowPolicy,
+    ) -> PyResult<Self> {
+        Self::handle_io_result(Self::create_with_policy(
+            path,
+            capacity,
+            flush_interval,
+            overflow_policy,
+        ))
+    }
+
     /// Convenience constructor using the default formatter and queue capacity.
     /// Spawn the worker thread that processes file commands.
     fn spawn_worker<W, F>(
@@ -265,7 +284,11 @@ impl FemtoFileHandler {
             for cmd in rx {
                 match cmd {
                     FileCommand::Record(record) => {
-                        Self::write_record(&mut writer, &formatter, record, &mut tracker);
+                        if let Err(e) =
+                            Self::write_record(&mut writer, &formatter, record, &mut tracker)
+                        {
+                            warn!("FemtoFileHandler write error: {e}");
+                        }
                     }
                     FileCommand::Flush(ack) => {
                         if writer.flush().is_err() {
@@ -311,38 +334,22 @@ impl FemtoFileHandler {
         Self::with_capacity_flush_policy(path, DefaultFormatter, cfg)
     }
 
-    fn build_py_handler(
-        path: String,
-        capacity: usize,
-        flush_interval: Option<usize>,
-        overflow_policy: OverflowPolicy,
-    ) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
-            path,
-            capacity,
-            flush_interval,
-            overflow_policy,
-        ))
-    }
-
     /// Write a single log record to the provided writer.
     fn write_record<W, F>(
         writer: &mut W,
         formatter: &F,
         record: FemtoLogRecord,
         flush_tracker: &mut FlushTracker,
-    ) where
+    ) -> io::Result<()>
+    where
         W: Write,
         F: FemtoFormatter,
     {
         let msg = formatter.format(&record);
 
-        if writeln!(writer, "{msg}")
-            .and_then(|_| flush_tracker.record_write(writer))
-            .is_err()
-        {
-            warn!("FemtoFileHandler write error");
-        }
+        writeln!(writer, "{msg}")?;
+
+        flush_tracker.record_write(writer)
     }
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
