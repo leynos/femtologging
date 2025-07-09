@@ -1,7 +1,7 @@
 # Documentation style guide
 
 This guide outlines conventions for authoring documentation for Lille.
-Apply these rules to keep the documentation clear and consistent for
+These rules help keep the documentation clear and consistent for
 developers.
 
 ## Spelling
@@ -9,7 +9,7 @@ developers.
 - Use British English based on the
   [Oxford English Dictionary](https://public.oed.com/) (en-oxendict).
 - The word **"outwith"** is acceptable.
-- Keep US spelling when used in an API, for example `color`.
+- Keep US spelling when used in an API, for example, `color`.
 - The project licence file is spelled `LICENSE` for community consistency.
 
 ## Punctuation and grammar
@@ -24,7 +24,8 @@ developers.
 
 ## Markdown rules
 
-- Follow [markdownlint](https://github.com/DavidAnson/markdownlint) recommendations[^markdownlint].
+- Follow [markdownlint](https://github.com/DavidAnson/markdownlint)
+  recommendations[^markdownlint].
 - Provide code blocks and lists using standard Markdown syntax.
 - Always provide a language identifier for fenced code blocks; use
   `plaintext` for non-code text.
@@ -64,7 +65,9 @@ contents of the manual.
 - Document the return value with `# Returns`.
 - Document any panics or errors with `# Panics` or `# Errors` as appropriate.
 - Place examples under `# Examples` and mark the code block with `no_run`
-  so they do not execute during documentation tests.
+  so they compile but do not execute during documentation tests. Use
+  `ignore` instead of `no_run` when the example does not compile or relies on
+  external tools.
 - Put function attributes after the doc comment.
 
 ````rust
@@ -93,7 +96,7 @@ pub fn add(a: i32, b: i32) -> i32 {
 Where it adds clarity, include [Mermaid](https://mermaid.js.org/) diagrams.
 When embedding figures, use `![alt text](path/to/image)` and provide concise
 alt text describing the content. Add a short description before each Mermaid
-diagram so screen readers can understand it.
+diagram, so screen readers can understand it.
 
 ```mermaid
 flowchart TD
@@ -105,7 +108,9 @@ flowchart TD
 ## Python docstrings
 
 Docstrings document public modules, classes, and functions. Use the NumPy
-style and keep descriptions short.
+style and keep descriptions short. See the
+[NumPy docstring standard][numpydoc]
+for the full specification.
 
 - Begin with a one-line summary followed by a blank line and extended description.
 - List parameters and return values under `Parameters` and `Returns` headings.
@@ -130,5 +135,7 @@ def scale(values: list[float], factor: float) -> list[float]:
     """
     return [v * factor for v in values]
 ```
+
+[numpydoc]: https://numpydoc.readthedocs.io/en/stable/format.html
 
 [^markdownlint]: A linter that enforces consistent Markdown formatting.
