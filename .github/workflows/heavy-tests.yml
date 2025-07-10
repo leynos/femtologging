@@ -18,7 +18,12 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install maturin==1.4.0 pytest==7.4.4
+          python -m pip install --upgrade pip
+
+          # Cache wheels to avoid repeated downloads
+          pip install \
+            --cache-dir "${{ runner.tool_cache }}" \
+            maturin==1.4.0 pytest==7.4.4
       - run: |
           source .venv/bin/activate
           maturin develop --manifest-path rust_extension/Cargo.toml
