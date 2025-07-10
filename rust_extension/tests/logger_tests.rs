@@ -1,5 +1,7 @@
 use _femtologging_rs::FemtoLogger;
-use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+};
 use rstest::rstest;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -22,14 +24,19 @@ fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
 }
 
 #[rstest]
-#[case("core", "INFO", "hello", "core [INFO] hello")]
-#[case("sys", "ERROR", "fail", "sys [ERROR] fail")]
-#[case("", "INFO", "", " [INFO] ")]
-#[case("core", "WARN", "⚠", "core [WARN] ⚠")]
-#[case("i18n", "INFO", "こんにちは世界", "i18n [INFO] こんにちは世界")]
+#[case("core", FemtoLevel::Info, "hello", "core [INFO] hello")]
+#[case("sys", FemtoLevel::Error, "fail", "sys [ERROR] fail")]
+#[case("", FemtoLevel::Info, "", " [INFO] ")]
+#[case("core", FemtoLevel::Warn, "⚠", "core [WARN] ⚠")]
+#[case(
+    "i18n",
+    FemtoLevel::Info,
+    "こんにちは世界",
+    "i18n [INFO] こんにちは世界"
+)]
 fn log_formats_message(
     #[case] name: &str,
-    #[case] level: &str,
+    #[case] level: FemtoLevel,
     #[case] message: &str,
     #[case] expected: &str,
 ) {
@@ -46,16 +53,19 @@ fn log_formats_long_messages(#[case] length: usize) {
     let msg = "x".repeat(length);
     let logger = FemtoLogger::new("long".to_string());
     let expected = format!("long [INFO] {}", msg);
-    assert_eq!(logger.log("INFO", &msg).as_deref(), Some(expected.as_str()));
+    assert_eq!(
+        logger.log(FemtoLevel::Info, &msg).as_deref(),
+        Some(expected.as_str())
+    );
 }
 
 #[test]
 fn logger_filters_levels() {
     let logger = FemtoLogger::new("core".to_string());
-    logger.set_level("ERROR");
-    assert_eq!(logger.log("INFO", "ignored"), None);
+    logger.set_level(FemtoLevel::Error);
+    assert_eq!(logger.log(FemtoLevel::Info, "ignored"), None);
     assert_eq!(
-        logger.log("ERROR", "processed").as_deref(),
+        logger.log(FemtoLevel::Error, "processed").as_deref(),
         Some("core [ERROR] processed")
     );
 }
@@ -63,15 +73,20 @@ fn logger_filters_levels() {
 #[test]
 fn level_parsing_and_filtering() {
     let logger = FemtoLogger::new("core".to_string());
-    for lvl in ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"] {
+    for lvl in [
+        FemtoLevel::Trace,
+        FemtoLevel::Debug,
+        FemtoLevel::Info,
+        FemtoLevel::Warn,
+        FemtoLevel::Error,
+        FemtoLevel::Critical,
+    ] {
         logger.set_level(lvl);
         assert!(logger.log(lvl, "ok").is_some());
     }
 
-    logger.set_level("ERROR");
-    assert!(logger.log("WARN", "drop").is_none());
-    // Invalid strings default to INFO with warning
-    assert!(logger.log("bogus", "drop").is_none());
+    logger.set_level(FemtoLevel::Error);
+    assert!(logger.log(FemtoLevel::Warn, "drop").is_none());
 }
 
 #[test]
@@ -89,7 +104,7 @@ fn logger_routes_to_multiple_handlers() {
     let mut logger = FemtoLogger::new("core".to_string());
     logger.add_handler(handler1.clone() as Arc<dyn FemtoHandlerTrait>);
     logger.add_handler(handler2.clone() as Arc<dyn FemtoHandlerTrait>);
-    logger.log("INFO", "hello");
+    logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler1);
     drop(handler2);
@@ -108,8 +123,8 @@ fn shared_handler_across_loggers() {
     let mut l2 = FemtoLogger::new("b".to_string());
     l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
     l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    l1.log("INFO", "one");
-    l2.log("INFO", "two");
+    l1.log(FemtoLevel::Info, "one");
+    l2.log(FemtoLevel::Info, "two");
     drop(l1);
     drop(l2);
     drop(handler);

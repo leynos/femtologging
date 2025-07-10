@@ -53,13 +53,12 @@ impl FemtoLogger {
     /// This method currently builds a simple string combining the logger's
     /// name with the level and message.
     #[pyo3(text_signature = "(self, level, message)")]
-    pub fn log(&self, level: &str, message: &str) -> Option<String> {
-        let record_level = FemtoLevel::parse_or_warn(level);
+    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
-        if (record_level as u8) < threshold {
+        if (level as u8) < threshold {
             return None;
         }
-        let record = FemtoLogRecord::new(&self.name, level, message);
+        let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
         let msg = self.formatter.format(&record);
         if let Some(tx) = &self.tx {
             if tx.try_send(record).is_err() {
@@ -75,9 +74,8 @@ impl FemtoLogger {
     /// "CRITICAL". The update is thread‑safe because the level is stored in an
     /// `AtomicU8`.
     #[pyo3(text_signature = "(self, level)")]
-    pub fn set_level(&self, level: &str) {
-        let lvl = FemtoLevel::parse_or_warn(level);
-        self.level.store(lvl as u8, Ordering::Relaxed);
+    pub fn set_level(&self, level: FemtoLevel) {
+        self.level.store(level as u8, Ordering::Relaxed);
     }
 }
 
