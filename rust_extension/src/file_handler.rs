@@ -136,8 +136,11 @@ impl FlushTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use logtest::Logger;
+    use rstest::*;
     use std::io::{self, Write};
 
+    #[derive(Default)]
     struct DummyWriter {
         flushed: usize,
         fail: bool,
@@ -158,56 +161,42 @@ mod tests {
         }
     }
 
-    #[test]
-    fn flushes_on_interval_without_error() {
-        let mut writer = DummyWriter {
-            flushed: 0,
-            fail: false,
-        };
-        let mut tracker = FlushTracker::new(2);
-        tracker.writes = 2;
-        let result = tracker.flush_if_due(&mut writer);
-        assert!(result.is_ok());
-        assert_eq!(writer.flushed, 1);
+    #[fixture]
+    fn writer(#[default(false)] fail: bool) -> DummyWriter {
+        DummyWriter { flushed: 0, fail }
     }
 
-    #[test]
-    fn returns_error_when_flush_fails() {
-        let mut writer = DummyWriter {
-            flushed: 0,
-            fail: true,
-        };
-        let mut tracker = FlushTracker::new(1);
-        tracker.writes = 1;
+    #[rstest]
+    #[case(2, 2, false, 1, false)]
+    #[case(1, 1, true, 1, true)]
+    #[case(3, 1, false, 0, false)]
+    #[case(0, 5, false, 0, false)]
+    fn flush_if_due_cases(
+        #[case] interval: usize,
+        #[case] writes: usize,
+        #[case] _fail: bool,
+        #[case] expected_flushes: usize,
+        #[case] expect_error: bool,
+        #[with(_fail)] mut writer: DummyWriter,
+    ) {
+        let mut tracker = FlushTracker::new(interval);
+        tracker.writes = writes;
         let result = tracker.flush_if_due(&mut writer);
+        assert_eq!(writer.flushed, expected_flushes);
+        assert_eq!(result.is_err(), expect_error);
+    }
+
+    #[rstest]
+    fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
+        let mut logger = Logger::start();
+        let mut tracker = FlushTracker::new(1);
+        let result = tracker.record_write(&mut writer);
         assert!(result.is_err());
         assert_eq!(writer.flushed, 1);
-    }
 
-    #[test]
-    fn does_not_flush_when_interval_not_reached() {
-        let mut writer = DummyWriter {
-            flushed: 0,
-            fail: false,
-        };
-        let mut tracker = FlushTracker::new(3);
-        tracker.writes = 1;
-        let result = tracker.flush_if_due(&mut writer);
-        assert!(result.is_ok());
-        assert_eq!(writer.flushed, 0);
-    }
-
-    #[test]
-    fn zero_interval_never_flushes() {
-        let mut writer = DummyWriter {
-            flushed: 0,
-            fail: false,
-        };
-        let mut tracker = FlushTracker::new(0);
-        tracker.writes = 5;
-        let result = tracker.flush_if_due(&mut writer);
-        assert!(result.is_ok());
-        assert_eq!(writer.flushed, 0);
+        let log = logger.pop().expect("no log produced");
+        assert_eq!(log.level(), log::Level::Warn);
+        assert!(log.args().contains("flush failed"));
     }
 }
 
