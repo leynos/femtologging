@@ -12,6 +12,7 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, OverflowPolicy,
     TestConfig,
 };
+use pyo3::prelude::*;
 use tempfile::NamedTempFile;
 
 #[derive(Clone)]
@@ -206,4 +207,41 @@ fn timeout_policy_gives_up() {
     handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
     assert!(start_time.elapsed() >= Duration::from_millis(50));
     start.wait();
+}
+
+#[test]
+fn callback_policy_executes_function() {
+    Python::with_gil(|py| {
+        use pyo3::types::{IntoPyDict, PyList};
+
+        let drops = PyList::empty(py);
+        let locals = [("drops", drops)].into_py_dict(py);
+        let cb: PyObject = py
+            .eval(
+                "lambda logger, level, message: drops.append(message)",
+                None,
+                Some(&locals),
+            )
+            .unwrap()
+            .into();
+
+        let mut cfg = TestConfig::new(
+            SharedBuf(Arc::new(Mutex::new(Vec::new()))),
+            DefaultFormatter,
+        );
+        cfg.capacity = 1;
+        cfg.flush_interval = 1;
+        cfg.overflow_policy = OverflowPolicy::Callback(cb);
+
+        let handler = FemtoFileHandler::with_writer_for_test(cfg);
+        handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+        handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+        handler.flush();
+
+        assert_eq!(drops.len(), 1);
+        assert_eq!(
+            drops.get_item(0).unwrap().extract::<String>().unwrap(),
+            "second"
+        );
+    });
 }

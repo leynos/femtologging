@@ -72,6 +72,7 @@ policy when constructing a handler:
 - **Block** – the call blocks until space becomes available.
 - **Timeout** – wait for a fixed duration before giving up and dropping the
   record.
+- **Callback** – invoke a user-provided function when a record would be dropped.
 
 ### StreamHandler
 
