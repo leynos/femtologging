@@ -7,7 +7,7 @@ from pathlib import Path
 import threading
 import typing
 
-from femtologging import FemtoFileHandler
+from femtologging import FemtoFileHandler, OverflowPolicy
 import pytest  # pyright: ignore[reportMissingImports]
 
 FileHandlerFactory = cabc.Callable[
@@ -187,3 +187,58 @@ def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
     assert (
         path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
     )
+
+
+def test_overflow_policy_builder_block(tmp_path: Path) -> None:
+    """Overflow policy can be specified explicitly using strings."""
+    path = tmp_path / "block_enum.log"
+    handler = FemtoFileHandler.with_capacity_flush_policy(
+        str(path), 2, 1, OverflowPolicy.BLOCK.value, None
+    )
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")
+    handler.close()
+    assert (
+        path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    )
+
+
+def test_overflow_policy_builder_timeout(tmp_path: Path) -> None:
+    """Timeout policy via builder honours the timeout."""
+    path = tmp_path / "builder_timeout.log"
+    handler = FemtoFileHandler.with_capacity_flush_policy(
+        str(path), 1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=500
+    )
+    handler.handle("core", "INFO", "first")
+    handler.close()
+    assert path.read_text() == "core [INFO] first\n"
+
+
+def test_overflow_policy_builder_drop(tmp_path: Path) -> None:
+    """Drop policy discards records once the queue is full."""
+    path = tmp_path / "drop_enum.log"
+    handler = FemtoFileHandler.with_capacity_flush_policy(
+        str(path), 2, 1, OverflowPolicy.DROP.value, None
+    )
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")  # dropped
+    handler.close()
+    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
+
+
+def test_overflow_policy_builder_invalid(tmp_path: Path) -> None:
+    """Invalid policy strings raise ``ValueError``."""
+    path = tmp_path / "invalid.log"
+    with pytest.raises(ValueError):
+        FemtoFileHandler.with_capacity_flush_policy(str(path), 1, 1, "bogus", None)
+
+
+def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
+    """Timeout policy without ``timeout_ms`` is rejected."""
+    path = tmp_path / "missing_ms.log"
+    with pytest.raises(ValueError):
+        FemtoFileHandler.with_capacity_flush_policy(
+            str(path), 1, 1, OverflowPolicy.TIMEOUT.value, None
+        )
