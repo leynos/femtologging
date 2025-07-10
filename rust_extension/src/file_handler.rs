@@ -114,37 +114,23 @@ impl FlushTracker {
 
     fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
-
-        if let Some(e) = should_flush_and_has_error(self.flush_interval, self.writes, writer) {
+        self.flush_if_due(writer).map_err(|e| {
             warn!("FemtoFileHandler flush error: {e}");
-            return Err(e);
-        }
-
+            e
+        })?;
         Ok(())
     }
 
     fn reset(&mut self) {
         self.writes = 0;
     }
-}
 
-/// Determine whether a flush should occur and return the error if it fails.
-///
-/// The predicate encapsulates the logic for periodic flushing based on
-/// `flush_interval`. If flushing is due and the call to `writer.flush()`
-/// returns an error, the error is returned to the caller. Otherwise `None` is
-/// returned.
-fn should_flush_and_has_error<W: Write>(
-    flush_interval: usize,
-    writes: usize,
-    writer: &mut W,
-) -> Option<io::Error> {
-    if flush_interval != 0 && writes % flush_interval == 0 {
-        if let Err(e) = writer.flush() {
-            return Some(e);
+    fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        if self.flush_interval != 0 && self.writes % self.flush_interval == 0 {
+            writer.flush()?;
         }
+        Ok(())
     }
-    None
 }
 
 #[cfg(test)]
@@ -178,8 +164,10 @@ mod tests {
             flushed: 0,
             fail: false,
         };
-        let result = should_flush_and_has_error(2, 2, &mut writer);
-        assert!(result.is_none());
+        let mut tracker = FlushTracker::new(2);
+        tracker.writes = 2;
+        let result = tracker.flush_if_due(&mut writer);
+        assert!(result.is_ok());
         assert_eq!(writer.flushed, 1);
     }
 
@@ -189,8 +177,10 @@ mod tests {
             flushed: 0,
             fail: true,
         };
-        let result = should_flush_and_has_error(1, 1, &mut writer);
-        assert!(result.is_some());
+        let mut tracker = FlushTracker::new(1);
+        tracker.writes = 1;
+        let result = tracker.flush_if_due(&mut writer);
+        assert!(result.is_err());
         assert_eq!(writer.flushed, 1);
     }
 
@@ -200,8 +190,10 @@ mod tests {
             flushed: 0,
             fail: false,
         };
-        let result = should_flush_and_has_error(3, 1, &mut writer);
-        assert!(result.is_none());
+        let mut tracker = FlushTracker::new(3);
+        tracker.writes = 1;
+        let result = tracker.flush_if_due(&mut writer);
+        assert!(result.is_ok());
         assert_eq!(writer.flushed, 0);
     }
 
@@ -211,8 +203,10 @@ mod tests {
             flushed: 0,
             fail: false,
         };
-        let result = should_flush_and_has_error(0, 5, &mut writer);
-        assert!(result.is_none());
+        let mut tracker = FlushTracker::new(0);
+        tracker.writes = 5;
+        let result = tracker.flush_if_due(&mut writer);
+        assert!(result.is_ok());
         assert_eq!(writer.flushed, 0);
     }
 }
