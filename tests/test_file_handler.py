@@ -213,3 +213,32 @@ def test_overflow_policy_builder_timeout(tmp_path: Path) -> None:
     handler.handle("core", "INFO", "first")
     handler.close()
     assert path.read_text() == "core [INFO] first\n"
+
+
+def test_overflow_policy_builder_drop(tmp_path: Path) -> None:
+    """Drop policy discards records once the queue is full."""
+    path = tmp_path / "drop_enum.log"
+    handler = FemtoFileHandler.with_capacity_flush_policy(
+        str(path), 2, 1, OverflowPolicy.DROP.value, None
+    )
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")  # dropped
+    handler.close()
+    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
+
+
+def test_overflow_policy_builder_invalid(tmp_path: Path) -> None:
+    """Invalid policy strings raise ``ValueError``."""
+    path = tmp_path / "invalid.log"
+    with pytest.raises(ValueError):
+        FemtoFileHandler.with_capacity_flush_policy(str(path), 1, 1, "bogus", None)
+
+
+def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
+    """Timeout policy without ``timeout_ms`` is rejected."""
+    path = tmp_path / "missing_ms.log"
+    with pytest.raises(ValueError):
+        FemtoFileHandler.with_capacity_flush_policy(
+            str(path), 1, 1, OverflowPolicy.TIMEOUT.value, None
+        )
