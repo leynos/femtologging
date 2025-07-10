@@ -115,17 +115,105 @@ impl FlushTracker {
     fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
 
-        if self.flush_interval > 0 && self.writes % self.flush_interval == 0 {
-            if let Err(e) = writer.flush() {
-                warn!("FemtoFileHandler flush error: {e}");
-                return Err(e);
-            }
+        if let Some(e) = should_flush_and_has_error(self.flush_interval, self.writes, writer) {
+            warn!("FemtoFileHandler flush error: {e}");
+            return Err(e);
         }
+
         Ok(())
     }
 
     fn reset(&mut self) {
         self.writes = 0;
+    }
+}
+
+/// Determine whether a flush should occur and return the error if it fails.
+///
+/// The predicate encapsulates the logic for periodic flushing based on
+/// `flush_interval`. If flushing is due and the call to `writer.flush()`
+/// returns an error, the error is returned to the caller. Otherwise `None` is
+/// returned.
+fn should_flush_and_has_error<W: Write>(
+    flush_interval: usize,
+    writes: usize,
+    writer: &mut W,
+) -> Option<io::Error> {
+    if flush_interval != 0 && writes % flush_interval == 0 {
+        if let Err(e) = writer.flush() {
+            return Some(e);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{self, Write};
+
+    struct DummyWriter {
+        flushed: usize,
+        fail: bool,
+    }
+
+    impl Write for DummyWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushed += 1;
+            if self.fail {
+                Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn flushes_on_interval_without_error() {
+        let mut writer = DummyWriter {
+            flushed: 0,
+            fail: false,
+        };
+        let result = should_flush_and_has_error(2, 2, &mut writer);
+        assert!(result.is_none());
+        assert_eq!(writer.flushed, 1);
+    }
+
+    #[test]
+    fn returns_error_when_flush_fails() {
+        let mut writer = DummyWriter {
+            flushed: 0,
+            fail: true,
+        };
+        let result = should_flush_and_has_error(1, 1, &mut writer);
+        assert!(result.is_some());
+        assert_eq!(writer.flushed, 1);
+    }
+
+    #[test]
+    fn does_not_flush_when_interval_not_reached() {
+        let mut writer = DummyWriter {
+            flushed: 0,
+            fail: false,
+        };
+        let result = should_flush_and_has_error(3, 1, &mut writer);
+        assert!(result.is_none());
+        assert_eq!(writer.flushed, 0);
+    }
+
+    #[test]
+    fn zero_interval_never_flushes() {
+        let mut writer = DummyWriter {
+            flushed: 0,
+            fail: false,
+        };
+        let result = should_flush_and_has_error(0, 5, &mut writer);
+        assert!(result.is_none());
+        assert_eq!(writer.flushed, 0);
     }
 }
 
