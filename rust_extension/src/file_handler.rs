@@ -103,6 +103,15 @@ impl WorkerConfig {
     ///
     /// `start_barrier` is always set to `None`; tests may override this via
     /// `with_writer_for_test`.
+    ///
+    /// # Rationale
+    ///
+    /// Production handlers spawn their worker threads immediately and do not
+    /// require synchronisation before processing records. The optional
+    /// `start_barrier` is therefore `None` by default. Tests may use a barrier to
+    /// coordinate multiple workers and eliminate startup races. If a future
+    /// production feature needs coordinated startup (e.g. simultaneous rotation
+    /// of several files), revisit this choice and update the documentation.
     fn from_handler(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,

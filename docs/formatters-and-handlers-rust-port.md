@@ -123,6 +123,13 @@ controlling how many records are written before the worker thread flushes.
 Passing `0` disables periodic flushing and flushes only when the handler shuts
 down.
 
+The worker thread begins processing records as soon as the handler is created.
+Production code therefore leaves the optional `start_barrier` field unset. Unit
+tests may use this barrier to synchronise multiple workers and avoid race
+conditions. Should a future feature require coordinated startup (for example,
+rotating several files at once), the `WorkerConfig` creation logic will need to
+expose this.
+
 All handlers spawn their consumer threads on creation and expose a
 `snd: Sender<FemtoLogRecord>` to the logger. The logger clones this sender when
 created, ensuring log messages are dispatched without blocking. Dropping the
