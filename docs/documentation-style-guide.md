@@ -56,7 +56,7 @@ fn add(a: i32, b: i32) -> i32 {
 
 ## API doc comments (Rust)
 
-Use doc comments to document public APIs. Keep them consistent with the
+Doc comments document public APIs and must remain consistent with the
 contents of the manual.
 
 - Begin each block with `///`.
