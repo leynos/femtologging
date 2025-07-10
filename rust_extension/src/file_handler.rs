@@ -26,7 +26,7 @@ use crate::{
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Determines how `FemtoFileHandler` reacts when its queue is full.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum OverflowPolicy {
     /// Drop new records, preserving existing ones. Current default behaviour.
     Drop,
@@ -34,10 +34,12 @@ pub enum OverflowPolicy {
     Block,
     /// Block up to the specified duration before giving up.
     Timeout(Duration),
+    /// Invoke a user-provided callback when dropping a record.
+    Callback(PyObject),
 }
 
 /// Configuration options for constructing a [`FemtoFileHandler`].
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct HandlerConfig {
     /// Bounded queue size for records waiting to be written.
     pub capacity: usize,
@@ -177,6 +179,17 @@ impl FemtoFileHandler {
         )
     }
 
+    /// Callback variant of `with_capacity`.
+    #[staticmethod]
+    #[pyo3(name = "with_capacity_callback")]
+    fn py_with_capacity_callback(
+        path: String,
+        capacity: usize,
+        callback: PyObject,
+    ) -> PyResult<Self> {
+        Self::build_py_handler(path, capacity, None, OverflowPolicy::Callback(callback))
+    }
+
     /// Create a handler with a custom flush interval.
     ///
     /// `flush_interval` controls how often the worker thread flushes the
@@ -217,6 +230,23 @@ impl FemtoFileHandler {
             capacity,
             Some(flush_interval),
             OverflowPolicy::Timeout(Duration::from_millis(timeout_ms)),
+        )
+    }
+
+    /// Callback variant of `with_capacity_flush`.
+    #[staticmethod]
+    #[pyo3(name = "with_capacity_flush_callback")]
+    fn py_with_capacity_flush_callback(
+        path: String,
+        capacity: usize,
+        flush_interval: usize,
+        callback: PyObject,
+    ) -> PyResult<Self> {
+        Self::build_py_handler(
+            path,
+            capacity,
+            Some(flush_interval),
+            OverflowPolicy::Callback(callback),
         )
     }
 
@@ -456,6 +486,7 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     /// - `Drop`: never blocks and discards the record if the queue is full.
     /// - `Block`: waits until space becomes available.
     /// - `Timeout`: waits for the configured duration before giving up.
+    /// - `Callback`: calls a user-provided function when a record would be dropped.
     fn handle(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
             match self.overflow_policy {
@@ -478,6 +509,14 @@ impl FemtoHandlerTrait for FemtoFileHandler {
                         warn!(
                             "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
                         );
+                    }
+                }
+                OverflowPolicy::Callback(ref cb) => {
+                    let cloned = record.clone();
+                    if tx.try_send(FileCommand::Record(cloned)).is_err() {
+                        Python::with_gil(|py| {
+                            let _ = cb.call1(py, (record.logger, record.level, record.message));
+                        });
                     }
                 }
             }

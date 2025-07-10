@@ -187,3 +187,20 @@ def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
     assert (
         path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
     )
+
+
+def test_callback_policy(tmp_path: Path) -> None:
+    """Ensure callback executes when the queue is full."""
+    path = tmp_path / "callback.log"
+    dropped: list[tuple[str, str, str]] = []
+
+    def cb(logger: str, level: str, message: str) -> None:
+        dropped.append((logger, level, message))
+
+    handler = FemtoFileHandler.with_capacity_flush_callback(str(path), 1, 1, cb)
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.close()
+
+    assert path.read_text() == "core [INFO] first\n"
+    assert dropped == [("core", "INFO", "second")]
