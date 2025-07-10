@@ -98,6 +98,20 @@ impl Default for WorkerConfig {
     }
 }
 
+impl WorkerConfig {
+    /// Create a worker configuration from a `HandlerConfig`.
+    ///
+    /// `start_barrier` is always set to `None`; tests may override this via
+    /// `with_writer_for_test`.
+    fn from_handler(cfg: &HandlerConfig) -> Self {
+        Self {
+            capacity: cfg.capacity,
+            flush_interval: cfg.flush_interval,
+            start_barrier: None,
+        }
+    }
+}
+
 /// Tracks how many writes occurred and triggers periodic flushes.
 struct FlushTracker {
     writes: usize,
@@ -307,6 +321,26 @@ impl FemtoFileHandler {
         (tx, done_rx, handle)
     }
 
+    /// Build a handler from a writer and worker configuration.
+    fn build_from_worker<W, F>(
+        writer: W,
+        formatter: F,
+        worker_cfg: WorkerConfig,
+        policy: OverflowPolicy,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+        F: FemtoFormatter + Send + 'static,
+    {
+        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg);
+        Self {
+            tx: Some(tx),
+            handle: Some(handle),
+            done_rx,
+            overflow_policy: policy,
+        }
+    }
+
     fn build_config(
         capacity: usize,
         flush_interval: Option<usize>,
@@ -408,18 +442,8 @@ impl FemtoFileHandler {
     where
         F: FemtoFormatter + Send + 'static,
     {
-        let worker_cfg = WorkerConfig {
-            capacity: config.capacity,
-            flush_interval: config.flush_interval,
-            start_barrier: None,
-        };
-        let (tx, done_rx, handle) = Self::spawn_worker(file, formatter, worker_cfg);
-        Self {
-            tx: Some(tx),
-            handle: Some(handle),
-            done_rx,
-            overflow_policy: config.overflow_policy,
-        }
+        let worker_cfg = WorkerConfig::from_handler(&config);
+        Self::build_from_worker(file, formatter, worker_cfg, config.overflow_policy)
     }
 
     /// Flush any pending log records.
@@ -518,12 +542,24 @@ impl FemtoFileHandler {
             flush_interval,
             start_barrier,
         };
-        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg);
-        Self {
-            tx: Some(tx),
-            handle: Some(handle),
-            done_rx,
-            overflow_policy,
-        }
+        Self::build_from_worker(writer, formatter, worker_cfg, overflow_policy)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_config_from_handler_copies_values() {
+        let cfg = HandlerConfig {
+            capacity: 42,
+            flush_interval: 7,
+            overflow_policy: OverflowPolicy::Drop,
+        };
+        let worker = WorkerConfig::from_handler(&cfg);
+        assert_eq!(worker.capacity, 42);
+        assert_eq!(worker.flush_interval, 7);
+        assert!(worker.start_barrier.is_none());
     }
 }
