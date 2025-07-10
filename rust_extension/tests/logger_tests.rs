@@ -140,8 +140,8 @@ fn drop_with_sender_clone_exits() {
     let t = std::thread::spawn(move || {
         let res = tx.send(FemtoLogRecord::new("clone", "INFO", "late"));
         assert!(
-            res.is_ok(),
-            "Expected send to succeed while a sender clone is alive"
+            res.is_err(),
+            "Expected send to fail after logger is dropped"
         );
     });
     drop(logger);

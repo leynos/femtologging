@@ -13,7 +13,7 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{bounded, select, Sender};
 use log::warn;
 use parking_lot::RwLock;
 use std::sync::{
@@ -36,6 +36,7 @@ pub struct FemtoLogger {
     level: AtomicU8,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     tx: Option<Sender<FemtoLogRecord>>,
+    shutdown_tx: Option<Sender<()>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -103,11 +104,25 @@ impl FemtoLogger {
             Arc::new(RwLock::new(Vec::new()));
 
         let (tx, rx) = bounded::<FemtoLogRecord>(DEFAULT_CHANNEL_CAPACITY);
+        let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
         let thread_handlers = Arc::clone(&handlers);
-        let handle = thread::spawn(move || {
-            for record in rx {
-                for h in thread_handlers.read().iter() {
-                    h.handle(record.clone());
+        let handle = thread::spawn(move || loop {
+            select! {
+                recv(rx) -> rec => match rec {
+                    Ok(record) => {
+                        for h in thread_handlers.read().iter() {
+                            h.handle(record.clone());
+                        }
+                    }
+                    Err(_) => break,
+                },
+                recv(shutdown_rx) -> _ => {
+                    while let Ok(record) = rx.try_recv() {
+                        for h in thread_handlers.read().iter() {
+                            h.handle(record.clone());
+                        }
+                    }
+                    break;
                 }
             }
         });
@@ -119,6 +134,7 @@ impl FemtoLogger {
             level: AtomicU8::new(FemtoLevel::Info as u8),
             handlers,
             tx: Some(tx),
+            shutdown_tx: Some(shutdown_tx),
             handle: Some(handle),
         }
     }
@@ -126,6 +142,9 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
         self.tx.take();
         if let Some(handle) = self.handle.take() {
             if handle.join().is_err() {
