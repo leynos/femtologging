@@ -8,10 +8,9 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     path::Path,
-    sync::atomic::{AtomicUsize, Ordering},
     sync::{Arc, Barrier},
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -130,29 +129,10 @@ impl FlushTracker {
     }
 }
 
-/// Shared state tracking flush requests.
-///
-/// Each `flush()` call increments `next_id` and waits for `completed_id`
-/// to reach or surpass it. The worker thread updates `completed_id` after
-/// flushing the writer, ensuring all pending records are persisted.
-struct FlushState {
-    next_id: AtomicUsize,
-    completed_id: AtomicUsize,
-}
-
-impl FlushState {
-    fn new() -> Self {
-        Self {
-            next_id: AtomicUsize::new(0),
-            completed_id: AtomicUsize::new(0),
-        }
-    }
-}
-
 /// Handler that writes formatted log records to a file on a background thread.
 enum FileCommand {
     Record(FemtoLogRecord),
-    Flush(usize),
+    Flush,
 }
 
 #[pyclass]
@@ -161,7 +141,7 @@ pub struct FemtoFileHandler {
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
     overflow_policy: OverflowPolicy,
-    flush_state: Arc<FlushState>,
+    ack_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -282,7 +262,7 @@ impl FemtoFileHandler {
         writer: W,
         formatter: F,
         config: WorkerConfig,
-        flush_state: Arc<FlushState>,
+        ack_tx: Sender<()>,
     ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
     where
         W: Write + Send + 'static,
@@ -296,7 +276,6 @@ impl FemtoFileHandler {
         } = config;
         let (tx, rx) = bounded(capacity);
         let (done_tx, done_rx) = bounded(1);
-        let fs = Arc::clone(&flush_state);
         let handle = thread::spawn(move || {
             if let Some(b) = start_barrier {
                 b.wait();
@@ -313,12 +292,12 @@ impl FemtoFileHandler {
                             warn!("FemtoFileHandler write error: {e}");
                         }
                     }
-                    FileCommand::Flush(id) => {
+                    FileCommand::Flush => {
                         if writer.flush().is_err() {
                             warn!("FemtoFileHandler flush error");
                         }
                         tracker.reset();
-                        fs.completed_id.store(id, Ordering::SeqCst);
+                        let _ = ack_tx.send(());
                     }
                 }
             }
@@ -436,33 +415,24 @@ impl FemtoFileHandler {
             flush_interval: config.flush_interval,
             start_barrier: None,
         };
-        let flush_state = Arc::new(FlushState::new());
-        let (tx, done_rx, handle) =
-            Self::spawn_worker(file, formatter, worker_cfg, Arc::clone(&flush_state));
+        let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
+        let (tx, done_rx, handle) = Self::spawn_worker(file, formatter, worker_cfg, ack_tx);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
             overflow_policy: config.overflow_policy,
-            flush_state,
+            ack_rx,
         }
     }
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
         if let Some(tx) = &self.tx {
-            let id = self.flush_state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
-            if tx.send(FileCommand::Flush(id)).is_err() {
+            if tx.send(FileCommand::Flush).is_err() {
                 return false;
             }
-            let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(1) {
-                if self.flush_state.completed_id.load(Ordering::SeqCst) >= id {
-                    return true;
-                }
-                thread::sleep(Duration::from_millis(1));
-            }
-            return false;
+            return self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
         }
         false
     }
@@ -551,15 +521,14 @@ impl FemtoFileHandler {
             flush_interval,
             start_barrier,
         };
-        let flush_state = Arc::new(FlushState::new());
-        let (tx, done_rx, handle) =
-            Self::spawn_worker(writer, formatter, worker_cfg, Arc::clone(&flush_state));
+        let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
+        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg, ack_tx);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
             overflow_policy,
-            flush_state,
+            ack_rx,
         }
     }
 }
