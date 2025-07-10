@@ -220,6 +220,31 @@ impl FemtoFileHandler {
         )
     }
 
+    /// Create a handler with an explicit overflow policy specified as a string.
+    #[staticmethod]
+    #[pyo3(name = "with_capacity_flush_policy")]
+    fn py_with_capacity_flush_policy(
+        path: String,
+        capacity: usize,
+        flush_interval: usize,
+        policy: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        use pyo3::exceptions::PyValueError;
+        let policy = match policy.to_ascii_lowercase().as_str() {
+            "drop" => OverflowPolicy::Drop,
+            "block" => OverflowPolicy::Block,
+            "timeout" => {
+                let ms = timeout_ms.ok_or_else(|| {
+                    PyValueError::new_err("timeout_ms required for timeout policy")
+                })?;
+                OverflowPolicy::Timeout(Duration::from_millis(ms))
+            }
+            _ => return Err(PyValueError::new_err("invalid overflow policy")),
+        };
+        Self::build_py_handler(path, capacity, Some(flush_interval), policy)
+    }
+
     /// Dispatch a log record created from the provided parameters.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
