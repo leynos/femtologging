@@ -128,8 +128,16 @@ impl FlushTracker {
         self.writes = 0;
     }
 
+    /// Determine whether the writer should flush on the current write.
+    ///
+    /// A flush is due when the interval is non-zero, at least one write has
+    /// occurred, and the write count is a multiple of the interval.
+    fn should_flush(&self) -> bool {
+        self.flush_interval != 0 && self.writes > 0 && self.writes % self.flush_interval == 0
+    }
+
     fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        if self.flush_interval != 0 && self.writes > 0 && self.writes % self.flush_interval == 0 {
+        if self.should_flush() {
             writer.flush()?;
         }
         Ok(())
