@@ -1,5 +1,5 @@
 use _femtologging_rs::FemtoLogger;
-use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoStreamHandler};
+use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
 use rstest::rstest;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -116,4 +116,15 @@ fn shared_handler_across_loggers() {
     let out = read_output(&buffer);
     assert!(out.contains("a [INFO] one"));
     assert!(out.contains("b [INFO] two"));
+}
+
+#[test]
+fn drop_with_sender_clone_exits() {
+    let logger = FemtoLogger::new("clone".to_string());
+    let tx = logger.clone_sender_for_test().expect("sender should exist");
+    let t = std::thread::spawn(move || {
+        let _ = tx.send(FemtoLogRecord::new("clone", "INFO", "late"));
+    });
+    drop(logger);
+    t.join().unwrap();
 }

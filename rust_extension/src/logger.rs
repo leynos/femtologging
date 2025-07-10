@@ -13,10 +13,16 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
+use crossbeam_channel::{bounded, select, Receiver, Sender};
+use log::warn;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc,
 };
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -29,6 +35,10 @@ pub struct FemtoLogger {
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
     handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    tx: Option<Sender<FemtoLogRecord>>,
+    shutdown_tx: Option<Sender<()>>,
+    done_rx: Receiver<()>,
+    handle: Option<JoinHandle<()>>,
 }
 
 #[pymethods]
@@ -56,6 +66,11 @@ impl FemtoLogger {
         for h in &self.handlers {
             h.handle(record.clone());
         }
+        if let Some(tx) = &self.tx {
+            if tx.send(record).is_err() {
+                warn!("FemtoLogger: failed to send log record to worker");
+            }
+        }
         Some(msg)
     }
 
@@ -77,9 +92,40 @@ impl FemtoLogger {
         self.handlers.push(handler);
     }
 
+    #[cfg(feature = "test-util")]
+    pub fn clone_sender_for_test(&self) -> Option<Sender<FemtoLogRecord>> {
+        self.tx.as_ref().cloned()
+    }
+
     /// Create a logger with an explicit parent name.
     pub fn with_parent(name: String, parent: Option<String>) -> Self {
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
+
+        let (tx, rx) = bounded(DEFAULT_CHANNEL_CAPACITY);
+        let (shutdown_tx, shutdown_rx) = bounded(1);
+        let (done_tx, done_rx) = bounded(1);
+        let fmt = Arc::clone(&formatter);
+        let handle = thread::spawn(move || {
+            loop {
+                select! {
+                    recv(shutdown_rx) -> _ => {
+                        while let Ok(record) = rx.try_recv() {
+                            let msg = fmt.format(&record);
+                            println!("{msg}");
+                        }
+                        break;
+                    }
+                    recv(rx) -> rec => match rec {
+                        Ok(record) => {
+                            let msg = fmt.format(&record);
+                            println!("{msg}");
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            let _ = done_tx.send(());
+        });
 
         Self {
             name,
@@ -87,6 +133,28 @@ impl FemtoLogger {
             formatter,
             level: AtomicU8::new(FemtoLevel::Info as u8),
             handlers: Vec::new(),
+            tx: Some(tx),
+            shutdown_tx: Some(shutdown_tx),
+            done_rx,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for FemtoLogger {
+    fn drop(&mut self) {
+        self.tx.take();
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
+                warn!("FemtoLogger: worker thread did not shut down within 1s");
+                return;
+            }
+            if handle.join().is_err() {
+                warn!("FemtoLogger: worker thread panicked");
+            }
         }
     }
 }
