@@ -91,8 +91,7 @@ When implementing changes, adhere to the following testing procedures:
   - For Markdown files (`.md` only):
 
     - **Linting:** Run `make markdownlint` or use integrated editor linting.
-    - **Mermaid diagrams:** Validate diagrams with `make nixie`. `nixie` is a
-      standalone CLI binary, not an npm package.
+    - **Mermaid diagrams:** Validate diagrams with `make nixie`.
       
 - **Committing:**
   
