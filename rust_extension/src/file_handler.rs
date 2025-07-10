@@ -428,13 +428,27 @@ impl FemtoFileHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        if let Some(tx) = &self.tx {
-            if tx.send(FileCommand::Flush).is_err() {
-                return false;
-            }
-            return self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        match &self.tx {
+            Some(tx) => self.perform_flush(tx),
+            None => false,
         }
-        false
+    }
+
+    /// Send a flush command to the worker thread.
+    ///
+    /// Returns `false` if the command could not be queued.
+    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+        if tx.send(FileCommand::Flush).is_err() {
+            return false;
+        }
+        self.wait_for_flush_completion()
+    }
+
+    /// Wait for the worker thread to acknowledge the flush.
+    ///
+    /// Returns `true` if the worker responded within one second.
+    fn wait_for_flush_completion(&self) -> bool {
+        self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
     }
 
     /// Close the handler and wait for the worker thread to exit.
