@@ -38,8 +38,8 @@ queues.
 
 Each logger also spawns a small worker thread. Log calls send records over a
 bounded `crossbeam-channel`, keeping the hot path non-blocking. Dropping the
-logger sends a shutdown signal so the worker can drain remaining records and
-exit cleanly. A timeout warns if the thread does not finish within one second.
+logger closes the channel, so the worker can drain remaining records and exit
+cleanly. A timeout warns if the thread does not finish within one second.
 
 Currently, `add_handler()` is only available from Rust code. Python users still
 create a logger with a single default handler. Support for attaching additional

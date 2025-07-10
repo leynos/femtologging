@@ -123,7 +123,11 @@ fn drop_with_sender_clone_exits() {
     let logger = FemtoLogger::new("clone".to_string());
     let tx = logger.clone_sender_for_test().expect("sender should exist");
     let t = std::thread::spawn(move || {
-        let _ = tx.send(FemtoLogRecord::new("clone", "INFO", "late"));
+        let res = tx.send(FemtoLogRecord::new("clone", "INFO", "late"));
+        assert!(
+            res.is_ok(),
+            "Expected send to succeed while a sender clone is alive"
+        );
     });
     drop(logger);
     t.join().unwrap();
