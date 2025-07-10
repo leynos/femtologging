@@ -115,7 +115,10 @@ impl FlushTracker {
     fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
         self.flush_if_due(writer).map_err(|e| {
-            warn!("FemtoFileHandler flush error: {e}");
+            warn!(
+                "FemtoFileHandler flush error after write {}/{}: {e}",
+                self.writes, self.flush_interval
+            );
             e
         })?;
         Ok(())
@@ -126,7 +129,7 @@ impl FlushTracker {
     }
 
     fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        if self.flush_interval != 0 && self.writes % self.flush_interval == 0 {
+        if self.flush_interval != 0 && self.writes > 0 && self.writes % self.flush_interval == 0 {
             writer.flush()?;
         }
         Ok(())
@@ -171,6 +174,7 @@ mod tests {
     #[case(1, 1, true, 1, true)]
     #[case(3, 1, false, 0, false)]
     #[case(0, 5, false, 0, false)]
+    #[case(2, 0, false, 0, false)]
     fn flush_if_due_cases(
         #[case] interval: usize,
         #[case] writes: usize,
@@ -196,6 +200,7 @@ mod tests {
 
         let log = logger.pop().expect("no log produced");
         assert_eq!(log.level(), log::Level::Warn);
+        assert!(log.args().contains("after write"));
         assert!(log.args().contains("flush failed"));
     }
 }
