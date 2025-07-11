@@ -1,8 +1,9 @@
 //! Asynchronous file handler used by `femtologging`.
 //!
-//! A dedicated worker thread receives `FemtoLogRecord` values over a bounded
+//! A dedicated worker thread receives [`FemtoLogRecord`] values over a bounded
 //! channel and writes them to disk. Python constructors map onto the Rust
-//! APIs via PyO3 wrappers defined below.
+//! APIs via PyO3 wrappers defined below. The worker thread flushes periodically
+//! and supports optional synchronisation for tests via a [`Barrier`].
 
 use std::{
     fs::{File, OpenOptions},
@@ -560,7 +561,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn worker_config_from_trait_copies_values() {
+    fn worker_config_from_handlerconfig_copies_values() {
         let cfg = HandlerConfig {
             capacity: 42,
             flush_interval: 7,
