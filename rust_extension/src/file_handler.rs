@@ -675,7 +675,7 @@ impl FemtoFileHandler {
             overflow_policy,
             start_barrier,
         } = config;
-        let mut worker_cfg = WorkerConfig::from_handler(&HandlerConfig {
+        let mut worker_cfg = WorkerConfig::from(&HandlerConfig {
             capacity,
             flush_interval,
             overflow_policy,
