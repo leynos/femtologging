@@ -98,21 +98,21 @@ impl Default for WorkerConfig {
     }
 }
 
-impl WorkerConfig {
-    /// Create a worker configuration from a `HandlerConfig`.
-    ///
-    /// `start_barrier` is always set to `None`; tests may override this via
-    /// `with_writer_for_test`.
-    ///
-    /// # Rationale
-    ///
-    /// Production handlers spawn their worker threads immediately and do not
-    /// require synchronisation before processing records. The optional
-    /// `start_barrier` is therefore `None` by default. Tests may use a barrier to
-    /// coordinate multiple workers and eliminate startup races. If a future
-    /// production feature needs coordinated startup (e.g. simultaneous rotation
-    /// of several files), revisit this choice and update the documentation.
-    fn from_handler(cfg: &HandlerConfig) -> Self {
+/// Convert a [`HandlerConfig`] into a [`WorkerConfig`].
+///
+/// `start_barrier` is always set to `None`; tests may override this via
+/// `with_writer_for_test`.
+///
+/// # Rationale
+///
+/// Production handlers spawn their worker threads immediately and do not
+/// require synchronisation before processing records. The optional
+/// `start_barrier` is therefore `None` by default. Tests may use a barrier to
+/// coordinate multiple workers and eliminate startup races. If a future
+/// production feature needs coordinated startup (e.g. simultaneous rotation of
+/// several files), revisit this choice and update the documentation.
+impl From<&HandlerConfig> for WorkerConfig {
+    fn from(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,
             flush_interval: cfg.flush_interval,
@@ -451,7 +451,7 @@ impl FemtoFileHandler {
     where
         F: FemtoFormatter + Send + 'static,
     {
-        let worker_cfg = WorkerConfig::from_handler(&config);
+        let worker_cfg = WorkerConfig::from(&config);
         Self::build_from_worker(file, formatter, worker_cfg, config.overflow_policy)
     }
 
@@ -560,13 +560,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn worker_config_from_handler_copies_values() {
+    fn worker_config_from_trait_copies_values() {
         let cfg = HandlerConfig {
             capacity: 42,
             flush_interval: 7,
             overflow_policy: OverflowPolicy::Drop,
         };
-        let worker = WorkerConfig::from_handler(&cfg);
+        let worker = WorkerConfig::from(&cfg);
         assert_eq!(worker.capacity, 42);
         assert_eq!(worker.flush_interval, 7);
         assert!(worker.start_barrier.is_none());
