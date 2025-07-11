@@ -15,15 +15,16 @@ The goals are:
 
 For a deeper dive into the architecture and the crates involved, see the
 documents in [`docs/`](./docs), especially
+
 <!-- markdownlint-disable-next-line MD013 -->
+
 [`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-multithreaded-logging-framework-for-python-design.md)
 and [`dependency-analysis.md`](docs/dependency-analysis.md).
 
 ## Installation
 
-Ensure the
-[Rust toolchain](https://www.rust-lang.org/tools/install) is available, then
-run:
+Ensure the [Rust toolchain](https://www.rust-lang.org/tools/install) is
+available, then run:
 
 ```bash
 pip install .
@@ -39,6 +40,11 @@ from femtologging import get_logger
 
 log = get_logger("demo")
 log.log("INFO", "hello from femtologging")
+
+# Attach a second handler
+from femtologging import FemtoStreamHandler
+
+log.add_handler(FemtoStreamHandler.stdout())
 ```
 
 `FemtoStreamHandler` and `FemtoFileHandler` are available for basic output. Each

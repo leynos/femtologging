@@ -41,7 +41,8 @@ Handlers manage their own worker threads; the logger simply forwards each record
 to every handler. Callers may invoke a handler's `flush()` method to ensure
 queued messages are written before dropping it.
 
-Currently, `add_handler()` is only available from Rust code. Python users still
-create a logger with a single default handler. Support for attaching additional
-handlers from Python will be added once the trait objects can be safely
-transferred across the FFI boundary.
+The `add_handler()` method is now exposed through the Python bindings. Any
+object with a `handle(logger, level, message)` method can be attached to a
+`FemtoLogger`. Built-in handlers like `FemtoStreamHandler` and
+`FemtoFileHandler` work out of the box, while custom Python classes simply need
+a compatible `handle` implementation.

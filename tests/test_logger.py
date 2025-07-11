@@ -4,7 +4,15 @@
 from __future__ import annotations
 
 import pytest  # pyright: ignore[reportMissingImports]
-from femtologging import FemtoLogger
+import collections.abc as cabc
+from pathlib import Path
+import typing
+
+from femtologging import FemtoFileHandler, FemtoLogger
+
+FileHandlerFactory = cabc.Callable[
+    [Path, int, int], typing.ContextManager[FemtoFileHandler]
+]
 
 
 @pytest.mark.parametrize(
@@ -49,3 +57,22 @@ def test_level_parsing_and_filtering() -> None:
     assert logger.log("WARN", "drop") is None
     with pytest.raises(ValueError):
         logger.log("bogus", "drop")
+
+
+def test_logger_add_handler(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
+    """Records should be written to every attached handler."""
+    path1 = tmp_path / "one.log"
+    path2 = tmp_path / "two.log"
+    with (
+        file_handler_factory(path1, 8, 1) as h1,
+        file_handler_factory(path2, 8, 1) as h2,
+    ):
+        logger = FemtoLogger("core")
+        logger.add_handler(h1)
+        logger.add_handler(h2)
+        logger.log("INFO", "hello")
+        del logger
+    assert path1.read_text() == "core [INFO] hello\n"
+    assert path2.read_text() == "core [INFO] hello\n"
