@@ -131,6 +131,12 @@ conditions. Should a future feature require coordinated startup (for example,
 rotating several files at once), the `WorkerConfig` creation logic will need to
 expose this.
 
+Calling `flush()` sends a `Flush` command to the worker thread and then waits on
+a dedicated acknowledgment channel for confirmation. The worker responds after
+flushing its writer, giving the caller a deterministic way to ensure all pending
+records are persisted. The wait is bounded to one second to avoid indefinite
+blocking.
+
 All handlers spawn their consumer threads on creation and expose a
 `snd: Sender<FemtoLogRecord>` to the logger. The logger clones this sender when
 created, ensuring log messages are dispatched without blocking. Dropping the

@@ -155,7 +155,7 @@ impl FlushTracker {
 /// Handler that writes formatted log records to a file on a background thread.
 enum FileCommand {
     Record(FemtoLogRecord),
-    Flush(Sender<()>),
+    Flush,
 }
 
 #[pyclass]
@@ -164,6 +164,7 @@ pub struct FemtoFileHandler {
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
     overflow_policy: OverflowPolicy,
+    ack_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -309,6 +310,7 @@ impl FemtoFileHandler {
         writer: W,
         formatter: F,
         config: WorkerConfig,
+        ack_tx: Sender<()>,
     ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
     where
         W: Write + Send + 'static,
@@ -338,12 +340,12 @@ impl FemtoFileHandler {
                             warn!("FemtoFileHandler write error: {e}");
                         }
                     }
-                    FileCommand::Flush(ack) => {
+                    FileCommand::Flush => {
                         if writer.flush().is_err() {
                             warn!("FemtoFileHandler flush error");
                         }
                         tracker.reset();
-                        let _ = ack.send(());
+                        let _ = ack_tx.send(());
                     }
                 }
             }
@@ -366,12 +368,14 @@ impl FemtoFileHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg);
+        let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
+        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg, ack_tx);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
             overflow_policy: policy,
+            ack_rx,
         }
     }
 
@@ -482,14 +486,27 @@ impl FemtoFileHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        if let Some(tx) = &self.tx {
-            let (ack_tx, ack_rx) = bounded(1);
-            if tx.send(FileCommand::Flush(ack_tx)).is_err() {
-                return false;
-            }
-            return ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        match &self.tx {
+            Some(tx) => self.perform_flush(tx),
+            None => false,
         }
-        false
+    }
+
+    /// Send a flush command to the worker thread.
+    ///
+    /// Returns `false` if the command could not be queued.
+    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+        if tx.send(FileCommand::Flush).is_err() {
+            return false;
+        }
+        self.wait_for_flush_completion()
+    }
+
+    /// Wait for the worker thread to acknowledge the flush.
+    ///
+    /// Returns `true` if the worker responded within one second.
+    fn wait_for_flush_completion(&self) -> bool {
+        self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
     }
 
     /// Close the handler and wait for the worker thread to exit.
@@ -571,11 +588,12 @@ impl FemtoFileHandler {
             overflow_policy,
             start_barrier,
         } = config;
-        let worker_cfg = WorkerConfig {
+        let mut worker_cfg = WorkerConfig::from_handler(&HandlerConfig {
             capacity,
             flush_interval,
-            start_barrier,
-        };
+            overflow_policy,
+        });
+        worker_cfg.start_barrier = start_barrier;
         Self::build_from_worker(writer, formatter, worker_cfg, overflow_policy)
     }
 }

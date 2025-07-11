@@ -89,11 +89,26 @@ fn multiple_records_are_serialised() {
 
 #[test]
 fn queue_overflow_drops_excess_records() {
-    let output = with_temp_file_handler(3, |h| {
-        for i in 0..10 {
-            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")));
-        }
-    });
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let start = Arc::new(Barrier::new(2));
+    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    cfg.capacity = 3;
+    cfg.flush_interval = 1;
+    cfg.overflow_policy = OverflowPolicy::Drop;
+    cfg.start_barrier = Some(Arc::clone(&start));
+    let handler = FemtoFileHandler::with_writer_for_test(cfg);
+
+    for i in 0..10 {
+        handler.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")));
+    }
+    // Allow the worker thread to start processing after all records are queued.
+    start.wait();
+    drop(handler);
+
+    let output = {
+        let buf = buffer.lock().unwrap();
+        String::from_utf8_lossy(&buf).to_string()
+    };
 
     assert_eq!(
         output,
