@@ -145,7 +145,7 @@ impl FlushTracker {
 }
 
 #[cfg(test)]
-mod tests {
+mod flush_tracker_tests {
     use super::*;
     use logtest::Logger;
     use rstest::*;
