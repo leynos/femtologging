@@ -571,4 +571,58 @@ mod tests {
         assert_eq!(worker.flush_interval, 7);
         assert!(worker.start_barrier.is_none());
     }
+
+    #[test]
+    fn build_from_worker_wires_handler_components() {
+        // Use a shared buffer so the spawned worker can write without
+        // requiring a real file. This keeps the test lightweight and
+        // deterministic.
+        #[derive(Clone)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Buf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.lock().unwrap().flush()
+            }
+        }
+
+        let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = Buf(std::sync::Arc::clone(&buffer));
+        let worker_cfg = WorkerConfig {
+            capacity: 1,
+            flush_interval: 1,
+            start_barrier: None,
+        };
+        let policy = OverflowPolicy::Block;
+        let mut handler =
+            FemtoFileHandler::build_from_worker(writer, DefaultFormatter, worker_cfg, policy);
+
+        assert!(handler.tx.is_some());
+        assert!(handler.handle.is_some());
+        assert_eq!(handler.overflow_policy, policy);
+
+        // Pull out the pieces so we can run the shutdown logic manually and
+        // observe the done notification without Drop consuming it first.
+        let tx = handler.tx.take().expect("tx missing");
+        let done_rx = handler.done_rx.clone();
+        let handle = handler.handle.take().expect("handle missing");
+
+        tx.send(FileCommand::Record(FemtoLogRecord::new(
+            "core", "INFO", "test",
+        )))
+        .expect("send");
+        drop(tx); // close channel so worker exits
+
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok());
+        handle.join().expect("worker thread");
+
+        let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        assert_eq!(output, "core [INFO] test\n");
+    }
 }
