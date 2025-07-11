@@ -582,11 +582,17 @@ mod tests {
 
         impl std::io::Write for Buf {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().write(buf)
+                self.0
+                    .lock()
+                    .expect("failed to acquire buffer lock for write")
+                    .write(buf)
             }
 
             fn flush(&mut self) -> std::io::Result<()> {
-                self.0.lock().unwrap().flush()
+                self.0
+                    .lock()
+                    .expect("failed to acquire buffer lock for flush")
+                    .flush()
             }
         }
 
@@ -622,7 +628,13 @@ mod tests {
             .is_ok());
         handle.join().expect("worker thread");
 
-        let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        let output = String::from_utf8(
+            buffer
+                .lock()
+                .expect("failed to acquire buffer lock for read")
+                .clone(),
+        )
+        .expect("buffer contained invalid UTF-8");
         assert_eq!(output, "core [INFO] test\n");
     }
 }
