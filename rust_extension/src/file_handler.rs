@@ -4,6 +4,8 @@
 //! channel and writes them to disk. Python constructors map onto the Rust
 //! APIs via PyO3 wrappers defined below. The worker thread flushes periodically
 //! and supports optional synchronisation for tests via a [`Barrier`].
+//! Worker configuration is built from a [`HandlerConfig`] using the standard
+//! [`From`] trait for ergonomic conversions.
 
 use std::{
     fs::{File, OpenOptions},
