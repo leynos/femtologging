@@ -33,26 +33,33 @@
 When implementing changes, adhere to the following testing procedures:
 
 - **New Functionality:**
+
   - Implement unit tests covering all new code units (functions, components,
     classes). Implement tests **before** implementing the unit.
   - Implement behavioural tests that verify the end-to-end behaviour of the new
     feature from a user interaction perspective.
   - Ensure both unit and behavioural tests pass before considering the
     functionality complete.
+
 - **Bug Fixes:**
+
   - Before fixing the bug, write a new test (unit or behavioural, whichever is
     most appropriate) that specifically targets and reproduces the bug. This
     test should initially fail.
   - Implement the bug fix.
   - Verify that the new test now passes, along with all existing tests.
+
 - **Modifying Existing Functionality:**
+
   - Identify the existing behavioural and unit tests relevant to the
     functionality being changed.
   - **First, modify the tests** to reflect the new requirements or behaviour.
   - Run the tests; they should now fail.
   - Implement the code changes to the functionality.
   - Verify that the modified tests (and all other existing tests) now pass.
+
 - **Refactoring:**
+
   - Identify or create a behavioural test that covers the functionality being
     refactored. Ensure this test passes **before** starting the refactor.
   - Perform the refactoring (e.g., extracting logic into a new unit).
@@ -67,42 +74,31 @@ When implementing changes, adhere to the following testing procedures:
   subsequent commit) should represent a single logical unit of work.
 - **Quality Gates:** Before considering a change complete or proposing a commit,
   ensure it meets the following criteria:
-  - For Python files:
+  
+  - For code changes files:
 
     - **Testing:** Passes all relevant unit and behavioural tests according to
-      the guidelines above.
-    - **Linting:** Run `make lint` or use integrated editor linting.
-    - **Formatting:** Use `make fmt` or integrated editor formatting.
-    - **Typechecking:** Run `make typecheck` or integrated editor type checking.
-
-  - For TypeScript files:
-
-    - **Testing:** Passes all relevant unit and behavioural tests according to
-      the guidelines above.
-    - **Linting:** Passes lint checks (`biome check .` or integrated editor
-      linting).
-    - **Formatting:** Adheres to formatting standards (`biome check --apply .`
-      or integrated editor formatting).
-    - **TypeScript Compilation:** Compiles successfully without TypeScript
-      errors (`tsc --noEmit`).
-
-  - For Rust files:
-
-    - **Testing:** Passes all relevant unit and behavioural tests according to
-      the guidelines above.
-    - **Linting:** Run `make lint` or use integrated editor linting.
-    - **Formatting:** Verify with `make check-fmt` or integrated editor
-      formatting.
+      the guidelines above. (Execute these using `make test`).
+    - **Linting:** Run `make lint` and ensure that there are no lint rule
+      violations. Fix the underlying causes of any violations rather than
+      silencing the rules.
+    - **Formatting:** Use `make fmt` and ensure that any updated formatting is
+      committed.
+    - **Typechecking:** Run `make typecheck` and ensure that there are no type
+      errors. Fix the underlying causes of any errors rather than silencing
+      the rules.
 
   - For Markdown files (`.md` only):
 
     - **Linting:** Run `make markdownlint` or use integrated editor linting.
-    - **Mermaid diagrams:** Validate diagrams with `make nixie`. `nixie` is a
-      standalone CLI binary, not an npm package.
+    - **Mermaid diagrams:** Validate diagrams with `make nixie`.
+      
 - **Committing:**
+  
   - Only changes that meet all the quality gates above should be committed.
   - Write clear, descriptive commit messages summarizing the change, following
     these formatting guidelines:
+
     - **Imperative Mood:** Use the imperative mood in the subject line (e.g.,
       "Fix bug", "Add feature" instead of "Fixed bug", "Added feature").
     - **Subject Line:** The first line should be a concise summary of the change
@@ -112,12 +108,14 @@ When implementing changes, adhere to the following testing procedures:
       including rationale, goals, and scope. Wrap the body at 72 characters.
     - **Formatting:** Use Markdown for any formatted text (like bullet points or
       code snippets) within the commit message body.
+
   - Do not commit changes that fail any of the quality gates.
 
 ## Refactoring Heuristics & Workflow
 
 - **Recognising Refactoring Needs:** Regularly assess the codebase for potential
   refactoring opportunities. Consider refactoring when you observe:
+
   - **Long Methods/Functions:** Functions or methods that are excessively long
     or try to do too many things.
   - **Duplicated Code:** Identical or very similar code blocks appearing in
@@ -135,10 +133,12 @@ When implementing changes, adhere to the following testing procedures:
     class/object than their own.
   - **Shotgun Surgery:** A single change requiring small modifications in many
     different classes or functions.
+
 - **Post-Commit Review:** After committing a functional change or bug fix (that
   meets all quality gates), review the changed code and surrounding areas using
   the heuristics above.
 - **Separate Atomic Refactors:** If refactoring is deemed necessary:
+
   - Perform the refactoring as a **separate, atomic commit** *after* the
     functional change commit.
   - Ensure the refactoring adheres to the testing guidelines (behavioural tests

@@ -9,6 +9,8 @@ libraries. Use the links below to explore each topic.
   - Describes Makefile commands for building, linting, formatting and tests.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
+- [documentation-style-guide.md](./documentation-style-guide.md)
+  - Provides conventions for documentation and Python docstrings.
 - [roadmap.md](./roadmap.md)
   - Lists milestones for porting picologging to a Rust/PyO3 implementation.
 

@@ -99,10 +99,19 @@ impl Default for WorkerConfig {
 }
 
 impl WorkerConfig {
-    /// Create a worker configuration from a [`HandlerConfig`].
+    /// Create a worker configuration from a `HandlerConfig`.
     ///
-    /// The optional `start_barrier` is not copied. Tests may override this
-    /// field via `with_writer_for_test`.
+    /// `start_barrier` is always set to `None`; tests may override this via
+    /// `with_writer_for_test`.
+    ///
+    /// # Rationale
+    ///
+    /// Production handlers spawn their worker threads immediately and do not
+    /// require synchronisation before processing records. The optional
+    /// `start_barrier` is therefore `None` by default. Tests may use a barrier to
+    /// coordinate multiple workers and eliminate startup races. If a future
+    /// production feature needs coordinated startup (e.g. simultaneous rotation
+    /// of several files), revisit this choice and update the documentation.
     fn from_handler(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,
@@ -233,6 +242,31 @@ impl FemtoFileHandler {
             Some(flush_interval),
             OverflowPolicy::Timeout(Duration::from_millis(timeout_ms)),
         )
+    }
+
+    /// Create a handler with an explicit overflow policy specified as a string.
+    #[staticmethod]
+    #[pyo3(name = "with_capacity_flush_policy")]
+    fn py_with_capacity_flush_policy(
+        path: String,
+        capacity: usize,
+        flush_interval: usize,
+        policy: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        use pyo3::exceptions::PyValueError;
+        let policy = match policy.to_ascii_lowercase().as_str() {
+            "drop" => OverflowPolicy::Drop,
+            "block" => OverflowPolicy::Block,
+            "timeout" => {
+                let ms = timeout_ms.ok_or_else(|| {
+                    PyValueError::new_err("timeout_ms required for timeout policy")
+                })?;
+                OverflowPolicy::Timeout(Duration::from_millis(ms))
+            }
+            _ => return Err(PyValueError::new_err("invalid overflow policy")),
+        };
+        Self::build_py_handler(path, capacity, Some(flush_interval), policy)
     }
 
     /// Dispatch a log record created from the provided parameters.

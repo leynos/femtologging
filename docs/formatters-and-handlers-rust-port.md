@@ -66,7 +66,8 @@ pub struct FemtoHandler;
 Implementations should forward the record to an internal queue with `try_send`
 so the caller never blocks. If the queue is full, the record is silently dropped
 and a warning is written to `stderr`. Advanced use cases can specify an overflow
-policy when constructing a handler:
+policy when constructing a handler. The Python API exposes this via
+`OverflowPolicy` and `FemtoFileHandler.with_capacity_flush_policy`:
 
 - **Drop** – current default; records are discarded when the queue is full.
 - **Block** – the call blocks until space becomes available.
@@ -122,6 +123,13 @@ maximize durability. To reduce syscall overhead in high-volume scenarios,
 controlling how many records are written before the worker thread flushes.
 Passing `0` disables periodic flushing and flushes only when the handler shuts
 down.
+
+The worker thread begins processing records as soon as the handler is created.
+Production code therefore leaves the optional `start_barrier` field unset. Unit
+tests may use this barrier to synchronise multiple workers and avoid race
+conditions. Should a future feature require coordinated startup (for example,
+rotating several files at once), the `WorkerConfig` creation logic will need to
+expose this.
 
 Calling `flush()` sends a `Flush` command to the worker thread and then waits on
 a dedicated acknowledgment channel for confirmation. The worker responds after
