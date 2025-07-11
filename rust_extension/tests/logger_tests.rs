@@ -137,7 +137,10 @@ fn shared_handler_across_loggers() {
 fn drop_with_sender_clone_exits() {
     let logger = FemtoLogger::new("clone".to_string());
     let tx = logger.clone_sender_for_test().expect("sender should exist");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let thread_barrier = std::sync::Arc::clone(&barrier);
     let t = std::thread::spawn(move || {
+        thread_barrier.wait();
         let res = tx.send(FemtoLogRecord::new("clone", "INFO", "late"));
         assert!(
             res.is_err(),
@@ -145,5 +148,6 @@ fn drop_with_sender_clone_exits() {
         );
     });
     drop(logger);
+    barrier.wait();
     t.join().unwrap();
 }
