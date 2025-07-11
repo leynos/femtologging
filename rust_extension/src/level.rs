@@ -4,6 +4,8 @@
 //! converting between strings and numeric representations so loggers can
 //! efficiently filter records.
 
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use std::fmt;
 use std::str::FromStr;
 
@@ -85,6 +87,18 @@ impl TryFrom<u8> for FemtoLevel {
             4 => Ok(Self::Error),
             5 => Ok(Self::Critical),
             _ => Err(()),
+        }
+    }
+}
+
+impl<'source> FromPyObject<'source> for FemtoLevel {
+    fn extract(obj: &'source PyAny) -> PyResult<Self> {
+        let s: &str = obj.extract()?;
+        match s.parse() {
+            Ok(level) => Ok(level),
+            Err(_) => Err(PyErr::new::<PyValueError, _>(format!(
+                "invalid log level: {s}"
+            ))),
         }
     }
 }

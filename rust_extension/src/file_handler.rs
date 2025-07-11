@@ -140,25 +140,109 @@ impl FlushTracker {
 
     fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
-
-        if self.flush_interval > 0 && self.writes % self.flush_interval == 0 {
-            if let Err(e) = writer.flush() {
-                warn!("FemtoFileHandler flush error: {e}");
-                return Err(e);
-            }
-        }
+        self.flush_if_due(writer).map_err(|e| {
+            warn!(
+                "FemtoFileHandler flush error after write {}/{}: {e}",
+                self.writes, self.flush_interval
+            );
+            e
+        })?;
         Ok(())
     }
 
     fn reset(&mut self) {
         self.writes = 0;
     }
+
+    /// Determine whether the writer should flush on the current write.
+    ///
+    /// A flush is due when the interval is non-zero, at least one write has
+    /// occurred, and the write count is a multiple of the interval.
+    fn should_flush(&self) -> bool {
+        self.flush_interval != 0 && self.writes > 0 && self.writes % self.flush_interval == 0
+    }
+
+    fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        if self.should_flush() {
+            writer.flush()?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod flush_tracker_tests {
+    use super::*;
+    use logtest::Logger;
+    use rstest::*;
+    use std::io::{self, Write};
+
+    #[derive(Default)]
+    struct DummyWriter {
+        flushed: usize,
+        fail: bool,
+    }
+
+    impl Write for DummyWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushed += 1;
+            if self.fail {
+                Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[fixture]
+    fn writer(#[default(false)] fail: bool) -> DummyWriter {
+        DummyWriter { flushed: 0, fail }
+    }
+
+    #[rstest]
+    #[case(2, 2, false, 1, false)]
+    #[case(1, 1, true, 1, true)]
+    #[case(3, 1, false, 0, false)]
+    #[case(0, 5, false, 0, false)]
+    #[case(2, 0, false, 0, false)]
+    fn flush_if_due_cases(
+        #[case] interval: usize,
+        #[case] writes: usize,
+        #[case] _fail: bool,
+        #[case] expected_flushes: usize,
+        #[case] expect_error: bool,
+        #[with(_fail)] mut writer: DummyWriter,
+    ) {
+        let mut tracker = FlushTracker::new(interval);
+        tracker.writes = writes;
+        let result = tracker.flush_if_due(&mut writer);
+        assert_eq!(writer.flushed, expected_flushes);
+        assert_eq!(result.is_err(), expect_error);
+    }
+
+    #[rstest]
+    fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
+        let mut logger = Logger::start();
+        let mut tracker = FlushTracker::new(1);
+        let result = tracker.record_write(&mut writer);
+        assert!(result.is_err());
+        assert_eq!(writer.flushed, 1);
+
+        let log = logger.pop().expect("no log produced");
+        assert_eq!(log.level(), log::Level::Warn);
+        assert!(log.args().contains("after write"));
+        assert!(log.args().contains("flush failed"));
+    }
 }
 
 /// Handler that writes formatted log records to a file on a background thread.
 enum FileCommand {
     Record(FemtoLogRecord),
-    Flush(Sender<()>),
+    Flush,
 }
 
 #[pyclass]
@@ -167,6 +251,7 @@ pub struct FemtoFileHandler {
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
     overflow_policy: OverflowPolicy,
+    ack_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -246,6 +331,31 @@ impl FemtoFileHandler {
         )
     }
 
+    /// Create a handler with an explicit overflow policy specified as a string.
+    #[staticmethod]
+    #[pyo3(name = "with_capacity_flush_policy")]
+    fn py_with_capacity_flush_policy(
+        path: String,
+        capacity: usize,
+        flush_interval: usize,
+        policy: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        use pyo3::exceptions::PyValueError;
+        let policy = match policy.to_ascii_lowercase().as_str() {
+            "drop" => OverflowPolicy::Drop,
+            "block" => OverflowPolicy::Block,
+            "timeout" => {
+                let ms = timeout_ms.ok_or_else(|| {
+                    PyValueError::new_err("timeout_ms required for timeout policy")
+                })?;
+                OverflowPolicy::Timeout(Duration::from_millis(ms))
+            }
+            _ => return Err(PyValueError::new_err("invalid overflow policy")),
+        };
+        Self::build_py_handler(path, capacity, Some(flush_interval), policy)
+    }
+
     /// Dispatch a log record created from the provided parameters.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
@@ -287,6 +397,7 @@ impl FemtoFileHandler {
         writer: W,
         formatter: F,
         config: WorkerConfig,
+        ack_tx: Sender<()>,
     ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
     where
         W: Write + Send + 'static,
@@ -316,12 +427,12 @@ impl FemtoFileHandler {
                             warn!("FemtoFileHandler write error: {e}");
                         }
                     }
-                    FileCommand::Flush(ack) => {
+                    FileCommand::Flush => {
                         if writer.flush().is_err() {
                             warn!("FemtoFileHandler flush error");
                         }
                         tracker.reset();
-                        let _ = ack.send(());
+                        let _ = ack_tx.send(());
                     }
                 }
             }
@@ -344,12 +455,14 @@ impl FemtoFileHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg);
+        let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
+        let (tx, done_rx, handle) = Self::spawn_worker(writer, formatter, worker_cfg, ack_tx);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
             overflow_policy: policy,
+            ack_rx,
         }
     }
 
@@ -460,14 +573,27 @@ impl FemtoFileHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        if let Some(tx) = &self.tx {
-            let (ack_tx, ack_rx) = bounded(1);
-            if tx.send(FileCommand::Flush(ack_tx)).is_err() {
-                return false;
-            }
-            return ack_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        match &self.tx {
+            Some(tx) => self.perform_flush(tx),
+            None => false,
         }
-        false
+    }
+
+    /// Send a flush command to the worker thread.
+    ///
+    /// Returns `false` if the command could not be queued.
+    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+        if tx.send(FileCommand::Flush).is_err() {
+            return false;
+        }
+        self.wait_for_flush_completion()
+    }
+
+    /// Wait for the worker thread to acknowledge the flush.
+    ///
+    /// Returns `true` if the worker responded within one second.
+    fn wait_for_flush_completion(&self) -> bool {
+        self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
     }
 
     /// Close the handler and wait for the worker thread to exit.
@@ -549,11 +675,12 @@ impl FemtoFileHandler {
             overflow_policy,
             start_barrier,
         } = config;
-        let worker_cfg = WorkerConfig {
+        let mut worker_cfg = WorkerConfig::from_handler(&HandlerConfig {
             capacity,
             flush_interval,
-            start_barrier,
-        };
+            overflow_policy,
+        });
+        worker_cfg.start_barrier = start_barrier;
         Self::build_from_worker(writer, formatter, worker_cfg, overflow_policy)
     }
 }
@@ -573,5 +700,71 @@ mod tests {
         assert_eq!(worker.capacity, 42);
         assert_eq!(worker.flush_interval, 7);
         assert!(worker.start_barrier.is_none());
+    }
+
+    #[test]
+    fn build_from_worker_wires_handler_components() {
+        // Use a shared buffer so the spawned worker can write without
+        // requiring a real file. This keeps the test lightweight and
+        // deterministic.
+        #[derive(Clone)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Buf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("failed to acquire buffer lock for write")
+                    .write(buf)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0
+                    .lock()
+                    .expect("failed to acquire buffer lock for flush")
+                    .flush()
+            }
+        }
+
+        let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = Buf(std::sync::Arc::clone(&buffer));
+        let worker_cfg = WorkerConfig {
+            capacity: 1,
+            flush_interval: 1,
+            start_barrier: None,
+        };
+        let policy = OverflowPolicy::Block;
+        let mut handler =
+            FemtoFileHandler::build_from_worker(writer, DefaultFormatter, worker_cfg, policy);
+
+        assert!(handler.tx.is_some());
+        assert!(handler.handle.is_some());
+        assert_eq!(handler.overflow_policy, policy);
+
+        // Pull out the pieces so we can run the shutdown logic manually and
+        // observe the done notification without Drop consuming it first.
+        let tx = handler.tx.take().expect("tx missing");
+        let done_rx = handler.done_rx.clone();
+        let handle = handler.handle.take().expect("handle missing");
+
+        tx.send(FileCommand::Record(FemtoLogRecord::new(
+            "core", "INFO", "test",
+        )))
+        .expect("send");
+        drop(tx); // close channel so worker exits
+
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok());
+        handle.join().expect("worker thread");
+
+        let output = String::from_utf8(
+            buffer
+                .lock()
+                .expect("failed to acquire buffer lock for read")
+                .clone(),
+        )
+        .expect("buffer contained invalid UTF-8");
+        assert_eq!(output, "core [INFO] test\n");
     }
 }

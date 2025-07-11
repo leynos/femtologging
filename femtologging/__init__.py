@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from .overflow_policy import OverflowPolicy
+
 PACKAGE_NAME = "femtologging"
 
 rust = __import__(f"_{PACKAGE_NAME}_rs")
+
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
 get_logger = rust.get_logger  # type: ignore[attr-defined]
@@ -20,5 +23,6 @@ __all__ = [
     "reset_manager",
     "FemtoStreamHandler",
     "FemtoFileHandler",
+    "OverflowPolicy",
     "hello",
 ]
