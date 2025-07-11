@@ -27,6 +27,7 @@ implementation:
   log producers cannot exhaust memory if the consumer thread stalls.
 - **rstest** is used as a development dependency to provide concise test
   fixtures and parameterized tests.
+- **logtest** allows asserting on log output in unit tests.
 - **serde** will power any structured data serialization needed for network
   handlers or configuration files. This crate is not yet listed in `Cargo.toml`
   because serialization features are planned for a later phase.

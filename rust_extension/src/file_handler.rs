@@ -137,18 +137,102 @@ impl FlushTracker {
 
     fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
-
-        if self.flush_interval > 0 && self.writes % self.flush_interval == 0 {
-            if let Err(e) = writer.flush() {
-                warn!("FemtoFileHandler flush error: {e}");
-                return Err(e);
-            }
-        }
+        self.flush_if_due(writer).map_err(|e| {
+            warn!(
+                "FemtoFileHandler flush error after write {}/{}: {e}",
+                self.writes, self.flush_interval
+            );
+            e
+        })?;
         Ok(())
     }
 
     fn reset(&mut self) {
         self.writes = 0;
+    }
+
+    /// Determine whether the writer should flush on the current write.
+    ///
+    /// A flush is due when the interval is non-zero, at least one write has
+    /// occurred, and the write count is a multiple of the interval.
+    fn should_flush(&self) -> bool {
+        self.flush_interval != 0 && self.writes > 0 && self.writes % self.flush_interval == 0
+    }
+
+    fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        if self.should_flush() {
+            writer.flush()?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod flush_tracker_tests {
+    use super::*;
+    use logtest::Logger;
+    use rstest::*;
+    use std::io::{self, Write};
+
+    #[derive(Default)]
+    struct DummyWriter {
+        flushed: usize,
+        fail: bool,
+    }
+
+    impl Write for DummyWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushed += 1;
+            if self.fail {
+                Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[fixture]
+    fn writer(#[default(false)] fail: bool) -> DummyWriter {
+        DummyWriter { flushed: 0, fail }
+    }
+
+    #[rstest]
+    #[case(2, 2, false, 1, false)]
+    #[case(1, 1, true, 1, true)]
+    #[case(3, 1, false, 0, false)]
+    #[case(0, 5, false, 0, false)]
+    #[case(2, 0, false, 0, false)]
+    fn flush_if_due_cases(
+        #[case] interval: usize,
+        #[case] writes: usize,
+        #[case] _fail: bool,
+        #[case] expected_flushes: usize,
+        #[case] expect_error: bool,
+        #[with(_fail)] mut writer: DummyWriter,
+    ) {
+        let mut tracker = FlushTracker::new(interval);
+        tracker.writes = writes;
+        let result = tracker.flush_if_due(&mut writer);
+        assert_eq!(writer.flushed, expected_flushes);
+        assert_eq!(result.is_err(), expect_error);
+    }
+
+    #[rstest]
+    fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
+        let mut logger = Logger::start();
+        let mut tracker = FlushTracker::new(1);
+        let result = tracker.record_write(&mut writer);
+        assert!(result.is_err());
+        assert_eq!(writer.flushed, 1);
+
+        let log = logger.pop().expect("no log produced");
+        assert_eq!(log.level(), log::Level::Warn);
+        assert!(log.args().contains("after write"));
+        assert!(log.args().contains("flush failed"));
     }
 }
 
