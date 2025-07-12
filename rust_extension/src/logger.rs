@@ -194,7 +194,8 @@ mod tests {
         }
 
         fn collected(&self) -> Vec<FemtoLogRecord> {
-            self.records.lock().unwrap().clone()
+        fn collected(&self) -> Vec<FemtoLogRecord> {
+            self.records.lock().expect("Failed to lock records").clone()
         }
     }
 
