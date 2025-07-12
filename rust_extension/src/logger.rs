@@ -199,9 +199,14 @@ mod tests {
     }
 
     impl FemtoHandlerTrait for CollectingHandler {
-        fn handle(&self, record: FemtoLogRecord) {
-            self.records.lock().unwrap().push(record);
-        }
+impl FemtoHandlerTrait for CollectingHandler {
+    fn handle(&self, record: FemtoLogRecord) {
+        self.records
+            .lock()
+            .expect("Failed to lock records")
+            .push(record);
+    }
+}
     }
 
     #[test]
