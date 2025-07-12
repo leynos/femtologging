@@ -1,8 +1,11 @@
 //! Asynchronous file handler used by `femtologging`.
 //!
-//! A dedicated worker thread receives `FemtoLogRecord` values over a bounded
+//! A dedicated worker thread receives [`FemtoLogRecord`] values over a bounded
 //! channel and writes them to disk. Python constructors map onto the Rust
-//! APIs via PyO3 wrappers defined below.
+//! APIs via PyO3 wrappers defined below. The worker thread flushes periodically
+//! and supports optional synchronisation for tests via a [`Barrier`].
+//! Worker configuration is built from a [`HandlerConfig`] using the standard
+//! [`From`] trait for ergonomic conversions.
 
 use std::{
     fs::{File, OpenOptions},
@@ -98,21 +101,21 @@ impl Default for WorkerConfig {
     }
 }
 
-impl WorkerConfig {
-    /// Create a worker configuration from a `HandlerConfig`.
-    ///
-    /// `start_barrier` is always set to `None`; tests may override this via
-    /// `with_writer_for_test`.
-    ///
-    /// # Rationale
-    ///
-    /// Production handlers spawn their worker threads immediately and do not
-    /// require synchronisation before processing records. The optional
-    /// `start_barrier` is therefore `None` by default. Tests may use a barrier to
-    /// coordinate multiple workers and eliminate startup races. If a future
-    /// production feature needs coordinated startup (e.g. simultaneous rotation
-    /// of several files), revisit this choice and update the documentation.
-    fn from_handler(cfg: &HandlerConfig) -> Self {
+/// Convert a [`HandlerConfig`] into a [`WorkerConfig`].
+///
+/// `start_barrier` is always set to `None`; tests may override this via
+/// `with_writer_for_test`.
+///
+/// # Rationale
+///
+/// Production handlers spawn their worker threads immediately and do not
+/// require synchronisation before processing records. The optional
+/// `start_barrier` is therefore `None` by default. Tests may use a barrier to
+/// coordinate multiple workers and eliminate startup races. If a future
+/// production feature needs coordinated startup (e.g. simultaneous rotation of
+/// several files), revisit this choice and update the documentation.
+impl From<&HandlerConfig> for WorkerConfig {
+    fn from(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,
             flush_interval: cfg.flush_interval,
@@ -564,7 +567,7 @@ impl FemtoFileHandler {
     where
         F: FemtoFormatter + Send + 'static,
     {
-        let worker_cfg = WorkerConfig::from_handler(&config);
+        let worker_cfg = WorkerConfig::from(&config);
         Self::build_from_worker(file, formatter, worker_cfg, config.overflow_policy)
     }
 
@@ -672,7 +675,7 @@ impl FemtoFileHandler {
             overflow_policy,
             start_barrier,
         } = config;
-        let mut worker_cfg = WorkerConfig::from_handler(&HandlerConfig {
+        let mut worker_cfg = WorkerConfig::from(&HandlerConfig {
             capacity,
             flush_interval,
             overflow_policy,
@@ -687,15 +690,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn worker_config_from_handler_copies_values() {
+    fn worker_config_from_handlerconfig_copies_values() {
         let cfg = HandlerConfig {
             capacity: 42,
             flush_interval: 7,
             overflow_policy: OverflowPolicy::Drop,
         };
-        let worker = WorkerConfig::from_handler(&cfg);
+        let worker = WorkerConfig::from(&cfg);
         assert_eq!(worker.capacity, 42);
         assert_eq!(worker.flush_interval, 7);
         assert!(worker.start_barrier.is_none());
+    }
+
+    #[test]
+    fn build_from_worker_wires_handler_components() {
+        // Use a shared buffer so the spawned worker can write without
+        // requiring a real file. This keeps the test lightweight and
+        // deterministic.
+        #[derive(Clone)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Buf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("failed to acquire buffer lock for write")
+                    .write(buf)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0
+                    .lock()
+                    .expect("failed to acquire buffer lock for flush")
+                    .flush()
+            }
+        }
+
+        let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = Buf(std::sync::Arc::clone(&buffer));
+        let worker_cfg = WorkerConfig {
+            capacity: 1,
+            flush_interval: 1,
+            start_barrier: None,
+        };
+        let policy = OverflowPolicy::Block;
+        let mut handler =
+            FemtoFileHandler::build_from_worker(writer, DefaultFormatter, worker_cfg, policy);
+
+        assert!(handler.tx.is_some());
+        assert!(handler.handle.is_some());
+        assert_eq!(handler.overflow_policy, policy);
+
+        // Pull out the pieces so we can run the shutdown logic manually and
+        // observe the done notification without Drop consuming it first.
+        let tx = handler.tx.take().expect("tx missing");
+        let done_rx = handler.done_rx.clone();
+        let handle = handler.handle.take().expect("handle missing");
+
+        tx.send(FileCommand::Record(FemtoLogRecord::new(
+            "core", "INFO", "test",
+        )))
+        .expect("send");
+        drop(tx); // close channel so worker exits
+
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok());
+        handle.join().expect("worker thread");
+
+        let output = String::from_utf8(
+            buffer
+                .lock()
+                .expect("failed to acquire buffer lock for read")
+                .clone(),
+        )
+        .expect("buffer contained invalid UTF-8");
+        assert_eq!(output, "core [INFO] test\n");
     }
 }
