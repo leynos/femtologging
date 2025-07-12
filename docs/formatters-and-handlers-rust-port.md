@@ -56,6 +56,7 @@ common trait:
 ```rust
 pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord);
+    fn flush(&self) -> bool { true }
 }
 
 /// Base Python-exposed class. Methods are no-ops by default.
@@ -73,6 +74,9 @@ policy when constructing a handler. The Python API exposes this via
 - **Block** – the call blocks until space becomes available.
 - **Timeout** – wait for a fixed duration before giving up and dropping the
   record.
+
+Every handler provides a `flush()` method so callers can force pending messages
+to be written before shutdown.
 
 ### StreamHandler
 

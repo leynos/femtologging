@@ -9,6 +9,16 @@ use pyo3::prelude::*;
 pub trait FemtoHandlerTrait: Send + Sync {
     /// Dispatch a log record for handling.
     fn handle(&self, record: FemtoLogRecord);
+
+    /// Flush any pending log records.
+    ///
+    /// Returning `true` signals the flush completed successfully. Implementations
+    /// may return `false` when the handler has been closed or if the flush
+    /// command could not be processed.
+    fn flush(&self) -> bool {
+        // Default to a no-op flush for handlers that do not buffer writes.
+        true
+    }
 }
 
 /// Base Python class for handlers. Methods do nothing by default.
@@ -26,4 +36,8 @@ impl FemtoHandler {
 
 impl FemtoHandlerTrait for FemtoHandler {
     fn handle(&self, _record: FemtoLogRecord) {}
+
+    fn flush(&self) -> bool {
+        true
+    }
 }

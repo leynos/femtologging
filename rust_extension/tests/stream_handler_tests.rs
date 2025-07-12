@@ -75,6 +75,18 @@ fn stream_handler_multiple_records(
 }
 
 #[rstest]
+fn stream_handler_flush(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    handler.handle(FemtoLogRecord::new("core", "INFO", "one"));
+    assert!(handler.flush());
+    handler.handle(FemtoLogRecord::new("core", "INFO", "two"));
+    drop(handler);
+
+    assert_eq!(read_output(&buffer), "core [INFO] one\ncore [INFO] two\n");
+}
+
+#[rstest]
 fn stream_handler_concurrent_usage(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {

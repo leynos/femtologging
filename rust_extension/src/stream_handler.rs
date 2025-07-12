@@ -28,11 +28,17 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 /// Each instance owns a background thread which receives records via a
 /// channel and writes them to the provided stream. The writer and formatter
 /// are moved into that thread so the caller never locks or blocks.
+enum StreamCommand {
+    Record(FemtoLogRecord),
+    Flush,
+}
+
 #[pyclass]
 pub struct FemtoStreamHandler {
-    tx: Sender<FemtoLogRecord>,
+    tx: Option<Sender<StreamCommand>>,
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
+    ack_rx: Receiver<()>,
 }
 
 #[pymethods]
@@ -58,6 +64,18 @@ impl FemtoStreamHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+    }
+
+    /// Flush pending log records without shutting down the worker thread.
+    #[pyo3(name = "flush")]
+    fn py_flush(&self) -> bool {
+        self.flush()
+    }
+
+    /// Close the handler and wait for the worker thread to finish.
+    #[pyo3(name = "close")]
+    fn py_close(&mut self) {
+        self.close();
     }
 }
 
@@ -89,48 +107,89 @@ impl FemtoStreamHandler {
     {
         let (tx, rx) = bounded(capacity);
         let (done_tx, done_rx) = bounded(1);
+        let (ack_tx, ack_rx) = bounded(1);
         let handle = thread::spawn(move || {
             let mut writer = writer;
             let formatter = formatter;
-            for record in rx {
-                let msg = formatter.format(&record);
-                if writeln!(writer, "{msg}")
-                    .and_then(|_| writer.flush())
-                    .is_err()
-                {
-                    warn!("FemtoStreamHandler write error");
+            for cmd in rx {
+                match cmd {
+                    StreamCommand::Record(record) => {
+                        let msg = formatter.format(&record);
+                        if writeln!(writer, "{msg}")
+                            .and_then(|_| writer.flush())
+                            .is_err()
+                        {
+                            warn!("FemtoStreamHandler write error");
+                        }
+                    }
+                    StreamCommand::Flush => {
+                        if writer.flush().is_err() {
+                            warn!("FemtoStreamHandler flush error");
+                        }
+                        let _ = ack_tx.send(());
+                    }
                 }
+            }
+            if writer.flush().is_err() {
+                warn!("FemtoStreamHandler flush error");
             }
             let _ = done_tx.send(());
         });
 
         Self {
-            tx,
+            tx: Some(tx),
             handle: Some(handle),
             done_rx,
+            ack_rx,
         }
     }
-}
 
-impl FemtoHandlerTrait for FemtoStreamHandler {
-    fn handle(&self, record: FemtoLogRecord) {
-        if self.tx.try_send(record).is_err() {
-            warn!("FemtoStreamHandler: queue full or shutting down, dropping record");
-        }
+    /// Flush any pending log records.
+    pub fn flush(&self) -> bool {
+        <Self as FemtoHandlerTrait>::flush(self)
     }
-}
 
-impl Drop for FemtoStreamHandler {
-    fn drop(&mut self) {
+    /// Close the handler and wait for the worker thread to exit.
+    pub fn close(&mut self) {
+        self.tx.take();
         if let Some(handle) = self.handle.take() {
             if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
                 warn!("FemtoStreamHandler: worker thread did not shut down within 1s");
-                // Detach the thread so shutdown continues
                 return;
             }
             if handle.join().is_err() {
                 warn!("FemtoStreamHandler: worker thread panicked");
             }
         }
+    }
+}
+
+impl FemtoHandlerTrait for FemtoStreamHandler {
+    fn handle(&self, record: FemtoLogRecord) {
+        if let Some(tx) = &self.tx {
+            if tx.try_send(StreamCommand::Record(record)).is_err() {
+                warn!("FemtoStreamHandler: queue full or shutting down, dropping record");
+            }
+        } else {
+            warn!("FemtoStreamHandler: handle called after close");
+        }
+    }
+
+    fn flush(&self) -> bool {
+        match &self.tx {
+            Some(tx) => {
+                if tx.send(StreamCommand::Flush).is_err() {
+                    return false;
+                }
+                self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
+            }
+            None => false,
+        }
+    }
+}
+
+impl Drop for FemtoStreamHandler {
+    fn drop(&mut self) {
+        self.close();
     }
 }
