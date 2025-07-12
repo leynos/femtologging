@@ -3,40 +3,20 @@
 //! These tests leverage `loom` to explore possible thread interleavings
 //! and ensure log records are routed correctly without duplication.
 
-use loom::sync::{Arc, Mutex};
+use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
 use loom::thread;
-use std::io::{self, Write};
+use std::io::Write;
+
+type Arc<T> = LoomArc<T>;
+type Mutex<T> = LoomMutex<T>;
+#[path = "../test_utils/shared_buffer.rs"]
+mod shared_buffer;
+use shared_buffer::{read_output, SharedBuf as LoomBuf};
 
 use _femtologging_rs::{
     DefaultFormatter, FemtoLogger, FemtoHandlerTrait, FemtoStreamHandler,
 };
 
-#[derive(Clone)]
-struct LoomBuf(Arc<Mutex<Vec<u8>>>);
-
-impl Write for LoomBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .expect("Failed to lock LoomBuf for write")
-            .write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0
-            .lock()
-            .expect("Failed to lock LoomBuf for flush")
-            .flush()
-    }
-}
-
-fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    let data = buffer
-        .lock()
-        .expect("Failed to lock buffer for read")
-        .clone();
-    String::from_utf8(data).expect("Buffer contains invalid UTF-8")
-}
 
 #[test]
 #[ignore]
