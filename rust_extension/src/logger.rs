@@ -5,6 +5,7 @@
 
 // FIXME: Track PyO3 issue for proper fix
 use pyo3::prelude::*;
+use pyo3::{Py, PyAny};
 
 use crate::handler::FemtoHandlerTrait;
 
@@ -23,6 +24,23 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+
+/// Wrapper allowing Python handler objects to be used by the logger.
+struct PyHandler {
+    obj: Py<PyAny>,
+}
+
+impl FemtoHandlerTrait for PyHandler {
+    fn handle(&self, record: FemtoLogRecord) {
+        Python::with_gil(|py| {
+            let _ = self.obj.call_method1(
+                py,
+                "handle",
+                (&record.logger, &record.level, &record.message),
+            );
+        });
+    }
+}
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -77,6 +95,12 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Attach a handler implemented in Python or Rust.
+    #[pyo3(name = "add_handler", text_signature = "(self, handler)")]
+    pub fn py_add_handler(&mut self, handler: Py<PyAny>) {
+        self.add_handler(Arc::new(PyHandler { obj: handler }) as Arc<dyn FemtoHandlerTrait>);
     }
 }
 
