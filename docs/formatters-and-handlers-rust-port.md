@@ -81,7 +81,8 @@ purposes:
 ```python
 from femtologging import FemtoFileHandler, OverflowPolicy
 
-# Drop-in replacement that blocks instead of discarding
+# Drop-in replacement that blocks instead of discarding.
+# Waiting ensures no log messages are lost if the queue becomes full.
 handler = FemtoFileHandler.with_capacity_flush_policy(
     path="app.log",
     capacity=4096,
