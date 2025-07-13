@@ -133,6 +133,15 @@ impl FemtoLogger {
     }
 
     /// Drain any remaining records once a shutdown signal is received.
+    ///
+    /// Consumes all messages still available on `rx` and dispatches them
+    /// through the provided `handlers`. This ensures no log records are lost
+    /// during shutdown.
+    ///
+    /// # Arguments
+    ///
+    /// * `rx` - Channel receiver holding pending log records.
+    /// * `handlers` - Shared collection of handlers used to process records.
     fn drain_remaining_records(
         rx: &Receiver<FemtoLogRecord>,
         handlers: &Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
@@ -143,6 +152,17 @@ impl FemtoLogger {
     }
 
     /// Main loop executed by the logger's worker thread.
+    ///
+    /// Waits on either incoming log records or a shutdown signal using
+    /// `select!`. Each received record is forwarded to `handle_log_record`.
+    /// When a shutdown signal arrives, any queued records are drained before
+    /// the thread exits.
+    ///
+    /// # Arguments
+    ///
+    /// * `rx` - Channel receiver for new log records.
+    /// * `shutdown_rx` - Channel receiver signaling shutdown.
+    /// * `handlers` - Shared collection of handlers for processing records.
     fn worker_thread_loop(
         rx: Receiver<FemtoLogRecord>,
         shutdown_rx: Receiver<()>,
@@ -232,7 +252,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::bounded(4);
         for i in 0..3 {
             tx.send(FemtoLogRecord::new("core", "INFO", &format!("{i}")))
-                .unwrap();
+                .expect("Failed to send test record");
         }
         drop(tx);
 
@@ -256,10 +276,14 @@ mod tests {
             FemtoLogger::worker_thread_loop(rx, shutdown_rx, handlers);
         });
 
-        tx.send(FemtoLogRecord::new("core", "INFO", "one")).unwrap();
-        tx.send(FemtoLogRecord::new("core", "INFO", "two")).unwrap();
-        shutdown_tx.send(()).unwrap();
-        thread.join().unwrap();
+        tx.send(FemtoLogRecord::new("core", "INFO", "one"))
+            .expect("Failed to send first test record");
+        tx.send(FemtoLogRecord::new("core", "INFO", "two"))
+            .expect("Failed to send second test record");
+        shutdown_tx
+            .send(())
+            .expect("Failed to send shutdown signal");
+        thread.join().expect("Worker thread panicked");
 
         let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
         assert_eq!(msgs, vec!["one", "two"]);
