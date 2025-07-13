@@ -7,7 +7,19 @@ use crate::{Arc, Mutex};
 use std::io::{self, Write};
 
 #[derive(Clone)]
-pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);
+pub struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+impl SharedBuf {
+    /// Create a new, empty `SharedBuf`.
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(Vec::new())))
+    }
+
+    /// Access the inner `Arc<Mutex<Vec<u8>>>`.
+    pub fn inner(&self) -> &Arc<Mutex<Vec<u8>>> {
+        &self.0
+    }
+}
 
 impl Write for SharedBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
