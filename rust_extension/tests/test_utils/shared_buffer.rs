@@ -7,7 +7,7 @@ use crate::{Arc, Mutex};
 use std::io::{self, Write};
 
 #[derive(Clone)]
-pub struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);
 
 impl SharedBuf {
     /// Create a new, empty `SharedBuf`.
@@ -37,7 +37,7 @@ impl Write for SharedBuf {
     }
 }
 
-fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
+pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
     String::from_utf8(
         buffer
             .lock()
