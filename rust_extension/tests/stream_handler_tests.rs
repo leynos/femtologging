@@ -4,6 +4,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
+use log;
+use logtest;
 use rstest::*;
 
 #[derive(Clone)]
@@ -186,4 +188,28 @@ fn stream_handler_drop_timeout() {
     // while still proving the drop doesn't hang indefinitely.
     // Allow the worker thread to finish
     barrier.wait();
+}
+
+#[rstest]
+fn stream_handler_reports_dropped_records() {
+    let logger = logtest::start();
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler = FemtoStreamHandler::with_capacity_timeout(
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
+        1,
+        Duration::from_millis(50),
+    );
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    assert!(handler.flush());
+
+    let warnings: Vec<_> = logger
+        .into_iter()
+        .filter(|r| r.level() == log::Level::Warn)
+        .collect();
+    assert!(warnings
+        .iter()
+        .any(|r| r.args().to_string().contains("1 log records dropped")));
 }
