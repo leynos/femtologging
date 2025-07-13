@@ -19,11 +19,11 @@ tree) under a root logger via a `Manager` holding a `loggerDict` of names to
 logger instances. Each `Logger` has attributes like `name`, `level`, a list of
 child handlers, and links to its parent logger, and inherits filtering behavior
 via the `Filterer` mixin. Handlers (e.g. `StreamHandler`, `FileHandler`) hold
-output streams and optional `Formatter` objects, and each has its own lock
-for thread-safe I/O. When a logger emits, it creates a `LogRecord` (a Python
-object with fields like `msg`, `args`, `levelno`, timestamp, etc.), runs it
-through logger filters, then calls each handler’s `handle()` method. The handler
-filters it again, formats it (via `Formatter.format(record)`), and writes to its
+output streams and optional `Formatter` objects, and each has a lock for thread-
+safe I/O. When a logger emits, it creates a `LogRecord` (a Python object with
+fields like `msg`, `args`, `levelno`, timestamp, etc.), runs it through logger
+filters, then calls each handler’s `handle()` method. The handler filters
+it again, formats it (via `Formatter.format(record)`), and writes to its
 destination (often wrapped in `with self.lock:`).
 
 In contrast, **picologging** implements most core classes in C++ (exposed
@@ -44,7 +44,7 @@ Picologging’s Logger class has no Python-level inheritance hierarchy beyond
 the C struct (though it also embeds a `Filterer`). It uses boolean flags
 (`enabledForDebug`, etc.) set at init to speed up `isEnabledFor` checks, rather
 than dynamic lookups. Extensible hooks in CPython (like custom `LogRecord`
-factories) are largely absent: notably `Manager.setLogRecordFactory` is
+factories) are largely absent: notably, `Manager.setLogRecordFactory` is
 **not implemented** in picologging. In effect, CPython logging emphasizes
 extensibility and configurability, while picologging emphasizes a streamlined,
 lower-overhead class design (trading off some features).
@@ -235,8 +235,7 @@ In multi-threaded scenarios, both libraries are thread-safe but behave
 differently: CPython logging’s global lock can become a bottleneck if many
 threads are concurrently creating loggers or modifying handlers. Picologging’s
 lack of a global lock means threads only contend on individual handler locks or
-Python’s GIL. This suggests picologging should scale better under heavy multi-
-threaded logging, although real-world gains depend on workload. (No specific
+Python’s GIL. This suggests picologging should scale better under heavy multi-threaded logging, although real-world gains depend on workload. (No specific
 multithread benchmarks are publicly available to cite; this conclusion follows
 from the architecture.)
 
