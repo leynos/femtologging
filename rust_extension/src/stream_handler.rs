@@ -8,8 +8,9 @@
 
 use std::{
     io::{self, Write},
+    sync::Mutex,
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -23,6 +24,7 @@ use crate::{
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+const WARN_RATE_LIMIT: Duration = Duration::from_secs(5);
 
 /// Handler that writes formatted log records to an `io::Write` stream.
 ///
@@ -30,7 +32,8 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 /// commands via a channel and writes them to the provided stream. The writer
 /// and formatter are moved into that thread so the caller never locks or
 /// blocks. The handler supports explicit flushing to ensure all queued records
-/// are written.
+/// are written. Flush operations wait up to `flush_timeout_secs` seconds for the
+/// worker thread to confirm completion.
 enum StreamCommand {
     Record(FemtoLogRecord),
     Flush,
@@ -42,6 +45,10 @@ pub struct FemtoStreamHandler {
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
     ack_rx: Receiver<()>,
+    /// Timestamp of the last dropped-record warning.
+    last_warn: Mutex<Instant>,
+    /// Timeout for flush operations in seconds.
+    flush_timeout_secs: u64,
 }
 
 #[pymethods]
@@ -108,6 +115,20 @@ impl FemtoStreamHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
+        Self::with_capacity_timeout(writer, formatter, capacity, 1)
+    }
+
+    /// Create a new handler with custom capacity and flush timeout.
+    pub fn with_capacity_timeout<W, F>(
+        writer: W,
+        formatter: F,
+        capacity: usize,
+        flush_timeout_secs: u64,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+        F: FemtoFormatter + Send + 'static,
+    {
         let (tx, rx) = bounded(capacity);
         let (done_tx, done_rx) = bounded(1);
         let (ack_tx, ack_rx) = bounded(1);
@@ -144,6 +165,8 @@ impl FemtoStreamHandler {
             handle: Some(handle),
             done_rx,
             ack_rx,
+            last_warn: Mutex::new(Instant::now() - WARN_RATE_LIMIT),
+            flush_timeout_secs,
         }
     }
 
@@ -169,12 +192,17 @@ impl FemtoStreamHandler {
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) {
-        if let Some(tx) = &self.tx {
-            if tx.try_send(StreamCommand::Record(record)).is_err() {
+        let send_failed = match &self.tx {
+            Some(tx) => tx.try_send(StreamCommand::Record(record)).is_err(),
+            None => true,
+        };
+        if send_failed {
+            let now = Instant::now();
+            let mut last = self.last_warn.lock().unwrap();
+            if now.duration_since(*last) >= WARN_RATE_LIMIT {
                 warn!("FemtoStreamHandler: queue full or shutting down, dropping record");
+                *last = now;
             }
-        } else {
-            warn!("FemtoStreamHandler: handle called after close");
         }
     }
 
@@ -184,7 +212,9 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                 if tx.send(StreamCommand::Flush).is_err() {
                     return false;
                 }
-                self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
+                self.ack_rx
+                    .recv_timeout(Duration::from_secs(self.flush_timeout_secs))
+                    .is_ok()
             }
             None => false,
         }

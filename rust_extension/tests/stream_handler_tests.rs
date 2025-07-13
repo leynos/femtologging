@@ -87,6 +87,24 @@ fn stream_handler_flush(
 }
 
 #[rstest]
+fn stream_handler_close_flushes_pending(
+    #[from(handler_tuple)] (buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    handler.handle(FemtoLogRecord::new("core", "INFO", "close"));
+    handler.close();
+
+    assert_eq!(read_output(&buffer), "core [INFO] close\n");
+}
+
+#[rstest]
+fn stream_handler_flush_after_close(
+    #[from(handler_tuple)] (_buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    handler.close();
+    assert!(!handler.flush());
+}
+
+#[rstest]
 fn stream_handler_concurrent_usage(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {

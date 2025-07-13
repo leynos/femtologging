@@ -646,7 +646,7 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     }
 
     fn flush(&self) -> bool {
-        self.flush()
+        FemtoFileHandler::flush(self)
     }
 }
 
