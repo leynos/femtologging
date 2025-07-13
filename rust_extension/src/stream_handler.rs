@@ -1,9 +1,10 @@
 //! Stream-based logging handler implementation.
 //!
 //! This module defines `FemtoStreamHandler`, which formats log records and
-//! writes them to a stream on a background thread. The handler forwards
-//! `FemtoLogRecord` values over a bounded channel so the producer never blocks
-//! on I/O.
+//! writes them to a stream on a background thread. The handler forwards log
+//! records and flush commands over a bounded channel so the producer never
+//! blocks on I/O. The handler supports explicit flushing to ensure all pending
+//! records are written.
 
 use std::{
     io::{self, Write},
@@ -25,9 +26,11 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Handler that writes formatted log records to an `io::Write` stream.
 ///
-/// Each instance owns a background thread which receives records via a
-/// channel and writes them to the provided stream. The writer and formatter
-/// are moved into that thread so the caller never locks or blocks.
+/// Each instance owns a background thread which receives records and flush
+/// commands via a channel and writes them to the provided stream. The writer
+/// and formatter are moved into that thread so the caller never locks or
+/// blocks. The handler supports explicit flushing to ensure all queued records
+/// are written.
 enum StreamCommand {
     Record(FemtoLogRecord),
     Flush,

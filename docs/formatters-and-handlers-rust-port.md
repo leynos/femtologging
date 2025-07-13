@@ -75,7 +75,7 @@ policy when constructing a handler. The Python API exposes this via
 - **Timeout** – wait for a fixed duration before giving up and dropping the
   record.
 
-Every handler provides a `flush()` method so callers can force pending messages
+Every handler provides a `flush()` method, so callers can force pending messages
 to be written before shutdown.
 
 ### StreamHandler
