@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "femtologging package"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = { text = "ISC" }
 dependencies = []
 
 [dependency-groups]
