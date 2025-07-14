@@ -6,8 +6,8 @@ the library's existing model, which blends fine-grained locks with reliance on
 Python's Global Interpreter Lock (GIL). It then explores how a language with a
 sophisticated compile-time ownership model, such as Rust, could offer enhanced
 safety guarantees. Finally, it delves into asynchronous architectures that
-decouple log creation from I/O-bound emission, a critical pattern for
-high-throughput applications.
+decouple log creation from I/O-bound emission, a critical pattern for high-
+throughput applications.
 
 ## 1. The `picologging` Concurrency Model: A Hybrid Approach
 
@@ -38,8 +38,8 @@ locking.
   destinations (e.g., one to a file, another to the console) do not contend with
   each other.
 
-A crucial detail of this implementation is the sequence of operations within the
-`handle` method: filtering occurs *before* the lock is acquired. This is an
+A crucial detail of this implementation is the sequence of operations within
+the `handle` method: filtering occurs *before* the lock is acquired. This is an
 important optimisation, as it prevents the cost of filtering out a message from
 contributing to lock contention. However, the work of formatting the message via
 the `Formatter` occurs *inside* the locked region, as it is part of the `emit`
@@ -53,8 +53,8 @@ Instead, it relies on the protection afforded by Python's **Global Interpreter
 Lock (GIL)**.
 
 - **Mechanism**: Operations that modify the shared logger hierarchy, such as
-  `getLogger` creating a new logger instance or `_fixupParents` linking it into
-  the tree, are not guarded by a specific lock within `picologging`. Their
+  `getLogger` creating a new logger instance or `_fixupParents` linking it
+  into the tree, are not guarded by a specific lock within `picologging`. Their
   thread safety is a consequence of the GIL ensuring that only one thread can
   execute Python bytecode at any given time.
 
@@ -63,8 +63,7 @@ Lock (GIL)**.
   during application start-up in a single-threaded context. By avoiding an
   explicit global lock, `picologging` eliminates a potential point of contention
   for the far more frequent operation of emitting log messages, thereby
-  prioritising runtime performance \[cite:
-  `logging-cpython-picologging-comparison.md`\].
+  prioritising runtime performance[^1].
 
 ## 2. A Rust Implementation: The Power of Compile-Time Safety
 
@@ -74,8 +73,8 @@ by an ownership model and borrow checker.
 
 ### Guaranteed Handler Safety with `Mutex`
 
-In a Rust version, the handler's shared mutable state (the output stream) would
-be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
+In a Rust version, the handler's shared mutable state (the output stream)
+would be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
 (Atomic Reference Counter).
 
 ```rust
@@ -165,8 +164,7 @@ This is achieved with a producer-consumer pattern, where application threads
 ### `picologging`'s Asynchronous Support
 
 `picologging` natively supports this architecture via its `QueueHandler` and
-`QueueListener` classes \[cite:
-`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`\].
+`QueueListener` classes[^2].
 
 1. `QueueHandler`: Configured on the primary loggers, its only job is to take a
    `LogRecord` and place it on a `queue.Queue`. This is a very low-latency
@@ -182,8 +180,8 @@ ensuring log calls have minimal impact on performance.
 ### The Idiomatic Rust Pattern: MPSC Channels
 
 In Rust, this asynchronous model is best implemented not with a
-`Mutex<VecDeque>` (which still involves a shared lock), but with a
-**Multi-Producer, Single-Consumer (MPSC) channel** from the standard library.
+`Mutex<VecDeque>` (which still involves a shared lock), but with a **Multi-
+Producer, Single-Consumer (MPSC) channel** from the standard library.
 
 This pattern is the definitive solution for this use case:
 
@@ -196,7 +194,10 @@ This pattern is the definitive solution for this use case:
   handlers **without any locks whatsoever**. The channel's design guarantees
   serial, thread-safe delivery to this single consumer.
 
-This architecture achieves the ultimate goal: the hot path (log creation) is
-parallel and minimally contentious, while the cold path (I/O) is handled
+This architecture achieves the ultimate goal: the hot path (log creation)
+is parallel and minimally contentious, while the cold path (I/O) is handled
 serially by a dedicated worker, eliminating lock contention where it is most
-expensive.
+expensive.[^1][^2]
+
+[^1]: See [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
+[^2]: Source: [`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`](microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py)

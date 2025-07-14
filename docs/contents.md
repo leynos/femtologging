@@ -18,7 +18,8 @@ libraries. Use the links below to explore each topic.
 
 - [logging-class-overview.md](./logging-class-overview.md)
   - Presents a Mermaid class diagram showing CPython logging's hierarchy.
-- [logging-cpython-picologging-comparison.md](./logging-cpython-picologging-comparison.md)
+- [logging-cpython-picologging-comparison.md](./logging-cpython-picologging-
+  comparison.md)
   - Compares CPython logging and picologging implementations and performance
     trade-offs.
 - [logging-sequence-diagrams.md](./logging-sequence-diagrams.md)
@@ -26,19 +27,25 @@ libraries. Use the links below to explore each topic.
 
 ## Rust Port Design Notes
 
-- [concurrency-models-in-high-performance-logging.md](./concurrency-models-in-high-performance-logging.md)
+- [concurrency-models-in-high-performance-logging.md](./concurrency-models-in-
+  high-performance-logging.md)
   - Examines picologging's hybrid lock strategy and contrasts it with Rust's
     compile-time safety and asynchronous patterns.
 - [core_features.md](./core_features.md)
   - Summarizes picologging's key features prioritized for the Rust port.
 - [formatters-and-handlers-rust-port.md](./formatters-and-handlers-rust-port.md)
   - Design for moving formatter and handler logic to Rust with thread safety.
-- [logger-hierarchy-and-multi-handler.md](./logger-hierarchy-and-multi-handler.md)
+- [logger-hierarchy-and-multi-handler.md](./logger-hierarchy-and-multi-
+  handler.md)
   - Describes how loggers share handlers and inherit configuration via dotted
     names.
 - [rust-extension.md](./rust-extension.md)
   - Describes the small PyO3-based Rust extension shipped in the project.
-- [rust-multithreaded-logging-framework-for-python-design.md](./rust-multithreaded-logging-framework-for-python-design.md)
+- [cpython-abi-management-in-rust-with-pyo3.md](./cpython-abi-management-in-
+  rust-with-pyo3.md)
+  - Comprehensive guide to managing CPython ABI compatibility with PyO3.
+- [rust-multithreaded-logging-framework-for-python-design.md](./rust-
+  multithreaded-logging-framework-for-python-design.md)
   - Proposes a multithreaded Rust logging framework with strong compile-time
     safety.
 - [rust-testing-with-rstest-fixtures.md](./rust-testing-with-rstest-fixtures.md)
