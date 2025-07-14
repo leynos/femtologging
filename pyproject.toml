@@ -8,7 +8,7 @@ license = { text = "MIT" }
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "pytest-timeout"]
 
 [tool.ruff]
 line-length = 88
@@ -25,4 +25,7 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "femtologging"
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
+
+[tool.pytest.ini_options]
+timeout = 30
 
