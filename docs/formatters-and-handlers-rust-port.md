@@ -66,9 +66,13 @@ pub struct FemtoHandler;
 
 Implementations should forward the record to an internal queue with `try_send`
 so the caller never blocks. If the queue is full, the record is silently dropped
-and a warning is written to `stderr`. Advanced use cases can specify an overflow
-policy when constructing a handler. The Python API exposes this via
-`OverflowPolicy` and `FemtoFileHandler.with_capacity_flush_policy`:
+and a warning is written to `stderr`. This favours throughput over completeness:
+records may be lost to keep the application responsive. Advanced use cases can
+specify an overflow policy when constructing a handler. The Python API exposes
+this via `OverflowPolicy` and `FemtoFileHandler.with_capacity_flush_policy`. The
+policy may also be extended to support options like back pressure, writing
+overflowed messages to a separate file, or emitting metrics for monitoring
+purposes:
 
 - **Drop** – current default; records are discarded when the queue is full.
 - **Block** – the call blocks until space becomes available.
@@ -77,6 +81,18 @@ policy when constructing a handler. The Python API exposes this via
 
 Every handler provides a `flush()` method, so callers can force pending messages
 to be written before shutdown.
+
+```python
+from femtologging import FemtoFileHandler, OverflowPolicy
+
+# Drop-in replacement that blocks instead of discarding.
+# Waiting ensures no log messages are lost if the queue becomes full.
+handler = FemtoFileHandler.with_capacity_flush_policy(
+    path="app.log",
+    capacity=4096,
+    overflow_policy=OverflowPolicy.BLOCK,
+)
+```
 
 ### StreamHandler
 

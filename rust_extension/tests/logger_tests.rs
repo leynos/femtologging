@@ -11,16 +11,28 @@ struct SharedBuf(Arc<Mutex<Vec<u8>>>);
 
 impl Write for SharedBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
+        self.0
+            .lock()
+            .expect("Failed to lock SharedBuf for writing")
+            .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().unwrap().flush()
+        self.0
+            .lock()
+            .expect("Failed to lock SharedBuf for flushing")
+            .flush()
     }
 }
 
 fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+    String::from_utf8(
+        buffer
+            .lock()
+            .expect("Failed to lock buffer for reading")
+            .clone(),
+    )
+    .expect("Buffer did not contain valid UTF-8")
 }
 
 #[rstest]
@@ -149,5 +161,25 @@ fn drop_with_sender_clone_exits() {
     });
     drop(logger);
     barrier.wait();
-    t.join().unwrap();
+    t.join().expect("Worker thread panicked");
+}
+
+#[test]
+fn logger_drains_records_on_drop() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
+    ));
+    let mut logger = FemtoLogger::new("core".to_string());
+    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger.log(FemtoLevel::Info, "one");
+    logger.log(FemtoLevel::Info, "two");
+    logger.log(FemtoLevel::Info, "three");
+    drop(logger);
+    drop(handler);
+    assert_eq!(
+        read_output(&buffer),
+        "core [INFO] one\ncore [INFO] two\ncore [INFO] three\n"
+    );
 }
