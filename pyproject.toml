@@ -18,7 +18,7 @@ package = true
 
 
 [build-system]
-requires = ["maturin>=1.5"]
+requires = ["maturin>=1.9.1,<2.0.0"]
 build-backend = "maturin"
 [tool.maturin]
 manifest-path = "rust_extension/Cargo.toml"
