@@ -647,6 +647,10 @@ impl FemtoHandlerTrait for FemtoFileHandler {
             warn!("FemtoFileHandler: handle called after close");
         }
     }
+
+    fn flush(&self) -> bool {
+        FemtoFileHandler::flush(self)
+    }
 }
 
 impl Drop for FemtoFileHandler {

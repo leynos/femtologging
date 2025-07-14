@@ -4,6 +4,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
+use log;
+use logtest;
 use rstest::*;
 
 #[derive(Clone)]
@@ -72,6 +74,36 @@ fn stream_handler_multiple_records(
         output,
         "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
     );
+}
+
+#[rstest]
+fn stream_handler_flush(
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    handler.handle(FemtoLogRecord::new("core", "INFO", "one"));
+    assert!(handler.flush());
+    handler.handle(FemtoLogRecord::new("core", "INFO", "two"));
+    drop(handler);
+
+    assert_eq!(read_output(&buffer), "core [INFO] one\ncore [INFO] two\n");
+}
+
+#[rstest]
+fn stream_handler_close_flushes_pending(
+    #[from(handler_tuple)] (buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    handler.handle(FemtoLogRecord::new("core", "INFO", "close"));
+    handler.close();
+
+    assert_eq!(read_output(&buffer), "core [INFO] close\n");
+}
+
+#[rstest]
+fn stream_handler_flush_after_close(
+    #[from(handler_tuple)] (_buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+) {
+    handler.close();
+    assert!(!handler.flush());
 }
 
 #[rstest]
@@ -156,4 +188,28 @@ fn stream_handler_drop_timeout() {
     // while still proving the drop doesn't hang indefinitely.
     // Allow the worker thread to finish
     barrier.wait();
+}
+
+#[rstest]
+fn stream_handler_reports_dropped_records() {
+    let logger = logtest::start();
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler = FemtoStreamHandler::with_capacity_timeout(
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
+        1,
+        Duration::from_millis(50),
+    );
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    assert!(handler.flush());
+
+    let warnings: Vec<_> = logger
+        .into_iter()
+        .filter(|r| r.level() == log::Level::Warn)
+        .collect();
+    assert!(warnings
+        .iter()
+        .any(|r| r.args().to_string().contains("1 log records dropped")));
 }

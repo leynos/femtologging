@@ -56,6 +56,7 @@ common trait:
 ```rust
 pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord);
+    fn flush(&self) -> bool { true }
 }
 
 /// Base Python-exposed class. Methods are no-ops by default.
@@ -77,6 +78,9 @@ purposes:
 - **Block** – the call blocks until space becomes available.
 - **Timeout** – wait for a fixed duration before giving up and dropping the
   record.
+
+Every handler provides a `flush()` method, so callers can force pending messages
+to be written before shutdown.
 
 ```python
 from femtologging import FemtoFileHandler, OverflowPolicy
@@ -102,8 +106,9 @@ The default bounded queue size is 1024 records, but
 when needed.
 
 Dropping a handler closes its channel and waits briefly for the worker thread to
-finish flushing. If the thread does not exit within one second, a warning is
-printed, and the drop continues, preventing deadlocks during shutdown.
+finish flushing. If the thread does not exit within the configured flush timeout
+(one second by default), a warning is printed, and the drop continues,
+preventing deadlocks during shutdown.
 
 #### Sequence Diagram
 
@@ -150,8 +155,8 @@ expose this.
 Calling `flush()` sends a `Flush` command to the worker thread and then waits on
 a dedicated acknowledgment channel for confirmation. The worker responds after
 flushing its writer, giving the caller a deterministic way to ensure all pending
-records are persisted. The wait is bounded to one second to avoid indefinite
-blocking.
+records are persisted. The wait is bounded by the handler's `flush_timeout_secs`
+setting (one second by default) to avoid indefinite blocking.
 
 All handlers spawn their consumer threads on creation and expose a
 `snd: Sender<FemtoLogRecord>` to the logger. The logger clones this sender when
