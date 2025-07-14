@@ -1,11 +1,11 @@
 # femtologging
 
 **femtologging** is an experiment in building a fast, thread-friendly logging
-library for Python using Rust. The project ports core ideas from
-[picologging](https://github.com/microsoft/picologging) and exposes them through
-a small [PyO3](https://pyo3.rs/) extension. Log records travel over
-`crossbeam-channel` queues to dedicated worker threads, ensuring the application
-remains responsive even when log output is slow.
+library for Python using Rust. The project ports core ideas from [picologging]
+(<https://github.com/microsoft/picologging>) and exposes them through a small
+[PyO3](https://pyo3.rs/) extension. Log records travel over `crossbeam-channel`
+queues to dedicated worker threads, ensuring the application remains responsive
+even when log output is slow.
 
 The goals are:
 
@@ -18,8 +18,9 @@ documents in [`docs/`](./docs), especially
 
 <!-- markdownlint-disable-next-line MD013 -->
 
-[`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-multithreaded-logging-framework-for-python-design.md)
-and [`dependency-analysis.md`](docs/dependency-analysis.md).
+[`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-
+multithreaded-logging-framework-for-python-design.md) and [`dependency-
+analysis.md`](docs/dependency-analysis.md).
 
 ## Installation
 
@@ -45,6 +46,17 @@ log.log("INFO", "hello from femtologging")
 from femtologging import FemtoStreamHandler
 
 log.add_handler(FemtoStreamHandler.stdout())
+
+# Attach a custom Python handler
+class Collector:
+    def __init__(self) -> None:
+        self.records: list[tuple[str, str, str]] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        self.records.append((logger, level, message))
+
+collector = Collector()
+log.add_handler(collector)
 ```
 
 `FemtoStreamHandler` and `FemtoFileHandler` are available for basic output. Each

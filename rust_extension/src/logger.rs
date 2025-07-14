@@ -33,11 +33,14 @@ struct PyHandler {
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) {
         Python::with_gil(|py| {
-            let _ = self.obj.call_method1(
+            if let Err(err) = self.obj.call_method1(
                 py,
                 "handle",
                 (&record.logger, &record.level, &record.message),
-            );
+            ) {
+                err.print(py);
+                warn!("PyHandler: error calling handle");
+            }
         });
     }
 }

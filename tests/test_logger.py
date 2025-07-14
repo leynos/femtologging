@@ -76,3 +76,23 @@ def test_logger_add_handler(
         del logger
     assert path1.read_text() == "core [INFO] hello\n"
     assert path2.read_text() == "core [INFO] hello\n"
+
+
+class CollectingHandler:
+    """Simple handler used to verify Python handler support."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[str, str, str]] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        self.records.append((logger, level, message))
+
+
+def test_python_handler_invocation() -> None:
+    """Python handlers should receive records via PyHandler."""
+    logger = FemtoLogger("core")
+    collector = CollectingHandler()
+    logger.add_handler(collector)
+    logger.log("INFO", "ok")
+    del logger
+    assert collector.records == [("core", "INFO", "ok")]
