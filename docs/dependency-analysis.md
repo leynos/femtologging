@@ -5,11 +5,11 @@ This note tracks third-party libraries required for the Rust port of
 
 ## Python project
 
-The current Python package has no runtime dependencies. Development tools are
-`pytest`, `ruff` and `pyright` as configured in `pyproject.toml`. Static type
-checking uses the `ty` CLI. A `Makefile` in the project root wraps these tools
-with convenient targets (`fmt`, `check-fmt`, `lint`, `test`, `build` and
-`release`). The `tools` target ensures commands like `ruff` and `ty` are
+The current Python package has no runtime dependencies. Development tools
+are `pytest`, `ruff` and `pyright` as configured in `pyproject.toml`. Static
+type checking uses the `ty` CLI. A `Makefile` in the project root wraps these
+tools with convenient targets (`fmt`, `check-fmt`, `lint`, `test`, `build`
+and `release`). The `tools` target ensures commands like `ruff` and `ty` are
 present.
 
 ## Rust ecosystem
@@ -18,7 +18,8 @@ The design document discusses several crates that map to parts of the CPython
 implementation:
 
 - **PyO3** provides bindings so the Rust library can be imported from Python. It
-  replaces the C++ extension used by picologging.
+  replaces the C++ extension used by picologging. The project now targets `pyo3`
+  version `>=0.25.1,<0.26.0` to ensure compatibility with Python 3.14.
 - **crossbeam-channel** (v0.5.15) is recommended as the baseline synchronous
   multi-producer, single-consumer queue for handler threads. Alternatives like
   `flume` or `tokio::sync::mpsc` may be benchmarked later. Version 0.5.15 avoids

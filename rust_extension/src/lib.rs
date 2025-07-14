@@ -35,7 +35,7 @@ fn reset_manager_py() {
 
 #[allow(deprecated)]
 #[pymodule]
-fn _femtologging_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn _femtologging_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;

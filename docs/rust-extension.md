@@ -1,9 +1,9 @@
 # Rust Extension
 
-This project includes a small Rust extension built with [PyO3](https://
-pyo3.rs/). Initially, it exposed only a trivial `hello()` function and
-the `FemtoLogger` class. It has since grown to provide the core handler
-implementations as well:
+This project includes a small Rust extension built with [PyO3](https://pyo3.rs/)
+(currently `>=0.25.1,<0.26.0`). Initially, it exposed only a trivial `hello()`
+function and the `FemtoLogger` class. It has since grown to provide the core
+handler implementations as well:
 
 - `FemtoStreamHandler` writes log records to `stdout` or `stderr` on a
   background thread.
