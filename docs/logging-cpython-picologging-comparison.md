@@ -44,7 +44,7 @@ Picologging’s Logger class has no Python-level inheritance hierarchy beyond
 the C struct (though it also embeds a `Filterer`). It uses boolean flags
 (`enabledForDebug`, etc.) set at init to speed up `isEnabledFor` checks, rather
 than dynamic lookups. Extensible hooks in CPython (like custom `LogRecord`
-factories) are largely absent: notably `Manager.setLogRecordFactory` is
+factories) are largely absent: notably, `Manager.setLogRecordFactory` is
 **not implemented** in picologging. In effect, CPython logging emphasizes
 extensibility and configurability, while picologging emphasizes a streamlined,
 lower-overhead class design (trading off some features).
@@ -313,12 +313,14 @@ applications.
 CPython’s `logging` module is a mature, feature-rich, pure-Python logging
 framework with flexible configuration and extensibility. Microsoft’s
 `picologging` reimplements the same API in (mostly) C++ for high performance.
-<!-- markdownlint-disable MD032 --> Key differences include: **class
-implementation** (Python classes vs C structs), **locking** (global RLock plus
-per-handler RLock vs per-handler C++ mutex, no global lock), **data structures**
-(dynamic vs static fields), and **features supported** (full logging API
-vs a subset). These design choices give <!-- markdownlint-enable MD032 -->
-picologging much higher throughput at the cost of some flexibility.
+
+Key differences include:
+
+- **class implementation** (Python classes vs C structs)
+- **locking** (global RLock plus per-handler RLock vs per-handler C++ mutex, 
+  no global lock)
+- **data structures** (dynamic vs static fields), and
+- **features supported** (full logging API vs a subset).
 
 For latency-sensitive or heavily threaded applications, picologging is generally
 a better fit. For applications needing maximum configurability or running in

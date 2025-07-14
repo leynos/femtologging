@@ -55,7 +55,7 @@ test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
 	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test --manifest-path $(RUST_MANIFEST)
-	uv run pytest -q
+	uv run pytest -v
 
 typecheck: build ## Static type analysis
 	ty check
