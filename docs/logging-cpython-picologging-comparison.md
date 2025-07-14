@@ -225,7 +225,7 @@ is disabled.
 Concrete measured *throughput* numbers vary by environment, but the order-
 of-magnitude improvements are widely noted. (For example, publishing these
 benchmarks in a blog or issue would confirm them, but as of this writing the
-claim inis the primary source.) Latency per record is drastically lower in
+claim is the primary source.) Latency per record is drastically lower in
 picologging, which benefits real-time logging. In terms of *memory usage*, no
 detailed comparison is documented. One might expect picologging’s C-structs to
 use less per-record overhead than Python objects, but the C extension itself
