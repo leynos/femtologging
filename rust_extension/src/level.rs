@@ -92,7 +92,7 @@ impl TryFrom<u8> for FemtoLevel {
 }
 
 impl<'source> FromPyObject<'source> for FemtoLevel {
-    fn extract(obj: &'source PyAny) -> PyResult<Self> {
+    fn extract_bound(obj: &Bound<'source, PyAny>) -> PyResult<Self> {
         let s: &str = obj.extract()?;
         match s.parse() {
             Ok(level) => Ok(level),
