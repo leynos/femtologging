@@ -234,10 +234,11 @@ increases the binary size. We did not find published memory profiles.
 In multi-threaded scenarios, both libraries are thread-safe but behave
 differently: CPython logging’s global lock can become a bottleneck if many
 threads are concurrently creating loggers or modifying handlers. Picologging’s
-lack of a global lock means threads only contend on individual handler locks or
-Python’s GIL. This suggests picologging should scale better under heavy multi-threaded logging, although real-world gains depend on workload. (No specific
-multithread benchmarks are publicly available to cite; this conclusion follows
-from the architecture.)
+lack of a global lock means threads only contend on individual handler locks
+or Python’s GIL. This suggests picologging should scale better under heavy
+multi-threaded logging, although real-world gains depend on workload. (No
+specific multithread benchmarks are publicly available to cite; this
+conclusion follows from the architecture.)
 
 ## Use-Case Suitability
 
