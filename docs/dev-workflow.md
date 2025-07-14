@@ -24,4 +24,9 @@ across Python and Rust code.
 - `make nixie` – validate Mermaid diagrams embedded in Markdown.
 - `make help` – list available targets.
 
+ABI3 forward compatibility is disabled to simplify building for
+currently supported Python versions. The project had trouble producing
+a library that worked across multiple Python releases, so we set
+`PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0` both locally and in CI.
+
 These targets ensure style, type safety and correctness across the project.
