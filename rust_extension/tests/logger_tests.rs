@@ -113,7 +113,7 @@ fn logger_routes_to_multiple_handlers() {
         SharedBuf(Arc::clone(&buf2)),
         DefaultFormatter,
     ));
-    let mut logger = FemtoLogger::new("core".to_string());
+    let logger = FemtoLogger::new("core".to_string());
     logger.add_handler(handler1.clone() as Arc<dyn FemtoHandlerTrait>);
     logger.add_handler(handler2.clone() as Arc<dyn FemtoHandlerTrait>);
     logger.log(FemtoLevel::Info, "hello");
@@ -131,8 +131,8 @@ fn shared_handler_across_loggers() {
         SharedBuf(Arc::clone(&buffer)),
         DefaultFormatter,
     ));
-    let mut l1 = FemtoLogger::new("a".to_string());
-    let mut l2 = FemtoLogger::new("b".to_string());
+    let l1 = FemtoLogger::new("a".to_string());
+    let l2 = FemtoLogger::new("b".to_string());
     l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
     l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
     l1.log(FemtoLevel::Info, "one");
@@ -171,7 +171,7 @@ fn logger_drains_records_on_drop() {
         SharedBuf(Arc::clone(&buffer)),
         DefaultFormatter,
     ));
-    let mut logger = FemtoLogger::new("core".to_string());
+    let logger = FemtoLogger::new("core".to_string());
     logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
     logger.log(FemtoLevel::Info, "one");
     logger.log(FemtoLevel::Info, "two");

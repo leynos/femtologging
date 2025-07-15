@@ -32,18 +32,19 @@ logger's minimum level using a `FemtoLevel` value. Likewise, `log()` accepts a
 is filtered out.
 
 `FemtoLogger` can now dispatch a record to multiple handlers. Handlers implement
-`FemtoHandlerTrait` and run their I/O on worker threads. A logger holds a
-`Vec<Arc<dyn FemtoHandlerTrait>>`; calling `add_handler()` stores another
-handler reference. When `log()` creates a `FemtoLogRecord`, it sends a clone
-to each configured handler, ensuring thread‑safe routing via the handlers' MPSC
-queues.
+`FemtoHandlerTrait` and run their I/O on worker threads. The logger keeps its
+handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`, allowing
+handlers to be added through `&self`. Calling `add_handler()` pushes another
+reference into that list. When `log()` creates a `FemtoLogRecord`, it sends a
+clone to each configured handler, ensuring thread‑safe routing via the handlers'
+MPSC queues.
 
 Handlers manage their own worker threads; the logger simply forwards each record
 to every handler. Callers may invoke a handler's `flush()` method to ensure
 queued messages are written before dropping it.
 
-The `add_handler()` method is now exposed through the Python bindings.
-Any object with a `handle(logger, level, message)` method can be attached
-to a `FemtoLogger`. Built-in handlers like `FemtoStreamHandler` and
-`FemtoFileHandler` work out of the box. Custom Python classes require a
-compatible `handle` implementation.
+The `add_handler()` method is exposed through the Python bindings and can be
+called on a shared logger instance. Any object with a `handle(logger, level,
+message)` method can be attached to a `FemtoLogger`. Built-in handlers like
+`FemtoStreamHandler` and `FemtoFileHandler` work out of the box. Custom Python
+classes require a compatible `handle` implementation.

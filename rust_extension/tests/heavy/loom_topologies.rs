@@ -52,7 +52,7 @@ fn loom_single_logger_multi_handlers() {
             LoomBuf(Arc::clone(&buf2)),
             DefaultFormatter,
         ));
-        let mut logger = FemtoLogger::new("core".to_string());
+        let logger = FemtoLogger::new("core".to_string());
         logger.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
         logger.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
         let logger = Arc::new(logger);
@@ -83,8 +83,8 @@ fn loom_shared_handler_multi_loggers() {
             LoomBuf(Arc::clone(&buffer)),
             DefaultFormatter,
         ));
-        let mut l1 = FemtoLogger::new("a".to_string());
-        let mut l2 = FemtoLogger::new("b".to_string());
+        let l1 = FemtoLogger::new("a".to_string());
+        let l2 = FemtoLogger::new("b".to_string());
         l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
         l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
         let l1 = Arc::new(l1);
@@ -125,10 +125,10 @@ fn loom_multiple_loggers_multiple_handlers() {
             LoomBuf(Arc::clone(&buf2)),
             DefaultFormatter,
         ));
-        let mut l1 = FemtoLogger::new("l1".to_string());
+        let l1 = FemtoLogger::new("l1".to_string());
         l1.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
         l1.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
-        let mut l2 = FemtoLogger::new("l2".to_string());
+        let l2 = FemtoLogger::new("l2".to_string());
         l2.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
         l2.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
         let l1 = Arc::new(l1);

@@ -102,14 +102,14 @@ impl FemtoLogger {
 
     /// Attach a handler implemented in Python or Rust.
     #[pyo3(name = "add_handler", text_signature = "(self, handler)")]
-    pub fn py_add_handler(&mut self, handler: Py<PyAny>) {
+    pub fn py_add_handler(&self, handler: Py<PyAny>) {
         self.add_handler(Arc::new(PyHandler { obj: handler }) as Arc<dyn FemtoHandlerTrait>);
     }
 }
 
 impl FemtoLogger {
     /// Attach a handler to this logger.
-    pub fn add_handler(&mut self, handler: Arc<dyn FemtoHandlerTrait>) {
+    pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
     }
 

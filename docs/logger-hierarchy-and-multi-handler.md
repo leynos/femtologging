@@ -1,7 +1,7 @@
 # Logger Hierarchy and Handler Relationships
 
-This note outlines the remaining work to add flexible logger/handler wiring to
-`femtologging`. The prototype originally assumed each logger owned a single
+This note outlines the remaining work to add flexible logger/handler wiring
+to `femtologging`. The prototype originally assumed each logger owned a single
 handler and that handlers were not shared. The codebase now supports multiple
 handlers per logger and safely sharing a handler between loggers. The next step
 is implementing hierarchical configuration using dotted names with propagation.
@@ -24,8 +24,9 @@ is implementing hierarchical configuration using dotted names with propagation.
 
 2. **Allow multiple handlers per logger**
 
-   - Change `FemtoLogger` to hold a `Vec<Arc<dyn FemtoHandlerTrait>>`.
-   - Expose `add_handler()` and `remove_handler()` APIs.
+   - Change `FemtoLogger` to hold an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`.
+   - Expose `add_handler()` and `remove_handler()` APIs that work through
+     `&self`.
    - Update logging macros to dispatch each record to every configured handler.
 
 3. **Support handler sharing**
@@ -47,8 +48,8 @@ is implementing hierarchical configuration using dotted names with propagation.
    - Extend the builder API to attach multiple handler IDs per logger.
    - Allow handlers defined once to be referenced from several loggers.
    - Implement a `get_logger(name)` helper exposed through the Python bindings.
-     It mirrors CPython's semantics and returns existing instances from the
-     registry. Provide a camelCase alias `getLogger()` for backwards
+     It mirrors CPython's semantics and returns existing instances from
+     the registry. Provide a camelCase alias `getLogger()` for backwards
      compatibility, though new code should prefer the snake_case form.
 
 ## Testing Considerations

@@ -47,6 +47,8 @@ from femtologging import FemtoStreamHandler
 
 log.add_handler(FemtoStreamHandler.stdout())
 
+# Handlers can be added at any time, even when the logger is shared.
+
 # Attach a custom Python handler
 class Collector:
     def __init__(self) -> None:
