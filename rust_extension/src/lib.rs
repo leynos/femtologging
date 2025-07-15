@@ -7,6 +7,7 @@ mod level;
 mod log_record;
 mod logger;
 mod manager;
+pub mod rate_limiter;
 mod stream_handler;
 
 pub use file_handler::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig};
