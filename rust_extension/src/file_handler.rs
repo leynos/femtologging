@@ -245,6 +245,99 @@ enum FileCommand {
     Flush,
 }
 
+/// Configuration for Python constructors requiring an overflow policy.
+///
+/// Groups parameters commonly used when constructing a handler so
+/// `py_with_capacity_flush_policy` only accepts a single argument.
+/// Fields may be mutated from Python before building the handler.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyHandlerConfig {
+    /// Bounded queue size for records waiting to be written.
+    /// Must be greater than zero.
+    #[pyo3(get, set)]
+    pub capacity: usize,
+    /// How often the worker thread flushes the file.
+    /// Must be greater than zero.
+    #[pyo3(get, set)]
+    pub flush_interval: usize,
+    /// Overflow policy as a string: "drop", "block", or "timeout".
+    #[pyo3(get)]
+    pub policy: String,
+    /// Timeout in milliseconds for the "timeout" policy.
+    ///
+    /// Only meaningful if `policy` is set to "timeout". For other policies,
+    /// this should be `None` and will be ignored.
+    #[pyo3(get)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[pymethods]
+impl PyHandlerConfig {
+    #[new]
+    fn new(
+        capacity: usize,
+        flush_interval: usize,
+        policy: String,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        if capacity == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "capacity must be greater than zero",
+            ));
+        }
+        if flush_interval == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "flush_interval must be greater than zero",
+            ));
+        }
+        let policy_lc = policy.to_ascii_lowercase();
+        if !matches!(policy_lc.as_str(), "drop" | "block" | "timeout") {
+            let valid = ["drop", "block", "timeout"].join(", ");
+            let msg = format!("invalid overflow policy: '{policy}'. Valid options are: {valid}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        if policy_lc != "timeout" && timeout_ms.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "timeout_ms can only be set when policy is 'timeout'",
+            ));
+        }
+        Ok(Self {
+            capacity,
+            flush_interval,
+            policy: policy_lc,
+            timeout_ms,
+        })
+    }
+
+    #[setter]
+    fn set_timeout_ms(&mut self, value: Option<u64>) -> PyResult<()> {
+        if self.policy != "timeout" && value.is_some() {
+            Err(pyo3::exceptions::PyValueError::new_err(
+                "timeout_ms can only be set when policy is 'timeout'",
+            ))
+        } else {
+            self.timeout_ms = value;
+            Ok(())
+        }
+    }
+
+    #[setter]
+    fn set_policy(&mut self, value: String) -> PyResult<()> {
+        let value_lc = value.to_ascii_lowercase();
+        if !matches!(value_lc.as_str(), "drop" | "block" | "timeout") {
+            let valid = ["drop", "block", "timeout"].join(", ");
+            let msg = format!("invalid overflow policy: '{value}'. Valid options are: {valid}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        self.policy = value_lc;
+        if self.policy != "timeout" {
+            self.timeout_ms = None;
+        }
+        Ok(())
+    }
+}
+
 #[pyclass]
 pub struct FemtoFileHandler {
     tx: Option<Sender<FileCommand>>,
@@ -331,29 +424,31 @@ impl FemtoFileHandler {
         )
     }
 
-    /// Create a handler with an explicit overflow policy specified as a string.
+    /// Create a handler with an explicit overflow policy using a configuration
+    /// object.
     #[staticmethod]
     #[pyo3(name = "with_capacity_flush_policy")]
-    fn py_with_capacity_flush_policy(
-        path: String,
-        capacity: usize,
-        flush_interval: usize,
-        policy: &str,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<Self> {
+    fn py_with_capacity_flush_policy(path: String, config: PyHandlerConfig) -> PyResult<Self> {
         use pyo3::exceptions::PyValueError;
-        let policy = match policy.to_ascii_lowercase().as_str() {
+        let policy = match config.policy.to_ascii_lowercase().as_str() {
             "drop" => OverflowPolicy::Drop,
             "block" => OverflowPolicy::Block,
             "timeout" => {
-                let ms = timeout_ms.ok_or_else(|| {
+                let ms = config.timeout_ms.ok_or_else(|| {
                     PyValueError::new_err("timeout_ms required for timeout policy")
                 })?;
                 OverflowPolicy::Timeout(Duration::from_millis(ms))
             }
-            _ => return Err(PyValueError::new_err("invalid overflow policy")),
+            _ => {
+                let valid = ["drop", "block", "timeout"].join(", ");
+                let msg = format!(
+                    "invalid overflow policy: '{}'. Valid options are: {}",
+                    config.policy, valid
+                );
+                return Err(PyValueError::new_err(msg));
+            }
         };
-        Self::build_py_handler(path, capacity, Some(flush_interval), policy)
+        Self::build_py_handler(path, config.capacity, Some(config.flush_interval), policy)
     }
 
     /// Dispatch a log record created from the provided parameters.
