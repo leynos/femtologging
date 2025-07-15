@@ -99,12 +99,11 @@ handler = FemtoFileHandler.with_capacity_flush_policy("app.log", config)
 
 ### StreamHandler
 
-`FemtoStreamHandler` writes formatted records to `stdout` or `stderr`. The
-consumer thread receives `FemtoLogRecord` values, moves the writer and formatter
-into the worker thread, and writes directly without locking. This mirrors the
-design in [`concurrency-models-in-high-performance-logging.md`](./concurrency-
-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-
-a-hybrid-approach). The default bounded queue size is 1024 records, but
+`FemtoStreamHandler` writes formatted records to `stdout` or `stderr`.
+The consumer thread receives `FemtoLogRecord` values, moves the writer
+and formatter into the worker thread, and writes directly without locking.
+This mirrors the design in [`concurrency-models-in-high-performance-
+logging.md`][cmhp-log]. The default bounded queue size is 1024 records, but
 `FemtoStreamHandler::with_capacity` lets callers configure a custom capacity
 when needed.
 
@@ -182,12 +181,11 @@ sender signals the consumer to finish once the queue is drained.
 
 ## Testing
 
-Rust unit tests use the `rstest` crate, as shown in [`rust-testing-with-
-rstest-fixtures.md`](./rust-testing-with-rstest-fixtures.md). Handlers should
-expose minimal hooks (e.g. returning formatted strings in test mode) so tests
-can verify output without relying on external I/O. Integration tests will
-instantiate loggers and handlers together to ensure proper channel operation and
-thread termination.
+Rust unit tests use the `rstest` crate, as shown in [`rust-testing-with-rstest-
+fixtures.md`][rstest-fixtures]. Handlers should expose minimal hooks (e.g.
+returning formatted strings in test mode) so tests can verify output without
+relying on external I/O. Integration tests will instantiate loggers and handlers
+together to ensure proper channel operation and thread termination.
 
 ## Next Steps
 
@@ -196,3 +194,6 @@ thread termination.
 3. Update the roadmap once these components have stable tests.
 4. Expand with rotating and network handlers as described in the roadmap's later
    phases.
+
+[cmhp-log]: ./concurrency-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-a-hybrid-approach
+[rstest-fixtures]: ./rust-testing-with-rstest-fixtures.md

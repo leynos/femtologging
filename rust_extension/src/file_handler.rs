@@ -247,23 +247,28 @@ enum FileCommand {
 
 /// Configuration for Python constructors requiring an overflow policy.
 ///
-/// This groups commonly used parameters so `py_with_capacity_flush_policy`
-/// only accepts a single configuration argument. Python code can modify the
-/// fields directly before passing it to the constructor.
+/// Groups parameters commonly used when constructing a handler so
+/// `py_with_capacity_flush_policy` only accepts a single argument.
+/// Fields may be mutated from Python before building the handler.
 #[pyclass]
 #[derive(Clone)]
 pub struct PyHandlerConfig {
     /// Bounded queue size for records waiting to be written.
+    /// Must be greater than zero.
     #[pyo3(get, set)]
     pub capacity: usize,
     /// How often the worker thread flushes the file.
+    /// Must be greater than zero.
     #[pyo3(get, set)]
     pub flush_interval: usize,
     /// Overflow policy as a string: "drop", "block", or "timeout".
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub policy: String,
     /// Timeout in milliseconds for the "timeout" policy.
-    #[pyo3(get, set)]
+    ///
+    /// Only meaningful if `policy` is set to "timeout". For other policies,
+    /// this should be `None` and will be ignored.
+    #[pyo3(get)]
     pub timeout_ms: Option<u64>,
 }
 
@@ -275,13 +280,61 @@ impl PyHandlerConfig {
         flush_interval: usize,
         policy: String,
         timeout_ms: Option<u64>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        if capacity == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "capacity must be greater than zero",
+            ));
+        }
+        if flush_interval == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "flush_interval must be greater than zero",
+            ));
+        }
+        let policy_lc = policy.to_ascii_lowercase();
+        if !matches!(policy_lc.as_str(), "drop" | "block" | "timeout") {
+            let valid = ["drop", "block", "timeout"].join(", ");
+            let msg = format!("invalid overflow policy: '{policy}'. Valid options are: {valid}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        if policy_lc != "timeout" && timeout_ms.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "timeout_ms can only be set when policy is 'timeout'",
+            ));
+        }
+        Ok(Self {
             capacity,
             flush_interval,
-            policy,
+            policy: policy_lc,
             timeout_ms,
+        })
+    }
+
+    #[setter]
+    fn set_timeout_ms(&mut self, value: Option<u64>) -> PyResult<()> {
+        if self.policy != "timeout" && value.is_some() {
+            Err(pyo3::exceptions::PyValueError::new_err(
+                "timeout_ms can only be set when policy is 'timeout'",
+            ))
+        } else {
+            self.timeout_ms = value;
+            Ok(())
         }
+    }
+
+    #[setter]
+    fn set_policy(&mut self, value: String) -> PyResult<()> {
+        let value_lc = value.to_ascii_lowercase();
+        if !matches!(value_lc.as_str(), "drop" | "block" | "timeout") {
+            let valid = ["drop", "block", "timeout"].join(", ");
+            let msg = format!("invalid overflow policy: '{value}'. Valid options are: {valid}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        self.policy = value_lc;
+        if self.policy != "timeout" {
+            self.timeout_ms = None;
+        }
+        Ok(())
     }
 }
 
@@ -386,7 +439,14 @@ impl FemtoFileHandler {
                 })?;
                 OverflowPolicy::Timeout(Duration::from_millis(ms))
             }
-            _ => return Err(PyValueError::new_err("invalid overflow policy")),
+            _ => {
+                let valid = ["drop", "block", "timeout"].join(", ");
+                let msg = format!(
+                    "invalid overflow policy: '{}'. Valid options are: {}",
+                    config.policy, valid
+                );
+                return Err(PyValueError::new_err(msg));
+            }
         };
         Self::build_py_handler(path, config.capacity, Some(config.flush_interval), policy)
     }

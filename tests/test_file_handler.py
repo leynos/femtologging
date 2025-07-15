@@ -241,3 +241,19 @@ def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
         FemtoFileHandler.with_capacity_flush_policy(
             str(path), PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, None)
         )
+
+
+def test_py_handler_config_mutation(tmp_path: Path) -> None:
+    """Mutating a ``PyHandlerConfig`` before use affects the handler."""
+    cfg = PyHandlerConfig(1, 10, OverflowPolicy.BLOCK.value, None)
+    cfg.capacity = 2
+    cfg.flush_interval = 1
+    cfg.policy = OverflowPolicy.DROP.value
+    cfg.timeout_ms = None
+    path = tmp_path / "mutate.log"
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+    handler.handle("core", "INFO", "first")
+    handler.handle("core", "INFO", "second")
+    handler.handle("core", "INFO", "third")  # dropped due to capacity 2
+    handler.close()
+    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
