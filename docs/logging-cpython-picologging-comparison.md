@@ -44,7 +44,7 @@ Picologging’s Logger class has no Python-level inheritance hierarchy beyond
 the C struct (though it also embeds a `Filterer`). It uses boolean flags
 (`enabledForDebug`, etc.) set at init to speed up `isEnabledFor` checks, rather
 than dynamic lookups. Extensible hooks in CPython (like custom `LogRecord`
-factories) are largely absent: notably `Manager.setLogRecordFactory` is
+factories) are largely absent: notably, `Manager.setLogRecordFactory` is
 **not implemented** in picologging. In effect, CPython logging emphasizes
 extensibility and configurability, while picologging emphasizes a streamlined,
 lower-overhead class design (trading off some features).
