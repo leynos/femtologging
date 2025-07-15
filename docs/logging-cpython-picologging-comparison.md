@@ -19,11 +19,11 @@ tree) under a root logger via a `Manager` holding a `loggerDict` of names to
 logger instances. Each `Logger` has attributes like `name`, `level`, a list of
 child handlers, and links to its parent logger, and inherits filtering behavior
 via the `Filterer` mixin. Handlers (e.g. `StreamHandler`, `FileHandler`) hold
-output streams and optional `Formatter` objects, and each has a lock for thread-
-safe I/O. When a logger emits, it creates a `LogRecord` (a Python object with
-fields like `msg`, `args`, `levelno`, timestamp, etc.), runs it through logger
-filters, then calls each handler’s `handle()` method. The handler filters
-it again, formats it (via `Formatter.format(record)`), and writes to its
+output streams and optional `Formatter` objects, and each has its own lock
+for thread-safe I/O. When a logger emits, it creates a `LogRecord` (a Python
+object with fields like `msg`, `args`, `levelno`, timestamp, etc.), runs it
+through logger filters, then calls each handler’s `handle()` method. The handler
+filters it again, formats it (via `Formatter.format(record)`), and writes to its
 destination (often wrapped in `with self.lock:`).
 
 In contrast, **picologging** implements most core classes in C++ (exposed
@@ -225,7 +225,7 @@ is disabled.
 Concrete measured *throughput* numbers vary by environment, but the order-
 of-magnitude improvements are widely noted. (For example, publishing these
 benchmarks in a blog or issue would confirm them, but as of this writing the
-claim inis the primary source.) Latency per record is drastically lower in
+claim is the primary source.) Latency per record is drastically lower in
 picologging, which benefits real-time logging. In terms of *memory usage*, no
 detailed comparison is documented. One might expect picologging’s C-structs to
 use less per-record overhead than Python objects, but the C extension itself
@@ -234,11 +234,11 @@ increases the binary size. We did not find published memory profiles.
 In multi-threaded scenarios, both libraries are thread-safe but behave
 differently: CPython logging’s global lock can become a bottleneck if many
 threads are concurrently creating loggers or modifying handlers. Picologging’s
-lack of a global lock means threads only contend on individual handler locks
-or Python’s GIL. This suggests picologging should scale better under heavy
-multi-threaded logging, although real-world gains depend on workload. (No
-specific multithread benchmarks are publicly available to cite; this
-conclusion follows from the architecture.)
+lack of a global lock means threads only contend on individual handler locks or
+Python’s GIL. This suggests picologging should scale better under heavy multi-
+threaded logging, although real-world gains depend on workload. (No specific
+multithread benchmarks are publicly available to cite; this conclusion follows
+from the architecture.)
 
 ## Use-Case Suitability
 
@@ -313,11 +313,14 @@ applications.
 CPython’s `logging` module is a mature, feature-rich, pure-Python logging
 framework with flexible configuration and extensibility. Microsoft’s
 `picologging` reimplements the same API in (mostly) C++ for high performance.
-Key differences include: **class implementation** (Python classes vs C structs),
-**locking** (global RLock plus per-handler RLock vs per-handler C++ mutex
-with no global lock), **data structures** (dynamic vs static fields), and
-**features supported** (full logging API vs a subset). These design choices give
-picologging much higher throughput at the cost of some flexibility.
+
+Key differences include:
+
+- **class implementation** (Python classes vs C structs)
+- **locking** (global RLock plus per-handler RLock vs per-handler C++ mutex, 
+  no global lock)
+- **data structures** (dynamic vs static fields), and
+- **features supported** (full logging API vs a subset).
 
 For latency-sensitive or heavily threaded applications, picologging is generally
 a better fit. For applications needing maximum configurability or running in
