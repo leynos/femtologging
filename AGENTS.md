@@ -74,9 +74,7 @@ When implementing changes, adhere to the following testing procedures:
   subsequent commit) should represent a single logical unit of work.
 - **Quality Gates:** Before considering a change complete or proposing a commit,
   ensure it meets the following criteria:
-
-  - For code changes files:
-
+  - For code-change files:
     - **Testing:** Passes all relevant unit and behavioural tests according to
       the guidelines above. (Execute these using `make test`).
     - **Linting:** Run `make lint` and ensure that there are no lint rule
