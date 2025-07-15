@@ -74,7 +74,7 @@ When implementing changes, adhere to the following testing procedures:
   subsequent commit) should represent a single logical unit of work.
 - **Quality Gates:** Before considering a change complete or proposing a commit,
   ensure it meets the following criteria:
-  
+
   - For code changes files:
 
     - **Testing:** Passes all relevant unit and behavioural tests according to
@@ -92,9 +92,9 @@ When implementing changes, adhere to the following testing procedures:
 
     - **Linting:** Run `make markdownlint` or use integrated editor linting.
     - **Mermaid diagrams:** Validate diagrams with `make nixie`.
-      
+
 - **Committing:**
-  
+
   - Only changes that meet all the quality gates above should be committed.
   - Write clear, descriptive commit messages summarizing the change, following
     these formatting guidelines:
@@ -148,8 +148,8 @@ When implementing changes, adhere to the following testing procedures:
 ## Rust Specific Guidance
 
 This repository is written in Rust and uses Cargo for building and dependency
-management. Contributors should follow these best practices when working on the
-project:
+management. Contributors should follow these best practices when working on
+the project:
 
 - Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
   committing.
