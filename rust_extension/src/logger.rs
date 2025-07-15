@@ -14,7 +14,7 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use log::warn;
 use parking_lot::RwLock;
 use std::sync::{
@@ -156,24 +156,6 @@ impl FemtoLogger {
         }
     }
 
-    /// Drain any remaining records once a shutdown signal is received.
-    ///
-    /// Consumes all messages still available on `rx` and dispatches them
-    /// through the provided `handlers`. This ensures no log records are lost
-    /// during shutdown.
-    ///
-    /// # Arguments
-    ///
-    /// * `rx` - Channel receiver holding pending log records.
-    /// * `handlers` - Shared collection of handlers used to process records.
-    fn drain_remaining_records(
-        rx: &Receiver<FemtoLogRecord>,
-        handlers: &Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
-    ) {
-        while let Ok(record) = rx.try_recv() {
-            Self::handle_log_record(handlers, record);
-        }
-    }
 
     /// Main loop executed by the logger's worker thread.
     ///
