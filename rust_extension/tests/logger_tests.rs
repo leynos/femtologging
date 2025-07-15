@@ -3,37 +3,13 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
 use rstest::rstest;
-use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
-#[derive(Clone)]
-struct SharedBuf(Arc<Mutex<Vec<u8>>>);
-
-impl Write for SharedBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .expect("Failed to lock SharedBuf for writing")
-            .write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0
-            .lock()
-            .expect("Failed to lock SharedBuf for flushing")
-            .flush()
-    }
-}
-
-fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    String::from_utf8(
-        buffer
-            .lock()
-            .expect("Failed to lock buffer for reading")
-            .clone(),
-    )
-    .expect("Buffer did not contain valid UTF-8")
-}
+type Arc<T> = StdArc<T>;
+type Mutex<T> = StdMutex<T>;
+#[path = "test_utils/shared_buffer.rs"]
+mod shared_buffer;
+use shared_buffer::{read_output, SharedBuf};
 
 #[rstest]
 #[case("core", FemtoLevel::Info, "hello", "core [INFO] hello")]
