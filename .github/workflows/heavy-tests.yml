@@ -8,6 +8,8 @@ on:
 jobs:
   heavy:
     runs-on: ubuntu-latest
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,17 +25,13 @@ jobs:
           # Cache wheels to avoid repeated downloads
           pip install \
             --cache-dir "${{ runner.tool_cache }}" \
-            maturin==1.4.0 pytest==7.4.4
+            "maturin>=1.9.1,<2.0.0" pytest==7.4.4
       - run: |
           source .venv/bin/activate
           maturin develop --manifest-path rust_extension/Cargo.toml
-        env:
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - run: |
           source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
           cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
           cargo test --manifest-path rust_extension/Cargo.toml -- --ignored
           pytest -q
-        env:
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1

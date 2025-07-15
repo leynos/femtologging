@@ -3,12 +3,12 @@ name = "femtologging"
 version = "0.1.0"
 description = "femtologging package"
 readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "MIT" }
+requires-python = ">=3.12"
+license = { text = "ISC" }
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "pytest-timeout"]
 
 [tool.ruff]
 line-length = 88
@@ -18,11 +18,14 @@ package = true
 
 
 [build-system]
-requires = ["maturin>=1.5"]
+requires = ["maturin>=1.9.1,<2.0.0"]
 build-backend = "maturin"
 [tool.maturin]
 manifest-path = "rust_extension/Cargo.toml"
 python-source = "femtologging"
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
+
+[tool.pytest.ini_options]
+timeout = 30
 

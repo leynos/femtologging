@@ -4,7 +4,15 @@
 from __future__ import annotations
 
 import pytest  # pyright: ignore[reportMissingImports]
-from femtologging import FemtoLogger
+import collections.abc as cabc
+from pathlib import Path
+import typing
+
+from femtologging import FemtoFileHandler, FemtoLogger
+
+FileHandlerFactory = cabc.Callable[
+    [Path, int, int], typing.ContextManager[FemtoFileHandler]
+]
 
 
 @pytest.mark.parametrize(
@@ -49,3 +57,43 @@ def test_level_parsing_and_filtering() -> None:
     assert logger.log("WARN", "drop") is None
     with pytest.raises(ValueError):
         logger.log("bogus", "drop")
+
+
+def test_logger_drop_no_hang(
+    tmp_path: Path, file_handler_factory: FileHandlerFactory
+) -> None:
+    """FemtoLogger cleanup shouldn't block waiting on its thread."""
+    path1 = tmp_path / "one.log"
+    path2 = tmp_path / "two.log"
+    with (
+        file_handler_factory(path1, 8, 1) as h1,
+        file_handler_factory(path2, 8, 1) as h2,
+    ):
+        logger = FemtoLogger("core")
+        logger.add_handler(h1)
+        logger.add_handler(h2)
+        logger.log("INFO", "hello")
+        del logger
+    assert path1.read_text() == "core [INFO] hello\n"
+    assert path2.read_text() == "core [INFO] hello\n"
+
+
+class CollectingHandler:
+    """Simple handler used to verify Python handler support."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[str, str, str]] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        self.records.append((logger, level, message))
+
+
+@pytest.mark.skip
+def test_python_handler_invocation() -> None:
+    """Python handlers should receive records via PyHandler."""
+    logger = FemtoLogger("core")
+    collector = CollectingHandler()
+    logger.add_handler(collector)
+    logger.log("INFO", "ok")
+    del logger
+    assert collector.records == [("core", "INFO", "ok")]

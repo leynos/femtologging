@@ -56,6 +56,7 @@ common trait:
 ```rust
 pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord);
+    fn flush(&self) -> bool { true }
 }
 
 /// Base Python-exposed class. Methods are no-ops by default.
@@ -65,14 +66,33 @@ pub struct FemtoHandler;
 
 Implementations should forward the record to an internal queue with `try_send`
 so the caller never blocks. If the queue is full, the record is silently dropped
-and a warning is written to `stderr`. Advanced use cases can specify an overflow
-policy when constructing a handler. The Python API exposes this via
-`OverflowPolicy` and `FemtoFileHandler.with_capacity_flush_policy`:
+and a warning is written to `stderr`. This favours throughput over completeness:
+records may be lost to keep the application responsive. Advanced use cases can
+specify an overflow policy when constructing a handler. The Python API exposes
+this via `OverflowPolicy` and `FemtoFileHandler.with_capacity_flush_policy`. The
+policy may also be extended to support options like back pressure, writing
+overflowed messages to a separate file, or emitting metrics for monitoring
+purposes:
 
 - **Drop** – current default; records are discarded when the queue is full.
 - **Block** – the call blocks until space becomes available.
 - **Timeout** – wait for a fixed duration before giving up and dropping the
   record.
+
+Every handler provides a `flush()` method, so callers can force pending messages
+to be written before shutdown.
+
+```python
+from femtologging import FemtoFileHandler, OverflowPolicy
+
+# Drop-in replacement that blocks instead of discarding.
+# Waiting ensures no log messages are lost if the queue becomes full.
+handler = FemtoFileHandler.with_capacity_flush_policy(
+    path="app.log",
+    capacity=4096,
+    overflow_policy=OverflowPolicy.BLOCK,
+)
+```
 
 ### StreamHandler
 
@@ -86,8 +106,9 @@ The default bounded queue size is 1024 records, but
 when needed.
 
 Dropping a handler closes its channel and waits briefly for the worker thread to
-finish flushing. If the thread does not exit within one second, a warning is
-printed, and the drop continues, preventing deadlocks during shutdown.
+finish flushing. If the thread does not exit within the configured flush timeout
+(one second by default), a warning is printed, and the drop continues,
+preventing deadlocks during shutdown.
 
 #### Sequence Diagram
 
@@ -134,8 +155,8 @@ expose this.
 Calling `flush()` sends a `Flush` command to the worker thread and then waits on
 a dedicated acknowledgment channel for confirmation. The worker responds after
 flushing its writer, giving the caller a deterministic way to ensure all pending
-records are persisted. The wait is bounded to one second to avoid indefinite
-blocking.
+records are persisted. The wait is bounded by the handler's `flush_timeout_secs`
+setting (one second by default) to avoid indefinite blocking.
 
 All handlers spawn their consumer threads on creation and expose a
 `snd: Sender<FemtoLogRecord>` to the logger. The logger clones this sender when
