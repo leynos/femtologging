@@ -26,7 +26,9 @@ is implementing hierarchical configuration using dotted names with propagation.
 
    - Change `FemtoLogger` to hold an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`.
    - Expose `add_handler()` and `remove_handler()` APIs that work through
-     `&self`.
+     `&self`. Adding or removing a handler while other threads log is safe—new
+     handlers only process messages logged after they are added, and removed
+     handlers stop receiving further records.
    - Update logging macros to dispatch each record to every configured handler.
 
 3. **Support handler sharing**

@@ -6,6 +6,7 @@
 // FIXME: Track PyO3 issue for proper fix
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
+use std::any::Any;
 
 use crate::handler::FemtoHandlerTrait;
 
@@ -42,6 +43,10 @@ impl FemtoHandlerTrait for PyHandler {
                 warn!("PyHandler: error calling handle");
             }
         });
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -105,12 +110,43 @@ impl FemtoLogger {
     pub fn py_add_handler(&self, handler: Py<PyAny>) {
         self.add_handler(Arc::new(PyHandler { obj: handler }) as Arc<dyn FemtoHandlerTrait>);
     }
+
+    /// Remove a handler that was previously attached via `add_handler`.
+    #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
+    pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
+        Python::with_gil(|py| {
+            let mut handlers = self.handlers.write();
+            if let Some(pos) = handlers.iter().position(|h| {
+                if let Some(py_h) = h.as_any().downcast_ref::<PyHandler>() {
+                    py_h.obj.bind(py).is(handler.bind(py))
+                } else {
+                    false
+                }
+            }) {
+                handlers.remove(pos);
+                true
+            } else {
+                false
+            }
+        })
+    }
 }
 
 impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
+    }
+
+    /// Detach a handler previously added to this logger.
+    pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
+        let mut handlers = self.handlers.write();
+        if let Some(pos) = handlers.iter().position(|h| Arc::ptr_eq(h, handler)) {
+            handlers.remove(pos);
+            true
+        } else {
+            false
+        }
     }
 
     /// Clone the internal sender for use in tests.
@@ -255,6 +291,10 @@ mod tests {
                 .lock()
                 .expect("Failed to lock records")
                 .push(record);
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
     }
 

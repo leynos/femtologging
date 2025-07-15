@@ -19,6 +19,7 @@ use std::{
 use crossbeam_channel::{bounded, Receiver, Sender};
 use log::warn;
 use pyo3::prelude::*;
+use std::any::Any;
 
 use crate::handler::FemtoHandlerTrait;
 use crate::{
@@ -650,6 +651,10 @@ impl FemtoHandlerTrait for FemtoFileHandler {
 
     fn flush(&self) -> bool {
         FemtoFileHandler::flush(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

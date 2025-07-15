@@ -146,6 +146,26 @@ fn shared_handler_across_loggers() {
 }
 
 #[test]
+fn handler_can_be_removed() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
+    ));
+    let logger = FemtoLogger::new("core".to_string());
+    logger.add_handler(Arc::clone(&handler));
+    logger.log(FemtoLevel::Info, "one");
+    handler.flush();
+    assert!(logger.remove_handler(&handler));
+    logger.log(FemtoLevel::Info, "two");
+    drop(logger);
+    handler.flush();
+    drop(handler);
+    let output = read_output(&buffer);
+    assert!(!output.contains("two"));
+}
+
+#[test]
 fn drop_with_sender_clone_exits() {
     let logger = FemtoLogger::new("clone".to_string());
     let tx = logger.clone_sender_for_test().expect("sender should exist");

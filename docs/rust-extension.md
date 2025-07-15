@@ -39,6 +39,12 @@ reference into that list. When `log()` creates a `FemtoLogRecord`, it sends a
 clone to each configured handler, ensuring thread‑safe routing via the handlers'
 MPSC queues.
 
+Handlers observe log records in the order they are attached. Adding a handler
+while other threads are logging is safe—new handlers only receive records
+logged after the addition completes. The `remove_handler()` method works through
+`&self` as well and detaches a handler so it no longer receives subsequent
+records.
+
 Handlers manage their own worker threads; the logger simply forwards each record
 to every handler. Callers may invoke a handler's `flush()` method to ensure
 queued messages are written before dropping it.

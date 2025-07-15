@@ -1,12 +1,13 @@
 use crate::log_record::FemtoLogRecord;
 use pyo3::prelude::*;
+use std::any::Any;
 
 /// Trait implemented by all log handlers.
 ///
 /// `FemtoHandler` is `Send + Sync` so it can be safely called from multiple
 /// threads by reference. Each implementation forwards the record to its own
 /// consumer thread without blocking the caller.
-pub trait FemtoHandlerTrait: Send + Sync {
+pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// Dispatch a log record for handling.
     fn handle(&self, record: FemtoLogRecord);
 
@@ -19,6 +20,9 @@ pub trait FemtoHandlerTrait: Send + Sync {
         // Default to a no-op flush for handlers that do not buffer writes.
         true
     }
+
+    /// Expose a typed reference for downcasting.
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// Base Python class for handlers. Methods do nothing by default.
@@ -39,5 +43,9 @@ impl FemtoHandlerTrait for FemtoHandler {
 
     fn flush(&self) -> bool {
         true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
