@@ -15,6 +15,7 @@ reset_manager = rust.reset_manager_py  # type: ignore[attr-defined]
 FemtoHandler = rust.FemtoHandler  # type: ignore[attr-defined]
 FemtoStreamHandler = rust.FemtoStreamHandler  # type: ignore[attr-defined]
 FemtoFileHandler = rust.FemtoFileHandler  # type: ignore[attr-defined]
+PyHandlerConfig = rust.PyHandlerConfig  # type: ignore[attr-defined]
 
 __all__ = [
     "FemtoHandler",
@@ -23,6 +24,7 @@ __all__ = [
     "reset_manager",
     "FemtoStreamHandler",
     "FemtoFileHandler",
+    "PyHandlerConfig",
     "OverflowPolicy",
     "hello",
 ]

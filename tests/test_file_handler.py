@@ -7,7 +7,7 @@ from pathlib import Path
 import threading
 import typing
 
-from femtologging import FemtoFileHandler, OverflowPolicy
+from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
 import pytest  # pyright: ignore[reportMissingImports]
 
 FileHandlerFactory = cabc.Callable[
@@ -192,9 +192,8 @@ def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
 def test_overflow_policy_builder_block(tmp_path: Path) -> None:
     """Overflow policy can be specified explicitly using strings."""
     path = tmp_path / "block_enum.log"
-    handler = FemtoFileHandler.with_capacity_flush_policy(
-        str(path), 2, 1, OverflowPolicy.BLOCK.value, None
-    )
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.BLOCK.value, None)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
     handler.handle("core", "INFO", "third")
@@ -207,9 +206,8 @@ def test_overflow_policy_builder_block(tmp_path: Path) -> None:
 def test_overflow_policy_builder_timeout(tmp_path: Path) -> None:
     """Timeout policy via builder honours the timeout."""
     path = tmp_path / "builder_timeout.log"
-    handler = FemtoFileHandler.with_capacity_flush_policy(
-        str(path), 1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=500
-    )
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=500)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.close()
     assert path.read_text() == "core [INFO] first\n"
@@ -218,9 +216,8 @@ def test_overflow_policy_builder_timeout(tmp_path: Path) -> None:
 def test_overflow_policy_builder_drop(tmp_path: Path) -> None:
     """Drop policy discards records once the queue is full."""
     path = tmp_path / "drop_enum.log"
-    handler = FemtoFileHandler.with_capacity_flush_policy(
-        str(path), 2, 1, OverflowPolicy.DROP.value, None
-    )
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.DROP.value, None)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
     handler.handle("core", "INFO", "third")  # dropped
@@ -232,7 +229,9 @@ def test_overflow_policy_builder_invalid(tmp_path: Path) -> None:
     """Invalid policy strings raise ``ValueError``."""
     path = tmp_path / "invalid.log"
     with pytest.raises(ValueError):
-        FemtoFileHandler.with_capacity_flush_policy(str(path), 1, 1, "bogus", None)
+        FemtoFileHandler.with_capacity_flush_policy(
+            str(path), PyHandlerConfig(1, 1, "bogus", None)
+        )
 
 
 def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
@@ -240,5 +239,5 @@ def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
     path = tmp_path / "missing_ms.log"
     with pytest.raises(ValueError):
         FemtoFileHandler.with_capacity_flush_policy(
-            str(path), 1, 1, OverflowPolicy.TIMEOUT.value, None
+            str(path), PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, None)
         )

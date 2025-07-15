@@ -9,7 +9,9 @@ mod logger;
 mod manager;
 mod stream_handler;
 
-pub use file_handler::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig};
+pub use file_handler::{
+    FemtoFileHandler, HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig,
+};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use level::FemtoLevel;
@@ -44,6 +46,7 @@ fn _femtologging_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    m.add_class::<PyHandlerConfig>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
