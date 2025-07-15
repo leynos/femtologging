@@ -156,7 +156,6 @@ impl FemtoLogger {
         }
     }
 
-
     /// Main loop executed by the logger's worker thread.
     ///
     /// Processes incoming log records until the channel is closed.
@@ -241,7 +240,6 @@ mod tests {
         assert_eq!(r1[0].message, "msg");
         assert_eq!(r2[0].message, "msg");
     }
-
 
     #[test]
     fn worker_thread_loop_processes_and_drains() {
