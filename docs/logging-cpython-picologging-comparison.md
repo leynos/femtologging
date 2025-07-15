@@ -237,7 +237,7 @@ threads are concurrently creating loggers or modifying handlers. Picologging’s
 lack of a global lock means threads only contend on individual handler locks or
 Python’s GIL. This suggests picologging should scale better under heavy multi-
 threaded logging, although real-world gains depend on workload. (No specific
-multithread benchmarks are publicly available to cite; this conclusion follows
+multi-thread benchmarks are publicly available to cite; this conclusion follows
 from the architecture.)
 
 ## Use-Case Suitability
@@ -248,7 +248,7 @@ from the architecture.)
   mean log throughput is much higher, reducing the impact of logging on
   application latency.
 
-- **Heavily multithreaded applications:** Picologging’s finer-grained locking
+- **Heavily multi-threaded applications:** Picologging’s finer-grained locking
   (per-handler) may offer better concurrency than CPython’s one big lock. In
   CPython logging, adding handlers or modifying logger hierarchy is serialized
   by the module-wide `_lock`. Picologging avoids that, so in a heavily
