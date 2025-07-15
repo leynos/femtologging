@@ -217,9 +217,13 @@ impl Drop for FemtoLogger {
         }
         self.tx.take();
         if let Some(handle) = self.handle.take() {
-            if handle.join().is_err() {
-                warn!("FemtoLogger: worker thread panicked");
-            }
+            Python::with_gil(|py| {
+                py.allow_threads(move || {
+                    if handle.join().is_err() {
+                        warn!("FemtoLogger: worker thread panicked");
+                    }
+                })
+            });
         }
     }
 }

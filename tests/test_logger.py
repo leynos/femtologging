@@ -59,11 +59,10 @@ def test_level_parsing_and_filtering() -> None:
         logger.log("bogus", "drop")
 
 
-@pytest.mark.skip
-def test_logger_add_handler(
+def test_logger_drop_no_hang(
     tmp_path: Path, file_handler_factory: FileHandlerFactory
 ) -> None:
-    """Records should be written to every attached handler."""
+    """FemtoLogger cleanup shouldn't block waiting on its thread."""
     path1 = tmp_path / "one.log"
     path2 = tmp_path / "two.log"
     with (
