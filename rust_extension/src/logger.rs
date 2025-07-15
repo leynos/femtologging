@@ -159,10 +159,9 @@ impl FemtoLogger {
 
     /// Main loop executed by the logger's worker thread.
     ///
-    /// Waits on either incoming log records or a shutdown signal using
-    /// `select!`. Each received record is forwarded to `handle_log_record`.
-    /// When a shutdown signal arrives, any queued records are drained before
-    /// the thread exits.
+    /// Processes incoming log records until the channel is closed.
+    /// Each received record is forwarded to `handle_log_record`.
+    /// The loop terminates when all senders are dropped and the channel closes.
     ///
     /// # Arguments
     ///
@@ -243,23 +242,6 @@ mod tests {
         assert_eq!(r2[0].message, "msg");
     }
 
-    #[test]
-    fn drain_remaining_records_pulls_all() {
-        let (tx, rx) = crossbeam_channel::bounded(4);
-        for i in 0..3 {
-            tx.send(FemtoLogRecord::new("core", "INFO", &format!("{i}")))
-                .expect("Failed to send test record");
-        }
-        drop(tx);
-
-        let h = Arc::new(CollectingHandler::new());
-        let handlers = Arc::new(RwLock::new(vec![h.clone() as Arc<dyn FemtoHandlerTrait>]));
-
-        FemtoLogger::drain_remaining_records(&rx, &handlers);
-
-        let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
-        assert_eq!(msgs, vec!["0", "1", "2"]);
-    }
 
     #[test]
     fn worker_thread_loop_processes_and_drains() {
