@@ -217,7 +217,7 @@ This version-specific approach yields significant performance benefits:
   functions. It passes arguments as a C array of `PyObject*` pointers, avoiding
   the overhead of creating and unpacking a `PyTuple` object for every call.
   PyO3 leverages this protocol in version-specific builds to accelerate
-  function calls from Rust to Python and vice-versa. The PyO3 performance guide
+  function calls from Rust to Python and vice versa. The PyO3 performance guide
   notes that using Rust tuples as arguments to Python callables enables the
   use of `vectorcall`. In contrast, the Limited API did not gain support for
   `vectorcall` until Python 3.12, making older `abi3` builds inherently slower
@@ -956,5 +956,6 @@ ecosystem.
 
 ## **Works cited**
 
-[^1]: Supporting multiple Python versions - PyO3 user guide, <https://pyo3.rs/v0.25.1/building-and-distribution/multiple-python-versions.html>
-[^2]: pyo3 - Rust - [Docs.rs](https://docs.rs/pyo3/latest/pyo3/)
+[^1]: Supporting multiple Python versions - PyO3 user guide, <<https://pyo3.rs/>
+v0.25.1/building-and-distribution/multiple-python-versions.html> [^2]: pyo3 -
+Rust - [Docs.rs](https://docs.rs/pyo3/latest/pyo3/)

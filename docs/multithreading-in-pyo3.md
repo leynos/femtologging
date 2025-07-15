@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 MD033 MD032 -->
 # Fearless Concurrency: A Developer's Guide to Multithreading in PyO3 v0.25.1
 
 ## Introduction
