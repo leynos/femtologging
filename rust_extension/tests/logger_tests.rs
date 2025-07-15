@@ -3,7 +3,7 @@ use _femtologging_rs::QueuedRecord; // needed for clone_sender test
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
-use rstest::rstest;
+use rstest::{fixture, rstest};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +34,28 @@ fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
             .clone(),
     )
     .expect("Buffer did not contain valid UTF-8")
+}
+
+#[fixture]
+fn dual_handler_setup() -> (
+    Arc<Mutex<Vec<u8>>>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<dyn FemtoHandlerTrait>,
+    Arc<dyn FemtoHandlerTrait>,
+    FemtoLogger,
+) {
+    let buf1 = Arc::new(Mutex::new(Vec::new()));
+    let buf2 = Arc::new(Mutex::new(Vec::new()));
+    let handler1: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf1)),
+        DefaultFormatter,
+    ));
+    let handler2: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf2)),
+        DefaultFormatter,
+    ));
+    let logger = FemtoLogger::new("core".to_string());
+    (buf1, buf2, handler1, handler2, logger)
 }
 
 #[rstest]
@@ -102,21 +124,18 @@ fn level_parsing_and_filtering() {
     assert!(logger.log(FemtoLevel::Warn, "drop").is_none());
 }
 
-#[test]
-fn logger_routes_to_multiple_handlers() {
-    let buf1 = Arc::new(Mutex::new(Vec::new()));
-    let buf2 = Arc::new(Mutex::new(Vec::new()));
-    let handler1 = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buf1)),
-        DefaultFormatter,
-    ));
-    let handler2 = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buf2)),
-        DefaultFormatter,
-    ));
-    let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(handler1.clone() as Arc<dyn FemtoHandlerTrait>);
-    logger.add_handler(handler2.clone() as Arc<dyn FemtoHandlerTrait>);
+#[rstest]
+fn logger_routes_to_multiple_handlers(
+    #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, mut logger): (
+        Arc<Mutex<Vec<u8>>>,
+        Arc<Mutex<Vec<u8>>>,
+        Arc<dyn FemtoHandlerTrait>,
+        Arc<dyn FemtoHandlerTrait>,
+        FemtoLogger,
+    ),
+) {
+    logger.add_handler(handler1.clone());
+    logger.add_handler(handler2.clone());
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler1);
@@ -162,22 +181,19 @@ fn adding_same_handler_multiple_times_duplicates_output() {
     assert_eq!(read_output(&buffer), "dup [INFO] hello\ndup [INFO] hello\n");
 }
 
-#[test]
-fn handler_added_after_logging_only_sees_future_records() {
-    let buf1 = Arc::new(Mutex::new(Vec::new()));
-    let buf2 = Arc::new(Mutex::new(Vec::new()));
-    let h1 = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buf1)),
-        DefaultFormatter,
-    ));
-    let h2 = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buf2)),
-        DefaultFormatter,
-    ));
-    let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
+#[rstest]
+fn handler_added_after_logging_only_sees_future_records(
+    #[from(dual_handler_setup)] (buf1, buf2, h1, h2, mut logger): (
+        Arc<Mutex<Vec<u8>>>,
+        Arc<Mutex<Vec<u8>>>,
+        Arc<dyn FemtoHandlerTrait>,
+        Arc<dyn FemtoHandlerTrait>,
+        FemtoLogger,
+    ),
+) {
+    logger.add_handler(h1.clone());
     logger.log(FemtoLevel::Info, "before");
-    logger.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger.add_handler(h2.clone());
     logger.log(FemtoLevel::Info, "after");
     drop(logger);
     drop(h1);
