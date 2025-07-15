@@ -1,4 +1,5 @@
 use _femtologging_rs::FemtoLogger;
+use _femtologging_rs::QueuedRecord; // needed for clone_sender test
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
@@ -146,6 +147,48 @@ fn shared_handler_across_loggers() {
 }
 
 #[test]
+fn adding_same_handler_multiple_times_duplicates_output() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buffer)),
+        DefaultFormatter,
+    ));
+    let logger = FemtoLogger::new("dup".to_string());
+    logger.add_handler(handler.clone());
+    logger.add_handler(handler.clone());
+    logger.log(FemtoLevel::Info, "hello");
+    drop(logger);
+    drop(handler);
+    assert_eq!(read_output(&buffer), "dup [INFO] hello\ndup [INFO] hello\n");
+}
+
+#[test]
+fn handler_added_after_logging_only_sees_future_records() {
+    let buf1 = Arc::new(Mutex::new(Vec::new()));
+    let buf2 = Arc::new(Mutex::new(Vec::new()));
+    let h1 = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf1)),
+        DefaultFormatter,
+    ));
+    let h2 = Arc::new(FemtoStreamHandler::new(
+        SharedBuf(Arc::clone(&buf2)),
+        DefaultFormatter,
+    ));
+    let logger = FemtoLogger::new("core".to_string());
+    logger.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger.log(FemtoLevel::Info, "before");
+    logger.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger.log(FemtoLevel::Info, "after");
+    drop(logger);
+    drop(h1);
+    drop(h2);
+    assert_eq!(
+        read_output(&buf1),
+        "core [INFO] before\ncore [INFO] after\n"
+    );
+    assert_eq!(read_output(&buf2), "core [INFO] after\n");
+}
+#[test]
 fn handler_can_be_removed() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
@@ -173,7 +216,10 @@ fn drop_with_sender_clone_exits() {
     let thread_barrier = std::sync::Arc::clone(&barrier);
     let t = std::thread::spawn(move || {
         thread_barrier.wait();
-        let res = tx.send(FemtoLogRecord::new("clone", "INFO", "late"));
+        let res = tx.send(QueuedRecord {
+            record: FemtoLogRecord::new("clone", "INFO", "late"),
+            handlers: Vec::new(),
+        });
         assert!(
             res.is_err(),
             "Expected send to fail after logger is dropped"

@@ -154,3 +154,61 @@ fn loom_multiple_loggers_multiple_handlers() {
     });
 }
 
+#[test]
+#[ignore]
+fn loom_concurrent_handler_addition() {
+    loom::model(|| {
+        let buf1 = Arc::new(Mutex::new(Vec::new()));
+        let buf2 = Arc::new(Mutex::new(Vec::new()));
+        let buf3 = Arc::new(Mutex::new(Vec::new()));
+        let h1 = Arc::new(FemtoStreamHandler::new(
+            LoomBuf(Arc::clone(&buf1)),
+            DefaultFormatter,
+        ));
+        let h2 = Arc::new(FemtoStreamHandler::new(
+            LoomBuf(Arc::clone(&buf2)),
+            DefaultFormatter,
+        ));
+        let h3 = Arc::new(FemtoStreamHandler::new(
+            LoomBuf(Arc::clone(&buf3)),
+            DefaultFormatter,
+        ));
+        let logger = Arc::new(FemtoLogger::new("core".to_string()));
+
+        let t1 = {
+            let l = Arc::clone(&logger);
+            let h = h1.clone() as Arc<dyn FemtoHandlerTrait>;
+            thread::spawn(move || {
+                l.add_handler(h);
+            })
+        };
+        let t2 = {
+            let l = Arc::clone(&logger);
+            let h = h2.clone() as Arc<dyn FemtoHandlerTrait>;
+            thread::spawn(move || {
+                l.add_handler(h);
+            })
+        };
+        let t3 = {
+            let l = Arc::clone(&logger);
+            let h = h3.clone() as Arc<dyn FemtoHandlerTrait>;
+            thread::spawn(move || {
+                l.add_handler(h);
+            })
+        };
+        t1.join().expect("t1");
+        t2.join().expect("t2");
+        t3.join().expect("t3");
+
+        logger.log("INFO", "hi");
+        drop(logger);
+        drop(h1);
+        drop(h2);
+        drop(h3);
+
+        assert_eq!(read_output(&buf1), "core [INFO] hi\n");
+        assert_eq!(read_output(&buf2), "core [INFO] hi\n");
+        assert_eq!(read_output(&buf3), "core [INFO] hi\n");
+    });
+}
+

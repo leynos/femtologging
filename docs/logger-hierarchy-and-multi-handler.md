@@ -51,8 +51,8 @@ is implementing hierarchical configuration using dotted names with propagation.
    - Allow handlers defined once to be referenced from several loggers.
    - Implement a `get_logger(name)` helper exposed through the Python bindings.
      It mirrors CPython's semantics and returns existing instances from
-     the registry. Provide a camelCase alias `getLogger()` for backwards
-     compatibility, though new code should prefer the snake_case form.
+    the registry. Provide a camelCase alias `getLogger()` for backward
+    compatibility, though new code should prefer the snake_case form.
 
 ## Testing Considerations
 
