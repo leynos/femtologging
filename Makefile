@@ -55,7 +55,7 @@ nixie: ## Validate Mermaid diagrams
 test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST)
+	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
 	uv run pytest -v
 
 typecheck: build ## Static type analysis
