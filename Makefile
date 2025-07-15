@@ -44,7 +44,7 @@ check-fmt: ## Verify formatting
 
 lint: ## Run linters
 	ruff check
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
 
 markdownlint: ## Lint Markdown files
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT)
@@ -54,7 +54,7 @@ nixie: ## Validate Mermaid diagrams
 
 test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) -- -D warnings
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
 	uv run pytest -v
 
