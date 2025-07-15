@@ -14,7 +14,7 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use log::warn;
 use parking_lot::RwLock;
 use std::sync::{
@@ -57,7 +57,6 @@ pub struct FemtoLogger {
     level: AtomicU8,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     tx: Option<Sender<FemtoLogRecord>>,
-    shutdown_tx: Option<Sender<()>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -131,10 +130,9 @@ impl FemtoLogger {
             Arc::new(RwLock::new(Vec::new()));
 
         let (tx, rx) = bounded::<FemtoLogRecord>(DEFAULT_CHANNEL_CAPACITY);
-        let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
         let thread_handlers = Arc::clone(&handlers);
         let handle = thread::spawn(move || {
-            Self::worker_thread_loop(rx, shutdown_rx, thread_handlers);
+            Self::worker_thread_loop(rx, thread_handlers);
         });
 
         Self {
@@ -144,7 +142,6 @@ impl FemtoLogger {
             level: AtomicU8::new(FemtoLevel::Info as u8),
             handlers,
             tx: Some(tx),
-            shutdown_tx: Some(shutdown_tx),
             handle: Some(handle),
         }
     }
@@ -159,62 +156,28 @@ impl FemtoLogger {
         }
     }
 
-    /// Drain any remaining records once a shutdown signal is received.
-    ///
-    /// Consumes all messages still available on `rx` and dispatches them
-    /// through the provided `handlers`. This ensures no log records are lost
-    /// during shutdown.
-    ///
-    /// # Arguments
-    ///
-    /// * `rx` - Channel receiver holding pending log records.
-    /// * `handlers` - Shared collection of handlers used to process records.
-    fn drain_remaining_records(
-        rx: &Receiver<FemtoLogRecord>,
-        handlers: &Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
-    ) {
-        while let Ok(record) = rx.try_recv() {
-            Self::handle_log_record(handlers, record);
-        }
-    }
-
     /// Main loop executed by the logger's worker thread.
     ///
-    /// Waits on either incoming log records or a shutdown signal using
-    /// `select!`. Each received record is forwarded to `handle_log_record`.
-    /// When a shutdown signal arrives, any queued records are drained before
-    /// the thread exits.
+    /// Processes incoming log records until the channel is closed.
+    /// Each received record is forwarded to `handle_log_record`.
+    /// The loop terminates when all senders are dropped and the channel closes.
     ///
     /// # Arguments
     ///
     /// * `rx` - Channel receiver for new log records.
-    /// * `shutdown_rx` - Channel receiver signaling shutdown.
     /// * `handlers` - Shared collection of handlers for processing records.
     fn worker_thread_loop(
         rx: Receiver<FemtoLogRecord>,
-        shutdown_rx: Receiver<()>,
         handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     ) {
-        loop {
-            select! {
-                recv(rx) -> rec => match rec {
-                    Ok(record) => Self::handle_log_record(&handlers, record),
-                    Err(_) => break,
-                },
-                recv(shutdown_rx) -> _ => {
-                    Self::drain_remaining_records(&rx, &handlers);
-                    break;
-                }
-            }
+        for record in rx {
+            Self::handle_log_record(&handlers, record);
         }
     }
 }
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
-        }
         self.tx.take();
         if let Some(handle) = self.handle.take() {
             Python::with_gil(|py| {
@@ -279,41 +242,20 @@ mod tests {
     }
 
     #[test]
-    fn drain_remaining_records_pulls_all() {
-        let (tx, rx) = crossbeam_channel::bounded(4);
-        for i in 0..3 {
-            tx.send(FemtoLogRecord::new("core", "INFO", &format!("{i}")))
-                .expect("Failed to send test record");
-        }
-        drop(tx);
-
-        let h = Arc::new(CollectingHandler::new());
-        let handlers = Arc::new(RwLock::new(vec![h.clone() as Arc<dyn FemtoHandlerTrait>]));
-
-        FemtoLogger::drain_remaining_records(&rx, &handlers);
-
-        let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
-        assert_eq!(msgs, vec!["0", "1", "2"]);
-    }
-
-    #[test]
     fn worker_thread_loop_processes_and_drains() {
         let (tx, rx) = crossbeam_channel::bounded(4);
-        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
         let h = Arc::new(CollectingHandler::new());
         let handlers = Arc::new(RwLock::new(vec![h.clone() as Arc<dyn FemtoHandlerTrait>]));
 
         let thread = std::thread::spawn(move || {
-            FemtoLogger::worker_thread_loop(rx, shutdown_rx, handlers);
+            FemtoLogger::worker_thread_loop(rx, handlers);
         });
 
         tx.send(FemtoLogRecord::new("core", "INFO", "one"))
             .expect("Failed to send first test record");
         tx.send(FemtoLogRecord::new("core", "INFO", "two"))
             .expect("Failed to send second test record");
-        shutdown_tx
-            .send(())
-            .expect("Failed to send shutdown signal");
+        drop(tx);
         thread.join().expect("Worker thread panicked");
 
         let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
