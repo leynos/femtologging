@@ -215,6 +215,9 @@ fn handler_can_be_removed() {
     logger.add_handler(Arc::clone(&handler));
     logger.log(FemtoLevel::Info, "one");
     handler.flush();
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let output = read_output(&buffer);
+    assert!(output.contains("one"));
     assert!(logger.remove_handler(&handler));
     logger.log(FemtoLevel::Info, "two");
     drop(logger);
