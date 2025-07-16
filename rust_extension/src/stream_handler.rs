@@ -21,10 +21,11 @@ use crate::handler::FemtoHandlerTrait;
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
-    rate_limiter::RateLimiter,
+    rate_limiter::{system_time_provider, RateLimiter},
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+const WARN_RATE_LIMIT_SECS: u64 = 5;
 
 /// Handler that writes formatted log records to an `io::Write` stream.
 ///
@@ -162,7 +163,11 @@ impl FemtoStreamHandler {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
-            rate_limiter: Arc::new(RateLimiter::new("FemtoStreamHandler")),
+            rate_limiter: Arc::new(RateLimiter::new(
+                "FemtoStreamHandler",
+                WARN_RATE_LIMIT_SECS,
+                Box::new(system_time_provider),
+            )),
             flush_timeout,
         }
     }
