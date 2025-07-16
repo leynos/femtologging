@@ -75,7 +75,7 @@ When implementing changes, adhere to the following testing procedures:
 - **Quality Gates:** Before considering a change complete or proposing a commit,
   ensure it meets the following criteria:
 
-  - For code changes files:
+  - For code changes:
 
     - **Testing:** Passes all relevant unit and behavioural tests according to
       the guidelines above. (Execute these using `make test`).
@@ -148,8 +148,8 @@ When implementing changes, adhere to the following testing procedures:
 ## Rust Specific Guidance
 
 This repository is written in Rust and uses Cargo for building and dependency
-management. Contributors should follow these best practices when working on the
-project:
+management. Contributors should follow these best practices when working on
+the project:
 
 - Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
   committing.
