@@ -4,7 +4,6 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
 use rstest::{fixture, rstest};
-use std::io::{self, Write};
 use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
 type Arc<T> = StdArc<T>;
@@ -103,7 +102,7 @@ fn level_parsing_and_filtering() {
 
 #[rstest]
 fn logger_routes_to_multiple_handlers(
-    #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, mut logger): (
+    #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, logger): (
         Arc<Mutex<Vec<u8>>>,
         Arc<Mutex<Vec<u8>>>,
         Arc<dyn FemtoHandlerTrait>,
@@ -160,7 +159,7 @@ fn adding_same_handler_multiple_times_duplicates_output() {
 
 #[rstest]
 fn handler_added_after_logging_only_sees_future_records(
-    #[from(dual_handler_setup)] (buf1, buf2, h1, h2, mut logger): (
+    #[from(dual_handler_setup)] (buf1, buf2, h1, h2, logger): (
         Arc<Mutex<Vec<u8>>>,
         Arc<Mutex<Vec<u8>>>,
         Arc<dyn FemtoHandlerTrait>,
