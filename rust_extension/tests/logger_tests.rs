@@ -134,6 +134,7 @@ fn drop_with_sender_clone_exits() {
             res.is_err(),
             "Expected send to fail after logger is dropped"
         );
+        drop(tx);
     });
     drop(logger);
     barrier.wait();
