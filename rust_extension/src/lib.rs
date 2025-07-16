@@ -16,7 +16,7 @@ pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
-pub use logger::FemtoLogger;
+pub use logger::{FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
 pub use stream_handler::FemtoStreamHandler;
 
