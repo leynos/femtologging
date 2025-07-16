@@ -12,11 +12,7 @@ fn mock_time_provider(time: Arc<AtomicU64>) -> impl Fn() -> u64 {
 fn rate_limiter_issues_warnings() {
     let mut logger = Logger::start();
     let time = Arc::new(AtomicU64::new(0));
-    let limiter = RateLimiter::new(
-        "TestHandler",
-        5,
-        Box::new(mock_time_provider(time.clone())),
-    );
+    let limiter = RateLimiter::new("TestHandler", 5, Box::new(mock_time_provider(time.clone())));
 
     // First dropped record should not trigger a warning
     limiter.record_dropped();

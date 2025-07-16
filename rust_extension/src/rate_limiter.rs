@@ -21,9 +21,7 @@ impl RateLimiter {
     /// Create a new `RateLimiter` for the specified handler.
     pub fn new(handler_name: &str, warn_interval: u64, time_provider: TimeProvider) -> Self {
         Self {
-            last_warn: AtomicU64::new(
-                time_provider().saturating_sub(warn_interval),
-            ),
+            last_warn: AtomicU64::new(time_provider().saturating_sub(warn_interval)),
             dropped_records: AtomicU64::new(0),
             handler_name: handler_name.to_string(),
             warn_interval,
