@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
 
-mod file_handler;
+mod handlers {
+    pub mod file;
+}
 mod formatter;
 mod handler;
 mod level;
@@ -9,11 +11,11 @@ mod logger;
 mod manager;
 mod stream_handler;
 
-pub use file_handler::{
-    FemtoFileHandler, HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig,
-};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
+pub use handlers::file::{
+    FemtoFileHandler, HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig,
+};
 pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 pub use logger::{FemtoLogger, QueuedRecord};
