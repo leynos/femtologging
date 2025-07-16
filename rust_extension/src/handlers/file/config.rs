@@ -1,3 +1,11 @@
+//! Configuration structures for [`FemtoFileHandler`].
+//!
+//! This module defines the various configuration types used when constructing
+//! and testing file handlers. The public API exposes [`HandlerConfig`] for
+//! Rust callers and [`PyHandlerConfig`] for Python bindings. Overflow handling
+//! and channel capacity are also defined here so they can be shared between
+//! the handler implementation and worker thread logic.
+
 use std::{
     sync::{Arc, Barrier},
     time::Duration,

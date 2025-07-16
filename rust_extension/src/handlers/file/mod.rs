@@ -1,3 +1,9 @@
+//! Public API for the file-based logging handler.
+//!
+//! `FemtoFileHandler` spawns a dedicated worker thread that writes formatted
+//! log records to disk. Configuration types and the worker implementation live
+//! in submodules and are re-exported here for external use.
+
 mod config;
 mod worker;
 

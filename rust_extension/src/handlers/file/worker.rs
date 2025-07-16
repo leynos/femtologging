@@ -1,3 +1,11 @@
+//! Background worker thread for [`FemtoFileHandler`].
+//!
+//! This module owns the asynchronous file writing loop. The worker receives
+//! `FileCommand` values over a channel, writes log records, flushes the
+//! underlying writer, and notifies the handler when flushes complete. Tests
+//! can spawn a worker with [`spawn_worker`] and inspect `FlushTracker` to
+//! verify flushing behaviour.
+
 use std::{
     io::{self, Write},
     sync::{Arc, Barrier},

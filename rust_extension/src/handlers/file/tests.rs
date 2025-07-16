@@ -1,3 +1,8 @@
+//! Unit tests for the file handler implementation.
+//!
+//! These tests verify the wiring between configuration and worker threads as
+//! well as basic flushing behaviour.
+
 use super::*;
 use std::io::Write;
 
