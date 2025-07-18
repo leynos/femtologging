@@ -8,6 +8,9 @@ authors = ["Payton McIntosh <pmcintosh@df12.net>"]
 name = "_femtologging_rs"
 crate-type = ["cdylib", "rlib"]
 
+[build-dependencies]
+pyo3-build-config = "0.25.1"
+
 [dependencies]
 pyo3 = { version = ">=0.25.1,<0.26.0", default-features = false, features = ["macros", "auto-initialize"] }
 crossbeam-channel = "0.5.15"

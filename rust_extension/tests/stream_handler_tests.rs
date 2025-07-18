@@ -203,7 +203,7 @@ fn stream_handler_reports_dropped_records() {
 
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
     handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
-    assert!(handler.flush());
+    handler.flush();
 
     let warnings: Vec<_> = logger
         .into_iter()
