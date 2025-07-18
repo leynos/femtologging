@@ -137,7 +137,7 @@ variants (`FemtoRotatingFileHandler`, `FemtoTimedRotatingFileHandler`) build on
 this by performing rotation logic inside their consumer threads.
 
 The Rust implementation resides under `rust_extension/src/handlers/file`. This
-module is split into three pieces so each concern stays focused:
+module is split into three pieces, so each concern stays focused:
 
 1. `config.rs` – all configuration structures, including
    `HandlerConfig`, `PyHandlerConfig` and `OverflowPolicy`.
