@@ -431,6 +431,6 @@ Developing multithreaded Python extensions in Rust with PyO3 is a powerful techn
 
   22. Appendix A: Migration Guide - PyO3 user guide, accessed on July 14, 2025, <https://pyo3.rs/v0.12.0/migration>
 
-  23. Error handling - PyO3 user guide, accessed on July 14, 2025, <https://pyo3.rs/main/function/error-handling.html> 
+  23. Error handling – PyO3 user guide, accessed on July 14, 2025, <https://pyo3.rs/main/function/error-handling.html>
 
   24. PyErr in pyo3::err - Rust, accessed on July 14, 2025, <https://pyo3.rs/internal/doc/pyo3/err/struct.pyerr>
