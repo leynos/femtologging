@@ -136,6 +136,18 @@ sequenceDiagram
 variants (`FemtoRotatingFileHandler`, `FemtoTimedRotatingFileHandler`) build on
 this by performing rotation logic inside their consumer threads.
 
+The Rust implementation resides under `rust_extension/src/handlers/file`. This
+module is split into three pieces so each concern stays focused:
+
+1. `config.rs` – all configuration structures, including
+   `HandlerConfig`, `PyHandlerConfig` and `OverflowPolicy`.
+2. `worker.rs` – the background writer thread and its helper types.
+3. `mod.rs` – the public `FemtoFileHandler` API re‑exporting the config types.
+
+```rust
+use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
+```
+
 `FemtoFileHandler` exposes `flush()` and `close()` methods, so callers can drain
 pending records and stop the background thread explicitly. Dropping the handler
 still performs this cleanup if the methods aren't invoked.

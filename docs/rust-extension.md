@@ -11,6 +11,18 @@ handler implementations as well:
   thread. It now provides `flush()` and `close()` to deterministically manage
   that thread.
 
+The file handler lives under `rust_extension/src/handlers/file`. This directory
+splits responsibilities into three modules:
+
+1. `config.rs` – configuration types shared with the Python bindings.
+2. `worker.rs` – the asynchronous consumer thread that writes log records.
+3. `mod.rs` – the public API exposing `FemtoFileHandler` and re‑exporting the
+   configuration items.
+
+```rust
+use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
+```
+
 Packaging is handled by [maturin](https://maturin.rs/). Use version
 `>=1.9.1,<2.0.0` as declared in `pyproject.toml`. The `[tool.maturin]` section
 declares the extension module as `femtologging._femtologging_rs`, so running
