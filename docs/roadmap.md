@@ -1,8 +1,8 @@
 # Roadmap: Port picologging to Rust/PyO3
 
-The design document in
-[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
-outlines a phased approach for building `femtologging`. The high‑level goal is
+<!-- markdownlint-disable-next-line MD013 MD039 -->
+The design document in [`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md) outlines a
+phased approach for building `femtologging`. The high‑level goal is
 to re‑implement picologging in Rust with strong compile‑time safety and a
 multithreaded handler model. The steps below summarise the actionable items from
 that design.

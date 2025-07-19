@@ -10,8 +10,7 @@ use rstest::*;
 
 mod test_utils;
 use test_utils::{
-    fixtures::handler_tuple,
-    shared_buffer::{read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex},
+    fixtures::handler_tuple, read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex,
 };
 
 #[derive(Clone)]

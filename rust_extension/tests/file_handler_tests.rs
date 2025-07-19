@@ -15,7 +15,7 @@ use _femtologging_rs::{
 use tempfile::NamedTempFile;
 
 mod test_utils;
-use test_utils::shared_buffer::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
