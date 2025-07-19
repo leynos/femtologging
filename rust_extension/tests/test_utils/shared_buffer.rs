@@ -11,7 +11,12 @@ pub type StdMutex<T> = std::sync::Mutex<T>;
 
 /// Re-export loom synchronization primitives so loom tests can
 /// share the same buffer implementation.
+///
+/// These aliases aren't used in all test crates, so allow dead code
+/// to avoid spurious warnings when compiling with `-D warnings`.
+#[allow(dead_code)]
 pub type LoomArc<T> = loom::sync::Arc<T>;
+#[allow(dead_code)]
 pub type LoomMutex<T> = loom::sync::Mutex<T>;
 
 use crate::{Arc, Mutex};
@@ -31,8 +36,12 @@ impl Write for SharedBuf {
 
 /// Return the captured output as a `String`.
 ///
-/// This clones the entire buffer for simplicity, which is fine for tests
+/// This helper isn't used in every test crate, so allow dead code to
+/// prevent build failures when `-D warnings` is enabled.
+///
+/// It clones the entire buffer for simplicity, which is fine for tests
 /// but could be expensive with large data sets.
+#[allow(dead_code)]
 pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
     String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
         .expect("Buffer contains invalid UTF-8")

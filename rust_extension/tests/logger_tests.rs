@@ -6,7 +6,7 @@ use _femtologging_rs::{
 use rstest::{fixture, rstest};
 
 mod test_utils;
-use test_utils::{read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::shared_buffer::{read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 #[fixture]
 fn dual_handler_setup() -> (
