@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{Arc as StdArc, Barrier, Mutex as StdMutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -8,18 +8,12 @@ use log;
 use logtest;
 use rstest::*;
 
-#[derive(Clone)]
-struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+type Arc<T> = StdArc<T>;
+type Mutex<T> = StdMutex<T>;
 
-impl Write for SharedBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().unwrap().flush()
-    }
-}
+#[path = "test_utils/shared_buffer.rs"]
+mod shared_buffer;
+use shared_buffer::{read_output, SharedBuf};
 
 #[derive(Clone)]
 struct BlockingBuf {
@@ -44,10 +38,6 @@ fn handler_tuple() -> (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler) {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     (buffer, handler)
-}
-
-fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
 }
 
 #[rstest]

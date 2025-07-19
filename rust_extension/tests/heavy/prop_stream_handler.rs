@@ -4,42 +4,18 @@
 //! that the handler correctly writes each record without losing data.
 
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
 use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler, FemtoLogRecord};
 use itertools::iproduct;
 use proptest::prelude::*;
 
-#[derive(Clone)]
-struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+type Arc<T> = StdArc<T>;
+type Mutex<T> = StdMutex<T>;
 
-impl Write for SharedBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self
-            .0
-            .lock()
-            .expect("Failed to acquire lock for write")
-            .write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self
-            .0
-            .lock()
-            .expect("Failed to acquire lock for flush")
-            .flush()
-    }
-}
-
-fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-    String::from_utf8(
-        buffer
-            .lock()
-            .expect("Failed to acquire buffer lock")
-            .clone(),
-    )
-    .expect("Buffer contains invalid UTF-8")
-}
+#[path = "../test_utils/shared_buffer.rs"]
+mod shared_buffer;
+use shared_buffer::{read_output, SharedBuf};
 
 proptest! {
     #[test]
