@@ -200,4 +200,8 @@ serially by a dedicated worker, eliminating lock contention where it is most
 expensive.[^1][^2]
 
 [^1]: See [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
-[^2]: Source: [`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`](microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py)
+<!-- markdownlint-disable-next-line MD039 -->
+[^2]: Source: [`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`][handlers-source]
+
+<!-- markdownlint-disable-next-line MD013 -->
+[handlers-source]: microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py

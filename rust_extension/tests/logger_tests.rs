@@ -4,13 +4,9 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
 use rstest::{fixture, rstest};
-use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
-type Arc<T> = StdArc<T>;
-type Mutex<T> = StdMutex<T>;
-#[path = "test_utils/shared_buffer.rs"]
-mod shared_buffer;
-use shared_buffer::{read_output, SharedBuf};
+mod test_utils;
+use test_utils::shared_buffer::{read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 #[fixture]
 fn dual_handler_setup() -> (
