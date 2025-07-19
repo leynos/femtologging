@@ -4,7 +4,7 @@
 //! handling and concurrent usage from multiple threads.
 
 use std::fs;
-use std::sync::{Arc as StdArc, Barrier, Mutex as StdMutex};
+use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,12 +14,8 @@ use _femtologging_rs::{
 };
 use tempfile::NamedTempFile;
 
-type Arc<T> = StdArc<T>;
-type Mutex<T> = StdMutex<T>;
-
-#[path = "test_utils/shared_buffer.rs"]
-mod shared_buffer;
-use shared_buffer::SharedBuf;
+mod test_utils;
+use test_utils::shared_buffer::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.

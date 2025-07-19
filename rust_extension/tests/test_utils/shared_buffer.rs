@@ -3,8 +3,20 @@
 //! Provides thread-safe buffer types and helpers for capturing
 //! log output in both standard and loom-based scenarios.
 
-use crate::{Arc, Mutex};
 use std::io::{self, Write};
+
+/// Re-export std synchronization primitives for convenience in tests.
+pub type StdArc<T> = std::sync::Arc<T>;
+pub type StdMutex<T> = std::sync::Mutex<T>;
+pub type StdBarrier = std::sync::Barrier;
+
+/// Re-export loom synchronization primitives so loom tests can
+/// share the same buffer implementation.
+pub type LoomArc<T> = loom::sync::Arc<T>;
+pub type LoomMutex<T> = loom::sync::Mutex<T>;
+pub type LoomBarrier = loom::sync::Barrier;
+
+use crate::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);

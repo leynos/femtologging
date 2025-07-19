@@ -3,18 +3,12 @@
 //! These tests model concurrent logging via the `FemtoStreamHandler` to ensure
 //! there are no race conditions when multiple threads push records.
 
-use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
+mod test_utils;
+use test_utils::shared_buffer::{read_output, LoomArc as Arc, LoomMutex as Mutex, SharedBuf as LoomBuf};
 use loom::thread;
 use std::io::{self, Write};
 
 use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler, FemtoLogRecord};
-
-type Arc<T> = LoomArc<T>;
-type Mutex<T> = LoomMutex<T>;
-
-#[path = "../test_utils/shared_buffer.rs"]
-mod shared_buffer;
-use shared_buffer::{read_output, SharedBuf as LoomBuf};
 
 #[test]
 #[ignore]
