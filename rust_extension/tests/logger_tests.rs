@@ -246,7 +246,7 @@ fn logger_drains_records_on_drop() {
 fn add_handler_is_thread_safe() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let logger = Arc::new(FemtoLogger::new("core".to_string()));
-    let handlers: Vec<_> = (0..4)
+    let new_handlers: Vec<_> = (0..4)
         .map(|_| {
             Arc::new(FemtoStreamHandler::new(
                 SharedBuf(Arc::clone(&buffer)),
@@ -255,23 +255,28 @@ fn add_handler_is_thread_safe() {
         })
         .collect();
 
-    let threads: Vec<_> = handlers
+    let start = Arc::new(std::sync::Barrier::new(new_handlers.len() + 1));
+    let worker_threads: Vec<_> = new_handlers
         .iter()
         .cloned()
         .map(|h| {
-            let log = Arc::clone(&logger);
+            let log_clone = Arc::clone(&logger);
+            let barrier = Arc::clone(&start);
             std::thread::spawn(move || {
-                log.add_handler(h);
+                barrier.wait();
+                log_clone.add_handler(h);
             })
         })
         .collect();
-    for t in threads {
+
+    start.wait();
+    for t in worker_threads {
         t.join().expect("thread panicked");
     }
 
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
-    for h in handlers {
+    for h in new_handlers {
         drop(h);
     }
     let output = read_output(&buffer);
