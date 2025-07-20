@@ -1,4 +1,4 @@
-use super::shared_buffer::{SharedBuf, StdArc, StdMutex};
+use super::shared_buffer::std::{Arc as StdArc, Mutex as StdMutex, SharedBuf};
 use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler};
 use rstest::fixture;
 
