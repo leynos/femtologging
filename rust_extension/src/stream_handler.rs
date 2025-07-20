@@ -21,7 +21,7 @@ use crate::handler::FemtoHandlerTrait;
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
-    rate_limited_warner::RateLimitedWarner,
+    rate_limited_warner::{RateLimitedWarner, DEFAULT_WARN_INTERVAL},
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -128,6 +128,41 @@ impl FemtoStreamHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
+        Self::with_warner(
+            writer,
+            formatter,
+            capacity,
+            flush_timeout,
+            RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
+        )
+    }
+
+    #[cfg(feature = "test-util")]
+    pub fn with_capacity_timeout_warner<W, F>(
+        writer: W,
+        formatter: F,
+        capacity: usize,
+        flush_timeout: Duration,
+        warner: RateLimitedWarner,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+        F: FemtoFormatter + Send + 'static,
+    {
+        Self::with_warner(writer, formatter, capacity, flush_timeout, warner)
+    }
+
+    fn with_warner<W, F>(
+        writer: W,
+        formatter: F,
+        capacity: usize,
+        flush_timeout: Duration,
+        warner: RateLimitedWarner,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+        F: FemtoFormatter + Send + 'static,
+    {
         let (tx, rx) = bounded(capacity);
         let (done_tx, done_rx) = bounded(1);
         let handle = thread::spawn(move || {
@@ -162,7 +197,7 @@ impl FemtoStreamHandler {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
-            warner: RateLimitedWarner::new(),
+            warner,
             flush_timeout,
         }
     }

@@ -9,6 +9,9 @@ mod level;
 mod log_record;
 mod logger;
 mod manager;
+#[cfg(feature = "test-util")]
+pub mod rate_limited_warner;
+#[cfg(not(feature = "test-util"))]
 mod rate_limited_warner;
 mod stream_handler;
 

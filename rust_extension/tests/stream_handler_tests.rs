@@ -9,7 +9,7 @@ use logtest;
 use rstest::*;
 
 mod test_utils;
-use test_utils::fixtures::handler_tuple;
+use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
 use test_utils::shared_buffer::std::read_output;
 use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
@@ -193,4 +193,35 @@ fn stream_handler_reports_dropped_records() {
     assert!(warnings
         .iter()
         .any(|r| r.args().to_string().contains("1 log records dropped")));
+}
+
+#[rstest]
+fn stream_handler_rate_limits_warnings(
+    #[from(handler_tuple_custom(Duration::from_millis(50)))] (_buffer, handler): (
+        Arc<Mutex<Vec<u8>>>,
+        FemtoStreamHandler,
+    ),
+) {
+    let logger = logtest::start();
+    // First drop triggers a warning
+    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    assert!(handler.flush());
+
+    // Second drop within interval should be suppressed
+    handler.handle(FemtoLogRecord::new("core", "INFO", "third"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "fourth"));
+    assert!(handler.flush());
+
+    // Wait for interval to elapse then drop again
+    std::thread::sleep(Duration::from_millis(60));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "fifth"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "sixth"));
+    assert!(handler.flush());
+
+    let warnings: Vec<_> = logger
+        .into_iter()
+        .filter(|r| r.level() == log::Level::Warn)
+        .collect();
+    assert_eq!(warnings.len(), 2);
 }

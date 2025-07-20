@@ -1,15 +1,32 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-/// How often to emit warnings about dropped log records.
-pub const WARN_RATE_LIMIT_SECS: u64 = 5;
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+/// Source of time for [`RateLimitedWarner`].
+pub trait Clock: Send + Sync {
+    /// Return the current time in milliseconds since an arbitrary epoch.
+    fn now_millis(&self) -> u64;
 }
+
+/// [`Clock`] implementation backed by [`Instant`].
+struct RealClock {
+    start: Instant,
+}
+
+impl Default for RealClock {
+    fn default() -> Self {
+        Self { start: Instant::now() }
+    }
+}
+
+impl Clock for RealClock {
+    fn now_millis(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
+}
+
+/// How often to emit warnings about dropped log records by default.
+pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Helper that rate limits dropped-record warnings.
 ///
@@ -17,19 +34,28 @@ fn now_secs() -> u64 {
 /// [`warn_if_due`] emits a warning using the provided callback if the configured
 /// interval has elapsed. [`flush`] emits a warning immediately if any records
 /// have been dropped since the last emission.
-#[derive(Default)]
 pub struct RateLimitedWarner {
     last_warn: AtomicU64,
     dropped: AtomicU64,
+    interval_ms: u64,
+    clock: Arc<dyn Clock>,
 }
 
 impl RateLimitedWarner {
-    /// Create a new [`RateLimitedWarner`]. The first warning can be emitted
-    /// immediately.
-    pub fn new() -> Self {
+    /// Create a new [`RateLimitedWarner`] using the provided interval.
+    pub fn new(interval: Duration) -> Self {
+        Self::with_clock(interval, Arc::new(RealClock::default()))
+    }
+
+    /// Create a new [`RateLimitedWarner`] with a custom clock.
+    pub fn with_clock(interval: Duration, clock: Arc<dyn Clock>) -> Self {
+        let interval_ms = interval.as_millis() as u64;
+        let start = clock.now_millis();
         Self {
-            last_warn: AtomicU64::new(now_secs().saturating_sub(WARN_RATE_LIMIT_SECS)),
+            last_warn: AtomicU64::new(start.saturating_sub(interval_ms)),
             dropped: AtomicU64::new(0),
+            interval_ms,
+            clock,
         }
     }
 
@@ -40,9 +66,9 @@ impl RateLimitedWarner {
 
     /// Emit a warning if the rate limit interval has elapsed.
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
-        let now = now_secs();
+        let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
-        if now.saturating_sub(prev) >= WARN_RATE_LIMIT_SECS {
+        if now.saturating_sub(prev) >= self.interval_ms {
             let count = self.dropped.swap(0, Ordering::Relaxed);
             if count > 0 {
                 warn(count);
@@ -56,17 +82,51 @@ impl RateLimitedWarner {
         let count = self.dropped.swap(0, Ordering::Relaxed);
         if count > 0 {
             warn(count);
-            self.last_warn.store(now_secs(), Ordering::Relaxed);
+            self.last_warn
+                .store(self.clock.now_millis(), Ordering::Relaxed);
         }
+    }
+}
+
+impl Default for RateLimitedWarner {
+    fn default() -> Self {
+        Self::new(DEFAULT_WARN_INTERVAL)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU64;
+
+    struct FakeClock {
+        now: AtomicU64,
+    }
+
+    impl Default for FakeClock {
+        fn default() -> Self {
+            Self {
+                now: AtomicU64::new(0),
+            }
+        }
+    }
+
+    impl Clock for FakeClock {
+        fn now_millis(&self) -> u64 {
+            self.now.load(Ordering::Relaxed)
+        }
+    }
+
+    impl FakeClock {
+        fn advance(&self, ms: u64) {
+            self.now.fetch_add(ms, Ordering::Relaxed);
+        }
+    }
+
     #[test]
     fn emits_first_warning_immediately() {
-        let warner = RateLimitedWarner::new();
+        let clock = Arc::new(FakeClock::default());
+        let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), Arc::clone(&clock));
         let mut warnings = Vec::new();
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
@@ -75,18 +135,24 @@ mod tests {
 
     #[test]
     fn rate_limits_subsequent_warnings() {
-        let warner = RateLimitedWarner::new();
+        let clock = Arc::new(FakeClock::default());
+        let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), Arc::clone(&clock));
         let mut warnings = Vec::new();
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1]);
+        clock.advance(1000);
+        warner.record_drop();
+        warner.warn_if_due(|c| warnings.push(c));
+        assert_eq!(warnings, vec![1, 1]);
     }
 
     #[test]
     fn flush_emits_pending_warning() {
-        let warner = RateLimitedWarner::new();
+        let clock = Arc::new(FakeClock::default());
+        let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock);
         let mut warnings = Vec::new();
         warner.record_drop();
         warner.flush(|c| warnings.push(c));
