@@ -9,7 +9,9 @@ use logtest;
 use rstest::*;
 
 mod test_utils;
-use test_utils::std::{handler_tuple, read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::fixtures::handler_tuple;
+use test_utils::shared_buffer::std::read_output;
+use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 #[derive(Clone)]
 struct BlockingBuf {

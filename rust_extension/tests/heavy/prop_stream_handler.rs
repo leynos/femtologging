@@ -10,7 +10,8 @@ use itertools::iproduct;
 use proptest::prelude::*;
 
 mod test_utils;
-use test_utils::std::{read_output, SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::shared_buffer::std::read_output;
+use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 proptest! {
     #[test]

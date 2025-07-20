@@ -4,7 +4,8 @@
 //! and ensure log records are routed correctly without duplication.
 
 mod test_utils;
-use test_utils::loom::{read_output, LoomArc as Arc, LoomMutex as Mutex, SharedBuf as LoomBuf};
+use test_utils::shared_buffer::loom::read_output;
+use test_utils::shared_buffer::loom::{Arc as LoomArc, Mutex as LoomMutex, SharedBuf as LoomBuf};
 use loom::thread;
 use std::io::Write;
 

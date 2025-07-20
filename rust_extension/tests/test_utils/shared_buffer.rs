@@ -8,7 +8,6 @@ pub mod std {
 
     pub type Arc<T> = std::sync::Arc<T>;
     pub type Mutex<T> = std::sync::Mutex<T>;
-    pub type Barrier = std::sync::Barrier;
 
     #[derive(Clone)]
     pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);
@@ -36,7 +35,6 @@ pub mod loom {
 
     pub type Arc<T> = loom::sync::Arc<T>;
     pub type Mutex<T> = loom::sync::Mutex<T>;
-    pub type Barrier = loom::sync::Barrier;
 
     #[derive(Clone)]
     pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);
