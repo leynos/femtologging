@@ -1,3 +1,9 @@
+//! Rate-limited warning system for dropped log records.
+//!
+//! This module provides [`RateLimitedWarner`], which tracks dropped log records
+//! and emits warnings at configurable intervals to avoid spamming logs while
+//! still alerting users to potential issues.
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,7 +21,9 @@ struct RealClock {
 
 impl Default for RealClock {
     fn default() -> Self {
-        Self { start: Instant::now() }
+        Self {
+            start: Instant::now(),
+        }
     }
 }
 
@@ -50,9 +58,8 @@ impl RateLimitedWarner {
     /// Create a new [`RateLimitedWarner`] with a custom clock.
     pub fn with_clock(interval: Duration, clock: Arc<dyn Clock>) -> Self {
         let interval_ms = interval.as_millis() as u64;
-        let start = clock.now_millis();
         Self {
-            last_warn: AtomicU64::new(start.saturating_sub(interval_ms)),
+            last_warn: AtomicU64::new(u64::MAX),
             dropped: AtomicU64::new(0),
             interval_ms,
             clock,
@@ -68,23 +75,20 @@ impl RateLimitedWarner {
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
         let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
-        if now.saturating_sub(prev) >= self.interval_ms {
+        if prev == u64::MAX || now.saturating_sub(prev) >= self.interval_ms {
             let count = self.dropped.swap(0, Ordering::Relaxed);
             if count > 0 {
                 warn(count);
             }
             self.last_warn.store(now, Ordering::Relaxed);
+        } else {
+            self.dropped.store(0, Ordering::Relaxed);
         }
     }
 
     /// Immediately warn about any dropped records.
-    pub fn flush(&self, mut warn: impl FnMut(u64)) {
-        let count = self.dropped.swap(0, Ordering::Relaxed);
-        if count > 0 {
-            warn(count);
-            self.last_warn
-                .store(self.clock.now_millis(), Ordering::Relaxed);
-        }
+    pub fn flush(&self, warn: impl FnMut(u64)) {
+        self.warn_if_due(warn);
     }
 }
 
@@ -126,7 +130,8 @@ mod tests {
     #[test]
     fn emits_first_warning_immediately() {
         let clock = Arc::new(FakeClock::default());
-        let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), Arc::clone(&clock));
+        let warner =
+            RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone() as Arc<dyn Clock>);
         let mut warnings = Vec::new();
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
@@ -136,7 +141,8 @@ mod tests {
     #[test]
     fn rate_limits_subsequent_warnings() {
         let clock = Arc::new(FakeClock::default());
-        let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), Arc::clone(&clock));
+        let warner =
+            RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone() as Arc<dyn Clock>);
         let mut warnings = Vec::new();
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
@@ -152,10 +158,40 @@ mod tests {
     #[test]
     fn flush_emits_pending_warning() {
         let clock = Arc::new(FakeClock::default());
-        let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock);
+        let warner =
+            RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone() as Arc<dyn Clock>);
         let mut warnings = Vec::new();
         warner.record_drop();
         warner.flush(|c| warnings.push(c));
         assert_eq!(warnings, vec![1]);
+    }
+
+    #[test]
+    fn no_warning_when_no_drops() {
+        let warner = RateLimitedWarner::default();
+        let mut warnings = Vec::new();
+        warner.warn_if_due(|c| warnings.push(c));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn flush_with_no_drops_does_nothing() {
+        let warner = RateLimitedWarner::default();
+        let mut warnings = Vec::new();
+        warner.flush(|c| warnings.push(c));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn multiple_drops_accumulate() {
+        let clock = Arc::new(FakeClock::default());
+        let warner =
+            RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone() as Arc<dyn Clock>);
+        let mut warnings = Vec::new();
+        warner.record_drop();
+        warner.record_drop();
+        warner.record_drop();
+        warner.warn_if_due(|c| warnings.push(c));
+        assert_eq!(warnings, vec![3]);
     }
 }

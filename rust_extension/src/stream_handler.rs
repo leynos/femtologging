@@ -26,6 +26,41 @@ use crate::{
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Configuration for constructing a [`FemtoStreamHandler`].
+pub struct HandlerConfig {
+    pub capacity: usize,
+    pub flush_timeout: Duration,
+    pub warner: RateLimitedWarner,
+}
+
+impl Default for HandlerConfig {
+    fn default() -> Self {
+        Self {
+            capacity: DEFAULT_CHANNEL_CAPACITY,
+            flush_timeout: Duration::from_secs(1),
+            warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
+        }
+    }
+}
+
+impl HandlerConfig {
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.capacity = capacity;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.flush_timeout = timeout;
+        self
+    }
+
+    #[cfg(feature = "test-util")]
+    pub fn with_warner(mut self, warner: RateLimitedWarner) -> Self {
+        self.warner = warner;
+        self
+    }
+}
+
 /// Handler that writes formatted log records to an `io::Write` stream.
 ///
 /// Each instance owns a background thread which receives records and flush
@@ -128,12 +163,12 @@ impl FemtoStreamHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        Self::with_warner(
+        Self::with_config(
             writer,
             formatter,
-            capacity,
-            flush_timeout,
-            RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
+            HandlerConfig::default()
+                .with_capacity(capacity)
+                .with_timeout(flush_timeout),
         )
     }
 
@@ -149,21 +184,22 @@ impl FemtoStreamHandler {
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        Self::with_warner(writer, formatter, capacity, flush_timeout, warner)
+        Self::with_config(
+            writer,
+            formatter,
+            HandlerConfig::default()
+                .with_capacity(capacity)
+                .with_timeout(flush_timeout)
+                .with_warner(warner),
+        )
     }
 
-    fn with_warner<W, F>(
-        writer: W,
-        formatter: F,
-        capacity: usize,
-        flush_timeout: Duration,
-        warner: RateLimitedWarner,
-    ) -> Self
+    fn with_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
     where
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        let (tx, rx) = bounded(capacity);
+        let (tx, rx) = bounded(config.capacity);
         let (done_tx, done_rx) = bounded(1);
         let handle = thread::spawn(move || {
             let mut writer = writer;
@@ -197,8 +233,8 @@ impl FemtoStreamHandler {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
-            warner,
-            flush_timeout,
+            warner: config.warner,
+            flush_timeout: config.flush_timeout,
         }
     }
 
