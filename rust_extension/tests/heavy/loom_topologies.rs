@@ -3,15 +3,11 @@
 //! These tests leverage `loom` to explore possible thread interleavings
 //! and ensure log records are routed correctly without duplication.
 
-use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
+mod test_utils;
+use test_utils::shared_buffer::loom::read_output;
+use test_utils::shared_buffer::loom::{Arc as LoomArc, Mutex as LoomMutex, SharedBuf as LoomBuf};
 use loom::thread;
 use std::io::Write;
-
-type Arc<T> = LoomArc<T>;
-type Mutex<T> = LoomMutex<T>;
-#[path = "../test_utils/shared_buffer.rs"]
-mod shared_buffer;
-use shared_buffer::{read_output, SharedBuf as LoomBuf};
 
 use _femtologging_rs::{
     DefaultFormatter, FemtoLogger, FemtoHandlerTrait, FemtoStreamHandler,

@@ -4,7 +4,7 @@
 //! handling and concurrent usage from multiple threads.
 
 use std::fs;
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,18 +14,8 @@ use _femtologging_rs::{
 };
 use tempfile::NamedTempFile;
 
-#[derive(Clone)]
-struct SharedBuf(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for SharedBuf {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.lock().unwrap().flush()
-    }
-}
+mod test_utils;
+use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
