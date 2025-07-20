@@ -9,6 +9,7 @@ mod level;
 mod log_record;
 mod logger;
 mod manager;
+mod rate_limited_warner;
 mod stream_handler;
 
 pub use formatter::{DefaultFormatter, FemtoFormatter};
