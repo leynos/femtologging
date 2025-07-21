@@ -1,10 +1,9 @@
 # Porting Formatters and Handlers to Rust
 
 This document outlines a safe and thread‑aware design for moving formatting
-and handler components from Python to Rust. It complements the [roadmap](./
-roadmap.md) and expands on the design ideas described in [`rust-multithreaded-
-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-
-for-python-design.md).
+and handler components from Python to Rust. It complements the
+[roadmap](./roadmap.md) and expands on the design ideas described in
+[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md).
 
 ## Goals
 
