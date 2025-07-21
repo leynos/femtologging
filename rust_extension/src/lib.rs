@@ -41,13 +41,8 @@ fn reset_manager_py() {
     reset_manager();
 }
 
-#[expect(
-    deprecated,
-    reason = "module init signature uses Bound for PyO3 0.25; will be cleaned up in issue #92"
-)]
-#[allow(unfulfilled_lint_expectations)]
 #[pymodule]
-fn _femtologging_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
