@@ -34,8 +34,13 @@ developers.
 - Ensure blank lines before and after bulleted lists and fenced blocks.
 - Ensure tables have a delimiter line below the header row.
 - When linking to headings in other documents, use GitHub's kebab-case anchors.
-  For example, `docs/rust-binary-router-library-design.md#3-1-binary-serialization-libraries-in-rust`
-  links to "3.1. Binary Serialization Libraries in Rust".
+  For example:
+
+  ```plaintext
+  docs/rust-binary-router-library-design.md#31-binary-serialization-libraries-in-rust
+  ```
+  
+  This links to "3.1. Binary Serialization Libraries in Rust".
 
 ## Expanding acronyms
 
@@ -46,7 +51,7 @@ developers.
 - Wrap paragraphs at 80 columns.
 - Wrap code at 120 columns.
 - Do not wrap tables.
-- Use GitHub flavoured Markdown references and numbered footnotes (`[^1]`).
+- Use GitHub-flavoured Markdown references and numbered footnotes (`[^1]`).
   Avoid `【F:path†L1-L2】` citations or reference-style links (`[foo][bar]`).
   Number footnotes sequentially in the document.
 
