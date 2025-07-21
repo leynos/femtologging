@@ -24,7 +24,7 @@ pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 pub use logger::{FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
-pub use stream_handler::FemtoStreamHandler;
+pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 
 #[pyfunction]
 fn hello() -> &'static str {

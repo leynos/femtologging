@@ -173,25 +173,12 @@ impl FemtoStreamHandler {
     }
 
     #[cfg(feature = "test-util")]
-    pub fn with_capacity_timeout_warner<W, F>(
-        writer: W,
-        formatter: F,
-        capacity: usize,
-        flush_timeout: Duration,
-        warner: RateLimitedWarner,
-    ) -> Self
+    pub fn with_test_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
     where
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
-        Self::with_config(
-            writer,
-            formatter,
-            HandlerConfig::default()
-                .with_capacity(capacity)
-                .with_timeout(flush_timeout)
-                .with_warner(warner),
-        )
+        Self::with_config(writer, formatter, config)
     }
 
     fn with_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
