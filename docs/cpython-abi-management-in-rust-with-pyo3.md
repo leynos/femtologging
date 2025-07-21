@@ -414,8 +414,8 @@ Configuration for an `abi3` build is managed through Cargo features in
    prevent linking against `libpython` on Unix systems.
 
 2. `abi3-pyXY`: This feature is the key to enabling `abi3` builds. `XY`
-   represents the minimum Python version the wheel will support (e.g.,
-   `abi3- py38` for Python 3.8 and newer). This feature does two critical
+  represents the minimum Python version the wheel will support (e.g.,
+  `abi3-py38` for Python 3.8 and newer). This feature does two critical
    things: it enables the generic `abi3` feature within PyO3, and it sets the
    `Py_LIMITED_API` C macro to the correct version hex code during compilation.
 
