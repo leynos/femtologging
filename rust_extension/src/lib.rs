@@ -9,6 +9,10 @@ mod level;
 mod log_record;
 mod logger;
 mod manager;
+#[cfg(feature = "test-util")]
+pub mod rate_limited_warner;
+#[cfg(not(feature = "test-util"))]
+mod rate_limited_warner;
 mod stream_handler;
 
 pub use formatter::{DefaultFormatter, FemtoFormatter};
@@ -20,7 +24,7 @@ pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 pub use logger::{FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
-pub use stream_handler::FemtoStreamHandler;
+pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 
 #[pyfunction]
 fn hello() -> &'static str {
