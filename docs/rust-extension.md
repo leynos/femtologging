@@ -15,9 +15,9 @@ The file handler lives under `rust_extension/src/handlers/file`. This directory
 splits responsibilities into three modules:
 
 1. `config.rs` – configuration types shared with the Python bindings.
-1. `worker.rs` – the asynchronous consumer thread that writes log records.
-1. `mod.rs` – the public API exposing `FemtoFileHandler` and re‑exporting the
-   configuration items.
+2. `worker.rs` — the asynchronous consumer thread that writes log records.
+3. `mod.rs` — the public API exposing `FemtoFileHandler` and re‑exporting the
+    configuration items.
 
 ```rust
 use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
@@ -28,7 +28,7 @@ Packaging is handled by [maturin](https://maturin.rs/). Use version
 declares the extension module as `femtologging._femtologging_rs`, so running
 `pip install .` automatically builds the Rust code. Windows users may need the
 MSVC build tools installed or may need to run maturin with
-`--compatibility windows`.
+`--compatibility windows` to build.
 
 `FemtoLogRecord` now groups its contextual fields into a `RecordMetadata`
 struct. Each record stores a timestamp, source file and line, module path and
@@ -57,13 +57,12 @@ logged after the addition completes. The `remove_handler()` method works
 through `&self` as well and detaches a handler so it no longer receives
 subsequent records.
 
-Handlers manage their own worker threads; the logger simply forwards each
-record to every handler. Callers may invoke a handler's `flush()` method to
-ensure queued messages are written before dropping it.
+Handlers manage worker threads; the logger simply forwards each record to every
+handler. Callers may invoke a handler's `flush()` method to ensure queued
+messages are written before dropping it.
 
 The `add_handler()` method is exposed through the Python bindings and can be
 called on a shared logger instance. It verifies the provided object defines a
-callable `handle(logger, level, message)` method and raises `TypeError` if
-the check fails. Built-in handlers like `FemtoStreamHandler` and
-`FemtoFileHandler` pass automatically; custom classes must implement a
-compatible `handle` method.
+callable `handle(logger, level, message)` method and raises `TypeError` if the
+check fails. Built-in handlers like `FemtoStreamHandler` and `FemtoFileHandler`
+pass automatically; custom classes must implement a compatible `handle` method.
