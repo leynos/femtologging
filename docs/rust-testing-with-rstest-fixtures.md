@@ -1280,6 +1280,20 @@ logic to these generated tests.22 This allows `rstest` to focus on test
 structure and data provision, while `test-with` provides an orthogonal layer of
 control over test execution conditions.
 
+### C. Concurrency Testing with `loom`
+
+`femtologging` uses the [`loom`](https://crates.io/crates/loom) crate to
+systematically explore thread interleavings. When writing these tests, import
+`Arc` and `Mutex` directly from `loom::sync`:
+
+```rust
+use loom::sync::{Arc, Mutex};
+```
+
+Avoid aliasing these types or mixing them with the `std` variants. Doing so can
+defeat Loom's model checking. Helpers like `SharedBuf` should depend on these
+Loom primitives internally.
+
 ## XI. Conclusion and Further Resources
 
 `rstest` significantly enhances the testing experience in Rust by providing a
