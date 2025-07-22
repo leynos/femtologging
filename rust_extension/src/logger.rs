@@ -114,8 +114,42 @@ impl FemtoLogger {
 
     /// Attach a handler implemented in Python or Rust.
     #[pyo3(name = "add_handler", text_signature = "(self, handler)")]
-    pub fn py_add_handler(&self, handler: Py<PyAny>) {
-        self.add_handler(Arc::new(PyHandler { obj: handler }) as Arc<dyn FemtoHandlerTrait>);
+    pub fn py_add_handler(&self, handler: Py<PyAny>) -> PyResult<()> {
+        Python::with_gil(|py| {
+            let obj = handler.bind(py);
+            obj
+                .getattr("handle")
+                .map_err(|err| {
+                    if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) {
+                        pyo3::exceptions::PyTypeError::new_err(
+                            "handler must implement a callable 'handle' method",
+                        )
+                    } else {
+                        err
+                    }
+                })
+                .and_then(|attr| {
+                    if attr.is_callable() {
+                        Ok(())
+                    } else {
+                        let attr_type = attr
+                            .get_type()
+                            .name()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|_| "<unknown>".to_string());
+                        let handler_repr = obj
+                            .repr()
+                            .map(|r| r.to_string())
+                            .unwrap_or_else(|_| "<unrepresentable>".to_string());
+                        Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "'handler.handle' is not callable (type: {attr_type}, handler: {handler_repr})"
+                        )))
+                    }
+                })?;
+
+            self.add_handler(Arc::new(PyHandler { obj: handler }) as Arc<dyn FemtoHandlerTrait>);
+            Ok(())
+        })
     }
 
     /// Remove a handler that was previously attached via `add_handler`.
