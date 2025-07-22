@@ -18,7 +18,7 @@ fn loom_stream_push_delivery() {
     loom::model(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let handler = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buffer)),
+            LoomBuf::new(Arc::clone(&buffer)),
             DefaultFormatter,
         ));
         let h = Arc::clone(&handler);

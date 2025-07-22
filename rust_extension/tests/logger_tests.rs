@@ -20,11 +20,11 @@ fn dual_handler_setup() -> (
     let buf1 = Arc::new(Mutex::new(Vec::new()));
     let buf2 = Arc::new(Mutex::new(Vec::new()));
     let handler1: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buf1)),
+        SharedBuf::new(Arc::clone(&buf1)),
         DefaultFormatter,
     ));
     let handler2: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buf2)),
+        SharedBuf::new(Arc::clone(&buf2)),
         DefaultFormatter,
     ));
     let logger = FemtoLogger::new("core".to_string());
@@ -121,7 +121,7 @@ fn logger_routes_to_multiple_handlers(
 fn shared_handler_across_loggers() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
     ));
     let l1 = FemtoLogger::new("a".to_string());
@@ -142,7 +142,7 @@ fn shared_handler_across_loggers() {
 fn adding_same_handler_multiple_times_duplicates_output() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
     ));
     let logger = FemtoLogger::new("dup".to_string());
@@ -181,7 +181,7 @@ fn handler_added_after_logging_only_sees_future_records(
 fn handler_can_be_removed() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
     ));
     let logger = FemtoLogger::new("core".to_string());
@@ -226,7 +226,7 @@ fn drop_with_sender_clone_exits() {
 fn logger_drains_records_on_drop() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = Arc::new(FemtoStreamHandler::new(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
     ));
     let logger = FemtoLogger::new("core".to_string());
@@ -249,7 +249,7 @@ fn add_handler_is_thread_safe() {
     let new_handlers: Vec<_> = (0..4)
         .map(|_| {
             Arc::new(FemtoStreamHandler::new(
-                SharedBuf(Arc::clone(&buffer)),
+                SharedBuf::new(Arc::clone(&buffer)),
                 DefaultFormatter,
             )) as Arc<dyn FemtoHandlerTrait>
         })

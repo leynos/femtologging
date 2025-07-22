@@ -28,7 +28,7 @@ proptest! {
         ], 1..3)
     ) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
-        let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+        let handler = FemtoStreamHandler::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
 
         let mut expected = String::new();
         for (logger, level, msg) in iproduct!(logger_names, log_levels, messages) {

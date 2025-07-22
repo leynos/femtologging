@@ -9,7 +9,7 @@ use std::time::Duration;
 #[fixture]
 pub fn handler_tuple() -> (StdArc<StdMutex<Vec<u8>>>, FemtoStreamHandler) {
     let buffer = StdArc::new(StdMutex::new(Vec::new()));
-    let handler = FemtoStreamHandler::new(SharedBuf(StdArc::clone(&buffer)), DefaultFormatter);
+    let handler = FemtoStreamHandler::new(SharedBuf::new(StdArc::clone(&buffer)), DefaultFormatter);
     (buffer, handler)
 }
 
@@ -19,7 +19,7 @@ pub fn handler_tuple_custom(
 ) -> (StdArc<StdMutex<Vec<u8>>>, FemtoStreamHandler) {
     let buffer = StdArc::new(StdMutex::new(Vec::new()));
     let handler = FemtoStreamHandler::with_test_config(
-        SharedBuf(StdArc::clone(&buffer)),
+        SharedBuf::new(StdArc::clone(&buffer)),
         DefaultFormatter,
         StreamHandlerConfig::default()
             .with_capacity(1)

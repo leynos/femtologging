@@ -22,11 +22,11 @@ fn loom_single_logger_multi_handlers() {
         let buf1 = Arc::new(Mutex::new(Vec::new()));
         let buf2 = Arc::new(Mutex::new(Vec::new()));
         let h1 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf1)),
+            LoomBuf::new(Arc::clone(&buf1)),
             DefaultFormatter,
         ));
         let h2 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf2)),
+            LoomBuf::new(Arc::clone(&buf2)),
             DefaultFormatter,
         ));
         let logger = FemtoLogger::new("core".to_string());
@@ -57,7 +57,7 @@ fn loom_shared_handler_multi_loggers() {
     loom::model(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let handler = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buffer)),
+            LoomBuf::new(Arc::clone(&buffer)),
             DefaultFormatter,
         ));
         let l1 = FemtoLogger::new("a".to_string());
@@ -91,15 +91,15 @@ fn loom_multiple_loggers_multiple_handlers() {
         let buf1 = Arc::new(Mutex::new(Vec::new()));
         let buf2 = Arc::new(Mutex::new(Vec::new()));
         let shared_handler = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&shared_buf)),
+            LoomBuf::new(Arc::clone(&shared_buf)),
             DefaultFormatter,
         ));
         let h1 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf1)),
+            LoomBuf::new(Arc::clone(&buf1)),
             DefaultFormatter,
         ));
         let h2 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf2)),
+            LoomBuf::new(Arc::clone(&buf2)),
             DefaultFormatter,
         ));
         let l1 = FemtoLogger::new("l1".to_string());
@@ -139,15 +139,15 @@ fn loom_concurrent_handler_addition() {
         let buf2 = Arc::new(Mutex::new(Vec::new()));
         let buf3 = Arc::new(Mutex::new(Vec::new()));
         let h1 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf1)),
+            LoomBuf::new(Arc::clone(&buf1)),
             DefaultFormatter,
         ));
         let h2 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf2)),
+            LoomBuf::new(Arc::clone(&buf2)),
             DefaultFormatter,
         ));
         let h3 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf3)),
+            LoomBuf::new(Arc::clone(&buf3)),
             DefaultFormatter,
         ));
         let logger = Arc::new(FemtoLogger::new("core".to_string()));
