@@ -31,10 +31,8 @@ pub mod std {
 
 #[allow(dead_code)]
 pub mod loom {
+    use loom::sync::{Arc, Mutex};
     use std::io::{self, Write};
-
-    pub type Arc<T> = loom::sync::Arc<T>;
-    pub type Mutex<T> = loom::sync::Mutex<T>;
 
     #[derive(Clone)]
     pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);

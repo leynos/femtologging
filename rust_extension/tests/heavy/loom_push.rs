@@ -4,8 +4,8 @@
 //! there are no race conditions when multiple threads push records.
 
 mod test_utils;
-use test_utils::shared_buffer::loom::read_output;
-use test_utils::shared_buffer::loom::{Arc as LoomArc, Mutex as LoomMutex, SharedBuf as LoomBuf};
+use test_utils::shared_buffer::loom::{read_output, SharedBuf as LoomBuf};
+use loom::sync::{Arc, Mutex};
 use loom::thread;
 use std::io::{self, Write};
 
