@@ -36,10 +36,12 @@ developers.
 - When linking to headings in other documents, use GitHub's kebab-case anchors.
   For example:
 
+<!-- markdownlint-disable MD013 -->
   ```plaintext
   docs/rust-binary-router-library-design.md#31-binary-serialization-libraries-in-rust
   ```
-  
+<!-- markdownlint-enable MD013 -->
+
   This links to "3.1. Binary Serialization Libraries in Rust".
 
 ## Expanding acronyms
