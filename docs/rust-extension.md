@@ -27,7 +27,7 @@ Packaging is handled by [maturin](https://maturin.rs/). Use version
 `>=1.9.1,<2.0.0` as declared in `pyproject.toml`. The `[tool.maturin]` section
 declares the extension module as `femtologging._femtologging_rs`, so running
 `pip install .` automatically builds the Rust code. Windows users may need the
-MSVC build tools installed or may need to run maturin with
+MSVC build tools installed, or may need to run maturin with
 `--compatibility windows` to build.
 
 `FemtoLogRecord` now groups its contextual fields into a `RecordMetadata`

@@ -141,8 +141,8 @@ module is split into three pieces, so each concern stays focused:
 
 1. `config.rs` – all configuration structures, including
    `HandlerConfig`, `PyHandlerConfig` and `OverflowPolicy`.
-2. `worker.rs` – the background writer thread and its helper types.
-3. `mod.rs` – the public `FemtoFileHandler` API re‑exporting the config types.
+2. `worker.rs` — the background writer thread and its helper types.
+3. `mod.rs` — the public `FemtoFileHandler` API re‑exporting the config types.
 
 ```rust
 use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
