@@ -82,7 +82,9 @@ impl FlushTracker {
     }
 
     fn should_flush(&self) -> bool {
-        self.flush_interval != 0 && self.writes > 0 && self.writes % self.flush_interval == 0
+        self.flush_interval != 0
+            && self.writes > 0
+            && self.writes.is_multiple_of(self.flush_interval)
     }
 
     fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
