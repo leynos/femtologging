@@ -88,7 +88,22 @@ class CollectingHandler:
         self.records.append((logger, level, message))
 
 
-@pytest.mark.skip
+def test_add_handler_requires_handle() -> None:
+    logger = FemtoLogger("core")
+
+    class MissingHandle:
+        pass
+
+    with pytest.raises(TypeError, match="callable 'handle' method"):
+        logger.add_handler(MissingHandle())
+
+    class NotCallable:
+        handle = "oops"
+
+    with pytest.raises(TypeError, match="not callable"):
+        logger.add_handler(NotCallable())
+
+
 def test_python_handler_invocation() -> None:
     """Python handlers should receive records via PyHandler."""
     logger = FemtoLogger("core")
