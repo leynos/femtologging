@@ -25,7 +25,7 @@ developers.
 ## Markdown rules
 
 - Follow [markdownlint](https://github.com/DavidAnson/markdownlint)
-  recommendations[^markdownlint].
+  recommendations[^1].
 - Provide code blocks and lists using standard Markdown syntax.
 - Always provide a language identifier for fenced code blocks; use
   `plaintext` for non-code text.
@@ -33,6 +33,16 @@ developers.
 - Prefer inline links using `[text](url)` or angle brackets around the URL.
 - Ensure blank lines before and after bulleted lists and fenced blocks.
 - Ensure tables have a delimiter line below the header row.
+- When linking to headings in other documents, use GitHub's kebab-case anchors.
+  For example:
+
+<!-- markdownlint-disable MD013 -->
+  ```plaintext
+  docs/rust-binary-router-library-design.md#31-binary-serialization-libraries-in-rust
+  ```
+<!-- markdownlint-enable MD013 -->
+
+  This links to "3.1. Binary Serialization Libraries in Rust".
 
 ## Expanding acronyms
 
@@ -43,7 +53,9 @@ developers.
 - Wrap paragraphs at 80 columns.
 - Wrap code at 120 columns.
 - Do not wrap tables.
-- Use footnotes referenced with `[^label]`.
+- Use GitHub-flavoured Markdown references and numbered footnotes (`[^1]`).
+  Avoid `【F:path†L1-L2】` citations or reference-style links (`[foo][bar]`).
+  Number footnotes sequentially in the document.
 
 ## Example snippet
 
@@ -109,7 +121,7 @@ flowchart TD
 
 Docstrings document public modules, classes, and functions. Use the NumPy
 style and keep descriptions short. See the
-[NumPy docstring standard][numpydoc]
+NumPy docstring standard[^2]
 for the full specification.
 
 - Begin with a one-line summary followed by a blank line and extended description.
@@ -136,6 +148,5 @@ def scale(values: list[float], factor: float) -> list[float]:
     return [v * factor for v in values]
 ```
 
-[numpydoc]: https://numpydoc.readthedocs.io/en/stable/format.html
-
-[^markdownlint]: A linter that enforces consistent Markdown formatting.
+[^1]: A linter that enforces consistent Markdown formatting.
+[^2]: <https://numpydoc.readthedocs.io/en/stable/format.html>
