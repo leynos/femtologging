@@ -5,13 +5,15 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::shared_buffer::std::SharedBuf;
 use _femtologging_rs::{
     rate_limited_warner::RateLimitedWarner, DefaultFormatter, FemtoStreamHandler,
     StreamHandlerConfig,
 };
 use rstest::fixture;
 
+use super::shared_buffer::std::SharedBuf;
+
+/// Return a new shared in-memory buffer wrapped in `Arc<Mutex<_>>`.
 fn fresh_buffer() -> Arc<Mutex<Vec<u8>>> {
     Arc::new(Mutex::new(Vec::new()))
 }
