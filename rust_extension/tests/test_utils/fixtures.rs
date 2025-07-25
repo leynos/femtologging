@@ -19,6 +19,9 @@ pub fn handler_tuple() -> (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler) {
     (buffer, handler)
 }
 
+/// Return a handler backed by a shared buffer with a small capacity and
+/// short timeout. The warn interval allows tests to tune rate-limited
+/// warnings.
 #[fixture]
 pub fn handler_tuple_custom(
     #[default(Duration::from_secs(5))] warn_interval: Duration,
