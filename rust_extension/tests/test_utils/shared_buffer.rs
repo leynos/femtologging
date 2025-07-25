@@ -59,6 +59,10 @@ macro_rules! shared_buf_mod {
             ///
             /// Panics if locking the mutex fails or if the bytes are not valid
             /// UTF-8.
+            ///
+            /// This helper is widely used by tests such as
+            /// `stream_handler_tests` and `logger_tests` to verify buffered
+            /// output.
             #[cfg(test)]
             pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
                 String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
