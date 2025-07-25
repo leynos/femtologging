@@ -8,6 +8,8 @@
 
 macro_rules! shared_buf_mod {
     ($name:ident, $arc:path, $mutex:path) => {
+        #[expect(dead_code)]
+        #[allow(unfulfilled_lint_expectations)]
         pub mod $name {
             use std::io::{self, Write};
 
@@ -24,6 +26,10 @@ macro_rules! shared_buf_mod {
 
             impl SharedBuf {
                 /// Creates a new `SharedBuf` wrapping the provided buffer.
+                ///
+                /// # Parameters
+                /// - `buffer`: An `Arc<Mutex<Vec<u8>>>` representing the shared
+                ///   byte buffer to wrap.
                 pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
                     Self { buffer }
                 }
@@ -55,6 +61,7 @@ macro_rules! shared_buf_mod {
             ///
             /// Panics if locking the mutex fails or if the bytes are not valid
             /// UTF-8.
+            #[cfg(test)]
             pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
                 String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
                     .expect("Buffer contains invalid UTF-8")
