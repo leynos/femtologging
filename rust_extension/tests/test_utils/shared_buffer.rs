@@ -69,4 +69,6 @@ macro_rules! shared_buf_mod {
 }
 
 shared_buf_mod!(std, std::sync::Arc, std::sync::Mutex);
+
+#[cfg(test)]
 shared_buf_mod!(loom, loom::sync::Arc, loom::sync::Mutex);
