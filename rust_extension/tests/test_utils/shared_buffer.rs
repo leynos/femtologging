@@ -8,7 +8,6 @@
 
 macro_rules! shared_buf_mod {
     ($name:ident, $arc:path, $mutex:path) => {
-        #[expect(dead_code)]
         pub mod $name {
             use std::io::{self, Write};
 
