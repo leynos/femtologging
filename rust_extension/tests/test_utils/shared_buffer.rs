@@ -25,10 +25,21 @@ pub mod std {
             Self { buffer }
         }
 
-        /// Borrow the inner shared buffer.
+        /// Return a snapshot of the buffer contents.
         #[allow(dead_code)]
-        pub fn buffer(&self) -> Arc<Mutex<Vec<u8>>> {
-            Arc::clone(&self.buffer)
+        pub fn contents(&self) -> Vec<u8> {
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl Default for SharedBuf {
+        fn default() -> Self {
+            Self {
+                buffer: Arc::new(Mutex::new(Vec::new())),
+            }
         }
     }
 
@@ -74,8 +85,19 @@ pub mod loom {
         }
 
         #[allow(dead_code)]
-        pub fn buffer(&self) -> Arc<Mutex<Vec<u8>>> {
-            Arc::clone(&self.buffer)
+        pub fn contents(&self) -> Vec<u8> {
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl Default for SharedBuf {
+        fn default() -> Self {
+            Self {
+                buffer: Arc::new(Mutex::new(Vec::new())),
+            }
         }
     }
 

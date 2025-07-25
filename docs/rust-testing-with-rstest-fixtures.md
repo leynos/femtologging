@@ -1296,9 +1296,10 @@ use loom::sync::{Arc, Mutex};
 
 Avoid aliasing these types or mixing them with the `std` variants. Doing so can
 defeat Loom's model checking. Helpers like `SharedBuf` should depend on these
-Loom primitives internally. `SharedBuf` now keeps its inner
-`Arc<Mutex<Vec<u8>>>` private and exposes a `new()` constructor so tests can't
-mutate the buffer without taking the lock.
+Loom primitives internally. `SharedBuf` keeps its inner `Arc<Mutex<Vec<u8>>>`
+private. Use `SharedBuf::new` when an existing buffer must be shared or
+`SharedBuf::default` for a fresh buffer. The `contents()` method returns a
+snapshot so tests can assert output without exposing the lock.
 
 ## XI. Conclusion and Further Resources
 
