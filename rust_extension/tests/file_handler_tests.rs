@@ -82,7 +82,7 @@ fn multiple_records_are_serialised() {
 fn queue_overflow_drops_excess_records() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let start = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
     cfg.capacity = 3;
     cfg.flush_interval = 1;
     cfg.overflow_policy = OverflowPolicy::Drop;
@@ -169,7 +169,7 @@ fn file_handler_flush_interval_one() {
 fn blocking_policy_waits_for_space() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let start = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
     cfg.capacity = 1;
     cfg.flush_interval = 1;
     cfg.overflow_policy = OverflowPolicy::Block;
@@ -200,7 +200,7 @@ fn blocking_policy_waits_for_space() {
 fn timeout_policy_gives_up() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let start = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
     cfg.capacity = 1;
     cfg.flush_interval = 1;
     cfg.overflow_policy = OverflowPolicy::Timeout(Duration::from_millis(50));

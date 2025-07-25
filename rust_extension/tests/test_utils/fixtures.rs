@@ -26,7 +26,7 @@ fn fresh_buffer() -> SharedBytes {
 #[fixture]
 pub fn handler_tuple() -> (SharedBytes, FemtoStreamHandler) {
     let buffer = fresh_buffer();
-    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+    let handler = FemtoStreamHandler::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
     (buffer, handler)
 }
 
@@ -42,7 +42,7 @@ pub fn handler_tuple_custom(
 ) -> (SharedBytes, FemtoStreamHandler) {
     let buffer = fresh_buffer();
     let handler = FemtoStreamHandler::with_test_config(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
         StreamHandlerConfig::default()
             .with_capacity(1)

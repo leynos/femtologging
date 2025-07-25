@@ -180,7 +180,7 @@ fn stream_handler_reports_dropped_records() {
     let logger = logtest::start();
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = FemtoStreamHandler::with_capacity_timeout(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
         1,
         Duration::from_millis(50),
