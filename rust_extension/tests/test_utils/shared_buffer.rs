@@ -9,7 +9,6 @@
 macro_rules! shared_buf_mod {
     ($name:ident, $arc:path, $mutex:path) => {
         #[expect(dead_code)]
-        #[allow(unfulfilled_lint_expectations)]
         pub mod $name {
             use std::io::{self, Write};
 
@@ -27,7 +26,7 @@ macro_rules! shared_buf_mod {
             impl SharedBuf {
                 /// Creates a new `SharedBuf` wrapping the provided buffer.
                 ///
-                /// # Parameters
+                /// # Arguments
                 /// - `buffer`: An `Arc<Mutex<Vec<u8>>>` representing the shared
                 ///   byte buffer to wrap.
                 pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
