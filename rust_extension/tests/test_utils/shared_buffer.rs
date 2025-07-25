@@ -4,10 +4,11 @@
 //! both standard and loom-based scenarios.
 //!
 //! Use [`SharedBuf::new`] to construct instances while keeping the internal
-//! `Arc<Mutex<Vec<u8>>>` hidden so callers must access it through a lock.
+//! `Arc<Mutex<Vec<u8>>>` hidden, requiring callers to lock before access.
 
 macro_rules! shared_buf_mod {
     ($name:ident, $arc:path, $mutex:path) => {
+        #[allow(dead_code)]
         pub mod $name {
             use std::io::{self, Write};
 
@@ -47,13 +48,13 @@ macro_rules! shared_buf_mod {
 
             /// Returns the current contents of the buffer as a UTF-8 string.
             ///
-            /// # Arguments
-            ///
-            /// * `buffer` - Reference to the buffer to read from.
+            /// The `buffer` parameter is an `Arc`-wrapped `Mutex` guarding a
+            /// `Vec<u8>`. The mutex is locked before the bytes are cloned and
+            /// converted into UTF-8.
             ///
             /// # Panics
             ///
-            /// Panics if the mutex is poisoned or if the buffer contains invalid
+            /// Panics if locking the mutex fails or if the bytes are not valid
             /// UTF-8.
             pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
                 String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
