@@ -10,9 +10,10 @@ use rstest::*;
 use serial_test::serial;
 
 mod test_utils;
+use std::sync::{Arc, Mutex};
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
 use test_utils::shared_buffer::std::read_output;
-use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::std::SharedBuf;
 
 #[derive(Clone)]
 struct BlockingBuf {

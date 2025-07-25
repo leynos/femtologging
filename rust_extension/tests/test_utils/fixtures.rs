@@ -1,25 +1,48 @@
-use super::shared_buffer::std::{Arc as StdArc, Mutex as StdMutex, SharedBuf};
+//! Test fixtures that provide `(SharedBytes, FemtoStreamHandler)` pairs for
+//! integration and property tests. These helpers wrap a shared in-memory buffer
+//! so that handlers can be exercised without touching the file system.
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
 use _femtologging_rs::{
     rate_limited_warner::RateLimitedWarner, DefaultFormatter, FemtoStreamHandler,
     StreamHandlerConfig,
 };
 use rstest::fixture;
-use std::time::Duration;
 
+use super::shared_buffer::std::SharedBuf;
+
+/// Shared in-memory byte buffer.
+type SharedBytes = Arc<Mutex<Vec<u8>>>;
+
+/// Return a new shared in-memory buffer wrapped in `SharedBytes`.
+#[must_use]
+fn fresh_buffer() -> SharedBytes {
+    Arc::new(Mutex::new(Vec::new()))
+}
+
+/// Return a handler with a fresh in-memory buffer using the default configuration.
 #[fixture]
-pub fn handler_tuple() -> (StdArc<StdMutex<Vec<u8>>>, FemtoStreamHandler) {
-    let buffer = StdArc::new(StdMutex::new(Vec::new()));
-    let handler = FemtoStreamHandler::new(SharedBuf(StdArc::clone(&buffer)), DefaultFormatter);
+pub fn handler_tuple() -> (SharedBytes, FemtoStreamHandler) {
+    let buffer = fresh_buffer();
+    let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
     (buffer, handler)
 }
 
+/// Return a handler backed by a shared buffer with a small capacity and
+/// short timeout.
+///
+/// # Arguments
+/// * `warn_interval` – the minimum duration between successive rate-limited
+///   warnings emitted by the handler.
 #[fixture]
 pub fn handler_tuple_custom(
     #[default(Duration::from_secs(5))] warn_interval: Duration,
-) -> (StdArc<StdMutex<Vec<u8>>>, FemtoStreamHandler) {
-    let buffer = StdArc::new(StdMutex::new(Vec::new()));
+) -> (SharedBytes, FemtoStreamHandler) {
+    let buffer = fresh_buffer();
     let handler = FemtoStreamHandler::with_test_config(
-        SharedBuf(StdArc::clone(&buffer)),
+        SharedBuf(Arc::clone(&buffer)),
         DefaultFormatter,
         StreamHandlerConfig::default()
             .with_capacity(1)

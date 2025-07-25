@@ -6,8 +6,9 @@ use _femtologging_rs::{
 use rstest::{fixture, rstest};
 
 mod test_utils;
+use std::sync::{Arc, Mutex};
 use test_utils::shared_buffer::std::read_output;
-use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::std::SharedBuf;
 
 #[fixture]
 fn dual_handler_setup() -> (
