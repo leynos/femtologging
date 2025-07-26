@@ -106,7 +106,7 @@
     pass before and after, unit tests added for new units).
   - Ensure the refactoring commit itself passes all quality gates.
 
-## Rust Specific Guidance
+## Rust-specific Guidance
 
 This repository is written in Rust and uses Cargo for building and dependency
 management. Contributors should follow these best practices when working on the
@@ -163,14 +163,31 @@ project:
 
 ### Error Handling
 
-- **Prefer semantic error enums**. Derive `std::error::Error` (via the
-  `thiserror` crate) for any condition the caller might inspect, retry, or
-  map to an HTTP status.
-- **Use an *opaque* error only at the app boundary**. Use `eyre::Report` for
-  human-readable logs; these should not be exposed in public APIs.
-- **Never export the opaque type from a library**. Convert to domain enums at
-  API boundaries, and to `eyre` only in the main `main()` entrypoint or
-  top-level async task.
+- **Prefer semantic error enums.** Use domain-specific enums to model
+  recoverable errors. Derive `std::error::Error` using `thiserror`. Implement
+  `From<DomainError> for PyErr` to allow automatic conversion to Python
+  exceptions via `PyResult<T>`.
+- **Define and export Python exceptions.** Use `create_exception!` to define
+  module-level Python exception types. Map domain errors to these using
+  `From<DomainError> for PyErr`. Prefer built-in Python exceptions where
+  appropriate; otherwise define and expose custom exceptions for domain-specific
+  cases.
+- **Avoid opaque error types in public APIs.** Do not expose `anyhow::Error`,
+  `eyre::Report`, or similar from PyO3 functions. Use these only in binary crates
+  or application-level code. Convert to domain enums before returning from any
+  `#[pyfunction]` or `#[pymethod]`.
+- **Return `PyResult<T>` from exposed functions.** Ensure all exposed functions
+  return `PyResult<T>` or `Result<T, E>` with a `From<E> for PyErr` implementation.
+  Export exception classes from the module for explicit Python-side error handling.
+- **Preserve error context for debugging.** Where necessary, use
+  `pyerr.set_cause(py, Some(inner_pyerr))` to attach a cause to a raised exception.
+  This enables chained tracebacks in Python.
+- **Use structured Python exceptions only when required.** If additional data must
+  be exposed in exceptions, define `#[pyclass(extends=PyException)]` types and
+  expose relevant fields using `#[pyo3(get)]`. Avoid unnecessary complexity.
+- **Prevent panics across the FFI boundary.** Ensure Rust panics do not cross into
+  Python. Handle all expected failures using error returns. Treat any panic as a
+  logic bug to be resolved internally.
 
 ## Python Development Guidelines
 
