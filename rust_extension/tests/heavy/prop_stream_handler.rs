@@ -10,8 +10,9 @@ use itertools::iproduct;
 use proptest::prelude::*;
 
 mod test_utils;
+use std::sync::{Arc, Mutex};
 use test_utils::shared_buffer::std::read_output;
-use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::std::SharedBuf;
 
 proptest! {
     #[test]
@@ -28,7 +29,10 @@ proptest! {
         ], 1..3)
     ) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
-        let handler = FemtoStreamHandler::new(SharedBuf(Arc::clone(&buffer)), DefaultFormatter);
+        let handler = FemtoStreamHandler::new(
+            SharedBuf::new(Arc::clone(&buffer)),
+            DefaultFormatter,
+        );
 
         let mut expected = String::new();
         for (logger, level, msg) in iproduct!(logger_names, log_levels, messages) {

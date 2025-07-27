@@ -9,14 +9,28 @@
 - **Clarity over cleverness.** Be concise, but favour explicit over terse or
   obscure idioms. Prefer code that's easy to follow.
 - **Use functions and composition.** Avoid repetition by extracting reusable
-  logic. Prefer generators or comprehensions to imperative repetition when
-  readable.
+  logic. Prefer generators or comprehensions, and declarative code to imperative
+  repetition when readable.
+- **Small, meaningful functions.** Functions must be small, clear in purpose,
+  single responsibility, and obey command/query segregation.
+- **Clear commit messages.** Commit messages should be descriptive, explaining
+  what was changed and why.
 - **Name things precisely.** Use clear, descriptive variable and function names.
   For booleans, prefer names with `is`, `has`, or `should`.
 - **Structure logically.** Each file should encapsulate a coherent module. Group
   related code (e.g., models + utilities + fixtures) close together.
 - **Group by feature, not layer.** Colocate views, logic, fixtures, and helpers
   related to a domain concept rather than splitting by type.
+- **Use consistent spelling and grammar.** Comments must use en-GB-oxendict
+  ("-ize" / "-yse" / "-our") spelling and grammar, with the exception of
+  references to external APIs.
+- **Illustrate with clear examples.** Function documentation must include clear
+  examples demonstrating the usage and outcome of the function. Test documentation
+  should omit examples where the example serves only to reiterate the test logic.
+- **Keep file size managable.** No single code file may be longer than 400 lines.
+  Long switch statements or dispatch tables should be broken up by feature and
+  constituents colocated with targets. Large blocks of test data should be moved
+  to external data files.
 
 ## Documentation Maintenance
 
@@ -25,48 +39,11 @@
   choices, and architectural decisions.
 - **Update:** When new decisions are made, requirements change, libraries are
   added/removed, or architectural patterns evolve, **proactively update** the
-  relevant file(s) in the `docs/` directory to reflect the latest state. Ensure
-  the documentation remains accurate and current.
-
-## Guidelines for Code Changes & Testing
-
-When implementing changes, adhere to the following testing procedures:
-
-- **New Functionality:**
-
-  - Implement unit tests covering all new code units (functions, components,
-    classes). Implement tests **before** implementing the unit.
-  - Implement behavioural tests that verify the end-to-end behaviour of the new
-    feature from a user interaction perspective.
-  - Ensure both unit and behavioural tests pass before considering the
-    functionality complete.
-
-- **Bug Fixes:**
-
-  - Before fixing the bug, write a new test (unit or behavioural, whichever is
-    most appropriate) that specifically targets and reproduces the bug. This
-    test should initially fail.
-  - Implement the bug fix.
-  - Verify that the new test now passes, along with all existing tests.
-
-- **Modifying Existing Functionality:**
-
-  - Identify the existing behavioural and unit tests relevant to the
-    functionality being changed.
-  - **First, modify the tests** to reflect the new requirements or behaviour.
-  - Run the tests; they should now fail.
-  - Implement the code changes to the functionality.
-  - Verify that the modified tests (and all other existing tests) now pass.
-
-- **Refactoring:**
-
-  - Identify or create a behavioural test that covers the functionality being
-    refactored. Ensure this test passes **before** starting the refactor.
-  - Perform the refactoring (e.g., extracting logic into a new unit).
-  - If new units are created (e.g., a new function or component), add unit tests
-    for these extracted units.
-  - After the refactor, ensure the original behavioural test **still passes**
-    without modification. Also ensure any new unit tests pass.
+  relevant file(s) in the `docs/` directory to reflect the latest state.
+  **Ensure the documentation remains accurate and current.**
+- Documentation must use en-GB-oxendict ("-ize" / "-yse" / "-our") spelling
+  and grammar. (EXCEPTION: the naming of the "LICENSE" file, which
+  is to be left unchanged for community consistency.)
 
 ## Change Quality & Committing
 
@@ -74,31 +51,19 @@ When implementing changes, adhere to the following testing procedures:
   subsequent commit) should represent a single logical unit of work.
 - **Quality Gates:** Before considering a change complete or proposing a commit,
   ensure it meets the following criteria:
-
-  - For code changes:
-
-    - **Testing:** Passes all relevant unit and behavioural tests according to
-      the guidelines above. (Execute these using `make test`).
-    - **Linting:** Run `make lint` and ensure that there are no lint rule
-      violations. Fix the underlying causes of any violations rather than
-      silencing the rules.
-    - **Formatting:** Use `make fmt` and ensure that any updated formatting is
-      committed.
-    - **Typechecking:** Run `make typecheck` and ensure that there are no type
-      errors. Fix the underlying causes of any errors rather than silencing
-      the rules.
-
-  - For Markdown files (`.md` only):
-
-    - **Linting:** Run `make markdownlint` or use integrated editor linting.
-    - **Mermaid diagrams:** Validate diagrams with `make nixie`.
-
+  - New functionality or changes in behaviour are fully validated by relevant
+    unittests and behavioural tests.
+  - Where a bug is being fixed, a unittest has been provided demonstrating the
+    behaviour being corrected both to validate the fix and to guard against
+    regression.
+  - Passes all relevant unit and behavioral tests according to the guidelines
+    above.
+  - Passes lint checks
+  - Adheres to formatting standards tested using a formatting validator.
 - **Committing:**
-
   - Only changes that meet all the quality gates above should be committed.
   - Write clear, descriptive commit messages summarizing the change, following
     these formatting guidelines:
-
     - **Imperative Mood:** Use the imperative mood in the subject line (e.g.,
       "Fix bug", "Add feature" instead of "Fixed bug", "Added feature").
     - **Subject Line:** The first line should be a concise summary of the change
@@ -108,14 +73,12 @@ When implementing changes, adhere to the following testing procedures:
       including rationale, goals, and scope. Wrap the body at 72 characters.
     - **Formatting:** Use Markdown for any formatted text (like bullet points or
       code snippets) within the commit message body.
-
   - Do not commit changes that fail any of the quality gates.
 
 ## Refactoring Heuristics & Workflow
 
-- **Recognising Refactoring Needs:** Regularly assess the codebase for potential
+- **Recognizing Refactoring Needs:** Regularly assess the codebase for potential
   refactoring opportunities. Consider refactoring when you observe:
-
   - **Long Methods/Functions:** Functions or methods that are excessively long
     or try to do too many things.
   - **Duplicated Code:** Identical or very similar code blocks appearing in
@@ -133,27 +96,27 @@ When implementing changes, adhere to the following testing procedures:
     class/object than their own.
   - **Shotgun Surgery:** A single change requiring small modifications in many
     different classes or functions.
-
 - **Post-Commit Review:** After committing a functional change or bug fix (that
   meets all quality gates), review the changed code and surrounding areas using
   the heuristics above.
 - **Separate Atomic Refactors:** If refactoring is deemed necessary:
-
   - Perform the refactoring as a **separate, atomic commit** *after* the
     functional change commit.
-  - Ensure the refactoring adheres to the testing guidelines (behavioural tests
+  - Ensure the refactoring adheres to the testing guidelines (behavioral tests
     pass before and after, unit tests added for new units).
   - Ensure the refactoring commit itself passes all quality gates.
 
-## Rust Specific Guidance
+## Rust-specific Guidance
 
 This repository is written in Rust and uses Cargo for building and dependency
-management. Contributors should follow these best practices when working on
-the project:
+management. Contributors should follow these best practices when working on the
+project:
 
-- Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
-  committing.
+- Run `make fmt`, `make lint`, and `make test` before committing. These targets
+  wrap `cargo fmt`, `cargo clippy`, and `cargo test` with the appropriate flags.
 - Clippy warnings MUST be disallowed.
+- Fix any warnings emitted during tests in the code itself rather than
+  silencing them.
 - Where a function is too long, extract meaningfully named helper functions
   adhering to separation of concerns and CQRS.
 - Where a function has too many parameters, group related parameters in
@@ -162,6 +125,8 @@ the project:
   amount of data returned.
 - Write unit and behavioural tests for new functionality. Run both before and
   after making any change.
+- Every module **must** begin with a module level (`//!`) comment explaining the
+  module's purpose and utility.
 - Document public APIs using Rustdoc comments (`///`) so documentation can be
   generated with cargo doc.
 - Prefer immutable data and avoid unnecessary `mut` bindings.
@@ -169,10 +134,92 @@ the project:
 - Use explicit version ranges in `Cargo.toml` and keep dependencies up-to-date.
 - Avoid `unsafe` code unless absolutely necessary and document any usage
   clearly.
+- Place function attributes **after** doc comments.
+- Do not use `return` in single-line functions.
+- Use predicate functions for conditional criteria with more than two branches.
+- Lints must not be silenced except as a **last resort**.
+- Lint rule suppressions must be tightly scoped and include a clear reason.
+- Prefer `expect` over `allow`.
+- Use `rstest` fixtures for shared setup.
+- Replace duplicated tests with `#[rstest(...)]` parameterised cases.
+- Prefer `mockall` for mocks/stubs.
+- Prefer `.expect()` over `.unwrap()`.
+- Use `concat!()` to combine long string literals rather than escaping newlines
+  with a backslash.
 
-These practices will help maintain a high-quality codebase and make
-collaboration easier.
+### Dependency Management
+
+- **Mandate caret requirements for all dependencies.** All crate versions
+  specified in `Cargo.toml` must use SemVer-compatible caret requirements
+  (e.g., `some-crate = "1.2.3"`). This is Cargo's default and allows for safe,
+  non-breaking updates to minor and patch versions while preventing breaking
+  changes from new major versions. This approach is critical for ensuring
+  build stability and reproducibility.
+- **Prohibit unstable version specifiers.** The use of wildcard (`*`) or
+  open-ended inequality (`>=`) version requirements is strictly forbidden
+  as they introduce unacceptable risk and unpredictability. Tilde requirements
+  (`~`) should only be used where a dependency must be locked to patch-level
+  updates for a specific, documented reason.
+
+### Error Handling
+
+- **Prefer semantic error enums.** Use domain-specific enums to model
+  recoverable errors. Derive `std::error::Error` using `thiserror`. Implement
+  `From<DomainError> for PyErr` to allow automatic conversion to Python
+  exceptions via `PyResult<T>`.
+- **Define and export Python exceptions.** Use `create_exception!` to define
+  module-level Python exception types. Map domain errors to these using
+  `From<DomainError> for PyErr`. Prefer built-in Python exceptions where
+  appropriate; otherwise define and expose custom exceptions for domain-specific
+  cases.
+- **Avoid opaque error types in public APIs.** Do not expose `anyhow::Error`,
+  `eyre::Report`, or similar from PyO3 functions. Use these only in binary crates
+  or application-level code. Convert to domain enums before returning from any
+  `#[pyfunction]` or `#[pymethod]`.
+- **Return `PyResult<T>` from exposed functions.** Ensure all exposed functions
+  return `PyResult<T>` or `Result<T, E>` with a `From<E> for PyErr` implementation.
+  Export exception classes from the module for explicit Python-side error handling.
+- **Preserve error context for debugging.** Where necessary, use
+  `pyerr.set_cause(py, Some(inner_pyerr))` to attach a cause to a raised exception.
+  This enables chained tracebacks in Python.
+- **Use structured Python exceptions only when required.** If additional data must
+  be exposed in exceptions, define `#[pyclass(extends=PyException)]` types and
+  expose relevant fields using `#[pyo3(get)]`. Avoid unnecessary complexity.
+- **Prevent panics across the FFI boundary.** Ensure Rust panics do not cross into
+  Python. Handle all expected failures using error returns. Treat any panic as a
+  logic bug to be resolved internally.
 
 ## Python Development Guidelines
 
-See `.rules/python-*.mdc` for guidance on Python development.
+For Python development, refer to the detailed guidelines in the `.rules/`
+directory:
+
+* [Python Code Style Guidelines](.rules/python-00.mdc) - Core Python style
+  conventions
+* [Python Context Managers](.rules/python-context-managers.mdc) - Best practices
+  for context managers
+* [Python Generators](.rules/python-generators.mdc) - Generator and iterator
+  patterns
+* [Python Project Configuration](.rules/python-pyproject.mdc) - pyproject.toml
+  and packaging
+* [Python Return Patterns](.rules/python-return.mdc) - Function return
+  conventions
+* [Python Typing](.rules/python-typing.mdc) - Type annotation best practices
+
+## Markdown Guidance
+
+- Validate Markdown files using `make markdownlint`.
+- Run `make fmt` after any documentation changes to format all Markdown
+  files and fix table markup.
+- Validate Mermaid diagrams in Markdown files by running `make nixie`.
+- Markdown paragraphs and bullet points must be wrapped at 80 columns.
+- Code blocks must be wrapped at 120 columns.
+- Tables and headings must not be wrapped.
+- Use dashes (`-`) for list bullets.
+- Use GitHub-flavoured Markdown footnotes (`[^1]`) for references and
+  footnotes.
+
+## Key Takeaway
+
+These practices help maintain a high-quality codebase and facilitate
+collaboration.

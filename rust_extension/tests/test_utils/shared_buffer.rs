@@ -9,16 +9,53 @@ pub mod std {
     pub type Arc<T> = std::sync::Arc<T>;
     pub type Mutex<T> = std::sync::Mutex<T>;
 
+    /// Thread-safe wrapper around a byte buffer used by stream handlers.
+    ///
+    /// The inner `Arc<Mutex<Vec<u8>>>` is kept private so tests can't
+    /// accidentally bypass the `Write` implementation or mutate the buffer
+    /// without locking.
     #[derive(Clone)]
-    pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);
+    pub struct SharedBuf {
+        buffer: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl SharedBuf {
+        /// Create a new `SharedBuf` backed by the given shared buffer.
+        pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+            Self { buffer }
+        }
+
+        /// Return a snapshot of the buffer contents.
+        #[allow(dead_code)]
+        pub fn contents(&self) -> Vec<u8> {
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl Default for SharedBuf {
+        fn default() -> Self {
+            Self {
+                buffer: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
 
     impl Write for SharedBuf {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().expect("SharedBuf mutex poisoned").write(buf)
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            self.0.lock().expect("SharedBuf mutex poisoned").flush()
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .flush()
         }
     }
 
@@ -36,16 +73,47 @@ pub mod loom {
     pub type Arc<T> = loom::sync::Arc<T>;
     pub type Mutex<T> = loom::sync::Mutex<T>;
 
+    /// Wrapper around a loom-backed byte buffer.
     #[derive(Clone)]
-    pub struct SharedBuf(pub Arc<Mutex<Vec<u8>>>);
+    pub struct SharedBuf {
+        buffer: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl SharedBuf {
+        pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+            Self { buffer }
+        }
+
+        #[allow(dead_code)]
+        pub fn contents(&self) -> Vec<u8> {
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl Default for SharedBuf {
+        fn default() -> Self {
+            Self {
+                buffer: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
 
     impl Write for SharedBuf {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().expect("SharedBuf mutex poisoned").write(buf)
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            self.0.lock().expect("SharedBuf mutex poisoned").flush()
+            self.buffer
+                .lock()
+                .expect("SharedBuf mutex poisoned")
+                .flush()
         }
     }
 

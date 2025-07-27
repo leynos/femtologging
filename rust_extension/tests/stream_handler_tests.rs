@@ -10,9 +10,10 @@ use rstest::*;
 use serial_test::serial;
 
 mod test_utils;
+use std::sync::{Arc, Mutex};
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
 use test_utils::shared_buffer::std::read_output;
-use test_utils::std::{SharedBuf, StdArc as Arc, StdMutex as Mutex};
+use test_utils::std::SharedBuf;
 
 #[derive(Clone)]
 struct BlockingBuf {
@@ -179,7 +180,7 @@ fn stream_handler_reports_dropped_records() {
     let logger = logtest::start();
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = FemtoStreamHandler::with_capacity_timeout(
-        SharedBuf(Arc::clone(&buffer)),
+        SharedBuf::new(Arc::clone(&buffer)),
         DefaultFormatter,
         1,
         Duration::from_millis(50),
