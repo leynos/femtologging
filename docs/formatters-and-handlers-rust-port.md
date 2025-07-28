@@ -1,9 +1,10 @@
 # Porting Formatters and Handlers to Rust
 
-This document outlines a safe and thread‑aware design for moving formatting
-and handler components from Python to Rust. It complements the
+This document outlines a safe and thread‑aware design for moving formatting and
+handler components from Python to Rust. It complements the
 [roadmap](./roadmap.md) and expands on the design ideas described in
-[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md).
+[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
+.
 
 ## Goals
 
@@ -155,9 +156,9 @@ handler still performs this cleanup if the methods aren't invoked.
 By default, the file handler flushes the underlying file after every record to
 maximize durability. To reduce syscall overhead in high-volume scenarios,
 `FemtoFileHandler.with_capacity_flush()` accepts a `flush_interval` parameter
-controlling how many records are written before the worker thread flushes.
-Passing `0` disables periodic flushing and flushes only when the handler shuts
-down.
+controlling how many records are written before the worker thread flushes. The
+value must be greater than zero, so periodic flushing always occurs. Use higher
+values to reduce syscall overhead in high-volume scenarios.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit
@@ -211,4 +212,3 @@ and thread termination.
 
 [cmhp-log]:
 ./concurrency-models-in-high-performance-logging.md#1-the-picologging-concurrency-model-a-hybrid-approach
- [design doc]: ./rust-multithreaded-logging-framework-for-python-design.md
