@@ -112,3 +112,17 @@ def test_python_handler_invocation() -> None:
     logger.log("INFO", "ok")
     del logger
     assert collector.records == [("core", "INFO", "ok")]
+
+
+def test_python_handler_invocation_multiple_messages() -> None:
+    """Python handlers should receive every emitted record."""
+    logger = FemtoLogger("core")
+    collector = CollectingHandler()
+    logger.add_handler(collector)
+    logger.log("INFO", "first")
+    logger.log("ERROR", "second")
+    del logger
+    assert collector.records == [
+        ("core", "INFO", "first"),
+        ("core", "ERROR", "second"),
+    ]
