@@ -202,7 +202,7 @@ must be held while interacting with Python, the
 This specialized lock function is aware of PyO3's internals and helps prevent
 deadlocks with the GIL or other global interpreter synchronization events.[^12]
 
-<!-- markdownlint-disable MD013 MD033 MD056 -->
+<!-- markdownlint-disable MD033 MD056 -->
 
 | PyO3 API                    | CPython C API Equivalent                       | Core Function                         | Safety Guarantees in PyO3                                                                         |
 | --------------------------- | ---------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -210,7 +210,7 @@ deadlocks with the GIL or other global interpreter synchronization events.[^12]
 | `py.allow_threads(          |
 | ...)`                       | Py_BEGIN_ALLOW_THREADS... Py_END_ALLOW_THREADS |
 | py: Python in #[pyfunction] | (Implicit context)                             | Access GIL in a callback from Python. | Zero-cost token provided by the runtime, ensuring the function body has proof of GIL acquisition. |
-<!-- markdownlint-enable MD013 MD033 MD056 -->
+<!-- markdownlint-enable MD033 MD056 -->
 
 ## Managing State Across Threads: Object Lifetimes and Safety
 
@@ -400,14 +400,14 @@ interior mutability and adopt explicit thread-safety patterns.
   be used after a rigorous soundness review, as described in resources like the
   Rustonomicon.[^12]
 
-<!-- markdownlint-disable MD013 MD033 MD056 -->
+<!-- markdownlint-disable MD033 MD056 -->
 
 | Type             | GIL-Bound? | Send? | Sync? | Primary Use Case                                                              |
 | ---------------- | ---------- | ----- | ----- | ----------------------------------------------------------------------------- |
 | Py<T> / PyObject | No         | Yes   | Yes   | Storage and Transport: Storing in structs, sending between threads.           |
 | Bound<'py, T>    | Yes ('py)  | No    | No    | Operation: Calling methods, accessing data. The "working" handle.             |
 | &Bound<'py, T>   | Yes ('py)  | Yes   | Yes   | Borrowing: Passing as a non-owning function argument within a GIL-held scope. |
-<!-- markdownlint-enable MD013 MD033 MD056 -->
+<!-- markdownlint-enable MD033 MD056 -->
 
 ## Practical Multithreading Patterns and Best Practices
 
@@ -633,14 +633,14 @@ explicit, robust concurrency controls like mutexes for any
 
 `#[pyclass]` intended for use in a high-contention, free-threaded environment.
 
-<!-- markdownlint-disable MD013 MD033 MD056 -->
+<!-- markdownlint-disable MD033 MD056 -->
 
 | Strategy                     | Mechanism                                | Pros                                         | Cons                                                                  | Ideal Use Case                                                           |
 | ---------------------------- | ---------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Default Interior Mutability  | Runtime borrow-checking (PyRef/PyRefMut) | Automatic for simple types.                  | Raises runtime errors/panics under contention.                        | Prototyping; low-contention scenarios; single-threaded applications.     |
 | Atomics + #[pyclass(frozen)] | std::sync::atomic types                  | Lock-free, high performance.                 | Limited to simple data types (integers, bools).                       | Simple counters, flags, or state fields in high-contention environments. |
 | Mutex/Locks                  | std::sync::Mutex wrapping data           | Supports complex, arbitrary data structures. | Can introduce blocking and potential deadlocks if not used carefully. | Complex, multi-field state that needs to be updated transactionally.     |
-<!-- markdownlint-enable MD013 MD033 MD056 -->
+<!-- markdownlint-enable MD033 MD056 -->
 
 ## Conclusion: A Summary of Rules for Robust Multithreaded Extensions
 
