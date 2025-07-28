@@ -81,6 +81,10 @@ impl FlushTracker {
         self.writes = 0;
     }
 
+    /// Determines whether a flush should occur.
+    ///
+    /// A flush is due when the interval is positive, at least one write has
+    /// occurred, and the write count is a multiple of the interval.
     fn should_flush(&self) -> bool {
         self.flush_interval != 0
             && self.writes > 0

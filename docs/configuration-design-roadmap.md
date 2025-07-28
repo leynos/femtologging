@@ -141,7 +141,8 @@ impl FileHandlerBuilder {
     /// Sets the internal channel capacity for the handler.
     pub fn capacity(mut self, capacity: usize) -> Self { /* ... */ }
 
-    /// Sets the flush interval for the handler (0 for no periodic flush).
+    /// Sets how often the worker thread flushes the file. Must be greater
+    /// than zero so periodic flushing always occurs.
     pub fn flush_interval(mut self, interval: usize) -> Self { /* ... */ }
 }
 
@@ -252,8 +253,8 @@ methods. These functions will internally leverage the new builder API.
 
 ### 2.1. `basicConfig`
 
-The `femtologging.basicConfig(**kwargs)` function will be provided, offering the
-same interface as `logging.basicConfig`.
+The `femtologging.basicConfig(**kwargs)` function will be provided, offering
+the same interface as `logging.basicConfig`.
 
 - **Functionality:** It will configure the root logger, typically adding a
   `StreamHandler` to `stderr` or `stdout` (or a `FileHandler` if `filename` is
@@ -306,10 +307,10 @@ configuration, as specified by `logging.config.dictConfig`.
 
     1. **Version Check:** Validate the `version` key (must be `1`).
 
-    2. `disable_existing_loggers`: Directly map this boolean to
+    1. `disable_existing_loggers`: Directly map this boolean to
        `ConfigBuilder.disable_existing_loggers()`.
 
-    3. **Formatters**: Iterate through the `formatters` dictionary. For each
+    1. **Formatters**: Iterate through the `formatters` dictionary. For each
        `id` and `formatter_config_dict`:
 
        - Resolve `class` (if specified, for custom formatters) or default to
@@ -321,10 +322,10 @@ configuration, as specified by `logging.config.dictConfig`.
 
        - Add the `FormatterBuilder` to the `ConfigBuilder` using its `id`.
 
-    4. **Filters**: (Future) Similar to formatters, resolve `class` and
+    1. **Filters**: (Future) Similar to formatters, resolve `class` and
        parameters, then add to `ConfigBuilder`.
 
-    5. **Handlers**: Iterate through the `handlers` dictionary. For each `id`
+    1. **Handlers**: Iterate through the `handlers` dictionary. For each `id`
        and `handler_config_dict`:
 
        - **Dynamic Class Resolution**: The `class` entry (e.g.,
@@ -336,8 +337,8 @@ configuration, as specified by `logging.config.dictConfig`.
          `FileHandlerBuilder`).
 
        - `args` **and** `kwargs` **Handling**: The `args` (list) and `kwargs`
-         (dictionary) from the `dictConfig` entry will be directly passed to the
-         builder's `__init__` and subsequent methods. This implies the
+         (dictionary) from the `dictConfig` entry will be directly passed to
+         the builder's `__init__` and subsequent methods. This implies the
          `femtologging` builder methods must be designed to accept these
          parameters. For example, `FileHandlerBuilder("path", mode="a")` in
          Python. The Rust binding will then map these Python arguments to the
@@ -347,13 +348,13 @@ configuration, as specified by `logging.config.dictConfig`.
          builder.
 
        - Set handler-specific parameters (e.g., `filename`, `maxBytes`,
-         `backupCount` for `RotatingFileHandler`) by passing them as `kwargs` to
-         the builder's constructor or dedicated methods.
+         `backupCount` for `RotatingFileHandler`) by passing them as `kwargs`
+         to the builder's constructor or dedicated methods.
 
        - Add the `HandlerBuilder` (or its concrete subclass instance) to the
          `ConfigBuilder` using its `id`.
 
-    6. **Loggers**: Iterate through the `loggers` dictionary. For each `name`
+    1. **Loggers**: Iterate through the `loggers` dictionary. For each `name`
        and `logger_config_dict`:
 
        - Instantiate `LoggerConfigBuilder`.
@@ -363,17 +364,17 @@ configuration, as specified by `logging.config.dictConfig`.
        - Add the `LoggerConfigBuilder` to the `ConfigBuilder` using the logger's
          `name`.
 
-    7. **Root Logger**: Process the `root` dictionary if present, similar to
+    1. **Root Logger**: Process the `root` dictionary if present, similar to
        named loggers, and set it via `ConfigBuilder.set_root_logger()`.
 
   - `incremental`: As with `picologging`, `femtologging` will **not** support
     the `incremental` option \[cite: 1.1, 2.5,
     uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64998826/docs/core\_[features.md](http://features.md)\].
-    If `incremental` is `True`, a `ValueError` will be raised.
+     If `incremental` is `True`, a `ValueError` will be raised.
 
   - **Error Handling:** Robust error handling will be crucial to provide clear
-    and informative messages for invalid configurations, unknown class names, or
-    malformed arguments.
+    and informative messages for invalid configurations, unknown class names,
+    or malformed arguments.
 
 ### 2.3. `fileConfig`
 
@@ -387,9 +388,9 @@ configuration files, as per `logging.config.fileConfig`.
 
   - **Rust-backed INI Parsing:** The `fileConfig` function (in Python) will
     delegate the actual INI file parsing to a new Rust function exposed via
-    PyO3. This Rust function will use an existing, robust Rust INI parsing crate
-    (e.g., `ini` or `configparser`) to read the INI file into a structured
-    representation (e.g., `HashMap<String, HashMap<String, String>>`
+    PyO3. This Rust function will use an existing, robust Rust INI parsing
+    crate (e.g., `ini` or `configparser`) to read the INI file into a
+    structured representation (e.g., `HashMap<String, HashMap<String, String>>`
     representing sections and key-value pairs).
 
   - **Python-side Conversion to** `dictConfig` **Schema:** The Rust-parsed data
@@ -419,24 +420,25 @@ configuration files, as per `logging.config.fileConfig`.
     `dictConfig`-compatible dictionary will be passed to
     `femtologging.dictConfig()`. This makes `fileConfig` a two-stage process:
     INI parsing (Rust) -> `dictConfig` dictionary conversion (Python) ->
-    `dictConfig` processing (Python, calling Rust builders). This simplifies the
-    overall implementation by centralizing the core configuration logic in
+    `dictConfig` processing (Python, calling Rust builders). This simplifies
+    the overall implementation by centralizing the core configuration logic in
     `dictConfig` and its builder translation.
 
 ## 3. Runtime Reconfiguration
 
 - **Dynamic Log Level Updates:** As outlined in the design document \[cite:
   uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-  Dynamic log-level changes for loggers will be a core feature, utilizing atomic
-  operations in Rust for thread-safe updates. This will be exposed via methods
-  on `FemtoLogger` instances (e.g., `logger.set_level()`).
+  Dynamic log-level changes for loggers will be a core feature, utilizing
+  atomic operations in Rust for thread-safe updates. This will be exposed via
+  methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
 - **Future Enhancements:** Dynamic changes to handlers, formatters, and filters
   (e.g., swapping out a file handler for a new one with a different path, or
-  changing a formatter's string) will be considered for future versions (V1.1 or
-  V2) due to their complexity. This would require careful management of consumer
-  threads and resource lifecycles in Rust, likely involving a `reload()` method
-  on the `ConfigBuilder` or dedicated control plane for the logging system.
+  changing a formatter's string) will be considered for future versions (V1.1
+  or V2) due to their complexity. This would require careful management of
+  consumer threads and resource lifecycles in Rust, likely involving a
+  `reload()` method on the `ConfigBuilder` or dedicated control plane for the
+  logging system.
 
 ## 4. Integration with Rust Ecosystem
 
@@ -444,6 +446,6 @@ configuration files, as per `logging.config.fileConfig`.
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
 \[cite:
 uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
-This ensures that `femtologging` can serve as a high-performance backend for
+ This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
