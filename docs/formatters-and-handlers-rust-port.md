@@ -2,9 +2,10 @@
 
 This document outlines a safe and thread‑aware design for moving formatting and
 handler components from Python to Rust. It complements the
-[roadmap](./roadmap.md) and expands on the design ideas described in
-<!-- markdownlint-disable-next-line MD013 -->
-[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md).
+[roadmap](./roadmap.md) and expands on the design ideas described in <!--
+markdownlint-disable-next-line MD013 -->
+[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
+.
 
 ## Goals
 
@@ -97,6 +98,12 @@ config = PyHandlerConfig(
 )
 handler = FemtoFileHandler.with_capacity_flush_policy("app.log", config)
 ```
+
+`PyHandlerConfig` enforces several invariants:
+
+- ``capacity`` and ``flush_interval`` must be greater than zero.
+- ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout"``.
+- ``timeout_ms`` may only be set when ``policy`` is ``"timeout"``.
 
 ### StreamHandler
 
