@@ -257,3 +257,22 @@ def test_py_handler_config_mutation(tmp_path: Path) -> None:
     handler.handle("core", "INFO", "third")  # dropped due to capacity 2
     handler.close()
     assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
+
+
+def test_py_handler_config_invalid_capacity() -> None:
+    """Capacity must be greater than zero."""
+    with pytest.raises(ValueError):
+        PyHandlerConfig(0, 1, OverflowPolicy.DROP.value, None)
+
+
+def test_py_handler_config_invalid_flush_interval() -> None:
+    """Flush interval must be greater than zero."""
+    with pytest.raises(ValueError):
+        PyHandlerConfig(1, 0, OverflowPolicy.DROP.value, None)
+
+
+def test_py_handler_config_set_policy_invalid() -> None:
+    """Setting an invalid policy raises ``ValueError``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, None)
+    with pytest.raises(ValueError):
+        cfg.policy = "bogus"

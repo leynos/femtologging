@@ -94,15 +94,13 @@ pub struct PyHandlerConfig {
     pub timeout_ms: Option<u64>,
 }
 
-#[pymethods]
 impl PyHandlerConfig {
-    #[new]
-    fn new(
+    fn validate_config(
         capacity: usize,
         flush_interval: usize,
-        policy: String,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<Self> {
+        policy: &str,
+        timeout_ms: &Option<u64>,
+    ) -> PyResult<String> {
         if capacity == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "capacity must be greater than zero",
@@ -116,7 +114,7 @@ impl PyHandlerConfig {
         let policy_lc = policy.to_ascii_lowercase();
         if !matches!(policy_lc.as_str(), "drop" | "block" | "timeout") {
             let valid = ["drop", "block", "timeout"].join(", ");
-            let msg = format!("invalid overflow policy: '{policy}'. Valid options are: {valid}");
+            let msg = format!("invalid overflow policy: '{policy}'. Valid options are: {valid}",);
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
         if policy_lc != "timeout" && timeout_ms.is_some() {
@@ -124,6 +122,20 @@ impl PyHandlerConfig {
                 "timeout_ms can only be set when policy is 'timeout'",
             ));
         }
+        Ok(policy_lc)
+    }
+}
+
+#[pymethods]
+impl PyHandlerConfig {
+    #[new]
+    fn new(
+        capacity: usize,
+        flush_interval: usize,
+        policy: String,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        let policy_lc = Self::validate_config(capacity, flush_interval, &policy, &timeout_ms)?;
         Ok(Self {
             capacity,
             flush_interval,
@@ -146,12 +158,8 @@ impl PyHandlerConfig {
 
     #[setter]
     fn set_policy(&mut self, value: String) -> PyResult<()> {
-        let value_lc = value.to_ascii_lowercase();
-        if !matches!(value_lc.as_str(), "drop" | "block" | "timeout") {
-            let valid = ["drop", "block", "timeout"].join(", ");
-            let msg = format!("invalid overflow policy: '{value}'. Valid options are: {valid}");
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
-        }
+        let value_lc =
+            Self::validate_config(self.capacity, self.flush_interval, &value, &self.timeout_ms)?;
         self.policy = value_lc;
         if self.policy != "timeout" {
             self.timeout_ms = None;
