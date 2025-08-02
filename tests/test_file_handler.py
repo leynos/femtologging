@@ -261,14 +261,32 @@ def test_py_handler_config_mutation(tmp_path: Path) -> None:
 
 def test_py_handler_config_invalid_capacity() -> None:
     """Capacity must be greater than zero."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as exc_info:
         PyHandlerConfig(0, 1, OverflowPolicy.DROP.value, None)
+    assert "capacity must be greater than zero" in str(exc_info.value)
 
 
 def test_py_handler_config_invalid_flush_interval() -> None:
     """Flush interval must be greater than zero."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as exc_info:
         PyHandlerConfig(1, 0, OverflowPolicy.DROP.value, None)
+    assert "flush_interval must be greater than zero" in str(exc_info.value)
+
+
+def test_py_handler_config_set_capacity_invalid() -> None:
+    """Setting capacity to zero raises ``ValueError``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, None)
+    with pytest.raises(ValueError) as exc_info:
+        cfg.capacity = 0
+    assert "capacity must be greater than zero" in str(exc_info.value)
+
+
+def test_py_handler_config_set_flush_interval_invalid() -> None:
+    """Setting flush_interval to zero raises ``ValueError``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, None)
+    with pytest.raises(ValueError) as exc_info:
+        cfg.flush_interval = 0
+    assert "flush_interval must be greater than zero" in str(exc_info.value)
 
 
 def test_py_handler_config_set_policy_invalid() -> None:

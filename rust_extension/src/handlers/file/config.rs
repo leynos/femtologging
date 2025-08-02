@@ -1,10 +1,10 @@
-//! Configuration structures for [`FemtoFileHandler`].
+//! Configuration structures and Python bindings for [`FemtoFileHandler`].
 //!
 //! This module defines the various configuration types used when constructing
-//! and testing file handlers. The public API exposes [`HandlerConfig`] for
-//! Rust callers and [`PyHandlerConfig`] for Python bindings. Overflow handling
-//! and channel capacity are also defined here so they can be shared between
-//! the handler implementation and worker thread logic.
+//! and testing file handlers. The public API exposes [`HandlerConfig`] for Rust
+//! callers and [`PyHandlerConfig`] for Python bindings. Overflow handling and
+//! channel capacity are also defined here so they can be shared between the
+//! handler implementation and worker thread logic.
 
 use std::{
     sync::{Arc, Barrier},
@@ -80,11 +80,11 @@ impl<W, F> TestConfig<W, F> {
 pub struct PyHandlerConfig {
     /// Bounded queue size for records waiting to be written.
     /// Must be greater than zero.
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub capacity: usize,
     /// How often the worker thread flushes the file.
     /// Must be greater than zero.
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub flush_interval: usize,
     /// Overflow policy as a string: "drop", "block", or "timeout".
     #[pyo3(get)]
@@ -94,40 +94,36 @@ pub struct PyHandlerConfig {
     pub timeout_ms: Option<u64>,
 }
 
+#[pymethods]
 impl PyHandlerConfig {
-    fn validate_config(
-        capacity: usize,
-        flush_interval: usize,
-        policy: &str,
-        timeout_ms: &Option<u64>,
-    ) -> PyResult<String> {
-        if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be greater than zero",
-            ));
+    /// Ensure a value is greater than zero.
+    #[staticmethod]
+    fn validate_positive(value: usize, field: &str) -> PyResult<()> {
+        if value == 0 {
+            Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{field} must be greater than zero"
+            )))
+        } else {
+            Ok(())
         }
-        if flush_interval == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "flush_interval must be greater than zero",
-            ));
-        }
-        let policy_lc = policy.to_ascii_lowercase();
-        if !matches!(policy_lc.as_str(), "drop" | "block" | "timeout") {
+    }
+
+    /// Validate the overflow policy and optional timeout.
+    #[staticmethod]
+    fn validate_policy(policy: &str, timeout_ms: Option<u64>) -> PyResult<()> {
+        if !matches!(policy, "drop" | "block" | "timeout") {
             let valid = ["drop", "block", "timeout"].join(", ");
-            let msg = format!("invalid overflow policy: '{policy}'. Valid options are: {valid}",);
-            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "invalid overflow policy: '{policy}'. Valid options are: {valid}"
+            )));
         }
-        if policy_lc != "timeout" && timeout_ms.is_some() {
+        if policy != "timeout" && timeout_ms.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms can only be set when policy is 'timeout'",
             ));
         }
-        Ok(policy_lc)
+        Ok(())
     }
-}
-
-#[pymethods]
-impl PyHandlerConfig {
     #[new]
     fn new(
         capacity: usize,
@@ -135,7 +131,10 @@ impl PyHandlerConfig {
         policy: String,
         timeout_ms: Option<u64>,
     ) -> PyResult<Self> {
-        let policy_lc = Self::validate_config(capacity, flush_interval, &policy, &timeout_ms)?;
+        Self::validate_positive(capacity, "capacity")?;
+        Self::validate_positive(flush_interval, "flush_interval")?;
+        let policy_lc = policy.trim().to_ascii_lowercase();
+        Self::validate_policy(&policy_lc, timeout_ms)?;
         Ok(Self {
             capacity,
             flush_interval,
@@ -157,9 +156,23 @@ impl PyHandlerConfig {
     }
 
     #[setter]
+    fn set_capacity(&mut self, value: usize) -> PyResult<()> {
+        Self::validate_positive(value, "capacity")?;
+        self.capacity = value;
+        Ok(())
+    }
+
+    #[setter]
+    fn set_flush_interval(&mut self, value: usize) -> PyResult<()> {
+        Self::validate_positive(value, "flush_interval")?;
+        self.flush_interval = value;
+        Ok(())
+    }
+
+    #[setter]
     fn set_policy(&mut self, value: String) -> PyResult<()> {
-        let value_lc =
-            Self::validate_config(self.capacity, self.flush_interval, &value, &self.timeout_ms)?;
+        let value_lc = value.trim().to_ascii_lowercase();
+        Self::validate_policy(&value_lc, self.timeout_ms)?;
         self.policy = value_lc;
         if self.policy != "timeout" {
             self.timeout_ms = None;
