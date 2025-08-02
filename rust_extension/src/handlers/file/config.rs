@@ -80,11 +80,11 @@ impl<W, F> TestConfig<W, F> {
 pub struct PyHandlerConfig {
     /// Bounded queue size for records waiting to be written.
     /// Must be greater than zero.
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub capacity: usize,
     /// How often the worker thread flushes the file.
     /// Must be greater than zero.
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub flush_interval: usize,
     /// Overflow policy as a string: "drop", "block", or "timeout".
     #[pyo3(get)]
@@ -96,6 +96,18 @@ pub struct PyHandlerConfig {
 
 #[pymethods]
 impl PyHandlerConfig {
+    /// Ensure a value is greater than zero.
+    #[staticmethod]
+    fn validate_positive(value: usize, field: &str) -> PyResult<()> {
+        if value == 0 {
+            Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{field} must be greater than zero"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Validate the overflow policy and optional timeout.
     #[staticmethod]
     fn validate_policy(policy: &str, timeout_ms: Option<u64>) -> PyResult<()> {
@@ -119,17 +131,9 @@ impl PyHandlerConfig {
         policy: String,
         timeout_ms: Option<u64>,
     ) -> PyResult<Self> {
-        if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be greater than zero",
-            ));
-        }
-        if flush_interval == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "flush_interval must be greater than zero",
-            ));
-        }
-        let policy_lc = policy.to_ascii_lowercase();
+        Self::validate_positive(capacity, "capacity")?;
+        Self::validate_positive(flush_interval, "flush_interval")?;
+        let policy_lc = policy.trim().to_ascii_lowercase();
         Self::validate_policy(&policy_lc, timeout_ms)?;
         Ok(Self {
             capacity,
@@ -152,8 +156,22 @@ impl PyHandlerConfig {
     }
 
     #[setter]
+    fn set_capacity(&mut self, value: usize) -> PyResult<()> {
+        Self::validate_positive(value, "capacity")?;
+        self.capacity = value;
+        Ok(())
+    }
+
+    #[setter]
+    fn set_flush_interval(&mut self, value: usize) -> PyResult<()> {
+        Self::validate_positive(value, "flush_interval")?;
+        self.flush_interval = value;
+        Ok(())
+    }
+
+    #[setter]
     fn set_policy(&mut self, value: String) -> PyResult<()> {
-        let value_lc = value.to_ascii_lowercase();
+        let value_lc = value.trim().to_ascii_lowercase();
         Self::validate_policy(&value_lc, self.timeout_ms)?;
         self.policy = value_lc;
         if self.policy != "timeout" {
