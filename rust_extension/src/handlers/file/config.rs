@@ -98,20 +98,19 @@ pub struct PyHandlerConfig {
 impl PyHandlerConfig {
     /// Validate the overflow policy and optional timeout.
     #[staticmethod]
-    fn validate_policy(policy: &str, timeout_ms: Option<u64>) -> PyResult<String> {
-        let lc = policy.to_ascii_lowercase();
-        if !matches!(lc.as_str(), "drop" | "block" | "timeout") {
+    fn validate_policy(policy: &str, timeout_ms: Option<u64>) -> PyResult<()> {
+        if !matches!(policy, "drop" | "block" | "timeout") {
             let valid = ["drop", "block", "timeout"].join(", ");
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "invalid overflow policy: '{policy}'. Valid options are: {valid}"
             )));
         }
-        if lc != "timeout" && timeout_ms.is_some() {
+        if policy != "timeout" && timeout_ms.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms can only be set when policy is 'timeout'",
             ));
         }
-        Ok(lc)
+        Ok(())
     }
     #[new]
     fn new(
@@ -130,7 +129,8 @@ impl PyHandlerConfig {
                 "flush_interval must be greater than zero",
             ));
         }
-        let policy_lc = Self::validate_policy(&policy, timeout_ms)?;
+        let policy_lc = policy.to_ascii_lowercase();
+        Self::validate_policy(&policy_lc, timeout_ms)?;
         Ok(Self {
             capacity,
             flush_interval,
@@ -153,7 +153,8 @@ impl PyHandlerConfig {
 
     #[setter]
     fn set_policy(&mut self, value: String) -> PyResult<()> {
-        let value_lc = Self::validate_policy(&value, self.timeout_ms)?;
+        let value_lc = value.to_ascii_lowercase();
+        Self::validate_policy(&value_lc, self.timeout_ms)?;
         self.policy = value_lc;
         if self.policy != "timeout" {
             self.timeout_ms = None;
