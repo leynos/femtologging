@@ -111,13 +111,18 @@ impl PyHandlerConfig {
     /// Validate the overflow policy and optional timeout.
     #[staticmethod]
     fn validate_policy(policy: &str, timeout_ms: Option<u64>) -> PyResult<()> {
-        if !matches!(policy, "drop" | "block" | "timeout") {
+        // Trim and ignore case so callers may pass mixed-case policies.
+        let candidate = policy.trim();
+        if !["drop", "block", "timeout"]
+            .iter()
+            .any(|valid| valid.eq_ignore_ascii_case(candidate))
+        {
             let valid = ["drop", "block", "timeout"].join(", ");
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "invalid overflow policy: '{policy}'. Valid options are: {valid}"
+                "invalid overflow policy: '{candidate}'. Valid options are: {valid}"
             )));
         }
-        if policy != "timeout" && timeout_ms.is_some() {
+        if !"timeout".eq_ignore_ascii_case(candidate) && timeout_ms.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms can only be set when policy is 'timeout'",
             ));
@@ -133,8 +138,8 @@ impl PyHandlerConfig {
     ) -> PyResult<Self> {
         Self::validate_positive(capacity, "capacity")?;
         Self::validate_positive(flush_interval, "flush_interval")?;
+        Self::validate_policy(&policy, timeout_ms)?;
         let policy_lc = policy.trim().to_ascii_lowercase();
-        Self::validate_policy(&policy_lc, timeout_ms)?;
         Ok(Self {
             capacity,
             flush_interval,
@@ -171,9 +176,8 @@ impl PyHandlerConfig {
 
     #[setter]
     fn set_policy(&mut self, value: String) -> PyResult<()> {
-        let value_lc = value.trim().to_ascii_lowercase();
-        Self::validate_policy(&value_lc, self.timeout_ms)?;
-        self.policy = value_lc;
+        Self::validate_policy(&value, self.timeout_ms)?;
+        self.policy = value.trim().to_ascii_lowercase();
         if self.policy != "timeout" {
             self.timeout_ms = None;
         }
