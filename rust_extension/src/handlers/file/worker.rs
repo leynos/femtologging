@@ -154,6 +154,7 @@ mod flush_tracker_tests {
     use super::*;
     use logtest::Logger;
     use rstest::*;
+    use serial_test::serial;
     use std::io::{self, Write};
 
     #[derive(Default)]
@@ -204,6 +205,7 @@ mod flush_tracker_tests {
     }
 
     #[rstest]
+    #[serial]
     fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
         let mut logger = Logger::start();
         let mut tracker = FlushTracker::new(1);
