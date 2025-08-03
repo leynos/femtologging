@@ -6,31 +6,42 @@
 use super::*;
 use serial_test::serial;
 use std::io::{self, Write};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{mpsc, Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Default)]
-struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+struct SharedBuf {
+    buffer: Arc<Mutex<Vec<u8>>>,
+}
 
 impl SharedBuf {
-    fn new(buf: Arc<Mutex<Vec<u8>>>) -> Self {
-        Self(buf)
-    }
-
-    fn contents(buf: &Arc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buf.lock().expect("lock").clone()).expect("invalid UTF-8")
+    /// Return the UTF-8 contents of the buffer.
+    fn contents(&self) -> String {
+        String::from_utf8(self.buffer.lock().expect("lock").clone()).expect("invalid UTF-8")
     }
 }
 
 impl Write for SharedBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().expect("lock").write(buf)
+        self.buffer.lock().expect("lock").write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().expect("lock").flush()
+        self.buffer.lock().expect("lock").flush()
     }
+}
+
+fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, FemtoFileHandler) {
+    let buffer = SharedBuf::default();
+    let barrier = Arc::new(Barrier::new(2));
+    let mut cfg = TestConfig::new(buffer.clone(), DefaultFormatter);
+    cfg.capacity = 1;
+    cfg.flush_interval = 1;
+    cfg.overflow_policy = policy;
+    cfg.start_barrier = Some(Arc::clone(&barrier));
+    let handler = FemtoFileHandler::with_writer_for_test(cfg);
+    (buffer, barrier, handler)
 }
 
 #[test]
@@ -48,8 +59,8 @@ fn worker_config_from_handlerconfig_copies_values() {
 
 #[test]
 fn build_from_worker_wires_handler_components() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let writer = SharedBuf::new(Arc::clone(&buffer));
+    let buffer = SharedBuf::default();
+    let writer = buffer.clone();
     let worker_cfg = WorkerConfig {
         capacity: 1,
         flush_interval: 1,
@@ -78,14 +89,7 @@ fn build_from_worker_wires_handler_components() {
         .is_ok());
     handle.join().expect("worker thread");
 
-    let output = String::from_utf8(
-        buffer
-            .lock()
-            .expect("failed to acquire buffer lock for read")
-            .clone(),
-    )
-    .expect("buffer contained invalid UTF-8");
-    assert_eq!(output, "core [INFO] test\n");
+    assert_eq!(buffer.contents(), "core [INFO] test\n");
 }
 
 #[test]
@@ -98,46 +102,42 @@ fn femto_file_handler_invalid_file_path() {
 #[test]
 #[serial]
 fn femto_file_handler_queue_overflow_drop_policy() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
-    let barrier = Arc::new(Barrier::new(2));
-    cfg.capacity = 1;
-    cfg.flush_interval = 1;
-    cfg.overflow_policy = OverflowPolicy::Drop;
-    cfg.start_barrier = Some(Arc::clone(&barrier));
-    let handler = FemtoFileHandler::with_writer_for_test(cfg);
+    let (buffer, barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);
 
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
     handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
     barrier.wait();
     drop(handler);
 
-    assert_eq!(SharedBuf::contents(&buffer), "core [INFO] first\n");
+    assert_eq!(buffer.contents(), "core [INFO] first\n");
 }
 
 #[test]
 fn femto_file_handler_queue_overflow_block_policy() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
-    let barrier = Arc::new(Barrier::new(2));
-    cfg.capacity = 1;
-    cfg.flush_interval = 1;
-    cfg.overflow_policy = OverflowPolicy::Block;
-    cfg.start_barrier = Some(Arc::clone(&barrier));
-    let handler = Arc::new(FemtoFileHandler::with_writer_for_test(cfg));
-
+    let (buffer, barrier, handler) = setup_overflow_test(OverflowPolicy::Block);
     handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+
+    let handler = Arc::new(handler);
+    let (done_tx, done_rx) = mpsc::channel();
+    let send_barrier = Arc::new(Barrier::new(2));
     let h = Arc::clone(&handler);
+    let sb = Arc::clone(&send_barrier);
     let t = thread::spawn(move || {
+        sb.wait();
         h.handle(FemtoLogRecord::new("core", "INFO", "second"));
+        done_tx.send(()).expect("send done");
     });
-    thread::sleep(Duration::from_millis(50));
-    assert!(!t.is_finished());
+
+    send_barrier.wait();
+    assert!(done_rx.try_recv().is_err());
     barrier.wait();
-    t.join().unwrap();
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not finish");
+    t.join().expect("join thread");
     drop(handler);
 
-    let out = SharedBuf::contents(&buffer);
+    let out = buffer.contents();
     assert!(out.contains("core [INFO] first"));
     assert!(out.contains("core [INFO] second"));
 }
