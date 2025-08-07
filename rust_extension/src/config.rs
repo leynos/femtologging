@@ -361,7 +361,8 @@ impl ConfigBuilder {
         slf
     }
 
-    fn add_formatter<'py>(
+    #[pyo3(name = "with_formatter")]
+    fn py_with_formatter<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
         builder: FormatterBuilder,
@@ -370,7 +371,8 @@ impl ConfigBuilder {
         slf
     }
 
-    fn add_logger<'py>(
+    #[pyo3(name = "with_logger")]
+    fn py_with_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
         name: String,
         builder: LoggerConfigBuilder,
@@ -379,7 +381,8 @@ impl ConfigBuilder {
         slf
     }
 
-    fn set_root_logger<'py>(
+    #[pyo3(name = "with_root_logger")]
+    fn py_with_root_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
         builder: LoggerConfigBuilder,
     ) -> PyRefMut<'py, Self> {
