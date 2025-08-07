@@ -30,29 +30,50 @@ impl ConfigBuilder {
     pub fn new() -> Self { /* ... */ }
 
     /// Sets the configuration schema version. Currently, only 1 is supported.
-    pub fn version(mut self, version: u8) -> Self { /* ... */ }
+    pub fn with_version(mut self, version: u8) -> Self { /* ... */ }
 
     /// Sets whether existing loggers should be disabled upon configuration.
-    pub fn disable_existing_loggers(mut self, disable: bool) -> Self { /* ... */ }
+    pub fn with_disable_existing_loggers(mut self, disable: bool) -> Self { /* ... */ }
 
     /// Sets the default log level for loggers that do not have an explicit level configured.
-    pub fn default_level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_default_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Adds a formatter configuration by its unique ID.
-    pub fn add_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self {
+        /* ... */
+    }
 
     /// Adds a filter configuration by its unique ID.
-    // pub fn add_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self { /* ... */ } // Future
+    // pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
+    //     /* ... */
+    // } // Future
 
     /// Adds a handler configuration by its unique ID.
     /// Requires a boxed trait object for the specific handler builder.
-    pub fn add_handler(mut self, id: impl Into<String>, builder: Box<dyn HandlerBuilderTrait>) -> Self { /* ... */ }
+    pub fn with_handler(
+        mut self,
+        id: impl Into<String>,
+        builder: Box<dyn HandlerBuilderTrait>,
+    ) -> Self {
+        /* ... */
+    }
 
     /// Adds a logger configuration by its name.
-    pub fn add_logger(mut self, name: impl Into<String>, builder: LoggerConfigBuilder) -> Self { /* ... */ }
+    pub fn with_logger(
+        mut self,
+        name: impl Into<String>,
+        builder: LoggerConfigBuilder,
+    ) -> Self {
+        /* ... */
+    }
 
     /// Sets the configuration for the root logger.
-    pub fn set_root_logger(mut self, builder: LoggerConfigBuilder) -> Self { /* ... */ }
+    pub fn with_root_logger(
+        mut self,
+        builder: LoggerConfigBuilder,
+    ) -> Self {
+        /* ... */
+    }
 
     /// Finalizes the configuration and initializes the global logging system.
     pub fn build_and_init(self) -> Result<(), ConfigError> { /* ... */ }
@@ -71,16 +92,22 @@ impl LoggerConfigBuilder {
     pub fn new() -> Self { /* ... */ }
 
     /// Sets the log level for this logger.
-    pub fn level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets whether messages should propagate to parent loggers.
-    pub fn propagate(mut self, propagate: bool) -> Self { /* ... */ }
+    pub fn with_propagate(mut self, propagate: bool) -> Self { /* ... */ }
 
     /// Adds a list of filter IDs to apply to this logger.
-    pub fn filters(mut self, filter_ids: Vec<impl Into<String>>) -> Self { /* ... */ }
+    /// Accepts `Vec<String>` to avoid unstable `impl Trait` in collections.
+    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self {
+        /* ... */
+    }
 
     /// Adds a list of handler IDs to associate with this logger.
-    pub fn handlers(mut self, handler_ids: Vec<impl Into<String>>) -> Self { /* ... */ }
+    /// Accepts `Vec<String>` for the same reason.
+    pub fn with_handlers(mut self, handler_ids: Vec<String>) -> Self {
+        /* ... */
+    }
 }
 
 // In femtologging::config::FormatterBuilder
@@ -95,10 +122,10 @@ impl FormatterBuilder {
     pub fn new() -> Self { /* ... */ }
 
     /// Sets the format string for the formatter.
-    pub fn format(mut self, format_str: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_format(mut self, format_str: impl Into<String>) -> Self { /* ... */ }
 
     /// Sets the date format string for the formatter.
-    pub fn datefmt(mut self, date_format_str: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_datefmt(mut self, date_format_str: impl Into<String>) -> Self { /* ... */ }
 }
 
 // In femtologging::handlers::HandlerBuilderTrait (and specific builders)
@@ -130,16 +157,19 @@ impl FileHandlerBuilder {
     pub fn encoding(mut self, encoding: impl Into<String>) -> Self { /* ... */ }
 
     /// Sets the log level for this handler.
-    pub fn level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
-    pub fn formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
 
     /// Adds a list of filter IDs to apply to this handler.
-    pub fn filters(mut self, filter_ids: Vec<impl Into<String>>) -> Self { /* ... */ }
+    /// Uses `Vec<String>` to keep within stable Rust features.
+    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self {
+        /* ... */
+    }
 
     /// Sets the internal channel capacity for the handler.
-    pub fn capacity(mut self, capacity: usize) -> Self { /* ... */ }
+    pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
 
     /// Sets how often the worker thread flushes the file. Must be greater
     /// than zero so periodic flushing always occurs.
@@ -169,16 +199,17 @@ impl StreamHandlerBuilder {
     pub fn stream_target(mut self, target: impl Into<String>) -> Self { /* ... */ }
 
     /// Sets the log level for this handler.
-    pub fn level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
-    pub fn formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
 
     /// Adds a list of filter IDs to apply to this handler.
-    pub fn filters(mut self, filter_ids: Vec<impl Into<String>>) -> Self { /* ... */ }
+    /// Uses `Vec<String>` for stability.
+    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self { /* ... */ }
 
     /// Sets the internal channel capacity for the handler.
-    pub fn capacity(mut self, capacity: usize) -> Self { /* ... */ }
+    pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
@@ -198,36 +229,36 @@ from .levels import Level  # Assuming an enum or similar for levels
 
 class ConfigBuilder:
     def __init__(self) -> None: ...
-    def version(self, version: int) -> "ConfigBuilder": ...
-    def disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
-    def default_level(self, level: Union[str, Level]) -> "ConfigBuilder": ...
-    def add_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...
-    def add_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ... # Future
-    def add_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
-    def add_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...
-    def set_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...
+    def with_version(self, version: int) -> "ConfigBuilder": ...
+    def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
+    def with_default_level(self, level: Union[str, Level]) -> "ConfigBuilder": ...
+    def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...
+    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ... # Future
+    def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
+    def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...
+    def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...
     def build_and_init(self) -> None: ...
 
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
-    def level(self, level: Union[str, Level]) -> "LoggerConfigBuilder": ...
-    def propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
-    def filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...
-    def handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...
+    def with_level(self, level: Union[str, Level]) -> "LoggerConfigBuilder": ...
+    def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
+    def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...
+    def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...
 
 class FormatterBuilder:
     def __init__(self) -> None: ...
-    def format(self, format_str: str) -> "FormatterBuilder": ...
-    def datefmt(self, date_format_str: str) -> "FormatterBuilder": ...
+    def with_format(self, format_str: str) -> "FormatterBuilder": ...
+    def with_datefmt(self, date_format_str: str) -> "FormatterBuilder": ...
     # def style(self, style: str) -> "FormatterBuilder": ... # Future
 
 # In femtologging.handlers
 class HandlerBuilder: # Abstract base class or conceptual union
     # Common methods
-    def level(self, level: Union[str, Level]) -> "HandlerBuilder": ...
-    def formatter(self, formatter_id: str) -> "HandlerBuilder": ...
-    def filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...
-    def capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
+    def with_level(self, level: Union[str, Level]) -> "HandlerBuilder": ...
+    def with_formatter(self, formatter_id: str) -> "HandlerBuilder": ...
+    def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...
+    def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
 
 class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
@@ -271,10 +302,10 @@ the same interface as `logging.basicConfig`.
   - Otherwise, a `StreamHandlerBuilder` will be created, writing to `stderr`
     (default).
 
-  - A `FormatterBuilder` will be created using `format` and `datefmt` (if
-    provided). This formatter will be added to the `ConfigBuilder` with a
-    default ID (e.g., `"default_basic_config_formatter"`) and associated with
-    the handler.
+  - A `FormatterBuilder` will be created using `with_format` and
+    `with_datefmt` (if provided). This formatter will be added to the
+    `ConfigBuilder` with a default ID (e.g.,
+    `"default_basic_config_formatter"`) and associated with the handler.
 
   - The handler will be added to the `ConfigBuilder` with a default ID (e.g.,
     `"default_basic_config_handler"`).
@@ -308,7 +339,7 @@ configuration, as specified by `logging.config.dictConfig`.
     1. **Version Check:** Validate the `version` key (must be `1`).
 
     1. `disable_existing_loggers`: Directly map this boolean to
-       `ConfigBuilder.disable_existing_loggers()`.
+       `ConfigBuilder.with_disable_existing_loggers()`.
 
     1. **Formatters**: Iterate through the `formatters` dictionary. For each
        `id` and `formatter_config_dict`:
@@ -318,9 +349,10 @@ configuration, as specified by `logging.config.dictConfig`.
 
        - Instantiate the appropriate `FormatterBuilder`.
 
-       - Set `format` and `datefmt` properties on the builder.
+    - Call `with_format` and `with_datefmt` on the builder.
 
-       - Add the `FormatterBuilder` to the `ConfigBuilder` using its `id`.
+    - Add the `FormatterBuilder` to the `ConfigBuilder` via
+      `with_formatter()` using its `id`.
 
     1. **Filters**: (Future) Similar to formatters, resolve `class` and
        parameters, then add to `ConfigBuilder`.
@@ -361,11 +393,11 @@ configuration, as specified by `logging.config.dictConfig`.
 
        - Set `level`, `propagate`, `filters`, `handlers` (all by IDs).
 
-       - Add the `LoggerConfigBuilder` to the `ConfigBuilder` using the logger's
-         `name`.
+       - Add the `LoggerConfigBuilder` to the `ConfigBuilder` via
+         `with_logger()` using the logger's `name`.
 
     1. **Root Logger**: Process the `root` dictionary if present, similar to
-       named loggers, and set it via `ConfigBuilder.set_root_logger()`.
+       named loggers, and set it via `ConfigBuilder.with_root_logger()`.
 
   - `incremental`: As with `picologging`, `femtologging` will **not** support
     the `incremental` option \[cite: 1.1, 2.5,
@@ -449,3 +481,10 @@ uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a6498534
  This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
+
+## 5. Implementation Notes
+
+The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
+and `FormatterBuilder` with fluent, chainable methods. Handler builders remain
+future work. `build_and_init` currently validates only the configuration
+version and does not yet wire the builders into the runtime.

@@ -1,0 +1,20 @@
+# serializer version: 1
+# name: test_build_simple_configuration
+  dict({
+    'disable_existing_loggers': False,
+    'formatters': dict({
+      'fmt': dict({
+        'format': '{level} {message}',
+      }),
+    }),
+    'loggers': dict({
+      'core': dict({
+        'level': 'INFO',
+      }),
+    }),
+    'root': dict({
+      'level': 'WARN',
+    }),
+    'version': 1,
+  })
+# ---

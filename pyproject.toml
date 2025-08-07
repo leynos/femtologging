@@ -8,7 +8,7 @@ license = { text = "ISC" }
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest", "pytest-timeout"]
+dev = ["pytest", "pytest-timeout", "pytest-bdd", "syrupy"]
 
 [tool.ruff]
 line-length = 88

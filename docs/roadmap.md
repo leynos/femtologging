@@ -1,11 +1,11 @@
 # Roadmap: Port picologging to Rust/PyO3
 
-<!-- markdownlint-disable-next-line MD013 MD039 -->
-The design document in [`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md) outlines a
-phased approach for building `femtologging`. The high‑level goal is
+<!-- markdownlint-disable-next-line MD013 MD039 --> The design document in
+[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
+ outlines a phased approach for building `femtologging`. The high‑level goal is
 to re‑implement picologging in Rust with strong compile‑time safety and a
-multithreaded handler model. The steps below summarise the actionable items from
-that design.
+multithreaded handler model. The steps below summarise the actionable items
+from that design.
 
 ## Initial Setup Tasks
 
@@ -42,7 +42,7 @@ that design.
 - [x] Select and integrate an MPSC channel for producer‑consumer queues.
 - [x] Create `FemtoStreamHandler` and `FemtoFileHandler`, each running in a
   dedicated consumer thread.
-- [ ] Provide a programmatic configuration API using the builder pattern.
+- [x] Provide a programmatic configuration API using the builder pattern.
 - [ ] Add compile‑time log level filtering via Cargo features.
 - [ ] Ensure all components satisfy `Send`/`Sync` requirements.
 - [ ] Establish a basic test suite covering unit and integration tests.
@@ -70,5 +70,5 @@ that design.
 
 These phases will lead to a robust Rust implementation that matches the
 performance goals of picologging while leveraging Rust's safety guarantees.
-Development should start with Phase 1 to deliver a minimal, testable product and
-iterate from there.
+Development should start with Phase 1 to deliver a minimal, testable product
+and iterate from there.
