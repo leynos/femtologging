@@ -37,7 +37,7 @@ def configuration_matches_snapshot(config_builder: ConfigBuilder, snapshot) -> N
 
 @when("I set version 2")
 def set_version(config_builder: ConfigBuilder) -> None:
-    config_builder.version(2)
+    config_builder.with_version(2)
 
 
 @then("building the configuration fails")

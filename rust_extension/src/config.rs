@@ -337,12 +337,14 @@ impl ConfigBuilder {
         Self::new()
     }
 
-    fn version<'py>(mut slf: PyRefMut<'py, Self>, version: u8) -> PyRefMut<'py, Self> {
+    #[pyo3(name = "with_version")]
+    fn py_with_version<'py>(mut slf: PyRefMut<'py, Self>, version: u8) -> PyRefMut<'py, Self> {
         slf.version = version;
         slf
     }
 
-    fn disable_existing_loggers<'py>(
+    #[pyo3(name = "with_disable_existing_loggers")]
+    fn py_with_disable_existing_loggers<'py>(
         mut slf: PyRefMut<'py, Self>,
         disable: bool,
     ) -> PyRefMut<'py, Self> {
@@ -350,7 +352,11 @@ impl ConfigBuilder {
         slf
     }
 
-    fn default_level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
+    #[pyo3(name = "with_default_level")]
+    fn py_with_default_level<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        level: FemtoLevel,
+    ) -> PyRefMut<'py, Self> {
         slf.default_level = Some(level);
         slf
     }
