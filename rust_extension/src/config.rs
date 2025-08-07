@@ -69,26 +69,30 @@ impl FormatterBuilder {
         Self::new()
     }
 
-    fn format<'py>(mut slf: PyRefMut<'py, Self>, format: String) -> PyRefMut<'py, Self> {
+    /// Set the format string.
+    #[pyo3(name = "with_format")]
+    fn py_with_format<'py>(mut slf: PyRefMut<'py, Self>, format: String) -> PyRefMut<'py, Self> {
         slf.format = Some(format);
         slf
     }
 
-    fn datefmt<'py>(mut slf: PyRefMut<'py, Self>, datefmt: String) -> PyRefMut<'py, Self> {
+    /// Set the date format string.
+    #[pyo3(name = "with_datefmt")]
+    fn py_with_datefmt<'py>(mut slf: PyRefMut<'py, Self>, datefmt: String) -> PyRefMut<'py, Self> {
         slf.datefmt = Some(datefmt);
         slf
     }
 
     /// Return a dictionary representation of the formatter.
-    fn as_dict(&self, py: Python<'_>) -> PyObject {
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = PyDict::new(py);
         if let Some(ref f) = self.format {
-            let _ = d.set_item("format", f);
+            d.set_item("format", f)?;
         }
         if let Some(ref df) = self.datefmt {
-            let _ = d.set_item("datefmt", df);
+            d.set_item("datefmt", df)?;
         }
-        d.into()
+        Ok(d.into())
     }
 }
 
@@ -150,42 +154,56 @@ impl LoggerConfigBuilder {
         Self::new()
     }
 
-    fn level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
+    /// Set the logger level.
+    #[pyo3(name = "with_level")]
+    fn py_with_level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
         slf.level = Some(level);
         slf
     }
 
-    fn propagate<'py>(mut slf: PyRefMut<'py, Self>, propagate: bool) -> PyRefMut<'py, Self> {
+    /// Set propagation behaviour.
+    #[pyo3(name = "with_propagate")]
+    fn py_with_propagate<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        propagate: bool,
+    ) -> PyRefMut<'py, Self> {
         slf.propagate = Some(propagate);
         slf
     }
 
-    fn filters<'py>(mut slf: PyRefMut<'py, Self>, ids: Vec<String>) -> PyRefMut<'py, Self> {
+    /// Set filters by identifier.
+    #[pyo3(name = "with_filters")]
+    fn py_with_filters<'py>(mut slf: PyRefMut<'py, Self>, ids: Vec<String>) -> PyRefMut<'py, Self> {
         slf.filters = ids;
         slf
     }
 
-    fn handlers<'py>(mut slf: PyRefMut<'py, Self>, ids: Vec<String>) -> PyRefMut<'py, Self> {
+    /// Set handlers by identifier.
+    #[pyo3(name = "with_handlers")]
+    fn py_with_handlers<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        ids: Vec<String>,
+    ) -> PyRefMut<'py, Self> {
         slf.handlers = ids;
         slf
     }
 
     /// Return a dictionary representation of the logger configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyObject {
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = PyDict::new(py);
         if let Some(level) = self.level {
-            let _ = d.set_item("level", level.to_string());
+            d.set_item("level", level.to_string())?;
         }
         if let Some(propagate) = self.propagate {
-            let _ = d.set_item("propagate", propagate);
+            d.set_item("propagate", propagate)?;
         }
         if !self.filters.is_empty() {
-            let _ = d.set_item("filters", &self.filters);
+            d.set_item("filters", &self.filters)?;
         }
         if !self.handlers.is_empty() {
-            let _ = d.set_item("handlers", &self.handlers);
+            d.set_item("handlers", &self.handlers)?;
         }
-        d.into()
+        Ok(d.into())
     }
 }
 
@@ -262,11 +280,33 @@ impl ConfigBuilder {
     }
 
     /// Finalise the configuration.
-    pub fn build_and_init(self) -> Result<(), ConfigError> {
+    pub fn build_and_init(&self) -> Result<(), ConfigError> {
         if self.version != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version));
         }
         Ok(())
+    }
+
+    fn create_formatters_dict(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+        if self.formatters.is_empty() {
+            return Ok(None);
+        }
+        let fmt = PyDict::new(py);
+        for (k, v) in &self.formatters {
+            fmt.set_item(k, v.as_dict(py)?)?;
+        }
+        Ok(Some(fmt.into()))
+    }
+
+    fn create_loggers_dict(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+        if self.loggers.is_empty() {
+            return Ok(None);
+        }
+        let lgs = PyDict::new(py);
+        for (k, v) in &self.loggers {
+            lgs.set_item(k, v.as_dict(py)?)?;
+        }
+        Ok(Some(lgs.into()))
     }
 
     /// Produce a Python dictionary describing the configuration.
@@ -277,22 +317,14 @@ impl ConfigBuilder {
         if let Some(level) = self.default_level {
             d.set_item("default_level", level.to_string())?;
         }
-        if !self.formatters.is_empty() {
-            let fmt = PyDict::new(py);
-            for (k, v) in &self.formatters {
-                fmt.set_item(k, v.as_dict(py))?;
-            }
-            d.set_item("formatters", fmt)?;
+        if let Some(formatters) = self.create_formatters_dict(py)? {
+            d.set_item("formatters", formatters)?;
         }
-        if !self.loggers.is_empty() {
-            let lgs = PyDict::new(py);
-            for (k, v) in &self.loggers {
-                lgs.set_item(k, v.as_dict(py))?;
-            }
-            d.set_item("loggers", lgs)?;
+        if let Some(loggers) = self.create_loggers_dict(py)? {
+            d.set_item("loggers", loggers)?;
         }
         if let Some(root) = &self.root_logger {
-            d.set_item("root", root.as_dict(py))?;
+            d.set_item("root", root.as_dict(py)?)?;
         }
         Ok(d.into())
     }
@@ -352,7 +384,7 @@ impl ConfigBuilder {
     /// Finalise configuration, raising ``ValueError`` on error.
     #[pyo3(name = "build_and_init")]
     fn py_build_and_init(&self) -> PyResult<()> {
-        self.clone().build_and_init().map_err(PyErr::from)
+        self.build_and_init().map_err(PyErr::from)
     }
 
     /// Return a dictionary representation of the configuration.
