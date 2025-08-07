@@ -16,6 +16,9 @@ FemtoHandler = rust.FemtoHandler  # type: ignore[attr-defined]
 FemtoStreamHandler = rust.FemtoStreamHandler  # type: ignore[attr-defined]
 FemtoFileHandler = rust.FemtoFileHandler  # type: ignore[attr-defined]
 PyHandlerConfig = rust.PyHandlerConfig  # type: ignore[attr-defined]
+ConfigBuilder = rust.ConfigBuilder  # type: ignore[attr-defined]
+LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
+FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
 
 __all__ = [
     "FemtoHandler",
@@ -25,6 +28,9 @@ __all__ = [
     "FemtoStreamHandler",
     "FemtoFileHandler",
     "PyHandlerConfig",
+    "ConfigBuilder",
+    "LoggerConfigBuilder",
+    "FormatterBuilder",
     "OverflowPolicy",
     "hello",
 ]

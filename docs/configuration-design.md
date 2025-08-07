@@ -449,3 +449,10 @@ uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a6498534
  This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
+
+## 5. Implementation Notes
+
+The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
+and `FormatterBuilder` with fluent, chainable methods. Handler builders remain
+future work. `build_and_init` currently validates only the configuration
+version and does not yet wire the builders into the runtime.

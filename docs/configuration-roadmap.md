@@ -5,11 +5,11 @@ expanded with specifics for the configuration design.
 
 ## Phase 1 – Core Functionality & Minimum Viable Product (Configuration-related tasks)
 
-- [ ] **Implement** `femtologging::config::ConfigBuilder` **in Rust.**
+- [x] **Implement** `femtologging::config::ConfigBuilder` **in Rust.**
 
-- [ ] **Implement** `femtologging::config::LoggerConfigBuilder` **in Rust.**
+- [x] **Implement** `femtologging::config::LoggerConfigBuilder` **in Rust.**
 
-- [ ] **Implement** `femtologging::config::FormatterBuilder` **in Rust.**
+- [x] **Implement** `femtologging::config::FormatterBuilder` **in Rust.**
 
 - [ ] **Implement** `femtologging::handlers::FileHandlerBuilder` **and**
   `femtologging::handlers::StreamHandlerBuilder` **in Rust, implementing**
@@ -24,12 +24,14 @@ expanded with specifics for the configuration design.
 - [x] **Introduce a `Manager` registry with dotted-name hierarchy support and a
   root logger configuration.**
 
-- [ ] **Expose a mirroring** `femtologging.ConfigBuilder` **in Python via**
+- [x] **Expose a mirroring** `femtologging.ConfigBuilder` **in Python via**
   `PyO3` **bindings.**
 
-- [ ] **Expose mirroring Python** `LoggerConfigBuilder`**,**
-  `FormatterBuilder`**,** `FileHandlerBuilder`**,** `StreamHandlerBuilder`
-  **via** `PyO3` **bindings.**
+- [ ] **Expose mirroring Python builders via** `PyO3` **bindings.**
+  - [x] `LoggerConfigBuilder`
+  - [x] `FormatterBuilder`
+  - [ ] `FileHandlerBuilder`
+  - [ ] `StreamHandlerBuilder`
 
 - [ ] Add compile‑time log level filtering via Cargo features.
 

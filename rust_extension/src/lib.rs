@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 mod handlers {
     pub mod file;
 }
+mod config;
 mod formatter;
 mod handler;
 mod level;
@@ -15,6 +16,7 @@ pub mod rate_limited_warner;
 mod rate_limited_warner;
 mod stream_handler;
 
+pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use handlers::file::{
@@ -48,6 +50,9 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
     m.add_class::<PyHandlerConfig>()?;
+    m.add_class::<ConfigBuilder>()?;
+    m.add_class::<LoggerConfigBuilder>()?;
+    m.add_class::<FormatterBuilder>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
