@@ -4,12 +4,15 @@
 //! currently provide a minimal, type-safe API for defining formatters and
 //! loggers. Handler builders will be added in a future iteration.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, convert::identity};
 
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
+use pyo3::{exceptions::PyValueError, prelude::*};
 use thiserror::Error;
 
-use crate::level::FemtoLevel;
+use crate::{
+    level::FemtoLevel,
+    macros::{impl_as_pydict, py_setters, AsPyDict},
+};
 
 /// Errors that may occur while building a configuration.
 #[derive(Debug, Error)]
@@ -17,6 +20,9 @@ pub enum ConfigError {
     /// The provided configuration schema version is unsupported.
     #[error("unsupported configuration version: {0}")]
     UnsupportedVersion(u8),
+    /// No root logger configuration was provided.
+    #[error("missing root logger configuration")]
+    MissingRootLogger,
 }
 
 impl From<ConfigError> for PyErr {
@@ -62,39 +68,15 @@ impl FormatterBuilder {
     }
 }
 
-#[pymethods]
-impl FormatterBuilder {
-    #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
+impl_as_pydict!(FormatterBuilder {
+    opt format => "format",
+    opt datefmt => "datefmt",
+});
 
-    /// Set the format string.
-    #[pyo3(name = "with_format")]
-    fn py_with_format<'py>(mut slf: PyRefMut<'py, Self>, format: String) -> PyRefMut<'py, Self> {
-        slf.format = Some(format);
-        slf
-    }
-
-    /// Set the date format string.
-    #[pyo3(name = "with_datefmt")]
-    fn py_with_datefmt<'py>(mut slf: PyRefMut<'py, Self>, datefmt: String) -> PyRefMut<'py, Self> {
-        slf.datefmt = Some(datefmt);
-        slf
-    }
-
-    /// Return a dictionary representation of the formatter.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let d = PyDict::new(py);
-        if let Some(ref f) = self.format {
-            d.set_item("format", f)?;
-        }
-        if let Some(ref df) = self.datefmt {
-            d.set_item("datefmt", df)?;
-        }
-        Ok(d.into())
-    }
-}
+py_setters!(FormatterBuilder {
+    format: py_with_format => "with_format", String, Some, "Set the format string.",
+    datefmt: py_with_datefmt => "with_datefmt", String, Some, "Set the date format string.",
+});
 
 /// Builder for logger configuration.
 #[pyclass]
@@ -125,14 +107,26 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier.
-    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self {
-        self.filters = filter_ids;
+    ///
+    /// This replaces any existing filters with the provided list.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.filters = filter_ids.into_iter().map(Into::into).collect();
         self
     }
 
     /// Set handlers by identifier.
-    pub fn with_handlers(mut self, handler_ids: Vec<String>) -> Self {
-        self.handlers = handler_ids;
+    ///
+    /// This replaces any existing handlers with the provided list.
+    pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.handlers = handler_ids.into_iter().map(Into::into).collect();
         self
     }
 
@@ -147,65 +141,21 @@ impl LoggerConfigBuilder {
     }
 }
 
-#[pymethods]
-impl LoggerConfigBuilder {
-    #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
+impl_as_pydict!(LoggerConfigBuilder {
+    opt_to_string level => "level",
+    opt propagate => "propagate",
+    vec filters => "filters",
+    vec handlers => "handlers",
+});
 
-    /// Set the logger level.
-    #[pyo3(name = "with_level")]
-    fn py_with_level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
-        slf.level = Some(level);
-        slf
-    }
-
-    /// Set propagation behaviour.
-    #[pyo3(name = "with_propagate")]
-    fn py_with_propagate<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        propagate: bool,
-    ) -> PyRefMut<'py, Self> {
-        slf.propagate = Some(propagate);
-        slf
-    }
-
-    /// Set filters by identifier.
-    #[pyo3(name = "with_filters")]
-    fn py_with_filters<'py>(mut slf: PyRefMut<'py, Self>, ids: Vec<String>) -> PyRefMut<'py, Self> {
-        slf.filters = ids;
-        slf
-    }
-
-    /// Set handlers by identifier.
-    #[pyo3(name = "with_handlers")]
-    fn py_with_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
-        slf.handlers = ids;
-        slf
-    }
-
-    /// Return a dictionary representation of the logger configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let d = PyDict::new(py);
-        if let Some(level) = self.level {
-            d.set_item("level", level.to_string())?;
-        }
-        if let Some(propagate) = self.propagate {
-            d.set_item("propagate", propagate)?;
-        }
-        if !self.filters.is_empty() {
-            d.set_item("filters", &self.filters)?;
-        }
-        if !self.handlers.is_empty() {
-            d.set_item("handlers", &self.handlers)?;
-        }
-        Ok(d.into())
-    }
-}
+py_setters!(LoggerConfigBuilder {
+    level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level.",
+    propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour.",
+    filters: py_with_filters => "with_filters", Vec<String>, identity,
+        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.",
+    handlers: py_with_handlers => "with_handlers", Vec<String>, identity,
+        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.",
+});
 
 /// Top-level builder coordinating loggers and formatters.
 #[pyclass]
@@ -257,18 +207,24 @@ impl ConfigBuilder {
     }
 
     /// Add a formatter by identifier.
+    ///
+    /// Any existing formatter with the same identifier is replaced.
     pub fn with_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self {
         self.formatters.insert(id.into(), builder);
         self
     }
 
     /// Add a logger by name.
+    ///
+    /// Any existing logger with the same name is replaced.
     pub fn with_logger(mut self, name: impl Into<String>, builder: LoggerConfigBuilder) -> Self {
         self.loggers.insert(name.into(), builder);
         self
     }
 
     /// Set the root logger configuration.
+    ///
+    /// Calling this multiple times replaces the previous root logger.
     pub fn with_root_logger(mut self, builder: LoggerConfigBuilder) -> Self {
         self.root_logger = Some(builder);
         self
@@ -284,51 +240,21 @@ impl ConfigBuilder {
         if self.version != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version));
         }
+        if self.root_logger.is_none() {
+            return Err(ConfigError::MissingRootLogger);
+        }
         Ok(())
     }
-
-    fn create_formatters_dict(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        if self.formatters.is_empty() {
-            return Ok(None);
-        }
-        let fmt = PyDict::new(py);
-        for (k, v) in &self.formatters {
-            fmt.set_item(k, v.as_dict(py)?)?;
-        }
-        Ok(Some(fmt.into()))
-    }
-
-    fn create_loggers_dict(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        if self.loggers.is_empty() {
-            return Ok(None);
-        }
-        let lgs = PyDict::new(py);
-        for (k, v) in &self.loggers {
-            lgs.set_item(k, v.as_dict(py)?)?;
-        }
-        Ok(Some(lgs.into()))
-    }
-
-    /// Produce a Python dictionary describing the configuration.
-    fn to_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let d = PyDict::new(py);
-        d.set_item("version", self.version)?;
-        d.set_item("disable_existing_loggers", self.disable_existing_loggers)?;
-        if let Some(level) = self.default_level {
-            d.set_item("default_level", level.to_string())?;
-        }
-        if let Some(formatters) = self.create_formatters_dict(py)? {
-            d.set_item("formatters", formatters)?;
-        }
-        if let Some(loggers) = self.create_loggers_dict(py)? {
-            d.set_item("loggers", loggers)?;
-        }
-        if let Some(root) = &self.root_logger {
-            d.set_item("root", root.as_dict(py)?)?;
-        }
-        Ok(d.into())
-    }
 }
+
+impl_as_pydict!(ConfigBuilder {
+    val version => "version",
+    val disable_existing_loggers => "disable_existing_loggers",
+    opt_to_string default_level => "default_level",
+    map formatters => "formatters",
+    map loggers => "loggers",
+    optmap root_logger => "root",
+});
 
 #[pymethods]
 impl ConfigBuilder {
@@ -361,6 +287,9 @@ impl ConfigBuilder {
         slf
     }
 
+    /// Add a formatter by identifier.
+    ///
+    /// Any existing formatter with the same identifier is replaced.
     #[pyo3(name = "with_formatter")]
     fn py_with_formatter<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -371,6 +300,9 @@ impl ConfigBuilder {
         slf
     }
 
+    /// Add a logger by name.
+    ///
+    /// Any existing logger with the same name is replaced.
     #[pyo3(name = "with_logger")]
     fn py_with_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -381,6 +313,9 @@ impl ConfigBuilder {
         slf
     }
 
+    /// Set the root logger configuration.
+    ///
+    /// Calling this multiple times replaces the previous root logger.
     #[pyo3(name = "with_root_logger")]
     fn py_with_root_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -398,7 +333,7 @@ impl ConfigBuilder {
 
     /// Return a dictionary representation of the configuration.
     fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        self.to_pydict(py)
+        self.as_pydict(py)
     }
 }
 
@@ -414,8 +349,15 @@ mod tests {
     }
 
     #[rstest]
-    fn build_accepts_default_version() {
+    fn build_rejects_missing_root() {
         let builder = ConfigBuilder::new();
+        assert!(builder.build_and_init().is_err());
+    }
+
+    #[rstest]
+    fn build_accepts_default_version() {
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new().with_root_logger(root);
         assert!(builder.build_and_init().is_ok());
     }
 }

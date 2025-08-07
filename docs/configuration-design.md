@@ -38,7 +38,7 @@ impl ConfigBuilder {
     /// Sets the default log level for loggers that do not have an explicit level configured.
     pub fn with_default_level(mut self, level: Level) -> Self { /* ... */ }
 
-    /// Adds a formatter configuration by its unique ID.
+    /// Adds a formatter configuration by its unique ID, replacing any existing entry.
     pub fn with_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self {
         /* ... */
     }
@@ -58,7 +58,7 @@ impl ConfigBuilder {
         /* ... */
     }
 
-    /// Adds a logger configuration by its name.
+    /// Adds a logger configuration by its name, replacing any existing entry.
     pub fn with_logger(
         mut self,
         name: impl Into<String>,
@@ -67,7 +67,8 @@ impl ConfigBuilder {
         /* ... */
     }
 
-    /// Sets the configuration for the root logger.
+    /// Sets the configuration for the root logger. Calling this multiple times
+    /// replaces the previous root logger.
     pub fn with_root_logger(
         mut self,
         builder: LoggerConfigBuilder,
@@ -97,15 +98,21 @@ impl LoggerConfigBuilder {
     /// Sets whether messages should propagate to parent loggers.
     pub fn with_propagate(mut self, propagate: bool) -> Self { /* ... */ }
 
-    /// Adds a list of filter IDs to apply to this logger.
-    /// Accepts `Vec<String>` to avoid unstable `impl Trait` in collections.
-    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self {
+    /// Sets the filter identifiers, replacing any previously configured filters.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         /* ... */
     }
 
-    /// Adds a list of handler IDs to associate with this logger.
-    /// Accepts `Vec<String>` for the same reason.
-    pub fn with_handlers(mut self, handler_ids: Vec<String>) -> Self {
+    /// Sets the handler identifiers, replacing any previously configured handlers.
+    pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         /* ... */
     }
 }
@@ -162,9 +169,12 @@ impl FileHandlerBuilder {
     /// Sets the ID of the formatter to be used by this handler.
     pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
 
-    /// Adds a list of filter IDs to apply to this handler.
-    /// Uses `Vec<String>` to keep within stable Rust features.
-    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self {
+    /// Sets the filter identifiers, replacing any previously configured filters.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         /* ... */
     }
 
@@ -204,9 +214,14 @@ impl StreamHandlerBuilder {
     /// Sets the ID of the formatter to be used by this handler.
     pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
 
-    /// Adds a list of filter IDs to apply to this handler.
-    /// Uses `Vec<String>` for stability.
-    pub fn with_filters(mut self, filter_ids: Vec<String>) -> Self { /* ... */ }
+    /// Sets the filter identifiers, replacing any previously configured filters.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        /* ... */
+    }
 
     /// Sets the internal channel capacity for the handler.
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
@@ -232,19 +247,19 @@ class ConfigBuilder:
     def with_version(self, version: int) -> "ConfigBuilder": ...
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
     def with_default_level(self, level: Union[str, Level]) -> "ConfigBuilder": ...
-    def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...
+    def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
     def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ... # Future
     def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
-    def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...
-    def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...
+    def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
+    def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
     def build_and_init(self) -> None: ...
 
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
     def with_level(self, level: Union[str, Level]) -> "LoggerConfigBuilder": ...
     def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
-    def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...
-    def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...
+    def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing filters
+    def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing handlers
 
 class FormatterBuilder:
     def __init__(self) -> None: ...
@@ -257,7 +272,7 @@ class HandlerBuilder: # Abstract base class or conceptual union
     # Common methods
     def with_level(self, level: Union[str, Level]) -> "HandlerBuilder": ...
     def with_formatter(self, formatter_id: str) -> "HandlerBuilder": ...
-    def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...
+    def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
     def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
 
 class FileHandlerBuilder(HandlerBuilder):
@@ -402,7 +417,7 @@ configuration, as specified by `logging.config.dictConfig`.
   - `incremental`: As with `picologging`, `femtologging` will **not** support
     the `incremental` option \[cite: 1.1, 2.5,
     uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64998826/docs/core\_[features.md](http://features.md)\].
-     If `incremental` is `True`, a `ValueError` will be raised.
+    If `incremental` is `True`, a `ValueError` will be raised.
 
   - **Error Handling:** Robust error handling will be crucial to provide clear
     and informative messages for invalid configurations, unknown class names,
@@ -478,7 +493,7 @@ configuration files, as per `logging.config.fileConfig`.
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
 \[cite:
 uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
- This ensures that `femtologging` can serve as a high-performance backend for
+This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
 

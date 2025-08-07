@@ -44,3 +44,64 @@ def set_version(config_builder: ConfigBuilder) -> None:
 def build_fails(config_builder: ConfigBuilder) -> None:
     with pytest.raises(ValueError):
         config_builder.build_and_init()
+
+
+def test_duplicate_formatter_overwrites() -> None:
+    builder = ConfigBuilder()
+    fmt1 = FormatterBuilder().with_format("one")
+    fmt2 = FormatterBuilder().with_format("two")
+    builder.with_formatter("fmt", fmt1)
+    builder.with_formatter("fmt", fmt2)
+    config = builder.as_dict()
+    assert config["formatters"]["fmt"]["format"] == "two"
+
+
+def test_duplicate_logger_overwrites() -> None:
+    builder = ConfigBuilder()
+    logger1 = LoggerConfigBuilder().with_level("INFO")
+    logger2 = LoggerConfigBuilder().with_level("ERROR")
+    builder.with_logger("core", logger1)
+    builder.with_logger("core", logger2)
+    builder.with_root_logger(LoggerConfigBuilder().with_level("WARNING"))
+    config = builder.as_dict()
+    assert config["loggers"]["core"]["level"] == "ERROR"
+
+
+def test_logger_config_builder_optional_fields_set() -> None:
+    logger = (
+        LoggerConfigBuilder()
+        .with_level("DEBUG")
+        .with_propagate(False)
+        .with_filters(["myfilter"])
+        .with_handlers(["console", "file"])
+    )
+    config = logger.as_dict()
+    assert config["level"] == "DEBUG"
+    assert config["propagate"] is False
+    assert config["filters"] == ["myfilter"]
+    assert config["handlers"] == ["console", "file"]
+
+
+def test_logger_config_builder_optional_fields_omitted() -> None:
+    logger = LoggerConfigBuilder().with_level("WARNING")
+    config = logger.as_dict()
+    assert config["level"] == "WARN"
+    assert "propagate" not in config
+    assert "filters" not in config
+    assert "handlers" not in config
+
+
+def test_no_root_logger_behavior() -> None:
+    builder = ConfigBuilder()
+    with pytest.raises(ValueError):
+        builder.build_and_init()
+
+
+def test_multiple_root_logger_assignments() -> None:
+    builder = ConfigBuilder()
+    root1 = LoggerConfigBuilder().with_level("INFO")
+    root2 = LoggerConfigBuilder().with_level("ERROR")
+    builder.with_root_logger(root1)
+    builder.with_root_logger(root2)
+    config = builder.as_dict()
+    assert config["root"]["level"] == "ERROR"
