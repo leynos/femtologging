@@ -11,10 +11,10 @@ throughput applications.
 
 ## 1. The `picologging` Concurrency Model: A Hybrid Approach
 
-`picologging` achieves its performance by implementing critical paths in C++ and
-making deliberate trade-offs in its concurrency strategy. It eschews the single,
-global module lock found in CPython's standard `logging` library in favour of a
-more granular approach.
+`picologging` achieves its performance by implementing critical paths in C++
+and making deliberate trade-offs in its concurrency strategy. It eschews the
+single, global module lock found in CPython's standard `logging` library in
+favour of a more granular approach.
 
 ### Fine-Grained Locking at the Handler Level
 
@@ -24,26 +24,26 @@ multiple threads can write log messages without corrupting the output stream
 locking.
 
 - **Mechanism**: Each `Handler` instance contains its own C++
-  `std::recursive_mutex`. This lock is acquired at the beginning of the `handle`
-  method and released upon completion.
+  `std::recursive_mutex`. This lock is acquired at the beginning of the
+  `handle` method and released upon completion.
 
 - **Implementation**: The `Handler` struct definition in
-  `src/picologging/handler.hxx` includes the `lock` member. The `Handler_handle`
-  function in `src/picologging/handler.cxx` orchestrates the lock acquisition
-  and release around the call to the `emit` method.
+  `src/picologging/handler.hxx` includes the `lock` member. The
+  `Handler_handle` function in `src/picologging/handler.cxx` orchestrates the
+  lock acquisition and release around the call to the `emit` method.
 
 - **Rationale**: This ensures that the process of formatting a log record and
   writing it to its destination is an atomic operation for each handler. By
-  keeping the locks fine-grained (one per handler), threads writing to different
-  destinations (e.g., one to a file, another to the console) do not contend with
-  each other.
+  keeping the locks fine-grained (one per handler), threads writing to
+  different destinations (e.g., one to a file, another to the console) do not
+  contend with each other.
 
 A crucial detail of this implementation is the sequence of operations within
 the `handle` method: filtering occurs *before* the lock is acquired. This is an
 important optimisation, as it prevents the cost of filtering out a message from
-contributing to lock contention. However, the work of formatting the message via
-the `Formatter` occurs *inside* the locked region, as it is part of the `emit`
-call chain.
+contributing to lock contention. However, the work of formatting the message
+via the `Formatter` occurs *inside* the locked region, as it is part of the
+`emit` call chain.
 
 ### Reliance on the GIL for Global State
 
@@ -53,28 +53,28 @@ Instead, it relies on the protection afforded by Python's **Global Interpreter
 Lock (GIL)**.
 
 - **Mechanism**: Operations that modify the shared logger hierarchy, such as
-  `getLogger` creating a new logger instance or `_fixupParents` linking it
-  into the tree, are not guarded by a specific lock within `picologging`. Their
+  `getLogger` creating a new logger instance or `_fixupParents` linking it into
+  the tree, are not guarded by a specific lock within `picologging`. Their
   thread safety is a consequence of the GIL ensuring that only one thread can
   execute Python bytecode at any given time.
 
 - **Rationale**: This design decision is predicated on the assumption that
   logger configuration is a relatively infrequent operation, often performed
   during application start-up in a single-threaded context. By avoiding an
-  explicit global lock, `picologging` eliminates a potential point of contention
-  for the far more frequent operation of emitting log messages, thereby
-  prioritising runtime performance[^1].
+  explicit global lock, `picologging` eliminates a potential point of
+  contention for the far more frequent operation of emitting log messages,
+  thereby prioritising runtime performance[^1].
 
 ## 2. A Rust Implementation: The Power of Compile-Time Safety
 
-Translating this architecture to Rust highlights the profound difference between
-runtime concurrency checks (mutexes, GIL) and compile-time guarantees provided
-by an ownership model and borrow checker.
+Translating this architecture to Rust highlights the profound difference
+between runtime concurrency checks (mutexes, GIL) and compile-time guarantees
+provided by an ownership model and borrow checker.
 
 ### Guaranteed Handler Safety with `Mutex`
 
-In a Rust version, the handler's shared mutable state (the output stream)
-would be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
+In a Rust version, the handler's shared mutable state (the output stream) would
+be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
 (Atomic Reference Counter).
 
 ```rust
@@ -194,14 +194,15 @@ This pattern is the definitive solution for this use case:
   handlers **without any locks whatsoever**. The channel's design guarantees
   serial, thread-safe delivery to this single consumer.
 
-This architecture achieves the ultimate goal: the hot path (log creation)
-is parallel and minimally contentious, while the cold path (I/O) is handled
+This architecture achieves the ultimate goal: the hot path (log creation) is
+parallel and minimally contentious, while the cold path (I/O) is handled
 serially by a dedicated worker, eliminating lock contention where it is most
 expensive.[^1][^2]
 
-[^1]: See [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
-<!-- markdownlint-disable-next-line MD039 -->
-[^2]: Source: [`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`][handlers-source]
+[^1]: See
+      [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
 
 <!-- markdownlint-disable-next-line MD013 -->
-[handlers-source]: microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py
+[^2]: Source:
+      `microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py
+      `

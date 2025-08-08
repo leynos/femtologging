@@ -69,8 +69,8 @@ impl FormatterBuilder {
 }
 
 impl_as_pydict!(FormatterBuilder {
-    opt format => "format",
-    opt datefmt => "datefmt",
+    set_opt format => "format",
+    set_opt datefmt => "datefmt",
 });
 
 py_setters!(FormatterBuilder {
@@ -109,6 +109,18 @@ impl LoggerConfigBuilder {
     /// Set filters by identifier.
     ///
     /// This replaces any existing filters with the provided list.
+    ///
+    /// # Expected input
+    ///
+    /// Accepts any iterable of items convertible into a [`String`].
+    /// This includes collections such as `Vec`, `&[&str]`, or similar.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// builder.with_filters(vec!["filter1", "filter2"]);
+    /// builder.with_filters(&["filter1", "filter2"]);
+    /// ```
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -121,6 +133,18 @@ impl LoggerConfigBuilder {
     /// Set handlers by identifier.
     ///
     /// This replaces any existing handlers with the provided list.
+    ///
+    /// # Expected input
+    ///
+    /// Accepts any iterable of items convertible into a [`String`].
+    /// This includes collections such as `Vec`, `&[&str]`, or similar.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// builder.with_handlers(vec!["console", "file"]);
+    /// builder.with_handlers(&["console", "file"]);
+    /// ```
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -142,10 +166,10 @@ impl LoggerConfigBuilder {
 }
 
 impl_as_pydict!(LoggerConfigBuilder {
-    opt_to_string level => "level",
-    opt propagate => "propagate",
-    vec filters => "filters",
-    vec handlers => "handlers",
+    set_opt_to_string level => "level",
+    set_opt propagate => "propagate",
+    set_vec filters => "filters",
+    set_vec handlers => "handlers",
 });
 
 py_setters!(LoggerConfigBuilder {
@@ -248,12 +272,12 @@ impl ConfigBuilder {
 }
 
 impl_as_pydict!(ConfigBuilder {
-    val version => "version",
-    val disable_existing_loggers => "disable_existing_loggers",
-    opt_to_string default_level => "default_level",
-    map formatters => "formatters",
-    map loggers => "loggers",
-    optmap root_logger => "root",
+    set_val version => "version",
+    set_val disable_existing_loggers => "disable_existing_loggers",
+    set_opt_to_string default_level => "default_level",
+    set_map formatters => "formatters",
+    set_map loggers => "loggers",
+    set_optmap root_logger => "root",
 });
 
 #[pymethods]
