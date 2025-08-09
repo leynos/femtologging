@@ -5,7 +5,7 @@ handler components from Python to Rust. It complements the
 [roadmap](./roadmap.md) and expands on the design ideas described in <!--
 markdownlint-disable-next-line MD013 -->
 [`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
-.
+ .
 
 ## Goals
 
@@ -99,6 +99,10 @@ config = PyHandlerConfig(
 handler = FemtoFileHandler.with_capacity_flush_policy("app.log", config)
 ```
 
+Legacy constructors like ``with_capacity_flush_blocking`` and
+``with_capacity_flush_timeout`` have been removed. Use
+``with_capacity_flush_policy`` with an appropriate configuration instead.
+
 `PyHandlerConfig` enforces several invariants:
 
 - ``capacity`` and ``flush_interval`` must be greater than zero.
@@ -161,11 +165,12 @@ drain pending records and stop the background thread explicitly. Dropping the
 handler still performs this cleanup if the methods aren't invoked.
 
 By default, the file handler flushes the underlying file after every record to
-maximize durability. To reduce syscall overhead in high-volume scenarios,
-`FemtoFileHandler.with_capacity_flush()` accepts a `flush_interval` parameter
-controlling how many records are written before the worker thread flushes. The
-value must be greater than zero, so periodic flushing always occurs. Higher
-values reduce syscall overhead in high-volume scenarios.
+maximise durability. To batch writes, pass a custom configuration to
+`with_capacity_flush_policy()` (Rust) or `with_capacity_flush_policy()` on the
+Python side. Setting the `flush_interval` in `HandlerConfig` or
+`PyHandlerConfig` defers flushing until the specified number of records have
+been written. The value must be greater than zero, so periodic flushing always
+occurs. Higher values reduce syscall overhead in high-volume scenarios.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit

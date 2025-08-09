@@ -7,7 +7,9 @@ use loom::sync::Arc;
 use loom::thread;
 use tempfile::NamedTempFile;
 
-use _femtologging_rs::{DefaultFormatter, FemtoFileHandler, FemtoLogRecord};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoFileHandler, FemtoLogRecord, HandlerConfig, OverflowPolicy,
+};
 
 #[test]
 #[ignore]
@@ -15,14 +17,14 @@ fn loom_file_handler_flush_concurrent() {
     loom::model(|| {
         let tmp = NamedTempFile::new().expect("create temp file");
         let path = tmp.path().to_path_buf();
+        let cfg = HandlerConfig {
+            capacity: 8,
+            flush_interval: 1,
+            overflow_policy: OverflowPolicy::Drop,
+        };
         let handler = Arc::new(
-            FemtoFileHandler::with_capacity_flush_interval(
-                &path,
-                DefaultFormatter,
-                8,
-                1,
-            )
-            .expect("create handler"),
+            FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg)
+                .expect("create handler"),
         );
 
         let mut threads = vec![];

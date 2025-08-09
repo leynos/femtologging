@@ -9,7 +9,7 @@ import sys
 # Add project root to sys.path so femtologging can be imported without hacks.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from femtologging import FemtoFileHandler
+from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
 import pytest  # pyright: ignore[reportMissingImports]
 
 
@@ -26,9 +26,8 @@ def file_handler_factory():
     def factory(
         path: Path, capacity: int, flush_interval: int
     ) -> Iterator[FemtoFileHandler]:
-        handler = FemtoFileHandler.with_capacity_flush(
-            str(path), capacity, flush_interval
-        )
+        cfg = PyHandlerConfig(capacity, flush_interval, OverflowPolicy.DROP.value, None)
+        handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
         try:
             yield handler
         finally:
