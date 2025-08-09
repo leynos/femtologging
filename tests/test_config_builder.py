@@ -44,3 +44,17 @@ def set_version(config_builder: ConfigBuilder) -> None:
 def build_fails(config_builder: ConfigBuilder) -> None:
     with pytest.raises(ValueError):
         config_builder.build_and_init()
+
+
+def test_multiple_root_logger_assignments() -> None:
+    """Test that multiple root logger assignments result in last assignment taking effect."""
+    builder = ConfigBuilder()
+    root1 = LoggerConfigBuilder().with_level("INFO")
+    root2 = LoggerConfigBuilder().with_level("ERROR")
+    builder.with_root_logger(root1)
+    builder.with_root_logger(root2)
+    config = builder.as_dict()
+    assert config["root"]["level"] == "ERROR", (
+        "Last root logger assignment should take effect"
+    )
+
