@@ -197,7 +197,7 @@ This pattern is the definitive solution for this use case:
 This architecture achieves the ultimate goal: the hot path (log creation) is
 parallel and minimally contentious, while the cold path (I/O) is handled
 serially by a dedicated worker, eliminating lock contention where it is most
-expensive.[^1][^2]
+expensive.[^1]
 
 [^1]: See
       [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)

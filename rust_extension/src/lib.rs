@@ -1,11 +1,9 @@
 use pyo3::prelude::*;
 
-mod handlers {
-    pub mod file;
-}
 mod config;
 mod formatter;
 mod handler;
+mod handlers;
 mod level;
 mod log_record;
 mod logger;
@@ -20,8 +18,9 @@ mod stream_handler;
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
-pub use handlers::file::{
-    FemtoFileHandler, HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig,
+pub use handlers::{
+    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig},
+    FileHandlerBuilder, HandlerBuilderTrait, StreamHandlerBuilder,
 };
 pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
@@ -50,6 +49,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    m.add_class::<StreamHandlerBuilder>()?;
+    m.add_class::<FileHandlerBuilder>()?;
     m.add_class::<PyHandlerConfig>()?;
     m.add_class::<ConfigBuilder>()?;
     m.add_class::<LoggerConfigBuilder>()?;

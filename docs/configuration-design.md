@@ -291,6 +291,16 @@ class StreamHandlerBuilder(HandlerBuilder):
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
 
+### 1.3. Implemented handler builders
+
+The initial implementation provides `FileHandlerBuilder` and
+`StreamHandlerBuilder` as thin wrappers over the existing handler types. Both
+builders support basic configuration (path and queue settings for file
+handlers, stream target for stream handlers) and expose `build()` methods
+returning ready‑to‑use handlers. Advanced options such as file encoding or
+custom writers are deferred until the corresponding handler features are ported
+from picologging.
+
 ## 2. Backwards Compatibility APIs
 
 `femtologging` will provide functions in the Python package to ensure backwards
