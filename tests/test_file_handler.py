@@ -121,14 +121,10 @@ def test_file_handler_custom_flush_interval(
     )
 
 
-def test_file_handler_flush_interval_zero(
-    tmp_path: Path, file_handler_factory: FileHandlerFactory
-) -> None:
-    """Periodic flushing is disabled when flush_interval is zero."""
-    path = tmp_path / "flush_zero.log"
-    with file_handler_factory(path, 8, 0) as handler:
-        handler.handle("core", "INFO", "message")
-    assert path.read_text() == "core [INFO] message\n"
+def test_file_handler_flush_interval_zero(tmp_path: Path) -> None:
+    """Zero flush interval is rejected."""
+    with pytest.raises(ValueError):
+        PyHandlerConfig(8, 0, OverflowPolicy.DROP.value, None)
 
 
 def test_file_handler_flush_interval_one(
@@ -144,7 +140,8 @@ def test_file_handler_flush_interval_one(
 def test_blocking_policy_basic(tmp_path: Path) -> None:
     """Verify flushing and writing when using the blocking policy."""
     path = tmp_path / "block.log"
-    handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 1, 1)
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.BLOCK.value, None)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.close()
     assert path.read_text() == "core [INFO] first\n"
@@ -153,7 +150,8 @@ def test_blocking_policy_basic(tmp_path: Path) -> None:
 def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
     """Verify blocking behaviour when capacity is exceeded."""
     path = tmp_path / "block_over.log"
-    handler = FemtoFileHandler.with_capacity_flush_blocking(str(path), 2, 1)
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.BLOCK.value, None)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
     handler.handle("core", "INFO", "third")
@@ -166,9 +164,8 @@ def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
 def test_timeout_policy_basic(tmp_path: Path) -> None:
     """Test basic functionality of timeout policy in FemtoFileHandler."""
     path = tmp_path / "timeout.log"
-    handler = FemtoFileHandler.with_capacity_flush_timeout(
-        str(path), 1, 1, timeout_ms=500
-    )
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=500)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.close()
     assert path.read_text() == "core [INFO] first\n"
@@ -177,9 +174,8 @@ def test_timeout_policy_basic(tmp_path: Path) -> None:
 def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
     """Ensure timeout policy flushes when over capacity."""
     path = tmp_path / "timeout_over.log"
-    handler = FemtoFileHandler.with_capacity_flush_timeout(
-        str(path), 2, 1, timeout_ms=1000
-    )
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=1000)
+    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
     handler.handle("core", "INFO", "third")

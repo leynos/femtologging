@@ -9,8 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, OverflowPolicy,
-    TestConfig,
+    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerConfig,
+    OverflowPolicy, TestConfig,
 };
 use tempfile::NamedTempFile;
 
@@ -29,13 +29,13 @@ where
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     {
-        let handler = FemtoFileHandler::with_capacity_flush_interval(
-            &path,
-            DefaultFormatter,
+        let cfg = HandlerConfig {
             capacity,
             flush_interval,
-        )
-        .expect("failed to create file handler");
+            overflow_policy: OverflowPolicy::Drop,
+        };
+        let handler = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg)
+            .expect("failed to create file handler");
         f(&handler);
     }
     fs::read_to_string(&path).expect("failed to read log output")
