@@ -203,7 +203,5 @@ expensive.[^1][^2]
       [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
 
 [^2]: Source:
-      [handlers.py][handlers-source]
+  [`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`](microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py)
 
-[handlers-source]:
-https://github.com/microsoft/picologging/blob/dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py
