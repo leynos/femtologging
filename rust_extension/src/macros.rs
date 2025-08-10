@@ -29,8 +29,6 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if let Some(v) = opt {
-        // `IntoPyObject` for `&T` requires `Clone`; cloning avoids unnecessary trait
-        // gymnastics whilst keeping call sites ergonomic.
         dict.set_item(key, v.clone())?;
     }
     Ok(())
@@ -101,10 +99,9 @@ pub(crate) fn set_val<'py, T>(
     val: &T,
 ) -> PyResult<()>
 where
-    T: IntoPyObject<'py> + Clone,
+    T: IntoPyObject<'py> + Copy,
 {
-    // See `set_opt`; cloning here preserves symmetry with optional values.
-    dict.set_item(key, val.clone())
+    dict.set_item(key, *val)
 }
 
 macro_rules! impl_as_pydict {
