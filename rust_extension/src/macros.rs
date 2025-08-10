@@ -1,3 +1,10 @@
+//! Macros and traits for converting Rust structs to Python dictionaries.
+//!
+//! This module provides the `AsPyDict` trait and associated macros to generate
+//! consistent Python dictionary representations of configuration builder
+//! structs. The macros reduce boilerplate in PyO3 bindings whilst ensuring
+//! uniform serialisation behaviour across all builder types.
+
 use pyo3::conversion::IntoPyObject;
 use pyo3::{
     prelude::*,
@@ -6,7 +13,9 @@ use pyo3::{
 };
 use std::collections::BTreeMap;
 
+/// Convert a configuration builder into a Python dictionary.
 pub(crate) trait AsPyDict {
+    /// Return the builder's state as a Python dictionary.
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject>;
 }
 
@@ -47,6 +56,7 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if !vec.is_empty() {
+        // Propagate potential conversion errors from PyList::new
         let list = PyList::new(py, vec.iter().cloned())?;
         dict.set_item(key, list)?;
     }

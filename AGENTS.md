@@ -9,8 +9,8 @@
 - **Clarity over cleverness.** Be concise, but favour explicit over terse or
   obscure idioms. Prefer code that's easy to follow.
 - **Use functions and composition.** Avoid repetition by extracting reusable
-  logic. Prefer generators or comprehensions, and declarative code to imperative
-  repetition when readable.
+  logic. Prefer generators or comprehensions, and declarative code to
+  imperative repetition when readable.
 - **Small, meaningful functions.** Functions must be small, clear in purpose,
   single responsibility, and obey command/query segregation.
 - **Clear commit messages.** Commit messages should be descriptive, explaining
@@ -25,12 +25,14 @@
   ("-ize" / "-yse" / "-our") spelling and grammar, with the exception of
   references to external APIs.
 - **Illustrate with clear examples.** Function documentation must include clear
-  examples demonstrating the usage and outcome of the function. Test documentation
-  should omit examples where the example serves only to reiterate the test logic.
-- **Keep file size managable.** No single code file may be longer than 400 lines.
+  examples demonstrating the usage and outcome of the function. Test
+  documentation should omit examples where the example serves only to reiterate
+  the test logic.
+- **Keep file size managable.** No single code file may be longer than 400
+  lines.
   Long switch statements or dispatch tables should be broken up by feature and
-  constituents colocated with targets. Large blocks of test data should be moved
-  to external data files.
+  constituents colocated with targets. Large blocks of test data should be
+  moved to external data files.
 
 ## Documentation Maintenance
 
@@ -42,8 +44,8 @@
   relevant file(s) in the `docs/` directory to reflect the latest state.
   **Ensure the documentation remains accurate and current.**
 - Documentation must use en-GB-oxendict ("-ize" / "-yse" / "-our") spelling
-  and grammar. (EXCEPTION: the naming of the "LICENSE" file, which
-  is to be left unchanged for community consistency.)
+  and grammar. (EXCEPTION: the naming of the "LICENSE" file, which is to be
+  left unchanged for community consistency.)
 
 ## Change Quality & Committing
 
@@ -153,11 +155,11 @@ project:
   specified in `Cargo.toml` must use SemVer-compatible caret requirements
   (e.g., `some-crate = "1.2.3"`). This is Cargo's default and allows for safe,
   non-breaking updates to minor and patch versions while preventing breaking
-  changes from new major versions. This approach is critical for ensuring
-  build stability and reproducibility.
+  changes from new major versions. This approach is critical for ensuring build
+  stability and reproducibility.
 - **Prohibit unstable version specifiers.** The use of wildcard (`*`) or
-  open-ended inequality (`>=`) version requirements is strictly forbidden
-  as they introduce unacceptable risk and unpredictability. Tilde requirements
+  open-ended inequality (`>=`) version requirements is strictly forbidden as
+  they introduce unacceptable risk and unpredictability. Tilde requirements
   (`~`) should only be used where a dependency must be locked to patch-level
   updates for a specific, documented reason.
 
@@ -170,41 +172,44 @@ project:
 - **Define and export Python exceptions.** Use `create_exception!` to define
   module-level Python exception types. Map domain errors to these using
   `From<DomainError> for PyErr`. Prefer built-in Python exceptions where
-  appropriate; otherwise define and expose custom exceptions for domain-specific
-  cases.
+  appropriate; otherwise define and expose custom exceptions for
+  domain-specific cases.
 - **Avoid opaque error types in public APIs.** Do not expose `anyhow::Error`,
-  `eyre::Report`, or similar from PyO3 functions. Use these only in binary crates
-  or application-level code. Convert to domain enums before returning from any
-  `#[pyfunction]` or `#[pymethod]`.
+  `eyre::Report`, or similar from PyO3 functions. Use these only in binary
+  crates or application-level code. Convert to domain enums before returning
+  from any `#[pyfunction]` or `#[pymethod]`.
 - **Return `PyResult<T>` from exposed functions.** Ensure all exposed functions
-  return `PyResult<T>` or `Result<T, E>` with a `From<E> for PyErr` implementation.
-  Export exception classes from the module for explicit Python-side error handling.
+  return `PyResult<T>` or `Result<T, E>` with a `From<E> for PyErr`
+  implementation. Export exception classes from the module for explicit
+  Python-side error handling.
 - **Preserve error context for debugging.** Where necessary, use
-  `pyerr.set_cause(py, Some(inner_pyerr))` to attach a cause to a raised exception.
-  This enables chained tracebacks in Python.
-- **Use structured Python exceptions only when required.** If additional data must
+  `pyerr.set_cause(py, Some(inner_pyerr))` to attach a cause to a raised
+  exception. This enables chained tracebacks in Python.
+- **Use structured Python exceptions only when required.** If additional data
+  must
   be exposed in exceptions, define `#[pyclass(extends=PyException)]` types and
   expose relevant fields using `#[pyo3(get)]`. Avoid unnecessary complexity.
-- **Prevent panics across the FFI boundary.** Ensure Rust panics do not cross into
-  Python. Handle all expected failures using error returns. Treat any panic as a
-  logic bug to be resolved internally.
+- **Prevent panics across the FFI boundary.** Ensure Rust panics do not cross
+  into
+  Python. Handle all expected failures using error returns. Treat any panic as
+  a logic bug to be resolved internally.
 
 ## Python Development Guidelines
 
 For Python development, refer to the detailed guidelines in the `.rules/`
 directory:
 
-* [Python Code Style Guidelines](.rules/python-00.mdc) - Core Python style
+- [Python Code Style Guidelines](.rules/python-00.mdc) - Core Python style
   conventions
-* [Python Context Managers](.rules/python-context-managers.mdc) - Best practices
+- [Python Context Managers](.rules/python-context-managers.mdc) - Best practices
   for context managers
-* [Python Generators](.rules/python-generators.mdc) - Generator and iterator
+- [Python Generators](.rules/python-generators.mdc) - Generator and iterator
   patterns
-* [Python Project Configuration](.rules/python-pyproject.mdc) - pyproject.toml
+- [Python Project Configuration](.rules/python-pyproject.mdc) - pyproject.toml
   and packaging
-* [Python Return Patterns](.rules/python-return.mdc) - Function return
+- [Python Return Patterns](.rules/python-return.mdc) - Function return
   conventions
-* [Python Typing](.rules/python-typing.mdc) - Type annotation best practices
+- [Python Typing](.rules/python-typing.mdc) - Type annotation best practices
 
 ## Markdown Guidance
 
