@@ -279,38 +279,18 @@ impl_as_pydict!(ConfigBuilder {
     set_map loggers => "loggers",
     set_optmap root_logger => "root",
 });
-
-#[pymethods]
-impl ConfigBuilder {
-    #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
-
-    #[pyo3(name = "with_version")]
-    fn py_with_version<'py>(mut slf: PyRefMut<'py, Self>, version: u8) -> PyRefMut<'py, Self> {
-        slf.version = version;
-        slf
-    }
-
-    #[pyo3(name = "with_disable_existing_loggers")]
-    fn py_with_disable_existing_loggers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        disable: bool,
-    ) -> PyRefMut<'py, Self> {
-        slf.disable_existing_loggers = disable;
-        slf
-    }
-
-    #[pyo3(name = "with_default_level")]
-    fn py_with_default_level<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        level: FemtoLevel,
-    ) -> PyRefMut<'py, Self> {
-        slf.default_level = Some(level);
-        slf
-    }
-
+py_setters!(ConfigBuilder {
+    version: py_with_version => "with_version", u8, identity,
+        "Set the schema version.",
+    disable_existing_loggers: py_with_disable_existing_loggers =>
+        "with_disable_existing_loggers", bool, identity,
+        "Set whether existing loggers are disabled.",
+    default_level: py_with_default_level => "with_default_level",
+        FemtoLevel, Some, "Set the default log level.",
+    root_logger: py_with_root_logger => "with_root_logger",
+        LoggerConfigBuilder, Some,
+        "Set the root logger configuration.\n\nCalling this multiple times replaces the previous root logger.",
+};
     /// Add a formatter by identifier.
     ///
     /// Any existing formatter with the same identifier is replaced.
@@ -337,29 +317,12 @@ impl ConfigBuilder {
         slf
     }
 
-    /// Set the root logger configuration.
-    ///
-    /// Calling this multiple times replaces the previous root logger.
-    #[pyo3(name = "with_root_logger")]
-    fn py_with_root_logger<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        builder: LoggerConfigBuilder,
-    ) -> PyRefMut<'py, Self> {
-        slf.root_logger = Some(builder);
-        slf
-    }
-
     /// Finalise configuration, raising ``ValueError`` on error.
     #[pyo3(name = "build_and_init")]
     fn py_build_and_init(&self) -> PyResult<()> {
         self.build_and_init().map_err(PyErr::from)
     }
-
-    /// Return a dictionary representation of the configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        self.as_pydict(py)
-    }
-}
+);
 
 #[cfg(test)]
 mod tests {

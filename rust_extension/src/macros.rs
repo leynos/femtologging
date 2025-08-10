@@ -118,7 +118,12 @@ macro_rules! impl_as_pydict {
 pub(crate) use impl_as_pydict;
 
 macro_rules! py_setters {
-    ($builder:ident { $( $field:ident : $fname:ident => $py_name:literal, $ty:ty, $conv:expr, $doc:literal ),* $(,)? }) => {
+    (
+        $builder:ident {
+            $( $field:ident : $fname:ident => $py_name:literal, $ty:ty, $conv:expr, $doc:literal ),* $(,)?
+        }
+        $(; $($extra:item)*)?
+    ) => {
         #[pymethods]
         impl $builder {
             #[new]
@@ -132,6 +137,8 @@ macro_rules! py_setters {
                 slf
             }
             )*
+
+            $($($extra)*)*
 
             fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
                 self.as_pydict(py)
