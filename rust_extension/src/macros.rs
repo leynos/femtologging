@@ -29,6 +29,8 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if let Some(v) = opt {
+        // `IntoPyObject` for `&T` requires `Clone`; cloning avoids unnecessary trait
+        // gymnastics whilst keeping call sites ergonomic.
         dict.set_item(key, v.clone())?;
     }
     Ok(())
@@ -56,7 +58,8 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if !vec.is_empty() {
-        // Propagate potential conversion errors from PyList::new
+        // Convert slice to a Python list only when non-empty and propagate
+        // conversion errors from PyList::new.
         let list = PyList::new(py, vec.iter().cloned())?;
         dict.set_item(key, list)?;
     }
@@ -100,6 +103,7 @@ pub(crate) fn set_val<'py, T>(
 where
     T: IntoPyObject<'py> + Clone,
 {
+    // See `set_opt`; cloning here preserves symmetry with optional values.
     dict.set_item(key, val.clone())
 }
 
