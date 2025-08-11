@@ -56,8 +56,9 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if !vec.is_empty() {
-        // Convert the slice to a Python list only when non-empty. `PyList::new`
-        // surfaces element conversion failures via its `PyResult` return type.
+        // Convert the slice to a Python list only when non-empty.
+        // `PyList::new` surfaces element conversion failures via its
+        // `PyResult` return type.
         let list = PyList::new(py, vec.iter().cloned())?;
         dict.set_item(key, list)?;
     }
