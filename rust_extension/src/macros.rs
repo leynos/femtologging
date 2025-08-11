@@ -3,7 +3,7 @@
 //! This module provides the `AsPyDict` trait and associated macros to generate
 //! consistent Python dictionary representations of configuration builder
 //! structs. The macros reduce boilerplate in PyO3 bindings whilst ensuring
-//! uniform serialisation behaviour across all builder types.
+//! uniform serialization behaviour across all builder types.
 
 use pyo3::conversion::IntoPyObject;
 use pyo3::{
@@ -56,8 +56,8 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if !vec.is_empty() {
-        // Convert the slice to a Python list only when non-empty, propagating
-        // any element conversion errors.
+        // Convert the slice to a Python list only when non-empty. `PyList::new`
+        // surfaces element conversion failures via its `PyResult` return type.
         let list = PyList::new(py, vec.iter().cloned())?;
         dict.set_item(key, list)?;
     }
