@@ -75,7 +75,7 @@ provided by an ownership model and borrow checker.
 
 In a Rust version, the handler's shared mutable state (the output stream) would
 be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
-(Atomic Reference Counter).
+(an atomically reference-counted pointer).
 
 ```rust
 use std::io::{self, Write};
