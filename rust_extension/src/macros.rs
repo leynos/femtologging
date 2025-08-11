@@ -56,8 +56,8 @@ where
     T: IntoPyObject<'py> + Clone,
 {
     if !vec.is_empty() {
-        // Convert slice to a Python list only when non-empty and propagate
-        // conversion errors from PyList::new.
+        // Convert the slice to a Python list only when non-empty, propagating
+        // any element conversion errors.
         let list = PyList::new(py, vec.iter().cloned())?;
         dict.set_item(key, list)?;
     }
@@ -110,7 +110,7 @@ macro_rules! impl_as_pydict {
             fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
                 let d = pyo3::types::PyDict::new(py);
                 $(crate::macros::$setter(py, &d, $key, &self.$field)?;)*
-                Ok(d.into())
+                Ok(d.unbind().into())
             }
         }
     };
