@@ -115,6 +115,7 @@ def test_no_root_logger_behavior() -> None:
         ("ERROR", "INFO", "INFO"),
         ("DEBUG", "WARN", "WARN"),
     ],
+    ids=["INFO→ERROR", "ERROR→INFO", "DEBUG→WARN"],
 )
 def test_root_logger_last_assignment_wins(
     first: str, second: str, expected: str
@@ -124,6 +125,4 @@ def test_root_logger_last_assignment_wins(
     builder.with_root_logger(LoggerConfigBuilder().with_level(first))
     builder.with_root_logger(LoggerConfigBuilder().with_level(second))
     config = builder.as_dict()
-    assert config["root"]["level"] == expected, (
-        "Last root logger assignment should take effect"
-    )
+    assert config["root"]["level"] == expected, "Last root logger assignment wins"
