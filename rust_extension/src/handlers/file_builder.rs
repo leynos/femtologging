@@ -49,21 +49,27 @@ impl FileHandlerBuilder {
         self
     }
 
+    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
+        match self.capacity {
+            Some(0) => Err(HandlerBuildError::InvalidConfig(
+                "capacity must be greater than zero".to_string(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
+        match self.flush_interval {
+            Some(0) => Err(HandlerBuildError::InvalidConfig(
+                "flush_interval must be greater than zero".to_string(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     fn validate(&self) -> Result<(), HandlerBuildError> {
-        if let Some(cap) = self.capacity {
-            if cap == 0 {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "capacity must be greater than zero".to_string(),
-                ));
-            }
-        }
-        if let Some(flush) = self.flush_interval {
-            if flush == 0 {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "flush_interval must be greater than zero".to_string(),
-                ));
-            }
-        }
+        self.is_capacity_valid()?;
+        self.is_flush_interval_valid()?;
         Ok(())
     }
 
@@ -184,6 +190,12 @@ mod tests {
     #[rstest]
     fn reject_zero_capacity() {
         let builder = FileHandlerBuilder::new("log.txt").with_capacity(0);
+        assert!(builder.build_inner().is_err());
+    }
+
+    #[rstest]
+    fn reject_zero_flush_interval() {
+        let builder = FileHandlerBuilder::new("log.txt").with_flush_interval(0);
         assert!(builder.build_inner().is_err());
     }
 }
