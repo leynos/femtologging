@@ -19,3 +19,8 @@ Feature: Handler builders
     Given a StreamHandlerBuilder targeting stderr
     When I set stream capacity 0
     Then building the stream handler fails
+
+  Scenario: invalid stream handler flush timeout
+    Given a StreamHandlerBuilder targeting stdout
+    When I set stream flush timeout 0
+    Then building the stream handler fails

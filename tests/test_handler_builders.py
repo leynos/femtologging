@@ -41,6 +41,13 @@ def when_set_stream_capacity(
     stream_builder.with_capacity(capacity)
 
 
+@when(parsers.parse("I set stream flush timeout {timeout:d}"))
+def when_set_stream_flush_timeout(
+    stream_builder: StreamHandlerBuilder, timeout: int
+) -> None:
+    stream_builder.with_flush_timeout_ms(timeout)
+
+
 @when("I set flush interval 2")
 def when_set_flush_interval(file_builder: FileHandlerBuilder) -> None:
     file_builder.with_flush_interval(2)
@@ -68,9 +75,16 @@ def then_stream_builder_snapshot(
     assert stream_builder.as_dict() == snapshot
     handler = stream_builder.build()
     handler.flush()
+    handler.close()
 
 
 @then("building the stream handler fails")
 def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
     with pytest.raises(ValueError):
         stream_builder.build()
+
+
+def test_stream_builder_negative_capacity() -> None:
+    builder = StreamHandlerBuilder.stdout()
+    with pytest.raises(OverflowError):
+        builder.with_capacity(-1)

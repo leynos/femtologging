@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::handler::FemtoHandlerTrait;
 
+mod common;
 pub mod file;
 pub mod file_builder;
 pub mod stream_builder;

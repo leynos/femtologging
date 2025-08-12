@@ -7,7 +7,7 @@
 
 use pyo3::prelude::*;
 
-use super::{file::*, HandlerBuildError, HandlerBuilderTrait};
+use super::{common::CommonBuilder, file::*, HandlerBuildError, HandlerBuilderTrait};
 use crate::{formatter::DefaultFormatter, handler::FemtoHandlerTrait};
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
@@ -15,7 +15,7 @@ use crate::{formatter::DefaultFormatter, handler::FemtoHandlerTrait};
 #[derive(Clone, Debug)]
 pub struct FileHandlerBuilder {
     path: String,
-    capacity: Option<usize>,
+    common: CommonBuilder,
     flush_interval: Option<usize>,
     overflow_policy: OverflowPolicy,
 }
@@ -25,7 +25,7 @@ impl FileHandlerBuilder {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            capacity: None,
+            common: CommonBuilder::default(),
             flush_interval: None,
             overflow_policy: OverflowPolicy::Drop,
         }
@@ -33,7 +33,7 @@ impl FileHandlerBuilder {
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.capacity = Some(capacity);
+        self.common.capacity = Some(capacity);
         self
     }
 
@@ -50,12 +50,7 @@ impl FileHandlerBuilder {
     }
 
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
-        match self.capacity {
-            Some(0) => Err(HandlerBuildError::InvalidConfig(
-                "capacity must be greater than zero".to_string(),
-            )),
-            _ => Ok(()),
-        }
+        self.common.is_capacity_valid()
     }
 
     fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
@@ -76,7 +71,7 @@ impl FileHandlerBuilder {
     fn build_inner(&self) -> Result<FemtoFileHandler, HandlerBuildError> {
         self.validate()?;
         let mut cfg = HandlerConfig::default();
-        if let Some(cap) = self.capacity {
+        if let Some(cap) = self.common.capacity {
             cfg.capacity = cap;
         }
         if let Some(flush) = self.flush_interval {
@@ -98,7 +93,7 @@ impl FileHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.capacity = Some(capacity);
+        slf.common.capacity = Some(capacity);
         slf
     }
 
@@ -142,7 +137,7 @@ impl FileHandlerBuilder {
         use pyo3::types::PyDict;
         let d = PyDict::new(py);
         d.set_item("path", &self.path)?;
-        if let Some(cap) = self.capacity {
+        if let Some(cap) = self.common.capacity {
             d.set_item("capacity", cap)?;
         }
         if let Some(flush) = self.flush_interval {

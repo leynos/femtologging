@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use pyo3::prelude::*;
 
-use super::{HandlerBuildError, HandlerBuilderTrait};
+use super::{common::CommonBuilder, HandlerBuildError, HandlerBuilderTrait};
 use crate::{
     formatter::DefaultFormatter, handler::FemtoHandlerTrait, stream_handler::FemtoStreamHandler,
 };
@@ -24,7 +24,7 @@ enum StreamTarget {
 #[derive(Clone, Debug)]
 pub struct StreamHandlerBuilder {
     target: StreamTarget,
-    capacity: Option<usize>,
+    common: CommonBuilder,
     flush_timeout_ms: Option<u64>,
 }
 
@@ -33,7 +33,7 @@ impl StreamHandlerBuilder {
     pub fn stdout() -> Self {
         Self {
             target: StreamTarget::Stdout,
-            capacity: None,
+            common: CommonBuilder::default(),
             flush_timeout_ms: None,
         }
     }
@@ -42,14 +42,14 @@ impl StreamHandlerBuilder {
     pub fn stderr() -> Self {
         Self {
             target: StreamTarget::Stderr,
-            capacity: None,
+            common: CommonBuilder::default(),
             flush_timeout_ms: None,
         }
     }
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.capacity = Some(capacity);
+        self.common.capacity = Some(capacity);
         self
     }
 
@@ -59,20 +59,28 @@ impl StreamHandlerBuilder {
         self
     }
 
-    fn validate(&self) -> Result<(), HandlerBuildError> {
-        if let Some(cap) = self.capacity {
-            if cap == 0 {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "capacity must be greater than zero".to_string(),
-                ));
-            }
+    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
+        self.common.is_capacity_valid()
+    }
+
+    fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
+        match self.flush_timeout_ms {
+            Some(0) => Err(HandlerBuildError::InvalidConfig(
+                "flush_timeout_ms must be greater than zero".to_string(),
+            )),
+            _ => Ok(()),
         }
+    }
+
+    fn validate(&self) -> Result<(), HandlerBuildError> {
+        self.is_capacity_valid()?;
+        self.is_flush_timeout_valid()?;
         Ok(())
     }
 
     fn build_inner(&self) -> Result<FemtoStreamHandler, HandlerBuildError> {
         self.validate()?;
-        let capacity = self.capacity.unwrap_or(1024);
+        let capacity = self.common.capacity.unwrap_or(1024);
         let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
         let handler = match self.target {
             StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
@@ -113,7 +121,7 @@ impl StreamHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.capacity = Some(capacity);
+        slf.common.capacity = Some(capacity);
         slf
     }
 
@@ -137,7 +145,7 @@ impl StreamHandlerBuilder {
                 StreamTarget::Stderr => "stderr",
             },
         )?;
-        if let Some(cap) = self.capacity {
+        if let Some(cap) = self.common.capacity {
             d.set_item("capacity", cap)?;
         }
         if let Some(ms) = self.flush_timeout_ms {
@@ -174,6 +182,12 @@ mod tests {
     #[rstest]
     fn reject_zero_capacity() {
         let builder = StreamHandlerBuilder::stderr().with_capacity(0);
+        assert!(builder.build_inner().is_err());
+    }
+
+    #[rstest]
+    fn reject_zero_flush_timeout() {
+        let builder = StreamHandlerBuilder::stdout().with_flush_timeout(0);
         assert!(builder.build_inner().is_err());
     }
 }
