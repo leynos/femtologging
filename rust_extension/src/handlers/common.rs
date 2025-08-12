@@ -8,12 +8,19 @@ pub struct CommonBuilder {
 }
 
 impl CommonBuilder {
-    pub(crate) fn is_capacity_valid(&self) -> Result<(), super::HandlerBuildError> {
-        match self.capacity {
-            Some(0) => Err(super::HandlerBuildError::InvalidConfig(
-                "capacity must be greater than zero".to_string(),
-            )),
+    pub(crate) fn ensure_non_zero(
+        field: &str,
+        value: Option<u64>,
+    ) -> Result<(), super::HandlerBuildError> {
+        match value {
+            Some(0) => Err(super::HandlerBuildError::InvalidConfig(format!(
+                "{field} must be greater than zero",
+            ))),
             _ => Ok(()),
         }
+    }
+
+    pub(crate) fn is_capacity_valid(&self) -> Result<(), super::HandlerBuildError> {
+        Self::ensure_non_zero("capacity", self.capacity.map(|v| v as u64))
     }
 }

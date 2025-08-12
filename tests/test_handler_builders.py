@@ -1,3 +1,9 @@
+"""Behaviour-driven tests for FileHandlerBuilder and StreamHandlerBuilder.
+
+Scenarios cover capacity and interval configuration, dictionary snapshots,
+and build-time failures.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

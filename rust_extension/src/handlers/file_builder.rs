@@ -54,12 +54,7 @@ impl FileHandlerBuilder {
     }
 
     fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
-        match self.flush_interval {
-            Some(0) => Err(HandlerBuildError::InvalidConfig(
-                "flush_interval must be greater than zero".to_string(),
-            )),
-            _ => Ok(()),
-        }
+        CommonBuilder::ensure_non_zero("flush_interval", self.flush_interval.map(|v| v as u64))
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {

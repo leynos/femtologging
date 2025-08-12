@@ -64,12 +64,7 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        match self.flush_timeout_ms {
-            Some(0) => Err(HandlerBuildError::InvalidConfig(
-                "flush_timeout_ms must be greater than zero".to_string(),
-            )),
-            _ => Ok(()),
-        }
+        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.flush_timeout_ms)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
