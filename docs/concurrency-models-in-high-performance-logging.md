@@ -1,4 +1,4 @@
-# Concurrency Models in High-Performance Logging: An Architectural Analysis
+# Concurrency models in high-performance logging: an architectural analysis
 
 This document synthesizes an analysis of concurrency mechanisms within logging
 libraries, using Microsoft's `picologging` as a primary case study. It examines
@@ -9,14 +9,14 @@ safety guarantees. Finally, it delves into asynchronous architectures that
 decouple log creation from I/O-bound emission, a critical pattern for high-
 throughput applications.
 
-## 1. The `picologging` Concurrency Model: A Hybrid Approach
+## 1. The picologging concurrency model: a hybrid approach
 
 `picologging` achieves its performance by implementing critical paths in C++
 and making deliberate trade-offs in its concurrency strategy. It eschews the
 single, global module lock found in CPython's standard `logging` library in
 favour of a more granular approach.
 
-### Fine-Grained Locking at the Handler Level
+### Fine-grained locking at the handler level
 
 The most performance-critical aspect of concurrent logging is ensuring that
 multiple threads can write log messages without corrupting the output stream
@@ -45,7 +45,7 @@ contributing to lock contention. However, the work of formatting the message
 via the `Formatter` occurs *inside* the locked region, as it is part of the
 `emit` call chain.
 
-### Reliance on the GIL for Global State
+### Reliance on the GIL for global state
 
 For managing the global state—specifically the hierarchy of loggers stored in
 the `Manager`'s `loggerDict`—`picologging` forgoes an explicit global lock.
@@ -65,17 +65,17 @@ Lock (GIL)**.
   contention for the far more frequent operation of emitting log messages,
   thereby prioritizing runtime performance[^1].
 
-## 2. A Rust Implementation: The Power of Compile-Time Safety
+## 2. A Rust implementation: the power of compile-time safety
 
 Translating this architecture to Rust highlights the profound difference
 between runtime concurrency checks (mutexes, GIL) and compile-time guarantees
 provided by an ownership model and borrow checker.
 
-### Guaranteed Handler Safety with `Mutex`
+### Guaranteed handler safety with Mutex
 
 In a Rust version, the handler's shared mutable state (the output stream) would
-be wrapped in `std::sync::Mutex` and shared across threads using an `Arc`
-(an atomically reference-counted pointer).
+be wrapped in `std::sync::Mutex` and shared across threads using an `Arc` (an
+atomically reference-counted pointer).
 
 ```rust
 use std::io::{self, Write};
@@ -112,7 +112,7 @@ The borrow checker provides two unshakable guarantees:
 This transforms a runtime convention into a compile-time proof of correctness,
 eliminating an entire class of potential data race bugs.
 
-### Granular Registry Safety with `RwLock`
+### Granular registry safety with RwLock
 
 For the global logger registry, Rust's `std::sync::RwLock` (Read-Write Lock)
 provides a more granular and explicit alternative to relying on the GIL. Since
@@ -151,7 +151,7 @@ Here, the borrow checker enforces that you can only get immutable access with a
 read lock and mutable access with a write lock, again preventing data races at
 compile time.
 
-## 3. Asynchronous Architecture: Decoupling for Maximum Throughput
+## 3. Asynchronous architecture: decoupling for maximum throughput
 
 For applications where logging latency is absolutely critical, the optimal
 solution is to decouple the fast, thread-local work of record creation from the
@@ -161,7 +161,7 @@ This is achieved with a producer-consumer pattern, where application threads
 ("producers") place log records onto a queue, and a dedicated background thread
 ("consumer") processes them.
 
-### `picologging`'s Asynchronous Support
+### picologging's asynchronous support
 
 `picologging` natively supports this architecture via its `QueueHandler` and
 `QueueListener` classes[^2].
@@ -177,7 +177,7 @@ This is achieved with a producer-consumer pattern, where application threads
 This effectively moves all blocking I/O off the application's critical path,
 ensuring log calls have minimal impact on performance.
 
-### The Idiomatic Rust Pattern: MPSC Channels
+### The idiomatic Rust pattern: MPSC channels
 
 In Rust, this asynchronous model is best implemented not with a
 `Mutex<VecDeque>` (which still involves a shared lock), but with a **Multi-
