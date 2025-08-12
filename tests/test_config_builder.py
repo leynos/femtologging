@@ -108,14 +108,21 @@ def test_no_root_logger_behavior() -> None:
         builder.build_and_init()
 
 
-def test_multiple_root_logger_assignments() -> None:
-    """Test that multiple root logger assignments result in the last assignment taking effect."""
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        ("INFO", "ERROR", "ERROR"),
+        ("ERROR", "INFO", "INFO"),
+        ("DEBUG", "WARN", "WARN"),
+    ],
+    ids=["INFO→ERROR", "ERROR→INFO", "DEBUG→WARN"],
+)
+def test_root_logger_last_assignment_wins(
+    first: str, second: str, expected: str
+) -> None:
+    """Verify last-write-wins semantics when assigning the root logger multiple times."""
     builder = ConfigBuilder()
-    root1 = LoggerConfigBuilder().with_level("INFO")
-    root2 = LoggerConfigBuilder().with_level("ERROR")
-    builder.with_root_logger(root1)
-    builder.with_root_logger(root2)
+    builder.with_root_logger(LoggerConfigBuilder().with_level(first))
+    builder.with_root_logger(LoggerConfigBuilder().with_level(second))
     config = builder.as_dict()
-    assert config["root"]["level"] == "ERROR", (
-        "Last root logger assignment should take effect"
-    )
+    assert config["root"]["level"] == expected, f"Last root logger assignment wins: {first}→{second}"
