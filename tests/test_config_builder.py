@@ -109,11 +109,13 @@ def test_no_root_logger_behavior() -> None:
 
 
 def test_multiple_root_logger_assignments() -> None:
-    """Test that later root logger assignments replace earlier ones."""
+    """Test that multiple root logger assignments result in the last assignment taking effect."""
     builder = ConfigBuilder()
     root1 = LoggerConfigBuilder().with_level("INFO")
     root2 = LoggerConfigBuilder().with_level("ERROR")
     builder.with_root_logger(root1)
     builder.with_root_logger(root2)
     config = builder.as_dict()
-    assert config["root"]["level"] == "ERROR", "Last root logger should win"
+    assert config["root"]["level"] == "ERROR", (
+        "Last root logger assignment should take effect"
+    )
