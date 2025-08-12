@@ -40,7 +40,7 @@ locking.
 
 A crucial detail of this implementation is the sequence of operations within
 the `handle` method: filtering occurs *before* the lock is acquired. This is an
-important optimisation, as it prevents the cost of filtering out a message from
+important optimization, as it prevents the cost of filtering out a message from
 contributing to lock contention. However, the work of formatting the message
 via the `Formatter` occurs *inside* the locked region, as it is part of the
 `emit` call chain.
@@ -63,7 +63,7 @@ Lock (GIL)**.
   during application start-up in a single-threaded context. By avoiding an
   explicit global lock, `picologging` eliminates a potential point of
   contention for the far more frequent operation of emitting log messages,
-  thereby prioritising runtime performance[^1].
+  thereby prioritizing runtime performance[^1].
 
 ## 2. A Rust Implementation: The Power of Compile-Time Safety
 
@@ -203,5 +203,5 @@ expensive.[^1][^2]
       [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
 
 [^2]: Source:
-  [`microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py`](microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py)
-
+      <!-- markdownlint-disable-next-line MD013 -->
+      [`handlers.py`](https://github.com/microsoft/picologging/blob/dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py)

@@ -109,7 +109,7 @@ def test_no_root_logger_behavior() -> None:
 
 
 def test_multiple_root_logger_assignments() -> None:
-    """Test that multiple root logger assignments result in last assignment taking effect."""
+    """Test that multiple root logger assignments result in the last assignment taking effect."""
     builder = ConfigBuilder()
     root1 = LoggerConfigBuilder().with_level("INFO")
     root2 = LoggerConfigBuilder().with_level("ERROR")
