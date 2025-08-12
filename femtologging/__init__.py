@@ -21,6 +21,8 @@ PyHandlerConfig = rust.PyHandlerConfig  # type: ignore[attr-defined]
 ConfigBuilder = rust.ConfigBuilder  # type: ignore[attr-defined]
 LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
 FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
+HandlerConfigError = rust.HandlerConfigError  # type: ignore[attr-defined]
+HandlerIOError = rust.HandlerIOError  # type: ignore[attr-defined]
 
 __all__ = [
     "FemtoHandler",
@@ -35,6 +37,8 @@ __all__ = [
     "ConfigBuilder",
     "LoggerConfigBuilder",
     "FormatterBuilder",
+    "HandlerConfigError",
+    "HandlerIOError",
     "OverflowPolicy",
     "hello",
 ]

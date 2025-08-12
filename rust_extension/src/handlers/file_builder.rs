@@ -8,7 +8,7 @@
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, file::*, HandlerBuildError, HandlerBuilderTrait};
-use crate::{formatter::DefaultFormatter, handler::FemtoHandlerTrait};
+use crate::formatter::DefaultFormatter;
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
 #[pyclass]
@@ -61,21 +61,6 @@ impl FileHandlerBuilder {
         self.is_capacity_valid()?;
         self.is_flush_interval_valid()?;
         Ok(())
-    }
-
-    fn build_inner(&self) -> Result<FemtoFileHandler, HandlerBuildError> {
-        self.validate()?;
-        let mut cfg = HandlerConfig::default();
-        if let Some(cap) = self.common.capacity {
-            cfg.capacity = cap;
-        }
-        if let Some(flush) = self.flush_interval {
-            cfg.flush_interval = flush;
-        }
-        cfg.overflow_policy = self.overflow_policy;
-        let handler =
-            FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?;
-        Ok(handler)
     }
 }
 
@@ -147,21 +132,35 @@ impl FileHandlerBuilder {
         Ok(d.into())
     }
 
-    /// Build the handler, raising ``ValueError`` or ``OSError`` on failure.
+    /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
+    /// failure.
     fn build(&self) -> PyResult<FemtoFileHandler> {
-        self.build_inner().map_err(PyErr::from)
+        <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
     }
 }
 
 impl HandlerBuilderTrait for FileHandlerBuilder {
-    fn build(&self) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError> {
-        let handler = self.build_inner()?;
-        Ok(Box::new(handler))
+    type Handler = FemtoFileHandler;
+
+    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
+        self.validate()?;
+        let mut cfg = HandlerConfig::default();
+        if let Some(cap) = self.common.capacity {
+            cfg.capacity = cap;
+        }
+        if let Some(flush) = self.flush_interval {
+            cfg.flush_interval = flush;
+        }
+        cfg.overflow_policy = self.overflow_policy;
+        let handler =
+            FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?;
+        Ok(handler)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::assert_build_err;
     use super::*;
     use rstest::rstest;
     use tempfile::tempdir;
@@ -173,19 +172,21 @@ mod tests {
         let builder = FileHandlerBuilder::new(path.to_string_lossy())
             .with_capacity(16)
             .with_flush_interval(1);
-        let handler = builder.build_inner().unwrap();
+        let handler = builder
+            .build_inner()
+            .expect("build_inner must succeed for a valid file builder");
         handler.flush();
     }
 
     #[rstest]
     fn reject_zero_capacity() {
         let builder = FileHandlerBuilder::new("log.txt").with_capacity(0);
-        assert!(builder.build_inner().is_err());
+        assert_build_err(builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
     fn reject_zero_flush_interval() {
         let builder = FileHandlerBuilder::new("log.txt").with_flush_interval(0);
-        assert!(builder.build_inner().is_err());
+        assert_build_err(builder, "build_inner must fail for zero flush interval");
     }
 }

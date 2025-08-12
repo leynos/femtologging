@@ -137,8 +137,14 @@ impl FormatterBuilder {
 
 // In femtologging::handlers::HandlerBuilderTrait (and specific builders)
 pub trait HandlerBuilderTrait: Send + Sync {
-    // Marker trait for handler builders
-    fn build_handler(&self, config_context: &ConfigContext) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError>;
+    type Handler: FemtoHandlerTrait;
+
+    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError>;
+
+    fn build(&self) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError> {
+        let handler = self.build_inner()?;
+        Ok(Box::new(handler))
+    }
 }
 
 // Example: In femtologging::handlers::FileHandlerBuilder

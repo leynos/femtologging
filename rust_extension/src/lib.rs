@@ -20,7 +20,8 @@ pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use handlers::{
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig},
-    FileHandlerBuilder, HandlerBuilderTrait, StreamHandlerBuilder,
+    FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
+    StreamHandlerBuilder,
 };
 pub use level::FemtoLevel;
 pub use log_record::{FemtoLogRecord, RecordMetadata};
@@ -45,12 +46,15 @@ fn reset_manager_py() {
 
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
     m.add_class::<StreamHandlerBuilder>()?;
     m.add_class::<FileHandlerBuilder>()?;
+    m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;
+    m.add("HandlerIOError", py.get_type::<HandlerIOError>())?;
     m.add_class::<PyHandlerConfig>()?;
     m.add_class::<ConfigBuilder>()?;
     m.add_class::<LoggerConfigBuilder>()?;

@@ -14,6 +14,7 @@ from pytest_bdd import given, scenarios, then, when, parsers
 from femtologging import (
     FileHandlerBuilder,
     StreamHandlerBuilder,
+    HandlerConfigError,
 )
 
 scenarios("features/handler_builders.feature")
@@ -70,7 +71,7 @@ def then_file_builder_snapshot(file_builder: FileHandlerBuilder, snapshot) -> No
 
 @then("building the file handler fails")
 def then_file_builder_fails(file_builder: FileHandlerBuilder) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(HandlerConfigError):
         file_builder.build()
 
 
@@ -86,7 +87,7 @@ def then_stream_builder_snapshot(
 
 @then("building the stream handler fails")
 def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(HandlerConfigError):
         stream_builder.build()
 
 

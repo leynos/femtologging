@@ -9,9 +9,7 @@ use std::time::Duration;
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, HandlerBuildError, HandlerBuilderTrait};
-use crate::{
-    formatter::DefaultFormatter, handler::FemtoHandlerTrait, stream_handler::FemtoStreamHandler,
-};
+use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
 
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
@@ -54,7 +52,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Set the flush timeout in milliseconds.
-    pub fn with_flush_timeout(mut self, timeout_ms: u64) -> Self {
+    pub fn with_flush_timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.flush_timeout_ms = Some(timeout_ms);
         self
     }
@@ -71,27 +69,6 @@ impl StreamHandlerBuilder {
         self.is_capacity_valid()?;
         self.is_flush_timeout_valid()?;
         Ok(())
-    }
-
-    fn build_inner(&self) -> Result<FemtoStreamHandler, HandlerBuildError> {
-        self.validate()?;
-        let capacity = self.common.capacity.unwrap_or(1024);
-        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
-        let handler = match self.target {
-            StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
-                std::io::stdout(),
-                DefaultFormatter,
-                capacity,
-                timeout,
-            ),
-            StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
-                std::io::stderr(),
-                DefaultFormatter,
-                capacity,
-                timeout,
-            ),
-        };
-        Ok(handler)
     }
 }
 
@@ -121,7 +98,7 @@ impl StreamHandlerBuilder {
     }
 
     #[pyo3(name = "with_flush_timeout_ms")]
-    fn py_with_flush_timeout<'py>(
+    fn py_with_flush_timeout_ms<'py>(
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
     ) -> PyRefMut<'py, Self> {
@@ -149,40 +126,62 @@ impl StreamHandlerBuilder {
         Ok(d.into())
     }
 
-    /// Build the handler, raising ``ValueError`` on failure.
+    /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
+    /// failure.
     fn build(&self) -> PyResult<FemtoStreamHandler> {
-        self.build_inner().map_err(PyErr::from)
+        <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
     }
 }
 
 impl HandlerBuilderTrait for StreamHandlerBuilder {
-    fn build(&self) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError> {
-        let handler = self.build_inner()?;
-        Ok(Box::new(handler))
+    type Handler = FemtoStreamHandler;
+
+    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
+        self.validate()?;
+        let capacity = self.common.capacity.unwrap_or(1024);
+        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
+        let handler = match self.target {
+            StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
+                std::io::stdout(),
+                DefaultFormatter,
+                capacity,
+                timeout,
+            ),
+            StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
+                std::io::stderr(),
+                DefaultFormatter,
+                capacity,
+                timeout,
+            ),
+        };
+        Ok(handler)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::assert_build_err;
     use super::*;
     use rstest::rstest;
 
     #[rstest]
     fn build_stream_handler_stdout() {
         let builder = StreamHandlerBuilder::stdout().with_capacity(8);
-        let handler = builder.build_inner().unwrap();
+        let handler = builder
+            .build_inner()
+            .expect("build_inner must succeed for a valid stdout builder");
         handler.flush();
     }
 
     #[rstest]
     fn reject_zero_capacity() {
         let builder = StreamHandlerBuilder::stderr().with_capacity(0);
-        assert!(builder.build_inner().is_err());
+        assert_build_err(builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
     fn reject_zero_flush_timeout() {
-        let builder = StreamHandlerBuilder::stdout().with_flush_timeout(0);
-        assert!(builder.build_inner().is_err());
+        let builder = StreamHandlerBuilder::stdout().with_flush_timeout_ms(0);
+        assert_build_err(builder, "build_inner must fail for zero flush timeout");
     }
 }
