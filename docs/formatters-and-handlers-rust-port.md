@@ -165,12 +165,13 @@ drain pending records and stop the background thread explicitly. Dropping the
 handler still performs this cleanup if the methods aren't invoked.
 
 By default, the file handler flushes the underlying file after every record to
-maximise durability. To batch writes, pass a custom configuration to
-`with_capacity_flush_policy()` (Rust) or `with_capacity_flush_policy()` on the
-Python side. Setting the `flush_interval` in `HandlerConfig` or
-`PyHandlerConfig` defers flushing until the specified number of records have
-been written. The value must be greater than zero, so periodic flushing always
-occurs. Higher values reduce syscall overhead in high-volume scenarios.
+maximise durability. To batch writes, pass a custom configuration via
+`FemtoFileHandler::with_capacity_flush_policy()` (Rust) or
+`FemtoFileHandler.with_capacity_flush_policy()` (Python). Setting the
+`flush_interval` in `HandlerConfig` or `PyHandlerConfig` defers flushing until
+the specified number of records have been written. The value must be greater
+than zero, so periodic flushing always occurs. Higher values reduce syscall
+overhead in high-volume scenarios.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit

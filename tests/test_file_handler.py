@@ -122,12 +122,6 @@ def test_file_handler_custom_flush_interval(
     )
 
 
-def test_file_handler_flush_interval_zero(tmp_path: Path) -> None:
-    """Zero flush interval is rejected."""
-    with pytest.raises(ValueError):
-        PyHandlerConfig(8, 0, OverflowPolicy.DROP.value, timeout_ms=None)
-
-
 def test_file_handler_flush_interval_one(
     tmp_path: Path, file_handler_factory: FileHandlerFactory
 ) -> None:

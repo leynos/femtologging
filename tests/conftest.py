@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, ContextManager, Iterator
 import gc
 import sys
 
@@ -14,7 +14,9 @@ import pytest  # pyright: ignore[reportMissingImports]
 
 
 @pytest.fixture()
-def file_handler_factory():
+def file_handler_factory() -> Callable[
+    [Path, int, int], ContextManager[FemtoFileHandler]
+]:
     """Return a context manager creating a ``FemtoFileHandler``.
 
     The factory yields a handler that flushes every ``flush_interval`` records.

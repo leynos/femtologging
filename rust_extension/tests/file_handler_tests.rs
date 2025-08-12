@@ -150,11 +150,15 @@ fn file_handler_custom_flush_interval() {
 }
 
 #[test]
-#[should_panic(expected = "flush_interval must be greater than zero")]
 fn file_handler_flush_interval_zero() {
-    with_temp_file_handler_flush(8, 0, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
-    });
+    let cfg = HandlerConfig {
+        capacity: 8,
+        flush_interval: 0,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+    let tmp = NamedTempFile::new().expect("failed to create temp file");
+    let result = FemtoFileHandler::with_capacity_flush_policy(tmp.path(), DefaultFormatter, cfg);
+    assert!(result.is_err());
 }
 
 #[test]

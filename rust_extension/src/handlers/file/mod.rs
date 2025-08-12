@@ -179,7 +179,10 @@ impl FemtoFileHandler {
         F: FemtoFormatter + Send + 'static,
     {
         if config.flush_interval == 0 {
-            panic!("flush_interval must be greater than zero");
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "flush_interval must be greater than zero",
+            ));
         }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
         Ok(Self::from_file(file, formatter, config))
