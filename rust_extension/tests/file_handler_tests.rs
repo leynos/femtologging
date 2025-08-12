@@ -150,11 +150,11 @@ fn file_handler_custom_flush_interval() {
 }
 
 #[test]
+#[should_panic(expected = "flush_interval must be greater than zero")]
 fn file_handler_flush_interval_zero() {
-    let output = with_temp_file_handler_flush(8, 0, |h| {
+    with_temp_file_handler_flush(8, 0, |h| {
         h.handle(FemtoLogRecord::new("core", "INFO", "message"));
     });
-    assert_eq!(output, "core [INFO] message\n");
 }
 
 #[test]

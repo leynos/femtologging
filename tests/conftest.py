@@ -26,7 +26,12 @@ def file_handler_factory():
     def factory(
         path: Path, capacity: int, flush_interval: int
     ) -> Iterator[FemtoFileHandler]:
-        cfg = PyHandlerConfig(capacity, flush_interval, OverflowPolicy.DROP.value, None)
+        cfg = PyHandlerConfig(
+            capacity,
+            flush_interval,
+            OverflowPolicy.DROP.value,
+            timeout_ms=None,
+        )
         handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
         try:
             yield handler

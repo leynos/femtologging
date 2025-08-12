@@ -4,8 +4,7 @@ This document outlines a safe and thread‑aware design for moving formatting an
 handler components from Python to Rust. It complements the
 [roadmap](./roadmap.md) and expands on the design ideas described in <!--
 markdownlint-disable-next-line MD013 -->
-[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
- .
+[`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md).
 
 ## Goals
 
@@ -107,7 +106,8 @@ Legacy constructors like ``with_capacity_flush_blocking`` and
 
 - ``capacity`` and ``flush_interval`` must be greater than zero.
 - ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout"``.
-- ``timeout_ms`` may only be set when ``policy`` is ``"timeout"``.
+- ``timeout_ms`` must be greater than zero and may only be set when ``policy``
+  is ``"timeout"``.
 
 ### StreamHandler
 

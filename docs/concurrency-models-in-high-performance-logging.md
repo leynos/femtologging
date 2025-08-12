@@ -205,4 +205,4 @@ expensive.[^1][^2]
 
 <!-- markdownlint-disable-next-line MD013 -->
 [handlers-source]:
-microsoft/picologging/picologging-dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py
+https://github.com/microsoft/picologging/blob/dc110b52c9f2e209f97a6fe80d286afb73a8437e/src/picologging/handlers.py

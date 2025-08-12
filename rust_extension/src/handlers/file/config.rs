@@ -90,6 +90,7 @@ pub struct PyHandlerConfig {
     #[pyo3(get)]
     pub policy: String,
     /// Timeout in milliseconds for the "timeout" policy.
+    /// Must be greater than zero when set.
     #[pyo3(get)]
     pub timeout_ms: Option<u64>,
 }
@@ -122,12 +123,23 @@ impl PyHandlerConfig {
                 "invalid overflow policy: '{candidate}'. Valid options are: {valid}"
             )));
         }
-        if !"timeout".eq_ignore_ascii_case(candidate) && timeout_ms.is_some() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
+        if "timeout".eq_ignore_ascii_case(candidate) {
+            match timeout_ms {
+                Some(ms) if ms > 0 => Ok(()),
+                Some(_) => Err(pyo3::exceptions::PyValueError::new_err(
+                    "timeout_ms must be greater than zero",
+                )),
+                None => Err(pyo3::exceptions::PyValueError::new_err(
+                    "timeout_ms required when policy is 'timeout'",
+                )),
+            }
+        } else if timeout_ms.is_some() {
+            Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms can only be set when policy is 'timeout'",
-            ));
+            ))
+        } else {
+            Ok(())
         }
-        Ok(())
     }
     #[new]
     fn new(

@@ -6,6 +6,7 @@ import collections.abc as cabc
 from pathlib import Path
 import threading
 import typing
+from contextlib import closing
 
 from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
 import pytest  # pyright: ignore[reportMissingImports]
@@ -124,7 +125,7 @@ def test_file_handler_custom_flush_interval(
 def test_file_handler_flush_interval_zero(tmp_path: Path) -> None:
     """Zero flush interval is rejected."""
     with pytest.raises(ValueError):
-        PyHandlerConfig(8, 0, OverflowPolicy.DROP.value, None)
+        PyHandlerConfig(8, 0, OverflowPolicy.DROP.value, timeout_ms=None)
 
 
 def test_file_handler_flush_interval_one(
@@ -137,10 +138,23 @@ def test_file_handler_flush_interval_one(
     assert path.read_text() == "core [INFO] message\n"
 
 
+def test_file_handler_flush_interval_large(tmp_path: Path) -> None:
+    """Large flush_interval flushes all messages on close."""
+    path = tmp_path / "large_flush.log"
+    cfg = PyHandlerConfig(8, 10000, OverflowPolicy.DROP.value, timeout_ms=None)
+    with closing(
+        FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+    ) as handler:
+        for i in range(5):
+            handler.handle("core", "INFO", f"msg {i}")
+    expected = "".join(f"core [INFO] msg {i}\n" for i in range(5))
+    assert path.read_text() == expected
+
+
 def test_blocking_policy_basic(tmp_path: Path) -> None:
     """Verify flushing and writing when using the blocking policy."""
     path = tmp_path / "block.log"
-    cfg = PyHandlerConfig(1, 1, OverflowPolicy.BLOCK.value, None)
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.BLOCK.value, timeout_ms=None)
     handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.close()
@@ -150,7 +164,7 @@ def test_blocking_policy_basic(tmp_path: Path) -> None:
 def test_blocking_policy_over_capacity(tmp_path: Path) -> None:
     """Verify blocking behaviour when capacity is exceeded."""
     path = tmp_path / "block_over.log"
-    cfg = PyHandlerConfig(2, 1, OverflowPolicy.BLOCK.value, None)
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.BLOCK.value, timeout_ms=None)
     handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
@@ -165,9 +179,10 @@ def test_timeout_policy_basic(tmp_path: Path) -> None:
     """Test basic functionality of timeout policy in FemtoFileHandler."""
     path = tmp_path / "timeout.log"
     cfg = PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=500)
-    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
-    handler.handle("core", "INFO", "first")
-    handler.close()
+    with closing(
+        FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+    ) as handler:
+        handler.handle("core", "INFO", "first")
     assert path.read_text() == "core [INFO] first\n"
 
 
@@ -175,20 +190,29 @@ def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
     """Ensure timeout policy flushes when over capacity."""
     path = tmp_path / "timeout_over.log"
     cfg = PyHandlerConfig(2, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=1000)
-    handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
-    handler.handle("core", "INFO", "first")
-    handler.handle("core", "INFO", "second")
-    handler.handle("core", "INFO", "third")
-    handler.close()
+    with closing(
+        FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+    ) as handler:
+        handler.handle("core", "INFO", "first")
+        handler.handle("core", "INFO", "second")
+        handler.handle("core", "INFO", "third")
     assert (
         path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
     )
 
 
+def test_timeout_policy_invalid_timeout_ms(tmp_path: Path) -> None:
+    """timeout_ms must be greater than zero."""
+    with pytest.raises(ValueError):
+        PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=0)
+    with pytest.raises(OverflowError):
+        PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=-1)  # type: ignore[arg-type]
+
+
 def test_overflow_policy_builder_block(tmp_path: Path) -> None:
     """Overflow policy can be specified explicitly using strings."""
     path = tmp_path / "block_enum.log"
-    cfg = PyHandlerConfig(2, 1, OverflowPolicy.BLOCK.value, None)
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.BLOCK.value, timeout_ms=None)
     handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
@@ -212,7 +236,7 @@ def test_overflow_policy_builder_timeout(tmp_path: Path) -> None:
 def test_overflow_policy_builder_drop(tmp_path: Path) -> None:
     """Drop policy discards records once the queue is full."""
     path = tmp_path / "drop_enum.log"
-    cfg = PyHandlerConfig(2, 1, OverflowPolicy.DROP.value, None)
+    cfg = PyHandlerConfig(2, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
     handler.handle("core", "INFO", "first")
     handler.handle("core", "INFO", "second")
@@ -226,7 +250,7 @@ def test_overflow_policy_builder_invalid(tmp_path: Path) -> None:
     path = tmp_path / "invalid.log"
     with pytest.raises(ValueError):
         FemtoFileHandler.with_capacity_flush_policy(
-            str(path), PyHandlerConfig(1, 1, "bogus", None)
+            str(path), PyHandlerConfig(1, 1, "bogus", timeout_ms=None)
         )
 
 
@@ -235,13 +259,19 @@ def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
     path = tmp_path / "missing_ms.log"
     with pytest.raises(ValueError):
         FemtoFileHandler.with_capacity_flush_policy(
-            str(path), PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, None)
+            str(path),
+            PyHandlerConfig(
+                1,
+                1,
+                OverflowPolicy.TIMEOUT.value,
+                timeout_ms=None,
+            ),
         )
 
 
 def test_py_handler_config_mutation(tmp_path: Path) -> None:
     """Mutating a ``PyHandlerConfig`` before use affects the handler."""
-    cfg = PyHandlerConfig(1, 10, OverflowPolicy.BLOCK.value, None)
+    cfg = PyHandlerConfig(1, 10, OverflowPolicy.BLOCK.value, timeout_ms=None)
     cfg.capacity = 2
     cfg.flush_interval = 1
     cfg.policy = OverflowPolicy.DROP.value
@@ -258,20 +288,20 @@ def test_py_handler_config_mutation(tmp_path: Path) -> None:
 def test_py_handler_config_invalid_capacity() -> None:
     """Capacity must be greater than zero."""
     with pytest.raises(ValueError) as exc_info:
-        PyHandlerConfig(0, 1, OverflowPolicy.DROP.value, None)
+        PyHandlerConfig(0, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     assert "capacity must be greater than zero" in str(exc_info.value)
 
 
 def test_py_handler_config_invalid_flush_interval() -> None:
     """Flush interval must be greater than zero."""
     with pytest.raises(ValueError) as exc_info:
-        PyHandlerConfig(1, 0, OverflowPolicy.DROP.value, None)
+        PyHandlerConfig(1, 0, OverflowPolicy.DROP.value, timeout_ms=None)
     assert "flush_interval must be greater than zero" in str(exc_info.value)
 
 
 def test_py_handler_config_set_capacity_invalid() -> None:
     """Setting capacity to zero raises ``ValueError``."""
-    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, None)
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     with pytest.raises(ValueError) as exc_info:
         cfg.capacity = 0
     assert "capacity must be greater than zero" in str(exc_info.value)
@@ -279,7 +309,7 @@ def test_py_handler_config_set_capacity_invalid() -> None:
 
 def test_py_handler_config_set_flush_interval_invalid() -> None:
     """Setting flush_interval to zero raises ``ValueError``."""
-    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, None)
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     with pytest.raises(ValueError) as exc_info:
         cfg.flush_interval = 0
     assert "flush_interval must be greater than zero" in str(exc_info.value)
@@ -287,6 +317,6 @@ def test_py_handler_config_set_flush_interval_invalid() -> None:
 
 def test_py_handler_config_set_policy_invalid() -> None:
     """Setting an invalid policy raises ``ValueError``."""
-    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, None)
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     with pytest.raises(ValueError):
         cfg.policy = "bogus"
