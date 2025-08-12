@@ -27,7 +27,7 @@ expanded with specifics for the configuration design.
 - [x] **Expose a mirroring** `femtologging.ConfigBuilder` **in Python via**
   `PyO3` **bindings.**
 
-- [ ] **Expose mirroring Python builders via** `PyO3` **bindings.**
+- [x] **Expose mirroring Python builders via** `PyO3` **bindings.**
   - [x] `LoggerConfigBuilder`
   - [x] `FormatterBuilder`
   - [x] `FileHandlerBuilder`

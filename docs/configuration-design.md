@@ -510,6 +510,7 @@ switch their logging calls.
 ## 5. Implementation Notes
 
 The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
-and `FormatterBuilder` with fluent, chainable methods. Handler builders remain
-future work. `build_and_init` currently validates only the configuration
-version and does not yet wire the builders into the runtime.
+`FormatterBuilder`, `FileHandlerBuilder`, and `StreamHandlerBuilder` with
+fluent, chainable methods exposed to Python via `PyO3`. Further handler types
+will be added iteratively. `build_and_init` currently validates only the
+configuration version and does not yet wire the builders into the runtime.
