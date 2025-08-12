@@ -127,4 +127,3 @@ def test_root_logger_last_assignment_wins(
     assert config["root"]["level"] == expected, (
         "Last root logger assignment should take effect"
     )
-    return
