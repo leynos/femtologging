@@ -202,8 +202,8 @@ directory:
   practices for context managers
 - [Python Generators](.rules/python-generators.mdc) — Generator and iterator
   patterns
-- [Python Project Configuration](.rules/python-pyproject.mdc) — pyproject
-  toml and packaging
+- [Python Project Configuration](.rules/python-pyproject.mdc) — pyproject.toml
+  and packaging
 - [Python Return Patterns](.rules/python-return.mdc) — Function return
   conventions
 - [Python Typing](.rules/python-typing.mdc) — Type annotation best practices

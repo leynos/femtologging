@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import pytest  # pyright: ignore[reportMissingImports]
+import pytest  # pyright: ignore[reportMissingImports]  # FIXME: Add pytest types in dev env and remove this suppression
 import collections.abc as cabc
 from pathlib import Path
 import typing

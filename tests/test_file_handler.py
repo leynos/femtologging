@@ -9,7 +9,7 @@ import typing
 from contextlib import closing
 
 from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
-import pytest  # pyright: ignore[reportMissingImports]
+import pytest  # pyright: ignore[reportMissingImports]  # FIXME: Add pytest types in dev env and remove this suppression
 
 FileHandlerFactory = cabc.Callable[
     [Path, int, int], typing.ContextManager[FemtoFileHandler]
@@ -140,6 +140,8 @@ def test_file_handler_flush_interval_large(tmp_path: Path) -> None:
     ) as handler:
         for i in range(5):
             handler.handle("core", "INFO", f"msg {i}")
+        # No flush should occur before close when flush_interval is large
+        assert path.read_text() == ""
     expected = "".join(f"core [INFO] msg {i}\n" for i in range(5))
     assert path.read_text() == expected
 

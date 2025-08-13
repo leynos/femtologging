@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
 from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
-import pytest  # pyright: ignore[reportMissingImports]
+import pytest  # pyright: ignore[reportMissingImports]  # FIXME: Add pytest types in dev env and remove this suppression
 
 HandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
 
