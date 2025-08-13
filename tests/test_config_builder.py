@@ -125,4 +125,6 @@ def test_root_logger_last_assignment_wins(
     builder.with_root_logger(LoggerConfigBuilder().with_level(first))
     builder.with_root_logger(LoggerConfigBuilder().with_level(second))
     config = builder.as_dict()
-    assert config["root"]["level"] == expected, f"Last root logger assignment wins: {first}→{second}"
+    assert config["root"]["level"] == expected, (
+        f"Last root logger assignment wins: {first}→{second}"
+    )
