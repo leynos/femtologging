@@ -246,8 +246,10 @@ impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
 
 ```
 
-The file builder uses a `flush_record_interval` measured in records, whereas
-the stream builder's `flush_timeout_ms` is a duration in milliseconds. Their
+The file builder uses a `flush_record_interval` measured in records, while the
+stream builder's `flush_timeout_ms` is a duration in milliseconds. These
+semantics intentionally differ: file handlers flush after a set number of
+records, whereas stream handlers flush after a period of inactivity. Their
 dictionary representations mirror these names to avoid ambiguity.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)

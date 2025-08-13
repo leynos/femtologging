@@ -2,7 +2,8 @@
 //!
 //! Allows configuration of stream based handlers writing to `stdout` or
 //! `stderr`. The builder exposes basic tuning for channel capacity and
-//! flush timeout.
+//! a millisecond-based flush timeout. `py_new` defaults to `stderr`
+//! to mirror Python's `logging.StreamHandler`.
 
 use std::{num::NonZeroUsize, time::Duration};
 
@@ -23,6 +24,7 @@ enum StreamTarget {
 pub struct StreamHandlerBuilder {
     target: StreamTarget,
     common: CommonBuilder,
+    formatter_id: Option<String>,
     flush_timeout_ms: Option<i64>,
 }
 
@@ -32,6 +34,7 @@ impl StreamHandlerBuilder {
         Self {
             target: StreamTarget::Stdout,
             common: CommonBuilder::default(),
+            formatter_id: None,
             flush_timeout_ms: None,
         }
     }
@@ -41,6 +44,7 @@ impl StreamHandlerBuilder {
         Self {
             target: StreamTarget::Stderr,
             common: CommonBuilder::default(),
+            formatter_id: None,
             flush_timeout_ms: None,
         }
     }
@@ -52,7 +56,7 @@ impl StreamHandlerBuilder {
         self
     }
 
-    /// Set the flush timeout in milliseconds.
+    /// Set the flush timeout in milliseconds. Must be greater than zero.
     pub fn with_flush_timeout_ms(mut self, timeout_ms: i64) -> Self {
         self.flush_timeout_ms = Some(timeout_ms);
         self
@@ -60,7 +64,7 @@ impl StreamHandlerBuilder {
 
     /// Set the formatter identifier.
     pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
-        self.common.formatter_id = Some(formatter_id.into());
+        self.formatter_id = Some(formatter_id.into());
         self
     }
 
@@ -86,6 +90,9 @@ impl StreamHandlerBuilder {
 
 #[pymethods]
 impl StreamHandlerBuilder {
+    /// Create a new `StreamHandlerBuilder` defaulting to `stderr`.
+    ///
+    /// Mirrors Python's `logging.StreamHandler` default stream.
     #[new]
     fn py_new() -> Self {
         Self::stderr()
@@ -124,7 +131,7 @@ impl StreamHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id);
+        slf.formatter_id = Some(formatter_id);
         slf
     }
 
@@ -145,7 +152,7 @@ impl StreamHandlerBuilder {
         if let Some(ms) = self.flush_timeout_ms {
             d.set_item("flush_timeout_ms", ms)?;
         }
-        if let Some(fid) = &self.common.formatter_id {
+        if let Some(fid) = &self.formatter_id {
             d.set_item("formatter_id", fid)?;
         }
         Ok(d.into())
@@ -165,7 +172,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
         self.validate()?;
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
         let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000) as u64);
-        let formatter = match self.common.formatter_id.as_deref() {
+        let formatter = match self.formatter_id.as_deref() {
             Some("default") | None => DefaultFormatter,
             Some(other) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(

@@ -3,7 +3,8 @@
 //! Provides a fluent API for configuring a file-based logging handler.
 //! Only a subset of options are currently supported; additional
 //! parameters such as encoding and mode will be added as the project
-//! evolves.
+//! evolves. Flushing is driven by a `flush_record_interval`
+//! measured in records.
 
 use std::num::NonZeroUsize;
 
@@ -18,6 +19,7 @@ use crate::formatter::DefaultFormatter;
 pub struct FileHandlerBuilder {
     path: String,
     common: CommonBuilder,
+    formatter_id: Option<String>,
     flush_record_interval: Option<usize>,
     overflow_policy: OverflowPolicy,
 }
@@ -28,6 +30,7 @@ impl FileHandlerBuilder {
         Self {
             path: path.into(),
             common: CommonBuilder::default(),
+            formatter_id: None,
             flush_record_interval: None,
             overflow_policy: OverflowPolicy::Drop,
         }
@@ -40,7 +43,8 @@ impl FileHandlerBuilder {
         self
     }
 
-    /// Set the periodic flush interval measured in records.
+    /// Set the periodic flush interval measured in records. Must be greater
+    /// than zero.
     pub fn with_flush_record_interval(mut self, interval: usize) -> Self {
         self.flush_record_interval = Some(interval);
         self
@@ -48,7 +52,7 @@ impl FileHandlerBuilder {
 
     /// Set the formatter identifier.
     pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
-        self.common.formatter_id = Some(formatter_id.into());
+        self.formatter_id = Some(formatter_id.into());
         self
     }
 
@@ -114,7 +118,7 @@ impl FileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id);
+        slf.formatter_id = Some(formatter_id);
         slf
     }
 
@@ -155,7 +159,7 @@ impl FileHandlerBuilder {
         if let Some(flush) = self.flush_record_interval {
             d.set_item("flush_record_interval", flush)?;
         }
-        if let Some(fid) = &self.common.formatter_id {
+        if let Some(fid) = &self.formatter_id {
             d.set_item("formatter_id", fid)?;
         }
         let policy = match self.overflow_policy {
@@ -193,7 +197,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
             cfg.flush_interval = flush;
         }
         cfg.overflow_policy = self.overflow_policy;
-        let handler = match self.common.formatter_id.as_deref() {
+        let handler = match self.formatter_id.as_deref() {
             Some("default") | None => {
                 FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?
             }

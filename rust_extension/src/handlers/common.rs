@@ -8,7 +8,6 @@ use std::num::NonZeroUsize;
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
-    pub(crate) formatter_id: Option<String>,
 }
 
 impl CommonBuilder {

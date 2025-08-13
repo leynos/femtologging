@@ -1,7 +1,7 @@
 #![cfg(test)]
 //! Test helpers for handler builders.
 //!
-//! This module centralises repeated assertions used across builder tests.
+//! This module centralizes repeated assertions used across builder tests.
 
 use super::HandlerBuilderTrait;
 
