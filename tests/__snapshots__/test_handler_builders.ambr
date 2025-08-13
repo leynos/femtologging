@@ -13,6 +13,12 @@
     'target': 'stdout',
   })
 # ---
+# name: test_build_stream_handler_builder_with_flush_timeout
+  dict({
+    'flush_timeout_ms': 250,
+    'target': 'stdout',
+  })
+# ---
 # name: test_file_handler_builder_with_timeout_overflow_policy
   dict({
     'overflow_policy': 'timeout',

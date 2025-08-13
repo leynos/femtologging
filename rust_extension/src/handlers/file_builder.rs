@@ -1,9 +1,11 @@
 //! Builder for [`FemtoFileHandler`].
 //!
-//! Provides a fluent API for configuring a file based logging handler.
+//! Provides a fluent API for configuring a file-based logging handler.
 //! Only a subset of options are currently supported; additional
 //! parameters such as encoding and mode will be added as the project
 //! evolves.
+
+use std::num::NonZeroUsize;
 
 use pyo3::prelude::*;
 
@@ -33,7 +35,8 @@ impl FileHandlerBuilder {
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.common.capacity = Some(capacity);
+        self.common.capacity = NonZeroUsize::new(capacity);
+        self.common.capacity_set = true;
         self
     }
 
@@ -54,7 +57,7 @@ impl FileHandlerBuilder {
     }
 
     fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero("flush_interval", self.flush_interval.map(|v| v as u64))
+        CommonBuilder::ensure_non_zero_u64("flush_interval", self.flush_interval.map(|v| v as u64))
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -73,7 +76,8 @@ impl FileHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.common.capacity = Some(capacity);
+        slf.common.capacity = NonZeroUsize::new(capacity);
+        slf.common.capacity_set = true;
         slf
     }
 
@@ -118,7 +122,7 @@ impl FileHandlerBuilder {
         let d = PyDict::new(py);
         d.set_item("path", &self.path)?;
         if let Some(cap) = self.common.capacity {
-            d.set_item("capacity", cap)?;
+            d.set_item("capacity", cap.get())?;
         }
         if let Some(flush) = self.flush_interval {
             d.set_item("flush_interval", flush)?;
@@ -145,11 +149,14 @@ impl FileHandlerBuilder {
 impl HandlerBuilderTrait for FileHandlerBuilder {
     type Handler = FemtoFileHandler;
 
+    /// Build a [`FemtoFileHandler`].
+    ///
+    /// `DEFAULT_CHANNEL_CAPACITY` (1024) when `with_capacity` is not called.
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let mut cfg = HandlerConfig::default();
         if let Some(cap) = self.common.capacity {
-            cfg.capacity = cap;
+            cfg.capacity = cap.get();
         }
         if let Some(flush) = self.flush_interval {
             cfg.flush_interval = flush;

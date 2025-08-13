@@ -34,3 +34,8 @@ Feature: Handler builders
     Given a StreamHandlerBuilder targeting stdout
     When I set stream flush timeout 0
     Then building the stream handler fails
+
+  Scenario: build stream handler builder with flush timeout
+    Given a StreamHandlerBuilder targeting stdout
+    When I set stream flush timeout 250
+    Then the stream handler builder matches snapshot

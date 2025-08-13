@@ -4,7 +4,7 @@
 //! `stderr`. The builder exposes basic tuning for channel capacity and
 //! flush timeout.
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use pyo3::prelude::*;
 
@@ -47,7 +47,8 @@ impl StreamHandlerBuilder {
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.common.capacity = Some(capacity);
+        self.common.capacity = NonZeroUsize::new(capacity);
+        self.common.capacity_set = true;
         self
     }
 
@@ -62,7 +63,7 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.flush_timeout_ms)
+        CommonBuilder::ensure_non_zero_u64("flush_timeout_ms", self.flush_timeout_ms)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -93,7 +94,8 @@ impl StreamHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.common.capacity = Some(capacity);
+        slf.common.capacity = NonZeroUsize::new(capacity);
+        slf.common.capacity_set = true;
         slf
     }
 
@@ -118,7 +120,7 @@ impl StreamHandlerBuilder {
             },
         )?;
         if let Some(cap) = self.common.capacity {
-            d.set_item("capacity", cap)?;
+            d.set_item("capacity", cap.get())?;
         }
         if let Some(ms) = self.flush_timeout_ms {
             d.set_item("flush_timeout_ms", ms)?;
@@ -138,7 +140,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
 
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
-        let capacity = self.common.capacity.unwrap_or(1024);
+        let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
         let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
         let handler = match self.target {
             StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
@@ -167,10 +169,11 @@ mod tests {
     #[rstest]
     fn build_stream_handler_stdout() {
         let builder = StreamHandlerBuilder::stdout().with_capacity(8);
-        let handler = builder
+        let mut handler = builder
             .build_inner()
             .expect("build_inner must succeed for a valid stdout builder");
         handler.flush();
+        handler.close();
     }
 
     #[rstest]

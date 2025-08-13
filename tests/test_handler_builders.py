@@ -111,7 +111,10 @@ def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
         stream_builder.build()
 
 
-def test_stream_builder_negative_capacity() -> None:
-    builder = StreamHandlerBuilder.stdout()
+@pytest.mark.parametrize(
+    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
+)
+def test_stream_builder_negative_capacity(ctor) -> None:
+    builder = ctor()
     with pytest.raises(OverflowError):
         builder.with_capacity(-1)
