@@ -9,6 +9,7 @@ mod handler;
 mod level;
 mod log_record;
 mod logger;
+mod macros;
 mod manager;
 #[cfg(feature = "test-util")]
 pub mod rate_limited_warner;
