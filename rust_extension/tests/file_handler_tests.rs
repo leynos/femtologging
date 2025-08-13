@@ -4,6 +4,7 @@
 //! handling and concurrent usage from multiple threads.
 
 use std::fs;
+use std::io;
 use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -158,7 +159,12 @@ fn file_handler_flush_interval_zero() {
     };
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let result = FemtoFileHandler::with_capacity_flush_policy(tmp.path(), DefaultFormatter, cfg);
-    assert!(result.is_err());
+    let err = match result {
+        Ok(_) => panic!("expected invalid flush_interval"),
+        Err(e) => e,
+    };
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(err.to_string(), "flush_interval must be greater than zero");
 }
 
 #[test]

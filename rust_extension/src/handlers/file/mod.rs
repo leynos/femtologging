@@ -8,6 +8,9 @@
 //! the queue size, or [`with_capacity_flush_policy`] for full control. Python
 //! callers use ``FemtoFileHandler.with_capacity_flush_policy`` with a
 //! [`PyHandlerConfig`](PyHandlerConfig) to access the same options.
+//!
+//! The flush interval must be greater than zero. A value of 1 flushes on every
+//! record.
 
 mod config;
 mod worker;
@@ -78,6 +81,11 @@ impl FemtoFileHandler {
     /// cfg = PyHandlerConfig(1024, 1, OverflowPolicy.DROP.value, None)
     /// handler = FemtoFileHandler.with_capacity_flush_policy("app.log", cfg)
     /// ```
+    ///
+    /// Notes:
+    /// - `flush_interval` must be > 0.
+    /// - For `OverflowPolicy.TIMEOUT`, `timeout_ms` must be provided and > 0;
+    ///   for other policies it must be `None`.
     #[staticmethod]
     #[pyo3(name = "with_capacity_flush_policy")]
     fn py_with_capacity_flush_policy(path: String, config: PyHandlerConfig) -> PyResult<Self> {
@@ -135,7 +143,17 @@ impl FemtoFileHandler {
     }
 
     fn handle_io_result(result: io::Result<Self>) -> PyResult<Self> {
-        result.map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+        match result {
+            Ok(handler) => Ok(handler),
+            Err(e) => {
+                use pyo3::exceptions::{PyIOError, PyValueError};
+                if e.kind() == io::ErrorKind::InvalidInput {
+                    Err(PyValueError::new_err(e.to_string()))
+                } else {
+                    Err(PyIOError::new_err(e.to_string()))
+                }
+            }
+        }
     }
 
     fn create_with_policy<P: AsRef<Path>>(
@@ -155,7 +173,7 @@ impl FemtoFileHandler {
 
     /// Create a handler with a custom queue `capacity` and default drop policy.
     ///
-    /// The handler flushes the file after every record.
+    /// The handler flushes the file after every record (`flush_interval = 1`).
     pub fn with_capacity<P, F>(path: P, formatter: F, capacity: usize) -> io::Result<Self>
     where
         P: AsRef<Path>,
@@ -167,8 +185,8 @@ impl FemtoFileHandler {
 
     /// Create a handler using an explicit [`HandlerConfig`].
     ///
-    /// This allows callers to override the queue capacity, flush interval and
-    /// overflow policy in a single place.
+    /// This allows callers to override the queue capacity, flush interval (> 0)
+    /// and overflow policy in a single place.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,

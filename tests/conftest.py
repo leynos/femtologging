@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, ContextManager, Iterator
+from typing import Callable, ContextManager, Generator
 import gc
 import sys
 
@@ -27,7 +27,7 @@ def file_handler_factory() -> Callable[
     @contextmanager
     def factory(
         path: Path, capacity: int, flush_interval: int
-    ) -> Iterator[FemtoFileHandler]:
+    ) -> Generator[FemtoFileHandler, None, None]:
         cfg = PyHandlerConfig(
             capacity,
             flush_interval,

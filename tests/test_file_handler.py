@@ -197,7 +197,7 @@ def test_timeout_policy_over_capacity(tmp_path: Path) -> None:
 
 def test_timeout_policy_invalid_timeout_ms(tmp_path: Path) -> None:
     """timeout_ms must be greater than zero."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
         PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=0)
     with pytest.raises(OverflowError):
         PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=-1)  # type: ignore[arg-type]
@@ -312,5 +312,5 @@ def test_py_handler_config_set_flush_interval_invalid() -> None:
 def test_py_handler_config_set_policy_invalid() -> None:
     """Setting an invalid policy raises ``ValueError``."""
     cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="invalid overflow policy"):
         cfg.policy = "bogus"
