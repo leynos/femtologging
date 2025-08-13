@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
-import gc
 import sys
 
 # Add project root to sys.path so femtologging can be imported without hacks.
@@ -20,8 +19,8 @@ def file_handler_factory() -> Callable[
     """Return a context manager creating a ``FemtoFileHandler``.
 
     The factory yields a handler that flushes every ``flush_interval`` records.
-    The handler is automatically destroyed and garbage collected when the
-    ``with`` block exits to ensure the worker thread shuts down.
+    The handler is automatically closed when the ``with`` block exits to ensure
+    the worker thread shuts down.
     """
 
     @contextmanager
@@ -34,11 +33,9 @@ def file_handler_factory() -> Callable[
             OverflowPolicy.DROP.value,
             timeout_ms=None,
         )
-        handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
-        try:
+        with closing(
+            FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+        ) as handler:
             yield handler
-        finally:
-            del handler
-            gc.collect()
 
     return factory
