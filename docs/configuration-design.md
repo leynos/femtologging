@@ -315,12 +315,12 @@ class StreamHandlerBuilder(HandlerBuilder):
 ### 1.3. Implemented handler builders
 
 The initial implementation provides `FileHandlerBuilder` and
-`StreamHandlerBuilder` as thin wrappers over the existing handler types. Both
-builders support basic configuration (path and queue settings for file
-handlers, stream target for stream handlers) and expose `build()` methods
-returning ready‑to‑use handlers. Advanced options such as file encoding or
-custom writers are deferred until the corresponding handler features are ported
-from picologging.
+`StreamHandlerBuilder` as thin wrappers over the existing handler types.
+`FileHandlerBuilder` supports capacity, flush interval, and overflow policy,
+while `StreamHandlerBuilder` configures the stream target and capacity. Both
+builders expose `build()` methods returning ready‑to‑use handlers. Advanced
+options such as file encoding or custom writers are deferred until the
+corresponding handler features are ported from picologging.
 
 ## 2. Backwards Compatibility APIs
 
@@ -532,6 +532,6 @@ switch their logging calls.
 
 The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
 `FormatterBuilder`, `FileHandlerBuilder`, and `StreamHandlerBuilder` with
-fluent, chainable methods exposed to Python via `PyO3`. Further handler types
-will be added iteratively. `build_and_init` currently validates only the
-configuration version and does not yet wire the builders into the runtime.
+fluent, chainable methods exposed to Python via `PyO3`. `build_and_init`
+currently validates only the configuration version and does not yet wire the
+builders into the runtime.

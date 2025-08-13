@@ -195,9 +195,11 @@ This pattern is the definitive solution for this use case:
   serial, thread-safe delivery to this single consumer.
 
 This architecture achieves the ultimate goal: the hot path (log creation) is
-parallel and minimally contentious, while the cold path (I/O) is handled
-serially by a dedicated worker, eliminating lock contention where it is most
-expensive.[^1][^2]
+parallel and minimally contentious. Records are queued on bounded MPSC
+channels, forming a producer–consumer pipeline. Each builder sets the channel
+capacity and overflow policy, providing predictable back-pressure. The cold
+path (I/O) is handled serially by a dedicated worker, eliminating lock
+contention where it is most expensive.[^1][^2]
 
 [^1]: See
       [logging-cpython-picologging-comparison.md](logging-cpython-picologging-comparison.md)
