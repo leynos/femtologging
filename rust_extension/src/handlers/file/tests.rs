@@ -6,6 +6,7 @@
 use super::*;
 use serial_test::serial;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -202,8 +203,8 @@ fn femto_file_handler_worker_thread_failure() {
 #[test]
 fn femto_file_handler_flush_and_close_idempotency() {
     struct TestWriter {
-        flushed: Arc<Mutex<u32>>,
-        closed: Arc<Mutex<u32>>,
+        flushed: Arc<AtomicU32>,
+        closed: Arc<AtomicU32>,
     }
 
     impl Write for TestWriter {
@@ -212,21 +213,19 @@ fn femto_file_handler_flush_and_close_idempotency() {
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            let mut count = self.flushed.lock().expect("lock");
-            *count += 1;
+            self.flushed.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
     }
 
     impl Drop for TestWriter {
         fn drop(&mut self) {
-            let mut count = self.closed.lock().expect("lock");
-            *count += 1;
+            self.closed.fetch_add(1, Ordering::SeqCst);
         }
     }
 
-    let flushed = Arc::new(Mutex::new(0));
-    let closed = Arc::new(Mutex::new(0));
+    let flushed = Arc::new(AtomicU32::new(0));
+    let closed = Arc::new(AtomicU32::new(0));
     let writer = TestWriter {
         flushed: Arc::clone(&flushed),
         closed: Arc::clone(&closed),
@@ -245,16 +244,21 @@ fn femto_file_handler_flush_and_close_idempotency() {
     );
 
     assert!(handler.flush());
-    assert_eq!(*flushed.lock().expect("lock"), 1);
+    assert_eq!(flushed.load(Ordering::SeqCst), 1);
 
     assert!(handler.flush());
-    assert_eq!(*flushed.lock().expect("lock"), 2);
+    assert_eq!(flushed.load(Ordering::SeqCst), 2);
 
     handler.close();
-    assert_eq!(*closed.lock().expect("lock"), 1);
+    assert_eq!(closed.load(Ordering::SeqCst), 1);
+    assert_eq!(flushed.load(Ordering::SeqCst), 3);
 
     handler.close();
-    assert_eq!(*closed.lock().expect("lock"), 1);
+    assert_eq!(closed.load(Ordering::SeqCst), 1);
+    assert_eq!(flushed.load(Ordering::SeqCst), 3);
 
     assert!(!handler.flush());
+    // Ensure counters remain unchanged after the no-op flush
+    assert_eq!(flushed.load(Ordering::SeqCst), 3);
+    assert_eq!(closed.load(Ordering::SeqCst), 1);
 }
