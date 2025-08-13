@@ -204,12 +204,12 @@ deadlocks with the GIL or other global interpreter synchronization events.[^12]
 
 <!-- markdownlint-disable MD033 MD056 -->
 
-| PyO3 API                    | CPython C API Equivalent                       | Core Function                         | Safety Guarantees in PyO3                                                                         |
+| PyO3 API | CPython C API Equivalent | Core Function | Safety Guarantees in PyO3 |
 | --------------------------- | ---------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `Python::with_gil(          | py                                             | ...)`                                 | PyGILState_STATE g = PyGILState_Ensure();...; PyGILState_Release(g);                              |
-| `py.allow_threads(          |
-| ...)`                       | Py_BEGIN_ALLOW_THREADS... Py_END_ALLOW_THREADS |
-| py: Python in #[pyfunction] | (Implicit context)                             | Access GIL in a callback from Python. | Zero-cost token provided by the runtime, ensuring the function body has proof of GIL acquisition. |
+| `Python::with_gil(          | py                                             | ...)` | PyGILState_STATE g = PyGILState_Ensure();...; PyGILState_Release(g); |
+| `py.allow_threads(          | | ...)` | Py_BEGIN_ALLOW_THREADS... Py_END_ALLOW_THREADS |
+| py: Python in #[pyfunction] | (Implicit context) | Access GIL in a callback from Python. | Zero-cost token provided by the runtime, ensuring the function body has proof of GIL acquisition. |
+
 <!-- markdownlint-enable MD033 MD056 -->
 
 ## Managing State Across Threads: Object Lifetimes and Safety
@@ -402,11 +402,12 @@ interior mutability and adopt explicit thread-safety patterns.
 
 <!-- markdownlint-disable MD033 MD056 -->
 
-| Type             | GIL-Bound? | Send? | Sync? | Primary Use Case                                                              |
+| Type | GIL-Bound? | Send? | Sync? | Primary Use Case |
 | ---------------- | ---------- | ----- | ----- | ----------------------------------------------------------------------------- |
-| Py<T> / PyObject | No         | Yes   | Yes   | Storage and Transport: Storing in structs, sending between threads.           |
-| Bound<'py, T>    | Yes ('py)  | No    | No    | Operation: Calling methods, accessing data. The "working" handle.             |
-| &Bound<'py, T>   | Yes ('py)  | Yes   | Yes   | Borrowing: Passing as a non-owning function argument within a GIL-held scope. |
+| Py<T> / PyObject | No | Yes | Yes | Storage and Transport: Storing in structs, sending between threads. |
+| Bound\<'py, T> | Yes ('py) | No | No | Operation: Calling methods, accessing data. The "working" handle. |
+| &Bound\<'py, T> | Yes ('py) | Yes | Yes | Borrowing: Passing as a non-owning function argument within a GIL-held scope. |
+
 <!-- markdownlint-enable MD033 MD056 -->
 
 ## Practical Multithreading Patterns and Best Practices
@@ -635,11 +636,12 @@ explicit, robust concurrency controls like mutexes for any
 
 <!-- markdownlint-disable MD033 MD056 -->
 
-| Strategy                     | Mechanism                                | Pros                                         | Cons                                                                  | Ideal Use Case                                                           |
+| Strategy | Mechanism | Pros | Cons | Ideal Use Case |
 | ---------------------------- | ---------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Default Interior Mutability  | Runtime borrow-checking (PyRef/PyRefMut) | Automatic for simple types.                  | Raises runtime errors/panics under contention.                        | Prototyping; low-contention scenarios; single-threaded applications.     |
-| Atomics + #[pyclass(frozen)] | std::sync::atomic types                  | Lock-free, high performance.                 | Limited to simple data types (integers, bools).                       | Simple counters, flags, or state fields in high-contention environments. |
-| Mutex/Locks                  | std::sync::Mutex wrapping data           | Supports complex, arbitrary data structures. | Can introduce blocking and potential deadlocks if not used carefully. | Complex, multi-field state that needs to be updated transactionally.     |
+| Default Interior Mutability | Runtime borrow-checking (PyRef/PyRefMut) | Automatic for simple types. | Raises runtime errors/panics under contention. | Prototyping; low-contention scenarios; single-threaded applications. |
+| Atomics + #[pyclass(frozen)] | std::sync::atomic types | Lock-free, high performance. | Limited to simple data types (integers, bools). | Simple counters, flags, or state fields in high-contention environments. |
+| Mutex/Locks | std::sync::Mutex wrapping data | Supports complex, arbitrary data structures. | Can introduce blocking and potential deadlocks if not used carefully. | Complex, multi-field state that needs to be updated transactionally. |
+
 <!-- markdownlint-enable MD033 MD056 -->
 
 ## Conclusion: A Summary of Rules for Robust Multithreaded Extensions
@@ -688,79 +690,80 @@ most critical rules for success can be summarized as follows:
   ensure it is correct and performant in future free-threaded versions of
   Python. Once verified, mark your module with `#[pymodule(gil_used = false)]`.
 
-- ## Works cited
+## Works cited
 
-  1. pyo3::marker - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/main/doc/pyo3/marker/>
+\[^1\]: pyo3::marker - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/main/doc/pyo3/marker/>
 
-  2. Supporting Free-Threaded Python - PyO3 user guide, accessed on July 14,
-     2025, <https://pyo3.rs/main/free-threading>
+\[^2\]: Supporting Free-Threaded Python - PyO3 user guide, accessed on July 14,
+2025, <https://pyo3.rs/main/free-threading>
 
-  3. pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
-     <https://docs.rs/pyo3/0.25.1/pyo3/>
+\[^3\]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
+<https://docs.rs/pyo3/0.25.1/pyo3/>
 
-  4. pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
-     <https://docs.rs/pyo3/latest/pyo3/>
+\[^4\]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
+<https://docs.rs/pyo3/latest/pyo3/>
 
-  5. How to implement multi-thread programs using Python C API? - Stack
-     Overflow, accessed on July 14, 2025,
-     <https://stackoverflow.com/questions/78180254/how-to-implement-multi-thread-programs-using-python-c-api>
+\[^5\]: How to implement multi-thread programs using Python C API? - Stack
+Overflow, accessed on July 14, 2025,
+<https://stackoverflow.com/questions/78180254/how-to-implement-multi-thread-programs-using-python-c-api>
 
-  6. Python in pyo3::marker - Rust - [Docs.rs](http://Docs.rs), accessed on July
-     14, 2025, <https://docs.rs/pyo3/latest/pyo3/marker/struct.Python.html>
+\[^6\]: Python in pyo3::marker - Rust - [Docs.rs](http://Docs.rs), accessed on
+July 14, 2025,
+<https://docs.rs/pyo3/latest/pyo3/marker/struct.Python.html>
 
-  7. Parallelism - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.25.1/parallelism.html>
+\[^7\]: Parallelism - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.25.1/parallelism.html>
 
-  8. Parallelism - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.2.7/parallelism>
+\[^8\]: Parallelism - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.2.7/parallelism>
 
-  9. Parallelism - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.11.0/parallelism>
+\[^9\]: Parallelism - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.11.0/parallelism>
 
-  10. FAQ and troubleshooting - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/latest/faq.html>
+\[^10\]: FAQ and troubleshooting - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/latest/faq.html>
 
-  11. GILOnceCell in pyo3::sync - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/main/doc/pyo3/sync/struct.giloncecell>
+\[^11\]: GILOnceCell in pyo3::sync - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/main/doc/pyo3/sync/struct.giloncecell>
 
-  12. Thread safety - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.25.1/class/thread-safety>
+\[^12\]: Thread safety - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.25.1/class/thread-safety>
 
-  13. Thread safety - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.24.0/class/thread-safety>
+\[^13\]: Thread safety - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.24.0/class/thread-safety>
 
-  14. Python object types - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.24.2/types.html>
+\[^14\]: Python object types - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.24.2/types.html>
 
-  15. PyObject in pyo3 - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/main/doc/pyo3/type.pyobject>
+\[^15\]: PyObject in pyo3 - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/main/doc/pyo3/type.pyobject>
 
-  16. GIL, mutability and object types - PyO3 user guide, accessed on July 14,
-     2025, <https://pyo3.rs/v0.20.1/types>
+\[^16\]: GIL, mutability and object types - PyO3 user guide, accessed on July 14,
+2025, <https://pyo3.rs/v0.20.1/types>
 
-  17. GIL, mutability and object types - PyO3 user guide, accessed on July 14,
-     2025, <https://pyo3.rs/v0.20.3/types>
+\[^17\]: GIL, mutability and object types - PyO3 user guide, accessed on July 14,
+2025, <https://pyo3.rs/v0.20.3/types>
 
-  18. Thread safety - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.23.3/class/thread-safety.html>
+\[^18\]: Thread safety - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.23.3/class/thread-safety.html>
 
-  19. Python classes - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.23.3/class>
+\[^19\]: Python classes - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.23.3/class>
 
-  20. Boost Python Performance with Cython, Numba, and PyO3 | by Configr
-     Technologies, accessed on July 14, 2025,
-     <https://configr.medium.com/boost-python-performance-with-cython-numba-and-pyo3-486d59d8c2c6>
+\[^20\]: Boost Python Performance with Cython, Numba, and PyO3 | by Configr
+Technologies, accessed on July 14, 2025,
+<https://configr.medium.com/boost-python-performance-with-cython-numba-and-pyo3-486d59d8c2c6>
 
-  21. Rust multi-thread and pyo3 real world problem. - Reddit, accessed on July
-     14, 2025,
-     <https://www.reddit.com/r/rust/comments/1jcsncv/rust_multithread_and_pyo3_real_world_problem/>
+\[^21\]: Rust multi-thread and pyo3 real world problem. - Reddit, accessed on July
+14, 2025,
+<https://www.reddit.com/r/rust/comments/1jcsncv/rust_multithread_and_pyo3_real_world_problem/>
 
-  22. Appendix A: Migration Guide - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.12.0/migration>
+\[^22\]: Appendix A: Migration Guide - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.12.0/migration>
 
-  23. Error handling – PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/main/function/error-handling.html>
+\[^23\]: Error handling – PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/main/function/error-handling.html>
 
-  24. PyErr in pyo3::err - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/internal/doc/pyo3/err/struct.pyerr>
+\[^24\]: PyErr in pyo3::err - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/internal/doc/pyo3/err/struct.pyerr>
