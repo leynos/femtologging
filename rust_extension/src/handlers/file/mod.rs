@@ -3,6 +3,14 @@
 //! `FemtoFileHandler` spawns a dedicated worker thread that writes formatted
 //! log records to disk. Configuration types and the worker implementation live
 //! in submodules and are re-exported here for external use.
+//!
+//! Construct the handler with [`new`] for defaults, [`with_capacity`] to tune
+//! the queue size, or [`with_capacity_flush_policy`] for full control. Python
+//! callers use ``FemtoFileHandler.with_capacity_flush_policy`` with a
+//! [`PyHandlerConfig`](PyHandlerConfig) to access the same options.
+//!
+//! The flush interval must be greater than zero. A value of 1 flushes on every
+//! record.
 
 mod config;
 mod worker;
@@ -66,65 +74,18 @@ impl FemtoFileHandler {
         Self::new(path).map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
     }
 
-    #[staticmethod]
-    #[pyo3(name = "with_capacity")]
-    fn py_with_capacity(path: String, capacity: usize) -> PyResult<Self> {
-        Self::build_py_handler(path, capacity, None, OverflowPolicy::Drop)
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "with_capacity_blocking")]
-    fn py_with_capacity_blocking(path: String, capacity: usize) -> PyResult<Self> {
-        Self::build_py_handler(path, capacity, None, OverflowPolicy::Block)
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "with_capacity_timeout")]
-    fn py_with_capacity_timeout(path: String, capacity: usize, timeout_ms: u64) -> PyResult<Self> {
-        Self::build_py_handler(
-            path,
-            capacity,
-            None,
-            OverflowPolicy::Timeout(Duration::from_millis(timeout_ms)),
-        )
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "with_capacity_flush")]
-    fn py_with_capacity_flush(
-        path: String,
-        capacity: usize,
-        flush_interval: usize,
-    ) -> PyResult<Self> {
-        Self::build_py_handler(path, capacity, Some(flush_interval), OverflowPolicy::Drop)
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "with_capacity_flush_blocking")]
-    fn py_with_capacity_flush_blocking(
-        path: String,
-        capacity: usize,
-        flush_interval: usize,
-    ) -> PyResult<Self> {
-        Self::build_py_handler(path, capacity, Some(flush_interval), OverflowPolicy::Block)
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "with_capacity_flush_timeout")]
-    fn py_with_capacity_flush_timeout(
-        path: String,
-        capacity: usize,
-        flush_interval: usize,
-        timeout_ms: u64,
-    ) -> PyResult<Self> {
-        Self::build_py_handler(
-            path,
-            capacity,
-            Some(flush_interval),
-            OverflowPolicy::Timeout(Duration::from_millis(timeout_ms)),
-        )
-    }
-
+    /// Construct a handler using a [`PyHandlerConfig`].
+    ///
+    /// ```python
+    /// from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
+    /// cfg = PyHandlerConfig(1024, 1, OverflowPolicy.DROP.value, None)
+    /// handler = FemtoFileHandler.with_capacity_flush_policy("app.log", cfg)
+    /// ```
+    ///
+    /// Notes:
+    /// - `flush_interval` must be > 0.
+    /// - For `OverflowPolicy.TIMEOUT`, `timeout_ms` must be provided and > 0;
+    ///   for other policies it must be `None`.
     #[staticmethod]
     #[pyo3(name = "with_capacity_flush_policy")]
     fn py_with_capacity_flush_policy(path: String, config: PyHandlerConfig) -> PyResult<Self> {
@@ -182,7 +143,17 @@ impl FemtoFileHandler {
     }
 
     fn handle_io_result(result: io::Result<Self>) -> PyResult<Self> {
-        result.map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+        match result {
+            Ok(handler) => Ok(handler),
+            Err(e) => {
+                use pyo3::exceptions::{PyIOError, PyValueError};
+                if e.kind() == io::ErrorKind::InvalidInput {
+                    Err(PyValueError::new_err(e.to_string()))
+                } else {
+                    Err(PyIOError::new_err(e.to_string()))
+                }
+            }
+        }
     }
 
     fn create_with_policy<P: AsRef<Path>>(
@@ -195,10 +166,14 @@ impl FemtoFileHandler {
         Self::with_capacity_flush_policy(path, DefaultFormatter, cfg)
     }
 
+    /// Create a handler writing to `path` with default settings.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
     }
 
+    /// Create a handler with a custom queue `capacity` and default drop policy.
+    ///
+    /// The handler flushes the file after every record (`flush_interval = 1`).
     pub fn with_capacity<P, F>(path: P, formatter: F, capacity: usize) -> io::Result<Self>
     where
         P: AsRef<Path>,
@@ -208,20 +183,10 @@ impl FemtoFileHandler {
         Self::with_capacity_flush_policy(path, formatter, cfg)
     }
 
-    pub fn with_capacity_flush_interval<P, F>(
-        path: P,
-        formatter: F,
-        capacity: usize,
-        flush_interval: usize,
-    ) -> io::Result<Self>
-    where
-        P: AsRef<Path>,
-        F: FemtoFormatter + Send + 'static,
-    {
-        let cfg = Self::build_config(capacity, Some(flush_interval), OverflowPolicy::Drop);
-        Self::with_capacity_flush_policy(path, formatter, cfg)
-    }
-
+    /// Create a handler using an explicit [`HandlerConfig`].
+    ///
+    /// This allows callers to override the queue capacity, flush interval (> 0)
+    /// and overflow policy in a single place.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -231,6 +196,12 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
+        if config.flush_interval == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "flush_interval must be greater than zero",
+            ));
+        }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
         Ok(Self::from_file(file, formatter, config))
     }

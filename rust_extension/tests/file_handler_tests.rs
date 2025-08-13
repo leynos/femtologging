@@ -4,13 +4,14 @@
 //! handling and concurrent usage from multiple threads.
 
 use std::fs;
+use std::io;
 use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, OverflowPolicy,
-    TestConfig,
+    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerConfig,
+    OverflowPolicy, TestConfig,
 };
 use tempfile::NamedTempFile;
 
@@ -29,13 +30,13 @@ where
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     {
-        let handler = FemtoFileHandler::with_capacity_flush_interval(
-            &path,
-            DefaultFormatter,
+        let cfg = HandlerConfig {
             capacity,
             flush_interval,
-        )
-        .expect("failed to create file handler");
+            overflow_policy: OverflowPolicy::Drop,
+        };
+        let handler = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg)
+            .expect("failed to create file handler");
         f(&handler);
     }
     fs::read_to_string(&path).expect("failed to read log output")
@@ -151,10 +152,19 @@ fn file_handler_custom_flush_interval() {
 
 #[test]
 fn file_handler_flush_interval_zero() {
-    let output = with_temp_file_handler_flush(8, 0, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
-    });
-    assert_eq!(output, "core [INFO] message\n");
+    let cfg = HandlerConfig {
+        capacity: 8,
+        flush_interval: 0,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+    let tmp = NamedTempFile::new().expect("failed to create temp file");
+    let result = FemtoFileHandler::with_capacity_flush_policy(tmp.path(), DefaultFormatter, cfg);
+    let err = match result {
+        Ok(_) => panic!("expected invalid flush_interval"),
+        Err(e) => e,
+    };
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(err.to_string(), "flush_interval must be greater than zero");
 }
 
 #[test]

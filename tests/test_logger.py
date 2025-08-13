@@ -1,9 +1,8 @@
-# pyright: reportMissingImports=false
 """Tests for :class:`FemtoLogger`."""
 
 from __future__ import annotations
 
-import pytest  # pyright: ignore[reportMissingImports]
+import pytest
 import collections.abc as cabc
 from pathlib import Path
 import typing

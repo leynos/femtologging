@@ -24,8 +24,8 @@
 - **Use consistent spelling and grammar.** Comments must use en-GB-oxendict
   ("-ize" / "-yse" / "-our") spelling and grammar, with the exception of
   references to external APIs.
-- **Illustrate with clear examples.** Function documentation must include clear
-  examples demonstrating the usage and outcome of the function. Test
+- **Illustrate with clear examples.** Function documentation must include
+  clear examples demonstrating the usage and outcome of the function. Test
   documentation should omit examples where the example serves only to reiterate
   the test logic.
 - **Keep file size manageable.** No single code file may be longer than 400
@@ -196,17 +196,17 @@ project:
 For Python development, refer to the detailed guidelines in the `.rules/`
 directory:
 
-- [Python Code Style Guidelines](.rules/python-00.mdc) - Core Python style
+- [Python Code Style Guidelines](.rules/python-00.mdc) — Core Python style
   conventions
-- [Python Context Managers](.rules/python-context-managers.mdc) - Best practices
-  for context managers
-- [Python Generators](.rules/python-generators.mdc) - Generator and iterator
+- [Python Context Managers](.rules/python-context-managers.mdc) — Best
+  practices for context managers
+- [Python Generators](.rules/python-generators.mdc) — Generator and iterator
   patterns
-- [Python Project Configuration](.rules/python-pyproject.mdc) - pyproject.toml
+- [Python Project Configuration](.rules/python-pyproject.mdc) — pyproject.toml
   and packaging
-- [Python Return Patterns](.rules/python-return.mdc) - Function return
+- [Python Return Patterns](.rules/python-return.mdc) — Function return
   conventions
-- [Python Typing](.rules/python-typing.mdc) - Type annotation best practices
+- [Python Typing](.rules/python-typing.mdc) — Type annotation best practices
 
 ## Markdown Guidance
 
