@@ -137,9 +137,19 @@ impl FormatterBuilder {
 
 // In femtologging::handlers::HandlerBuilderTrait (and specific builders)
 pub trait HandlerBuilderTrait: Send + Sync {
-    // Marker trait for handler builders
-    fn build_handler(&self, config_context: &ConfigContext) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError>;
+    type Handler: FemtoHandlerTrait;
+
+    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError>;
+
+    fn build(&self) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError> {
+        let handler = self.build_inner()?;
+        Ok(Box::new(handler))
+    }
 }
+
+// Builders capture any required context directly. The earlier
+// `build_handler(&ConfigContext)` design has been dropped; shared state is
+// injected through builder fields instead of a dedicated context object.
 
 // Example: In femtologging::handlers::FileHandlerBuilder
 pub struct FileHandlerBuilder {
@@ -150,7 +160,7 @@ pub struct FileHandlerBuilder {
     formatter_id: Option<String>,
     filters: Vec<String>,
     capacity: Option<usize>,
-    flush_interval: Option<usize>,
+    flush_record_interval: Option<usize>, // records
 }
 
 impl FileHandlerBuilder {
@@ -181,9 +191,10 @@ impl FileHandlerBuilder {
     /// Sets the internal channel capacity for the handler.
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
 
-    /// Sets how often the worker thread flushes the file. Must be greater
-    /// than zero so periodic flushing always occurs.
-    pub fn flush_interval(mut self, interval: usize) -> Self { /* ... */ }
+    /// Sets how often the worker thread flushes the file. Measured in
+    /// records and must be greater than zero so periodic flushing always
+    /// occurs.
+    pub fn flush_record_interval(mut self, interval: usize) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
@@ -196,6 +207,7 @@ pub struct StreamHandlerBuilder {
     formatter_id: Option<String>,
     filters: Vec<String>,
     capacity: Option<usize>,
+    flush_timeout_ms: Option<i64>, // milliseconds
 }
 
 impl StreamHandlerBuilder {
@@ -225,11 +237,20 @@ impl StreamHandlerBuilder {
 
     /// Sets the internal channel capacity for the handler.
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
+
+    /// Sets the flush timeout in milliseconds. Must be greater than zero.
+    pub fn with_flush_timeout_ms(mut self, timeout_ms: i64) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
 
 ```
+
+The file builder uses a `flush_record_interval` measured in records, while the
+stream builder's `flush_timeout_ms` is a duration in milliseconds. These
+semantics intentionally differ: file handlers flush after a set number of
+records, whereas stream handlers flush after a period of inactivity. Their
+dictionary representations mirror these names to avoid ambiguity.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
@@ -279,7 +300,7 @@ class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
     def mode(self, mode: str) -> "FileHandlerBuilder": ...
     def encoding(self, encoding: str) -> "FileHandlerBuilder": ...
-    def flush_interval(self, interval: int) -> "FileHandlerBuilder": ...
+    def flush_record_interval(self, interval: int) -> "FileHandlerBuilder": ...
 
 class StreamHandlerBuilder(HandlerBuilder):
     @classmethod
@@ -290,6 +311,16 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
+
+### 1.3. Implemented handler builders
+
+The initial implementation provides `FileHandlerBuilder` and
+`StreamHandlerBuilder` as thin wrappers over the existing handler types.
+`FileHandlerBuilder` supports capacity, flush interval, and overflow policy,
+while `StreamHandlerBuilder` configures the stream target and capacity. Both
+builders expose `build()` methods returning ready‑to‑use handlers. Advanced
+options such as file encoding or custom writers are deferred until the
+corresponding handler features are ported from picologging.
 
 ## 2. Backwards Compatibility APIs
 
@@ -500,6 +531,7 @@ switch their logging calls.
 ## 5. Implementation Notes
 
 The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
-and `FormatterBuilder` with fluent, chainable methods. Handler builders remain
-future work. `build_and_init` currently validates only the configuration
-version and does not yet wire the builders into the runtime.
+`FormatterBuilder`, `FileHandlerBuilder`, and `StreamHandlerBuilder` with
+fluent, chainable methods exposed to Python via `PyO3`. `build_and_init`
+currently validates only the configuration version and does not yet wire the
+builders into the runtime.

@@ -91,7 +91,7 @@ from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
 # Waiting ensures no log messages are lost if the queue becomes full.
 config = PyHandlerConfig(
     capacity=4096,
-    flush_interval=1,
+    flush_record_interval=1,
     policy=OverflowPolicy.BLOCK.value,
     timeout_ms=None,
 )
@@ -104,7 +104,7 @@ Legacy constructors like ``with_capacity_flush_blocking`` and
 
 `PyHandlerConfig` enforces several invariants:
 
-- ``capacity`` and ``flush_interval`` must be greater than zero.
+- ``capacity`` and ``flush_record_interval`` must be greater than zero.
 - ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout"``.
 - ``timeout_ms`` must be greater than zero and may only be set when ``policy``
   is ``"timeout"``.
@@ -117,7 +117,8 @@ formatter into the worker thread, and writes directly without locking. This
 mirrors the design in
 [`concurrency-models-in-high-performance- logging.md`][cmhp-log]. The default
 bounded queue size is 1024 records, but `FemtoStreamHandler::with_capacity`
-lets callers configure a custom capacity when needed.
+lets callers configure a custom capacity when needed. Flushing is driven by a
+timeout measured in milliseconds.
 
 Dropping a handler closes its channel and waits briefly for the worker thread
 to finish flushing. If the thread does not exit within the configured flush

@@ -1,0 +1,31 @@
+# serializer version: 1
+# name: test_build_file_handler_builder
+  dict({
+    'capacity': 10,
+    'flush_record_interval': 2,
+    'formatter_id': 'default',
+    'overflow_policy': 'drop',
+    'path': 'test.log',
+  })
+# ---
+# name: test_build_stream_handler_builder
+  dict({
+    'capacity': 8,
+    'formatter_id': 'default',
+    'target': 'stdout',
+  })
+# ---
+# name: test_build_stream_handler_builder_with_flush_timeout
+  dict({
+    'flush_timeout_ms': 250,
+    'formatter_id': 'default',
+    'target': 'stdout',
+  })
+# ---
+# name: test_file_handler_builder_with_timeout_overflow_policy
+  dict({
+    'overflow_policy': 'timeout',
+    'path': 'test.log',
+    'timeout_ms': 500,
+  })
+# ---

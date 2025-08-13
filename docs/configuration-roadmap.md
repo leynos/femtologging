@@ -11,9 +11,13 @@ expanded with specifics for the configuration design.
 
 - [x] **Implement** `femtologging::config::FormatterBuilder` **in Rust.**
 
-- [ ] **Implement** `femtologging::handlers::FileHandlerBuilder` **and**
+- [x] **Implement** `femtologging::handlers::FileHandlerBuilder` **and**
   `femtologging::handlers::StreamHandlerBuilder` **in Rust, implementing**
   `HandlerBuilderTrait`**.**
+  - `HandlerBuilderTrait` defines an associated `Handler` type and a
+    `build_inner`/`build` pattern. Builders capture any environmental context
+    via explicit fields; the previously proposed `ConfigContext` has been
+    dropped.
 
 - [ ] **Enable multiple handler IDs to be attached to a single logger in the
   builder API.**
@@ -27,11 +31,11 @@ expanded with specifics for the configuration design.
 - [x] **Expose a mirroring** `femtologging.ConfigBuilder` **in Python via**
   `PyO3` **bindings.**
 
-- [ ] **Expose mirroring Python builders via** `PyO3` **bindings.**
+- [x] **Expose mirroring Python builders via** `PyO3` **bindings.**
   - [x] `LoggerConfigBuilder`
   - [x] `FormatterBuilder`
-  - [ ] `FileHandlerBuilder`
-  - [ ] `StreamHandlerBuilder`
+  - [x] `FileHandlerBuilder`
+  - [x] `StreamHandlerBuilder`
 
 - [ ] Add compile‑time log level filtering via Cargo features.
 
