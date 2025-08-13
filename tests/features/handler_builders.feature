@@ -3,6 +3,7 @@ Feature: Handler builders
     Given a FileHandlerBuilder for path "test.log"
     When I set file capacity 10
     And I set flush record interval 2
+    And I set file formatter "default"
     Then the file handler builder matches snapshot
 
   Scenario: file handler builder with timeout overflow policy
@@ -23,6 +24,7 @@ Feature: Handler builders
   Scenario: build stream handler builder
     Given a StreamHandlerBuilder targeting stdout
     When I set stream capacity 8
+    And I set stream formatter "default"
     Then the stream handler builder matches snapshot
 
   Scenario: invalid stream handler capacity
@@ -38,4 +40,10 @@ Feature: Handler builders
   Scenario: build stream handler builder with flush timeout
     Given a StreamHandlerBuilder targeting stdout
     When I set stream flush timeout 250
+    And I set stream formatter "default"
     Then the stream handler builder matches snapshot
+
+  Scenario: invalid stream handler negative flush timeout
+    Given a StreamHandlerBuilder targeting stdout
+    When I set stream flush timeout -1
+    Then building the stream handler fails

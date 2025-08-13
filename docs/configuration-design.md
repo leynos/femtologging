@@ -160,7 +160,7 @@ pub struct FileHandlerBuilder {
     formatter_id: Option<String>,
     filters: Vec<String>,
     capacity: Option<usize>,
-    flush_record_interval: Option<usize>,
+    flush_record_interval: Option<usize>, // records
 }
 
 impl FileHandlerBuilder {
@@ -191,8 +191,9 @@ impl FileHandlerBuilder {
     /// Sets the internal channel capacity for the handler.
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
 
-    /// Sets how often the worker thread flushes the file. Must be greater
-    /// than zero so periodic flushing always occurs.
+    /// Sets how often the worker thread flushes the file. Measured in
+    /// records and must be greater than zero so periodic flushing always
+    /// occurs.
     pub fn flush_record_interval(mut self, interval: usize) -> Self { /* ... */ }
 }
 
@@ -206,6 +207,7 @@ pub struct StreamHandlerBuilder {
     formatter_id: Option<String>,
     filters: Vec<String>,
     capacity: Option<usize>,
+    flush_timeout_ms: Option<i64>, // milliseconds
 }
 
 impl StreamHandlerBuilder {
@@ -235,11 +237,18 @@ impl StreamHandlerBuilder {
 
     /// Sets the internal channel capacity for the handler.
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
+
+    /// Sets the flush timeout in milliseconds. Must be greater than zero.
+    pub fn with_flush_timeout_ms(mut self, timeout_ms: i64) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
 
 ```
+
+The file builder uses a `flush_record_interval` measured in records, whereas
+the stream builder's `flush_timeout_ms` is a duration in milliseconds. Their
+dictionary representations mirror these names to avoid ambiguity.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 

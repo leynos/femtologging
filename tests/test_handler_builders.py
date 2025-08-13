@@ -37,34 +37,52 @@ def given_stream_stderr() -> StreamHandlerBuilder:
 
 
 @when(parsers.parse("I set file capacity {capacity:d}"))
-def when_set_file_capacity(file_builder: FileHandlerBuilder, capacity: int) -> None:
-    file_builder.with_capacity(capacity)
+def when_set_file_capacity(
+    file_builder: FileHandlerBuilder, capacity: int
+) -> FileHandlerBuilder:
+    return file_builder.with_capacity(capacity)
 
 
 @when(parsers.parse("I set stream capacity {capacity:d}"))
 def when_set_stream_capacity(
     stream_builder: StreamHandlerBuilder, capacity: int
-) -> None:
-    stream_builder.with_capacity(capacity)
+) -> StreamHandlerBuilder:
+    return stream_builder.with_capacity(capacity)
 
 
 @when(parsers.parse("I set stream flush timeout {timeout:d}"))
 def when_set_stream_flush_timeout(
     stream_builder: StreamHandlerBuilder, timeout: int
-) -> None:
-    stream_builder.with_flush_timeout_ms(timeout)
+) -> StreamHandlerBuilder:
+    return stream_builder.with_flush_timeout_ms(timeout)
 
 
 @when(parsers.parse("I set flush record interval {interval:d}"))
 def when_set_flush_record_interval(
     file_builder: FileHandlerBuilder, interval: int
-) -> None:
-    file_builder.with_flush_record_interval(interval)
+) -> FileHandlerBuilder:
+    return file_builder.with_flush_record_interval(interval)
 
 
 @when("I set overflow policy to timeout with 500ms")
-def when_set_overflow_policy_timeout(file_builder: FileHandlerBuilder) -> None:
-    file_builder.with_overflow_policy("timeout", timeout_ms=500)
+def when_set_overflow_policy_timeout(
+    file_builder: FileHandlerBuilder,
+) -> FileHandlerBuilder:
+    return file_builder.with_overflow_policy("timeout", timeout_ms=500)
+
+
+@when(parsers.parse('I set file formatter "{formatter_id}"'))
+def when_set_file_formatter(
+    file_builder: FileHandlerBuilder, formatter_id: str
+) -> FileHandlerBuilder:
+    return file_builder.with_formatter(formatter_id)
+
+
+@when(parsers.parse('I set stream formatter "{formatter_id}"'))
+def when_set_stream_formatter(
+    stream_builder: StreamHandlerBuilder, formatter_id: str
+) -> StreamHandlerBuilder:
+    return stream_builder.with_formatter(formatter_id)
 
 
 @then("the file handler builder matches snapshot")

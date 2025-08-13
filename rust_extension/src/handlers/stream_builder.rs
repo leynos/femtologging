@@ -23,7 +23,7 @@ enum StreamTarget {
 pub struct StreamHandlerBuilder {
     target: StreamTarget,
     common: CommonBuilder,
-    flush_timeout_ms: Option<u64>,
+    flush_timeout_ms: Option<i64>,
 }
 
 impl StreamHandlerBuilder {
@@ -53,8 +53,14 @@ impl StreamHandlerBuilder {
     }
 
     /// Set the flush timeout in milliseconds.
-    pub fn with_flush_timeout_ms(mut self, timeout_ms: u64) -> Self {
+    pub fn with_flush_timeout_ms(mut self, timeout_ms: i64) -> Self {
         self.flush_timeout_ms = Some(timeout_ms);
+        self
+    }
+
+    /// Set the formatter identifier.
+    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
+        self.common.formatter_id = Some(formatter_id.into());
         self
     }
 
@@ -63,7 +69,12 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.flush_timeout_ms)
+        match self.flush_timeout_ms {
+            Some(ms) if ms <= 0 => Err(HandlerBuildError::InvalidConfig(
+                "flush_timeout_ms must be greater than zero".into(),
+            )),
+            _ => Ok(()),
+        }
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -102,9 +113,18 @@ impl StreamHandlerBuilder {
     #[pyo3(name = "with_flush_timeout_ms")]
     fn py_with_flush_timeout_ms<'py>(
         mut slf: PyRefMut<'py, Self>,
-        timeout_ms: u64,
+        timeout_ms: i64,
     ) -> PyRefMut<'py, Self> {
         slf.flush_timeout_ms = Some(timeout_ms);
+        slf
+    }
+
+    #[pyo3(name = "with_formatter")]
+    fn py_with_formatter<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        formatter_id: String,
+    ) -> PyRefMut<'py, Self> {
+        slf.common.formatter_id = Some(formatter_id);
         slf
     }
 
@@ -125,6 +145,9 @@ impl StreamHandlerBuilder {
         if let Some(ms) = self.flush_timeout_ms {
             d.set_item("flush_timeout_ms", ms)?;
         }
+        if let Some(fid) = &self.common.formatter_id {
+            d.set_item("formatter_id", fid)?;
+        }
         Ok(d.into())
     }
 
@@ -141,17 +164,25 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
-        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
+        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000) as u64);
+        let formatter = match self.common.formatter_id.as_deref() {
+            Some("default") | None => DefaultFormatter,
+            Some(other) => {
+                return Err(HandlerBuildError::InvalidConfig(format!(
+                    "unknown formatter id: {other}",
+                )))
+            }
+        };
         let handler = match self.target {
             StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
                 std::io::stdout(),
-                DefaultFormatter,
+                formatter,
                 capacity,
                 timeout,
             ),
             StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
                 std::io::stderr(),
-                DefaultFormatter,
+                formatter,
                 capacity,
                 timeout,
             ),

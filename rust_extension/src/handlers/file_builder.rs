@@ -46,6 +46,12 @@ impl FileHandlerBuilder {
         self
     }
 
+    /// Set the formatter identifier.
+    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
+        self.common.formatter_id = Some(formatter_id.into());
+        self
+    }
+
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.overflow_policy = policy;
@@ -103,6 +109,15 @@ impl FileHandlerBuilder {
         slf
     }
 
+    #[pyo3(name = "with_formatter")]
+    fn py_with_formatter<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        formatter_id: String,
+    ) -> PyRefMut<'py, Self> {
+        slf.common.formatter_id = Some(formatter_id);
+        slf
+    }
+
     #[pyo3(name = "with_overflow_policy")]
     fn py_with_overflow_policy<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -140,6 +155,9 @@ impl FileHandlerBuilder {
         if let Some(flush) = self.flush_record_interval {
             d.set_item("flush_record_interval", flush)?;
         }
+        if let Some(fid) = &self.common.formatter_id {
+            d.set_item("formatter_id", fid)?;
+        }
         let policy = match self.overflow_policy {
             OverflowPolicy::Drop => "drop",
             OverflowPolicy::Block => "block",
@@ -175,8 +193,16 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
             cfg.flush_interval = flush;
         }
         cfg.overflow_policy = self.overflow_policy;
-        let handler =
-            FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?;
+        let handler = match self.common.formatter_id.as_deref() {
+            Some("default") | None => {
+                FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?
+            }
+            Some(other) => {
+                return Err(HandlerBuildError::InvalidConfig(format!(
+                    "unknown formatter id: {other}",
+                )))
+            }
+        };
         Ok(handler)
     }
 }
