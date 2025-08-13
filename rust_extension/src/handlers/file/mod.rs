@@ -17,7 +17,7 @@ mod worker;
 
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     path::Path,
     thread::JoinHandle,
     time::Duration,
@@ -211,7 +211,12 @@ impl FemtoFileHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let worker_cfg = WorkerConfig::from(&config);
-        Self::build_from_worker(file, formatter, worker_cfg, config.overflow_policy)
+        // Use a buffered writer so flush policies control when records are
+        // persisted to disk. Without buffering each write reaches the OS
+        // immediately, causing premature flushes and defeating the configured
+        // `flush_interval`.
+        let writer = BufWriter::new(file);
+        Self::build_from_worker(writer, formatter, worker_cfg, config.overflow_policy)
     }
 
     pub fn flush(&self) -> bool {

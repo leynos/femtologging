@@ -171,7 +171,9 @@ maximize durability. To batch writes, pass a custom configuration via
 `flush_interval` in `HandlerConfig` or `PyHandlerConfig` defers flushing until
 the specified number of records have been written. The value must be greater
 than zero, so periodic flushing always occurs. Higher values reduce syscall
-overhead in high-volume scenarios.
+overhead in high-volume scenarios. Internally the handler buffers writes with
+`BufWriter`, so records only reach the file once a flush occurs or the handler
+shuts down.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit
