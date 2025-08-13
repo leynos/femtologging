@@ -9,9 +9,9 @@ use super::HandlerBuilderTrait;
 ///
 /// Reduces duplication by wrapping the common assertion that
 /// `build_inner` returns an error for invalid configurations.
-pub fn assert_build_err<B>(builder: B, msg: &str)
+pub fn assert_build_err<B>(builder: &B, msg: &str)
 where
-    B: HandlerBuilderTrait,
+    B: HandlerBuilderTrait + ?Sized,
 {
     assert!(builder.build_inner().is_err(), "{msg}");
 }

@@ -176,12 +176,12 @@ mod tests {
     #[rstest]
     fn reject_zero_capacity() {
         let builder = StreamHandlerBuilder::stderr().with_capacity(0);
-        assert_build_err(builder, "build_inner must fail for zero capacity");
+        assert_build_err(&builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
     fn reject_zero_flush_timeout() {
         let builder = StreamHandlerBuilder::stdout().with_flush_timeout_ms(0);
-        assert_build_err(builder, "build_inner must fail for zero flush timeout");
+        assert_build_err(&builder, "build_inner must fail for zero flush timeout");
     }
 }

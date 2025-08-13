@@ -5,9 +5,19 @@ Feature: Handler builders
     And I set flush interval 2
     Then the file handler builder matches snapshot
 
+  Scenario: file handler builder with timeout overflow policy
+    Given a FileHandlerBuilder for path "test.log"
+    When I set overflow policy to timeout with 500ms
+    Then the file handler builder with timeout overflow matches snapshot
+
   Scenario: invalid file handler capacity
     Given a FileHandlerBuilder for path "test.log"
     When I set file capacity 0
+    Then building the file handler fails
+
+  Scenario: invalid file handler flush interval
+    Given a FileHandlerBuilder for path "test.log"
+    When I set flush interval 0
     Then building the file handler fails
 
   Scenario: build stream handler builder

@@ -126,7 +126,10 @@ impl FileHandlerBuilder {
         let policy = match self.overflow_policy {
             OverflowPolicy::Drop => "drop",
             OverflowPolicy::Block => "block",
-            OverflowPolicy::Timeout(_) => "timeout",
+            OverflowPolicy::Timeout(dur) => {
+                d.set_item("timeout_ms", dur.as_millis() as u64)?;
+                "timeout"
+            }
         };
         d.set_item("overflow_policy", policy)?;
         Ok(d.into())
@@ -181,12 +184,12 @@ mod tests {
     #[rstest]
     fn reject_zero_capacity() {
         let builder = FileHandlerBuilder::new("log.txt").with_capacity(0);
-        assert_build_err(builder, "build_inner must fail for zero capacity");
+        assert_build_err(&builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
     fn reject_zero_flush_interval() {
         let builder = FileHandlerBuilder::new("log.txt").with_flush_interval(0);
-        assert_build_err(builder, "build_inner must fail for zero flush interval");
+        assert_build_err(&builder, "build_inner must fail for zero flush interval");
     }
 }
