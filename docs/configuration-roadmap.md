@@ -14,6 +14,10 @@ expanded with specifics for the configuration design.
 - [x] **Implement** `femtologging::handlers::FileHandlerBuilder` **and**
   `femtologging::handlers::StreamHandlerBuilder` **in Rust, implementing**
   `HandlerBuilderTrait`**.**
+  - `HandlerBuilderTrait` defines an associated `Handler` type and a
+    `build_inner`/`build` pattern. Builders capture any environmental context
+    via explicit fields; the previously proposed `ConfigContext` has been
+    dropped.
 
 - [ ] **Enable multiple handler IDs to be attached to a single logger in the
   builder API.**

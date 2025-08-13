@@ -147,6 +147,10 @@ pub trait HandlerBuilderTrait: Send + Sync {
     }
 }
 
+// Builders capture any required context directly. The earlier
+// `build_handler(&ConfigContext)` design has been dropped; shared state is
+// injected through builder fields instead of a dedicated context object.
+
 // Example: In femtologging::handlers::FileHandlerBuilder
 pub struct FileHandlerBuilder {
     path: String,
@@ -156,7 +160,7 @@ pub struct FileHandlerBuilder {
     formatter_id: Option<String>,
     filters: Vec<String>,
     capacity: Option<usize>,
-    flush_interval: Option<usize>,
+    flush_record_interval: Option<usize>,
 }
 
 impl FileHandlerBuilder {
@@ -189,7 +193,7 @@ impl FileHandlerBuilder {
 
     /// Sets how often the worker thread flushes the file. Must be greater
     /// than zero so periodic flushing always occurs.
-    pub fn flush_interval(mut self, interval: usize) -> Self { /* ... */ }
+    pub fn flush_record_interval(mut self, interval: usize) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
@@ -285,7 +289,7 @@ class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
     def mode(self, mode: str) -> "FileHandlerBuilder": ...
     def encoding(self, encoding: str) -> "FileHandlerBuilder": ...
-    def flush_interval(self, interval: int) -> "FileHandlerBuilder": ...
+    def flush_record_interval(self, interval: int) -> "FileHandlerBuilder": ...
 
 class StreamHandlerBuilder(HandlerBuilder):
     @classmethod

@@ -2,7 +2,7 @@
 # name: test_build_file_handler_builder
   dict({
     'capacity': 10,
-    'flush_interval': 2,
+    'flush_record_interval': 2,
     'overflow_policy': 'drop',
     'path': 'test.log',
   })

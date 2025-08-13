@@ -55,9 +55,11 @@ def when_set_stream_flush_timeout(
     stream_builder.with_flush_timeout_ms(timeout)
 
 
-@when(parsers.parse("I set flush interval {interval:d}"))
-def when_set_flush_interval(file_builder: FileHandlerBuilder, interval: int) -> None:
-    file_builder.with_flush_interval(interval)
+@when(parsers.parse("I set flush record interval {interval:d}"))
+def when_set_flush_record_interval(
+    file_builder: FileHandlerBuilder, interval: int
+) -> None:
+    file_builder.with_flush_record_interval(interval)
 
 
 @when("I set overflow policy to timeout with 500ms")

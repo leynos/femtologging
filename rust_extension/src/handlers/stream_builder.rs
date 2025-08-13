@@ -63,7 +63,7 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero_u64("flush_timeout_ms", self.flush_timeout_ms)
+        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.flush_timeout_ms)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -167,24 +167,30 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    fn build_stream_handler_stdout() {
-        let builder = StreamHandlerBuilder::stdout().with_capacity(8);
+    #[case(StreamHandlerBuilder::stdout())]
+    #[case(StreamHandlerBuilder::stderr())]
+    fn build_stream_handler_with_capacity(#[case] builder: StreamHandlerBuilder) {
+        let builder = builder.with_capacity(8);
         let mut handler = builder
             .build_inner()
-            .expect("build_inner must succeed for a valid stdout builder");
+            .expect("build_inner must succeed for a valid builder");
         handler.flush();
         handler.close();
     }
 
     #[rstest]
-    fn reject_zero_capacity() {
-        let builder = StreamHandlerBuilder::stderr().with_capacity(0);
+    #[case(StreamHandlerBuilder::stdout())]
+    #[case(StreamHandlerBuilder::stderr())]
+    fn reject_zero_capacity(#[case] builder: StreamHandlerBuilder) {
+        let builder = builder.with_capacity(0);
         assert_build_err(&builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
-    fn reject_zero_flush_timeout() {
-        let builder = StreamHandlerBuilder::stdout().with_flush_timeout_ms(0);
+    #[case(StreamHandlerBuilder::stdout())]
+    #[case(StreamHandlerBuilder::stderr())]
+    fn reject_zero_flush_timeout(#[case] builder: StreamHandlerBuilder) {
+        let builder = builder.with_flush_timeout_ms(0);
         assert_build_err(&builder, "build_inner must fail for zero flush timeout");
     }
 }

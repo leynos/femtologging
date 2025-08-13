@@ -2,7 +2,7 @@ Feature: Handler builders
   Scenario: build file handler builder
     Given a FileHandlerBuilder for path "test.log"
     When I set file capacity 10
-    And I set flush interval 2
+    And I set flush record interval 2
     Then the file handler builder matches snapshot
 
   Scenario: file handler builder with timeout overflow policy
@@ -15,9 +15,9 @@ Feature: Handler builders
     When I set file capacity 0
     Then building the file handler fails
 
-  Scenario: invalid file handler flush interval
+  Scenario: invalid file handler flush record interval
     Given a FileHandlerBuilder for path "test.log"
-    When I set flush interval 0
+    When I set flush record interval 0
     Then building the file handler fails
 
   Scenario: build stream handler builder

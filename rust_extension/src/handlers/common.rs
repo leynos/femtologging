@@ -23,13 +23,6 @@ impl CommonBuilder {
         }
     }
 
-    pub(crate) fn ensure_non_zero_u64(
-        field: &str,
-        value: Option<u64>,
-    ) -> Result<(), super::HandlerBuildError> {
-        Self::ensure_non_zero(field, value)
-    }
-
     pub(crate) fn is_capacity_valid(&self) -> Result<(), super::HandlerBuildError> {
         if self.capacity.is_none() && self.capacity_set {
             Err(super::HandlerBuildError::InvalidConfig(

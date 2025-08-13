@@ -18,7 +18,7 @@ use crate::formatter::DefaultFormatter;
 pub struct FileHandlerBuilder {
     path: String,
     common: CommonBuilder,
-    flush_interval: Option<usize>,
+    flush_record_interval: Option<usize>,
     overflow_policy: OverflowPolicy,
 }
 
@@ -28,7 +28,7 @@ impl FileHandlerBuilder {
         Self {
             path: path.into(),
             common: CommonBuilder::default(),
-            flush_interval: None,
+            flush_record_interval: None,
             overflow_policy: OverflowPolicy::Drop,
         }
     }
@@ -40,9 +40,9 @@ impl FileHandlerBuilder {
         self
     }
 
-    /// Set the periodic flush interval.
-    pub fn with_flush_interval(mut self, interval: usize) -> Self {
-        self.flush_interval = Some(interval);
+    /// Set the periodic flush interval measured in records.
+    pub fn with_flush_record_interval(mut self, interval: usize) -> Self {
+        self.flush_record_interval = Some(interval);
         self
     }
 
@@ -56,13 +56,26 @@ impl FileHandlerBuilder {
         self.common.is_capacity_valid()
     }
 
-    fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero_u64("flush_interval", self.flush_interval.map(|v| v as u64))
+    fn is_flush_record_interval_valid(&self) -> Result<(), HandlerBuildError> {
+        CommonBuilder::ensure_non_zero(
+            "flush_record_interval",
+            self.flush_record_interval.map(|v| v as u64),
+        )
+    }
+
+    fn is_overflow_policy_valid(&self) -> Result<(), HandlerBuildError> {
+        match self.overflow_policy {
+            OverflowPolicy::Timeout(dur) if dur.is_zero() => Err(HandlerBuildError::InvalidConfig(
+                "timeout_ms must be greater than zero".into(),
+            )),
+            _ => Ok(()),
+        }
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
-        self.is_flush_interval_valid()?;
+        self.is_flush_record_interval_valid()?;
+        self.is_overflow_policy_valid()?;
         Ok(())
     }
 }
@@ -81,12 +94,12 @@ impl FileHandlerBuilder {
         slf
     }
 
-    #[pyo3(name = "with_flush_interval")]
-    fn py_with_flush_interval<'py>(
+    #[pyo3(name = "with_flush_record_interval")]
+    fn py_with_flush_record_interval<'py>(
         mut slf: PyRefMut<'py, Self>,
         interval: usize,
     ) -> PyRefMut<'py, Self> {
-        slf.flush_interval = Some(interval);
+        slf.flush_record_interval = Some(interval);
         slf
     }
 
@@ -96,22 +109,22 @@ impl FileHandlerBuilder {
         policy: &str,
         timeout_ms: Option<u64>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        slf.overflow_policy = match policy.to_ascii_lowercase().as_str() {
-            "drop" => OverflowPolicy::Drop,
-            "block" => OverflowPolicy::Block,
-            "timeout" => {
-                let ms = timeout_ms.ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "timeout_ms required for timeout policy",
-                    )
-                })?;
-                OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
-            }
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "invalid overflow policy: {other}",
-                )));
-            }
+        slf.overflow_policy = if policy.eq_ignore_ascii_case("drop") {
+            OverflowPolicy::Drop
+        } else if policy.eq_ignore_ascii_case("block") {
+            OverflowPolicy::Block
+        } else if policy.eq_ignore_ascii_case("timeout") {
+            let ms = timeout_ms.ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "timeout_ms required for timeout policy",
+                )
+            })?;
+            CommonBuilder::ensure_non_zero("timeout_ms", Some(ms)).map_err(PyErr::from)?;
+            OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "invalid overflow policy: {policy}",
+            )));
         };
         Ok(slf)
     }
@@ -124,8 +137,8 @@ impl FileHandlerBuilder {
         if let Some(cap) = self.common.capacity {
             d.set_item("capacity", cap.get())?;
         }
-        if let Some(flush) = self.flush_interval {
-            d.set_item("flush_interval", flush)?;
+        if let Some(flush) = self.flush_record_interval {
+            d.set_item("flush_record_interval", flush)?;
         }
         let policy = match self.overflow_policy {
             OverflowPolicy::Drop => "drop",
@@ -158,7 +171,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
         if let Some(cap) = self.common.capacity {
             cfg.capacity = cap.get();
         }
-        if let Some(flush) = self.flush_interval {
+        if let Some(flush) = self.flush_record_interval {
             cfg.flush_interval = flush;
         }
         cfg.overflow_policy = self.overflow_policy;
@@ -181,7 +194,7 @@ mod tests {
         let path = dir.path().join("test.log");
         let builder = FileHandlerBuilder::new(path.to_string_lossy())
             .with_capacity(16)
-            .with_flush_interval(1);
+            .with_flush_record_interval(1);
         let handler = builder
             .build_inner()
             .expect("build_inner must succeed for a valid file builder");
@@ -195,8 +208,18 @@ mod tests {
     }
 
     #[rstest]
-    fn reject_zero_flush_interval() {
-        let builder = FileHandlerBuilder::new("log.txt").with_flush_interval(0);
-        assert_build_err(&builder, "build_inner must fail for zero flush interval");
+    fn reject_zero_flush_record_interval() {
+        let builder = FileHandlerBuilder::new("log.txt").with_flush_record_interval(0);
+        assert_build_err(
+            &builder,
+            "build_inner must fail for zero flush record interval",
+        );
+    }
+
+    #[rstest]
+    fn reject_zero_overflow_timeout() {
+        let builder = FileHandlerBuilder::new("log.txt")
+            .with_overflow_policy(OverflowPolicy::Timeout(std::time::Duration::from_millis(0)));
+        assert_build_err(&builder, "build_inner must fail for zero timeout_ms");
     }
 }
