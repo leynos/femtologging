@@ -198,3 +198,63 @@ fn femto_file_handler_worker_thread_failure() {
     assert!(start.elapsed() < Duration::from_millis(1500));
     barrier.wait();
 }
+
+#[test]
+fn femto_file_handler_flush_and_close_idempotency() {
+    struct TestWriter {
+        flushed: Arc<Mutex<u32>>,
+        closed: Arc<Mutex<u32>>,
+    }
+
+    impl Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            let mut count = self.flushed.lock().expect("lock");
+            *count += 1;
+            Ok(())
+        }
+    }
+
+    impl Drop for TestWriter {
+        fn drop(&mut self) {
+            let mut count = self.closed.lock().expect("lock");
+            *count += 1;
+        }
+    }
+
+    let flushed = Arc::new(Mutex::new(0));
+    let closed = Arc::new(Mutex::new(0));
+    let writer = TestWriter {
+        flushed: Arc::clone(&flushed),
+        closed: Arc::clone(&closed),
+    };
+
+    let worker_cfg = WorkerConfig {
+        capacity: 10,
+        flush_interval: 1,
+        start_barrier: None,
+    };
+    let mut handler = FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        worker_cfg,
+        OverflowPolicy::Block,
+    );
+
+    assert!(handler.flush());
+    assert_eq!(*flushed.lock().expect("lock"), 1);
+
+    assert!(handler.flush());
+    assert_eq!(*flushed.lock().expect("lock"), 2);
+
+    handler.close();
+    assert_eq!(*closed.lock().expect("lock"), 1);
+
+    handler.close();
+    assert_eq!(*closed.lock().expect("lock"), 1);
+
+    assert!(!handler.flush());
+}
