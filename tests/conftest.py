@@ -3,19 +3,15 @@ from __future__ import annotations
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
-import sys
-
-# Add project root to sys.path so femtologging can be imported without hacks.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
 import pytest  # pyright: ignore[reportMissingImports]
 
+HandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
+
 
 @pytest.fixture()
-def file_handler_factory() -> Callable[
-    [Path, int, int], ContextManager[FemtoFileHandler]
-]:
+def file_handler_factory() -> HandlerFactory:
     """Return a context manager creating a ``FemtoFileHandler``.
 
     The factory yields a handler that flushes every ``flush_interval`` records.

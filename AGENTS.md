@@ -24,15 +24,14 @@
 - **Use consistent spelling and grammar.** Comments must use en-GB-oxendict
   ("-ize" / "-yse" / "-our") spelling and grammar, with the exception of
   references to external APIs.
-- **Illustrate with clear examples.** Function documentation must include clear
-  examples demonstrating the usage and outcome of the function. Test
+- **Illustrate with clear examples.** Function documentation must include
+  clear examples demonstrating the usage and outcome of the function. Test
   documentation should omit examples where the example serves only to reiterate
   the test logic.
-- **Keep file size managable.** No single code file may be longer than 400
-  lines.
-  Long switch statements or dispatch tables should be broken up by feature and
-  constituents colocated with targets. Large blocks of test data should be
-  moved to external data files.
+- **Keep file size manageable.** No single code file may be longer than 400
+  lines. Long switch statements or dispatch tables should be broken up by
+  feature and constituents colocated with targets. Large blocks of test data
+  should be moved to external data files.
 
 ## Documentation Maintenance
 
@@ -158,7 +157,7 @@ project:
   changes from new major versions. This approach is critical for ensuring build
   stability and reproducibility.
 - **Prohibit unstable version specifiers.** The use of wildcard (`*`) or
-  open-ended inequality (`>=`) version requirements is strictly forbidden as
+  open-ended inequality (`>=`) version requirements is strictly forbidden, as
   they introduce unacceptable risk and unpredictability. Tilde requirements
   (`~`) should only be used where a dependency must be locked to patch-level
   updates for a specific, documented reason.
@@ -186,13 +185,11 @@ project:
   `pyerr.set_cause(py, Some(inner_pyerr))` to attach a cause to a raised
   exception. This enables chained tracebacks in Python.
 - **Use structured Python exceptions only when required.** If additional data
-  must
-  be exposed in exceptions, define `#[pyclass(extends=PyException)]` types and
-  expose relevant fields using `#[pyo3(get)]`. Avoid unnecessary complexity.
+  must be exposed in exceptions, define `#[pyclass(extends=PyException)]` types
+  and expose relevant fields using `#[pyo3(get)]`. Avoid unnecessary complexity.
 - **Prevent panics across the FFI boundary.** Ensure Rust panics do not cross
-  into
-  Python. Handle all expected failures using error returns. Treat any panic as
-  a logic bug to be resolved internally.
+  into Python. Handle all expected failures using error returns. Treat any
+  panic as a logic bug to be resolved internally.
 
 ## Python Development Guidelines
 
