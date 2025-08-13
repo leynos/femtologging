@@ -45,5 +45,4 @@ Feature: Handler builders
 
   Scenario: invalid stream handler negative flush timeout
     Given a StreamHandlerBuilder targeting stdout
-    When I set stream flush timeout -1
-    Then building the stream handler fails
+    Then setting stream flush timeout -1 fails

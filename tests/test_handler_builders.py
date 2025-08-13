@@ -131,6 +131,14 @@ def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
         stream_builder.build()
 
 
+@then(parsers.parse("setting stream flush timeout {timeout:d} fails"))
+def then_setting_stream_flush_timeout_fails(
+    stream_builder: StreamHandlerBuilder, timeout: int
+) -> None:
+    with pytest.raises(OverflowError):
+        stream_builder.with_flush_timeout_ms(timeout)
+
+
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )

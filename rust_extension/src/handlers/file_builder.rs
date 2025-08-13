@@ -96,7 +96,6 @@ impl FileHandlerBuilder {
     fn py_new(path: String) -> Self {
         Self::new(path)
     }
-
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
         slf.common.capacity = NonZeroUsize::new(capacity);

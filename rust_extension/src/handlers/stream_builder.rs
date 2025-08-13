@@ -25,7 +25,7 @@ pub struct StreamHandlerBuilder {
     target: StreamTarget,
     common: CommonBuilder,
     formatter_id: Option<String>,
-    flush_timeout_ms: Option<i64>,
+    flush_timeout_ms: Option<u64>,
 }
 
 impl StreamHandlerBuilder {
@@ -57,7 +57,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Set the flush timeout in milliseconds. Must be greater than zero.
-    pub fn with_flush_timeout_ms(mut self, timeout_ms: i64) -> Self {
+    pub fn with_flush_timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.flush_timeout_ms = Some(timeout_ms);
         self
     }
@@ -73,12 +73,7 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        match self.flush_timeout_ms {
-            Some(ms) if ms <= 0 => Err(HandlerBuildError::InvalidConfig(
-                "flush_timeout_ms must be greater than zero".into(),
-            )),
-            _ => Ok(()),
-        }
+        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.flush_timeout_ms)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -120,7 +115,7 @@ impl StreamHandlerBuilder {
     #[pyo3(name = "with_flush_timeout_ms")]
     fn py_with_flush_timeout_ms<'py>(
         mut slf: PyRefMut<'py, Self>,
-        timeout_ms: i64,
+        timeout_ms: u64,
     ) -> PyRefMut<'py, Self> {
         slf.flush_timeout_ms = Some(timeout_ms);
         slf
@@ -171,7 +166,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
-        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000) as u64);
+        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
         let formatter = match self.formatter_id.as_deref() {
             Some("default") | None => DefaultFormatter,
             Some(other) => {
@@ -230,5 +225,13 @@ mod tests {
     fn reject_zero_flush_timeout(#[case] builder: StreamHandlerBuilder) {
         let builder = builder.with_flush_timeout_ms(0);
         assert_build_err(&builder, "build_inner must fail for zero flush timeout");
+    }
+
+    #[rstest]
+    #[case(StreamHandlerBuilder::stdout())]
+    #[case(StreamHandlerBuilder::stderr())]
+    fn reject_unknown_formatter(#[case] builder: StreamHandlerBuilder) {
+        let builder = builder.with_formatter("does-not-exist");
+        assert_build_err(&builder, "build_inner must fail for unknown formatter");
     }
 }
