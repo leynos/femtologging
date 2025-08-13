@@ -9,7 +9,7 @@ import typing
 from contextlib import closing
 
 from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
-import pytest  # pyright: ignore[reportMissingImports]  # FIXME: Add pytest types in dev env and remove this suppression
+import pytest
 
 FileHandlerFactory = cabc.Callable[
     [Path, int, int], typing.ContextManager[FemtoFileHandler]

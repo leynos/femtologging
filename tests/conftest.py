@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
 from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
-import pytest  # pyright: ignore[reportMissingImports]  # FIXME: Add pytest types in dev env and remove this suppression
+import pytest
 
-HandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
+FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
 
 
 @pytest.fixture()
-def file_handler_factory() -> HandlerFactory:
+def file_handler_factory() -> FileHandlerFactory:
     """Return a context manager creating a ``FemtoFileHandler``.
 
     The factory yields a handler that flushes every ``flush_interval`` records.
