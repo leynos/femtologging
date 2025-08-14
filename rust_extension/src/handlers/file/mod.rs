@@ -65,6 +65,69 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
+fn parse_overflow_policy(policy: &str, timeout_ms: Option<i64>) -> PyResult<OverflowPolicy> {
+    use pyo3::exceptions::PyValueError;
+    let policy = policy.trim().to_ascii_lowercase();
+    match policy.as_str() {
+        "drop" => {
+            if timeout_ms.is_some() {
+                Err(PyValueError::new_err(
+                    "timeout_ms only valid for timeout policy",
+                ))
+            } else {
+                Ok(OverflowPolicy::Drop)
+            }
+        }
+        "block" => {
+            if timeout_ms.is_some() {
+                Err(PyValueError::new_err(
+                    "timeout_ms only valid for timeout policy",
+                ))
+            } else {
+                Ok(OverflowPolicy::Block)
+            }
+        }
+        "timeout" => {
+            let ms = timeout_ms
+                .ok_or_else(|| PyValueError::new_err("timeout_ms required for timeout policy"))?;
+            if ms <= 0 {
+                return Err(PyValueError::new_err(
+                    "timeout_ms must be greater than zero",
+                ));
+            }
+            Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)))
+        }
+        other => {
+            let valid = ["drop", "block", "timeout"].join(", ");
+            Err(PyValueError::new_err(format!(
+                "invalid overflow policy '{other}'. Valid options are: {valid}"
+            )))
+        }
+    }
+}
+
+fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
+    use pyo3::exceptions::PyValueError;
+    if capacity == 0 {
+        return Err(PyValueError::new_err("capacity must be greater than zero"));
+    }
+    if flush_interval <= 0 {
+        return Err(PyValueError::new_err(
+            "flush_interval must be greater than zero",
+        ));
+    }
+    Ok(flush_interval as usize)
+}
+
+fn open_log_file(path: &str) -> PyResult<File> {
+    use pyo3::exceptions::PyIOError;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| PyIOError::new_err(e.to_string()))
+}
+
 #[pymethods]
 impl FemtoFileHandler {
     #[new]
@@ -82,51 +145,14 @@ impl FemtoFileHandler {
         timeout_ms: Option<i64>,
         policy: &str,
     ) -> PyResult<Self> {
-        use pyo3::exceptions::{PyIOError, PyValueError};
-
-        if capacity == 0 {
-            return Err(PyValueError::new_err("capacity must be greater than zero"));
-        }
-        if flush_interval <= 0 {
-            return Err(PyValueError::new_err(
-                "flush_interval must be greater than zero",
-            ));
-        }
-
-        let policy = policy.trim().to_ascii_lowercase();
-        let overflow_policy = match policy.as_str() {
-            "drop" => OverflowPolicy::Drop,
-            "block" => OverflowPolicy::Block,
-            "timeout" => {
-                let ms = timeout_ms.ok_or_else(|| {
-                    PyValueError::new_err("timeout_ms required for timeout policy")
-                })?;
-                if ms <= 0 {
-                    return Err(PyValueError::new_err(
-                        "timeout_ms must be greater than zero",
-                    ));
-                }
-                OverflowPolicy::Timeout(Duration::from_millis(ms as u64))
-            }
-            other => {
-                let valid = ["drop", "block", "timeout"].join(", ");
-                return Err(PyValueError::new_err(format!(
-                    "invalid overflow policy '{other}'. Valid options are: {valid}"
-                )));
-            }
-        };
-
+        let overflow_policy = parse_overflow_policy(policy, timeout_ms)?;
+        let flush_interval = validate_params(capacity, flush_interval)?;
         let cfg = HandlerConfig {
             capacity,
-            flush_interval: flush_interval as usize,
+            flush_interval,
             overflow_policy,
         };
-
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        let file = open_log_file(&path)?;
         Ok(FemtoFileHandler::from_file(file, DefaultFormatter, cfg))
     }
 

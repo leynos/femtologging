@@ -201,6 +201,24 @@ def test_overflow_policy_drop(tmp_path: Path) -> None:
     assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
 
 
+def test_overflow_policy_drop_flush_interval_gt_one(tmp_path: Path) -> None:
+    """Drop policy with buffered writes still discards excess records."""
+    path = tmp_path / "drop_flush_gt_one.log"
+    with closing(
+        FemtoFileHandler(
+            str(path),
+            capacity=2,
+            flush_interval=5,
+            policy="drop",
+        )
+    ) as handler:
+        handler.handle("core", "INFO", "first")
+        handler.handle("core", "INFO", "second")
+        handler.handle("core", "INFO", "third")
+        handler.handle("core", "INFO", "fourth")
+    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
+
+
 def test_overflow_policy_invalid(tmp_path: Path) -> None:
     """Invalid policy strings raise ``ValueError``."""
     path = tmp_path / "invalid.log"
@@ -228,7 +246,7 @@ def test_flush_interval_validation(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="flush_interval must be greater than zero"):
         FemtoFileHandler(str(path), flush_interval=0)
     with pytest.raises(ValueError, match="flush_interval must be greater than zero"):
-        FemtoFileHandler(str(path), flush_interval=-1)  # type: ignore[arg-type]
+        FemtoFileHandler(str(path), flush_interval=-1)
 
 
 def test_timeout_ms_validation(tmp_path: Path) -> None:
