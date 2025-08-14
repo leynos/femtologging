@@ -251,6 +251,7 @@ fn femto_file_handler_flush_and_close_idempotency() {
 
     handler.close();
     assert_eq!(closed.load(Ordering::Relaxed), 1);
+    // Expect two manual flushes plus one triggered during shutdown
     assert_eq!(flushed.load(Ordering::Relaxed), 3);
 
     handler.close();
