@@ -231,9 +231,10 @@ fn femto_file_handler_flush_and_close_idempotency() {
         closed: Arc::clone(&closed),
     };
 
+    // Disable periodic flushing to ensure deterministic counter checks.
     let worker_cfg = WorkerConfig {
         capacity: 10,
-        flush_interval: 1,
+        flush_interval: 0,
         start_barrier: None,
     };
     let mut handler = FemtoFileHandler::build_from_worker(
