@@ -213,14 +213,14 @@ fn femto_file_handler_flush_and_close_idempotency() {
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            self.flushed.fetch_add(1, Ordering::SeqCst);
+            self.flushed.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
     }
 
     impl Drop for TestWriter {
         fn drop(&mut self) {
-            self.closed.fetch_add(1, Ordering::SeqCst);
+            self.closed.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -244,21 +244,21 @@ fn femto_file_handler_flush_and_close_idempotency() {
     );
 
     assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::SeqCst), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 1);
 
     assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::SeqCst), 2);
+    assert_eq!(flushed.load(Ordering::Relaxed), 2);
 
     handler.close();
-    assert_eq!(closed.load(Ordering::SeqCst), 1);
-    assert_eq!(flushed.load(Ordering::SeqCst), 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
 
     handler.close();
-    assert_eq!(closed.load(Ordering::SeqCst), 1);
-    assert_eq!(flushed.load(Ordering::SeqCst), 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
 
     assert!(!handler.flush());
     // Ensure counters remain unchanged after the no-op flush
-    assert_eq!(flushed.load(Ordering::SeqCst), 3);
-    assert_eq!(closed.load(Ordering::SeqCst), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
 }
