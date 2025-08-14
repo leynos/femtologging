@@ -6,6 +6,7 @@
 use super::*;
 use serial_test::serial;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -197,4 +198,73 @@ fn femto_file_handler_worker_thread_failure() {
     drop(handler);
     assert!(start.elapsed() < Duration::from_millis(1500));
     barrier.wait();
+}
+
+#[test]
+fn femto_file_handler_flush_and_close_idempotency() {
+    struct TestWriter {
+        flushed: Arc<AtomicU32>,
+        closed: Arc<AtomicU32>,
+    }
+
+    impl Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushed.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    impl Drop for TestWriter {
+        fn drop(&mut self) {
+            self.closed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    let flushed = Arc::new(AtomicU32::new(0));
+    let closed = Arc::new(AtomicU32::new(0));
+    let writer = TestWriter {
+        flushed: Arc::clone(&flushed),
+        closed: Arc::clone(&closed),
+    };
+
+    // Disable periodic flushing to ensure deterministic counter checks.
+    let worker_cfg = WorkerConfig {
+        capacity: 10,
+        flush_interval: 0,
+        start_barrier: None,
+    };
+    let mut handler = FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        worker_cfg,
+        OverflowPolicy::Block,
+    );
+
+    assert!(handler.flush());
+    assert_eq!(flushed.load(Ordering::Relaxed), 1);
+
+    assert!(handler.flush());
+    assert_eq!(flushed.load(Ordering::Relaxed), 2);
+
+    handler.close();
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    // Expect two manual flushes plus one triggered during shutdown
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+
+    handler.close();
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+
+    assert!(!handler.flush());
+    // Ensure counters remain unchanged after the no-op flush
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+
+    drop(handler);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
 }
