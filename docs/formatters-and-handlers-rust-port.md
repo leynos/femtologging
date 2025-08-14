@@ -178,7 +178,7 @@ shuts down.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit
-tests may use this barrier to synchronize multiple workers and avoid race
+tests may use this barrier to synchronize multiple workers, avoiding race
 conditions. Should a future feature require coordinated startup (for example,
 rotating several files at once), the `WorkerConfig` creation logic will need to
 expose this.
