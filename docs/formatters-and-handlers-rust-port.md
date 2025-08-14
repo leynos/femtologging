@@ -115,7 +115,7 @@ Legacy constructors like ``with_capacity_flush_blocking`` and
 consumer thread receives `FemtoLogRecord` values, moves the writer and
 formatter into the worker thread, and writes directly without locking. This
 mirrors the design in
-[`concurrency-models-in-high-performance- logging.md`][cmhp-log]. The default
+[`concurrency-models-in-high-performance-logging.md`][cmhp-log]. The default
 bounded queue size is 1024 records, but `FemtoStreamHandler::with_capacity`
 lets callers configure a custom capacity when needed. Flushing is driven by a
 timeout measured in milliseconds.
@@ -178,7 +178,7 @@ shuts down.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit
-tests may use this barrier to synchronise multiple workers and avoid race
+tests may use this barrier to synchronize multiple workers and avoid race
 conditions. Should a future feature require coordinated startup (for example,
 rotating several files at once), the `WorkerConfig` creation logic will need to
 expose this.

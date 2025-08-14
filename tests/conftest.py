@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import closing, contextmanager
+import gc
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
@@ -29,9 +30,13 @@ def file_handler_factory() -> FileHandlerFactory:
             OverflowPolicy.DROP.value,
             timeout_ms=None,
         )
-        with closing(
-            FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
-        ) as handler:
+        handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+        try:
             yield handler
+        finally:
+            if hasattr(handler, "close"):
+                handler.close()
+            del handler
+            gc.collect()
 
     return factory

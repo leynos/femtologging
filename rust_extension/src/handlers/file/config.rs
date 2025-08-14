@@ -15,6 +15,7 @@ use pyo3::prelude::*;
 
 /// Default bounded channel capacity for `FemtoFileHandler`.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+const VALID_POLICIES: [&str; 3] = ["drop", "block", "timeout"];
 
 /// Determines how `FemtoFileHandler` reacts when its queue is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,11 +115,11 @@ impl PyHandlerConfig {
     fn validate_policy(policy: &str, timeout_ms: Option<u64>) -> PyResult<()> {
         // Trim and ignore case so callers may pass mixed-case policies.
         let candidate = policy.trim();
-        if !["drop", "block", "timeout"]
+        if !VALID_POLICIES
             .iter()
             .any(|valid| valid.eq_ignore_ascii_case(candidate))
         {
-            let valid = ["drop", "block", "timeout"].join(", ");
+            let valid = VALID_POLICIES.join(", ");
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "invalid overflow policy: '{candidate}'. Valid options are: {valid}"
             )));
@@ -165,6 +166,10 @@ impl PyHandlerConfig {
         if self.policy != "timeout" && value.is_some() {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms can only be set when policy is 'timeout'",
+            ))
+        } else if matches!(value, Some(ms) if ms == 0) {
+            Err(pyo3::exceptions::PyValueError::new_err(
+                "timeout_ms must be greater than zero",
             ))
         } else {
             self.timeout_ms = value;
