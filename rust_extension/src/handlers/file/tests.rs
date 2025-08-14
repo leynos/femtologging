@@ -262,4 +262,8 @@ fn femto_file_handler_flush_and_close_idempotency() {
     // Ensure counters remain unchanged after the no-op flush
     assert_eq!(flushed.load(Ordering::Relaxed), 3);
     assert_eq!(closed.load(Ordering::Relaxed), 1);
+
+    drop(handler);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
 }
