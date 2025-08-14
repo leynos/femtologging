@@ -39,7 +39,7 @@ transforming potential runtime crashes into compile-time errors.
 
 ### The `Python<'py>` Token: A Compile-Time Proof of GIL Acquisition
 
-The cornerstone of PyO3's GIL safety model is the `Python<'py>` token.[^3] This
+The cornerstone of PyO3's GIL safety model is the `Python<'py>` token.[^2] This
 is a zero-cost, marker-like struct that serves as a tangible, compile-time
 "proof" that the current thread holds the GIL. Its presence is required by any
 PyO3 API function that needs to interact with the Python interpreter.
@@ -47,7 +47,7 @@ PyO3 API function that needs to interact with the Python interpreter.
 The true innovation lies in the associated lifetime parameter, `'py`. This
 lifetime is bound to the duration for which the GIL is held. Any other PyO3
 type that is parameterized by this `'py` lifetime, such as the `Bound<'py, T>`
-smart pointer, is statically tied to the GIL's state.[^3] The Rust compiler,
+smart pointer, is statically tied to the GIL's state.[^2] The Rust compiler,
 through its borrow-checking rules, ensures that no such GIL-bound type can
 escape the scope where its corresponding
 
@@ -57,7 +57,7 @@ This provides a profound safety advantage over the CPython C API. In C, a
 developer can hold a `PyObject*` pointer, but the compiler has no mechanism to
 verify that `PyGILState_Ensure()` has been called before that pointer is used.
 An accidental omission of this call leads to a segmentation fault or other
-undefined behavior at runtime.[^5] PyO3 eradicates this entire class of bugs.
+undefined behaviour at runtime.[^5] PyO3 eradicates this entire class of bugs.
 An attempt to use a GIL-bound type like
 
 `Bound<'py, PyList>` without a valid `Python<'py>` token in scope is not a
@@ -80,7 +80,7 @@ preferred method for functions that are called from Python.
 **Explicit Acquisition with** `Python::with_gil`**:** When Rust code needs to
 initiate interaction with the Python interpreter—for example, from a
 Rust-spawned thread or within a Rust binary that embeds Python—the
-`Python::with_gil` function is the primary mechanism.[^3] This function handles
+`Python::with_gil` function is the primary mechanism.[^2] This function handles
 the logic of acquiring the GIL, executing a user-provided closure with the
 
 `Python<'py>` token, and ensuring the GIL is released when the closure exits,
@@ -106,7 +106,7 @@ block in C. It leverages Rust's RAII (Resource Acquisition Is Initialization)
 pattern to guarantee the release of the GIL. Furthermore, if the
 `auto-initialize` feature is enabled in `Cargo.toml`, `Python::with_gil` will
 also handle the one-time initialization of the Python interpreter if it hasn't
-been started yet.[^3]
+been started yet.[^2]
 
 ### Unlocking Parallelism: Releasing the GIL with `py.allow_threads()`
 
@@ -297,7 +297,7 @@ PyO3 enforces this requirement at compile time. If a struct marked with
 `#[pyclass]` does not satisfy these bounds, the code will fail to compile. This
 is a powerful safety feature that prevents entire categories of data races that
 are trivial to introduce accidentally in C extensions, where no such
-compile-time check exists.[^2] For the rare case of a strictly single-threaded
+compile-time check exists.[^3] For the rare case of a strictly single-threaded
 application, this check can be bypassed with
 
 `#[pyclass(unsendable)]`, but this is strongly discouraged as it trades
@@ -323,7 +323,7 @@ calls perform a runtime check to ensure Rust's aliasing rules are not violated.
 In a multithreaded context, this runtime borrow check becomes a concurrency
 control mechanism. If two Python threads simultaneously call methods that both
 attempt to get a mutable borrow on the same Rust object, the second thread's
-call to `borrow_mut()` will panic or return a `PyBorrowMutError`.[^2] This
+call to `borrow_mut()` will panic or return a `PyBorrowMutError`.[^3] This
 effectively serializes mutable access and prevents data races on the
 
 `#[pyclass]`'s internal state. While this provides a baseline level of safety,
@@ -579,7 +579,7 @@ directly, making PyO3 extensions remarkably well-prepared for this shift.
 
 In a free-threaded Python world, the core concurrency concept changes. The
 question is no longer "Does my thread hold the GIL?" but rather "Is my thread
-attached to the Python interpreter runtime?".[^2] Calling any C API function is
+attached to the Python interpreter runtime?".[^3] Calling any C API function is
 only legal if the thread has a valid thread state (
 
 `PyThreadState`).
@@ -599,7 +599,7 @@ PyO3's existing API maps cleanly onto this new mental model 2:
 
 Even without a GIL, the interpreter still has global synchronization points,
 for instance, during garbage collection or when instrumenting code for
-profiling.[^2] A long-running Rust task that does not detach from the
+profiling.[^3] A long-running Rust task that does not detach from the
 interpreter could block these global events and hang the entire application.
 Therefore, the practice of using
 
@@ -609,7 +609,7 @@ practice.
 ### Preparing Your Code for a GIL-less World
 
 To signal that an extension module is safe for use in the free-threaded build,
-it must be explicitly marked with `#[pymodule(gil_used = false)]`.[^2] If a
+it must be explicitly marked with `#[pymodule(gil_used = false)]`.[^3] If a
 module is not marked, a free-threaded Python interpreter will re-enable the GIL
 for the duration of its import and usage, issuing a
 
@@ -618,7 +618,7 @@ for the duration of its import and usage, issuing a
 The foresight of PyO3's design becomes apparent here. The strict `Send + Sync`
 requirement for `#[pyclass]` means that any correctly written concurrent PyO3
 extension is already using explicit synchronization mechanisms (like `Mutex` or
-`Atomic*`) rather than implicitly relying on the GIL for thread safety.[^2]
+`Atomic*`) rather than implicitly relying on the GIL for thread safety.[^3]
 Such extensions are largely ready for the free-threaded world. In contrast,
 many C extensions that function correctly only because the GIL serializes
 access to their internal state will break when the GIL is removed.
@@ -627,8 +627,8 @@ However, one area requires increased vigilance: the default runtime
 borrow-checking mechanism in `#[pyclass]`. With true parallelism, the
 likelihood of two Python threads simultaneously calling methods that require a
 mutable borrow (`borrow_mut()`) on the same object increases dramatically. This
-will lead to more frequent runtime panics or `PyBorrowMutError`s.[^2] This
-underscores the importance of moving beyond the default behavior and using
+will lead to more frequent runtime panics or `PyBorrowMutError`s.[^3] This
+underscores the importance of moving beyond the default behaviour and using
 explicit, robust concurrency controls like mutexes for any
 
 `#[pyclass]` intended for use in a high-contention, free-threaded environment.
@@ -694,11 +694,11 @@ most critical rules for success can be summarized as follows:
 [^1]: pyo3::marker - Rust, accessed on July 14, 2025,
 <https://pyo3.rs/main/doc/pyo3/marker/>
 
-[^2]: Supporting Free-Threaded Python - PyO3 user guide, accessed on July 14,
-2025, <https://pyo3.rs/main/free-threading>
-
-[^3]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
+[^2]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
 <https://docs.rs/pyo3/0.25.1/pyo3/>
+
+[^3]: Supporting Free-Threaded Python - PyO3 user guide, accessed on July 14,
+2025, <https://pyo3.rs/main/free-threading>
 
 [^4]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
 <https://docs.rs/pyo3/latest/pyo3/>
