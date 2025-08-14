@@ -227,12 +227,31 @@ def test_flush_interval_validation(tmp_path: Path) -> None:
     path = tmp_path / "bad_flush.log"
     with pytest.raises(ValueError, match="flush_interval must be greater than zero"):
         FemtoFileHandler(str(path), flush_interval=0)
+    with pytest.raises(ValueError, match="flush_interval must be greater than zero"):
+        FemtoFileHandler(str(path), flush_interval=-1)  # type: ignore[arg-type]
 
 
 def test_timeout_ms_validation(tmp_path: Path) -> None:
     """Timeout policy requires positive ``timeout_ms``."""
     path = tmp_path / "bad_timeout.log"
-    FemtoFileHandler(str(path), policy="timeout", timeout_ms=0)
-    with pytest.raises(OverflowError):
-        FemtoFileHandler(str(path), policy="timeout", timeout_ms=-1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
+        FemtoFileHandler(str(path), policy="timeout", timeout_ms=0)
+    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
+        FemtoFileHandler(str(path), policy="timeout", timeout_ms=-1)
 
+
+def test_default_constructor(tmp_path: Path) -> None:
+    """Default arguments apply drop policy and flush after every record."""
+    path = tmp_path / "defaults.log"
+    with closing(FemtoFileHandler(str(path))) as handler:
+        handler.handle("core", "INFO", "first")
+        handler.handle("core", "INFO", "second")
+    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
+
+
+def test_policy_normalisation(tmp_path: Path) -> None:
+    """Policy strings are normalised for case and whitespace."""
+    path = tmp_path / "policy.log"
+    with closing(FemtoFileHandler(str(path), policy=" Drop ")) as handler:
+        handler.handle("core", "INFO", "msg")
+    assert path.read_text() == "core [INFO] msg\n"

@@ -71,41 +71,42 @@ impl FemtoFileHandler {
     #[pyo3(signature=(
         path,
         capacity = DEFAULT_CHANNEL_CAPACITY,
-        flush_interval = None,
+        flush_interval = 1,
         timeout_ms = None,
         policy = "drop"
     ))]
     fn py_new(
         path: String,
         capacity: usize,
-        flush_interval: Option<usize>,
-        timeout_ms: Option<u64>,
+        flush_interval: isize,
+        timeout_ms: Option<i64>,
         policy: &str,
     ) -> PyResult<Self> {
         use pyo3::exceptions::{PyIOError, PyValueError};
+
         if capacity == 0 {
             return Err(PyValueError::new_err("capacity must be greater than zero"));
         }
-        if let Some(fi) = flush_interval {
-            if fi == 0 {
-                return Err(PyValueError::new_err(
-                    "flush_interval must be greater than zero",
-                ));
-            }
+        if flush_interval <= 0 {
+            return Err(PyValueError::new_err(
+                "flush_interval must be greater than zero",
+            ));
         }
-        let overflow_policy = match policy {
+
+        let policy = policy.trim().to_ascii_lowercase();
+        let overflow_policy = match policy.as_str() {
             "drop" => OverflowPolicy::Drop,
             "block" => OverflowPolicy::Block,
             "timeout" => {
                 let ms = timeout_ms.ok_or_else(|| {
                     PyValueError::new_err("timeout_ms required for timeout policy")
                 })?;
-                if ms == 0 {
+                if ms <= 0 {
                     return Err(PyValueError::new_err(
                         "timeout_ms must be greater than zero",
                     ));
                 }
-                OverflowPolicy::Timeout(Duration::from_millis(ms))
+                OverflowPolicy::Timeout(Duration::from_millis(ms as u64))
             }
             other => {
                 let valid = ["drop", "block", "timeout"].join(", ");
@@ -114,12 +115,13 @@ impl FemtoFileHandler {
                 )));
             }
         };
-        let defaults = HandlerConfig::default();
+
         let cfg = HandlerConfig {
             capacity,
-            flush_interval: flush_interval.unwrap_or(defaults.flush_interval),
+            flush_interval: flush_interval as usize,
             overflow_policy,
         };
+
         let file = OpenOptions::new()
             .create(true)
             .append(true)
