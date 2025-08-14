@@ -15,10 +15,10 @@ The central thesis of this report is that PyO3 represents a paradigm shift in
 developing concurrent Python extensions. It moves beyond the runtime discipline
 and manual bookkeeping required by the C API, instead leveraging Rust's
 powerful type system—specifically its concepts of lifetimes and traits—to
-provide compile-time safety guarantees for GIL management and object handling.[^1]
-This "safety by construction" approach eliminates entire classes of common,
-hard-to-debug errors like segmentation faults from improper GIL handling and
-data races from unsynchronized access to shared state.
+provide compile-time safety guarantees for GIL management and object
+handling.[^1] This "safety by construction" approach eliminates entire classes
+of common, hard-to-debug errors like segmentation faults from improper GIL
+handling and data races from unsynchronized access to shared state.
 
 The scope of this document encompasses a deep dive into PyO3's GIL management
 model, its mechanisms for thread-safe object and data handling, an examination
@@ -39,15 +39,15 @@ transforming potential runtime crashes into compile-time errors.
 
 ### The `Python<'py>` Token: A Compile-Time Proof of GIL Acquisition
 
-The cornerstone of PyO3's GIL safety model is the `Python<'py>` token.[^3] This is
-a zero-cost, marker-like struct that serves as a tangible, compile-time "proof"
-that the current thread holds the GIL. Its presence is required by any PyO3 API
-function that needs to interact with the Python interpreter.
+The cornerstone of PyO3's GIL safety model is the `Python<'py>` token.[^2] This
+is a zero-cost, marker-like struct that serves as a tangible, compile-time
+"proof" that the current thread holds the GIL. Its presence is required by any
+PyO3 API function that needs to interact with the Python interpreter.
 
 The true innovation lies in the associated lifetime parameter, `'py`. This
 lifetime is bound to the duration for which the GIL is held. Any other PyO3
 type that is parameterized by this `'py` lifetime, such as the `Bound<'py, T>`
-smart pointer, is statically tied to the GIL's state.[^3] The Rust compiler,
+smart pointer, is statically tied to the GIL's state.[^2] The Rust compiler,
 through its borrow-checking rules, ensures that no such GIL-bound type can
 escape the scope where its corresponding
 
@@ -57,8 +57,8 @@ This provides a profound safety advantage over the CPython C API. In C, a
 developer can hold a `PyObject*` pointer, but the compiler has no mechanism to
 verify that `PyGILState_Ensure()` has been called before that pointer is used.
 An accidental omission of this call leads to a segmentation fault or other
-undefined behavior at runtime.[^5] PyO3 eradicates this entire class of bugs. An
-attempt to use a GIL-bound type like
+undefined behaviour at runtime.[^5] PyO3 eradicates this entire class of bugs.
+An attempt to use a GIL-bound type like
 
 `Bound<'py, PyList>` without a valid `Python<'py>` token in scope is not a
 runtime error; it is a compile-time error.[^1] This shifts the burden of
@@ -80,7 +80,7 @@ preferred method for functions that are called from Python.
 **Explicit Acquisition with** `Python::with_gil`**:** When Rust code needs to
 initiate interaction with the Python interpreter—for example, from a
 Rust-spawned thread or within a Rust binary that embeds Python—the
-`Python::with_gil` function is the primary mechanism.[^3] This function handles
+`Python::with_gil` function is the primary mechanism.[^2] This function handles
 the logic of acquiring the GIL, executing a user-provided closure with the
 
 `Python<'py>` token, and ensuring the GIL is released when the closure exits,
@@ -106,15 +106,15 @@ block in C. It leverages Rust's RAII (Resource Acquisition Is Initialization)
 pattern to guarantee the release of the GIL. Furthermore, if the
 `auto-initialize` feature is enabled in `Cargo.toml`, `Python::with_gil` will
 also handle the one-time initialization of the Python interpreter if it hasn't
-been started yet.[^3]
+been started yet.[^2]
 
 ### Unlocking Parallelism: Releasing the GIL with `py.allow_threads()`
 
 The most critical function for achieving true parallelism in a PyO3 extension
 is `py.allow_threads()`. This method takes a closure, releases the GIL before
-executing it, and re-acquires the GIL upon its completion.[^7] This allows other
-Python threads to run or, more importantly for CPU-bound tasks, allows other
-Rust threads to acquire the GIL if they are waiting.[^9]
+executing it, and re-acquires the GIL upon its completion.[^7] This allows
+other Python threads to run or, more importantly for CPU-bound tasks, allows
+other Rust threads to acquire the GIL if they are waiting.[^9]
 
 ```rust
 use pyo3::prelude::*;
@@ -195,22 +195,21 @@ closure:
 This pattern is so fundamental that PyO3 provides specialized tools to handle
 common variations correctly. The `GILOnceCell` type offers a deadlock-safe
 alternative to `std::sync::OnceLock` for one-time global initialization, a
-common source of this deadlock pattern.[^10] Additionally, for cases where a lock
-must be held while interacting with Python, the
+common source of this deadlock pattern.[^10] Additionally, for cases where a
+lock must be held while interacting with Python, the
 
 `MutexExt` trait provides a `lock_py_attached` method for `std::sync::Mutex`.
 This specialized lock function is aware of PyO3's internals and helps prevent
 deadlocks with the GIL or other global interpreter synchronization events.[^12]
 
-<!-- markdownlint-disable MD033 MD056 -->
+<!-- markdownlint-disable MD013 MD033 MD056 -->
+| PyO3 API                         | CPython C API Equivalent                                                | Core Function                           | Safety Guarantees in PyO3                                     |
+| -------------------------------- | ----------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------- |
+| `Python::with_gil`               | `PyGILState_STATE g = PyGILState_Ensure(); …; PyGILState_Release(g);`   | Acquire the GIL and run a closure       | RAII ensures the GIL is released even if the closure panics   |
+| `py.allow_threads`               | `Py_BEGIN_ALLOW_THREADS`…`Py_END_ALLOW_THREADS`                         | Run blocking code without the GIL       | Allows other Python threads to run while the closure executes |
+| `py` in `#[pyfunction]` argument | Implicit context                                                        | Access the GIL in callbacks from Python | Zero-cost token proving the GIL is held                       |
 
-| PyO3 API                    | CPython C API Equivalent                       | Core Function                         | Safety Guarantees in PyO3                                                                         |
-| --------------------------- | ---------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `Python::with_gil(          | py                                             | ...)`                                 | PyGILState_STATE g = PyGILState_Ensure();...; PyGILState_Release(g);                              |
-| `py.allow_threads(          |
-| ...)`                       | Py_BEGIN_ALLOW_THREADS... Py_END_ALLOW_THREADS |
-| py: Python in #[pyfunction] | (Implicit context)                             | Access GIL in a callback from Python. | Zero-cost token provided by the runtime, ensuring the function body has proof of GIL acquisition. |
-<!-- markdownlint-enable MD033 MD056 -->
+<!-- markdownlint-enable MD013 MD033 MD056 -->
 
 ## Managing State Across Threads: Object Lifetimes and Safety
 
@@ -223,8 +222,8 @@ requirements for custom types.
 ### Thread-Safe Python Object Handles: `Py<T>` vs. `Bound<'py, T>`
 
 PyO3 offers two primary smart pointers for Python objects, each with a distinct
-role in a concurrent application.[^14] Understanding their difference is crucial
-for writing correct multithreaded code.
+role in a concurrent application.[^14] Understanding their difference is
+crucial for writing correct multithreaded code.
 
 `Py<T>` **and** `PyObject`**:** This is the GIL-independent, owned handle to a
 Python object. Its most important characteristic is that it implements the
@@ -233,16 +232,16 @@ references to Python objects across thread boundaries. If a Rust struct needs
 to hold a Python object, or if a Python object reference needs to be sent from
 one thread to another (e.g., via a channel), it must be stored as a
 
-`Py<T>` (or its common alias, `PyObject`, which is `Py<PyAny>`).[^14] While it can
-be safely moved between threads, operating on the object it points to almost
-always requires acquiring the GIL and obtaining a temporary
+`Py<T>` (or its common alias, `PyObject`, which is `Py<PyAny>`).[^14] While it
+can be safely moved between threads, operating on the object it points to
+almost always requires acquiring the GIL and obtaining a temporary
 
 `Bound` handle.
 
 `Bound<'py, T>`**:** This is the GIL-dependent, "active" handle. It is
 conceptually equivalent to a tuple of `(Python<'py>, Py<T>)`, meaning it
-bundles an object handle with the proof that the GIL is held.[^14] Because it is
-bound to the
+bundles an object handle with the proof that the GIL is held.[^14] Because it
+is bound to the
 
 `'py` lifetime, it is *not* `Send` and cannot be moved out of a GIL-protected
 scope. Its advantage is that it provides the most complete and efficient API
@@ -279,8 +278,8 @@ transported across thread boundaries where the GIL is not held.
 
 When a Rust struct is exposed to Python using the `#[pyclass]` attribute, PyO3
 imposes a critical restriction: the struct must implement both the `Send` and
-`Sync` marker traits.[^12] This is not an arbitrary limitation; it is a direct and
-necessary consequence of Python's own threading model. From the Python
+`Sync` marker traits.[^12] This is not an arbitrary limitation; it is a direct
+and necessary consequence of Python's own threading model. From the Python
 interpreter's perspective, any object can be passed to any thread, and multiple
 threads can hold references to and call methods on the same object
 simultaneously.[^12]
@@ -298,7 +297,7 @@ PyO3 enforces this requirement at compile time. If a struct marked with
 `#[pyclass]` does not satisfy these bounds, the code will fail to compile. This
 is a powerful safety feature that prevents entire categories of data races that
 are trivial to introduce accidentally in C extensions, where no such
-compile-time check exists.[^2] For the rare case of a strictly single-threaded
+compile-time check exists.[^3] For the rare case of a strictly single-threaded
 application, this check can be bypassed with
 
 `#[pyclass(unsendable)]`, but this is strongly discouraged as it trades
@@ -324,7 +323,7 @@ calls perform a runtime check to ensure Rust's aliasing rules are not violated.
 In a multithreaded context, this runtime borrow check becomes a concurrency
 control mechanism. If two Python threads simultaneously call methods that both
 attempt to get a mutable borrow on the same Rust object, the second thread's
-call to `borrow_mut()` will panic or return a `PyBorrowMutError`.[^2] This
+call to `borrow_mut()` will panic or return a `PyBorrowMutError`.[^3] This
 effectively serializes mutable access and prevents data races on the
 
 `#[pyclass]`'s internal state. While this provides a baseline level of safety,
@@ -380,12 +379,12 @@ interior mutability and adopt explicit thread-safety patterns.
 
   For more complex data that cannot be represented by atomics or needs to be
   updated transactionally, the standard approach is to wrap the data in a
-  std::sync::Mutex.[^18] Each method that needs to access the data must first lock
-  the mutex. This ensures that only one thread can access the inner data at a
-  time, preventing data races at the cost of potential blocking.[^13] When using
-  this pattern, the deadlock rule from Section 1.4 is paramount: if a Python
-  API call needs to be made while the lock is held, special care is required,
-  potentially using
+  std::sync::Mutex.[^18] Each method that needs to access the data must first
+  lock the mutex. This ensures that only one thread can access the inner data
+  at a time, preventing data races at the cost of potential blocking.[^13] When
+  using this pattern, the deadlock rule from Section 1.4 is paramount: if a
+  Python API call needs to be made while the lock is held, special care is
+  required, potentially using
 
   `MutexExt::lock_py_attached`.
 
@@ -400,14 +399,15 @@ interior mutability and adopt explicit thread-safety patterns.
   be used after a rigorous soundness review, as described in resources like the
   Rustonomicon.[^12]
 
-<!-- markdownlint-disable MD033 MD056 -->
+<!-- markdownlint-disable MD013 MD033 MD056 -->
 
-| Type             | GIL-Bound? | Send? | Sync? | Primary Use Case                                                              |
-| ---------------- | ---------- | ----- | ----- | ----------------------------------------------------------------------------- |
-| Py<T> / PyObject | No         | Yes   | Yes   | Storage and Transport: Storing in structs, sending between threads.           |
-| Bound<'py, T>    | Yes ('py)  | No    | No    | Operation: Calling methods, accessing data. The "working" handle.             |
-| &Bound<'py, T>   | Yes ('py)  | Yes   | Yes   | Borrowing: Passing as a non-owning function argument within a GIL-held scope. |
-<!-- markdownlint-enable MD033 MD056 -->
+| Type                 | GIL-Bound?  | Send? | Sync? | Primary Use Case                                                              |
+| -------------------- | ----------- | ----- | ----- | ----------------------------------------------------------------------------- |
+| `Py<T>` / `PyObject` | No          | Yes   | Yes   | Storage and transport: storing in structs, sending between threads.           |
+| `Bound<'py, T>`      | Yes (`'py`) | No    | No    | Operation: calling methods, accessing data. The "working" handle.             |
+| `&Bound<'py, T>`     | Yes (`'py`) | Yes   | Yes   | Borrowing: passing as a non-owning function argument within a GIL-held scope. |
+
+<!-- markdownlint-enable MD013 MD033 MD056 -->
 
 ## Practical Multithreading Patterns and Best Practices
 
@@ -536,9 +536,9 @@ cleaner.[^21]
 ### Propagating Errors Across Threads: A Guide to `PyErr`
 
 Robust concurrent programming requires a sound strategy for error handling. A
-key design feature of PyO3 is that its error type, `PyErr`, is `Send + Sync`.[^22]
-This was a deliberate change in past versions to facilitate exactly these kinds
-of multithreaded use cases.
+key design feature of PyO3 is that its error type, `PyErr`, is
+`Send + Sync`.[^22] This was a deliberate change in past versions to facilitate
+exactly these kinds of multithreaded use cases.
 
 Because `PyErr` is thread-safe, an error can be created in one thread,
 propagated across a channel or returned from a parallel iterator, and
@@ -560,8 +560,8 @@ ultimately handled or raised in another thread. The workflow is idiomatic Rust:
 A noteworthy feature is that `PyErr` supports lazy instantiation. When creating
 an error with `PyErr::new::<PyTypeError, _>("message")`, the actual Python
 `TypeError` object is not created immediately. Instead, a lightweight,
-`Send + Sync` representation of the error is created.[^24] This allows errors to
-be constructed in contexts where the GIL is not held (e.g., inside
+`Send + Sync` representation of the error is created.[^24] This allows errors
+to be constructed in contexts where the GIL is not held (e.g., inside
 
 `allow_threads`). The full Python exception object is only materialized later,
 when it is needed—typically when `PyErr::restore` is called or when PyO3
@@ -579,7 +579,7 @@ directly, making PyO3 extensions remarkably well-prepared for this shift.
 
 In a free-threaded Python world, the core concurrency concept changes. The
 question is no longer "Does my thread hold the GIL?" but rather "Is my thread
-attached to the Python interpreter runtime?".[^2] Calling any C API function is
+attached to the Python interpreter runtime?".[^3] Calling any C API function is
 only legal if the thread has a valid thread state (
 
 `PyThreadState`).
@@ -599,9 +599,9 @@ PyO3's existing API maps cleanly onto this new mental model 2:
 
 Even without a GIL, the interpreter still has global synchronization points,
 for instance, during garbage collection or when instrumenting code for
-profiling.[^2] A long-running Rust task that does not detach from the interpreter
-could block these global events and hang the entire application. Therefore, the
-practice of using
+profiling.[^3] A long-running Rust task that does not detach from the
+interpreter could block these global events and hang the entire application.
+Therefore, the practice of using
 
 `allow_threads` for long-running, non-Python work remains a critical best
 practice.
@@ -609,38 +609,39 @@ practice.
 ### Preparing Your Code for a GIL-less World
 
 To signal that an extension module is safe for use in the free-threaded build,
-it must be explicitly marked with `#[pymodule(gil_used = false)]`.[^2] If a module
-is not marked, a free-threaded Python interpreter will re-enable the GIL for
-the duration of its import and usage, issuing a
+it must be explicitly marked with `#[pymodule(gil_used = false)]`.[^3] If a
+module is not marked, a free-threaded Python interpreter will re-enable the GIL
+for the duration of its import and usage, issuing a
 
 `RuntimeWarning` to the user.
 
 The foresight of PyO3's design becomes apparent here. The strict `Send + Sync`
 requirement for `#[pyclass]` means that any correctly written concurrent PyO3
 extension is already using explicit synchronization mechanisms (like `Mutex` or
-`Atomic*`) rather than implicitly relying on the GIL for thread safety.[^2] Such
-extensions are largely ready for the free-threaded world. In contrast, many C
-extensions that function correctly only because the GIL serializes access to
-their internal state will break when the GIL is removed.
+`Atomic*`) rather than implicitly relying on the GIL for thread safety.[^3]
+Such extensions are largely ready for the free-threaded world. In contrast,
+many C extensions that function correctly only because the GIL serializes
+access to their internal state will break when the GIL is removed.
 
 However, one area requires increased vigilance: the default runtime
 borrow-checking mechanism in `#[pyclass]`. With true parallelism, the
 likelihood of two Python threads simultaneously calling methods that require a
 mutable borrow (`borrow_mut()`) on the same object increases dramatically. This
-will lead to more frequent runtime panics or `PyBorrowMutError`s.[^2] This
-underscores the importance of moving beyond the default behavior and using
+will lead to more frequent runtime panics or `PyBorrowMutError`s.[^3] This
+underscores the importance of moving beyond the default behaviour and using
 explicit, robust concurrency controls like mutexes for any
 
 `#[pyclass]` intended for use in a high-contention, free-threaded environment.
 
-<!-- markdownlint-disable MD033 MD056 -->
+<!-- markdownlint-disable MD013 MD033 MD056 -->
 
 | Strategy                     | Mechanism                                | Pros                                         | Cons                                                                  | Ideal Use Case                                                           |
 | ---------------------------- | ---------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Default Interior Mutability  | Runtime borrow-checking (PyRef/PyRefMut) | Automatic for simple types.                  | Raises runtime errors/panics under contention.                        | Prototyping; low-contention scenarios; single-threaded applications.     |
 | Atomics + #[pyclass(frozen)] | std::sync::atomic types                  | Lock-free, high performance.                 | Limited to simple data types (integers, bools).                       | Simple counters, flags, or state fields in high-contention environments. |
 | Mutex/Locks                  | std::sync::Mutex wrapping data           | Supports complex, arbitrary data structures. | Can introduce blocking and potential deadlocks if not used carefully. | Complex, multi-field state that needs to be updated transactionally.     |
-<!-- markdownlint-enable MD033 MD056 -->
+
+<!-- markdownlint-enable MD013 MD033 MD056 -->
 
 ## Conclusion: A Summary of Rules for Robust Multithreaded Extensions
 
@@ -688,79 +689,74 @@ most critical rules for success can be summarized as follows:
   ensure it is correct and performant in future free-threaded versions of
   Python. Once verified, mark your module with `#[pymodule(gil_used = false)]`.
 
-- ## Works cited
+## Works cited
 
-  1. pyo3::marker - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/main/doc/pyo3/marker/>
+[^1]: pyo3::marker - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/main/doc/pyo3/marker/>
 
-  2. Supporting Free-Threaded Python - PyO3 user guide, accessed on July 14,
-     2025, <https://pyo3.rs/main/free-threading>
+[^2]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
+<https://docs.rs/pyo3/0.25.1/pyo3/>
 
-  3. pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
-     <https://docs.rs/pyo3/0.25.1/pyo3/>
+[^3]: Supporting Free-Threaded Python - PyO3 user guide, accessed on July 14,
+2025, <https://pyo3.rs/main/free-threading>
 
-  4. pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
-     <https://docs.rs/pyo3/latest/pyo3/>
+[^4]: pyo3 - Rust - [Docs.rs](http://Docs.rs), accessed on July 14, 2025,
+<https://docs.rs/pyo3/latest/pyo3/>
 
-  5. How to implement multi-thread programs using Python C API? - Stack
-     Overflow, accessed on July 14, 2025,
-     <https://stackoverflow.com/questions/78180254/how-to-implement-multi-thread-programs-using-python-c-api>
+[^5]: How to implement multi-thread programs using Python C API? - Stack
+Overflow, accessed on July 14, 2025,
+<https://stackoverflow.com/questions/78180254/how-to-implement-multi-thread-programs-using-python-c-api>
 
-  6. Python in pyo3::marker - Rust - [Docs.rs](http://Docs.rs), accessed on July
-     14, 2025, <https://docs.rs/pyo3/latest/pyo3/marker/struct.Python.html>
+[^6]: Python in pyo3::marker - Rust - [Docs.rs](http://Docs.rs), accessed on
+July 14, 2025, <https://docs.rs/pyo3/latest/pyo3/marker/struct.Python.html>
 
-  7. Parallelism - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.25.1/parallelism.html>
+[^7]: Parallelism - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.25.1/parallelism.html>
 
-  8. Parallelism - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.2.7/parallelism>
+<https://pyo3.rs/v0.2.7/parallelism>
 
-  9. Parallelism - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.11.0/parallelism>
+[^9]: Parallelism - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.11.0/parallelism>
 
-  10. FAQ and troubleshooting - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/latest/faq.html>
+[^10]: FAQ and troubleshooting - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/latest/faq.html>
 
-  11. GILOnceCell in pyo3::sync - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/main/doc/pyo3/sync/struct.giloncecell>
+<https://pyo3.rs/main/doc/pyo3/sync/struct.giloncecell>
 
-  12. Thread safety - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.25.1/class/thread-safety>
+[^12]: Thread safety - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.25.1/class/thread-safety>
 
-  13. Thread safety - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.24.0/class/thread-safety>
+[^13]: Thread safety - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.24.0/class/thread-safety>
 
-  14. Python object types - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.24.2/types.html>
+[^14]: Python object types - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.24.2/types.html>
 
-  15. PyObject in pyo3 - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/main/doc/pyo3/type.pyobject>
+[^15]: PyObject in pyo3 - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/main/doc/pyo3/type.pyobject>
 
-  16. GIL, mutability and object types - PyO3 user guide, accessed on July 14,
-     2025, <https://pyo3.rs/v0.20.1/types>
+2025, <https://pyo3.rs/v0.20.1/types>
 
-  17. GIL, mutability and object types - PyO3 user guide, accessed on July 14,
-     2025, <https://pyo3.rs/v0.20.3/types>
+[^17]: GIL, mutability and object types - PyO3 user guide, accessed on July 14,
+2025, <https://pyo3.rs/v0.20.3/types>
 
-  18. Thread safety - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.23.3/class/thread-safety.html>
+[^18]: Thread safety - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.23.3/class/thread-safety.html>
 
-  19. Python classes - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.23.3/class>
+<https://pyo3.rs/v0.23.3/class>
 
-  20. Boost Python Performance with Cython, Numba, and PyO3 | by Configr
-     Technologies, accessed on July 14, 2025,
-     <https://configr.medium.com/boost-python-performance-with-cython-numba-and-pyo3-486d59d8c2c6>
+Technologies, accessed on July 14, 2025,
+<https://configr.medium.com/boost-python-performance-with-cython-numba-and-pyo3-486d59d8c2c6>
 
-  21. Rust multi-thread and pyo3 real world problem. - Reddit, accessed on July
-     14, 2025,
-     <https://www.reddit.com/r/rust/comments/1jcsncv/rust_multithread_and_pyo3_real_world_problem/>
+[^21]: Rust multi-thread and pyo3 real world problem. - Reddit, accessed on July
+14, 2025,
+<https://www.reddit.com/r/rust/comments/1jcsncv/rust_multithread_and_pyo3_real_world_problem/>
 
-  22. Appendix A: Migration Guide - PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/v0.12.0/migration>
+[^22]: Appendix A: Migration Guide - PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/v0.12.0/migration>
 
-  23. Error handling – PyO3 user guide, accessed on July 14, 2025,
-     <https://pyo3.rs/main/function/error-handling.html>
+[^23]: Error handling – PyO3 user guide, accessed on July 14, 2025,
+<https://pyo3.rs/main/function/error-handling.html>
 
-  24. PyErr in pyo3::err - Rust, accessed on July 14, 2025,
-     <https://pyo3.rs/internal/doc/pyo3/err/struct.pyerr>
+[^24]: PyErr in pyo3::err - Rust, accessed on July 14, 2025,
+<https://pyo3.rs/internal/doc/pyo3/err/struct.pyerr>
