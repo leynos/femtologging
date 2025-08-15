@@ -159,9 +159,9 @@ pub trait HandlerBuilderTrait: Send + Sync {
 // `build_handler(&ConfigContext)` design has been dropped; shared state is
 // injected through builder fields instead of a dedicated context object.
 //
-// Built handlers are wrapped in `Arc` during realisation. The same `Arc` is
-// attached to multiple loggers, enabling safe cross-thread sharing of a single
-// handler instance.
+// Built handlers are wrapped in `Arc<dyn FemtoHandlerTrait>` during realisation.
+// The same `Arc` is attached to multiple loggers, enabling safe cross-thread
+// sharing of a single handler instance.
 
 // Example: In femtologging::handlers::FileHandlerBuilder
 pub struct FileHandlerBuilder {
