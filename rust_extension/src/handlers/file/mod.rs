@@ -114,6 +114,15 @@ fn open_log_file(path: &str) -> PyResult<File> {
 
 #[pymethods]
 impl FemtoFileHandler {
+    /// Create a file handler writing to `path`.
+    ///
+    /// Python usage:
+    ///   `FemtoFileHandler(path, capacity=DEFAULT_CHANNEL_CAPACITY,`
+    ///   `flush_interval=1, policy="drop")`
+    ///
+    /// - `capacity` must be greater than zero.
+    /// - `flush_interval` must be greater than zero.
+    /// - `policy` is one of: `"drop"`, `"block"`, or `"timeout:N"` (N > 0).
     #[new]
     #[pyo3(signature=(
         path,

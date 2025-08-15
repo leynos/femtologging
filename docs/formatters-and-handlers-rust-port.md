@@ -70,10 +70,11 @@ Implementations should forward the record to an internal queue with `try_send`
 so the caller never blocks. If the queue is full, the record is silently
 dropped and a warning is written to `stderr`. This favours throughput over
 completeness: records may be lost to keep the application responsive. Advanced
-use cases can specify an overflow policy when constructing a handler. The
-Python callers pass an overflow policy string to the constructor. The policy
-may also be extended to support options like back pressure, writing overflowed
-messages to a separate file, or emitting metrics for monitoring purposes:
+use cases can specify an overflow policy when constructing a handler. Python
+callers pass an overflow policy string literal ("drop", "block", or
+"timeout:N") to the constructor. The policy may also be extended to support
+options like back pressure, writing overflowed messages to a separate file, or
+emitting metrics for monitoring purposes:
 
 - **Drop** – current default; records are discarded when the queue is full.
 - **Block** – the call blocks until space becomes available.
@@ -86,14 +87,29 @@ messages to be written before shutdown.
 ```python
 from femtologging import FemtoFileHandler
 
+# Block until space is available
 handler = FemtoFileHandler(
     "app.log", capacity=4096, flush_interval=1, policy="block"
 )
+
+# Or wait up to 250 ms when the queue is full
+timeout_handler = FemtoFileHandler(
+    "app.log", capacity=4096, flush_interval=10, policy="timeout:250",
+)
 ```
 
-Legacy constructors like ``with_capacity_flush_blocking`` and
-``with_capacity_flush_timeout`` have been removed. Customise capacity, flush
-behaviour or overflow policy via keyword arguments on the constructor.
+Legacy constructors have been removed:
+
+- ``with_capacity``
+- ``with_capacity_blocking``
+- ``with_capacity_timeout``
+- ``with_capacity_flush``
+- ``with_capacity_flush_blocking``
+- ``with_capacity_flush_timeout``
+- ``with_capacity_flush_policy``
+
+Customise capacity, flush behaviour or overflow policy via keyword arguments on
+the constructor.
 
 The constructor enforces several invariants on the configuration:
 

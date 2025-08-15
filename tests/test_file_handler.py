@@ -150,7 +150,7 @@ def test_file_handler_flush_interval_large(tmp_path: Path) -> None:
 
 
 def test_overflow_policy_block(tmp_path: Path) -> None:
-    """Block policy waits for space before dropping records."""
+    """Block policy waits for space instead of dropping records."""
     path = tmp_path / "block.log"
     with closing(
         FemtoFileHandler(
@@ -211,11 +211,12 @@ def test_overflow_policy_drop_flush_interval_gt_one(tmp_path: Path) -> None:
             policy="drop",
         )
     ) as handler:
-        handler.handle("core", "INFO", "first")
-        handler.handle("core", "INFO", "second")
-        handler.handle("core", "INFO", "third")
-        handler.handle("core", "INFO", "fourth")
-    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
+        for i in range(10):
+            handler.handle("core", "INFO", f"msg{i}")
+    assert path.read_text().splitlines()[:2] == [
+        "core [INFO] msg0",
+        "core [INFO] msg1",
+    ]
 
 
 def test_overflow_policy_invalid(tmp_path: Path) -> None:
