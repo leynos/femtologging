@@ -36,50 +36,6 @@ use crate::{
 pub use config::{HandlerConfig, OverflowPolicy, TestConfig, DEFAULT_CHANNEL_CAPACITY};
 use worker::{spawn_worker, FileCommand, WorkerConfig};
 
-/// Python-visible configuration for [`FemtoFileHandler`].
-///
-/// - `capacity` sets the bounded queue size. Must be greater than zero.
-/// - `flush_interval` controls how many records are written between flushes.
-///   Must be greater than zero.
-/// - `timeout_ms` is only used when `policy == "timeout"` and must be
-///   greater than zero in that case.
-/// - `policy` is one of: `"drop"`, `"block"`, or `"timeout"`.
-#[pyclass]
-#[derive(Clone)]
-pub struct FemtoFileHandlerConfig {
-    #[pyo3(get, set)]
-    pub capacity: usize,
-    #[pyo3(get, set)]
-    pub flush_interval: isize,
-    #[pyo3(get, set)]
-    pub timeout_ms: Option<u64>,
-    #[pyo3(get, set)]
-    pub policy: String,
-}
-
-#[pymethods]
-impl FemtoFileHandlerConfig {
-    /// Create a configuration object for [`FemtoFileHandler`].
-    ///
-    /// Defaults mirror Rust defaults: capacity=`DEFAULT_CHANNEL_CAPACITY`,
-    /// flush on every record (`flush_interval = 1`), and a `"drop"` policy.
-    #[new]
-    #[pyo3(signature=(
-        capacity = DEFAULT_CHANNEL_CAPACITY,
-        flush_interval = 1,
-        timeout_ms = None,
-        policy = "drop"
-    ))]
-    fn new(capacity: usize, flush_interval: isize, timeout_ms: Option<u64>, policy: &str) -> Self {
-        Self {
-            capacity,
-            flush_interval,
-            timeout_ms,
-            policy: policy.into(),
-        }
-    }
-}
-
 /// Internal items needed by the worker implementation.
 mod mod_impl {
     use super::*;
