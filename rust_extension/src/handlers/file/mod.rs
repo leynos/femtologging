@@ -65,45 +65,29 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-fn parse_overflow_policy(policy: &str, timeout_ms: Option<i64>) -> PyResult<OverflowPolicy> {
+fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
     use pyo3::exceptions::PyValueError;
     let policy = policy.trim().to_ascii_lowercase();
-    match policy.as_str() {
-        "drop" => {
-            if timeout_ms.is_some() {
-                Err(PyValueError::new_err(
-                    "timeout_ms only valid for timeout policy",
-                ))
-            } else {
-                Ok(OverflowPolicy::Drop)
-            }
-        }
-        "block" => {
-            if timeout_ms.is_some() {
-                Err(PyValueError::new_err(
-                    "timeout_ms only valid for timeout policy",
-                ))
-            } else {
-                Ok(OverflowPolicy::Block)
-            }
-        }
-        "timeout" => {
-            let ms = timeout_ms
-                .ok_or_else(|| PyValueError::new_err("timeout_ms required for timeout policy"))?;
-            if ms <= 0 {
-                return Err(PyValueError::new_err(
-                    "timeout_ms must be greater than zero",
-                ));
-            }
-            Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)))
-        }
-        other => {
-            let valid = ["drop", "block", "timeout"].join(", ");
-            Err(PyValueError::new_err(format!(
-                "invalid overflow policy '{other}'. Valid options are: {valid}"
-            )))
-        }
+    if policy == "drop" {
+        return Ok(OverflowPolicy::Drop);
     }
+    if policy == "block" {
+        return Ok(OverflowPolicy::Block);
+    }
+    if let Some(rest) = policy.strip_prefix("timeout:") {
+        let ms: i64 = rest
+            .trim()
+            .parse()
+            .map_err(|_| PyValueError::new_err("timeout must be a positive integer"))?;
+        if ms <= 0 {
+            return Err(PyValueError::new_err("timeout must be greater than zero"));
+        }
+        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
+    }
+    let valid = "drop, block, timeout:N";
+    Err(PyValueError::new_err(format!(
+        "invalid overflow policy '{policy}'. Valid options are: {valid}",
+    )))
 }
 
 fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
@@ -135,17 +119,15 @@ impl FemtoFileHandler {
         path,
         capacity = DEFAULT_CHANNEL_CAPACITY,
         flush_interval = 1,
-        timeout_ms = None,
         policy = "drop"
     ))]
     fn py_new(
         path: String,
         capacity: usize,
         flush_interval: isize,
-        timeout_ms: Option<i64>,
         policy: &str,
     ) -> PyResult<Self> {
-        let overflow_policy = parse_overflow_policy(policy, timeout_ms)?;
+        let overflow_policy = parse_overflow_policy(policy)?;
         let flush_interval = validate_params(capacity, flush_interval)?;
         let handler_cfg = HandlerConfig {
             capacity,

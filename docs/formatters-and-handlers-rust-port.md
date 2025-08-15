@@ -98,9 +98,8 @@ behaviour or overflow policy via keyword arguments on the constructor.
 The constructor enforces several invariants on the configuration:
 
 - ``capacity`` and ``flush_interval`` must be greater than zero.
-- ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout"``.
-- ``timeout_ms`` must be greater than zero and may only be set when ``policy``
-  is ``"timeout"``.
+- ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout:N"``.
+- ``N`` must be greater than zero when specifying a timeout policy.
 
 ### StreamHandler
 

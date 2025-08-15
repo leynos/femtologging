@@ -176,8 +176,7 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
             str(path),
             capacity=1,
             flush_interval=1,
-            policy="timeout",
-            timeout_ms=500,
+            policy="timeout:500",
         )
     ) as handler:
         handler.handle("core", "INFO", "first")
@@ -227,9 +226,9 @@ def test_overflow_policy_invalid(tmp_path: Path) -> None:
 
 
 def test_overflow_policy_timeout_missing_ms(tmp_path: Path) -> None:
-    """Timeout policy without ``timeout_ms`` is rejected."""
+    """Timeout policy without a timeout is rejected."""
     path = tmp_path / "missing_ms.log"
-    with pytest.raises(ValueError, match="timeout_ms required"):
+    with pytest.raises(ValueError, match="invalid overflow policy"):
         FemtoFileHandler(str(path), policy="timeout")
 
 
@@ -249,13 +248,13 @@ def test_flush_interval_validation(tmp_path: Path) -> None:
         FemtoFileHandler(str(path), flush_interval=-1)
 
 
-def test_timeout_ms_validation(tmp_path: Path) -> None:
-    """Timeout policy requires positive ``timeout_ms``."""
+def test_timeout_policy_validation(tmp_path: Path) -> None:
+    """Timeout policy requires a positive timeout."""
     path = tmp_path / "bad_timeout.log"
-    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
-        FemtoFileHandler(str(path), policy="timeout", timeout_ms=0)
-    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
-        FemtoFileHandler(str(path), policy="timeout", timeout_ms=-1)
+    with pytest.raises(ValueError, match="timeout must be greater than zero"):
+        FemtoFileHandler(str(path), policy="timeout:0")
+    with pytest.raises(ValueError, match="timeout must be greater than zero"):
+        FemtoFileHandler(str(path), policy="timeout:-1")
 
 
 def test_default_constructor(tmp_path: Path) -> None:
