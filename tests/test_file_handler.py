@@ -259,9 +259,12 @@ def test_timeout_policy_validation(tmp_path: Path) -> None:
 
 
 def test_timeout_policy_non_numeric(tmp_path: Path) -> None:
-    """Non-numeric timeout is rejected with a clear error."""
-    path = tmp_path / "non_numeric_timeout.log"
-    with pytest.raises(ValueError, match="timeout must be a positive integer"):
+    """Non-numeric timeout values are rejected."""
+    path = tmp_path / "timeout_non_numeric.log"
+    with pytest.raises(
+        ValueError,
+        match=r"timeout must be a positive integer \(N in 'timeout:N'\)",
+    ):
         FemtoFileHandler(str(path), policy="timeout:abc")
 
 

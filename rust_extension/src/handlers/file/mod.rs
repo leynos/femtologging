@@ -79,10 +79,9 @@ fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
         return Ok(OverflowPolicy::Block);
     }
     if let Some(rest) = policy.strip_prefix("timeout:") {
-        let ms: i64 = rest
-            .trim()
-            .parse()
-            .map_err(|_| PyValueError::new_err("timeout must be a positive integer"))?;
+        let ms: i64 = rest.trim().parse().map_err(|_| {
+            PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
+        })?;
         if ms <= 0 {
             return Err(PyValueError::new_err("timeout must be greater than zero"));
         }

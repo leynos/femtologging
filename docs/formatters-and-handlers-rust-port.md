@@ -71,10 +71,10 @@ so the caller never blocks. If the queue is full, the record is silently
 dropped and a warning is written to `stderr`. This favours throughput over
 completeness: records may be lost to keep the application responsive. Advanced
 use cases can specify an overflow policy when constructing a handler. Python
-callers pass a lower-case overflow policy string literal ("drop", "block", or
-"timeout:N") to the constructor. The policy may also be extended to support
-options like back pressure, writing overflowed messages to a separate file, or
-emitting metrics for monitoring purposes:
+callers pass an overflow policy string literal ("drop", "block", or "timeout")
+to the constructor. The policy may also be extended to support options like
+back pressure, writing overflowed messages to a separate file, or emitting
+metrics for monitoring purposes:
 
 - **Drop** – current default; records are discarded when the queue is full.
 - **Block** – the call blocks until space becomes available.
@@ -107,6 +107,9 @@ Legacy constructors have been removed:
 - ``with_capacity_flush_blocking``
 - ``with_capacity_flush_timeout``
 - ``with_capacity_flush_policy``
+
+The timeout behaviour is configured via the policy string as ``"timeout:N"``,
+where ``N`` is the timeout in milliseconds and must be greater than zero.
 
 Customise capacity, flush behaviour or overflow policy via keyword arguments on
 the constructor.
@@ -158,15 +161,13 @@ variants (`FemtoRotatingFileHandler`, `FemtoTimedRotatingFileHandler`) build on
 this by performing rotation logic inside their consumer threads.
 
 The Rust implementation resides under `rust_extension/src/handlers/file`. This
-module is split into three pieces, so each concern stays focused:
+module is split into two pieces, so each concern stays focused:
 
-1. `config.rs` – all configuration structures, including `HandlerConfig` and
-   `OverflowPolicy`.
-2. `worker.rs` — the background writer thread and its helper types.
-3. `mod.rs` — the public `FemtoFileHandler` API re‑exporting the config types.
+1. `worker.rs` — the background writer thread and its helper types.
+2. `mod.rs` — the public `FemtoFileHandler` API.
 
 ```rust
-use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
+use femtologging_rs::handlers::file::FemtoFileHandler;
 ```
 
 `FemtoFileHandler` exposes `flush()` and `close()` methods, so callers can
@@ -174,14 +175,14 @@ drain pending records and stop the background thread explicitly. Dropping the
 handler still performs this cleanup if the methods aren't invoked.
 
 By default, the file handler flushes the underlying file after every record to
-maximize durability. To batch writes, pass a custom configuration via
+maximise durability. To batch writes, pass a custom configuration via
 `FemtoFileHandler::with_capacity_flush_policy()` (Rust) or set keyword
-arguments on ``FemtoFileHandler`` (Python). Setting the `flush_interval` in
-`HandlerConfig` or the Python constructor defers flushing until the specified
-number of records have been written. The value must be greater than zero, so
-periodic flushing always occurs. Higher values reduce syscall overhead in
-high-volume scenarios. Internally the handler buffers writes with `BufWriter`,
-so records only reach the file once a flush occurs or the handler shuts down.
+arguments on ``FemtoFileHandler`` (Python). Setting ``flush_interval`` defers
+flushing until the specified number of records have been written. The value
+must be greater than zero, so periodic flushing always occurs. Higher values
+reduce syscall overhead in high-volume scenarios. Internally the handler
+buffers writes with `BufWriter`, so records only reach the file once a flush
+occurs or the handler shuts down.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit
