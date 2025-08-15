@@ -34,8 +34,7 @@ def file_handler_factory() -> FileHandlerFactory:
         try:
             yield handler
         finally:
-            if hasattr(handler, "close"):
-                handler.close()
+            handler.close()
             del handler
             gc.collect()
 
