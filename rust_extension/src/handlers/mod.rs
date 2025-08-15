@@ -15,11 +15,13 @@ use crate::handler::FemtoHandlerTrait;
 mod common;
 pub mod file;
 pub mod file_builder;
+mod formatter_id;
 pub mod stream_builder;
 #[cfg(test)]
 pub mod test_helpers;
 
 pub use file_builder::FileHandlerBuilder;
+pub use formatter_id::FormatterId;
 pub use stream_builder::StreamHandlerBuilder;
 
 // Define module-level Python exceptions for explicit handling on the Python side.

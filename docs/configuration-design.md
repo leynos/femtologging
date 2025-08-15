@@ -13,6 +13,13 @@ programmatic and type-safe setup of the logging system.
 
 ```rust
 // In femtologging::config::ConfigBuilder
+pub enum HandlerBuilder {
+    Stream(StreamHandlerBuilder),
+    File(FileHandlerBuilder),
+}
+
+struct FormatterId(String); // Newtype for formatter identifiers
+
 pub struct ConfigBuilder {
     // Internal state to hold configuration parts
     version: u8,
@@ -20,7 +27,9 @@ pub struct ConfigBuilder {
     default_level: Option<Level>,
     formatters: BTreeMap<String, FormatterBuilder>,
     filters: BTreeMap<String, FilterBuilder>, // Future: FilterBuilder
-    handlers: BTreeMap<String, Box<dyn HandlerBuilderTrait>>, // Boxed trait object for handlers
+    handlers: BTreeMap<String, HandlerBuilder>,
+    // `HandlerBuilder` is a concrete enum; later insertions with the same ID
+    // overwrite earlier ones.
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
@@ -49,13 +58,12 @@ impl ConfigBuilder {
     // } // Future
 
     /// Adds a handler configuration by its unique ID.
-    /// Requires a boxed trait object for the specific handler builder.
-    pub fn with_handler(
-        mut self,
-        id: impl Into<String>,
-        builder: Box<dyn HandlerBuilderTrait>,
-    ) -> Self {
-        /* ... */
+    pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
+    where
+        B: Into<HandlerBuilder>,
+    {
+        self.handlers.insert(id.into(), builder.into());
+        self
     }
 
     /// Adds a logger configuration by its name, replacing any existing entry.
@@ -150,6 +158,10 @@ pub trait HandlerBuilderTrait: Send + Sync {
 // Builders capture any required context directly. The earlier
 // `build_handler(&ConfigContext)` design has been dropped; shared state is
 // injected through builder fields instead of a dedicated context object.
+//
+// Built handlers are wrapped in `Arc<dyn FemtoHandlerTrait>` during realisation.
+// The same `Arc` is attached to multiple loggers, enabling safe cross-thread
+// sharing of a single handler instance.
 
 // Example: In femtologging::handlers::FileHandlerBuilder
 pub struct FileHandlerBuilder {
@@ -157,7 +169,7 @@ pub struct FileHandlerBuilder {
     mode: Option<String>,
     encoding: Option<String>,
     level: Option<Level>,
-    formatter_id: Option<String>,
+    formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
     flush_record_interval: Option<usize>, // records
@@ -177,7 +189,7 @@ impl FileHandlerBuilder {
     pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
-    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
 
     /// Sets the filter identifiers, replacing any previously configured filters.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
@@ -204,7 +216,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
 pub struct StreamHandlerBuilder {
     stream_target: String, // "stdout", "stderr", or "ext://sys.stdout", "ext://sys.stderr"
     level: Option<Level>,
-    formatter_id: Option<String>,
+    formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
     flush_timeout_ms: Option<i64>, // milliseconds
@@ -224,7 +236,7 @@ impl StreamHandlerBuilder {
     pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
-    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
 
     /// Sets the filter identifiers, replacing any previously configured filters.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
@@ -446,11 +458,10 @@ configuration, as specified by `logging.config.dictConfig`.
        named loggers, and set it via `ConfigBuilder.with_root_logger()`.
 
   - `incremental`: As with `picologging`, `femtologging` will **not** support
-    the `incremental` option \[cite: 1.1, 2.5,
-    uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64998826/docs/core\_[features.md](http://features.md)\].
-     If `incremental` is `True`, a `ValueError` will be raised.
+    the `incremental` option. If `incremental` is `True`, a `ValueError` will
+    be raised. As with picologging, `incremental` is not supported.
 
-  - **Error Handling:** Robust error handling will be crucial to provide clear
+- **Error Handling:** Robust error handling will be crucial to provide clear
     and informative messages for invalid configurations, unknown class names,
     or malformed arguments.
 
@@ -533,5 +544,5 @@ switch their logging calls.
 The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
 `FormatterBuilder`, `FileHandlerBuilder`, and `StreamHandlerBuilder` with
 fluent, chainable methods exposed to Python via `PyO3`. `build_and_init`
-currently validates only the configuration version and does not yet wire the
-builders into the runtime.
+constructs each configured handler once, wraps it in an `Arc`, and attaches it
+to the appropriate loggers.

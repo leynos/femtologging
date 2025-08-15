@@ -171,6 +171,14 @@ impl FemtoLogger {
             }
         })
     }
+
+    fn handler_ptrs_for_test(&self) -> Vec<usize> {
+        self.handlers
+            .read()
+            .iter()
+            .map(|h| Arc::as_ptr(h) as *const () as usize)
+            .collect()
+    }
 }
 
 impl FemtoLogger {
@@ -188,6 +196,11 @@ impl FemtoLogger {
         } else {
             false
         }
+    }
+
+    #[cfg(test)]
+    pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
+        self.handlers.read().clone()
     }
 
     /// Clone the internal sender for use in tests.

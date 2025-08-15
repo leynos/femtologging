@@ -1,4 +1,30 @@
 # serializer version: 1
+# name: test_attach_handler_to_multiple_loggers
+  dict({
+    'disable_existing_loggers': False,
+    'handlers': dict({
+      'console': dict({
+        'target': 'stderr',
+      }),
+    }),
+    'loggers': dict({
+      'core': dict({
+        'handlers': list([
+          'console',
+        ]),
+      }),
+      'worker': dict({
+        'handlers': list([
+          'console',
+        ]),
+      }),
+    }),
+    'root': dict({
+      'level': 'INFO',
+    }),
+    'version': 1,
+  })
+# ---
 # name: test_build_simple_configuration
   dict({
     'disable_existing_loggers': False,

@@ -4,10 +4,16 @@
 
 use std::num::NonZeroUsize;
 
+use pyo3::{prelude::*, types::PyDict, Bound};
+
+use super::FormatterId;
+
 #[derive(Clone, Debug, Default)]
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
+    pub(crate) flush_timeout_ms: Option<u64>,
+    pub(crate) formatter_id: Option<FormatterId>,
 }
 
 impl CommonBuilder {
@@ -40,5 +46,19 @@ impl CommonBuilder {
         } else {
             Ok(())
         }
+    }
+
+    /// Extend a Python dictionary with common builder fields.
+    pub(crate) fn extend_py_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        if let Some(cap) = self.capacity {
+            d.set_item("capacity", cap.get())?;
+        }
+        if let Some(ms) = self.flush_timeout_ms {
+            d.set_item("flush_timeout_ms", ms)?;
+        }
+        if let Some(fid) = &self.formatter_id {
+            d.set_item("formatter_id", fid.as_str())?;
+        }
+        Ok(())
     }
 }
