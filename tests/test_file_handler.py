@@ -257,7 +257,9 @@ def test_overflow_policy_builder_invalid(tmp_path: Path) -> None:
 def test_overflow_policy_builder_timeout_missing_ms(tmp_path: Path) -> None:
     """Timeout policy without ``timeout_ms`` is rejected."""
     path = tmp_path / "missing_ms.log"
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match="timeout_ms required when policy is 'timeout'"
+    ):
         FemtoFileHandler.with_capacity_flush_policy(
             str(path),
             PyHandlerConfig(
@@ -321,3 +323,37 @@ def test_py_handler_config_set_policy_invalid() -> None:
     cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     with pytest.raises(ValueError, match="invalid overflow policy"):
         cfg.policy = "bogus"
+
+
+def test_py_handler_config_set_timeout_missing_for_timeout_policy() -> None:
+    """Clearing ``timeout_ms`` for ``timeout`` policy raises ``ValueError``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=1)
+    with pytest.raises(
+        ValueError, match="timeout_ms required when policy is 'timeout'"
+    ):
+        cfg.timeout_ms = None
+    assert cfg.timeout_ms == 1
+    assert cfg.capacity == 1
+    assert cfg.flush_interval == 1
+    assert cfg.policy == OverflowPolicy.TIMEOUT.value
+
+
+def test_py_handler_config_set_policy_timeout(tmp_path: Path) -> None:
+    """Switching to ``timeout`` policy sets ``timeout_ms`` atomically."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
+    cfg.set_policy_timeout(50)
+    assert cfg.policy == OverflowPolicy.TIMEOUT.value
+    assert cfg.timeout_ms == 50
+    path = tmp_path / "policy_timeout.log"
+    with closing(
+        FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+    ) as handler:
+        handler.handle("core", "INFO", "one")
+    assert path.read_text() == "core [INFO] one\n"
+
+
+def test_py_handler_config_set_policy_timeout_invalid() -> None:
+    """Zero ``timeout_ms`` is rejected by ``set_policy_timeout``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
+    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
+        cfg.set_policy_timeout(0)
