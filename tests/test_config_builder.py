@@ -1,9 +1,12 @@
 import pytest
-from pytest_bdd import given, when, then, scenarios
+from pytest_bdd import given, when, then, scenarios, parsers
 
-from femtologging import ConfigBuilder, FormatterBuilder, LoggerConfigBuilder
-
-scenarios("features/config_builder.feature")
+from femtologging import (
+    ConfigBuilder,
+    FormatterBuilder,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
+)
 
 
 @given("a ConfigBuilder", target_fixture="config_builder")
@@ -23,9 +26,33 @@ def add_logger(config_builder: ConfigBuilder) -> None:
     config_builder.with_logger("core", logger)
 
 
-@when('I set root logger with level "WARN"')
-def set_root(config_builder: ConfigBuilder) -> None:
-    root = LoggerConfigBuilder().with_level("WARN")
+@when(parsers.parse('I add stream handler "{hid}"'))
+def add_stream_handler(config_builder: ConfigBuilder, hid: str) -> None:
+    handler = StreamHandlerBuilder.stderr()
+    config_builder.with_handler(hid, handler)
+
+
+@when(parsers.parse('I add logger "{name}" with handler "{handler}"'))
+def add_logger_with_handler(
+    config_builder: ConfigBuilder, name: str, handler: str
+) -> None:
+    logger = LoggerConfigBuilder().with_handlers([handler])
+    config_builder.with_logger(name, logger)
+
+
+@when(
+    parsers.parse('I add logger "{name}" with level "{level}" and handler "{handler}"')
+)
+def add_logger_with_level_and_handler(
+    config_builder: ConfigBuilder, name: str, level: str, handler: str
+) -> None:
+    logger = LoggerConfigBuilder().with_level(level).with_handlers([handler])
+    config_builder.with_logger(name, logger)
+
+
+@when(parsers.parse('I set root logger with level "{level}"'))
+def set_root(config_builder: ConfigBuilder, level: str) -> None:
+    root = LoggerConfigBuilder().with_level(level)
     config_builder.with_root_logger(root)
 
 
@@ -44,6 +71,9 @@ def set_version(config_builder: ConfigBuilder) -> None:
 def build_fails(config_builder: ConfigBuilder) -> None:
     with pytest.raises(ValueError):
         config_builder.build_and_init()
+
+
+scenarios("features/config_builder.feature")
 
 
 def test_duplicate_formatter_overwrites() -> None:
@@ -104,6 +134,16 @@ def test_logger_config_builder_optional_fields_omitted() -> None:
 def test_no_root_logger_behavior() -> None:
     """Test that building without a root logger raises ValueError."""
     builder = ConfigBuilder()
+    with pytest.raises(ValueError):
+        builder.build_and_init()
+
+
+def test_unknown_handler_id_raises_value_error() -> None:
+    """Building with an unknown handler identifier fails."""
+    builder = ConfigBuilder()
+    logger = LoggerConfigBuilder().with_handlers(["missing"])
+    builder.with_logger("core", logger)
+    builder.with_root_logger(LoggerConfigBuilder().with_level("INFO"))
     with pytest.raises(ValueError):
         builder.build_and_init()
 

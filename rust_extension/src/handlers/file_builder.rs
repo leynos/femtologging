@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, file::*, HandlerBuildError, HandlerBuilderTrait};
-use crate::formatter::DefaultFormatter;
+use crate::{formatter::DefaultFormatter, macros::AsPyDict};
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
 #[pyclass]
@@ -90,6 +90,33 @@ impl FileHandlerBuilder {
     }
 }
 
+impl AsPyDict for FileHandlerBuilder {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        use pyo3::types::PyDict;
+        let d = PyDict::new(py);
+        d.set_item("path", &self.path)?;
+        if let Some(cap) = self.common.capacity {
+            d.set_item("capacity", cap.get())?;
+        }
+        if let Some(flush) = self.flush_record_interval {
+            d.set_item("flush_record_interval", flush)?;
+        }
+        if let Some(fid) = &self.formatter_id {
+            d.set_item("formatter_id", fid)?;
+        }
+        let policy = match self.overflow_policy {
+            OverflowPolicy::Drop => "drop",
+            OverflowPolicy::Block => "block",
+            OverflowPolicy::Timeout(dur) => {
+                d.set_item("timeout_ms", dur.as_millis() as u64)?;
+                "timeout"
+            }
+        };
+        d.set_item("overflow_policy", policy)?;
+        Ok(d.into())
+    }
+}
+
 #[pymethods]
 impl FileHandlerBuilder {
     #[new]
@@ -149,28 +176,7 @@ impl FileHandlerBuilder {
 
     /// Return a dictionary describing the builder configuration.
     fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        use pyo3::types::PyDict;
-        let d = PyDict::new(py);
-        d.set_item("path", &self.path)?;
-        if let Some(cap) = self.common.capacity {
-            d.set_item("capacity", cap.get())?;
-        }
-        if let Some(flush) = self.flush_record_interval {
-            d.set_item("flush_record_interval", flush)?;
-        }
-        if let Some(fid) = &self.formatter_id {
-            d.set_item("formatter_id", fid)?;
-        }
-        let policy = match self.overflow_policy {
-            OverflowPolicy::Drop => "drop",
-            OverflowPolicy::Block => "block",
-            OverflowPolicy::Timeout(dur) => {
-                d.set_item("timeout_ms", dur.as_millis() as u64)?;
-                "timeout"
-            }
-        };
-        d.set_item("overflow_policy", policy)?;
-        Ok(d.into())
+        self.as_pydict(py)
     }
 
     /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on

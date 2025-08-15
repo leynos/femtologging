@@ -10,3 +10,17 @@ Feature: ConfigBuilder
     Given a ConfigBuilder
     When I set version 2
     Then building the configuration fails
+
+  Scenario: attach handler to multiple loggers
+    Given a ConfigBuilder
+    When I add stream handler "console"
+    And I add logger "core" with handler "console"
+    And I add logger "worker" with handler "console"
+    And I set root logger with level "INFO"
+    Then the configuration matches snapshot
+
+  Scenario: unknown handler id
+    Given a ConfigBuilder
+    When I add logger "core" with handler "missing"
+    And I set root logger with level "INFO"
+    Then building the configuration fails

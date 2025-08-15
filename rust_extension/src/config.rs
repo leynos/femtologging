@@ -4,15 +4,42 @@
 //! currently provide a minimal, type-safe API for defining formatters and
 //! loggers. Handler builders will be added in a future iteration.
 
-use std::{collections::BTreeMap, convert::identity};
+use std::{collections::BTreeMap, convert::identity, sync::Arc};
 
 use pyo3::{exceptions::PyValueError, prelude::*};
 use thiserror::Error;
 
 use crate::{
+    handler::FemtoHandlerTrait,
+    handlers::{FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, StreamHandlerBuilder},
     level::FemtoLevel,
     macros::{impl_as_pydict, py_setters, AsPyDict},
+    manager,
 };
+
+#[derive(Clone, Debug)]
+pub enum HandlerBuilder {
+    Stream(StreamHandlerBuilder),
+    File(FileHandlerBuilder),
+}
+
+impl HandlerBuilder {
+    fn build(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
+        match self {
+            Self::Stream(b) => Ok(Arc::new(b.build_inner()?)),
+            Self::File(b) => Ok(Arc::new(b.build_inner()?)),
+        }
+    }
+}
+
+impl AsPyDict for HandlerBuilder {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match self {
+            Self::Stream(b) => b.as_pydict(py),
+            Self::File(b) => b.as_pydict(py),
+        }
+    }
+}
 
 /// Errors that may occur while building a configuration.
 #[derive(Debug, Error)]
@@ -23,6 +50,19 @@ pub enum ConfigError {
     /// No root logger configuration was provided.
     #[error("missing root logger configuration")]
     MissingRootLogger,
+    /// A logger referenced a handler identifier that was not defined.
+    #[error("unknown handler id: {0}")]
+    UnknownHandlerId(String),
+    /// Building a handler failed.
+    #[error("failed to build handler {id}: {source}")]
+    HandlerBuild {
+        id: String,
+        #[source]
+        source: HandlerBuildError,
+    },
+    /// Initialising a logger failed.
+    #[error("failed to initialise logger: {0}")]
+    LoggerInit(String),
 }
 
 impl From<ConfigError> for PyErr {
@@ -163,6 +203,11 @@ impl LoggerConfigBuilder {
     pub fn propagate_opt(&self) -> Option<bool> {
         self.propagate
     }
+
+    /// Retrieve the configured handler identifiers.
+    pub fn handler_ids(&self) -> &[String] {
+        &self.handlers
+    }
 }
 
 impl_as_pydict!(LoggerConfigBuilder {
@@ -183,12 +228,13 @@ py_setters!(LoggerConfigBuilder {
 
 /// Top-level builder coordinating loggers and formatters.
 #[pyclass]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ConfigBuilder {
     version: u8,
     disable_existing_loggers: bool,
     default_level: Option<FemtoLevel>,
     formatters: BTreeMap<String, FormatterBuilder>,
+    handlers: BTreeMap<String, HandlerBuilder>,
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
@@ -200,6 +246,7 @@ impl Default for ConfigBuilder {
             disable_existing_loggers: false,
             default_level: None,
             formatters: BTreeMap::new(),
+            handlers: BTreeMap::new(),
             loggers: BTreeMap::new(),
             root_logger: None,
         }
@@ -238,6 +285,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Add a handler builder by identifier.
+    ///
+    /// Any existing handler with the same identifier is replaced.
+    pub fn with_handler(mut self, id: impl Into<String>, builder: HandlerBuilder) -> Self {
+        self.handlers.insert(id.into(), builder);
+        self
+    }
+
     /// Add a logger by name.
     ///
     /// Any existing logger with the same name is replaced.
@@ -267,6 +322,45 @@ impl ConfigBuilder {
         if self.root_logger.is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
+        let mut built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>> = BTreeMap::new();
+        for (id, builder) in &self.handlers {
+            let handler = builder
+                .build()
+                .map_err(|source| ConfigError::HandlerBuild {
+                    id: id.clone(),
+                    source,
+                })?;
+            built_handlers.insert(id.clone(), handler);
+        }
+        Python::with_gil(|py| -> Result<(), ConfigError> {
+            if let Some(root) = &self.root_logger {
+                let logger = manager::get_logger(py, "root")
+                    .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
+                if let Some(level) = root.level_opt() {
+                    logger.borrow(py).set_level(level);
+                }
+                for hid in root.handler_ids() {
+                    let h = built_handlers
+                        .get(hid)
+                        .ok_or_else(|| ConfigError::UnknownHandlerId(hid.clone()))?;
+                    logger.borrow(py).add_handler(h.clone());
+                }
+            }
+            for (name, cfg) in &self.loggers {
+                let logger = manager::get_logger(py, name)
+                    .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
+                if let Some(level) = cfg.level_opt() {
+                    logger.borrow(py).set_level(level);
+                }
+                for hid in cfg.handler_ids() {
+                    let h = built_handlers
+                        .get(hid)
+                        .ok_or_else(|| ConfigError::UnknownHandlerId(hid.clone()))?;
+                    logger.borrow(py).add_handler(h.clone());
+                }
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 }
@@ -276,6 +370,7 @@ impl_as_pydict!(ConfigBuilder {
     set_val disable_existing_loggers => "disable_existing_loggers",
     set_opt_to_string default_level => "default_level",
     set_map formatters => "formatters",
+    set_map handlers => "handlers",
     set_map loggers => "loggers",
     set_optmap root_logger => "root",
 });
@@ -317,6 +412,25 @@ py_setters!(ConfigBuilder {
         slf
     }
 
+    /// Add a handler by identifier.
+    #[pyo3(name = "with_handler")]
+    fn py_with_handler<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        id: String,
+        builder: Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        if let Ok(b) = builder.extract::<StreamHandlerBuilder>() {
+            slf.handlers.insert(id, HandlerBuilder::Stream(b));
+        } else if let Ok(b) = builder.extract::<FileHandlerBuilder>() {
+            slf.handlers.insert(id, HandlerBuilder::File(b));
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "builder must be StreamHandlerBuilder or FileHandlerBuilder",
+            ));
+        }
+        Ok(slf)
+    }
+
     /// Finalise configuration, raising ``ValueError`` on error.
     #[pyo3(name = "build_and_init")]
     fn py_build_and_init(&self) -> PyResult<()> {
@@ -327,6 +441,7 @@ py_setters!(ConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::Python;
     use rstest::rstest;
 
     #[rstest]
@@ -346,5 +461,37 @@ mod tests {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let builder = ConfigBuilder::new().with_root_logger(root);
         assert!(builder.build_and_init().is_ok());
+    }
+
+    #[rstest]
+    fn shared_handler_attached_once() {
+        Python::with_gil(|py| {
+            manager::reset_manager();
+            let handler = StreamHandlerBuilder::stderr();
+            let logger_cfg = LoggerConfigBuilder::new().with_handlers(["h"]);
+            let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+            let builder = ConfigBuilder::new()
+                .with_handler("h", HandlerBuilder::Stream(handler))
+                .with_root_logger(root)
+                .with_logger("first", logger_cfg.clone())
+                .with_logger("second", logger_cfg);
+            builder.build_and_init().expect("build should succeed");
+            let first = manager::get_logger(py, "first").unwrap();
+            let second = manager::get_logger(py, "second").unwrap();
+            let h1 = first.borrow(py).handlers_for_test();
+            let h2 = second.borrow(py).handlers_for_test();
+            assert_eq!(h1[0], h2[0], "handler should be shared");
+        });
+    }
+
+    #[rstest]
+    fn unknown_handler_id_rejected() {
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let logger_cfg = LoggerConfigBuilder::new().with_handlers(["missing"]);
+        let builder = ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_logger("child", logger_cfg);
+        let err = builder.build_and_init().unwrap_err();
+        assert!(matches!(err, ConfigError::UnknownHandlerId(id) if id == "missing"));
     }
 }

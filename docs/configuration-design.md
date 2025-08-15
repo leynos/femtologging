@@ -20,7 +20,7 @@ pub struct ConfigBuilder {
     default_level: Option<Level>,
     formatters: BTreeMap<String, FormatterBuilder>,
     filters: BTreeMap<String, FilterBuilder>, // Future: FilterBuilder
-    handlers: BTreeMap<String, Box<dyn HandlerBuilderTrait>>, // Boxed trait object for handlers
+    handlers: BTreeMap<String, HandlerBuilder>,
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
@@ -49,12 +49,7 @@ impl ConfigBuilder {
     // } // Future
 
     /// Adds a handler configuration by its unique ID.
-    /// Requires a boxed trait object for the specific handler builder.
-    pub fn with_handler(
-        mut self,
-        id: impl Into<String>,
-        builder: Box<dyn HandlerBuilderTrait>,
-    ) -> Self {
+    pub fn with_handler(mut self, id: impl Into<String>, builder: HandlerBuilder) -> Self {
         /* ... */
     }
 
@@ -150,6 +145,10 @@ pub trait HandlerBuilderTrait: Send + Sync {
 // Builders capture any required context directly. The earlier
 // `build_handler(&ConfigContext)` design has been dropped; shared state is
 // injected through builder fields instead of a dedicated context object.
+//
+// Built handlers are wrapped in `Arc` values when the configuration is
+// realised, allowing several loggers to share the same handler instance safely
+// across threads.
 
 // Example: In femtologging::handlers::FileHandlerBuilder
 pub struct FileHandlerBuilder {
@@ -448,7 +447,7 @@ configuration, as specified by `logging.config.dictConfig`.
   - `incremental`: As with `picologging`, `femtologging` will **not** support
     the `incremental` option \[cite: 1.1, 2.5,
     uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64998826/docs/core\_[features.md](http://features.md)\].
-    If `incremental` is `True`, a `ValueError` will be raised.
+     If `incremental` is `True`, a `ValueError` will be raised.
 
   - **Error Handling:** Robust error handling will be crucial to provide clear
     and informative messages for invalid configurations, unknown class names,
@@ -524,7 +523,7 @@ configuration files, as per `logging.config.fileConfig`.
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
 \[cite:
 uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
-This ensures that `femtologging` can serve as a high-performance backend for
+ This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
 
@@ -533,5 +532,5 @@ switch their logging calls.
 The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
 `FormatterBuilder`, `FileHandlerBuilder`, and `StreamHandlerBuilder` with
 fluent, chainable methods exposed to Python via `PyO3`. `build_and_init`
-currently validates only the configuration version and does not yet wire the
-builders into the runtime.
+constructs each configured handler once, wraps it in an `Arc`, and attaches it
+to the appropriate loggers.

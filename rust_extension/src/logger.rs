@@ -190,6 +190,15 @@ impl FemtoLogger {
         }
     }
 
+    #[cfg(test)]
+    pub fn handlers_for_test(&self) -> Vec<*const ()> {
+        self.handlers
+            .read()
+            .iter()
+            .map(|h| Arc::as_ptr(h) as *const ())
+            .collect()
+    }
+
     /// Clone the internal sender for use in tests.
     ///
     /// # Warning

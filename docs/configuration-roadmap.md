@@ -19,10 +19,10 @@ expanded with specifics for the configuration design.
     via explicit fields; the previously proposed `ConfigContext` has been
     dropped.
 
-- [ ] **Enable multiple handler IDs to be attached to a single logger in the
+- [x] **Enable multiple handler IDs to be attached to a single logger in the
   builder API.**
 
-- [ ] **Store handlers in an `Arc` so that several loggers can share one
+- [x] **Store handlers in an `Arc` so that several loggers can share one
   instance safely.**
 
 - [x] **Introduce a `Manager` registry with dotted-name hierarchy support and a

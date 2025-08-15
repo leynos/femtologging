@@ -10,7 +10,7 @@ use std::{num::NonZeroUsize, time::Duration};
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, HandlerBuildError, HandlerBuilderTrait};
-use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
+use crate::{formatter::DefaultFormatter, macros::AsPyDict, stream_handler::FemtoStreamHandler};
 
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
@@ -83,6 +83,30 @@ impl StreamHandlerBuilder {
     }
 }
 
+impl AsPyDict for StreamHandlerBuilder {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        use pyo3::types::PyDict;
+        let d = PyDict::new(py);
+        d.set_item(
+            "target",
+            match self.target {
+                StreamTarget::Stdout => "stdout",
+                StreamTarget::Stderr => "stderr",
+            },
+        )?;
+        if let Some(cap) = self.common.capacity {
+            d.set_item("capacity", cap.get())?;
+        }
+        if let Some(ms) = self.flush_timeout_ms {
+            d.set_item("flush_timeout_ms", ms)?;
+        }
+        if let Some(fid) = &self.formatter_id {
+            d.set_item("formatter_id", fid)?;
+        }
+        Ok(d.into())
+    }
+}
+
 #[pymethods]
 impl StreamHandlerBuilder {
     /// Create a new `StreamHandlerBuilder` defaulting to `stderr`.
@@ -132,25 +156,7 @@ impl StreamHandlerBuilder {
 
     /// Return a dictionary describing the builder configuration.
     fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        use pyo3::types::PyDict;
-        let d = PyDict::new(py);
-        d.set_item(
-            "target",
-            match self.target {
-                StreamTarget::Stdout => "stdout",
-                StreamTarget::Stderr => "stderr",
-            },
-        )?;
-        if let Some(cap) = self.common.capacity {
-            d.set_item("capacity", cap.get())?;
-        }
-        if let Some(ms) = self.flush_timeout_ms {
-            d.set_item("flush_timeout_ms", ms)?;
-        }
-        if let Some(fid) = &self.formatter_id {
-            d.set_item("formatter_id", fid)?;
-        }
-        Ok(d.into())
+        self.as_pydict(py)
     }
 
     /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
