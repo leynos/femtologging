@@ -6,6 +6,7 @@ from femtologging import (
     FormatterBuilder,
     LoggerConfigBuilder,
     StreamHandlerBuilder,
+    get_logger,
 )
 
 
@@ -71,6 +72,23 @@ def set_version(config_builder: ConfigBuilder) -> None:
 def build_fails(config_builder: ConfigBuilder) -> None:
     with pytest.raises(ValueError):
         config_builder.build_and_init()
+
+
+@then(parsers.parse('building the configuration fails with error containing "{msg}"'))
+def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        config_builder.build_and_init()
+    assert msg in str(excinfo.value)
+
+
+@then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
+def loggers_share_handler(first: str, second: str, hid: str) -> None:
+    del hid  # parameter required by step signature
+    first_logger = get_logger(first)
+    second_logger = get_logger(second)
+    h1 = first_logger.handlers_for_test()
+    h2 = second_logger.handlers_for_test()
+    assert h1[0] == h2[0], "handlers should be shared"
 
 
 scenarios("features/config_builder.feature")
@@ -160,7 +178,7 @@ def test_unknown_handler_id_raises_value_error() -> None:
     logger = LoggerConfigBuilder().with_handlers(["missing"])
     builder.with_logger("core", logger)
     builder.with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown handler id: missing"):
         builder.build_and_init()
 
 

@@ -18,24 +18,44 @@ use crate::{
     manager,
 };
 
-trait DynHandlerBuilderTrait: AsPyDict + Send + Sync + std::fmt::Debug {
-    fn build_dyn(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError>;
+/// Concrete handler builder variants.
+#[derive(Clone, Debug)]
+pub enum HandlerBuilder {
+    /// Build a [`FemtoStreamHandler`].
+    Stream(StreamHandlerBuilder),
+    /// Build a [`FemtoFileHandler`].
+    File(FileHandlerBuilder),
 }
 
-impl<T> DynHandlerBuilderTrait for T
-where
-    T: HandlerBuilderTrait + AsPyDict + Send + Sync + std::fmt::Debug,
-{
-    fn build_dyn(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
-        T::build(self).map(Arc::from)
+impl HandlerBuilder {
+    fn build(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
+        match self {
+            Self::Stream(b) => <StreamHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
+                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
+            Self::File(b) => <FileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
+                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
+        }
     }
 }
 
-type DynHandlerBuilder = Box<dyn DynHandlerBuilderTrait>;
+impl From<StreamHandlerBuilder> for HandlerBuilder {
+    fn from(value: StreamHandlerBuilder) -> Self {
+        Self::Stream(value)
+    }
+}
 
-impl AsPyDict for Box<dyn DynHandlerBuilderTrait> {
+impl From<FileHandlerBuilder> for HandlerBuilder {
+    fn from(value: FileHandlerBuilder) -> Self {
+        Self::File(value)
+    }
+}
+
+impl AsPyDict for HandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        (**self).as_pydict(py)
+        match self {
+            Self::Stream(b) => b.as_pydict(py),
+            Self::File(b) => b.as_pydict(py),
+        }
     }
 }
 
@@ -232,7 +252,11 @@ pub struct ConfigBuilder {
     disable_existing_loggers: bool,
     default_level: Option<FemtoLevel>,
     formatters: BTreeMap<String, FormatterBuilder>,
-    handlers: BTreeMap<String, DynHandlerBuilder>,
+    /// Registered handler builders keyed by identifier.
+    ///
+    /// `HandlerBuilder` is a concrete enum rather than a trait object to make
+    /// cloning and serialisation straightforward.
+    handlers: BTreeMap<String, HandlerBuilder>,
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
@@ -288,9 +312,9 @@ impl ConfigBuilder {
     /// Any existing handler with the same identifier is replaced.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
-        B: HandlerBuilderTrait + AsPyDict + Send + Sync + std::fmt::Debug + 'static,
+        B: Into<HandlerBuilder>,
     {
-        self.handlers.insert(id.into(), Box::new(builder));
+        self.handlers.insert(id.into(), builder.into());
         self
     }
 
@@ -326,7 +350,7 @@ impl ConfigBuilder {
         let mut built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>> = BTreeMap::new();
         for (id, builder) in &self.handlers {
             let handler = builder
-                .build_dyn()
+                .build()
                 .map_err(|source| ConfigError::HandlerBuild {
                     id: id.clone(),
                     source,
@@ -432,17 +456,9 @@ py_setters!(ConfigBuilder {
         id: String,
         builder: Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        if let Ok(b) = builder.extract::<StreamHandlerBuilder>() {
-            slf.handlers.insert(id, Box::new(b));
-            return Ok(slf);
-        }
-        if let Ok(b) = builder.extract::<FileHandlerBuilder>() {
-            slf.handlers.insert(id, Box::new(b));
-            return Ok(slf);
-        }
-        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            "builder must be StreamHandlerBuilder or FileHandlerBuilder",
-        ))
+        let hb = Self::extract_handler_builder(&builder)?;
+        slf.handlers.insert(id, hb);
+        Ok(slf)
     }
 
     /// Finalise configuration, raising ``ValueError`` on error.
@@ -451,6 +467,20 @@ py_setters!(ConfigBuilder {
         self.build_and_init().map_err(PyErr::from)
     }
 );
+
+impl ConfigBuilder {
+    fn extract_handler_builder(builder: &Bound<'_, PyAny>) -> PyResult<HandlerBuilder> {
+        if let Ok(b) = builder.extract::<StreamHandlerBuilder>() {
+            Ok(HandlerBuilder::Stream(b))
+        } else if let Ok(b) = builder.extract::<FileHandlerBuilder>() {
+            Ok(HandlerBuilder::File(b))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "builder must be StreamHandlerBuilder or FileHandlerBuilder",
+            ))
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -495,8 +525,8 @@ mod tests {
             builder.build_and_init().expect("build should succeed");
             let first = manager::get_logger(py, "first").unwrap();
             let second = manager::get_logger(py, "second").unwrap();
-            let h1 = first.borrow(py).handlers_for_test();
-            let h2 = second.borrow(py).handlers_for_test();
+            let h1 = first.borrow(py).handler_ptrs_for_test();
+            let h2 = second.borrow(py).handler_ptrs_for_test();
             assert_eq!(h1[0], h2[0], "handler should be shared");
         });
     }

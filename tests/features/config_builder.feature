@@ -18,9 +18,10 @@ Feature: ConfigBuilder
     And I add logger "worker" with handler "console"
     And I set root logger with level "INFO"
     Then the configuration matches snapshot
+    And loggers "core" and "worker" share handler "console"
 
   Scenario: unknown handler id
     Given a ConfigBuilder
     When I add logger "core" with handler "missing"
     And I set root logger with level "INFO"
-    Then building the configuration fails
+    Then building the configuration fails with error containing "unknown handler id: missing"

@@ -13,7 +13,11 @@ programmatic and type-safe setup of the logging system.
 
 ```rust
 // In femtologging::config::ConfigBuilder
-type DynHandlerBuilder = Box<dyn HandlerBuilderTrait + AsPyDict + Send + Sync>;
+#[derive(Clone, Debug)]
+pub enum HandlerBuilder {
+    Stream(StreamHandlerBuilder),
+    File(FileHandlerBuilder),
+}
 
 pub struct ConfigBuilder {
     // Internal state to hold configuration parts
@@ -22,7 +26,7 @@ pub struct ConfigBuilder {
     default_level: Option<Level>,
     formatters: BTreeMap<String, FormatterBuilder>,
     filters: BTreeMap<String, FilterBuilder>, // Future: FilterBuilder
-    handlers: BTreeMap<String, DynHandlerBuilder>,
+    handlers: BTreeMap<String, HandlerBuilder>, // Concrete enum, not trait object
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
@@ -53,7 +57,7 @@ impl ConfigBuilder {
     /// Adds a handler configuration by its unique ID.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
-        B: HandlerBuilderTrait + AsPyDict + Send + Sync + 'static,
+        B: Into<HandlerBuilder>,
     {
         /* ... */
     }
