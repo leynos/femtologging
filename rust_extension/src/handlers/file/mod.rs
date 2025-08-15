@@ -216,7 +216,12 @@ impl FemtoFileHandler {
                 "flush_interval must be greater than zero",
             ));
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        #[allow(clippy::ineffective_open_options)] // explicit write intent for clarity
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(path)?;
         Ok(Self::from_file(file, formatter, config))
     }
 
