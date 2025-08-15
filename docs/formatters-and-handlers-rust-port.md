@@ -71,7 +71,7 @@ so the caller never blocks. If the queue is full, the record is silently
 dropped and a warning is written to `stderr`. This favours throughput over
 completeness: records may be lost to keep the application responsive. Advanced
 use cases can specify an overflow policy when constructing a handler. Python
-callers pass an overflow policy string literal ("drop", "block", or
+callers pass a lower-case overflow policy string literal ("drop", "block", or
 "timeout:N") to the constructor. The policy may also be extended to support
 options like back pressure, writing overflowed messages to a separate file, or
 emitting metrics for monitoring purposes:

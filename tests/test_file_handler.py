@@ -8,7 +8,7 @@ import threading
 import typing
 from contextlib import closing
 
-from femtologging import FemtoFileHandler, OverflowPolicy
+from femtologging import FemtoFileHandler
 import pytest
 
 FileHandlerFactory = cabc.Callable[
@@ -139,7 +139,7 @@ def test_file_handler_flush_interval_large(tmp_path: Path) -> None:
             str(path),
             capacity=8,
             flush_interval=10000,
-            policy=OverflowPolicy.DROP.value,
+            policy="drop",
         )
     ) as handler:
         for i in range(5):
@@ -256,6 +256,13 @@ def test_timeout_policy_validation(tmp_path: Path) -> None:
         FemtoFileHandler(str(path), policy="timeout:0")
     with pytest.raises(ValueError, match="timeout must be greater than zero"):
         FemtoFileHandler(str(path), policy="timeout:-1")
+
+
+def test_timeout_policy_non_numeric(tmp_path: Path) -> None:
+    """Non-numeric timeout is rejected with a clear error."""
+    path = tmp_path / "non_numeric_timeout.log"
+    with pytest.raises(ValueError, match="timeout must be a positive integer"):
+        FemtoFileHandler(str(path), policy="timeout:abc")
 
 
 def test_default_constructor(tmp_path: Path) -> None:

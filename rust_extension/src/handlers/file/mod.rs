@@ -56,6 +56,10 @@ mod mod_impl {
     }
 }
 
+/// File-based logging handler exposed to Python.
+///
+/// Spawns a worker thread that writes formatted records to disk using the
+/// configuration provided at construction time.
 #[pyclass]
 pub struct FemtoFileHandler {
     tx: Option<Sender<FileCommand>>,
@@ -105,11 +109,13 @@ fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
 
 fn open_log_file(path: &str) -> PyResult<File> {
     use pyo3::exceptions::PyIOError;
+    #[allow(clippy::ineffective_open_options)] // explicit write intent for clarity
     OpenOptions::new()
         .create(true)
+        .write(true)
         .append(true)
         .open(path)
-        .map_err(|e| PyIOError::new_err(e.to_string()))
+        .map_err(|e| PyIOError::new_err(format!("{path}: {e}")))
 }
 
 #[pymethods]
@@ -124,6 +130,9 @@ impl FemtoFileHandler {
     /// - `flush_interval` must be greater than zero.
     /// - `policy` is one of: `"drop"`, `"block"`, or `"timeout:N"` (N > 0).
     #[new]
+    #[pyo3(
+        text_signature = "(path, capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')"
+    )]
     #[pyo3(signature=(
         path,
         capacity = DEFAULT_CHANNEL_CAPACITY,
