@@ -162,10 +162,11 @@ variants (`FemtoRotatingFileHandler`, `FemtoTimedRotatingFileHandler`) build on
 this by performing rotation logic inside their consumer threads.
 
 The Rust implementation resides under `rust_extension/src/handlers/file`. This
-module is split into two pieces, so each concern stays focused:
+module is split into three pieces, so each concern stays focused:
 
-1. `worker.rs` — the background writer thread and its helper types.
-2. `mod.rs` — the public `FemtoFileHandler` API.
+1. `config.rs` — configuration structures and defaults.
+2. `worker.rs` — the background writer thread and its helper types.
+3. `mod.rs` — the public `FemtoFileHandler` API.
 
 ```rust
 use femtologging_rs::handlers::file::FemtoFileHandler;
