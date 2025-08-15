@@ -14,7 +14,7 @@ use pyo3::{
 use std::collections::BTreeMap;
 
 /// Convert a configuration builder into a Python dictionary.
-pub(crate) trait AsPyDict {
+pub trait AsPyDict {
     /// Return the builder's state as a Python dictionary.
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject>;
 }

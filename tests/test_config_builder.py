@@ -89,6 +89,22 @@ def test_duplicate_formatter_overwrites() -> None:
     )
 
 
+def test_duplicate_handler_overwrites() -> None:
+    """Second handler with same ID should replace the first."""
+    builder = ConfigBuilder()
+    handler1 = StreamHandlerBuilder.stderr()
+    handler2 = StreamHandlerBuilder.stdout()
+    builder.with_handler("console", handler1)
+    builder.with_handler("console", handler2)
+    logger = LoggerConfigBuilder().with_handlers(["console"])
+    builder.with_logger("core", logger)
+    builder.with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    config = builder.as_dict()
+    assert config["handlers"]["console"]["target"] == "stdout", (
+        "Later handler should overwrite earlier one",
+    )
+
+
 def test_duplicate_logger_overwrites() -> None:
     """Second logger with same ID should replace the first."""
     builder = ConfigBuilder()

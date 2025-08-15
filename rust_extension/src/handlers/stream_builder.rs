@@ -24,8 +24,6 @@ enum StreamTarget {
 pub struct StreamHandlerBuilder {
     target: StreamTarget,
     common: CommonBuilder,
-    formatter_id: Option<String>,
-    flush_timeout_ms: Option<u64>,
 }
 
 impl StreamHandlerBuilder {
@@ -34,8 +32,6 @@ impl StreamHandlerBuilder {
         Self {
             target: StreamTarget::Stdout,
             common: CommonBuilder::default(),
-            formatter_id: None,
-            flush_timeout_ms: None,
         }
     }
 
@@ -44,8 +40,6 @@ impl StreamHandlerBuilder {
         Self {
             target: StreamTarget::Stderr,
             common: CommonBuilder::default(),
-            formatter_id: None,
-            flush_timeout_ms: None,
         }
     }
 
@@ -58,13 +52,13 @@ impl StreamHandlerBuilder {
 
     /// Set the flush timeout in milliseconds. Must be greater than zero.
     pub fn with_flush_timeout_ms(mut self, timeout_ms: u64) -> Self {
-        self.flush_timeout_ms = Some(timeout_ms);
+        self.common.flush_timeout_ms = Some(timeout_ms);
         self
     }
 
     /// Set the formatter identifier.
     pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
-        self.formatter_id = Some(formatter_id.into());
+        self.common.formatter_id = Some(formatter_id.into());
         self
     }
 
@@ -73,7 +67,7 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.flush_timeout_ms)
+        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.common.flush_timeout_ms)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -94,15 +88,7 @@ impl AsPyDict for StreamHandlerBuilder {
                 StreamTarget::Stderr => "stderr",
             },
         )?;
-        if let Some(cap) = self.common.capacity {
-            d.set_item("capacity", cap.get())?;
-        }
-        if let Some(ms) = self.flush_timeout_ms {
-            d.set_item("flush_timeout_ms", ms)?;
-        }
-        if let Some(fid) = &self.formatter_id {
-            d.set_item("formatter_id", fid)?;
-        }
+        self.common.extend_py_dict(&d)?;
         Ok(d.into())
     }
 }
@@ -141,7 +127,7 @@ impl StreamHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
     ) -> PyRefMut<'py, Self> {
-        slf.flush_timeout_ms = Some(timeout_ms);
+        slf.common.flush_timeout_ms = Some(timeout_ms);
         slf
     }
 
@@ -150,7 +136,7 @@ impl StreamHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.formatter_id = Some(formatter_id);
+        slf.common.formatter_id = Some(formatter_id);
         slf
     }
 
@@ -172,8 +158,8 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
-        let timeout = Duration::from_millis(self.flush_timeout_ms.unwrap_or(1000));
-        let formatter = match self.formatter_id.as_deref() {
+        let timeout = Duration::from_millis(self.common.flush_timeout_ms.unwrap_or(1000));
+        let formatter = match self.common.formatter_id.as_deref() {
             Some("default") | None => DefaultFormatter,
             Some(other) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
