@@ -338,6 +338,8 @@ def test_py_handler_config_set_policy_timeout(tmp_path: Path) -> None:
     """Switching to ``timeout`` policy sets ``timeout_ms`` atomically."""
     cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     cfg.set_policy_timeout(50)
+    assert cfg.policy == OverflowPolicy.TIMEOUT.value
+    assert cfg.timeout_ms == 50
     path = tmp_path / "policy_timeout.log"
     with closing(
         FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)

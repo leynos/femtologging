@@ -34,6 +34,9 @@ def file_handler_factory() -> FileHandlerFactory:
         try:
             yield handler
         finally:
+            # Ensure the worker thread shuts down deterministically.
+            # Close explicitly, then force finalization in case any ref-cycles
+            # or delayed drops remain that could otherwise leak threads in CI.
             handler.close()
             del handler
             gc.collect()
