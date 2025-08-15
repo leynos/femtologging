@@ -332,6 +332,10 @@ def test_py_handler_config_set_timeout_missing_for_timeout_policy() -> None:
         ValueError, match="timeout_ms required when policy is 'timeout'"
     ):
         cfg.timeout_ms = None
+    assert cfg.timeout_ms == 1
+    assert cfg.capacity == 1
+    assert cfg.flush_interval == 1
+    assert cfg.policy == OverflowPolicy.TIMEOUT.value
 
 
 def test_py_handler_config_set_policy_timeout(tmp_path: Path) -> None:
