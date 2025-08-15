@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
@@ -25,22 +25,27 @@ from femtologging import (
 def configure(logging_path: Path) -> None:
     """Initialise femtologging with a file handler.
 
-    Using the builder pattern ensures the configuration is explicit and easy to
-    follow. The handler writes to ``logging_path`` and the root logger forwards
-    all records to it.
+    Parameters
+    ----------
+    logging_path : Path
+        Destination log file.
+
+    Notes
+    -----
+    Use the builder pattern to keep configuration explicit and easy to follow.
+    The handler writes to ``logging_path`` and the root logger forwards all
+    records to it.
     """
 
-    fmt = FormatterBuilder().with_format("{asctime} {threadName} {levelname} {message}")
-
-    handler = (
-        FileHandlerBuilder(str(logging_path))
-        .with_capacity(1024 * 1024)
-        .with_formatter("fmt")
+    simple_formatter = FormatterBuilder().with_format(
+        "{asctime} {threadName} {levelname} {name} {message}"
     )
+
+    handler = FileHandlerBuilder(str(logging_path)).with_formatter("simple_formatter")
 
     config = (
         ConfigBuilder()
-        .with_formatter("fmt", fmt)
+        .with_formatter("simple_formatter", simple_formatter)
         .with_handler("file", handler)
         .with_root_logger(
             LoggerConfigBuilder().with_level("INFO").with_handlers(["file"])
@@ -55,7 +60,7 @@ def worker(thread_id: int) -> None:
     start = randint(0, 1000)
     stop = start + randint(10, 100)
     for value in range(start, stop):
-        logger.info("thread %s produced %s", thread_id, value)
+        logger.info(f"thread {thread_id} produced {value}")
 
 
 def main() -> None:
