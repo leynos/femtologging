@@ -1,8 +1,7 @@
 # Documentation style guide
 
-This guide outlines conventions for authoring documentation for Lille.
-These rules help keep the documentation clear and consistent for
-developers.
+This guide outlines conventions for authoring documentation for Lille. These
+rules help keep the documentation clear and consistent for developers.
 
 ## Spelling
 
@@ -15,12 +14,14 @@ developers.
 ## Punctuation and grammar
 
 - Use the Oxford comma: "ships, planes, and hovercraft".
-- Company names are treated as collective nouns: "Lille Industries are expanding".
+- Company names are treated as collective nouns: "Lille Industries are
+  expanding".
 
 ## Headings
 
 - Write headings in sentence case.
-- Use Markdown headings (`#`, `##`, `###`, and so on) in order without skipping levels.
+- Use Markdown headings (`#`, `##`, `###`, and so on) in order without skipping
+  levels.
 
 ## Markdown rules
 
@@ -46,7 +47,8 @@ developers.
 
 ## Expanding acronyms
 
-- Expand any uncommon acronym on first use, for example, Continuous Integration (CI).
+- Expand any uncommon acronym on first use, for example, Continuous Integration
+  (CI).
 
 ## Formatting
 
@@ -68,18 +70,19 @@ fn add(a: i32, b: i32) -> i32 {
 
 ## API doc comments (Rust)
 
-Doc comments document public APIs and must remain consistent with the
-contents of the manual.
+Doc comments document public APIs and must remain consistent with the contents
+of the manual.
 
 - Begin each block with `///`.
 - Keep the summary line short, followed by further detail.
-- Explicitly document all parameters with `# Parameters`, describing each argument.
+- Explicitly document all parameters with `# Parameters`, describing each
+  argument.
 - Document the return value with `# Returns`.
 - Document any panics or errors with `# Panics` or `# Errors` as appropriate.
 - Place examples under `# Examples` and mark the code block with `no_run`
-  so they compile but do not execute during documentation tests. Use
-  `ignore` instead of `no_run` when the example does not compile or relies on
-  external tools.
+  so they compile but do not execute during documentation tests. Use `ignore`
+  instead of `no_run` when the example does not compile or relies on external
+  tools.
 - Put function attributes after the doc comment.
 
 ````rust
@@ -119,14 +122,15 @@ flowchart TD
 
 ## Python docstrings
 
-Docstrings document public modules, classes, and functions. Use the NumPy
-style and keep descriptions short. See the
-NumPy docstring standard[^2]
-for the full specification.
+Docstrings document public modules, classes, and functions. Use the NumPy style
+and keep descriptions short. See the NumPy docstring standard[^2] for the full
+specification.
 
-- Begin with a one-line summary followed by a blank line and extended description.
+- Begin with a one-line summary followed by a blank line and extended
+  description.
 - List parameters and return values under `Parameters` and `Returns` headings.
-- Document exceptions under `Raises` and include examples in fenced `python` blocks.
+- Document exceptions under `Raises` and include examples in fenced `python`
+  blocks.
 - Keep lines within 80 columns and prefer present tense.
 
 ```python

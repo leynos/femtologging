@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
-from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
+from femtologging import FemtoFileHandler
 import pytest
 
 FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
@@ -24,13 +24,12 @@ def file_handler_factory() -> FileHandlerFactory:
     def factory(
         path: Path, capacity: int, flush_interval: int
     ) -> Generator[FemtoFileHandler, None, None]:
-        cfg = PyHandlerConfig(
-            capacity,
-            flush_interval,
-            OverflowPolicy.DROP.value,
-            timeout_ms=None,
+        handler = FemtoFileHandler(
+            str(path),
+            capacity=capacity,
+            flush_interval=flush_interval,
+            policy="drop",
         )
-        handler = FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
         try:
             yield handler
         finally:

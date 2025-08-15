@@ -33,13 +33,13 @@ Rust ecosystem.
 ### 2.1 Compile-Time Safety as a Cornerstone
 
 Rust's powerful type system and ownership model enable the detection of many
-classes of bugs at compile time, including data races and use-after-free errors.
-`femtologging` will embrace this by avoiding `unsafe` code wherever possible.
-Any consideration of `unsafe` blocks, perhaps for highly specialized FFI
-interactions or performance-critical custom data structures, would be subject to
-rigorous justification and review, ensuring that safety guarantees are not
-compromised. This commitment ensures that the logging framework itself does not
-introduce instability into applications.
+classes of bugs at compile time, including data races and use-after-free
+errors. `femtologging` will embrace this by avoiding `unsafe` code wherever
+possible. Any consideration of `unsafe` blocks, perhaps for highly specialized
+FFI interactions or performance-critical custom data structures, would be
+subject to rigorous justification and review, ensuring that safety guarantees
+are not compromised. This commitment ensures that the logging framework itself
+does not introduce instability into applications.
 
 ### 2.2 Pervasive Multithreading via Producer-Consumer
 
@@ -131,11 +131,11 @@ The primary components of the `femtologging` system include:
   level, message, arguments, source code location (file, line number),
   timestamp, and thread ID. Critically, `FemtoLogRecord` instances must be
   `Send` and `Sync` to be safely transmitted across threads. This ensures that
-  once a record is created, its data is fixed and can be processed by a consumer
-  thread without race conditions. The data within the record, particularly
-  user-provided arguments, will also need to adhere to these trait bounds if
-  they are to be processed in their original form by the consumer; otherwise,
-  they may need to be pre-formatted into strings by the producer.
+  once a record is created, its data is fixed and can be processed by a
+  consumer thread without race conditions. The data within the record,
+  particularly user-provided arguments, will also need to adhere to these trait
+  bounds if they are to be processed in their original form by the consumer;
+  otherwise, they may need to be pre-formatted into strings by the producer.
 
 - `FemtoHandler` **Trait and Implementations:** A trait defining the contract
   for log handlers. Concrete implementations (e.g., `FemtoFileHandler`,
@@ -166,9 +166,9 @@ The logging process will follow these steps:
    contextual information.
 
 4. **Channel Send:** The `FemtoLogRecord` is sent through one or more MPSC
-   channels to the consumer threads associated with the active handlers for that
-   logger. The choice of MPSC channel implementation is critical for performance
-   and will be discussed further. Implementations like `flume` or
+   channels to the consumer threads associated with the active handlers for
+   that logger. The choice of MPSC channel implementation is critical for
+   performance and will be discussed further. Implementations like `flume` or
    `thingbuf::mpsc` offer different trade-offs in terms of speed, blocking
    behavior, and features.
 
@@ -245,38 +245,39 @@ classDiagram
 ### 3.4 Handler Implementation Strategy
 
 `femtologging` will provide Rust equivalents for common CPython `logging`
-handlers, each operating with its own producer-consumer MPSC queue and dedicated
-consumer thread. This ensures that the performance and resilience benefits of
-the producer-consumer model are consistently applied.
+handlers, each operating with its own producer-consumer MPSC queue and
+dedicated consumer thread. This ensures that the performance and resilience
+benefits of the producer-consumer model are consistently applied.
 
 <!-- markdownlint-disable MD056 -->
 
 **Table 1: Core CPython Handlers and** `femtologging` **Equivalents**
 
-| CPython `logging` Handler    | `femtologging` Equivalent       | Brief Description                                                                                                                                     | Key CPython Features to Replicate                                                                          |
-| ---------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `StreamHandler`              | `FemtoStreamHandler`            | Logs to an I/O stream (e.g., `stdout`, `stderr`). The consumer thread writes formatted records to the stream.                                         | Stream selection (default `stderr`), terminator customization.                                             |
-| `FileHandler`                | `FemtoFileHandler`              | Logs to a disk file. The consumer thread manages file I/O.                                                                                            | Filename, mode (append/overwrite), encoding, delayed open.                                                 |
-| `RotatingFileHandler`        | `FemtoRotatingFileHandler`      | Logs to a file, with rotation based on size. The consumer thread handles the rotation logic.                                                          | `maxBytes`, `backupCount`, file renaming scheme.                                                           |
-| `TimedRotatingFileHandler`   | `FemtoTimedRotatingFileHandler` | Logs to a file, with rotation based on time intervals. The consumer thread handles timed rotation.                                                    | `when`, `interval`, `backupCount`, `utc`, `atTime`.                                                        |
-| `SocketHandler`              | `FemtoSocketHandler`            | Sends log records over a TCP or Unix domain socket. The consumer thread manages socket connection and data transmission (pickled/serialized records). | Host, port, TCP/Unix socket, reconnection logic, pickling/serialization of `FemtoLogRecord`.               |
-| `HTTPHandler`                | `FemtoHTTPHandler`              | Sends log records to an HTTP server (GET or POST). The consumer thread makes HTTP requests.                                                           | Host, URL, method (GET/POST), secure (HTTPS), credentials, `mapLogRecord` equivalent for data preparation. |
+| CPython `logging` Handler  | `femtologging` Equivalent       | Brief Description                                                                                                                                     | Key CPython Features to Replicate                                                                          |
+| -------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `StreamHandler`            | `FemtoStreamHandler`            | Logs to an I/O stream (e.g., `stdout`, `stderr`). The consumer thread writes formatted records to the stream.                                         | Stream selection (default `stderr`), terminator customization.                                             |
+| `FileHandler`              | `FemtoFileHandler`              | Logs to a disk file. The consumer thread manages file I/O.                                                                                            | Filename, mode (append/overwrite), encoding, delayed open.                                                 |
+| `RotatingFileHandler`      | `FemtoRotatingFileHandler`      | Logs to a file, with rotation based on size. The consumer thread handles the rotation logic.                                                          | `maxBytes`, `backupCount`, file renaming scheme.                                                           |
+| `TimedRotatingFileHandler` | `FemtoTimedRotatingFileHandler` | Logs to a file, with rotation based on time intervals. The consumer thread handles timed rotation.                                                    | `when`, `interval`, `backupCount`, `utc`, `atTime`.                                                        |
+| `SocketHandler`            | `FemtoSocketHandler`            | Sends log records over a TCP or Unix domain socket. The consumer thread manages socket connection and data transmission (pickled/serialized records). | Host, port, TCP/Unix socket, reconnection logic, pickling/serialization of `FemtoLogRecord`.               |
+| `HTTPHandler`              | `FemtoHTTPHandler`              | Sends log records to an HTTP server (GET or POST). The consumer thread makes HTTP requests.                                                           | Host, URL, method (GET/POST), secure (HTTPS), credentials, `mapLogRecord` equivalent for data preparation. |
 
 <!-- markdownlint-enable MD056 -->
 
 Each `FemtoHandler` implementation will encapsulate the logic for its specific
-output mechanism within its consumer thread, ensuring that I/O operations do not
-block application threads. The choice of MPSC channel (e.g., bounded, unbounded,
-lock-free) will be a configurable aspect, potentially per handler, to allow
-fine-tuning based on expected log volume and performance characteristics. For
-instance, `crossbeam-channel` is a popular choice, but alternatives like `flume`
-claim higher performance in some scenarios and offer asynchronous capabilities,
-while `thingbuf` focuses on lock-free MPSC channels built on a lock-free queue.
-The selection directly impacts throughput and latency. For the early
-experimental release, `femtologging` defaults to a bounded `crossbeam-channel`
-with a capacity of 1024 records. This guards against unbounded memory growth
-when producers outpace the consumer thread. Later versions may expose the
-channel type and capacity as configuration options.
+output mechanism within its consumer thread, ensuring that I/O operations do
+not block application threads. The choice of MPSC channel (e.g., bounded,
+unbounded, lock-free) will be a configurable aspect, potentially per handler,
+to allow fine-tuning based on expected log volume and performance
+characteristics. For instance, `crossbeam-channel` is a popular choice, but
+alternatives like `flume` claim higher performance in some scenarios and offer
+asynchronous capabilities, while `thingbuf` focuses on lock-free MPSC channels
+built on a lock-free queue. The selection directly impacts throughput and
+latency. For the early experimental release, `femtologging` defaults to a
+bounded `crossbeam-channel` with a capacity of 1024 records. This guards
+against unbounded memory growth when producers outpace the consumer thread.
+Later versions may expose the channel type and capacity as configuration
+options.
 
 ## 4. Leveraging Rust's Strengths
 
@@ -309,8 +310,8 @@ high degree of confidence in their memory safety.
 ### 4.2 `Send` and `Sync` Traits for Thread Safety
 
 The `Send` and `Sync` marker traits are Rust's way of indicating whether a type
-can be safely transferred across thread boundaries or accessed concurrently from
-multiple threads, respectively.
+can be safely transferred across thread boundaries or accessed concurrently
+from multiple threads, respectively.
 
 - `Send`: A type `T` is `Send` if it is safe to move a value of type `T` to
   another thread. `FemtoLogRecord` instances must be `Send` to be passed from
@@ -322,12 +323,12 @@ multiple threads, respectively.
   need to be `Sync`.
 
 The compiler automatically derives these traits if all constituent parts of a
-type are also `Send` or `Sync`. By ensuring that all data structures involved in
-inter-thread communication or shared access satisfy these traits, `femtologging`
-guarantees thread safety at a fundamental level. For instance, if a
-`FemtoLogRecord` contains user-supplied data, that data itself must be `Send` if
-it's to be passed raw to the consumer. If not, it must be converted to a
-`Send`-able representation (e.g., a `String`) on the producer side.
+type are also `Send` or `Sync`. By ensuring that all data structures involved
+in inter-thread communication or shared access satisfy these traits,
+`femtologging` guarantees thread safety at a fundamental level. For instance,
+if a `FemtoLogRecord` contains user-supplied data, that data itself must be
+`Send` if it's to be passed raw to the consumer. If not, it must be converted
+to a `Send`-able representation (e.g., a `String`) on the producer side.
 
 ### 4.3 Macros for Ergonomic and Safe Logging
 
@@ -348,11 +349,11 @@ Key features of `femtologging` macros will include:
 - **Ergonomic Structured Data Logging:** A key goal is to make structured
   logging intuitive. The macros should support syntax like:
   `info!(target: "network", "Request received from {}", client_ip; request_id = "123", user_agent = agent_string);`
-  This allows for both a formatted message and arbitrary key-value pairs.
+   This allows for both a formatted message and arbitrary key-value pairs.
 
 - **Compile-Time Format String Checks:** Rust macros can parse format strings
-  and arguments at compile time, ensuring that the number and types of arguments
-  match the format specifiers, preventing runtime formatting errors.
+  and arguments at compile time, ensuring that the number and types of
+  arguments match the format specifiers, preventing runtime formatting errors.
 
 - **Minimal Performance Overhead:** Log level checks can be performed
   efficiently within the macro or by inlined logger code. If a log level is
@@ -363,26 +364,27 @@ Key features of `femtologging` macros will include:
 The design of these macros must carefully consider how structured data is
 captured. If arbitrary values are logged (e.g., `user_id = current_user.id()`),
 and these values are to be processed by the consumer thread, they must be
-`Send`. A pragmatic approach, often better for developer experience, is to allow
-non-`Send` values if they are formatted into strings (using their `Display` or
-`Debug` implementations) directly within the macro on the producer thread. The
-`FemtoLogRecord` would then store these pre-formatted key-value strings or
-potentially `Box<dyn Display + Send + Sync>` objects if more flexibility is
-needed for the formatter. This affects the design of `FemtoLogRecord`'s argument
-storage and the capabilities of the `FemtoFormatter`.
+`Send`. A pragmatic approach, often better for developer experience, is to
+allow non-`Send` values if they are formatted into strings (using their
+`Display` or `Debug` implementations) directly within the macro on the producer
+thread. The `FemtoLogRecord` would then store these pre-formatted key-value
+strings or potentially `Box<dyn Display + Send + Sync>` objects if more
+flexibility is needed for the formatter. This affects the design of
+`FemtoLogRecord`'s argument storage and the capabilities of the
+`FemtoFormatter`.
 
-Procedural macros, such as those demonstrated by the `logcall` crate for logging
-function entry/exit and arguments/return values, could also be considered as an
-extension for more specialized, attribute-based logging tasks, although the core
-logging calls will likely rely on declarative macros for simplicity and
-widespread applicability.
+Procedural macros, such as those demonstrated by the `logcall` crate for
+logging function entry/exit and arguments/return values, could also be
+considered as an extension for more specialized, attribute-based logging tasks,
+although the core logging calls will likely rely on declarative macros for
+simplicity and widespread applicability.
 
 ### 4.4 Commitment to Avoiding `unsafe` Code
 
 Reiterating the principle from section 2.1, the library will strive to be
 implemented entirely in safe Rust. The benefits of Rust's safety guarantees are
-too significant to compromise lightly. If a situation arises where `unsafe` code
-seems necessary for an extreme optimization (e.g., interacting with a
+too significant to compromise lightly. If a situation arises where `unsafe`
+code seems necessary for an extreme optimization (e.g., interacting with a
 platform-specific API via FFI for a specialized handler, or implementing a
 highly custom lock-free data structure not available in existing crates), it
 would require substantial justification, thorough review for soundness, and
@@ -413,8 +415,8 @@ The code executed on an application thread (producer) when a logging macro is
 called must be extremely efficient. This "hot path" involves several steps:
 
 - **Efficient Level Checking:** This is the first gate. The check to determine
-  if a log message should be processed must be very fast, typically involving an
-  atomic load of the current effective log level for the logger.
+  if a log message should be processed must be very fast, typically involving
+  an atomic load of the current effective log level for the logger.
 
 - **Lazy Argument Evaluation/Formatting:** Arguments to logging calls,
   especially those involving complex computations or string formatting, should
@@ -436,11 +438,11 @@ called must be extremely efficient. This "hot path" involves several steps:
   or low-contention concurrent queues are essential. The performance of
   `picologging`'s `QueueHandler` underscores the importance of this step.
 
-The richness of context captured automatically (like module, line number, thread
-ID) also contributes to hot path overhead. While compile-time constants like
-`module_path!`, `file!`, and `line!` have minimal runtime cost once compiled in,
-runtime acquisitions like thread IDs or high-resolution timestamps do have a
-cost. `slog`, for example, emphasizes contextual key-value pairs.
+The richness of context captured automatically (like module, line number,
+thread ID) also contributes to hot path overhead. While compile-time constants
+like `module_path!`, `file!`, and `line!` have minimal runtime cost once
+compiled in, runtime acquisitions like thread IDs or high-resolution timestamps
+do have a cost. `slog`, for example, emphasizes contextual key-value pairs.
 
 `femtologging` must balance the richness of automatically captured context with
 performance. Essential, cheap-to-acquire context fields should be part of the
@@ -484,14 +486,14 @@ them.
 
 Table 2: Comparison of Potential Rust MPSC Channel Implementations
 
-| Crate                                                             | Key Features                                                                                                                                           | Performance Profile (General)                                                                                           | Async Support                                                     | Send/Sync Handled | Notes                                                                                                                   |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `std::sync::mpsc`                                                 | Part of standard library, basic blocking MPSC.                                                                                                         | Generally slower than specialized crates, can be a bottleneck under high load.                                          | No (blocking only).                                               | Yes.              | Baseline, likely not performant enough for `femtologging`'s goals.                                                      |
-| `crossbeam-channel`                                               | Highly optimized, bounded & unbounded, `select!` macro. Offers both blocking and `try_` operations.                                                    | Very fast for many workloads, widely used. Uses spinlocks which can be an issue in low-traffic, many-channel scenarios. | Limited native async; often wrapped or used in blocking contexts. | Yes.              | A strong contender for synchronous handlers.                                                                            |
-| `flume`                                                           | Claims to be faster than `std::sync::mpsc` and sometimes `crossbeam-channel`. Bounded, unbounded, rendezvous. `Send + Sync + Clone` Senders/Receivers. | High performance, designed for speed and flexibility.                                                                   | Yes, `async` send/recv methods available. Can mix sync and async. | Yes.              | Excellent choice, especially if async handlers are a future goal. Good for batching via `try_iter`.                     |
-| `tokio::sync::mpsc`                                               | Designed for asynchronous programming within the Tokio runtime. Bounded channel.                                                                       | Optimized for async contexts, performance tied to Tokio's scheduler.                                                    | Yes (primary design).                                             | Yes.              | Ideal if `femtologging` aims for deep integration with Tokio-based applications.                                        |
-| `async-channel`                                                   | Similar to `crossbeam-channel` but with a focus on async. Bounded & unbounded.                                                                         | Good performance in async scenarios.                                                                                    | Yes (primary design).                                             | Yes.              | Another strong option for async handlers.                                                                               |
-| `thingbuf::mpsc`                                                  | Lock-free MPSC channel built on `ThingBuf` (a lock-free queue). Supports static allocation.                                                            | Potentially very low latency due to lock-free nature.                                                                   | Asynchronous and blocking versions available.                     | Yes.              | Interesting for minimizing contention, especially with many producers. Static allocation is a niche but useful feature. |
+| Crate               | Key Features                                                                                                                                           | Performance Profile (General)                                                                                           | Async Support                                                     | Send/Sync Handled | Notes                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `std::sync::mpsc`   | Part of standard library, basic blocking MPSC.                                                                                                         | Generally slower than specialized crates, can be a bottleneck under high load.                                          | No (blocking only).                                               | Yes.              | Baseline, likely not performant enough for `femtologging`'s goals.                                                      |
+| `crossbeam-channel` | Highly optimized, bounded & unbounded, `select!` macro. Offers both blocking and `try_` operations.                                                    | Very fast for many workloads, widely used. Uses spinlocks which can be an issue in low-traffic, many-channel scenarios. | Limited native async; often wrapped or used in blocking contexts. | Yes.              | A strong contender for synchronous handlers.                                                                            |
+| `flume`             | Claims to be faster than `std::sync::mpsc` and sometimes `crossbeam-channel`. Bounded, unbounded, rendezvous. `Send + Sync + Clone` Senders/Receivers. | High performance, designed for speed and flexibility.                                                                   | Yes, `async` send/recv methods available. Can mix sync and async. | Yes.              | Excellent choice, especially if async handlers are a future goal. Good for batching via `try_iter`.                     |
+| `tokio::sync::mpsc` | Designed for asynchronous programming within the Tokio runtime. Bounded channel.                                                                       | Optimized for async contexts, performance tied to Tokio's scheduler.                                                    | Yes (primary design).                                             | Yes.              | Ideal if `femtologging` aims for deep integration with Tokio-based applications.                                        |
+| `async-channel`     | Similar to `crossbeam-channel` but with a focus on async. Bounded & unbounded.                                                                         | Good performance in async scenarios.                                                                                    | Yes (primary design).                                             | Yes.              | Another strong option for async handlers.                                                                               |
+| `thingbuf::mpsc`    | Lock-free MPSC channel built on `ThingBuf` (a lock-free queue). Supports static allocation.                                                            | Potentially very low latency due to lock-free nature.                                                                   | Asynchronous and blocking versions available.                     | Yes.              | Interesting for minimizing contention, especially with many producers. Static allocation is a niche but useful feature. |
 
 The selection should be based on benchmarking various channel types under
 realistic load patterns (e.g., bursty traffic, sustained high volume, many
@@ -526,15 +528,15 @@ batches rather than one by one.
     transmissions.
 
 - **Implementation:** The consumer loop in each handler would be modified to
-  accumulate records into a temporary buffer before processing the entire batch.
-  Channels like `flume` provide convenient iterators (`recv_iter()`,
+  accumulate records into a temporary buffer before processing the entire
+  batch. Channels like `flume` provide convenient iterators (`recv_iter()`,
   `try_iter()`) that can simplify batch collection.
 
 - **Trade-off:** Batching introduces a small amount of latency for individual
   messages, as they might wait in the consumer's local buffer for the batch to
-  fill or for a timeout to expire before being written to the final destination.
-  This trade-off (throughput vs. individual message latency) should be
-  configurable (e.g., batch size, batch timeout).
+  fill or for a timeout to expire before being written to the final
+  destination. This trade-off (throughput vs. individual message latency)
+  should be configurable (e.g., batch size, batch timeout).
 
 Dynamic filtering, while a desirable feature for operational flexibility, also
 has performance implications. If filters are complex or numerous, evaluating
@@ -578,8 +580,8 @@ Simultaneously, the API will be thoroughly Rust-idiomatic:
   will be defined by traits, allowing users to implement custom behaviors.
 
 - **Rust Error Handling:** Operations that can fail (e.g., handler construction
-  due to I/O errors, configuration parsing) will return `Result<T, E>`, enabling
-  robust error management.
+  due to I/O errors, configuration parsing) will return `Result<T, E>`,
+  enabling robust error management.
 
 - **Macros for Conciseness:** As discussed, macros will be the primary interface
   for emitting log messages, providing a concise and powerful syntax.
@@ -588,13 +590,14 @@ Simultaneously, the API will be thoroughly Rust-idiomatic:
   ensure correctness and provide excellent compiler feedback.
 
 - **Builder Pattern:** For constructing complex objects like handlers or the
-  main `femtologging` configuration, the builder pattern will be used to provide
-  a clear, fluent, and discoverable API.
+  main `femtologging` configuration, the builder pattern will be used to
+  provide a clear, fluent, and discoverable API.
 
 A common consideration in Rust logging libraries is the "global vs. instance"
-logger pattern. CPython's `logging.getLogger()` provides access to a global (or,
-more accurately, hierarchical) logger registry. In Rust, global mutable state is
-often discouraged for reasons of explicitness and testability. Libraries like
+logger pattern. CPython's `logging.getLogger()` provides access to a global
+(or, more accurately, hierarchical) logger registry. In Rust, global mutable
+state is often discouraged for reasons of explicitness and testability.
+Libraries like
 
 `slog` encourage passing `Logger` instances explicitly, which can be verbose.
 Conversely,
@@ -605,8 +608,8 @@ approach:
 
 - It will provide convenient static logging macros (e.g.,
   `femtologging::info!(...)`) that dispatch to a globally initialized and
-  configured `femtologging` system. This offers ease of use similar to the `log`
-  crate.
+  configured `femtologging` system. This offers ease of use similar to the
+  `log` crate.
 
 - The underlying `FemtoLogger` objects and the central dispatcher could still be
   accessible for more advanced use cases, such as fine-grained control in
@@ -623,20 +626,22 @@ section 4.3, they will support:
 - Automatic capture of source code location (`file!`, `line!`, `module_path!`).
 
 - Ergonomic structured logging with key-value pairs (e.g.,
-  `info!("User {} logged in", user.name; user_id = user.id, ip_address = "127.0.0.1");`).
+  `info!("User {} logged in", user.name; user_id = user.id, ip_address = "127.0.0.1");`
+  ).
 
 - Compile-time validation of format strings and arguments.
 
 Inspired by `tracing::span!`,
 
-femtologging could also offer span-like macros for logging the entry and exit of
-a block of code, automatically including duration:
+femtologging could also offer span-like macros for logging the entry and exit
+of a block of code, automatically including duration:
 
 let result = info_span!("Processing request", request_id = id; { /\*... code...
 \*/ result_value });
 
-This would create two log events, one at the beginning and one at the end of the
-block, potentially with the duration of the block included in the exit event.
+This would create two log events, one at the beginning and one at the end of
+the block, potentially with the duration of the block included in the exit
+event.
 
 ### 6.3. Configuration API
 
@@ -646,8 +651,8 @@ potential future enhancement.
 
 - Programmatic Configuration:
 
-  A builder pattern will be the primary method for setting up femtologging. This
-  provides type safety and discoverability. A hypothetical example:
+  A builder pattern will be the primary method for setting up femtologging.
+  This provides type safety and discoverability. A hypothetical example:
 
   Rust
 
@@ -787,9 +792,9 @@ involves:
     unless overridden.
 
 - **Instantiating and Configuring Handlers:** Defining instances of
-  `FemtoFileHandler`, `FemtoSocketHandler`, etc., with their specific parameters
-  (file paths, rotation settings, network addresses, ports). Each handler will
-  spawn its own MPSC channel and consumer thread.
+  `FemtoFileHandler`, `FemtoSocketHandler`, etc., with their specific
+  parameters (file paths, rotation settings, network addresses, ports). Each
+  handler will spawn its own MPSC channel and consumer thread.
 
 - **Assigning Formatters to Handlers:** Each handler will be associated with a
   `FemtoFormatter` instance (either a default or a custom one).
@@ -831,22 +836,22 @@ configurations, especially log levels, without restarting the application.
       The tracing-subscriber::reload::Handle offers a sophisticated model for
       this, allowing parts of a
 
-      `tracing` subscriber (which could include filters or dispatch logic) to be
-      swapped out at runtime. The `log4rs_dynamic_filters` crate also
+      `tracing` subscriber (which could include filters or dispatch logic) to
+      be swapped out at runtime. The `log4rs_dynamic_filters` crate also
       demonstrates dynamic control over filter parameters.
 
 - `femtologging` **Strategy for Dynamic Reconfiguration:**
 
   - **V1 Priority:** Dynamic log level changes for loggers will be a core
-    feature in the initial version, leveraging atomic operations for thread-safe
-    updates.
+    feature in the initial version, leveraging atomic operations for
+    thread-safe updates.
 
   - **Future Enhancements:** The architecture should be designed to accommodate
     dynamic changes to handlers, formatters, and filters, but the full
-    implementation of this dynamic reconfiguration might be a V1.1 or V2 feature
-    due to its complexity. This would involve designing the central logger
-    dispatcher to safely manage and swap out handler configurations and their
-    associated consumer threads and MPSC channels.
+    implementation of this dynamic reconfiguration might be a V1.1 or V2
+    feature due to its complexity. This would involve designing the central
+    logger dispatcher to safely manage and swap out handler configurations and
+    their associated consumer threads and MPSC channels.
 
 Graceful handler reconfiguration requires careful resource management. If a
 `FemtoFileHandler`'s configured output path changes, the consumer thread
@@ -857,8 +862,8 @@ meaning the consumer attempts to process all remaining `FemtoLogRecord`s in its
 MPSC queue before exiting. The `FemtoHandler` trait might need to include
 methods like
 `reconfigure(&self, new_config: Box<dyn Any + Send + Sync>) -> Result<()>`
-(where `new_config` is a type-erased configuration specific to the handler type)
-and `shutdown(&self) -> Result<()>` that can be invoked by a central
+(where `new_config` is a type-erased configuration specific to the handler
+type) and `shutdown(&self) -> Result<()>` that can be invoked by a central
 configuration manager. The MPSC channel itself is crucial here; the sender side
 (from the logger) would be dropped, and the consumer would drain the channel
 before terminating.
@@ -881,13 +886,14 @@ configuration practices. This might involve:
 Furthermore, if `femtologging` provides APIs for dynamic reconfiguration that
 could be exposed via network endpoints (e.g., an HTTP endpoint to change log
 levels, similar to ideas in or CPython's `logging.config.listen`), the
-documentation must strongly emphasize the security implications. Such endpoints,
-if not properly secured (e.g., via authentication, authorization, network
-restrictions), could become a vector for attackers to disrupt logging (e.g., by
-disabling critical security logs) or to cause denial-of-service (e.g., by
-enabling excessively verbose logging to exhaust disk space or CPU). While
-`femtologging` itself might not provide the HTTP server, its reconfiguration API
-design should be mindful of these potential misuse scenarios.
+documentation must strongly emphasize the security implications. Such
+endpoints, if not properly secured (e.g., via authentication, authorization,
+network restrictions), could become a vector for attackers to disrupt logging
+(e.g., by disabling critical security logs) or to cause denial-of-service
+(e.g., by enabling excessively verbose logging to exhaust disk space or CPU).
+While `femtologging` itself might not provide the HTTP server, its
+reconfiguration API design should be mindful of these potential misuse
+scenarios.
 
 ## 8. Key Recommendations and Future Directions
 
@@ -958,12 +964,13 @@ A phased approach will allow for iterative development and feedback:
   - Explore performance optimizations like batching in consumer threads.
 
 A strategic consideration for adoption is the "ecosystem play." While
-`femtologging` will have its own powerful API, prioritizing integration with the
-`log` crate (Phase 2) and `tracing` (Phase 3) could significantly accelerate its
-uptake. This allows existing libraries and applications to benefit from
-`femtologging`'s performance and handler architecture without needing to rewrite
-their instrumentation calls. This path might be more impactful than perfecting a
-unique file-based configuration format in the early stages.
+`femtologging` will have its own powerful API, prioritizing integration with
+the `log` crate (Phase 2) and `tracing` (Phase 3) could significantly
+accelerate its uptake. This allows existing libraries and applications to
+benefit from `femtologging`'s performance and handler architecture without
+needing to rewrite their instrumentation calls. This path might be more
+impactful than perfecting a unique file-based configuration format in the early
+stages.
 
 It's also important to manage scope regarding feature parity with CPython's
 `logging` module. CPython `logging` has a vast array of features, helper
@@ -1013,16 +1020,16 @@ performance goals and compare it against alternatives.
       `FemtoLogRecord` is successfully enqueued into the MPSC channel.
 
     - End-to-end latency: Time from the logging macro call until the message is
-      written to its final destination by the consumer thread (harder to measure
-      accurately but indicative of overall performance).
+      written to its final destination by the consumer thread (harder to
+      measure accurately but indicative of overall performance).
 
   - **Overhead of Disabled Logs:** Measure the performance impact (ideally
     near-zero) of log statements that are filtered out by compile-time level
     settings and runtime level settings.
 
   - **Handler-Specific Performance:** Benchmark individual handlers (e.g.,
-    `FemtoFileHandler`, `FemtoSocketHandler`) under load to identify bottlenecks
-    in formatting or I/O.
+    `FemtoFileHandler`, `FemtoSocketHandler`) under load to identify
+    bottlenecks in formatting or I/O.
 
   - **Memory Usage:** Track memory consumption under various logging loads.
 
@@ -1074,9 +1081,9 @@ scope for more advanced structured logging features:
 - **Schema Compatibility:** Design formatters or provide adapters to produce log
   output compatible with common structured logging schemas and platforms, such
   as the OpenTelemetry Log Data Model, ELK (Elasticsearch, Logstash, Kibana)
-  stack ingestion formats, or JSON structures suitable for Datadog, Splunk, etc.
-  The `tracing-opentelemetry` crate provides a good example of integrating with
-  such ecosystems.
+  stack ingestion formats, or JSON structures suitable for Datadog, Splunk,
+  etc. The `tracing-opentelemetry` crate provides a good example of integrating
+  with such ecosystems.
 
 ## 9. Conclusion
 
@@ -1110,14 +1117,14 @@ The core strengths of the proposed `femtologging` design are:
 
 The success of `femtologging` will ultimately be measured by its ability to
 deliver on these strengths. Key metrics will include raw performance benchmarks
-against both Python logging solutions and other Rust logging libraries, the ease
-with which developers (especially those familiar with Python's `logging`) can
-adopt and use the library, its stability and reliability in highly concurrent
-applications, and its reception within the Rust community, particularly if
-developed as an open-source project. The proposed design positions
-`femtologging` favorably against these potential metrics by prioritizing
-performance, safety, and a considered approach to API design and ecosystem
-integration.
+against both Python logging solutions and other Rust logging libraries, the
+ease with which developers (especially those familiar with Python's `logging`)
+can adopt and use the library, its stability and reliability in highly
+concurrent applications, and its reception within the Rust community,
+particularly if developed as an open-source project. The proposed design
+positions `femtologging` favorably against these potential metrics by
+prioritizing performance, safety, and a considered approach to API design and
+ecosystem integration.
 
 ### 9.2. Alignment with User Requirements
 
@@ -1141,10 +1148,10 @@ The design directly addresses the primary requirements set forth:
 ### 9.3. Call to Action/Next Steps
 
 This design proposal provides a strong and detailed foundation for the
-development of `femtologging`. The next logical step is to commence with Phase 1
-of the suggested implementation roadmap. This initial phase will focus on
+development of `femtologging`. The next logical step is to commence with Phase
+1 of the suggested implementation roadmap. This initial phase will focus on
 establishing the core components, implementing essential handlers, and creating
 the foundational programmatic API, thereby delivering a minimum viable product
-that can be tested, benchmarked, and iterated upon. Subsequent phases will build
-upon this core to expand handler variety, enhance features, and deepen
+that can be tested, benchmarked, and iterated upon. Subsequent phases will
+build upon this core to expand handler variety, enhance features, and deepen
 integration with the broader Rust ecosystem.

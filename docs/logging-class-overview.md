@@ -94,12 +94,12 @@ classDiagram
   rotating‐file family, network-oriented handlers, queue helpers, etc.; for
   instance `BaseRotatingHandler` and its subclasses
   ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/handlers.py?plain=1)),
-  and buffering-based handlers
+   and buffering-based handlers
   ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/handlers.py?plain=1)).
 
 - Only inheritance and the most important *has-a* relations are shown; run-time
-  wiring (e.g. a `Logger` holding multiple `Handler` instances) is depicted at a
-  high level.
+  wiring (e.g. a `Logger` holding multiple `Handler` instances) is depicted at
+  a high level.
 
 - Platform-specific handlers (such as `NTEventLogHandler`) are included even
   though they are only available on Windows builds.

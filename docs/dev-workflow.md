@@ -39,9 +39,9 @@ across Python and Rust code.
 
 - `make help` – list available targets.
 
-ABI3 forward compatibility is disabled to simplify building for the
-currently supported Python versions. Producing a library that worked
-across multiple Python releases proved problematic; therefore,
+ABI3 forward compatibility is disabled to simplify building for the currently
+supported Python versions. Producing a library that worked across multiple
+Python releases proved problematic; therefore,
 `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0` is set both locally and in CI.
 
 These targets ensure style, type safety and correctness across the project.

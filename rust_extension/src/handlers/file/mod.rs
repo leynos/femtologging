@@ -4,10 +4,11 @@
 //! log records to disk. Configuration types and the worker implementation live
 //! in submodules and are re-exported here for external use.
 //!
-//! Construct the handler with [`new`] for defaults, [`with_capacity`] to tune
-//! the queue size, or [`with_capacity_flush_policy`] for full control. Python
-//! callers use ``FemtoFileHandler.with_capacity_flush_policy`` with a
-//! [`PyHandlerConfig`](PyHandlerConfig) to access the same options.
+//! Construct the handler with [`FemtoFileHandler::new`] for defaults,
+//! [`FemtoFileHandler::with_capacity`] to tune the queue size, or
+//! [`FemtoFileHandler::with_capacity_flush_policy`] for full control in Rust.
+//! Python callers customise these options via keyword arguments to
+//! `FemtoFileHandler`.
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
@@ -33,9 +34,7 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
-pub use config::{
-    HandlerConfig, OverflowPolicy, PyHandlerConfig, TestConfig, DEFAULT_CHANNEL_CAPACITY,
-};
+pub use config::{HandlerConfig, OverflowPolicy, TestConfig, DEFAULT_CHANNEL_CAPACITY};
 use worker::{spawn_worker, FileCommand, WorkerConfig};
 
 /// Internal items needed by the worker implementation.
@@ -58,6 +57,10 @@ mod mod_impl {
     }
 }
 
+/// File-based logging handler exposed to Python.
+///
+/// Spawns a worker thread that writes formatted records to disk using the
+/// configuration provided at construction time.
 #[pyclass]
 pub struct FemtoFileHandler {
     tx: Option<Sender<FileCommand>>,
@@ -67,48 +70,105 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
+fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
+    use pyo3::exceptions::PyValueError;
+    let policy = policy.trim().to_ascii_lowercase();
+    if policy == "drop" {
+        return Ok(OverflowPolicy::Drop);
+    }
+    if policy == "block" {
+        return Ok(OverflowPolicy::Block);
+    }
+    // Provide a targeted error for a bare "timeout" to guide users toward
+    // the correct syntax. Other malformed variants (e.g., non-integer or
+    // non-positive values after the colon) are handled below.
+    if policy == "timeout" {
+        return Err(PyValueError::new_err(
+            "timeout requires a positive integer N, use 'timeout:N'",
+        ));
+    }
+    if let Some(rest) = policy.strip_prefix("timeout:") {
+        let ms: i64 = rest.trim().parse().map_err(|_| {
+            PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
+        })?;
+        if ms <= 0 {
+            return Err(PyValueError::new_err("timeout must be greater than zero"));
+        }
+        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
+    }
+    let valid = "drop, block, timeout:N";
+    Err(PyValueError::new_err(format!(
+        "invalid overflow policy '{policy}'. Valid options are: {valid}",
+    )))
+}
+
+fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
+    use pyo3::exceptions::PyValueError;
+    if capacity == 0 {
+        return Err(PyValueError::new_err("capacity must be greater than zero"));
+    }
+    if flush_interval <= 0 {
+        return Err(PyValueError::new_err(
+            "flush_interval must be greater than zero",
+        ));
+    }
+    Ok(flush_interval as usize)
+}
+
+fn open_log_file(path: &str) -> PyResult<File> {
+    use pyo3::exceptions::PyIOError;
+    #[expect(
+        clippy::ineffective_open_options,
+        reason = "Be explicit about write intent alongside append"
+    )]
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| PyIOError::new_err(format!("{path}: {e}")))
+}
+
 #[pymethods]
 impl FemtoFileHandler {
+    /// Create a file handler writing to `path`.
+    ///
+    /// Python usage:
+    ///   `FemtoFileHandler(path, capacity=DEFAULT_CHANNEL_CAPACITY,`
+    ///   `flush_interval=1, policy="drop")`
+    ///
+    /// - `capacity` must be greater than zero.
+    /// - `flush_interval` must be greater than zero.
+    /// - `policy` is one of: `"drop"`, `"block"`, or `"timeout:N"` (N > 0).
     #[new]
-    fn py_new(path: String) -> PyResult<Self> {
-        Self::new(path).map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
-    }
-
-    /// Construct a handler using a [`PyHandlerConfig`].
-    ///
-    /// ```python
-    /// from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
-    /// cfg = PyHandlerConfig(1024, 1, OverflowPolicy.DROP.value, None)
-    /// handler = FemtoFileHandler.with_capacity_flush_policy("app.log", cfg)
-    /// ```
-    ///
-    /// Notes:
-    /// - `flush_interval` must be > 0.
-    /// - For `OverflowPolicy.TIMEOUT`, `timeout_ms` must be provided and > 0;
-    ///   for other policies it must be `None`.
-    #[staticmethod]
-    #[pyo3(name = "with_capacity_flush_policy")]
-    fn py_with_capacity_flush_policy(path: String, config: PyHandlerConfig) -> PyResult<Self> {
-        use pyo3::exceptions::PyValueError;
-        let policy = match config.policy.to_ascii_lowercase().as_str() {
-            "drop" => OverflowPolicy::Drop,
-            "block" => OverflowPolicy::Block,
-            "timeout" => {
-                let ms = config.timeout_ms.ok_or_else(|| {
-                    PyValueError::new_err("timeout_ms required for timeout policy")
-                })?;
-                OverflowPolicy::Timeout(Duration::from_millis(ms))
-            }
-            _ => {
-                let valid = ["drop", "block", "timeout"].join(", ");
-                let msg = format!(
-                    "invalid overflow policy: '{}'. Valid options are: {}",
-                    config.policy, valid
-                );
-                return Err(PyValueError::new_err(msg));
-            }
+    #[pyo3(
+        text_signature = "(path, capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')"
+    )]
+    #[pyo3(signature=(
+        path,
+        capacity = DEFAULT_CHANNEL_CAPACITY,
+        flush_interval = 1,
+        policy = "drop"
+    ))]
+    fn py_new(
+        path: String,
+        capacity: usize,
+        flush_interval: isize,
+        policy: &str,
+    ) -> PyResult<Self> {
+        let overflow_policy = parse_overflow_policy(policy)?;
+        let flush_interval = validate_params(capacity, flush_interval)?;
+        let handler_cfg = HandlerConfig {
+            capacity,
+            flush_interval,
+            overflow_policy,
         };
-        Self::build_py_handler(path, config.capacity, Some(config.flush_interval), policy)
+        let file = open_log_file(&path)?;
+        Ok(FemtoFileHandler::from_file(
+            file,
+            DefaultFormatter,
+            handler_cfg,
+        ))
     }
 
     #[pyo3(name = "handle")]
@@ -128,44 +188,6 @@ impl FemtoFileHandler {
 }
 
 impl FemtoFileHandler {
-    fn build_py_handler(
-        path: String,
-        capacity: usize,
-        flush_interval: Option<usize>,
-        overflow_policy: OverflowPolicy,
-    ) -> PyResult<Self> {
-        Self::handle_io_result(Self::create_with_policy(
-            path,
-            capacity,
-            flush_interval,
-            overflow_policy,
-        ))
-    }
-
-    fn handle_io_result(result: io::Result<Self>) -> PyResult<Self> {
-        match result {
-            Ok(handler) => Ok(handler),
-            Err(e) => {
-                use pyo3::exceptions::{PyIOError, PyValueError};
-                if e.kind() == io::ErrorKind::InvalidInput {
-                    Err(PyValueError::new_err(e.to_string()))
-                } else {
-                    Err(PyIOError::new_err(e.to_string()))
-                }
-            }
-        }
-    }
-
-    fn create_with_policy<P: AsRef<Path>>(
-        path: P,
-        capacity: usize,
-        flush_interval: Option<usize>,
-        overflow_policy: OverflowPolicy,
-    ) -> io::Result<Self> {
-        let cfg = Self::build_config(capacity, flush_interval, overflow_policy);
-        Self::with_capacity_flush_policy(path, DefaultFormatter, cfg)
-    }
-
     /// Create a handler writing to `path` with default settings.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
@@ -179,7 +201,11 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
-        let cfg = Self::build_config(capacity, None, OverflowPolicy::Drop);
+        let cfg = HandlerConfig {
+            capacity,
+            flush_interval: 1,
+            overflow_policy: OverflowPolicy::Drop,
+        };
         Self::with_capacity_flush_policy(path, formatter, cfg)
     }
 
@@ -202,7 +228,15 @@ impl FemtoFileHandler {
                 "flush_interval must be greater than zero",
             ));
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        #[expect(
+            clippy::ineffective_open_options,
+            reason = "Be explicit about write intent alongside append"
+        )]
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(path)?;
         Ok(Self::from_file(file, formatter, config))
     }
 
@@ -268,19 +302,6 @@ impl FemtoFileHandler {
             done_rx,
             overflow_policy: policy,
             ack_rx,
-        }
-    }
-
-    fn build_config(
-        capacity: usize,
-        flush_interval: Option<usize>,
-        overflow_policy: OverflowPolicy,
-    ) -> HandlerConfig {
-        let defaults = HandlerConfig::default();
-        HandlerConfig {
-            capacity,
-            flush_interval: flush_interval.unwrap_or(defaults.flush_interval),
-            overflow_policy,
         }
     }
 

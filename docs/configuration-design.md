@@ -448,7 +448,7 @@ configuration, as specified by `logging.config.dictConfig`.
   - `incremental`: As with `picologging`, `femtologging` will **not** support
     the `incremental` option \[cite: 1.1, 2.5,
     uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64998826/docs/core\_[features.md](http://features.md)\].
-    If `incremental` is `True`, a `ValueError` will be raised.
+     If `incremental` is `True`, a `ValueError` will be raised.
 
   - **Error Handling:** Robust error handling will be crucial to provide clear
     and informative messages for invalid configurations, unknown class names,
@@ -524,7 +524,7 @@ configuration files, as per `logging.config.fileConfig`.
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
 \[cite:
 uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
-This ensures that `femtologging` can serve as a high-performance backend for
+ This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
 
