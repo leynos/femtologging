@@ -9,7 +9,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use pyo3::prelude::*;
 
-use super::{common::CommonBuilder, HandlerBuildError, HandlerBuilderTrait};
+use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
 use crate::{formatter::DefaultFormatter, macros::AsPyDict, stream_handler::FemtoStreamHandler};
 
 #[derive(Clone, Copy, Debug)]
@@ -66,7 +66,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Set the formatter identifier.
-    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
+    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
         self.common.formatter_id = Some(formatter_id.into());
         self
     }
@@ -139,7 +139,7 @@ impl StreamHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id);
+        slf.common.formatter_id = Some(formatter_id.into());
         slf
     }
 
@@ -162,9 +162,9 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
         self.validate()?;
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
         let timeout = Duration::from_millis(self.common.flush_timeout_ms.unwrap_or(1000));
-        let formatter = match self.common.formatter_id.as_deref() {
-            Some("default") | None => DefaultFormatter,
-            Some(other) => {
+        let formatter = match self.common.formatter_id.as_ref() {
+            Some(FormatterId::Default) | None => DefaultFormatter,
+            Some(FormatterId::Custom(other)) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
                 )))

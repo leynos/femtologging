@@ -13,7 +13,12 @@ programmatic and type-safe setup of the logging system.
 
 ```rust
 // In femtologging::config::ConfigBuilder
-type DynHandlerBuilder = Box<dyn HandlerBuilderTrait + AsPyDict + Send + Sync>;
+pub enum HandlerBuilder {
+    Stream(StreamHandlerBuilder),
+    File(FileHandlerBuilder),
+}
+
+struct FormatterId(String); // Newtype for formatter identifiers
 
 pub struct ConfigBuilder {
     // Internal state to hold configuration parts
@@ -22,7 +27,7 @@ pub struct ConfigBuilder {
     default_level: Option<Level>,
     formatters: BTreeMap<String, FormatterBuilder>,
     filters: BTreeMap<String, FilterBuilder>, // Future: FilterBuilder
-    handlers: BTreeMap<String, DynHandlerBuilder>, // Boxed trait objects
+    handlers: BTreeMap<String, HandlerBuilder>, // Later insertions with the same ID overwrite earlier ones
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
@@ -53,9 +58,9 @@ impl ConfigBuilder {
     /// Adds a handler configuration by its unique ID.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
-        B: HandlerBuilderTrait + AsPyDict + Send + Sync + 'static,
+        B: Into<HandlerBuilder>,
     {
-        self.handlers.insert(id.into(), Box::new(builder));
+        self.handlers.insert(id.into(), builder.into());
         self
     }
 
@@ -152,9 +157,9 @@ pub trait HandlerBuilderTrait: Send + Sync {
 // `build_handler(&ConfigContext)` design has been dropped; shared state is
 // injected through builder fields instead of a dedicated context object.
 //
-// Built handlers are wrapped in `Arc` values when the configuration is
-// realised, allowing several loggers to share the same handler instance safely
-// across threads.
+// Built handlers are wrapped in `Arc` during realisation. The same `Arc` is
+// attached to multiple loggers, enabling safe cross-thread sharing of a single
+// handler instance.
 
 // Example: In femtologging::handlers::FileHandlerBuilder
 pub struct FileHandlerBuilder {
@@ -162,7 +167,7 @@ pub struct FileHandlerBuilder {
     mode: Option<String>,
     encoding: Option<String>,
     level: Option<Level>,
-    formatter_id: Option<String>,
+    formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
     flush_record_interval: Option<usize>, // records
@@ -182,7 +187,7 @@ impl FileHandlerBuilder {
     pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
-    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
 
     /// Sets the filter identifiers, replacing any previously configured filters.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
@@ -209,7 +214,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
 pub struct StreamHandlerBuilder {
     stream_target: String, // "stdout", "stderr", or "ext://sys.stdout", "ext://sys.stderr"
     level: Option<Level>,
-    formatter_id: Option<String>,
+    formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
     flush_timeout_ms: Option<i64>, // milliseconds
@@ -229,7 +234,7 @@ impl StreamHandlerBuilder {
     pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
-    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self { /* ... */ }
+    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
 
     /// Sets the filter identifiers, replacing any previously configured filters.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
@@ -451,11 +456,12 @@ configuration, as specified by `logging.config.dictConfig`.
        named loggers, and set it via `ConfigBuilder.with_root_logger()`.
 
   - `incremental`: As with `picologging`, `femtologging` will **not** support
-    the `incremental` option \[cite: 1.1, 2.5,
-    uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64998826/docs/core\_[features.md](http://features.md)\].
-     If `incremental` is `True`, a `ValueError` will be raised.
+    the `incremental` option. If `incremental` is `True`, a `ValueError` will
+    be raised.[^incremental]
 
-  - **Error Handling:** Robust error handling will be crucial to provide clear
+[^incremental]: As with picologging, `incremental` is not supported.
+
+- **Error Handling:** Robust error handling will be crucial to provide clear
     and informative messages for invalid configurations, unknown class names,
     or malformed arguments.
 

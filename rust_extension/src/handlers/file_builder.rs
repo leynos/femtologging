@@ -10,7 +10,7 @@ use std::num::NonZeroUsize;
 
 use pyo3::prelude::*;
 
-use super::{common::CommonBuilder, file::*, HandlerBuildError, HandlerBuilderTrait};
+use super::{common::CommonBuilder, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait};
 use crate::{formatter::DefaultFormatter, macros::AsPyDict};
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
@@ -49,7 +49,7 @@ impl FileHandlerBuilder {
     }
 
     /// Set the formatter identifier.
-    pub fn with_formatter(mut self, formatter_id: impl Into<String>) -> Self {
+    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
         self.common.formatter_id = Some(formatter_id.into());
         self
     }
@@ -143,7 +143,7 @@ impl FileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id);
+        slf.common.formatter_id = Some(formatter_id.into());
         slf
     }
 
@@ -203,11 +203,11 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
             cfg.flush_interval = flush;
         }
         cfg.overflow_policy = self.overflow_policy;
-        let handler = match self.common.formatter_id.as_deref() {
-            Some("default") | None => {
+        let handler = match self.common.formatter_id.as_ref() {
+            Some(FormatterId::Default) | None => {
                 FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?
             }
-            Some(other) => {
+            Some(FormatterId::Custom(other)) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
                 )))

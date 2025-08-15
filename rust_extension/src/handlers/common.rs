@@ -6,12 +6,14 @@ use std::num::NonZeroUsize;
 
 use pyo3::{prelude::*, types::PyDict, Bound};
 
+use super::FormatterId;
+
 #[derive(Clone, Debug, Default)]
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
     pub(crate) flush_timeout_ms: Option<u64>,
-    pub(crate) formatter_id: Option<String>,
+    pub(crate) formatter_id: Option<FormatterId>,
 }
 
 impl CommonBuilder {
@@ -55,7 +57,7 @@ impl CommonBuilder {
             d.set_item("flush_timeout_ms", ms)?;
         }
         if let Some(fid) = &self.formatter_id {
-            d.set_item("formatter_id", fid)?;
+            d.set_item("formatter_id", fid.as_str())?;
         }
         Ok(())
     }
