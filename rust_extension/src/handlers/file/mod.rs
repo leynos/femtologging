@@ -97,13 +97,6 @@ fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
         return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
     }
     let valid = "drop, block, timeout:N";
-    // As a final safeguard, if a bare "timeout" slips through earlier checks,
-    // still provide the targeted guidance instead of the generic message.
-    if policy == "timeout" {
-        return Err(PyValueError::new_err(
-            "timeout requires a positive integer N, use 'timeout:N'",
-        ));
-    }
     Err(PyValueError::new_err(format!(
         "invalid overflow policy '{policy}'. Valid options are: {valid}",
     )))
