@@ -323,3 +323,31 @@ def test_py_handler_config_set_policy_invalid() -> None:
     cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
     with pytest.raises(ValueError, match="invalid overflow policy"):
         cfg.policy = "bogus"
+
+
+def test_py_handler_config_set_timeout_missing_for_timeout_policy() -> None:
+    """Clearing ``timeout_ms`` for ``timeout`` policy raises ``ValueError``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.TIMEOUT.value, timeout_ms=1)
+    with pytest.raises(
+        ValueError, match="timeout_ms required when policy is 'timeout'"
+    ):
+        cfg.timeout_ms = None
+
+
+def test_py_handler_config_set_policy_timeout(tmp_path: Path) -> None:
+    """Switching to ``timeout`` policy sets ``timeout_ms`` atomically."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
+    cfg.set_policy_timeout(50)
+    path = tmp_path / "policy_timeout.log"
+    with closing(
+        FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
+    ) as handler:
+        handler.handle("core", "INFO", "one")
+    assert path.read_text() == "core [INFO] one\n"
+
+
+def test_py_handler_config_set_policy_timeout_invalid() -> None:
+    """Zero ``timeout_ms`` is rejected by ``set_policy_timeout``."""
+    cfg = PyHandlerConfig(1, 1, OverflowPolicy.DROP.value, timeout_ms=None)
+    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
+        cfg.set_policy_timeout(0)

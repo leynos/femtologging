@@ -167,6 +167,10 @@ impl PyHandlerConfig {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms can only be set when policy is 'timeout'",
             ))
+        } else if self.policy == "timeout" && value.is_none() {
+            Err(pyo3::exceptions::PyValueError::new_err(
+                "timeout_ms required when policy is 'timeout'",
+            ))
         } else if matches!(value, Some(ms) if ms == 0) {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "timeout_ms must be greater than zero",
@@ -188,6 +192,24 @@ impl PyHandlerConfig {
     fn set_flush_interval(&mut self, value: usize) -> PyResult<()> {
         Self::validate_positive(value, "flush_interval")?;
         self.flush_interval = value;
+        Ok(())
+    }
+
+    /// Atomically switch to the TIMEOUT policy with a required, non-zero
+    /// timeout.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// cfg = PyHandlerConfig(1, 1, "drop", timeout_ms=None)
+    /// cfg.set_policy_timeout(250)
+    /// assert cfg.policy == "timeout"
+    /// assert cfg.timeout_ms == 250
+    /// ```
+    pub fn set_policy_timeout(&mut self, timeout_ms: u64) -> PyResult<()> {
+        Self::validate_policy("timeout", Some(timeout_ms))?;
+        self.policy = "timeout".to_string();
+        self.timeout_ms = Some(timeout_ms);
         Ok(())
     }
 
