@@ -152,7 +152,10 @@ fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
 
 fn open_log_file(path: &str) -> PyResult<File> {
     use pyo3::exceptions::PyIOError;
-    #[allow(clippy::ineffective_open_options)] // explicit write intent for clarity
+    #[expect(
+        clippy::ineffective_open_options,
+        reason = "Be explicit about write intent alongside append"
+    )]
     OpenOptions::new()
         .create(true)
         .write(true)
@@ -260,7 +263,10 @@ impl FemtoFileHandler {
                 "flush_interval must be greater than zero",
             ));
         }
-        #[allow(clippy::ineffective_open_options)] // explicit write intent for clarity
+        #[expect(
+            clippy::ineffective_open_options,
+            reason = "Be explicit about write intent alongside append"
+        )]
         let file = OpenOptions::new()
             .create(true)
             .write(true)

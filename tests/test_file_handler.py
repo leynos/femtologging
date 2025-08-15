@@ -169,7 +169,12 @@ def test_overflow_policy_block(tmp_path: Path) -> None:
 
 
 def test_overflow_policy_timeout(tmp_path: Path) -> None:
-    """Timeout policy honours the timeout."""
+    """Timeout policy honours the timeout.
+
+    The worker drains the queue faster than Python can fill it, so reliably
+    forcing a timeout would introduce flakiness. This smoke test just exercises
+    the timeout parsing path.
+    """
     path = tmp_path / "timeout.log"
     with closing(
         FemtoFileHandler(
