@@ -19,7 +19,7 @@ pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use handlers::{
-    file::{FemtoFileHandler, FemtoFileHandlerConfig, HandlerConfig, OverflowPolicy, TestConfig},
+    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
     FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
     StreamHandlerBuilder,
 };
@@ -51,7 +51,6 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
-    m.add_class::<FemtoFileHandlerConfig>()?;
     m.add_class::<StreamHandlerBuilder>()?;
     m.add_class::<FileHandlerBuilder>()?;
     m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;

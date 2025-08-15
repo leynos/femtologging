@@ -84,18 +84,16 @@ Every handler provides a `flush()` method, so callers can force pending
 messages to be written before shutdown.
 
 ```python
-from femtologging import FemtoFileHandler, FemtoFileHandlerConfig
+from femtologging import FemtoFileHandler
 
-cfg = FemtoFileHandlerConfig(
-    capacity=4096, flush_interval=1, policy="block"
+handler = FemtoFileHandler(
+    "app.log", capacity=4096, flush_interval=1, policy="block"
 )
-handler = FemtoFileHandler("app.log", cfg)
 ```
 
 Legacy constructors like ``with_capacity_flush_blocking`` and
-``with_capacity_flush_timeout`` have been removed. Provide a
-``FemtoFileHandlerConfig`` instance when customising capacity, flush behaviour
-or overflow policy.
+``with_capacity_flush_timeout`` have been removed. Customise capacity, flush
+behaviour or overflow policy via keyword arguments on the constructor.
 
 The constructor enforces several invariants on the configuration:
 
@@ -162,14 +160,13 @@ handler still performs this cleanup if the methods aren't invoked.
 
 By default, the file handler flushes the underlying file after every record to
 maximize durability. To batch writes, pass a custom configuration via
-`FemtoFileHandler::with_capacity_flush_policy()` (Rust) or providing a
-``FemtoFileHandlerConfig`` to ``FemtoFileHandler`` (Python). Setting the
-`flush_interval` in `HandlerConfig` or the Python constructor defers flushing
-until the specified number of records have been written. The value must be
-greater than zero, so periodic flushing always occurs. Higher values reduce
-syscall overhead in high-volume scenarios. Internally the handler buffers
-writes with `BufWriter`, so records only reach the file once a flush occurs or
-the handler shuts down.
+`FemtoFileHandler::with_capacity_flush_policy()` (Rust) or set keyword
+arguments on ``FemtoFileHandler`` (Python). Setting the `flush_interval` in
+`HandlerConfig` or the Python constructor defers flushing until the specified
+number of records have been written. The value must be greater than zero, so
+periodic flushing always occurs. Higher values reduce syscall overhead in
+high-volume scenarios. Internally the handler buffers writes with `BufWriter`,
+so records only reach the file once a flush occurs or the handler shuts down.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit

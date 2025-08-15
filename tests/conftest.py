@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
-from femtologging import FemtoFileHandler, FemtoFileHandlerConfig, OverflowPolicy
+from femtologging import FemtoFileHandler, OverflowPolicy
 import pytest
 
 FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]

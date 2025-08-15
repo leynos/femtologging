@@ -5,9 +5,9 @@
 //! in submodules and are re-exported here for external use.
 //!
 //! Construct the handler with [`new`] for defaults, [`with_capacity`] to tune
-//! the queue size, or [`with_capacity_flush_policy`] for full control. Python
-//! callers supply an optional [`FemtoFileHandlerConfig`] to ``FemtoFileHandler``
-//! to access the same options.
+//! the queue size, or [`with_capacity_flush_policy`] for full control in Rust.
+//! Python callers customise these options via keyword arguments to
+//! ``FemtoFileHandler``.
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
@@ -35,54 +35,6 @@ use crate::{
 
 pub use config::{HandlerConfig, OverflowPolicy, TestConfig, DEFAULT_CHANNEL_CAPACITY};
 use worker::{spawn_worker, FileCommand, WorkerConfig};
-
-#[pyclass]
-#[derive(Clone)]
-pub struct FemtoFileHandlerConfig {
-    #[pyo3(get, set)]
-    pub capacity: usize,
-    #[pyo3(get, set)]
-    pub flush_interval: isize,
-    #[pyo3(get, set)]
-    pub timeout_ms: Option<i64>,
-    #[pyo3(get, set)]
-    pub policy: String,
-}
-
-impl Default for FemtoFileHandlerConfig {
-    fn default() -> Self {
-        Self {
-            capacity: DEFAULT_CHANNEL_CAPACITY,
-            flush_interval: 1,
-            timeout_ms: None,
-            policy: "drop".into(),
-        }
-    }
-}
-
-#[pymethods]
-impl FemtoFileHandlerConfig {
-    #[new]
-    #[pyo3(signature=(
-        capacity = DEFAULT_CHANNEL_CAPACITY,
-        flush_interval = 1,
-        timeout_ms = None,
-        policy = "drop"
-    ))]
-    fn py_new(
-        capacity: usize,
-        flush_interval: isize,
-        timeout_ms: Option<i64>,
-        policy: &str,
-    ) -> Self {
-        Self {
-            capacity,
-            flush_interval,
-            timeout_ms,
-            policy: policy.to_string(),
-        }
-    }
-}
 
 /// Internal items needed by the worker implementation.
 mod mod_impl {
@@ -179,13 +131,24 @@ fn open_log_file(path: &str) -> PyResult<File> {
 #[pymethods]
 impl FemtoFileHandler {
     #[new]
-    #[pyo3(signature=(path, config = None))]
-    fn py_new(path: String, config: Option<FemtoFileHandlerConfig>) -> PyResult<Self> {
-        let cfg = config.unwrap_or_default();
-        let overflow_policy = parse_overflow_policy(&cfg.policy, cfg.timeout_ms)?;
-        let flush_interval = validate_params(cfg.capacity, cfg.flush_interval)?;
+    #[pyo3(signature=(
+        path,
+        capacity = DEFAULT_CHANNEL_CAPACITY,
+        flush_interval = 1,
+        timeout_ms = None,
+        policy = "drop"
+    ))]
+    fn py_new(
+        path: String,
+        capacity: usize,
+        flush_interval: isize,
+        timeout_ms: Option<i64>,
+        policy: &str,
+    ) -> PyResult<Self> {
+        let overflow_policy = parse_overflow_policy(policy, timeout_ms)?;
+        let flush_interval = validate_params(capacity, flush_interval)?;
         let handler_cfg = HandlerConfig {
-            capacity: cfg.capacity,
+            capacity,
             flush_interval,
             overflow_policy,
         };
