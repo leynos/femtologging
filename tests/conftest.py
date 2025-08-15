@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from contextlib import closing, contextmanager
+import gc
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
-from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
+from femtologging import FemtoFileHandler
 import pytest
 
 FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
@@ -23,15 +24,20 @@ def file_handler_factory() -> FileHandlerFactory:
     def factory(
         path: Path, capacity: int, flush_interval: int
     ) -> Generator[FemtoFileHandler, None, None]:
-        cfg = PyHandlerConfig(
-            capacity,
-            flush_interval,
-            OverflowPolicy.DROP.value,
-            timeout_ms=None,
+        handler = FemtoFileHandler(
+            str(path),
+            capacity=capacity,
+            flush_interval=flush_interval,
+            policy="drop",
         )
-        with closing(
-            FemtoFileHandler.with_capacity_flush_policy(str(path), cfg)
-        ) as handler:
+        try:
             yield handler
+        finally:
+            # Ensure the worker thread shuts down deterministically.
+            # Close explicitly, then force finalization in case any ref-cycles
+            # or delayed drops remain that could otherwise leak threads in CI.
+            handler.close()
+            del handler
+            gc.collect()
 
     return factory

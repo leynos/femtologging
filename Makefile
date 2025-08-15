@@ -10,15 +10,18 @@ CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 
 all: release ## Build the release artifact
 
-build: ## Build debug artifact
-	uv venv
+build: ## Build dev artifact and install into venv
+	UV_VENV_CLEAR=1 uv venv
 	$(CARGO_BUILD_ENV) uv sync --group dev
+	# Install the mixed Rust/Python package into the venv for tests/tools
+	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST)
 
 release: ## Build release artifact
 	$(CARGO_BUILD_ENV) $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
 
 clean: ## Remove build artifacts
 	$(CARGO) clean --manifest-path $(RUST_MANIFEST)
+	find . -type f -name '*.log' -not -path './target/*' -delete
 
 define ensure_tool
 $(if $(shell command -v $(1) >/dev/null 2>&1 && echo y),,\
@@ -56,7 +59,7 @@ test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
-	PYTHONPATH="$(CURDIR)$${PYTHONPATH:+:$$PYTHONPATH}" uv run pytest -v
+	uv run pytest -v
 
 typecheck: build ## Static type analysis
 	ty check

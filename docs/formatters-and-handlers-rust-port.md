@@ -70,11 +70,12 @@ Implementations should forward the record to an internal queue with `try_send`
 so the caller never blocks. If the queue is full, the record is silently
 dropped and a warning is written to `stderr`. This favours throughput over
 completeness: records may be lost to keep the application responsive. Advanced
-use cases can specify an overflow policy when constructing a handler. The
-Python API exposes this via `OverflowPolicy` and
-`FemtoFileHandler.with_capacity_flush_policy`. The policy may also be extended
-to support options like back pressure, writing overflowed messages to a
-separate file, or emitting metrics for monitoring purposes:
+use cases can specify an overflow policy when constructing a handler. Python
+callers pass an overflow policy string literal ("drop", "block", or
+"timeout:N") to the constructor, where N is the timeout in milliseconds (for
+example, "timeout:500"). The policy may also be extended to support options
+like back pressure, writing overflowed messages to a separate file, or emitting
+metrics for monitoring purposes:
 
 - **Drop** – current default; records are discarded when the queue is full.
 - **Block** – the call blocks until space becomes available.
@@ -85,29 +86,40 @@ Every handler provides a `flush()` method, so callers can force pending
 messages to be written before shutdown.
 
 ```python
-from femtologging import FemtoFileHandler, OverflowPolicy, PyHandlerConfig
+from femtologging import FemtoFileHandler
 
-# Drop-in replacement that blocks instead of discarding.
-# Waiting ensures no log messages are lost if the queue becomes full.
-config = PyHandlerConfig(
-    capacity=4096,
-    flush_record_interval=1,
-    policy=OverflowPolicy.BLOCK.value,
-    timeout_ms=None,
+# Block until space is available
+handler = FemtoFileHandler(
+    "app.log", capacity=4096, flush_interval=1, policy="block"
 )
-handler = FemtoFileHandler.with_capacity_flush_policy("app.log", config)
+
+# Or wait up to 250 ms when the queue is full
+timeout_handler = FemtoFileHandler(
+    "app.log", capacity=4096, flush_interval=10, policy="timeout:250",
+)
 ```
 
-Legacy constructors like ``with_capacity_flush_blocking`` and
-``with_capacity_flush_timeout`` have been removed. Use
-``with_capacity_flush_policy`` with an appropriate configuration instead.
+Legacy constructors have been removed:
 
-`PyHandlerConfig` enforces several invariants:
+- ``with_capacity``
+- ``with_capacity_blocking``
+- ``with_capacity_timeout``
+- ``with_capacity_flush``
+- ``with_capacity_flush_blocking``
+- ``with_capacity_flush_timeout``
+- ``with_capacity_flush_policy``
 
-- ``capacity`` and ``flush_record_interval`` must be greater than zero.
-- ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout"``.
-- ``timeout_ms`` must be greater than zero and may only be set when ``policy``
-  is ``"timeout"``.
+The timeout behaviour is configured via the policy string as ``"timeout:N"``,
+where ``N`` is the timeout in milliseconds and must be greater than zero.
+
+Customise capacity, flush behaviour or overflow policy via keyword arguments on
+the constructor.
+
+The constructor enforces several invariants on the configuration:
+
+- ``capacity`` and ``flush_interval`` must be greater than zero.
+- ``policy`` must be ``"drop"``, ``"block"`` or ``"timeout:N"``.
+- ``N`` must be greater than zero when specifying a timeout policy.
 
 ### StreamHandler
 
@@ -115,7 +127,7 @@ Legacy constructors like ``with_capacity_flush_blocking`` and
 consumer thread receives `FemtoLogRecord` values, moves the writer and
 formatter into the worker thread, and writes directly without locking. This
 mirrors the design in
-[`concurrency-models-in-high-performance- logging.md`][cmhp-log]. The default
+[`concurrency-models-in-high-performance-logging.md`][cmhp-log]. The default
 bounded queue size is 1024 records, but `FemtoStreamHandler::with_capacity`
 lets callers configure a custom capacity when needed. Flushing is driven by a
 timeout measured in milliseconds.
@@ -152,13 +164,12 @@ this by performing rotation logic inside their consumer threads.
 The Rust implementation resides under `rust_extension/src/handlers/file`. This
 module is split into three pieces, so each concern stays focused:
 
-1. `config.rs` – all configuration structures, including
-   `HandlerConfig`, `PyHandlerConfig` and `OverflowPolicy`.
+1. `config.rs` — configuration structures and defaults.
 2. `worker.rs` — the background writer thread and its helper types.
-3. `mod.rs` — the public `FemtoFileHandler` API re‑exporting the config types.
+3. `mod.rs` — the public `FemtoFileHandler` API.
 
 ```rust
-use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
+use femtologging_rs::handlers::file::FemtoFileHandler;
 ```
 
 `FemtoFileHandler` exposes `flush()` and `close()` methods, so callers can
@@ -166,19 +177,18 @@ drain pending records and stop the background thread explicitly. Dropping the
 handler still performs this cleanup if the methods aren't invoked.
 
 By default, the file handler flushes the underlying file after every record to
-maximize durability. To batch writes, pass a custom configuration via
-`FemtoFileHandler::with_capacity_flush_policy()` (Rust) or
-`FemtoFileHandler.with_capacity_flush_policy()` (Python). Setting the
-`flush_interval` in `HandlerConfig` or `PyHandlerConfig` defers flushing until
-the specified number of records have been written. The value must be greater
-than zero, so periodic flushing always occurs. Higher values reduce syscall
-overhead in high-volume scenarios. Internally the handler buffers writes with
-`BufWriter`, so records only reach the file once a flush occurs or the handler
-shuts down.
+maximise durability. To batch writes, pass a custom configuration via
+`FemtoFileHandler::with_capacity_flush_policy()` (Rust) or set keyword
+arguments on ``FemtoFileHandler`` (Python). Setting ``flush_interval`` defers
+flushing until the specified number of records have been written. The value
+must be greater than zero, so periodic flushing always occurs. Higher values
+reduce syscall overhead in high-volume scenarios. Internally the handler
+buffers writes with `BufWriter`, so records only reach the file once a flush
+occurs or the handler shuts down.
 
 The worker thread begins processing records as soon as the handler is created.
 Production code therefore leaves the optional `start_barrier` field unset. Unit
-tests may use this barrier to synchronise multiple workers and avoid race
+tests may use this barrier to synchronize multiple workers, avoiding race
 conditions. Should a future feature require coordinated startup (for example,
 rotating several files at once), the `WorkerConfig` creation logic will need to
 expose this.

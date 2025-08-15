@@ -459,9 +459,7 @@ configuration, as specified by `logging.config.dictConfig`.
 
   - `incremental`: As with `picologging`, `femtologging` will **not** support
     the `incremental` option. If `incremental` is `True`, a `ValueError` will
-    be raised.[^incremental]
-
-[^incremental]: As with picologging, `incremental` is not supported.
+    be raised. As with picologging, `incremental` is not supported.
 
 - **Error Handling:** Robust error handling will be crucial to provide clear
     and informative messages for invalid configurations, unknown class names,

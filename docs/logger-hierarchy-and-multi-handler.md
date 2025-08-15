@@ -1,7 +1,7 @@
 # Logger Hierarchy and Handler Relationships
 
-This note outlines the remaining work to add flexible logger/handler wiring
-to `femtologging`. The prototype originally assumed each logger owned a single
+This note outlines the remaining work to add flexible logger/handler wiring to
+`femtologging`. The prototype originally assumed each logger owned a single
 handler and that handlers were not shared. The codebase now supports multiple
 handlers per logger and safely sharing a handler between loggers. The next step
 is implementing hierarchical configuration using dotted names with propagation.
@@ -50,9 +50,9 @@ is implementing hierarchical configuration using dotted names with propagation.
    - Extend the builder API to attach multiple handler IDs per logger.
    - Allow handlers defined once to be referenced from several loggers.
    - Implement a `get_logger(name)` helper exposed through the Python bindings.
-     It mirrors CPython's semantics and returns existing instances from
-    the registry. Provide a camelCase alias `getLogger()` for backward
-    compatibility, though new code should prefer the snake_case form.
+     It mirrors CPython's semantics and returns existing instances from the
+     registry. Provide a camelCase alias `getLogger()` for backward
+     compatibility, though new code should prefer the snake_case form.
 
 ## Testing Considerations
 
@@ -64,8 +64,8 @@ is implementing hierarchical configuration using dotted names with propagation.
   handler from multiple threads. They must assert that each log record is
   written exactly once with no data loss. Ordering between threads is not
   guaranteed, but records emitted by a single logger should appear in the order
-  they were produced. Tests must also check for duplicate records when a handler
-  is shared across threads.
+  they were produced. Tests must also check for duplicate records when a
+  handler is shared across threads.
 
 ## Architecture Diagrams
 
