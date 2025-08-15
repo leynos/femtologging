@@ -18,9 +18,8 @@ documents in [`docs/`](./docs), especially
 
 <!-- markdownlint-disable-next-line MD013 -->
 
-[`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-
-multithreaded-logging-framework-for-python-design.md) and [`dependency-
-analysis.md`](docs/dependency-analysis.md).
+[`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust- multithreaded-logging-framework-for-python-design.md)
+and [`dependency- analysis.md`](docs/dependency-analysis.md).
 
 ## Installation
 
@@ -63,8 +62,8 @@ log.add_handler(collector)
 log.remove_handler(collector)
 ```
 
-`FemtoStreamHandler` and `FemtoFileHandler` are available for basic output. Each
-runs its I/O in a separate thread, so logging calls return immediately.
+`FemtoStreamHandler` and `FemtoFileHandler` are available for basic output.
+Each runs its I/O in a separate thread, so logging calls return immediately.
 
 ## Development
 

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from .overflow_policy import OverflowPolicy
-
-PACKAGE_NAME = "femtologging"
-
-# Import the Rust extension packaged under this module's namespace.
+# Import the Rust extension packaged under this module's namespace first
+# to keep imports at the top for linters.
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
+from .overflow_policy import OverflowPolicy
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
