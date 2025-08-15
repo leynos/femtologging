@@ -21,6 +21,7 @@ release: ## Build release artifact
 
 clean: ## Remove build artifacts
 	$(CARGO) clean --manifest-path $(RUST_MANIFEST)
+	find . -type f -name '*.log' -not -path './target/*' -delete
 
 define ensure_tool
 $(if $(shell command -v $(1) >/dev/null 2>&1 && echo y),,\
