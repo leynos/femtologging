@@ -18,6 +18,15 @@ enum StreamTarget {
     Stderr,
 }
 
+impl StreamTarget {
+    fn as_str(&self) -> &'static str {
+        match self {
+            StreamTarget::Stdout => "stdout",
+            StreamTarget::Stderr => "stderr",
+        }
+    }
+}
+
 /// Builder for constructing [`FemtoStreamHandler`] instances.
 #[pyclass]
 #[derive(Clone, Debug)]
@@ -81,15 +90,9 @@ impl AsPyDict for StreamHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         use pyo3::types::PyDict;
         let d = PyDict::new(py);
-        d.set_item(
-            "target",
-            match self.target {
-                StreamTarget::Stdout => "stdout",
-                StreamTarget::Stderr => "stderr",
-            },
-        )?;
+        d.set_item("target", self.target.as_str())?;
         self.common.extend_py_dict(&d)?;
-        Ok(d.into())
+        Ok(d.unbind().into())
     }
 }
 

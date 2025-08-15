@@ -487,8 +487,8 @@ mod tests {
     use super::*;
     use pyo3::Python;
     use rstest::rstest;
-    // Serialise tests that mutate the global manager to avoid race conditions.
     use serial_test::serial;
+    use std::sync::Arc;
 
     #[rstest]
     fn build_rejects_invalid_version() {
@@ -525,9 +525,12 @@ mod tests {
             builder.build_and_init().expect("build should succeed");
             let first = manager::get_logger(py, "first").unwrap();
             let second = manager::get_logger(py, "second").unwrap();
-            let h1 = first.borrow(py).handler_ptrs_for_test();
-            let h2 = second.borrow(py).handler_ptrs_for_test();
-            assert_eq!(h1[0], h2[0], "handler should be shared");
+            let h1 = first.borrow(py).handlers_for_test();
+            let h2 = second.borrow(py).handlers_for_test();
+            assert!(
+                Arc::ptr_eq(&h1[0], &h2[0]),
+                "handler Arc pointers should be shared"
+            );
         });
     }
 

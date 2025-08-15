@@ -172,7 +172,7 @@ impl FemtoLogger {
         })
     }
 
-    fn handlers_for_test(&self) -> Vec<usize> {
+    fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
             .iter()
@@ -198,18 +198,9 @@ impl FemtoLogger {
         }
     }
 
-    /// Return raw, stable pointers to the underlying handler `Arc`s.
-    ///
-    /// This is for tests to assert handler identity across loggers. The
-    /// returned pointers remain valid while the logger holds the `Arc`s and are
-    /// not exposed to Python.
     #[cfg(test)]
-    pub fn handler_ptrs_for_test(&self) -> Vec<*const ()> {
-        self.handlers
-            .read()
-            .iter()
-            .map(|h| Arc::as_ptr(h) as *const ())
-            .collect()
+    pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
+        self.handlers.read().clone()
     }
 
     /// Clone the internal sender for use in tests.

@@ -27,9 +27,13 @@ def add_logger(config_builder: ConfigBuilder) -> None:
     config_builder.with_logger("core", logger)
 
 
-@when(parsers.parse('I add stream handler "{hid}"'))
-def add_stream_handler(config_builder: ConfigBuilder, hid: str) -> None:
-    handler = StreamHandlerBuilder.stderr()
+@when(parsers.parse('I add stream handler "{hid}" targeting "{target}"'))
+def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> None:
+    handler = (
+        StreamHandlerBuilder.stderr()
+        if target.lower() == "stderr"
+        else StreamHandlerBuilder.stdout()
+    )
     config_builder.with_handler(hid, handler)
 
 
@@ -86,8 +90,8 @@ def loggers_share_handler(first: str, second: str, hid: str) -> None:
     del hid  # parameter required by step signature
     first_logger = get_logger(first)
     second_logger = get_logger(second)
-    h1 = first_logger.handlers_for_test()
-    h2 = second_logger.handlers_for_test()
+    h1 = first_logger.handler_ptrs_for_test()
+    h2 = second_logger.handler_ptrs_for_test()
     assert h1[0] == h2[0], "handlers should be shared"
 
 

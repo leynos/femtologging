@@ -13,7 +13,7 @@ Feature: ConfigBuilder
 
   Scenario: attach handler to multiple loggers
     Given a ConfigBuilder
-    When I add stream handler "console"
+    When I add stream handler "console" targeting "stderr"
     And I add logger "core" with handler "console"
     And I add logger "worker" with handler "console"
     And I set root logger with level "INFO"
