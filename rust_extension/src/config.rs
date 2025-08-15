@@ -457,6 +457,8 @@ mod tests {
     use super::*;
     use pyo3::Python;
     use rstest::rstest;
+    // Serialise tests that mutate the global manager to avoid race conditions.
+    use serial_test::serial;
 
     #[rstest]
     fn build_rejects_invalid_version() {
@@ -478,6 +480,7 @@ mod tests {
     }
 
     #[rstest]
+    #[serial]
     fn shared_handler_attached_once() {
         Python::with_gil(|py| {
             manager::reset_manager();
@@ -499,6 +502,7 @@ mod tests {
     }
 
     #[rstest]
+    #[serial]
     fn unknown_handler_id_rejected() {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["missing"]);
