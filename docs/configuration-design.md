@@ -27,7 +27,9 @@ pub struct ConfigBuilder {
     default_level: Option<Level>,
     formatters: BTreeMap<String, FormatterBuilder>,
     filters: BTreeMap<String, FilterBuilder>, // Future: FilterBuilder
-    handlers: BTreeMap<String, HandlerBuilder>, // Later insertions with the same ID overwrite earlier ones
+    handlers: BTreeMap<String, HandlerBuilder>,
+    // `HandlerBuilder` is a concrete enum; later insertions with the same ID
+    // overwrite earlier ones.
     loggers: BTreeMap<String, LoggerConfigBuilder>,
     root_logger: Option<LoggerConfigBuilder>,
 }
