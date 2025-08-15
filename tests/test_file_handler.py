@@ -234,7 +234,10 @@ def test_overflow_policy_invalid(tmp_path: Path) -> None:
 def test_overflow_policy_timeout_missing_ms(tmp_path: Path) -> None:
     """Timeout policy without a timeout is rejected."""
     path = tmp_path / "missing_ms.log"
-    with pytest.raises(ValueError, match="invalid overflow policy"):
+    with pytest.raises(
+        ValueError,
+        match=r"timeout requires a positive integer N, use 'timeout:N'",
+    ):
         FemtoFileHandler(str(path), policy="timeout")
 
 

@@ -78,6 +78,14 @@ fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
     if policy == "block" {
         return Ok(OverflowPolicy::Block);
     }
+    // Provide a targeted error for a bare "timeout" to guide users toward
+    // the correct syntax. Other malformed variants (e.g., non-integer or
+    // non-positive values after the colon) are handled below.
+    if policy == "timeout" {
+        return Err(PyValueError::new_err(
+            "timeout requires a positive integer N, use 'timeout:N'",
+        ));
+    }
     if let Some(rest) = policy.strip_prefix("timeout:") {
         let ms: i64 = rest.trim().parse().map_err(|_| {
             PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
@@ -88,6 +96,13 @@ fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
         return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
     }
     let valid = "drop, block, timeout:N";
+    // As a final safeguard, if a bare "timeout" slips through earlier checks,
+    // still provide the targeted guidance instead of the generic message.
+    if policy == "timeout" {
+        return Err(PyValueError::new_err(
+            "timeout requires a positive integer N, use 'timeout:N'",
+        ));
+    }
     Err(PyValueError::new_err(format!(
         "invalid overflow policy '{policy}'. Valid options are: {valid}",
     )))

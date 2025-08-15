@@ -6,7 +6,8 @@ from .overflow_policy import OverflowPolicy
 
 PACKAGE_NAME = "femtologging"
 
-rust = __import__(f"_{PACKAGE_NAME}_rs")
+# Import the Rust extension packaged under this module's namespace.
+from . import _femtologging_rs as rust  # type: ignore[attr-defined]
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
