@@ -13,7 +13,6 @@ use std::{
 
 /// Default bounded channel capacity for `FemtoFileHandler`.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
-const VALID_POLICIES: [&str; 3] = ["drop", "block", "timeout"];
 
 /// Determines how `FemtoFileHandler` reacts when its queue is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
