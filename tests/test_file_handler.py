@@ -172,16 +172,16 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
     """Timeout policy honours the timeout.
 
     The worker drains the queue faster than Python can fill it, so reliably
-    forcing a timeout would introduce flakiness. This smoke test just exercises
-    the timeout parsing path.
+    forcing a timeout would introduce flakiness. This smoke test exercises the
+    timeout parsing path.
     """
     path = tmp_path / "timeout.log"
     with closing(
         FemtoFileHandler(
             str(path),
             capacity=1,
-            flush_interval=1,
-            policy="timeout:500",
+            flush_interval=10000,
+            policy="timeout:200",
         )
     ) as handler:
         handler.handle("core", "INFO", "first")
