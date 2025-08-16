@@ -1,0 +1,4 @@
+# serializer version: 1
+# name: test_configure_root_logger_with_stream_handler
+  'root [INFO] hello'
+# ---

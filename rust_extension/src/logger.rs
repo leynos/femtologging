@@ -172,6 +172,12 @@ impl FemtoLogger {
         })
     }
 
+    /// Remove all attached handlers.
+    #[pyo3(name = "clear_handlers", text_signature = "(self)")]
+    pub fn py_clear_handlers(&self) {
+        self.clear_handlers();
+    }
+
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -196,6 +202,11 @@ impl FemtoLogger {
         } else {
             false
         }
+    }
+
+    /// Remove all handlers from this logger.
+    pub fn clear_handlers(&self) {
+        self.handlers.write().clear();
     }
 
     #[cfg(test)]
@@ -309,6 +320,7 @@ impl Drop for FemtoLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
@@ -409,5 +421,15 @@ mod tests {
 
         let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
         assert_eq!(msgs, vec!["one", "two"]);
+    }
+
+    #[rstest]
+    fn clear_handlers_removes_all() {
+        let logger = FemtoLogger::new("test".into());
+        let h = Arc::new(CollectingHandler::new()) as Arc<dyn FemtoHandlerTrait>;
+        logger.add_handler(h);
+        assert_eq!(logger.handler_ptrs_for_test().len(), 1);
+        logger.clear_handlers();
+        assert!(logger.handler_ptrs_for_test().is_empty());
     }
 }
