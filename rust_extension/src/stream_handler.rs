@@ -14,6 +14,7 @@ use std::{
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use log::warn;
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use std::any::Any;
 
@@ -77,8 +78,8 @@ enum StreamCommand {
 #[pyclass]
 pub struct FemtoStreamHandler {
     tx: Option<Sender<StreamCommand>>,
-    handle: Option<JoinHandle<()>>,
-    done_rx: Receiver<()>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+    done_rx: Mutex<Receiver<()>>,
     /// Tracks dropped records and rate-limits warnings.
     warner: RateLimitedWarner,
     /// Timeout for flush operations.
@@ -218,8 +219,8 @@ impl FemtoStreamHandler {
 
         Self {
             tx: Some(tx),
-            handle: Some(handle),
-            done_rx,
+            handle: Mutex::new(Some(handle)),
+            done_rx: Mutex::new(done_rx),
             warner: config.warner,
             flush_timeout: config.flush_timeout,
         }
@@ -233,8 +234,13 @@ impl FemtoStreamHandler {
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
         self.tx.take();
-        if let Some(handle) = self.handle.take() {
-            if self.done_rx.recv_timeout(self.flush_timeout).is_err() {
+        if let Some(handle) = self.handle.lock().take() {
+            if self
+                .done_rx
+                .lock()
+                .recv_timeout(self.flush_timeout)
+                .is_err()
+            {
                 warn!(
                     "FemtoStreamHandler: worker thread did not shut down within {:?}",
                     self.flush_timeout

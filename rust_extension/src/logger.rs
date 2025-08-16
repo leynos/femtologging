@@ -17,7 +17,7 @@ use crate::{
 };
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use log::warn;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc,
@@ -98,7 +98,7 @@ pub struct FemtoLogger {
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
-    handle: Option<JoinHandle<()>>,
+    handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 #[pymethods]
@@ -234,7 +234,7 @@ impl FemtoLogger {
             handlers,
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
-            handle: Some(handle),
+            handle: Mutex::new(Some(handle)),
         }
     }
 
@@ -295,7 +295,7 @@ impl Drop for FemtoLogger {
             let _ = shutdown_tx.send(());
         }
         self.tx.take();
-        if let Some(handle) = self.handle.take() {
+        if let Some(handle) = self.handle.lock().take() {
             Python::with_gil(|py| {
                 py.allow_threads(move || {
                     if handle.join().is_err() {
