@@ -1,0 +1,11 @@
+# serializer version: 1
+# name: test_stream_handler_processes_logs_from_multiple_threads
+  list([
+    'test [INFO] message 0',
+    'test [INFO] message 1',
+    'test [INFO] message 2',
+  ])
+# ---
+# name: test_closed_stream_handler_drops_records
+  ''
+# ---

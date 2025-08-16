@@ -39,9 +39,9 @@ expanded with specifics for the configuration design.
 
 - [ ] Add compile‑time log level filtering via Cargo features.
 
-- [ ] Ensure all components satisfy `Send`/`Sync` requirements.
+- [x] Ensure all components satisfy `Send`/`Sync` requirements.
 
-- [ ] Establish a basic test suite covering unit and integration tests for the
+- [x] Establish a basic test suite covering unit and integration tests for the
   builder configuration system in both Rust and Python.
 
 ## Phase 2 – Expanded Handlers & Core Features (Configuration-related tasks)
