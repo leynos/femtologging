@@ -49,6 +49,7 @@ from that design.
 
 ## Phase 2 – Expanded Handlers & Core Features
 
+- [x] Implement `femtologging.basicConfig()` translating to the builder API.
 - [ ] Implement `FemtoRotatingFileHandler` and `FemtoTimedRotatingFileHandler`
   with their respective rotation logic.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
