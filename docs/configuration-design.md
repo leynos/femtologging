@@ -546,3 +546,8 @@ The initial implementation introduces `ConfigBuilder`, `LoggerConfigBuilder`,
 fluent, chainable methods exposed to Python via `PyO3`. `build_and_init`
 constructs each configured handler once, wraps it in an `Arc`, and attaches it
 to the appropriate loggers.
+
+A basic test suite validates these builders. Rust unit tests use `rstest` to
+cover success and failure cases, while Python behavioural tests leverage
+`pytest-bdd` with `syrupy` snapshots to assert dictionary output and
+initialisation errors.

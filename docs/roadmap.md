@@ -45,7 +45,7 @@ from that design.
 - [x] Provide a programmatic configuration API using the builder pattern.
 - [ ] Add compile‑time log level filtering via Cargo features.
 - [ ] Ensure all components satisfy `Send`/`Sync` requirements.
-- [ ] Establish a basic test suite covering unit and integration tests.
+- [x] Establish a basic test suite covering unit and integration tests.
 
 ## Phase 2 – Expanded Handlers & Core Features
 
