@@ -42,7 +42,8 @@ expanded with specifics for the configuration design.
 - [x] Ensure all components satisfy `Send`/`Sync` requirements.
 
 - [x] Establish a basic test suite covering unit and integration tests for the
-  builder configuration system in both Rust and Python.
+  builder configuration system in both Rust and Python, including syrupy
+  snapshot assertions.
 
 ## Phase 2 – Expanded Handlers & Core Features (Configuration-related tasks)
 

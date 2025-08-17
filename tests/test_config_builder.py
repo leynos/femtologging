@@ -1,5 +1,6 @@
 import pytest
 from pytest_bdd import given, when, then, scenarios, parsers
+from syrupy import SnapshotAssertion
 
 from femtologging import (
     ConfigBuilder,
@@ -62,7 +63,9 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
 
 
 @then("the configuration matches snapshot")
-def configuration_matches_snapshot(config_builder: ConfigBuilder, snapshot) -> None:
+def configuration_matches_snapshot(
+    config_builder: ConfigBuilder, snapshot: SnapshotAssertion
+) -> None:
     assert config_builder.as_dict() == snapshot
     config_builder.build_and_init()
 
