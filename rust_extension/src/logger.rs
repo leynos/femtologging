@@ -205,6 +205,10 @@ impl FemtoLogger {
     }
 
     /// Remove all handlers from this logger.
+    ///
+    /// Note: This affects only records enqueued after the call. Any records
+    /// already queued retain their captured handler set and will still be
+    /// dispatched to those handlers.
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
     }
@@ -320,7 +324,6 @@ impl Drop for FemtoLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rstest::rstest;
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
@@ -423,7 +426,7 @@ mod tests {
         assert_eq!(msgs, vec!["one", "two"]);
     }
 
-    #[rstest]
+    #[test]
     fn clear_handlers_removes_all() {
         let logger = FemtoLogger::new("test".into());
         let h = Arc::new(CollectingHandler::new()) as Arc<dyn FemtoHandlerTrait>;

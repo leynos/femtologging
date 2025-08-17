@@ -9,7 +9,7 @@ from .overflow_policy import OverflowPolicy
 import logging
 import sys
 from dataclasses import dataclass
-from typing import overload
+from typing import Iterable, TextIO, overload
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
@@ -33,9 +33,9 @@ class BasicConfig:
 
     level: str | int | None = None
     filename: str | None = None
-    stream: object | None = None
+    stream: TextIO | None = None
     force: bool = False
-    handlers: list | None = None
+    handlers: Iterable[FemtoHandler] | None = None
 
 
 @overload
@@ -47,9 +47,9 @@ def basicConfig(
     *,
     level: str | int | None = None,
     filename: str | None = None,
-    stream: object | None = None,
+    stream: TextIO | None = None,
     force: bool = False,
-    handlers: list | None = None,
+    handlers: Iterable[FemtoHandler] | None = None,
 ) -> None: ...
 
 
@@ -77,11 +77,11 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
         Logging level.
     filename : str, optional
         File to write logs to.
-    stream : object, optional
+    stream : TextIO, optional
         ``sys.stdout`` or ``sys.stderr``.
     force : bool, default False
         Remove any existing handlers before configuring.
-    handlers : list, optional
+    handlers : Iterable[FemtoHandler], optional
         Pre‑constructed handlers to attach.
 
     Examples
@@ -137,29 +137,31 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
 def _validate_basic_config_params(
     filename: str | None,
-    stream: object | None,
-    handlers: list | None,
+    stream: TextIO | None,
+    handlers: Iterable[FemtoHandler] | None,
 ) -> None:
     """Validate ``basicConfig`` parameters."""
     if filename and stream:
         raise ValueError("Cannot specify both `filename` and `stream`")
 
-    if handlers and (filename or stream):
+    if handlers is not None and (filename is not None or stream is not None):
         msg = "Cannot specify `handlers` with `filename` or `stream`"
         raise ValueError(msg)
 
     if stream not in (None, sys.stdout, sys.stderr):
-        raise ValueError("stream must be sys.stdout or sys.stderr")
+        raise ValueError(
+            f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
+        )
 
 
 def _configure_handlers(
     root: FemtoLogger,
-    handlers: list | None,
+    handlers: Iterable[FemtoHandler] | None,
     filename: str | None,
-    stream: object | None,
+    stream: TextIO | None,
 ) -> None:
     """Attach or build handlers for the root logger."""
-    if handlers:
+    if handlers is not None:
         for h in handlers:
             root.add_handler(h)
     else:
@@ -168,7 +170,7 @@ def _configure_handlers(
 
 def _build_and_configure_handler(
     filename: str | None,
-    stream: object | None,
+    stream: TextIO | None,
 ) -> None:
     """Build a handler via the builder API and install it."""
     builder = ConfigBuilder()
@@ -185,8 +187,8 @@ def _build_and_configure_handler(
 
 def _create_handler_builder(
     filename: str | None,
-    stream: object | None,
-):
+    stream: TextIO | None,
+) -> FileHandlerBuilder | StreamHandlerBuilder:
     """Create a handler builder for ``basicConfig``."""
     if filename:
         return FileHandlerBuilder(filename)
