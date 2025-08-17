@@ -4,9 +4,15 @@ Feature: Send and Sync safety
   Background:
     Given a stream handler built for stderr
 
-  Scenario: stream handler processes logs from multiple threads
-    When I log messages from 3 threads
+  Scenario Outline: stream handler processes logs from N threads
+    When I log messages from <count> threads
     Then the captured output matches snapshot
+
+    Examples:
+      | count |
+      | 1     |
+      | 10    |
+      | 100   |
 
   Scenario: closed stream handler drops records
     Given the handler is closed

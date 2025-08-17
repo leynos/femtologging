@@ -13,6 +13,9 @@ from syrupy.assertion import SnapshotAssertion
 from femtologging import FemtoStreamHandler, StreamHandlerBuilder
 
 
+INFO_PREFIX = "test [INFO] "
+
+
 pytestmark = [pytest.mark.send_sync, pytest.mark.concurrency]
 
 
@@ -37,7 +40,7 @@ def when_log_one(
     handler.handle("test", "INFO", "drop me")
     ok = handler.flush()
     out = capfd.readouterr().err.strip().splitlines()
-    lines = [ln for ln in out if ln.startswith("test [INFO] ")]
+    lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]
     assert ok, "handler.flush() timed out"
     return lines
 
@@ -49,7 +52,7 @@ def when_log_after_close(
     handler.handle("test", "INFO", "drop me")
     ok = handler.flush()
     out = capfd.readouterr().err.strip().splitlines()
-    lines = [ln for ln in out if ln.startswith("test [INFO] ")]
+    lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]
     assert not ok, "handler.flush() unexpectedly succeeded"
     return lines
 
@@ -74,15 +77,23 @@ def when_log_threads(
     ok = handler.flush()
     out = capfd.readouterr().err.strip().splitlines()
     assert ok, "handler.flush() timed out"
-    lines = [ln for ln in out if ln.startswith("test [INFO] ")]
-    # For counts >= 10, ensure "message 10" sorts after "message 9"
-    lines.sort(key=lambda s: int(s.rsplit(" ", 1)[-1]))
+    lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]
+
+    # For counts >= 10, ensure "message 10" sorts after "message 9".
+    # Fall back to lexicographic order if numeric suffix is missing.
+    def _suffix_num(s: str) -> int | None:
+        try:
+            return int(s.rsplit(" ", 1)[-1])
+        except (ValueError, IndexError):
+            return None
+
+    lines.sort(key=lambda s: (_suffix_num(s) is None, _suffix_num(s) or 0, s))
     return lines
 
 
 @then("the captured output matches snapshot")
 def then_output_snapshot(output: Sequence[str], snapshot: SnapshotAssertion) -> None:
-    assert output == snapshot
+    assert output == snapshot, "normalised output does not match the snapshot"
 
 
 @pytest.mark.parametrize("thread_count", [1, 10, 100])
@@ -100,9 +111,9 @@ def test_threaded_logging(thread_count: int, capfd: pytest.CaptureFixture[str]) 
         ok = handler.flush()
         out_lines = capfd.readouterr().err.strip().splitlines()
         assert ok, "handler.flush() timed out"
-        info_lines = [ln for ln in out_lines if ln.startswith("test [INFO] ")]
+        info_lines = [ln for ln in out_lines if ln.startswith(INFO_PREFIX)]
         assert len(info_lines) == thread_count, (
-            f"expected {thread_count} 'test [INFO] ' lines, "
+            f"expected {thread_count} '{INFO_PREFIX}' lines, "
             f"got {len(info_lines)}; all lines: {out_lines}"
         )
     finally:
