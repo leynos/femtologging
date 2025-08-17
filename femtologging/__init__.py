@@ -43,14 +43,7 @@ def basicConfig(config: BasicConfig, /) -> None: ...
 
 
 @overload
-def basicConfig(
-    *,
-    level: str | int | None = None,
-    filename: str | None = None,
-    stream: TextIO | None = None,
-    force: bool = False,
-    handlers: Iterable[FemtoHandler] | None = None,
-) -> None: ...
+def basicConfig(**kwargs: object) -> None: ...
 
 
 def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
@@ -135,6 +128,15 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     _set_logger_level(root, level)
 
 
+def _has_conflicting_handler_params(
+    handlers: Iterable[FemtoHandler] | None,
+    filename: str | None,
+    stream: TextIO | None,
+) -> bool:
+    """Check if handlers conflict with filename or stream parameters."""
+    return handlers is not None and (filename is not None or stream is not None)
+
+
 def _validate_basic_config_params(
     filename: str | None,
     stream: TextIO | None,
@@ -144,7 +146,7 @@ def _validate_basic_config_params(
     if filename and stream:
         raise ValueError("Cannot specify both `filename` and `stream`")
 
-    if handlers is not None and (filename is not None or stream is not None):
+    if _has_conflicting_handler_params(handlers, filename, stream):
         msg = "Cannot specify `handlers` with `filename` or `stream`"
         raise ValueError(msg)
 
