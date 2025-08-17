@@ -548,6 +548,8 @@ constructs each configured handler once, wraps it in an `Arc`, and attaches it
 to the appropriate loggers.
 
 Threaded components, such as `FemtoLogger` and `FemtoStreamHandler`, wrap their
-internal `JoinHandle` and channel receivers in `Mutex` guards. This ensures
-each struct implements `Send` and `Sync` so loggers and handlers can be shared
-safely across threads without resorting to `unsafe` code.
+internal `JoinHandle` and channel receivers in `parking_lot::Mutex` guards.
+This design makes each struct implement `Send` and `Sync`, so loggers and
+handlers can be shared safely across threads without resorting to `unsafe`
+code. Compile‑time assertions in `rust_extension/tests/send_sync.rs` enforce
+these guarantees.

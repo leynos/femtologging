@@ -309,7 +309,8 @@ impl Drop for FemtoLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
 
     #[derive(Clone, Default)]
     struct CollectingHandler {
@@ -324,16 +325,13 @@ mod tests {
         }
 
         fn collected(&self) -> Vec<FemtoLogRecord> {
-            self.records.lock().expect("Failed to lock records").clone()
+            self.records.lock().clone()
         }
     }
 
     impl FemtoHandlerTrait for CollectingHandler {
         fn handle(&self, record: FemtoLogRecord) {
-            self.records
-                .lock()
-                .expect("Failed to lock records")
-                .push(record);
+            self.records.lock().push(record);
         }
 
         fn as_any(&self) -> &dyn Any {

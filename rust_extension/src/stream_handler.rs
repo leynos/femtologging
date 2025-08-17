@@ -235,12 +235,8 @@ impl FemtoStreamHandler {
     pub fn close(&mut self) {
         self.tx.take();
         if let Some(handle) = self.handle.lock().take() {
-            if self
-                .done_rx
-                .lock()
-                .recv_timeout(self.flush_timeout)
-                .is_err()
-            {
+            let done_rx = self.done_rx.lock().clone();
+            if done_rx.recv_timeout(self.flush_timeout).is_err() {
                 warn!(
                     "FemtoStreamHandler: worker thread did not shut down within {:?}",
                     self.flush_timeout
