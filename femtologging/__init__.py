@@ -135,10 +135,9 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
     _validate_basic_config_params(filename, stream, handlers)
 
-    if force:
-        get_logger("root").clear_handlers()
-
     root = get_logger("root")
+    if force:
+        root.clear_handlers()
 
     _configure_handlers(root, handlers, filename, stream)
 

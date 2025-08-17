@@ -2,3 +2,9 @@
 # name: test_configure_root_logger_with_stream_handler
   'root [INFO] hello'
 # ---
+# name: test_force_removes_existing_handlers[INFO]
+  'root [INFO] post-force'
+# ---
+# name: test_force_removes_existing_handlers[WARNING]
+  'root [WARN] post-force'
+# ---

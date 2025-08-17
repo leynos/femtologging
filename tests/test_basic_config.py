@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import sys
+from contextlib import closing
+from pathlib import Path
+
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import (
+    FemtoFileHandler,
     FemtoStreamHandler,
     basicConfig,
     get_logger,
@@ -38,7 +42,11 @@ def call_basic_config_force(level: str) -> None:
 @then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
 def log_matches_snapshot(msg: str, level: str, snapshot) -> None:
     logger = get_logger("root")
-    assert logger.log(level, msg) == snapshot
+    result = logger.log(level, msg)
+    if level.upper() == "DEBUG":
+        assert result is None
+    else:
+        assert result == snapshot
 
 
 @then(parsers.parse("root logger has {count:d} handler"))
@@ -52,6 +60,38 @@ def root_handler_count(count: int) -> None:
         'calling basicConfig with filename "{filename}" and stream stdout fails'
     )
 )
-def basic_config_invalid(filename: str) -> None:
+def basic_config_invalid(filename: str, tmp_path: Path) -> None:
     with pytest.raises(ValueError):
-        basicConfig(filename=filename, stream=sys.stdout)
+        basicConfig(filename=str(tmp_path / filename), stream=sys.stdout)
+
+
+@then(
+    parsers.parse(
+        'calling basicConfig with handler "{handler}" and stream stdout fails'
+    )
+)
+def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
+    with closing(_make_handler(handler, tmp_path)) as h:
+        with pytest.raises(ValueError):
+            basicConfig(handlers=[h], stream=sys.stdout)
+
+
+@then(
+    parsers.parse(
+        'calling basicConfig with handler "{handler}" and filename "{filename}" fails'
+    )
+)
+def basic_config_handler_filename_invalid(
+    handler: str, filename: str, tmp_path: Path
+) -> None:
+    with closing(_make_handler(handler, tmp_path)) as h:
+        with pytest.raises(ValueError):
+            basicConfig(handlers=[h], filename=str(tmp_path / filename))
+
+
+def _make_handler(name: str, tmp_path: Path):
+    if name == "stream_handler":
+        return FemtoStreamHandler.stderr()
+    if name == "file_handler":
+        return FemtoFileHandler(str(tmp_path / "dummy.log"))
+    raise ValueError(f"unknown handler {name}")

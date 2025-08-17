@@ -351,14 +351,14 @@ standard `logging.basicConfig` interface.
 - **Internal Translation:**
 
   - Only `level`, `filename`, `stream`, `handlers`, and `force` are currently
-    supported. Formatter customisation and additional file options are deferred
+    supported. Formatter customization and additional file options are deferred
     until the formatter system matures.
 
   - The function instantiates a `ConfigBuilder` when no pre-constructed
     `handlers` are supplied.
 
   - If `filename` is provided, a `FileHandlerBuilder` targets the given path.
-    Otherwise a `StreamHandlerBuilder` writes to `stderr` by default or to
+    Otherwise, a `StreamHandlerBuilder` writes to `stderr` by default or to
     `stdout` when ``stream`` is ``sys.stdout``.
 
   - The handler is registered under a default identifier and attached to the
