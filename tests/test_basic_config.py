@@ -29,14 +29,13 @@ def root_has_handler() -> None:
     get_logger("root").add_handler(handler)
 
 
-@when(parsers.parse('I call basicConfig with level "{level}"'))
-def call_basic_config(level: str) -> None:
-    basicConfig(level=level)
-
-
-@when(parsers.parse('I call basicConfig with level "{level}" and force true'))
-def call_basic_config_force(level: str) -> None:
-    basicConfig(level=level, force=True)
+@when(
+    parsers.re(
+        r'I call basicConfig with level "(?P<level>[^"]+)"(?: and force (?P<force>true))?'
+    )
+)
+def call_basic_config(level: str, force: str | None) -> None:
+    basicConfig(level=level, force=force is not None)
 
 
 @then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
@@ -87,6 +86,38 @@ def basic_config_handler_filename_invalid(
     with closing(_make_handler(handler, tmp_path)) as h:
         with pytest.raises(ValueError):
             basicConfig(handlers=[h], filename=str(tmp_path / filename))
+
+
+@pytest.mark.parametrize("force", [True, False])
+@pytest.mark.parametrize(
+    "level, expected_msgs, suppressed_msgs",
+    [
+        ("DEBUG", {"debug", "info", "warning", "error"}, set()),
+        ("INFO", {"info", "warning", "error"}, {"debug"}),
+        ("WARNING", {"warning", "error"}, {"debug", "info"}),
+    ],
+)
+def test_basic_config_emits_expected_records(
+    force: bool,
+    level: str,
+    expected_msgs: set[str],
+    suppressed_msgs: set[str],
+) -> None:
+    """Verify that ``basicConfig`` honours level and force combinations."""
+    reset_manager()
+    basicConfig(level=level, force=force)
+    logger = get_logger("root")
+    assert len(logger.handler_ptrs_for_test()) == 1
+    records = {
+        "debug": logger.log("DEBUG", "debug"),
+        "info": logger.log("INFO", "info"),
+        "warning": logger.log("WARNING", "warning"),
+        "error": logger.log("ERROR", "error"),
+    }
+    for msg in expected_msgs:
+        assert records[msg] is not None
+    for msg in suppressed_msgs:
+        assert records[msg] is None
 
 
 def _make_handler(name: str, tmp_path: Path):
