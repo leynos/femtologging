@@ -10,5 +10,5 @@ Feature: Send and Sync safety
 
   Scenario: closed stream handler drops records
     Given the handler is closed
-    When I log a message
+    When I log a message after closing
     Then the captured output matches snapshot

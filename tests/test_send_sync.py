@@ -8,6 +8,7 @@ import threading
 
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
+from syrupy.assertion import SnapshotAssertion
 
 from femtologging import FemtoStreamHandler, StreamHandlerBuilder
 
@@ -34,8 +35,23 @@ def when_log_one(
     handler: FemtoStreamHandler, capfd: pytest.CaptureFixture[str]
 ) -> list[str]:
     handler.handle("test", "INFO", "drop me")
-    handler.flush()
-    return capfd.readouterr().err.strip().splitlines()
+    ok = handler.flush()
+    out = capfd.readouterr().err.strip().splitlines()
+    lines = [ln for ln in out if ln.startswith("test [INFO] ")]
+    assert ok, "handler.flush() timed out"
+    return lines
+
+
+@when("I log a message after closing", target_fixture="output")
+def when_log_after_close(
+    handler: FemtoStreamHandler, capfd: pytest.CaptureFixture[str]
+) -> list[str]:
+    handler.handle("test", "INFO", "drop me")
+    ok = handler.flush()
+    out = capfd.readouterr().err.strip().splitlines()
+    lines = [ln for ln in out if ln.startswith("test [INFO] ")]
+    assert not ok, "handler.flush() unexpectedly succeeded"
+    return lines
 
 
 @when(
@@ -55,15 +71,17 @@ def when_log_threads(
         t.start()
     for t in threads:
         t.join()
-    handler.flush()
+    ok = handler.flush()
     out = capfd.readouterr().err.strip().splitlines()
+    assert ok, "handler.flush() timed out"
     lines = [ln for ln in out if ln.startswith("test [INFO] ")]
-    lines.sort()
+    # For counts >= 10, ensure "message 10" sorts after "message 9"
+    lines.sort(key=lambda s: int(s.rsplit(" ", 1)[-1]))
     return lines
 
 
 @then("the captured output matches snapshot")
-def then_output_snapshot(output: Sequence[str], snapshot) -> None:
+def then_output_snapshot(output: Sequence[str], snapshot: SnapshotAssertion) -> None:
     assert output == snapshot
 
 
@@ -79,8 +97,9 @@ def test_threaded_logging(thread_count: int, capfd: pytest.CaptureFixture[str]) 
             t.start()
         for t in threads:
             t.join()
-        handler.flush()
+        ok = handler.flush()
         out_lines = capfd.readouterr().err.strip().splitlines()
+        assert ok, "handler.flush() timed out"
         info_lines = [ln for ln in out_lines if ln.startswith("test [INFO] ")]
         assert len(info_lines) == thread_count, (
             f"expected {thread_count} 'test [INFO] ' lines, "
