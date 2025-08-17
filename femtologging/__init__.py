@@ -8,6 +8,8 @@ from . import _femtologging_rs as rust  # type: ignore[attr-defined]
 from .overflow_policy import OverflowPolicy
 import logging
 import sys
+from dataclasses import dataclass
+from typing import overload
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
@@ -25,6 +27,22 @@ HandlerConfigError = rust.HandlerConfigError  # type: ignore[attr-defined]
 HandlerIOError = rust.HandlerIOError  # type: ignore[attr-defined]
 
 
+@dataclass
+class BasicConfig:
+    """Configuration parameters for basicConfig()."""
+
+    level: str | int | None = None
+    filename: str | None = None
+    stream: object | None = None
+    force: bool = False
+    handlers: list | None = None
+
+
+@overload
+def basicConfig(config: BasicConfig, /) -> None: ...
+
+
+@overload
 def basicConfig(
     *,
     level: str | int | None = None,
@@ -32,21 +50,48 @@ def basicConfig(
     stream: object | None = None,
     force: bool = False,
     handlers: list | None = None,
-) -> None:
+) -> None: ...
+
+
+def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     """Configure the root logger using the builder API.
 
     Parameters mirror ``logging.basicConfig`` but currently only a subset is
-    supported. ``level`` may be a string or numeric value understood by the
-    standard :mod:`logging` module. ``filename`` configures a
-    :class:`FemtoFileHandler`; otherwise a :class:`FemtoStreamHandler`
-    targeting ``stderr`` is installed. ``stream`` may be ``sys.stdout`` to
-    redirect output. ``force`` removes any existing handlers from the root
-    logger before applying the new configuration. ``handlers`` allows attaching
-    pre‑constructed handlers directly.
+    supported. ``config`` may be a :class:`BasicConfig` instance; if provided,
+    its values take precedence over individual parameters. ``level`` may be a
+    string or numeric value understood by the standard :mod:`logging` module.
+    ``filename`` configures a :class:`FemtoFileHandler`; otherwise a
+    :class:`FemtoStreamHandler` targeting ``stderr`` is installed. ``stream``
+    may be ``sys.stdout`` to redirect output. ``force`` removes any existing
+    handlers from the root logger before applying the new configuration.
+    ``handlers`` allows attaching pre‑constructed handlers directly.
+
+    Parameters
+    ----------
+    config : BasicConfig, optional
+        Configuration dataclass providing parameters for ``basicConfig``.
+
+    Other Parameters
+    ----------------
+    level : str or int, optional
+        Logging level.
+    filename : str, optional
+        File to write logs to.
+    stream : object, optional
+        ``sys.stdout`` or ``sys.stderr``.
+    force : bool, default False
+        Remove any existing handlers before configuring.
+    handlers : list, optional
+        Pre‑constructed handlers to attach.
 
     Examples
     --------
-    Configure a simple stream handler::
+    Using a dataclass::
+
+        cfg = BasicConfig(level="INFO")
+        basicConfig(cfg)
+
+    Using individual parameters::
 
         basicConfig(level="INFO")
 
@@ -55,6 +100,29 @@ def basicConfig(
     ``format`` and ``datefmt`` are intentionally unsupported until formatter
     customisation is implemented.
     """
+    allowed = {"level", "filename", "stream", "force", "handlers"}
+    unknown = set(kwargs) - allowed
+    if unknown:
+        name = next(iter(unknown))
+        raise TypeError(f"basicConfig() got an unexpected keyword argument {name!r}")
+
+    if config is not None:
+        level = config.level if config.level is not None else kwargs.get("level")
+        filename = (
+            config.filename if config.filename is not None else kwargs.get("filename")
+        )
+        stream = config.stream if config.stream is not None else kwargs.get("stream")
+        force = config.force
+        handlers = (
+            config.handlers if config.handlers is not None else kwargs.get("handlers")
+        )
+    else:
+        level = kwargs.get("level")
+        filename = kwargs.get("filename")
+        stream = kwargs.get("stream")
+        force = kwargs.get("force", False)
+        handlers = kwargs.get("handlers")
+
     _validate_basic_config_params(filename, stream, handlers)
 
     if force:
@@ -149,6 +217,7 @@ __all__ = [
     "HandlerConfigError",
     "HandlerIOError",
     "OverflowPolicy",
+    "BasicConfig",
     "basicConfig",
     "hello",
 ]
