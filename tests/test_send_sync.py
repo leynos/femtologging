@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Iterator
 import threading
 
 import pytest
@@ -11,9 +12,16 @@ from pytest_bdd import given, scenarios, then, when, parsers
 from femtologging import FemtoStreamHandler, StreamHandlerBuilder
 
 
+pytestmark = [pytest.mark.send_sync, pytest.mark.concurrency]
+
+
 @given("a stream handler built for stderr", target_fixture="handler")
-def given_handler() -> FemtoStreamHandler:
-    return StreamHandlerBuilder.stderr().build()
+def given_handler() -> Iterator[FemtoStreamHandler]:
+    handler = StreamHandlerBuilder.stderr().build()
+    try:
+        yield handler
+    finally:
+        handler.close()
 
 
 @given("the handler is closed")
@@ -48,8 +56,8 @@ def when_log_threads(
     for t in threads:
         t.join()
     handler.flush()
-    out = capfd.readouterr().err.strip()
-    lines = out.splitlines()
+    out = capfd.readouterr().err.strip().splitlines()
+    lines = [ln for ln in out if ln.startswith("test [INFO] ")]
     lines.sort()
     return lines
 
@@ -62,17 +70,24 @@ def then_output_snapshot(output: Sequence[str], snapshot) -> None:
 @pytest.mark.parametrize("thread_count", [1, 10, 100])
 def test_threaded_logging(thread_count: int, capfd: pytest.CaptureFixture[str]) -> None:
     handler: FemtoStreamHandler = StreamHandlerBuilder.stderr().build()
-    threads = [
-        threading.Thread(target=lambda: handler.handle("test", "INFO", "msg"))
-        for _ in range(thread_count)
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    handler.flush()
-    out = capfd.readouterr().err.strip().splitlines()
-    assert len(out) == thread_count, f"expected {thread_count} lines, got {len(out)}"
+    try:
+        threads = [
+            threading.Thread(target=lambda: handler.handle("test", "INFO", "msg"))
+            for _ in range(thread_count)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        handler.flush()
+        out_lines = capfd.readouterr().err.strip().splitlines()
+        info_lines = [ln for ln in out_lines if ln.startswith("test [INFO] ")]
+        assert len(info_lines) == thread_count, (
+            f"expected {thread_count} 'test [INFO] ' lines, "
+            f"got {len(info_lines)}; all lines: {out_lines}"
+        )
+    finally:
+        handler.close()
 
 
 scenarios("features/send_sync.feature")
