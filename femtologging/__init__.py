@@ -55,6 +55,24 @@ def basicConfig(
     ``format`` and ``datefmt`` are intentionally unsupported until formatter
     customisation is implemented.
     """
+    _validate_basic_config_params(filename, stream, handlers)
+
+    if force:
+        get_logger("root").clear_handlers()
+
+    root = get_logger("root")
+
+    _configure_handlers(root, handlers, filename, stream)
+
+    _set_logger_level(root, level)
+
+
+def _validate_basic_config_params(
+    filename: str | None,
+    stream: object | None,
+    handlers: list | None,
+) -> None:
+    """Validate ``basicConfig`` parameters."""
     if filename and stream:
         raise ValueError("Cannot specify both `filename` and `stream`")
 
@@ -62,34 +80,55 @@ def basicConfig(
         msg = "Cannot specify `handlers` with `filename` or `stream`"
         raise ValueError(msg)
 
-    if force:
-        get_logger("root").clear_handlers()
+    if stream not in (None, sys.stdout, sys.stderr):
+        raise ValueError("stream must be sys.stdout or sys.stderr")
 
-    root = get_logger("root")
 
+def _configure_handlers(
+    root: FemtoLogger,
+    handlers: list | None,
+    filename: str | None,
+    stream: object | None,
+) -> None:
+    """Attach or build handlers for the root logger."""
     if handlers:
         for h in handlers:
             root.add_handler(h)
     else:
-        builder = ConfigBuilder()
+        _build_and_configure_handler(filename, stream)
 
-        handler_id = "basic_config_handler"
-        if filename:
-            handler = FileHandlerBuilder(filename)
-        else:
-            if stream is sys.stdout:
-                handler = StreamHandlerBuilder.stdout()
-            elif stream in (None, sys.stderr):
-                handler = StreamHandlerBuilder.stderr()
-            else:
-                raise ValueError("stream must be sys.stdout or sys.stderr")
-        builder.with_handler(handler_id, handler)
 
-        logger_cfg = LoggerConfigBuilder().with_handlers([handler_id])
-        builder.with_root_logger(logger_cfg)
+def _build_and_configure_handler(
+    filename: str | None,
+    stream: object | None,
+) -> None:
+    """Build a handler via the builder API and install it."""
+    builder = ConfigBuilder()
 
-        builder.build_and_init()
+    handler_id = "basic_config_handler"
+    handler = _create_handler_builder(filename, stream)
+    builder.with_handler(handler_id, handler)
 
+    logger_cfg = LoggerConfigBuilder().with_handlers([handler_id])
+    builder.with_root_logger(logger_cfg)
+
+    builder.build_and_init()
+
+
+def _create_handler_builder(
+    filename: str | None,
+    stream: object | None,
+):
+    """Create a handler builder for ``basicConfig``."""
+    if filename:
+        return FileHandlerBuilder(filename)
+    if stream is sys.stdout:
+        return StreamHandlerBuilder.stdout()
+    return StreamHandlerBuilder.stderr()
+
+
+def _set_logger_level(root: FemtoLogger, level: str | int | None) -> None:
+    """Set the root logger level if provided."""
     if level is not None:
         lvl = logging.getLevelName(level) if isinstance(level, int) else level
         root.set_level(lvl)
