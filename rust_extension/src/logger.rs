@@ -17,6 +17,7 @@ use crate::{
 };
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use log::warn;
+// parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
