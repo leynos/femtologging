@@ -36,3 +36,7 @@ python-packages = ["femtologging"]
 
 [tool.pytest.ini_options]
 timeout = 30
+markers = [
+    "concurrency: tests covering threaded behaviour",
+    "send_sync: tests covering Send/Sync guarantees",
+]

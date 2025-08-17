@@ -17,7 +17,8 @@ use crate::{
 };
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 use log::warn;
-use parking_lot::RwLock;
+// parking_lot avoids poisoning and matches crate-wide locking strategy
+use parking_lot::{Mutex, RwLock};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc,
@@ -98,7 +99,7 @@ pub struct FemtoLogger {
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
-    handle: Option<JoinHandle<()>>,
+    handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 #[pymethods]
@@ -234,7 +235,7 @@ impl FemtoLogger {
             handlers,
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
-            handle: Some(handle),
+            handle: Mutex::new(Some(handle)),
         }
     }
 
@@ -295,7 +296,7 @@ impl Drop for FemtoLogger {
             let _ = shutdown_tx.send(());
         }
         self.tx.take();
-        if let Some(handle) = self.handle.take() {
+        if let Some(handle) = self.handle.lock().take() {
             Python::with_gil(|py| {
                 py.allow_threads(move || {
                     if handle.join().is_err() {
@@ -309,7 +310,8 @@ impl Drop for FemtoLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
 
     #[derive(Clone, Default)]
     struct CollectingHandler {
@@ -324,16 +326,13 @@ mod tests {
         }
 
         fn collected(&self) -> Vec<FemtoLogRecord> {
-            self.records.lock().expect("Failed to lock records").clone()
+            self.records.lock().clone()
         }
     }
 
     impl FemtoHandlerTrait for CollectingHandler {
         fn handle(&self, record: FemtoLogRecord) {
-            self.records
-                .lock()
-                .expect("Failed to lock records")
-                .push(record);
+            self.records.lock().push(record);
         }
 
         fn as_any(&self) -> &dyn Any {
