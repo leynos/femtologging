@@ -15,8 +15,9 @@ from femtologging import basicConfig, get_logger
 def main() -> None:
     """Configure logging and emit records at common levels.
 
-    Expect ``INFO`` and ``WARNING`` on ``stdout``, ``ERROR`` on ``stderr``, and
-    ``DEBUG`` to be suppressed.
+    With ``basicConfig(level=\"INFO\")``, messages below ``INFO`` are
+    suppressed. ``INFO``/``WARNING`` are written to standard output and
+    ``ERROR`` to standard error, as routed by the default stream handler.
     """
     basicConfig(level="INFO")
     logger = get_logger("example")

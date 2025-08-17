@@ -51,8 +51,9 @@ expanded with specifics for the configuration design.
 
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
 
-- [x] **Implement** `femtologging.basicConfig()` **in Python, translating to the
-  internal builder API.**
+- [x] Implement `femtologging.basicConfig()` translating to the builder API
+   (see [configuration design](./configuration-design.md#basicconfig) and
+   [example](../examples/basic_config.py)).
 
 - [ ] **Implement** `femtologging.dictConfig()` **in Python:**
 

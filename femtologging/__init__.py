@@ -9,7 +9,7 @@ from .overflow_policy import OverflowPolicy
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Iterable, TextIO, overload
+from typing import Iterable, TextIO, overload, cast
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
@@ -99,22 +99,39 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
         name = next(iter(unknown))
         raise TypeError(f"basicConfig() got an unexpected keyword argument {name!r}")
 
+    level: str | int | None
+    filename: str | None
+    stream: TextIO | None
+    force: bool
+    handlers: Iterable[FemtoHandler] | None
     if config is not None:
-        level = config.level if config.level is not None else kwargs.get("level")
-        filename = (
-            config.filename if config.filename is not None else kwargs.get("filename")
+        level = (
+            config.level
+            if config.level is not None
+            else cast(str | int | None, kwargs.get("level"))
         )
-        stream = config.stream if config.stream is not None else kwargs.get("stream")
-        force = config.force
+        filename = (
+            config.filename
+            if config.filename is not None
+            else cast(str | None, kwargs.get("filename"))
+        )
+        stream = (
+            config.stream
+            if config.stream is not None
+            else cast(TextIO | None, kwargs.get("stream"))
+        )
+        force = bool(config.force)
         handlers = (
-            config.handlers if config.handlers is not None else kwargs.get("handlers")
+            config.handlers
+            if config.handlers is not None
+            else cast(Iterable[FemtoHandler] | None, kwargs.get("handlers"))
         )
     else:
-        level = kwargs.get("level")
-        filename = kwargs.get("filename")
-        stream = kwargs.get("stream")
-        force = kwargs.get("force", False)
-        handlers = kwargs.get("handlers")
+        level = cast(str | int | None, kwargs.get("level"))
+        filename = cast(str | None, kwargs.get("filename"))
+        stream = cast(TextIO | None, kwargs.get("stream"))
+        force = bool(kwargs.get("force", False))
+        handlers = cast(Iterable[FemtoHandler] | None, kwargs.get("handlers"))
 
     _validate_basic_config_params(filename, stream, handlers)
 

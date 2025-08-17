@@ -367,7 +367,7 @@ standard `logging.basicConfig` interface.
   - Passing ``force=True`` uses the `FemtoLogger.clear_handlers` method to
     remove any existing root handlers before applying the new configuration.
 
-  - `ConfigBuilder.build_and_init()` finalises the setup.
+  - `ConfigBuilder.build_and_init()` finalizes the setup.
 
 The interaction sequence is illustrated below:
 
