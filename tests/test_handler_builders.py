@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
+from syrupy import SnapshotAssertion
 
 from femtologging import (
     FileHandlerBuilder,
@@ -86,7 +87,9 @@ def when_set_stream_formatter(
 
 
 @then("the file handler builder matches snapshot")
-def then_file_builder_snapshot(file_builder: FileHandlerBuilder, snapshot) -> None:
+def then_file_builder_snapshot(
+    file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
     data = file_builder.as_dict()
     data["path"] = Path(data["path"]).name
     assert data == snapshot, "file builder dict must match snapshot"
@@ -96,7 +99,7 @@ def then_file_builder_snapshot(file_builder: FileHandlerBuilder, snapshot) -> No
 
 @then("the file handler builder with timeout overflow matches snapshot")
 def then_file_builder_timeout_snapshot(
-    file_builder: FileHandlerBuilder, snapshot
+    file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     data = file_builder.as_dict()
     data["path"] = Path(data["path"]).name
@@ -115,7 +118,7 @@ def then_file_builder_fails(file_builder: FileHandlerBuilder) -> None:
 
 @then("the stream handler builder matches snapshot")
 def then_stream_builder_snapshot(
-    stream_builder: StreamHandlerBuilder, snapshot
+    stream_builder: StreamHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     assert stream_builder.as_dict() == snapshot, (
         "stream builder dict must match snapshot"

@@ -550,4 +550,4 @@ to the appropriate loggers.
 A basic test suite validates these builders. Rust unit tests use `rstest` to
 cover success and failure cases, while Python behavioural tests leverage
 `pytest-bdd` with `syrupy` snapshots to assert dictionary output and
-initialisation errors.
+initialization errors.
