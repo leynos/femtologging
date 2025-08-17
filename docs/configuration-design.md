@@ -369,6 +369,34 @@ standard `logging.basicConfig` interface.
 
   - `ConfigBuilder.build_and_init()` finalises the setup.
 
+The interaction sequence is illustrated below:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant basicConfig
+    participant FemtoLogger
+    participant ConfigBuilder
+    participant HandlerBuilder
+    User->>basicConfig: Call basicConfig(level, filename, stream, force, handlers)
+    alt force is True
+        basicConfig->>FemtoLogger: clear_handlers()
+    end
+    alt handlers provided
+        basicConfig->>FemtoLogger: add_handler(h) for each handler
+    else filename or stream provided
+        basicConfig->>ConfigBuilder: instantiate
+        alt filename
+            ConfigBuilder->>HandlerBuilder: FileHandlerBuilder(filename)
+        else stream
+            ConfigBuilder->>HandlerBuilder: StreamHandlerBuilder(stream)
+        end
+        ConfigBuilder->>FemtoLogger: with_root_logger(logger_cfg)
+        ConfigBuilder->>ConfigBuilder: build_and_init()
+    end
+    basicConfig->>FemtoLogger: set_level(level)
+```
+
 ### 2.2. `dictConfig`
 
 `femtologging.dictConfig(config: dict)` will support dictionary-based
