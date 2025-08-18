@@ -342,40 +342,60 @@ methods. These functions will internally leverage the new builder API.
 
 ### 2.1. `basicConfig`
 
-The `femtologging.basicConfig(**kwargs)` function will be provided, offering
-the same interface as `logging.basicConfig`.
+The `femtologging.basicConfig(**kwargs)` function offers a subset of the
+standard `logging.basicConfig` interface.
 
-- **Functionality:** It will configure the root logger, typically adding a
-  `StreamHandler` to `stderr` or `stdout` (or a `FileHandler` if `filename` is
-  provided) and setting its level.
+- **Functionality:** It configures the root logger with a single handler and
+  optional level.
 
-- **Internal Translation:** `basicConfig` will parse its `kwargs` (e.g.,
-  `level`, `format`, `filename`, `filemode`, `encoding`, `datefmt`, `force`).
+- **Internal Translation:**
 
-  - It will instantiate a `ConfigBuilder`.
+  - Only `level`, `filename`, `stream`, `handlers`, and `force` are currently
+    supported. Formatter customization and additional file options are deferred
+    until the formatter system matures.
 
-  - If `filename` is provided, a `FileHandlerBuilder` will be created with
-    `path=filename`, `mode=filemode` (default 'a'), and `encoding`.
+  - The function instantiates a `ConfigBuilder` when no pre-constructed
+    `handlers` are supplied.
 
-  - Otherwise, a `StreamHandlerBuilder` will be created, writing to `stderr`
-    (default).
+  - If `filename` is provided, a `FileHandlerBuilder` targets the given path.
+    Otherwise, a `StreamHandlerBuilder` writes to `stderr` by default or to
+    `stdout` when ``stream`` is ``sys.stdout``.
 
-  - A `FormatterBuilder` will be created using `with_format` and
-    `with_datefmt` (if provided). This formatter will be added to the
-    `ConfigBuilder` with a default ID (e.g.,
-    `"default_basic_config_formatter"`) and associated with the handler.
+  - The handler is registered under a default identifier and attached to the
+    root logger. The root's level is set if ``level`` is provided.
 
-  - The handler will be added to the `ConfigBuilder` with a default ID (e.g.,
-    `"default_basic_config_handler"`).
+  - Passing ``force=True`` uses the `FemtoLogger.clear_handlers` method to
+    remove any existing root handlers before applying the new configuration.
 
-  - The root logger's level will be set using `level`, and the default handler
-    will be attached.
+  - `ConfigBuilder.build_and_init()` finalizes the setup.
 
-  - The `force` parameter will control whether to clear existing handlers on the
-    root logger before applying the new configuration.
+The interaction sequence is illustrated below:
 
-  - Finally, `build_and_init()` will be called on the constructed
-    `ConfigBuilder`.
+```mermaid
+sequenceDiagram
+    actor User
+    participant basicConfig
+    participant FemtoLogger
+    participant ConfigBuilder
+    participant HandlerBuilder
+    User->>basicConfig: Call basicConfig(level, filename, stream, force, handlers)
+    alt force is True
+        basicConfig->>FemtoLogger: clear_handlers()
+    end
+    alt handlers provided
+        basicConfig->>FemtoLogger: add_handler(h) for each handler
+    else filename or stream provided
+        basicConfig->>ConfigBuilder: instantiate
+        alt filename
+            ConfigBuilder->>HandlerBuilder: FileHandlerBuilder(filename)
+        else stream
+            ConfigBuilder->>HandlerBuilder: StreamHandlerBuilder(stream)
+        end
+        ConfigBuilder->>FemtoLogger: with_root_logger(logger_cfg)
+        ConfigBuilder->>ConfigBuilder: build_and_init()
+    end
+    basicConfig->>FemtoLogger: set_level(level)
+```
 
 ### 2.2. `dictConfig`
 
