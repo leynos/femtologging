@@ -30,6 +30,12 @@ declares the extension module as `femtologging._femtologging_rs`, so running
 MSVC build tools installed, or may need to run maturin with
 `--compatibility windows` to build.
 
+PyO3 0.25 introduced `Bound` return types for constructors like
+`PyDict::new(py)`. When these dictionaries must be returned to Python, convert
+them using `into_py_any(py)` rather than the pre‑0.25 pattern of
+`unbind().into()`. This ensures the object remains bound to the GIL during the
+conversion.
+
 `FemtoLogRecord` now groups its contextual fields into a `RecordMetadata`
 struct. Each record stores a timestamp, source file and line, module path and
 thread ID. The thread name is included when available, along with any

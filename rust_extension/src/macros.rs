@@ -111,7 +111,7 @@ macro_rules! impl_as_pydict {
             fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
                 let d = pyo3::types::PyDict::new(py);
                 $(crate::macros::$setter(py, &d, $key, &self.$field)?;)*
-                Ok(d.unbind().into())
+                pyo3::IntoPyObjectExt::into_py_any(d, py)
             }
         }
     };

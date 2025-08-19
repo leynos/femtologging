@@ -112,7 +112,7 @@ impl AsPyDict for FileHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = pyo3::types::PyDict::new(py);
         self.fill_pydict(&d)?;
-        Ok(d.unbind().into())
+        pyo3::IntoPyObjectExt::into_py_any(d, py)
     }
 }
 
@@ -177,7 +177,7 @@ impl FileHandlerBuilder {
     fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = pyo3::types::PyDict::new(py);
         self.fill_pydict(&d)?;
-        Ok(d.unbind().into())
+        pyo3::IntoPyObjectExt::into_py_any(d, py)
     }
 
     /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on

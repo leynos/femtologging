@@ -92,7 +92,7 @@ impl AsPyDict for StreamHandlerBuilder {
         let d = PyDict::new(py);
         d.set_item("target", self.target.as_str())?;
         self.common.extend_py_dict(&d)?;
-        Ok(d.unbind().into())
+        pyo3::IntoPyObjectExt::into_py_any(d, py)
     }
 }
 
