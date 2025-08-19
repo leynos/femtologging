@@ -10,7 +10,11 @@ use std::{num::NonZeroUsize, time::Duration};
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
-use crate::{formatter::DefaultFormatter, macros::AsPyDict, stream_handler::FemtoStreamHandler};
+use crate::{
+    formatter::DefaultFormatter,
+    macros::{dict_into_py, AsPyDict},
+    stream_handler::FemtoStreamHandler,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
@@ -92,7 +96,7 @@ impl AsPyDict for StreamHandlerBuilder {
         let d = PyDict::new(py);
         d.set_item("target", self.target.as_str())?;
         self.common.extend_py_dict(&d)?;
-        Ok(d.unbind().into())
+        dict_into_py(d, py)
     }
 }
 

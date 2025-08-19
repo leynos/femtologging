@@ -6,6 +6,7 @@
 //! uniform serialization behaviour across all builder types.
 
 use pyo3::conversion::IntoPyObject;
+use pyo3::IntoPyObjectExt;
 use pyo3::{
     prelude::*,
     types::{PyDict, PyList},
@@ -17,6 +18,25 @@ use std::collections::BTreeMap;
 pub trait AsPyDict {
     /// Return the builder's state as a Python dictionary.
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject>;
+}
+
+/// Convert a [`PyDict`] bound to the current GIL into a [`PyObject`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use crate::macros::dict_into_py;
+/// use pyo3::prelude::*;
+///
+/// fn demo(py: Python<'_>) -> PyResult<()> {
+///     let d = pyo3::types::PyDict::new(py);
+///     let obj = dict_into_py(d, py)?;
+///     let _ = obj;
+///     Ok(())
+/// }
+/// ```
+pub(crate) fn dict_into_py(dict: Bound<'_, PyDict>, py: Python<'_>) -> PyResult<PyObject> {
+    dict.into_py_any(py)
 }
 
 pub(crate) fn set_opt<'py, T>(
@@ -111,7 +131,7 @@ macro_rules! impl_as_pydict {
             fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
                 let d = pyo3::types::PyDict::new(py);
                 $(crate::macros::$setter(py, &d, $key, &self.$field)?;)*
-                Ok(d.unbind().into())
+                crate::macros::dict_into_py(d, py)
             }
         }
     };

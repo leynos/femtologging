@@ -11,7 +11,10 @@ use std::num::NonZeroUsize;
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait};
-use crate::{formatter::DefaultFormatter, macros::AsPyDict};
+use crate::{
+    formatter::DefaultFormatter,
+    macros::{dict_into_py, AsPyDict},
+};
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
 #[pyclass]
@@ -112,7 +115,7 @@ impl AsPyDict for FileHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = pyo3::types::PyDict::new(py);
         self.fill_pydict(&d)?;
-        Ok(d.unbind().into())
+        dict_into_py(d, py)
     }
 }
 
@@ -175,9 +178,7 @@ impl FileHandlerBuilder {
 
     /// Return a dictionary describing the builder configuration.
     fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let d = pyo3::types::PyDict::new(py);
-        self.fill_pydict(&d)?;
-        Ok(d.unbind().into())
+        self.as_pydict(py)
     }
 
     /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
