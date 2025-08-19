@@ -1,9 +1,9 @@
 # Rust Extension
 
 This project includes a small Rust extension built with
-[PyO3](https://pyo3.rs/) (currently `>=0.25.1,<0.26.0`). Initially, it exposed
-only a trivial `hello()` function and the `FemtoLogger` class. It has since
-grown to provide the core handler implementations as well:
+[PyO3](https://pyo3.rs/) (currently `^0.25.1`). Initially, it exposed only a
+trivial `hello()` function and the `FemtoLogger` class. It has since grown to
+provide the core handler implementations as well:
 
 - `FemtoStreamHandler` writes log records to `stdout` or `stderr` on a
   background thread.
@@ -30,11 +30,16 @@ declares the extension module as `femtologging._femtologging_rs`, so running
 MSVC build tools installed, or may need to run maturin with
 `--compatibility windows` to build.
 
-PyO3 0.25 introduced `Bound` return types for constructors like
-`PyDict::new(py)`. When these dictionaries must be returned to Python, convert
-them using `into_py_any(py)` rather than the pre‑0.25 pattern of
-`unbind().into()`. This ensures the object remains bound to the GIL during the
-conversion.
+PyO3 0.25 introduced `Bound` return types for constructors such as
+`PyDict::new(py)`. When dictionaries must be returned to Python, use
+`pyo3::IntoPyObjectExt::into_py_any(d, py)` rather than the pre‑0.25 pattern of
+`unbind().into()`. This keeps the object bound to the Global Interpreter Lock
+(GIL) during conversion.
+
+```rust
+let d = pyo3::types::PyDict::new(py);
+let obj = pyo3::IntoPyObjectExt::into_py_any(d, py)?;
+```
 
 `FemtoLogRecord` now groups its contextual fields into a `RecordMetadata`
 struct. Each record stores a timestamp, source file and line, module path and
