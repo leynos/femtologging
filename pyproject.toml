@@ -5,6 +5,7 @@ description = "femtologging package"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "ISC" }
+authors = [{ name = "Payton McIntosh", email = "pmcintosh@df12.net" }]
 dependencies = []
 
 [dependency-groups]
