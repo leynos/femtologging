@@ -8,11 +8,11 @@ Astral's `uv` is a Rust-based project and package manager that uses
    (`uv.lock`) in sync with it.
 2. Create a virtual environment (`.venv`) if one does not already exist.
 3. Read dependency specifications (and any build-system directives) to install
-   or update packages accordingly. ([Astral Docs][1], [RidgeRun.ai][2])
+   or update packages accordingly.
 
 In other words, your `pyproject.toml` drives everything—from metadata to
 dependencies to build instructions—without needing `requirements.txt` or a
-separate `setup.py` file. ([Level Up Coding][3], [Python Packaging][4])
+separate `setup.py` file.
 
 ______________________________________________________________________
 
@@ -51,25 +51,22 @@ dependencies = [
 ]
 ```
 
-- **`name` and `version`:** Mandatory per PEP 621. ([Python Packaging][4],
-  [Reddit][5])
+- **`name` and `version`:** Mandatory per PEP 621.
 - **`description` and `readme`:** Although not mandatory, they help with
   indexing and packaging tools; `readme = "README.md"` tells `uv` (and PyPI) to
-  include your README as the long description. ([Astral Docs][1], [Python
-  Packaging][4])
+  include your README as the long description.
 - **`requires-python`:** Constrains which Python interpreters your package
-  supports (e.g. `>=3.10`). ([Python Packaging][4], [Reddit][5])
+  supports (e.g. `>=3.10`).
 - **`license = { text = "MIT" }`:** You can specify a license either as a SPDX
   identifier (via `license = { text = "MIT" }`) or by pointing to a file (e.g.
-  `license = { file = "LICENSE" }`). ([Python Packaging][4], [Reddit][5])
+  `license = { file = "LICENSE" }`).
 - **`authors`:** A list of tables with `name` and `email`. Many registries
-  (e.g., PyPI) pull this for display. ([Python Packaging][4], [Reddit][5])
+  (e.g., PyPI) pull this for display.
 - **`keywords` and `classifiers`:** These help search engines and package
   indexes. Classifiers must follow the exact trove list defined by PyPA.
-  ([Python Packaging][4], [Reddit][5])
 - **`dependencies`:** A list of PEP 508-style requirements (e.g.,
   `"requests>=2.25"`). `uv sync` will install exactly those versions, updating
-  the lockfile as needed. ([Astral Docs][1], [RidgeRun.ai][2])
+  the lockfile as needed.
 
 ______________________________________________________________________
 
@@ -94,11 +91,9 @@ docs = [
 
 - **`[project.optional-dependencies]`:** Each table key (e.g. `dev`, `docs`)
   defines a "dependency group." You can install a group via
-  `uv add --group dev` or `uv sync --include dev`. ([Python Packaging][4],
-  [DevsJC][6])
+  `uv add --group dev` or `uv sync --include dev`.
 - **Why use groups?** You keep the lockfile deterministic (via `uv.lock`) while
-  still separating concerns (test‐only vs. production). ([Medium][7],
-  [DevsJC][6])
+  still separating concerns (test‐only vs. production).
 
 ______________________________________________________________________
 
@@ -117,13 +112,11 @@ mygui = "my_project.gui:start"
 ```
 
 - **`[project.scripts]`:** Defines console scripts. When you run `uv run mycli`,
-  `uv` will invoke the `main` function in `my_project/cli.py`. ([Astral
-  Docs][8])
+  `uv` will invoke the `main` function in `my_project/cli.py`.
 - **`[project.gui-scripts]`:** On Windows, `uv` will wrap these in a GUI
   executable; on Unix-like systems, they behave like normal console scripts.
-  ([Astral Docs][8])
 - **Plugin Entry Points:** If your project supports plugins, use
-  `[project.entry-points.'group.name']` to register them. ([Astral Docs][8])
+  `[project.entry-points.'group.name']` to register them.
 
 ______________________________________________________________________
 
@@ -141,15 +134,13 @@ build-backend = "setuptools.build_meta"
 ```
 
 - **`requires`:** A list of packages needed at build time. For editable installs
-  in `uv`, you need at least `setuptools>=61.0` and `wheel`. ([Python
-  Packaging][4], [Astral Docs][8])
+  in `uv`, you need at least `setuptools>=61.0` and `wheel`.
 - **`build-backend`:** The entry point for your build backend.
   `setuptools.build_meta` is the PEP 517-compliant backend for setuptools.
-  ([Python Packaging][4], [Astral Docs][8])
 - **Note:** If you omit `[build-system]`, `uv` will assume
   `setuptools.build_meta:__legacy__` and still install dependencies, but it
   won't editably install your own project unless you set
-  `tool.uv.package = true` (see next section). ([Astral Docs][8])
+  `tool.uv.package = true` (see next section).
 
 ______________________________________________________________________
 
@@ -166,10 +157,9 @@ package = true
 - **`tool.uv.package = true`:** Forces `uv` to build and install your project
   into its virtual environment every time you run `uv sync` or `uv run`.
   Without this, `uv` only installs dependencies (not your own package) if
-  `[build-system]` is missing. ([Astral Docs][8])
+  `[build-system]` is missing.
 - You may also set other `uv`-specific keys (e.g., custom indexes, resolver
-  policies) under `[tool.uv]`, but `package` is the most common. ([Python
-  Packaging][4], [Astral Docs][8])
+  policies) under `[tool.uv]`, but `package` is the most common.
 
 ______________________________________________________________________
 
@@ -226,40 +216,37 @@ package = true
 
 1. **Metadata under `[project]`:**
 
-   - `name`, `version` (mandatory per PEP 621) ([Python Packaging][4],
-     [Reddit][5])
+   - `name`, `version` (mandatory per PEP 621)
    - `description`, `readme`, `requires-python`: provide clarity about the
-     project and help tools like PyPI. ([Python Packaging][4], [Reddit][5])
+     project and help tools like PyPI.
    - `license`, `authors`, `keywords`, `classifiers`: standardised metadata,
-     which improves discoverability. ([Python Packaging][4], [Reddit][5])
+     which improves discoverability.
    - `dependencies`: runtime requirements, expressed in PEP 508 syntax.
-     ([Astral Docs][1], [RidgeRun.ai][2])
 
 2. **Optional Dependencies (`[project.optional-dependencies]`):**
 
    - Grouped as `dev` (for testing + linting) and `docs` (for documentation).
      Installing them is as simple as `uv add --group dev` or
-     `uv sync --include dev`. ([Python Packaging][4], [DevsJC][6])
+     `uv sync --include dev`.
 
 3. **Entry Points (`[project.scripts]`):**
 
    - Defines a console command `mycli` that maps to `my_project/cli.py:main`.
-     Invoking `uv run mycli` will run the `main()` function. ([Astral Docs][8])
+     Invoking `uv run mycli` will run the `main()` function.
 
 4. **Build System:**
 
    - `setuptools>=61.0` plus `wheel` ensures both legacy and editable installs
      work. ✱ Newer versions of setuptools support PEP 660 editable installs
-     without a `setup.py` stub. ([Python Packaging][4], [Astral Docs][8])
+     without a `setup.py` stub.
    - `build-backend = "setuptools.build_meta"` tells `uv` how to compile your
-     package. ([Python Packaging][4], [Astral Docs][8])
+     package.
 
 5. **`[tool.uv]`:**
 
    - `package = true` ensures that `uv sync` will build and install your own
      project (in editable mode) every time dependencies change. Otherwise, `uv`
-     treats your project as a collection of scripts only (no package). ([Astral
-     Docs][8])
+     treats your project as a collection of scripts only (no package).
 
 ______________________________________________________________________
 
@@ -267,29 +254,27 @@ ______________________________________________________________________
 
 1. **Keep `pyproject.toml` Human-Readable:** Edit it by hand when possible.
    Modern editors (VS Code, PyCharm) offer TOML syntax highlighting and PEP 621
-   autocompletion. ([Python Packaging][4])
+   autocompletion.
 
 2. **Lockfile Discipline:** After modifying `dependencies` or any `[project]`
    fields, always run `uv sync` (or `uv lock`) to update `uv.lock`. This
-   guarantees reproducible environments. ([Astral Docs][1])
+   guarantees reproducible environments.
 
-3. **Semantic Versioning:** Follow [semver](https://semver.org/) for `version`
-   values (e.g., `1.2.3`). Bump patch versions for bug fixes, minor for
-   backward-compatible changes, and major for breaking changes. ([Python
-   Packaging][4])
+3. **Semantic Versioning:** Follow semantic versioning for `version` values
+   (e.g., `1.2.3`).[^1] Bump patch versions for bug fixes, minor for
+   backward-compatible changes, and major for breaking changes.
 
 4. **Keep Build Constraints Minimal:** If you don't need editable installs, you
    can omit `[build-system]` (but then `uv` won't build your package; it will
    only install dependencies). To override, set `tool.uv.package = true`.
-   ([Astral Docs][8])
 
 5. **Use Exact or Bounded Ranges for Dependencies:** Rather than `requests`, use
-   `requests>=2.25, <3.0` to avoid unexpected major bumps. ([DevsJC][6])
+   `requests>=2.25, <3.0` to avoid unexpected major bumps.
 
 6. **Consider Dynamic Fields Sparingly:** You can declare fields like
    `dynamic = ["version"]` if your version is computed at build time (e.g. via
    `setuptools_scm`). If you do so, ensure your build backend supports dynamic
-   metadata. ([Python Packaging][4])
+   metadata.
 
 ______________________________________________________________________
 
@@ -308,21 +293,8 @@ A "modern" `pyproject.toml` for an Astral `uv` project should:
   build and install your own package.
 
 Following these conventions ensures that your project is fully PEP-compliant,
-easy to maintain, and integrates seamlessly with Astral `uv`.
+easy to maintain, and integrates seamlessly with Astral `uv`. For detailed
+configuration options, refer to the uv documentation.[^2]
 
-[1]: https://docs.astral.sh/uv/guides/projects/?utm_source=chatgpt.com "Working
-on projects | uv - Astral Docs" [2]:
-https://www.ridgerun.ai/post/uv-tutorial-a-fast-python-package-and-project-manager?utm_source=chatgpt.com
- "UV Tutorial: A Fast Python Package and Project Manager" [3]:
-https://levelup.gitconnected.com/modern-python-development-with-pyproject-toml-and-uv-405dfb8b6ec8?utm_source=chatgpt.com
- "Modern Python Development with pyproject.toml and UV" [4]:
-https://packaging.python.org/en/latest/guides/writing-pyproject-toml/?utm_source=chatgpt.com
- "Writing your pyproject.toml - Python Packaging User Guide" [5]:
-https://www.reddit.com/r/Python/comments/1ixryec/anyone_used_uv_package_manager_in_production/?utm_source=chatgpt.com
- "Anyone used UV package manager in production : r/Python - Reddit" [6]:
-https://devsjc.github.io/blog/20240627-the-complete-guide-to-pyproject-toml/?utm_source=chatgpt.com
- "The Complete Guide to pyproject.toml · devsjc blogs //" [7]:
-https://medium.com/%40gnetkov/start-using-uv-python-package-manager-for-better-dependency-management-183e7e428760?utm_source=chatgpt.com
- "Start Using UV Python Package Manager for Better Dependency …" [8]:
-https://docs.astral.sh/uv/concepts/projects/config/?utm_source=chatgpt.com
-"Configuring projects | uv - Astral Docs"
+[^1]: <https://semver.org/>
+[^2]: <https://docs.astral.sh/uv/concepts/projects/config/>
