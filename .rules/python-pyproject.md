@@ -10,8 +10,8 @@ Astral's `uv` is a Rust-based project and package manager that uses
 3. Read dependency specifications (and any build-system directives) to install
    or update packages accordingly.
 
-In other words, your `pyproject.toml` drives everything—from metadata to
-dependencies to build instructions—without needing `requirements.txt` or a
+In other words, a `pyproject.toml` drives everything—from metadata to
+dependencies to build instructions—without the need for `requirements.txt` or a
 separate `setup.py` file.
 
 ______________________________________________________________________
