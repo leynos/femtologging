@@ -125,45 +125,31 @@ ______________________________________________________________________
 PEP 517/518 require a `[build-system]` table to tell tools how to build and
 install your project. A "modern" convention is to specify `setuptools>=61.0`
 (for editable installs without `setup.py`) or a lighter alternative like
-`flit_core`. Below is the typical setup using setuptools:
+`flit_core`. Astral `uv` also recognises a `[tool.uv]` table for its own
+configuration:
 
 ```toml
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
-```
 
-- **`requires`:** A list of packages needed at build time. For editable installs
-  in `uv`, you need at least `setuptools>=61.0` and `wheel`.
-- **`build-backend`:** The entry point for your build backend.
-  `setuptools.build_meta` is the PEP 517-compliant backend for setuptools.
-- **Note:** If you omit `[build-system]`, `uv` will assume
-  `setuptools.build_meta:__legacy__` and still install dependencies, but it
-  won't editably install your own project unless you set
-  `tool.uv.package = true` (see next section).
-
-______________________________________________________________________
-
-## 6. `uv`-Specific Configuration (`[tool.uv]`)
-
-Astral `uv` allows you to inject its own settings in `[tool.uv]`. The most
-common option is:
-
-```toml
 [tool.uv]
 package = true
 ```
 
-- **`tool.uv.package = true`:** Forces `uv` to build and install your project
-  into its virtual environment every time you run `uv sync` or `uv run`.
-  Without this, `uv` only installs dependencies (not your own package) if
-  `[build-system]` is missing.
-- You may also set other `uv`-specific keys (e.g., custom indexes, resolver
-  policies) under `[tool.uv]`, but `package` is the most common.
+- **`requires`:** Packages needed at build time. For editable installs in
+  `uv`, use at least `setuptools>=61.0` and `wheel`.
+- **`build-backend`:** Entry point for your build backend;
+  `setuptools.build_meta` is PEP 517‑compliant.
+- **`tool.uv.package = true`:** Builds and installs your project into the
+  virtual environment whenever dependencies change.
+- **Note:** If `[build-system]` is omitted, `uv` assumes
+  `setuptools.build_meta:__legacy__` and skips editable installs of your
+  project unless `tool.uv.package = true`.
 
 ______________________________________________________________________
 
-## 7. Putting It All Together: Example `pyproject.toml`
+## 6. Putting It All Together: Example `pyproject.toml`
 
 Below is a complete example that demonstrates all sections. Adjust values as
 needed for your own project.
@@ -250,7 +236,7 @@ package = true
 
 ______________________________________________________________________
 
-## 8. Additional Tips & Best Practices
+## 7. Additional Tips & Best Practices
 
 1. **Keep `pyproject.toml` Human-Readable:** Edit it by hand when possible.
    Modern editors (VS Code, PyCharm) offer TOML syntax highlighting and PEP 621
@@ -278,7 +264,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 9. Summary
+## 8. Summary
 
 A "modern" `pyproject.toml` for an Astral `uv` project should:
 
