@@ -1,5 +1,3 @@
-<!-- markdownlint-disable MD053 -->
-
 # 1. Overview of `uv` and `pyproject.toml`
 
 Astral's `uv` is a Rust-based project and package manager that uses
@@ -292,7 +290,7 @@ Following these conventions ensures that your project is fully PEP-compliant,
 easy to maintain, and integrates seamlessly with Astral `uv`. For detailed
 configuration options, refer to the uv documentation.[^2]
 
+<!-- markdownlint-disable MD053 -->
 [^1]: <https://semver.org/>
 [^2]: <https://docs.astral.sh/uv/concepts/projects/config/>
-
 <!-- markdownlint-enable MD053 -->
