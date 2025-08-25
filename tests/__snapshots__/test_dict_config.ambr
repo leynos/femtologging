@@ -1,0 +1,4 @@
+# serializer version: 1
+# name: test_configure_root_logger_via_dictconfig
+  'root [INFO] hello'
+# ---

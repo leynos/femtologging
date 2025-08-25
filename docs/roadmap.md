@@ -52,6 +52,7 @@ from that design.
 - [x] Implement `femtologging.basicConfig()` translating to the builder API
   (see [configuration design](./configuration-design.md#basicconfig) and
   [example](../examples/basic_config.py)).
+- [x] Implement `femtologging.dictConfig()` translating to the builder API.
 - [ ] Implement `FemtoRotatingFileHandler` and `FemtoTimedRotatingFileHandler`
   with their respective rotation logic.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and

@@ -6,10 +6,19 @@ from __future__ import annotations
 # to keep imports at the top for linters.
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
 from .overflow_policy import OverflowPolicy
+import ast
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Iterable, TextIO, overload, cast
+from typing import (
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    TextIO,
+    cast,
+    overload,
+)
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
@@ -25,6 +34,17 @@ LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
 FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
 HandlerConfigError = rust.HandlerConfigError  # type: ignore[attr-defined]
 HandlerIOError = rust.HandlerIOError  # type: ignore[attr-defined]
+
+
+# Mapping of string class names to handler builder classes. This mirrors the
+# ``logging.config.dictConfig`` expectation of string references while steering
+# users toward ``femtologging``'s builders.
+_HANDLER_CLASS_MAP: dict[str, type[StreamHandlerBuilder] | type[FileHandlerBuilder]] = {
+    "logging.StreamHandler": StreamHandlerBuilder,
+    "femtologging.StreamHandler": StreamHandlerBuilder,
+    "logging.FileHandler": FileHandlerBuilder,
+    "femtologging.FileHandler": FileHandlerBuilder,
+}
 
 
 @dataclass
@@ -222,6 +242,139 @@ def _set_logger_level(root: FemtoLogger, level: str | int | None) -> None:
         root.set_level(lvl)
 
 
+def _coerce_args(args: object) -> list[object]:
+    """Convert ``args`` into a list for handler construction.
+
+    ``dictConfig`` accepts either a sequence or a string representing a Python
+    literal. The string form is evaluated safely using ``ast.literal_eval`` so
+    configuration loaded from text formats (e.g. JSON) can express tuples.
+    """
+    if isinstance(args, str):
+        try:
+            args = ast.literal_eval(args)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError(f"invalid args: {args}") from exc
+    if args is None:
+        return []
+    if not isinstance(args, Sequence):
+        raise ValueError("args must be a sequence")
+    return list(args)
+
+
+def _coerce_kwargs(kwargs: object) -> dict[str, object]:
+    """Convert ``kwargs`` into a dictionary for handler construction."""
+    if isinstance(kwargs, str):
+        try:
+            kwargs = ast.literal_eval(kwargs)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError(f"invalid kwargs: {kwargs}") from exc
+    if kwargs is None:
+        return {}
+    if not isinstance(kwargs, Mapping):
+        raise ValueError("kwargs must be a mapping")
+    return dict(kwargs)
+
+
+def _resolve_handler_class(
+    name: str,
+) -> type[StreamHandlerBuilder] | type[FileHandlerBuilder]:
+    """Return the builder class for ``name`` or raise ``ValueError``."""
+    cls = _HANDLER_CLASS_MAP.get(name)
+    if cls is None:
+        raise ValueError(f"unsupported handler class {name!r}")
+    return cls
+
+
+def _build_handler_from_dict(
+    hid: str, data: MutableMapping[str, object]
+) -> FileHandlerBuilder | StreamHandlerBuilder:
+    """Create a handler builder from ``dictConfig`` handler data."""
+    cls_name = data.get("class")
+    if not isinstance(cls_name, str):
+        raise ValueError(f"handler {hid!r} missing class")
+    builder_cls = _resolve_handler_class(cls_name)
+    args = _coerce_args(data.get("args"))
+    kwargs = _coerce_kwargs(data.get("kwargs"))
+    try:
+        builder = builder_cls(*args, **kwargs)
+    except Exception as exc:  # pragma: no cover - constructor errors propagated
+        raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
+    if data.get("level") is not None:
+        raise ValueError("handler level is not supported")
+    if data.get("filters"):
+        raise ValueError("handler filters are not supported")
+    if fmt := data.get("formatter"):
+        builder = builder.with_formatter(fmt)
+    return builder
+
+
+def _build_logger_from_dict(
+    name: str, data: MutableMapping[str, object]
+) -> LoggerConfigBuilder:
+    """Create a ``LoggerConfigBuilder`` from ``dictConfig`` logger data."""
+    if data.get("filters"):
+        raise ValueError("filters are not supported")
+    builder = LoggerConfigBuilder()
+    if lvl := data.get("level"):
+        builder = builder.with_level(lvl)
+    if handlers := data.get("handlers"):
+        builder = builder.with_handlers(handlers)
+    if prop := data.get("propagate"):
+        builder = builder.with_propagate(bool(prop))
+    return builder
+
+
+def dictConfig(config: Mapping[str, object]) -> None:
+    """Configure logging using a ``dictConfig``-style dictionary."""
+    if config.get("incremental"):
+        raise ValueError("incremental configuration is not supported")
+    version = int(config.get("version", 1))
+    if version != 1:
+        raise ValueError(f"unsupported configuration version {version}")
+    builder = ConfigBuilder().with_version(version)
+    if config.get("disable_existing_loggers"):
+        builder.with_disable_existing_loggers(True)
+
+    formatters = config.get("formatters", {})
+    if not isinstance(formatters, Mapping):
+        raise ValueError("formatters must be a mapping")
+    for fid, fcfg in formatters.items():
+        if not isinstance(fcfg, Mapping):
+            raise ValueError("formatter config must be a mapping")
+        fb = FormatterBuilder()
+        if fmt := fcfg.get("format"):
+            fb = fb.with_format(fmt)
+        if datefmt := fcfg.get("datefmt"):
+            fb = fb.with_datefmt(datefmt)
+        builder.with_formatter(fid, fb)
+
+    if config.get("filters"):
+        raise ValueError("filters are not supported")
+
+    handlers = config.get("handlers", {})
+    if not isinstance(handlers, Mapping):
+        raise ValueError("handlers must be a mapping")
+    for hid, hcfg in handlers.items():
+        if not isinstance(hcfg, MutableMapping):
+            raise ValueError("handler config must be a mapping")
+        builder.with_handler(hid, _build_handler_from_dict(hid, hcfg))
+
+    loggers = config.get("loggers", {})
+    if not isinstance(loggers, Mapping):
+        raise ValueError("loggers must be a mapping")
+    for name, lcfg in loggers.items():
+        if not isinstance(lcfg, MutableMapping):
+            raise ValueError("logger config must be a mapping")
+        builder.with_logger(name, _build_logger_from_dict(name, lcfg))
+
+    root = config.get("root")
+    if not isinstance(root, MutableMapping):
+        raise ValueError("root logger configuration is required")
+    builder.with_root_logger(_build_logger_from_dict("root", root))
+
+    builder.build_and_init()
+
+
 __all__ = [
     "FemtoHandler",
     "FemtoLogger",
@@ -239,5 +392,6 @@ __all__ = [
     "OverflowPolicy",
     "BasicConfig",
     "basicConfig",
+    "dictConfig",
     "hello",
 ]
