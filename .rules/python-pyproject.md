@@ -67,8 +67,8 @@ dependencies = [
 - **`keywords` and `classifiers`:** These help search engines and package
   indexes. Classifiers must follow the exact trove list defined by PyPA.
 - **`dependencies`:** A list of PEP 508-style requirements (e.g.,
-  `"requests>=2.25"`). `uv sync` will install exactly those versions, updating
-  the lockfile as needed.
+  `"requests>=2.25"`). `uv sync` resolves those specifiers to concrete versions
+  and records them in the lockfile.
 
 ______________________________________________________________________
 
