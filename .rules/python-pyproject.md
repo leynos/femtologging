@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD053 -->
+
 # 1. Overview of `uv` and `pyproject.toml`
 
 Astral's `uv` is a Rust-based project and package manager that uses
@@ -72,28 +74,32 @@ ______________________________________________________________________
 
 ## 3. Optional and Development Dependencies
 
-Modern projects typically distinguish between "production" dependencies (those
-needed at runtime) and "development" dependencies (linters, test frameworks,
-etc.). In PEP 621, you use `[project.optional-dependencies]` for this:
+Modern projects distinguish between "production" dependencies (those needed at
+runtime) and local tooling. Use `[project.optional-dependencies]` only for
+extras intended for publication (e.g. documentation). Development tools belong
+under `[dependency-groups]` so they remain local and are controlled via group
+flags:
 
 ```toml
 [project.optional-dependencies]
+docs = [
+  "sphinx>=5.0",        # Documentation builder (published extra)
+  "sphinx-rtd-theme"
+]
+
+[dependency-groups]
 dev = [
-  "pytest>=7.0",        # Testing framework
+  "pytest>=7.0",        # Testing framework (local dev group)
   "black",              # Code formatter
   "flake8>=4.0"         # Linter
 ]
-docs = [
-  "sphinx>=5.0",        # Documentation builder
-  "sphinx-rtd-theme"
-]
 ```
 
-- **`[project.optional-dependencies]`:** Each table key (e.g. `dev`, `docs`)
-  defines a "dependency group." You can install a group via
-  `uv add --group dev` or `uv sync --include dev`.
-- **Why use groups?** You keep the lockfile deterministic (via `uv.lock`) while
-  still separating concerns (test‐only vs. production).
+- **`[project.optional-dependencies]`:** Published extras appear here and are
+  installed with `--extra` flags.
+- **`[dependency-groups]`:** Local-only groups like `dev` are enabled with
+  `uv add --group dev` or `uv sync --group dev`, keeping the lockfile
+  deterministic while separating concerns.
 
 ______________________________________________________________________
 
@@ -177,14 +183,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+docs = [
+  "sphinx>=5.0",
+  "sphinx-rtd-theme"
+]
+
+[dependency-groups]
 dev = [
   "pytest>=7.0",
   "black",
   "flake8>=4.0"
-]
-docs = [
-  "sphinx>=5.0",
-  "sphinx-rtd-theme"
 ]
 
 [project.scripts]
@@ -209,11 +217,12 @@ package = true
      which improves discoverability.
    - `dependencies`: runtime requirements, expressed in PEP 508 syntax.
 
-2. **Optional Dependencies (`[project.optional-dependencies]`):**
+2. **Optional Dependencies (`[project.optional-dependencies]` and
+   `[dependency-groups]`):**
 
-   - Grouped as `dev` (for testing + linting) and `docs` (for documentation).
-     Installing them is as simple as `uv add --group dev` or
-     `uv sync --include dev`.
+   - `docs` is an optional dependency exposed as a published extra.
+   - `dev` resides under `[dependency-groups]` so tooling remains local. Enable
+     it with `uv add --group dev` or `uv sync --group dev`.
 
 3. **Entry Points (`[project.scripts]`):**
 
@@ -269,7 +278,8 @@ ______________________________________________________________________
 A "modern" `pyproject.toml` for an Astral `uv` project should:
 
 - Use the PEP 621 `[project]` table for metadata and `dependencies`.
-- Distinguish optional dependencies under `[project.optional-dependencies]`.
+- Distinguish published extras under `[project.optional-dependencies]` and
+  development groups under `[dependency-groups]`.
 - Define any CLI or GUI entry points under `[project.scripts]` or
   `[project.gui-scripts]`.
 - Declare a PEP 517 `[build-system]` (e.g. `setuptools>=61.0`, `wheel`,
@@ -284,3 +294,5 @@ configuration options, refer to the uv documentation.[^2]
 
 [^1]: <https://semver.org/>
 [^2]: <https://docs.astral.sh/uv/concepts/projects/config/>
+
+<!-- markdownlint-enable MD053 -->
