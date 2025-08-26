@@ -256,6 +256,8 @@ def _coerce_args(args: object) -> list[object]:
             raise ValueError(f"invalid args: {args}") from exc
     if args is None:
         return []
+    if isinstance(args, (bytes, bytearray)):
+        raise ValueError("args must not be bytes or bytearray")
     if not isinstance(args, Sequence):
         raise ValueError("args must be a sequence")
     return list(args)
@@ -324,33 +326,49 @@ def _build_logger_from_dict(
     return builder
 
 
-def dictConfig(config: Mapping[str, object]) -> None:
-    """Configure logging using a ``dictConfig``-style dictionary."""
+def _validate_dict_config(config: Mapping[str, object]) -> int:
+    """Validate top-level configuration and return the version."""
     if config.get("incremental"):
         raise ValueError("incremental configuration is not supported")
     version = int(config.get("version", 1))
     if version != 1:
         raise ValueError(f"unsupported configuration version {version}")
+    if config.get("filters"):
+        raise ValueError("filters are not supported")
+    return version
+
+
+def _create_config_builder(version: int, config: Mapping[str, object]) -> ConfigBuilder:
+    """Initialise a ``ConfigBuilder`` with global options."""
     builder = ConfigBuilder().with_version(version)
     if config.get("disable_existing_loggers"):
-        builder.with_disable_existing_loggers(True)
+        builder = builder.with_disable_existing_loggers(True)
+    return builder
 
+
+def _build_formatter(fcfg: Mapping[str, object]) -> FormatterBuilder:
+    """Build a :class:`FormatterBuilder` from configuration."""
+    fb = FormatterBuilder()
+    if fmt := fcfg.get("format"):
+        fb = fb.with_format(fmt)
+    if datefmt := fcfg.get("datefmt"):
+        fb = fb.with_datefmt(datefmt)
+    return fb
+
+
+def _process_formatters(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+    """Attach formatter builders to ``builder``."""
     formatters = config.get("formatters", {})
     if not isinstance(formatters, Mapping):
         raise ValueError("formatters must be a mapping")
     for fid, fcfg in formatters.items():
         if not isinstance(fcfg, Mapping):
             raise ValueError("formatter config must be a mapping")
-        fb = FormatterBuilder()
-        if fmt := fcfg.get("format"):
-            fb = fb.with_format(fmt)
-        if datefmt := fcfg.get("datefmt"):
-            fb = fb.with_datefmt(datefmt)
-        builder.with_formatter(fid, fb)
+        builder.with_formatter(fid, _build_formatter(fcfg))
 
-    if config.get("filters"):
-        raise ValueError("filters are not supported")
 
+def _process_handlers(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+    """Attach handler builders to ``builder``."""
     handlers = config.get("handlers", {})
     if not isinstance(handlers, Mapping):
         raise ValueError("handlers must be a mapping")
@@ -359,6 +377,9 @@ def dictConfig(config: Mapping[str, object]) -> None:
             raise ValueError("handler config must be a mapping")
         builder.with_handler(hid, _build_handler_from_dict(hid, hcfg))
 
+
+def _process_loggers(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+    """Attach logger configurations to ``builder``."""
     loggers = config.get("loggers", {})
     if not isinstance(loggers, Mapping):
         raise ValueError("loggers must be a mapping")
@@ -367,11 +388,23 @@ def dictConfig(config: Mapping[str, object]) -> None:
             raise ValueError("logger config must be a mapping")
         builder.with_logger(name, _build_logger_from_dict(name, lcfg))
 
+
+def _process_root_logger(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+    """Configure the root logger."""
     root = config.get("root")
     if not isinstance(root, MutableMapping):
         raise ValueError("root logger configuration is required")
     builder.with_root_logger(_build_logger_from_dict("root", root))
 
+
+def dictConfig(config: Mapping[str, object]) -> None:
+    """Configure logging using a ``dictConfig``-style dictionary."""
+    version = _validate_dict_config(config)
+    builder = _create_config_builder(version, config)
+    _process_formatters(builder, config)
+    _process_handlers(builder, config)
+    _process_loggers(builder, config)
+    _process_root_logger(builder, config)
     builder.build_and_init()
 
 

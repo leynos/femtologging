@@ -31,7 +31,7 @@ def log_matches_snapshot(msg: str, level: str, snapshot) -> None:
 
 @then("calling dictConfig with incremental true fails")
 def dict_config_incremental_fails() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="incremental configuration is not supported"):
         dictConfig({"version": 1, "incremental": True, "root": {}})
 
 
@@ -56,6 +56,17 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     assert path.exists()
 
 
+def test_dict_config_args_reject_bytes() -> None:
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "handlers": {"h": {"class": "femtologging.StreamHandler", "args": b"bytes"}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(ValueError, match="args must not be bytes or bytearray"):
+        dictConfig(cfg)
+
+
 @pytest.mark.parametrize(
     "config",
     [
@@ -67,8 +78,9 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
         },
         {"version": 1, "filters": {"f": {}}, "root": {}},
     ],
+    ids=["version-unsupported", "handler-class-unknown", "filters-unsupported"],
 )
-def test_dict_config_invalid_configs(config) -> None:
+def test_dict_config_invalid_configs(config: dict[str, object]) -> None:
     """Invalid configurations raise ``ValueError``."""
     reset_manager()
     with pytest.raises(ValueError):
