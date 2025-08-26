@@ -334,6 +334,54 @@ builders expose `build()` methods returning ready‑to‑use handlers. Advanced
 options such as file encoding or custom writers are deferred until the
 corresponding handler features are ported from picologging.
 
+### 1.4. Class diagram
+
+The relationships among the builder types and the `dictConfig` helper are
+summarised below:
+
+```mermaid
+classDiagram
+    class ConfigBuilder {
+        +with_version(version: int)
+        +with_disable_existing_loggers(flag: bool)
+        +with_formatter(id: str, builder: FormatterBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|StreamHandlerBuilder)
+        +with_logger(name: str, builder: LoggerConfigBuilder)
+        +with_root_logger(builder: LoggerConfigBuilder)
+        +build_and_init()
+    }
+    class FormatterBuilder {
+        +with_format(fmt: str)
+        +with_datefmt(datefmt: str)
+    }
+    class FileHandlerBuilder {
+        +__init__(*args, **kwargs)
+        +with_formatter(fmt: str)
+    }
+    class StreamHandlerBuilder {
+        +__init__(*args, **kwargs)
+        +with_formatter(fmt: str)
+    }
+    class LoggerConfigBuilder {
+        +with_level(level: str|int)
+        +with_handlers(handlers: list)
+        +with_propagate(flag: bool)
+    }
+    class dictConfig {
+        +dictConfig(config: Mapping[str, object])
+    }
+    dictConfig --> ConfigBuilder
+    ConfigBuilder --> FormatterBuilder
+    ConfigBuilder --> FileHandlerBuilder
+    ConfigBuilder --> StreamHandlerBuilder
+    ConfigBuilder --> LoggerConfigBuilder
+    FileHandlerBuilder <|-- StreamHandlerBuilder
+    LoggerConfigBuilder --> FileHandlerBuilder
+    LoggerConfigBuilder --> StreamHandlerBuilder
+    FileHandlerBuilder --> FormatterBuilder
+    StreamHandlerBuilder --> FormatterBuilder
+```
+
 ## 2. Backwards Compatibility APIs
 
 `femtologging` will provide functions in the Python package to ensure backwards
