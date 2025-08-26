@@ -4,7 +4,7 @@
 [`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md)
  outlines a phased approach for building `femtologging`. The high‑level goal is
 to re‑implement picologging in Rust with strong compile‑time safety and a
-multithreaded handler model. The steps below summarise the actionable items
+multithreaded handler model. The steps below summarize the actionable items
 from that design.
 
 ## Initial Setup Tasks
@@ -16,7 +16,7 @@ from that design.
 - [x] Integrate Rust extension into Python packaging workflow
 - [ ] Port formatting and handler components to Rust
 - [ ] Add concurrency support and thread safety guarantees
-- [ ] Benchmark against picologging and optimise hot paths
+- [ ] Benchmark against picologging and optimize hot paths
 - [ ] Provide unit and integration tests for all features
 - [ ] Set up continuous integration for Rust and Python tests
 - [ ] Write migration guide for existing picologging users
@@ -70,7 +70,7 @@ from that design.
 - [ ] Add file‑based configuration support (TOML or YAML via `serde`).
 - [ ] Improve structured logging in macros to make context propagation easier.
 - [ ] Investigate runtime reconfiguration of handlers and filters.
-- [ ] Explore batching optimisations in consumer threads.
+- [ ] Explore batching optimizations in consumer threads.
 
 These phases will lead to a robust Rust implementation that matches the
 performance goals of picologging while leveraging Rust's safety guarantees.
