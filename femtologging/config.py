@@ -51,17 +51,24 @@ def _coerce_args(args: object) -> list[object]:
     return list(args)
 
 
-def _coerce_kwargs(kwargs: object) -> dict[str, object]:
-    """Convert ``kwargs`` into a dictionary for handler construction."""
-    if isinstance(kwargs, str):
-        try:
-            kwargs = ast.literal_eval(kwargs)
-        except (ValueError, SyntaxError) as exc:
-            raise ValueError(f"invalid kwargs: {kwargs}") from exc
-    if kwargs is None:
-        return {}
-    if isinstance(kwargs, (bytes, bytearray)) or not isinstance(kwargs, Mapping):
+def _evaluate_string_kwargs(kwargs: str) -> object:
+    """Safely evaluate string kwargs using ``ast.literal_eval``."""
+    try:
+        return ast.literal_eval(kwargs)
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(f"invalid kwargs: {kwargs}") from exc
+
+
+def _validate_kwargs_type(kwargs: object) -> None:
+    """Validate that ``kwargs`` is a mapping and not bytes-like."""
+    if isinstance(kwargs, (bytes, bytearray)):
         raise ValueError("kwargs must be a mapping")
+    if not isinstance(kwargs, Mapping):
+        raise ValueError("kwargs must be a mapping")
+
+
+def _validate_kwargs_items(kwargs: Mapping[object, object]) -> dict[str, object]:
+    """Validate ``kwargs`` keys and values before use."""
     result: dict[str, object] = {}
     for key, value in kwargs.items():
         if not isinstance(key, str):
@@ -70,6 +77,16 @@ def _coerce_kwargs(kwargs: object) -> dict[str, object]:
             raise ValueError("kwargs values must not be bytes or bytearray")
         result[key] = value
     return result
+
+
+def _coerce_kwargs(kwargs: object) -> dict[str, object]:
+    """Convert ``kwargs`` into a dictionary for handler construction."""
+    if isinstance(kwargs, str):
+        kwargs = _evaluate_string_kwargs(kwargs)
+    if kwargs is None:
+        return {}
+    _validate_kwargs_type(kwargs)
+    return _validate_kwargs_items(cast(Mapping[object, object], kwargs))
 
 
 def _resolve_handler_class(
@@ -82,17 +99,35 @@ def _resolve_handler_class(
     return cls
 
 
+def _validate_handler_keys(hid: str, data: Mapping[str, object]) -> None:
+    """Validate that ``data`` contains only supported handler keys."""
+    allowed = {"class", "level", "filters", "args", "kwargs", "formatter"}
+    unknown = set(data.keys()) - allowed
+    if unknown:
+        raise ValueError(f"handler {hid!r} has unsupported keys: {sorted(unknown)!r}")
+
+
+def _validate_handler_class(hid: str, cls_name: object) -> str:
+    """Ensure a string handler class name is provided."""
+    if not isinstance(cls_name, str):
+        raise ValueError(f"handler {hid!r} missing class")
+    return cls_name
+
+
+def _validate_unsupported_features(data: Mapping[str, object]) -> None:
+    """Reject handler features not yet implemented."""
+    if data.get("level") is not None:
+        raise ValueError("handler level is not supported")
+    if data.get("filters"):
+        raise ValueError("handler filters are not supported")
+
+
 def _build_handler_from_dict(
     hid: str, data: Mapping[str, object]
 ) -> FileHandlerBuilder | StreamHandlerBuilder:
     """Create a handler builder from ``dictConfig`` handler data."""
-    allowed_keys = {"class", "level", "filters", "args", "kwargs", "formatter"}
-    unknown = set(data.keys()) - allowed_keys
-    if unknown:
-        raise ValueError(f"handler {hid!r} has unsupported keys: {sorted(unknown)!r}")
-    cls_name = data.get("class")
-    if not isinstance(cls_name, str):
-        raise ValueError(f"handler {hid!r} missing class")
+    _validate_handler_keys(hid, data)
+    cls_name = _validate_handler_class(hid, data.get("class"))
     builder_cls = _resolve_handler_class(cls_name)
     args = _coerce_args(data.get("args"))
     kwargs = _coerce_kwargs(data.get("kwargs"))
@@ -100,10 +135,7 @@ def _build_handler_from_dict(
         builder = builder_cls(*args, **kwargs)
     except Exception as exc:  # pragma: no cover - constructor errors propagated
         raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
-    if data.get("level") is not None:
-        raise ValueError("handler level is not supported")
-    if data.get("filters"):
-        raise ValueError("handler filters are not supported")
+    _validate_unsupported_features(data)
     if fmt := data.get("formatter"):
         builder = builder.with_formatter(fmt)
     return builder
