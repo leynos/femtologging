@@ -337,7 +337,7 @@ corresponding handler features are ported from picologging.
 ### 1.4. Class diagram
 
 The relationships among the builder types and the `dictConfig` helper are
-summarised below:
+summarized below:
 
 ```mermaid
 classDiagram
@@ -375,11 +375,14 @@ classDiagram
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> LoggerConfigBuilder
-    FileHandlerBuilder <|-- StreamHandlerBuilder
-    LoggerConfigBuilder --> FileHandlerBuilder
-    LoggerConfigBuilder --> StreamHandlerBuilder
-    FileHandlerBuilder --> FormatterBuilder
-    StreamHandlerBuilder --> FormatterBuilder
+    class HandlerBuilderTrait
+    FileHandlerBuilder ..|> HandlerBuilderTrait
+    StreamHandlerBuilder ..|> HandlerBuilderTrait
+    LoggerConfigBuilder --> "uses" FormatterBuilder
+    LoggerConfigBuilder --> "references" FileHandlerBuilder
+    LoggerConfigBuilder --> "references" StreamHandlerBuilder
+    FileHandlerBuilder --> "uses" FormatterBuilder
+    StreamHandlerBuilder --> "uses" FormatterBuilder
 ```
 
 ## 2. Backwards Compatibility APIs
@@ -458,14 +461,15 @@ components in a fixed order to honour dependencies:
    populated via ``with_format`` and ``with_datefmt``.
 4. **Handlers** follow. Supported string class names are resolved via an
    internal registry of builder classes:
-   - ``"logging.StreamHandler"`` → ``StreamHandlerBuilder``
-   - ``"femtologging.FileHandler"`` → ``FileHandlerBuilder``
-   Unsupported classes (e.g., ``"logging.FileHandler"``) raise ``ValueError``.
-   ``args`` and ``kwargs`` may be provided either as native structures or as
-   strings, which are safely evaluated with ``ast.literal_eval``. For stream
-   handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
-   targets. Handler ``level`` and ``filters`` settings are currently
-   unsupported and produce ``ValueError``.
+   - ``"logging.StreamHandler"`` and ``"femtologging.StreamHandler"``
+     → ``StreamHandlerBuilder``
+   - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
+     → ``FileHandlerBuilder`` Unsupported handler classes raise ``ValueError``.
+     ``args`` and ``kwargs`` may be provided either as native structures or as
+     strings, which are safely evaluated with ``ast.literal_eval``. For stream
+     handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
+     targets. Handler ``level`` and ``filters`` settings are currently
+     unsupported and produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
    ``propagate`` settings. Logger ``filters`` are not yet supported and trigger

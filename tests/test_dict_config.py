@@ -44,7 +44,7 @@ def dict_config_incremental_fails() -> None:
     parsers.parse('I configure dictConfig with handler class "{cls}"'),
     target_fixture="config_error",
 )
-def configure_with_handler_class(cls: str) -> Exception:
+def configure_with_handler_class(cls: str) -> BaseException:
     cfg = {
         "version": 1,
         "handlers": {"h": {"class": cls}},
@@ -56,7 +56,7 @@ def configure_with_handler_class(cls: str) -> Exception:
 
 
 @then("dictConfig raises ValueError")
-def dict_config_raises_value_error(config_error: Exception) -> None:
+def dict_config_raises_value_error(config_error: BaseException) -> None:
     assert isinstance(config_error, ValueError)
 
 
@@ -92,6 +92,33 @@ def test_dict_config_args_reject_bytes() -> None:
         "root": {"level": "INFO", "handlers": ["h"]},
     }
     with pytest.raises(ValueError, match="args must not be bytes or bytearray"):
+        dictConfig(cfg)
+
+
+def test_dict_config_handler_filters_presence() -> None:
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "handlers": {
+            "h": {
+                "class": "femtologging.StreamHandler",
+                "filters": [],
+            }
+        },
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(ValueError, match="handler filters are not supported"):
+        dictConfig(cfg)
+
+
+def test_dict_config_logger_filters_presence() -> None:
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "loggers": {"a": {"filters": []}},
+        "root": {"handlers": []},
+    }
+    with pytest.raises(ValueError, match="filters are not supported"):
         dictConfig(cfg)
 
 

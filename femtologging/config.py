@@ -1,9 +1,23 @@
-"""Dictionary-based logging configuration helpers."""
+"""Configuration via logging‑style dictionaries.
+
+This module implements :func:`dictConfig`, a restricted variant of
+``logging.config.dictConfig``. Only a subset of the standard schema is
+recognized: ``filters`` sections, handler ``level`` attributes, and
+incremental configuration are unsupported.
+
+Example
+-------
+>>> dictConfig({
+...     "version": 1,
+...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
+...     "root": {"level": "INFO", "handlers": ["h"]},
+... })
+"""
 
 from __future__ import annotations
 
 import ast
-from typing import Final, Mapping, Sequence, cast
+from typing import Any, Final, Mapping, Sequence, cast
 
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
 from .overflow_policy import OverflowPolicy
@@ -15,9 +29,7 @@ LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
 FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
 
 
-_HANDLER_CLASS_MAP: Final[
-    dict[str, type[StreamHandlerBuilder] | type[FileHandlerBuilder]]
-] = {
+_HANDLER_CLASS_MAP: Final[dict[str, object]] = {
     "logging.StreamHandler": StreamHandlerBuilder,
     "femtologging.StreamHandler": StreamHandlerBuilder,
     "logging.FileHandler": FileHandlerBuilder,
@@ -65,7 +77,7 @@ def _coerce_args(args: object) -> list[object]:
     _validate_no_bytes(args, "args")
     if not isinstance(args, Sequence):
         raise ValueError("args must be a sequence")
-    return list(args)
+    return list(cast(Sequence[object], args))
 
 
 def _coerce_kwargs(kwargs: object) -> dict[str, object]:
@@ -83,9 +95,7 @@ def _coerce_kwargs(kwargs: object) -> dict[str, object]:
     return result
 
 
-def _resolve_handler_class(
-    name: str,
-) -> type[StreamHandlerBuilder] | type[FileHandlerBuilder]:
+def _resolve_handler_class(name: str) -> object:
     """Return the builder class for ``name`` or raise ``ValueError``."""
     cls = _HANDLER_CLASS_MAP.get(name)
     if cls is None:
@@ -110,9 +120,9 @@ def _validate_handler_class(hid: str, cls_name: object) -> str:
 
 def _validate_unsupported_features(data: Mapping[str, object]) -> None:
     """Reject handler features not yet implemented."""
-    if data.get("level") is not None:
+    if "level" in data:
         raise ValueError("handler level is not supported")
-    if data.get("filters"):
+    if "filters" in data:
         raise ValueError("handler filters are not supported")
 
 
@@ -122,47 +132,51 @@ def _validate_handler_config(
     """Validate handler ``data`` and return construction parameters."""
     _validate_handler_keys(hid, data)
     cls_name = _validate_handler_class(hid, data.get("class"))
+    _validate_unsupported_features(data)
     args = _coerce_args(data.get("args"))
     kwargs = _coerce_kwargs(data.get("kwargs"))
-    _validate_unsupported_features(data)
     return cls_name, args, kwargs, data.get("formatter")
 
 
 def _create_handler_instance(
     hid: str, cls_name: str, args: list[object], kwargs: dict[str, object]
-) -> FileHandlerBuilder | StreamHandlerBuilder:
+) -> object:
     """Instantiate a handler builder and wrap constructor errors."""
     builder_cls = _resolve_handler_class(cls_name)
     try:
-        return builder_cls(*args, **kwargs)
+        args_t = tuple(args)
+        kwargs_d = dict(kwargs)
+        return cast(Any, builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except Exception as exc:  # pragma: no cover - constructor errors propagated
         raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
 
 
-def _build_handler_from_dict(
-    hid: str, data: Mapping[str, object]
-) -> FileHandlerBuilder | StreamHandlerBuilder:
+def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
     """Create a handler builder from ``dictConfig`` handler data."""
     cls_name, args, kwargs, fmt = _validate_handler_config(hid, data)
-    builder = _create_handler_instance(hid, cls_name, args, kwargs)
-    if fmt:
+    builder = cast(Any, _create_handler_instance(hid, cls_name, args, kwargs))
+    if fmt is not None:
+        if not isinstance(fmt, str):
+            raise ValueError("formatter must be a string")
         builder = builder.with_formatter(fmt)
     return builder
 
 
-def _build_logger_from_dict(
-    name: str, data: Mapping[str, object]
-) -> LoggerConfigBuilder:
+def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
     """Create a ``LoggerConfigBuilder`` from ``dictConfig`` logger data."""
-    if data.get("filters"):
+    allowed = {"level", "handlers", "propagate", "filters"}
+    unknown = set(data.keys()) - allowed
+    if unknown:
+        raise ValueError(f"logger {name!r} has unsupported keys: {sorted(unknown)!r}")
+    if "filters" in data:
         raise ValueError("filters are not supported")
-    builder = LoggerConfigBuilder()
-    if lvl := data.get("level"):
-        builder = builder.with_level(lvl)
-    if handlers := data.get("handlers"):
-        builder = builder.with_handlers(handlers)
-    if prop := data.get("propagate"):
-        builder = builder.with_propagate(bool(prop))
+    builder = cast(Any, LoggerConfigBuilder())
+    if "level" in data:
+        builder = builder.with_level(data["level"])
+    if "handlers" in data:
+        builder = builder.with_handlers(data["handlers"])
+    if "propagate" in data:
+        builder = builder.with_propagate(bool(data["propagate"]))
     return builder
 
 
@@ -170,29 +184,36 @@ def _validate_dict_config(config: Mapping[str, object]) -> int:
     """Validate top-level configuration and return the version."""
     if config.get("incremental"):
         raise ValueError("incremental configuration is not supported")
-    version = int(config.get("version", 1))
+    version = int(cast(int, config.get("version", 1)))
     if version != 1:
         raise ValueError(f"unsupported configuration version {version}")
-    if config.get("filters"):
+    if "filters" in config:
         raise ValueError("filters are not supported")
     return version
 
 
-def _create_config_builder(version: int, config: Mapping[str, object]) -> ConfigBuilder:
-    """Initialise a ``ConfigBuilder`` with global options."""
-    builder = ConfigBuilder().with_version(version)
-    if config.get("disable_existing_loggers"):
-        builder = builder.with_disable_existing_loggers(True)
+def _create_config_builder(version: int, config: Mapping[str, object]) -> object:
+    """Initialize a ``ConfigBuilder`` with global options."""
+    cb = cast(Any, ConfigBuilder())
+    builder = cb.with_version(version)
+    if "disable_existing_loggers" in config:
+        builder = builder.with_disable_existing_loggers(
+            bool(config["disable_existing_loggers"])
+        )
     return builder
 
 
-def _build_formatter(fcfg: Mapping[str, object]) -> FormatterBuilder:
+def _build_formatter(fcfg: Mapping[str, object]) -> object:
     """Build a :class:`FormatterBuilder` from configuration."""
-    fb = FormatterBuilder()
-    if fmt := fcfg.get("format"):
-        fb = fb.with_format(fmt)
-    if datefmt := fcfg.get("datefmt"):
-        fb = fb.with_datefmt(datefmt)
+    allowed = {"format", "datefmt"}
+    unknown = set(fcfg.keys()) - allowed
+    if unknown:
+        raise ValueError(f"formatter has unsupported keys: {sorted(unknown)!r}")
+    fb = cast(Any, FormatterBuilder())
+    if "format" in fcfg:
+        fb = fb.with_format(fcfg["format"])
+    if "datefmt" in fcfg:
+        fb = fb.with_datefmt(fcfg["datefmt"])
     return fb
 
 
@@ -201,21 +222,29 @@ def _validate_section_mapping(section: object, name: str) -> Mapping[str, object
     return cast(Mapping[str, object], _validate_mapping_type(section, name))
 
 
-def _process_formatters(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+def _process_formatters(builder: Any, config: Mapping[str, object]) -> None:
     """Attach formatter builders to ``builder``."""
-    for fid, fcfg in _validate_section_mapping(
-        config.get("formatters", {}), "formatters"
-    ).items():
+    mapping = cast(
+        Mapping[object, object],
+        _validate_section_mapping(config.get("formatters", {}), "formatters"),
+    )
+    for fid, fcfg in mapping.items():
+        if not isinstance(fid, str):
+            raise ValueError("formatter ids must be strings")
         builder.with_formatter(
             fid, _build_formatter(_validate_section_mapping(fcfg, "formatter config"))
         )
 
 
-def _process_handlers(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
     """Attach handler builders to ``builder``."""
-    for hid, hcfg in _validate_section_mapping(
-        config.get("handlers", {}), "handlers"
-    ).items():
+    mapping = cast(
+        Mapping[object, object],
+        _validate_section_mapping(config.get("handlers", {}), "handlers"),
+    )
+    for hid, hcfg in mapping.items():
+        if not isinstance(hid, str):
+            raise ValueError("handler ids must be strings")
         builder.with_handler(
             hid,
             _build_handler_from_dict(
@@ -224,7 +253,7 @@ def _process_handlers(builder: ConfigBuilder, config: Mapping[str, object]) -> N
         )
 
 
-def _process_loggers(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
     """Attach logger configurations to ``builder``."""
     for name, lcfg in _validate_section_mapping(
         config.get("loggers", {}), "loggers"
@@ -237,7 +266,7 @@ def _process_loggers(builder: ConfigBuilder, config: Mapping[str, object]) -> No
         )
 
 
-def _process_root_logger(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
+def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
     """Configure the root logger."""
     root = config.get("root")
     if not isinstance(root, Mapping):
@@ -262,10 +291,18 @@ def dictConfig(config: Mapping[str, object]) -> None:
     ------
     ValueError
         If the configuration uses unsupported features or invalid schemas.
+
+    Examples
+    --------
+    >>> dictConfig({
+    ...     "version": 1,
+    ...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
+    ...     "root": {"level": "INFO", "handlers": ["h"]},
+    ... })
     """
 
     version = _validate_dict_config(config)
-    builder = _create_config_builder(version, config)
+    builder = cast(Any, _create_config_builder(version, config))
     _process_formatters(builder, config)
     _process_handlers(builder, config)
     _process_loggers(builder, config)
