@@ -1,9 +1,14 @@
+"""Tests for femtologging.dictConfig integration and behaviour."""
+
 from __future__ import annotations
 
-from femtologging import dictConfig, get_logger, reset_manager
 from pathlib import Path
-from pytest_bdd import given, parsers, scenarios, then, when
+import time
+
 import pytest
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from femtologging import dictConfig, get_logger, reset_manager
 
 scenarios("features/dict_config.feature")
 
@@ -29,10 +34,30 @@ def log_matches_snapshot(msg: str, level: str, snapshot) -> None:
     assert logger.log(level, msg) == snapshot
 
 
-@then("calling dictConfig with incremental true fails")
+@then("calling dictConfig with incremental true raises ValueError")
 def dict_config_incremental_fails() -> None:
     with pytest.raises(ValueError, match="incremental configuration is not supported"):
         dictConfig({"version": 1, "incremental": True, "root": {}})
+
+
+@when(
+    parsers.parse('I configure dictConfig with handler class "{cls}"'),
+    target_fixture="config_error",
+)
+def configure_with_handler_class(cls: str) -> Exception:
+    cfg = {
+        "version": 1,
+        "handlers": {"h": {"class": cls}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(ValueError) as exc:
+        dictConfig(cfg)
+    return exc.value
+
+
+@then("dictConfig raises ValueError")
+def dict_config_raises_value_error(config_error: Exception) -> None:
+    assert isinstance(config_error, ValueError)
 
 
 def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
@@ -53,7 +78,10 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     dictConfig(cfg)
     logger = get_logger("root")
     logger.log("INFO", "file")
+    time.sleep(0.05)
     assert path.exists()
+    contents = path.read_text()
+    assert "file" in contents
 
 
 def test_dict_config_args_reject_bytes() -> None:

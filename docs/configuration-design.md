@@ -456,12 +456,16 @@ components in a fixed order to honour dependencies:
    ``ConfigBuilder.with_disable_existing_loggers``.
 3. **Formatters** are created first. Each entry yields a ``FormatterBuilder``
    populated via ``with_format`` and ``with_datefmt``.
-4. **Handlers** follow. String class names such as
-   ``"logging.StreamHandler"`` and ``"femtologging.FileHandler"`` are resolved
-   using an internal registry of builder classes. ``args`` and ``kwargs`` may
-   be provided either as native structures or as strings, which are safely
-   evaluated with ``ast.literal_eval``. Handler ``level`` and ``filters``
-   settings are currently unsupported and produce ``ValueError``.
+4. **Handlers** follow. Supported string class names are resolved via an
+   internal registry of builder classes:
+   - ``"logging.StreamHandler"`` → ``StreamHandlerBuilder``
+   - ``"femtologging.FileHandler"`` → ``FileHandlerBuilder``
+   Unsupported classes (e.g., ``"logging.FileHandler"``) raise ``ValueError``.
+   ``args`` and ``kwargs`` may be provided either as native structures or as
+   strings, which are safely evaluated with ``ast.literal_eval``. For stream
+   handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
+   targets. Handler ``level`` and ``filters`` settings are currently
+   unsupported and produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
    ``propagate`` settings. Logger ``filters`` are not yet supported and trigger

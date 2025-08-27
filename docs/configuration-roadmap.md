@@ -64,8 +64,10 @@ expanded with specifics for the configuration design.
   - [x] **Handle** `args` **and** `kwargs` **evaluation for handler
     constructors.**
 
-  - [x] **Implement ordered processing of formatters, filters, handlers,
-    loggers, and root.**
+  - [x] **Implement ordered processing of** `version`,
+    `disable_existing_loggers`,
+    **formatters, handlers, loggers, and root.** Filters are not supported yet
+    and must raise `ValueError` if present.
 
   - [x] **Ensure proper error handling for invalid** `dictConfig` **structures
     or unsupported features like** `incremental=True`**.**

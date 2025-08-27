@@ -7,4 +7,9 @@ Feature: dictConfig
 
   Scenario: incremental configuration is rejected
     Given the logging system is reset
-    Then calling dictConfig with incremental true fails
+    Then calling dictConfig with incremental true raises ValueError
+
+  Scenario: unsupported handler class is rejected
+    Given the logging system is reset
+    When I configure dictConfig with handler class "logging.FileHandler"
+    Then dictConfig raises ValueError
