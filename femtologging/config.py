@@ -25,68 +25,62 @@ _HANDLER_CLASS_MAP: Final[
 }
 
 
-def _evaluate_string_args(args: str) -> object:
-    """Safely evaluate string args using ``ast.literal_eval``."""
+def _evaluate_string_safely(value: str, context: str) -> object:
+    """Safely evaluate a string ``value`` using ``ast.literal_eval``."""
     try:
-        return ast.literal_eval(args)
+        return ast.literal_eval(value)
     except (ValueError, SyntaxError) as exc:
-        raise ValueError(f"invalid args: {args}") from exc
+        raise ValueError(f"invalid {context}: {value}") from exc
 
 
-def _validate_args_type(args: object) -> None:
-    """Validate that ``args`` is a sequence and not bytes-like."""
-    if isinstance(args, (bytes, bytearray)):
-        raise ValueError("args must not be bytes or bytearray")
-    if not isinstance(args, Sequence):
-        raise ValueError("args must be a sequence")
+def _validate_mapping_type(value: object, name: str) -> Mapping[object, object]:
+    """Ensure ``value`` is a mapping and not bytes-like."""
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be a mapping")
+    return cast(Mapping[object, object], value)
+
+
+def _validate_no_bytes(value: object, name: str) -> None:
+    """Reject ``bytes`` or ``bytearray`` for ``value``."""
+    if isinstance(value, (bytes, bytearray)):
+        raise ValueError(f"{name} must not be bytes or bytearray")
+
+
+def _validate_string_keys(
+    mapping: Mapping[object, object], name: str
+) -> Mapping[str, object]:
+    """Ensure all keys in ``mapping`` are strings."""
+    for key in mapping:
+        if not isinstance(key, str):
+            raise ValueError(f"{name} keys must be strings")
+    return cast(Mapping[str, object], mapping)
 
 
 def _coerce_args(args: object) -> list[object]:
     """Convert ``args`` into a list for handler construction."""
     if isinstance(args, str):
-        args = _evaluate_string_args(args)
+        args = _evaluate_string_safely(args, "args")
     if args is None:
         return []
-    _validate_args_type(args)
+    _validate_no_bytes(args, "args")
+    if not isinstance(args, Sequence):
+        raise ValueError("args must be a sequence")
     return list(args)
-
-
-def _evaluate_string_kwargs(kwargs: str) -> object:
-    """Safely evaluate string kwargs using ``ast.literal_eval``."""
-    try:
-        return ast.literal_eval(kwargs)
-    except (ValueError, SyntaxError) as exc:
-        raise ValueError(f"invalid kwargs: {kwargs}") from exc
-
-
-def _validate_kwargs_type(kwargs: object) -> None:
-    """Validate that ``kwargs`` is a mapping and not bytes-like."""
-    if isinstance(kwargs, (bytes, bytearray)):
-        raise ValueError("kwargs must be a mapping")
-    if not isinstance(kwargs, Mapping):
-        raise ValueError("kwargs must be a mapping")
-
-
-def _validate_kwargs_items(kwargs: Mapping[object, object]) -> dict[str, object]:
-    """Validate ``kwargs`` keys and values before use."""
-    result: dict[str, object] = {}
-    for key, value in kwargs.items():
-        if not isinstance(key, str):
-            raise ValueError("kwargs keys must be strings")
-        if isinstance(value, (bytes, bytearray)):
-            raise ValueError("kwargs values must not be bytes or bytearray")
-        result[key] = value
-    return result
 
 
 def _coerce_kwargs(kwargs: object) -> dict[str, object]:
     """Convert ``kwargs`` into a dictionary for handler construction."""
     if isinstance(kwargs, str):
-        kwargs = _evaluate_string_kwargs(kwargs)
+        kwargs = _evaluate_string_safely(kwargs, "kwargs")
     if kwargs is None:
         return {}
-    _validate_kwargs_type(kwargs)
-    return _validate_kwargs_items(cast(Mapping[object, object], kwargs))
+    mapping = _validate_mapping_type(kwargs, "kwargs")
+    mapping = _validate_string_keys(mapping, "kwargs")
+    result: dict[str, object] = {}
+    for key, value in mapping.items():
+        _validate_no_bytes(value, "kwargs values")
+        result[key] = value
+    return result
 
 
 def _resolve_handler_class(
@@ -122,21 +116,36 @@ def _validate_unsupported_features(data: Mapping[str, object]) -> None:
         raise ValueError("handler filters are not supported")
 
 
+def _validate_handler_config(
+    hid: str, data: Mapping[str, object]
+) -> tuple[str, list[object], dict[str, object], object | None]:
+    """Validate handler ``data`` and return construction parameters."""
+    _validate_handler_keys(hid, data)
+    cls_name = _validate_handler_class(hid, data.get("class"))
+    args = _coerce_args(data.get("args"))
+    kwargs = _coerce_kwargs(data.get("kwargs"))
+    _validate_unsupported_features(data)
+    return cls_name, args, kwargs, data.get("formatter")
+
+
+def _create_handler_instance(
+    hid: str, cls_name: str, args: list[object], kwargs: dict[str, object]
+) -> FileHandlerBuilder | StreamHandlerBuilder:
+    """Instantiate a handler builder and wrap constructor errors."""
+    builder_cls = _resolve_handler_class(cls_name)
+    try:
+        return builder_cls(*args, **kwargs)
+    except Exception as exc:  # pragma: no cover - constructor errors propagated
+        raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
+
+
 def _build_handler_from_dict(
     hid: str, data: Mapping[str, object]
 ) -> FileHandlerBuilder | StreamHandlerBuilder:
     """Create a handler builder from ``dictConfig`` handler data."""
-    _validate_handler_keys(hid, data)
-    cls_name = _validate_handler_class(hid, data.get("class"))
-    builder_cls = _resolve_handler_class(cls_name)
-    args = _coerce_args(data.get("args"))
-    kwargs = _coerce_kwargs(data.get("kwargs"))
-    try:
-        builder = builder_cls(*args, **kwargs)
-    except Exception as exc:  # pragma: no cover - constructor errors propagated
-        raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
-    _validate_unsupported_features(data)
-    if fmt := data.get("formatter"):
+    cls_name, args, kwargs, fmt = _validate_handler_config(hid, data)
+    builder = _create_handler_instance(hid, cls_name, args, kwargs)
+    if fmt:
         builder = builder.with_formatter(fmt)
     return builder
 
@@ -187,37 +196,45 @@ def _build_formatter(fcfg: Mapping[str, object]) -> FormatterBuilder:
     return fb
 
 
+def _validate_section_mapping(section: object, name: str) -> Mapping[str, object]:
+    """Ensure a configuration ``section`` is a mapping."""
+    return cast(Mapping[str, object], _validate_mapping_type(section, name))
+
+
 def _process_formatters(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
     """Attach formatter builders to ``builder``."""
-    formatters = config.get("formatters", {})
-    if not isinstance(formatters, Mapping):
-        raise ValueError("formatters must be a mapping")
-    for fid, fcfg in formatters.items():
-        if not isinstance(fcfg, Mapping):
-            raise ValueError("formatter config must be a mapping")
-        builder.with_formatter(fid, _build_formatter(fcfg))
+    for fid, fcfg in _validate_section_mapping(
+        config.get("formatters", {}), "formatters"
+    ).items():
+        builder.with_formatter(
+            fid, _build_formatter(_validate_section_mapping(fcfg, "formatter config"))
+        )
 
 
 def _process_handlers(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
     """Attach handler builders to ``builder``."""
-    handlers = config.get("handlers", {})
-    if not isinstance(handlers, Mapping):
-        raise ValueError("handlers must be a mapping")
-    for hid, hcfg in handlers.items():
-        if not isinstance(hcfg, Mapping):
-            raise ValueError("handler config must be a mapping")
-        builder.with_handler(hid, _build_handler_from_dict(hid, hcfg))
+    for hid, hcfg in _validate_section_mapping(
+        config.get("handlers", {}), "handlers"
+    ).items():
+        builder.with_handler(
+            hid,
+            _build_handler_from_dict(
+                hid, _validate_section_mapping(hcfg, "handler config")
+            ),
+        )
 
 
 def _process_loggers(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
     """Attach logger configurations to ``builder``."""
-    loggers = config.get("loggers", {})
-    if not isinstance(loggers, Mapping):
-        raise ValueError("loggers must be a mapping")
-    for name, lcfg in loggers.items():
-        if not isinstance(lcfg, Mapping):
-            raise ValueError("logger config must be a mapping")
-        builder.with_logger(name, _build_logger_from_dict(name, lcfg))
+    for name, lcfg in _validate_section_mapping(
+        config.get("loggers", {}), "loggers"
+    ).items():
+        builder.with_logger(
+            name,
+            _build_logger_from_dict(
+                name, _validate_section_mapping(lcfg, "logger config")
+            ),
+        )
 
 
 def _process_root_logger(builder: ConfigBuilder, config: Mapping[str, object]) -> None:
