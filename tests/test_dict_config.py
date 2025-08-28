@@ -117,7 +117,30 @@ def test_dict_config_kwargs_reject_bytes_value() -> None:
         dictConfig(cfg)
 
 
+def test_dict_config_args_require_sequence() -> None:
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "handlers": {"h": {"class": "femtologging.StreamHandler", "args": 1}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(ValueError, match="handler 'h' args must be a sequence"):
+        dictConfig(cfg)
+
+
+def test_dict_config_kwargs_require_mapping() -> None:
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "handlers": {"h": {"class": "femtologging.StreamHandler", "kwargs": []}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(ValueError, match="handler 'h' kwargs must be a mapping"):
+        dictConfig(cfg)
+
+
 def test_process_formatters_apply_to_handlers() -> None:
+    """Formatters defined in config are built and linked to handlers."""
     builder = ConfigBuilder().with_version(1)
     cfg = {
         "formatters": {"f": {"format": "%(message)s", "datefmt": "%H:%M"}},
