@@ -17,6 +17,7 @@ Example
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from typing import Any, Callable, Final, Mapping, Sequence, cast
 
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
@@ -177,14 +178,26 @@ def _validate_logger_handlers(handlers_obj: object) -> list[str]:
     return list(cast(Sequence[str], handlers_seq))
 
 
-def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
-    """Create a ``LoggerConfigBuilder`` from ``dictConfig`` logger data."""
+def _validate_logger_config_keys(name: str, data: Mapping[str, object]) -> None:
+    """Ensure ``data`` uses only supported logger keys."""
     allowed = {"level", "handlers", "propagate", "filters"}
     unknown = set(data.keys()) - allowed
     if unknown:
         raise ValueError(f"logger {name!r} has unsupported keys: {sorted(unknown)!r}")
     if "filters" in data:
         raise ValueError("filters are not supported")
+
+
+def _validate_propagate_value(value: object) -> bool:
+    """Validate the ``propagate`` value for a logger."""
+    if not isinstance(value, bool):
+        raise ValueError("logger propagate must be a bool")
+    return value
+
+
+def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
+    """Create a ``LoggerConfigBuilder`` from ``dictConfig`` logger data."""
+    _validate_logger_config_keys(name, data)
     builder = LoggerConfigBuilder()
     if "level" in data:
         builder = builder.with_level(data["level"])
@@ -192,9 +205,7 @@ def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
         handlers = _validate_logger_handlers(data["handlers"])
         builder = builder.with_handlers(handlers)
     if "propagate" in data:
-        propagate = data["propagate"]
-        if not isinstance(propagate, bool):
-            raise ValueError("logger propagate must be a bool")
+        propagate = _validate_propagate_value(data["propagate"])
         builder = builder.with_propagate(propagate)
     return builder
 
@@ -256,27 +267,36 @@ def _validate_section_mapping(section: object, name: str) -> Mapping[str, object
     return cast(Mapping[str, object], _validate_mapping_type(section, name))
 
 
+@dataclass(frozen=True)
+class SectionProcessor:
+    """Configuration for :func:`_process_config_section`."""
+
+    section: str
+    builder_method: str
+    build_func: Callable[[str, Mapping[str, object]], object]
+    err_tmpl: str | None = None
+
+
 def _process_config_section(
-    builder: Any,
-    config: Mapping[str, object],
-    section: str,
-    builder_method: str,
-    build: Callable[[str, Mapping[str, object]], object],
-    err_tmpl: str | None = None,
+    builder: Any, config: Mapping[str, object], processor: SectionProcessor
 ) -> None:
     """Generic processor for formatter, handler, and logger sections."""
     mapping = cast(
         Mapping[object, object],
-        _validate_section_mapping(config.get(section, {}), section),
+        _validate_section_mapping(config.get(processor.section, {}), processor.section),
     )
-    method = getattr(builder, builder_method)
+    method = getattr(builder, processor.builder_method)
     for key, cfg in mapping.items():
         if not isinstance(key, str):
-            if err_tmpl is None:
-                raise ValueError(f"{section[:-1]} ids must be strings")
-            raise ValueError(err_tmpl.format(name=repr(key)))
+            if processor.err_tmpl is None:
+                raise ValueError(f"{processor.section[:-1]} ids must be strings")
+            raise ValueError(processor.err_tmpl.format(name=repr(key)))
         method(
-            key, build(key, _validate_section_mapping(cfg, f"{section[:-1]} config"))
+            key,
+            processor.build_func(
+                key,
+                _validate_section_mapping(cfg, f"{processor.section[:-1]} config"),
+            ),
         )
 
 
@@ -285,9 +305,9 @@ def _process_formatters(builder: Any, config: Mapping[str, object]) -> None:
     _process_config_section(
         builder,
         config,
-        "formatters",
-        "with_formatter",
-        lambda fid, m: _build_formatter(m),
+        SectionProcessor(
+            "formatters", "with_formatter", lambda fid, m: _build_formatter(m)
+        ),
     )
 
 
@@ -296,9 +316,9 @@ def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
     _process_config_section(
         builder,
         config,
-        "handlers",
-        "with_handler",
-        lambda hid, m: _build_handler_from_dict(hid, m),
+        SectionProcessor(
+            "handlers", "with_handler", lambda hid, m: _build_handler_from_dict(hid, m)
+        ),
     )
 
 
@@ -307,10 +327,12 @@ def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
     _process_config_section(
         builder,
         config,
-        "loggers",
-        "with_logger",
-        lambda name, m: _build_logger_from_dict(name, m),
-        err_tmpl="loggers section key {name} must be a string",
+        SectionProcessor(
+            "loggers",
+            "with_logger",
+            lambda name, m: _build_logger_from_dict(name, m),
+            err_tmpl="loggers section key {name} must be a string",
+        ),
     )
 
 
