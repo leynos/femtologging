@@ -17,14 +17,14 @@ Example
 from __future__ import annotations
 
 import ast
-from typing import Any, Final, Mapping, Sequence, cast
+from typing import Any, Callable, Final, Mapping, Sequence, cast
 
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
+from .overflow_policy import OverflowPolicy
 
 rust = cast(Any, rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
-from .overflow_policy import OverflowPolicy
 
 StreamHandlerBuilder = rust.StreamHandlerBuilder  # type: ignore[attr-defined]
 FileHandlerBuilder = rust.FileHandlerBuilder  # type: ignore[attr-defined]
@@ -167,6 +167,16 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
     return builder
 
 
+def _validate_logger_handlers(handlers_obj: object) -> list[str]:
+    """Validate logger ``handlers`` list and return it."""
+    if not isinstance(handlers_obj, (list, tuple)):
+        raise ValueError("logger handlers must be a list or tuple of strings")
+    handlers_seq = cast(Sequence[object], handlers_obj)
+    if not all(isinstance(h, str) for h in handlers_seq):
+        raise ValueError("logger handlers must be a list or tuple of strings")
+    return list(cast(Sequence[str], handlers_seq))
+
+
 def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
     """Create a ``LoggerConfigBuilder`` from ``dictConfig`` logger data."""
     allowed = {"level", "handlers", "propagate", "filters"}
@@ -179,13 +189,8 @@ def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
     if "level" in data:
         builder = builder.with_level(data["level"])
     if "handlers" in data:
-        handlers_obj = data["handlers"]
-        if not isinstance(handlers_obj, (list, tuple)):
-            raise ValueError("logger handlers must be a list or tuple of strings")
-        handlers_seq = cast(Sequence[object], handlers_obj)
-        if not all(isinstance(h, str) for h in handlers_seq):
-            raise ValueError("logger handlers must be a list or tuple of strings")
-        builder = builder.with_handlers(list(cast(Sequence[str], handlers_seq)))
+        handlers = _validate_logger_handlers(data["handlers"])
+        builder = builder.with_handlers(handlers)
     if "propagate" in data:
         propagate = data["propagate"]
         if not isinstance(propagate, bool):
@@ -218,6 +223,18 @@ def _create_config_builder(version: int, config: Mapping[str, object]) -> object
     return builder
 
 
+def _validate_formatter_field(
+    fcfg: Mapping[str, object], field: str, field_type: str
+) -> str | None:
+    """Return the string value for ``field`` or ``None`` if absent."""
+    if field not in fcfg:
+        return None
+    value = fcfg[field]
+    if not isinstance(value, str):
+        raise ValueError(f"formatter '{field_type}' must be a string")
+    return value
+
+
 def _build_formatter(fcfg: Mapping[str, object]) -> object:
     """Build a :class:`FormatterBuilder` from configuration."""
     allowed = {"format", "datefmt"}
@@ -225,14 +242,12 @@ def _build_formatter(fcfg: Mapping[str, object]) -> object:
     if unknown:
         raise ValueError(f"formatter has unsupported keys: {sorted(unknown)!r}")
     fb = FormatterBuilder()
-    if "format" in fcfg:
-        if not isinstance(fcfg["format"], str):
-            raise ValueError("formatter 'format' must be a string")
-        fb = fb.with_format(fcfg["format"])
-    if "datefmt" in fcfg:
-        if not isinstance(fcfg["datefmt"], str):
-            raise ValueError("formatter 'datefmt' must be a string")
-        fb = fb.with_datefmt(fcfg["datefmt"])
+    fmt = _validate_formatter_field(fcfg, "format", "format")
+    if fmt is not None:
+        fb = fb.with_format(fmt)
+    datefmt = _validate_formatter_field(fcfg, "datefmt", "datefmt")
+    if datefmt is not None:
+        fb = fb.with_datefmt(datefmt)
     return fb
 
 
@@ -241,52 +256,62 @@ def _validate_section_mapping(section: object, name: str) -> Mapping[str, object
     return cast(Mapping[str, object], _validate_mapping_type(section, name))
 
 
-def _process_formatters(builder: Any, config: Mapping[str, object]) -> None:
-    """Attach formatter builders to ``builder``."""
+def _process_config_section(
+    builder: Any,
+    config: Mapping[str, object],
+    section: str,
+    builder_method: str,
+    build: Callable[[str, Mapping[str, object]], object],
+    err_tmpl: str | None = None,
+) -> None:
+    """Generic processor for formatter, handler, and logger sections."""
     mapping = cast(
         Mapping[object, object],
-        _validate_section_mapping(config.get("formatters", {}), "formatters"),
+        _validate_section_mapping(config.get(section, {}), section),
     )
-    for fid, fcfg in mapping.items():
-        if not isinstance(fid, str):
-            raise ValueError("formatter ids must be strings")
-        builder.with_formatter(
-            fid, _build_formatter(_validate_section_mapping(fcfg, "formatter config"))
+    method = getattr(builder, builder_method)
+    for key, cfg in mapping.items():
+        if not isinstance(key, str):
+            if err_tmpl is None:
+                raise ValueError(f"{section[:-1]} ids must be strings")
+            raise ValueError(err_tmpl.format(name=repr(key)))
+        method(
+            key, build(key, _validate_section_mapping(cfg, f"{section[:-1]} config"))
         )
+
+
+def _process_formatters(builder: Any, config: Mapping[str, object]) -> None:
+    """Attach formatter builders to ``builder``."""
+    _process_config_section(
+        builder,
+        config,
+        "formatters",
+        "with_formatter",
+        lambda fid, m: _build_formatter(m),
+    )
 
 
 def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
     """Attach handler builders to ``builder``."""
-    mapping = cast(
-        Mapping[object, object],
-        _validate_section_mapping(config.get("handlers", {}), "handlers"),
+    _process_config_section(
+        builder,
+        config,
+        "handlers",
+        "with_handler",
+        lambda hid, m: _build_handler_from_dict(hid, m),
     )
-    for hid, hcfg in mapping.items():
-        if not isinstance(hid, str):
-            raise ValueError("handler ids must be strings")
-        builder.with_handler(
-            hid,
-            _build_handler_from_dict(
-                hid, _validate_section_mapping(hcfg, "handler config")
-            ),
-        )
 
 
 def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
     """Attach logger configurations to ``builder``."""
-    mapping = cast(
-        Mapping[object, object],
-        _validate_section_mapping(config.get("loggers", {}), "loggers"),
+    _process_config_section(
+        builder,
+        config,
+        "loggers",
+        "with_logger",
+        lambda name, m: _build_logger_from_dict(name, m),
+        err_tmpl="loggers section key {name} must be a string",
     )
-    for name, lcfg in mapping.items():
-        if not isinstance(name, str):
-            raise ValueError(f"loggers section key {name!r} must be a string")
-        builder.with_logger(
-            name,
-            _build_logger_from_dict(
-                name, _validate_section_mapping(lcfg, "logger config")
-            ),
-        )
 
 
 def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
