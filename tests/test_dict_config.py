@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
+from typing import cast
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -52,7 +53,7 @@ def configure_with_handler_class(cls: str) -> ValueError:
     }
     with pytest.raises(ValueError) as exc:
         dictConfig(cfg)
-    return exc.value
+    return cast(ValueError, exc.value)
 
 
 @then("dictConfig raises ValueError")
