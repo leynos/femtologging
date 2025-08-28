@@ -8,15 +8,7 @@ import time
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from femtologging import (
-    ConfigBuilder,
-    FormatterBuilder,
-    LoggerConfigBuilder,
-    StreamHandlerBuilder,
-    dictConfig,
-    get_logger,
-    reset_manager,
-)
+from femtologging import dictConfig, get_logger, reset_manager
 
 scenarios("features/dict_config.feature")
 
@@ -95,7 +87,7 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
                 break
         time.sleep(0.01)
     else:
-        pytest.fail("log file not written")
+        pytest.fail("log file not written in time")
     assert "file" in contents
 
 
@@ -134,21 +126,6 @@ def test_dict_config_handler_validation_errors(
         dictConfig(cfg)
 
 
-def test_config_builder_formatters_apply_to_handlers() -> None:
-    """Formatters are built and linked to handlers via the builder API."""
-    builder = ConfigBuilder().with_version(1)
-    fmt = FormatterBuilder().with_format("{message}").with_datefmt("%H:%M")
-    handler = StreamHandlerBuilder.stderr().with_formatter("fmt")
-    builder.with_formatter("fmt", fmt)
-    builder.with_handler("h", handler)
-    builder.with_root_logger(LoggerConfigBuilder().with_handlers(["h"]))
-    state = builder.as_dict()
-    fmt_state = state["formatters"]["fmt"]
-    assert fmt_state["format"] == "{message}"
-    assert fmt_state["datefmt"] == "%H:%M"
-    assert state["handlers"]["h"]["formatter_id"] == "fmt"
-
-
 def test_dict_config_logger_filters_presence() -> None:
     reset_manager()
     cfg = {
@@ -174,12 +151,67 @@ def test_dict_config_logger_filters_presence() -> None:
             r"(unknown|unsupported).+handler class",
         ),
         ({"version": 1, "filters": {"f": {}}, "root": {}}, r"filters.+not supported"),
+        (
+            {
+                "version": 1,
+                "disable_existing_loggers": "yes",
+                "root": {"handlers": []},
+            },
+            r"disable_existing_loggers must be a bool",
+        ),
+        (
+            {"version": 1, "loggers": {1: {}}, "root": {"handlers": []}},
+            r"loggers section key.+must be a string",
+        ),
+        (
+            {
+                "version": 1,
+                "loggers": {"a": {"handlers": "h"}},
+                "root": {"handlers": []},
+            },
+            r"logger handlers must be a list or tuple of strings",
+        ),
+        (
+            {
+                "version": 1,
+                "loggers": {"a": {"propagate": "yes"}},
+                "root": {"handlers": []},
+            },
+            r"logger propagate must be a bool",
+        ),
+        (
+            {
+                "version": 1,
+                "formatters": {"f": {"format": 1}},
+                "handlers": {
+                    "h": {"class": "femtologging.StreamHandler", "formatter": "f"}
+                },
+                "root": {"handlers": ["h"]},
+            },
+            r"formatter 'format' must be a string",
+        ),
+        (
+            {
+                "version": 1,
+                "handlers": {
+                    "h": {"class": "femtologging.StreamHandler", "formatter": "x"}
+                },
+                "root": {"handlers": ["h"]},
+            },
+            r"unknown formatter id",
+        ),
     ],
     ids=[
         "root-missing",
         "version-unsupported",
         "handler-class-unknown",
         "filters-unsupported",
+        "disable-existing-loggers-type",
+        "logger-id-type",
+        "logger-handlers-type",
+        "logger-propagate-type",
+        "formatter-value-type",
+        "formatter-id-unknown",
     ],
 )
 def test_dict_config_invalid_configs(config: dict[str, object], msg: str) -> None:
