@@ -334,6 +334,59 @@ builders expose `build()` methods returning ready‑to‑use handlers. Advanced
 options such as file encoding or custom writers are deferred until the
 corresponding handler features are ported from picologging.
 
+### 1.4. Class diagram
+
+The relationships among the builder types and the `dictConfig` helper are
+summarized below:
+
+```mermaid
+classDiagram
+    class ConfigBuilder {
+        +with_version(version: int)
+        +with_disable_existing_loggers(flag: bool)
+        +with_formatter(id: str, builder: FormatterBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|StreamHandlerBuilder)
+        +with_logger(name: str, builder: LoggerConfigBuilder)
+        +with_root_logger(builder: LoggerConfigBuilder)
+        +build_and_init()
+    }
+    class FormatterBuilder {
+        +with_format(fmt: str)
+        +with_datefmt(datefmt: str)
+    }
+    class FileHandlerBuilder {
+        +__init__(*args, **kwargs)
+        +with_formatter(fmt: str)
+    }
+    class StreamHandlerBuilder {
+        +__init__(*args, **kwargs)
+        +with_formatter(fmt: str)
+    }
+    class LoggerConfigBuilder {
+        +with_level(level: str|int)
+        +with_handlers(handlers: list)
+        +with_propagate(flag: bool)
+    }
+    class dictConfig {
+        +dictConfig(config: Mapping[str, object])
+    }
+    dictConfig --> ConfigBuilder
+    ConfigBuilder --> FormatterBuilder
+    ConfigBuilder --> FileHandlerBuilder
+    ConfigBuilder --> StreamHandlerBuilder
+    ConfigBuilder --> LoggerConfigBuilder
+    FileHandlerBuilder <|-- StreamHandlerBuilder
+    LoggerConfigBuilder --> FileHandlerBuilder
+    LoggerConfigBuilder --> StreamHandlerBuilder
+    FileHandlerBuilder --> FormatterBuilder
+    StreamHandlerBuilder --> FormatterBuilder
+    LoggerConfigBuilder --> "uses" FormatterBuilder
+    LoggerConfigBuilder --> "references" FileHandlerBuilder
+    LoggerConfigBuilder --> "references" StreamHandlerBuilder
+    FileHandlerBuilder --> "uses" FormatterBuilder
+    StreamHandlerBuilder --> "uses" FormatterBuilder
+```
+
 ## 2. Backwards Compatibility APIs
 
 `femtologging` will provide functions in the Python package to ensure backwards
@@ -399,91 +452,35 @@ sequenceDiagram
 
 ### 2.2. `dictConfig`
 
-`femtologging.dictConfig(config: dict)` will support dictionary-based
-configuration, as specified by `logging.config.dictConfig`.
+`femtologging.dictConfig(config: dict)` translates the standard
+`logging.config.dictConfig` schema into builder calls. The function processes
+components in a fixed order to honour dependencies:
 
-- **Functionality:** This will allow users to define their entire logging
-  configuration (loggers, handlers, formatters, filters) using a Python
-  dictionary, often loaded from JSON or YAML files.
+1. The `version` key must be `1`; any other value raises ``ValueError``.
+2. `disable_existing_loggers` is mapped directly to
+   ``ConfigBuilder.with_disable_existing_loggers``.
+3. **Formatters** are created first. Each entry yields a ``FormatterBuilder``
+   populated via ``with_format`` and ``with_datefmt``.
+4. **Handlers** follow. Supported string class names are resolved via an
+   internal registry of builder classes:
+   - ``"logging.StreamHandler"`` and ``"femtologging.StreamHandler"``
+     → ``StreamHandlerBuilder``
+   - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
+     → ``FileHandlerBuilder`` Unsupported handler classes raise ``ValueError``.
+     ``args`` and ``kwargs`` may be provided either as native structures or as
+     strings, which are safely evaluated with ``ast.literal_eval``. For stream
+     handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
+     targets. Handler ``level`` and ``filters`` settings are currently
+     unsupported and produce ``ValueError``.
+5. **Loggers** are processed next. Each definition yields a
+   ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
+   ``propagate`` settings. Logger ``filters`` are not yet supported and trigger
+   ``ValueError``.
+6. Finally, the **root** logger configuration is applied.
 
-- **Internal Translation and Challenges:**
-
-  - The `dictConfig` function will parse the input dictionary and map its
-    structure to calls on the `femtologging.ConfigBuilder`.
-
-  - **Configuration Order:** The parsing will logically follow the established
-    order:
-
-    1. **Version Check:** Validate the `version` key (must be `1`).
-
-    1. `disable_existing_loggers`: Directly map this boolean to
-       `ConfigBuilder.with_disable_existing_loggers()`.
-
-    1. **Formatters**: Iterate through the `formatters` dictionary. For each
-       `id` and `formatter_config_dict`:
-
-       - Resolve `class` (if specified, for custom formatters) or default to
-         `femtologging.FormatterBuilder`.
-
-       - Instantiate the appropriate `FormatterBuilder`.
-
-    - Call `with_format` and `with_datefmt` on the builder.
-
-    - Add the `FormatterBuilder` to the `ConfigBuilder` via
-      `with_formatter()` using its `id`.
-
-    1. **Filters**: (Future) Similar to formatters, resolve `class` and
-       parameters, then add to `ConfigBuilder`.
-
-    1. **Handlers**: Iterate through the `handlers` dictionary. For each `id`
-       and `handler_config_dict`:
-
-       - **Dynamic Class Resolution**: The `class` entry (e.g.,
-         `"logging.StreamHandler"`, `"femtologging.handlers.FileHandler"`) will
-         be critical. `femtologging` will maintain an internal Python-side
-         registry (a dictionary mapping string class names to `femtologging`'s
-         Python-exposed builder classes). This registry will be used to
-         instantiate the correct builder (e.g., `StreamHandlerBuilder`,
-         `FileHandlerBuilder`).
-
-       - `args` **and** `kwargs` **Handling**: The `args` (list) and `kwargs`
-         (dictionary) from the `dictConfig` entry will be directly passed to
-         the builder's `__init__` and subsequent methods. This implies the
-         `femtologging` builder methods must be designed to accept these
-         parameters. For example, `FileHandlerBuilder("path", mode="a")` in
-         Python. The Rust binding will then map these Python arguments to the
-         appropriate Rust builder methods (`.path(...)`, `.mode(...)`).
-
-       - Set `level`, `formatter` (by ID), and `filters` (by IDs) on the handler
-         builder.
-
-       - Set handler-specific parameters (e.g., `filename`, `maxBytes`,
-         `backupCount` for `RotatingFileHandler`) by passing them as `kwargs`
-         to the builder's constructor or dedicated methods.
-
-       - Add the `HandlerBuilder` (or its concrete subclass instance) to the
-         `ConfigBuilder` using its `id`.
-
-    1. **Loggers**: Iterate through the `loggers` dictionary. For each `name`
-       and `logger_config_dict`:
-
-       - Instantiate `LoggerConfigBuilder`.
-
-       - Set `level`, `propagate`, `filters`, `handlers` (all by IDs).
-
-       - Add the `LoggerConfigBuilder` to the `ConfigBuilder` via
-         `with_logger()` using the logger's `name`.
-
-    1. **Root Logger**: Process the `root` dictionary if present, similar to
-       named loggers, and set it via `ConfigBuilder.with_root_logger()`.
-
-  - `incremental`: As with `picologging`, `femtologging` will **not** support
-    the `incremental` option. If `incremental` is `True`, a `ValueError` will
-    be raised. As with picologging, `incremental` is not supported.
-
-- **Error Handling:** Robust error handling will be crucial to provide clear
-    and informative messages for invalid configurations, unknown class names,
-    or malformed arguments.
+`incremental=True` is explicitly rejected. The implementation favours explicit
+errors for malformed structures, unknown handler classes, or other unsupported
+features to aid debugging.
 
 ### 2.3. `fileConfig`
 

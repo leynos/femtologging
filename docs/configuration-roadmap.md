@@ -56,18 +56,19 @@ expanded with specifics for the configuration design.
    (see [configuration design](./configuration-design.md#basicconfig) and
    [example](../examples/basic_config.py)).
 
-- [ ] **Implement** `femtologging.dictConfig()` **in Python:**
+- [x] **Implement** `femtologging.dictConfig()` **in Python:**
 
-  - [ ] **Implement logic to parse the** `dictConfig` **schema, resolving string
+  - [x] **Implement logic to parse the** `dictConfig` **schema, resolving string
     class names to** `femtologging` **builders.**
 
-  - [ ] **Handle** `args` **and** `kwargs` **evaluation for handler
+  - [x] **Handle** `args` **and** `kwargs` **evaluation for handler
     constructors.**
 
-  - [ ] **Implement ordered processing of formatters, filters, handlers,
-    loggers, and root.**
+  - [x] **Implement ordered processing of** `version`,
+    `disable_existing_loggers`, **formatters, handlers, loggers, and root.**
+    Filters are not supported yet and must raise `ValueError` if present.
 
-  - [ ] **Ensure proper error handling for invalid** `dictConfig` **structures
+  - [x] **Ensure proper error handling for invalid** `dictConfig` **structures
     or unsupported features like** `incremental=True`**.**
 
 - [ ] Define the `FemtoFilter` trait and implement common filter types (e.g.,

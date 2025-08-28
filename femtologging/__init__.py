@@ -6,10 +6,16 @@ from __future__ import annotations
 # to keep imports at the top for linters.
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
 from .overflow_policy import OverflowPolicy
+from .config import dictConfig
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Iterable, TextIO, overload, cast
+from typing import (
+    Iterable,
+    TextIO,
+    cast,
+    overload,
+)
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
@@ -239,5 +245,6 @@ __all__ = [
     "OverflowPolicy",
     "BasicConfig",
     "basicConfig",
+    "dictConfig",
     "hello",
 ]
