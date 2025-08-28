@@ -85,57 +85,38 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     assert "file" in contents
 
 
-def test_dict_config_args_reject_bytes() -> None:
+@pytest.mark.parametrize(
+    ("handler_config", "expected_error"),
+    [
+        ({"args": b"bytes"}, "handler 'h' args must not be bytes or bytearray"),
+        (
+            {"kwargs": {"path": b"oops"}},
+            "handler 'h' kwargs values must not be bytes or bytearray",
+        ),
+        ({"args": 1}, "handler 'h' args must be a sequence"),
+        ({"kwargs": []}, "handler 'h' kwargs must be a mapping"),
+        ({"filters": []}, "handler filters are not supported"),
+    ],
+    ids=[
+        "args-bytes",
+        "kwargs-bytes",
+        "args-type",
+        "kwargs-type",
+        "filters-unsupported",
+    ],
+)
+def test_dict_config_handler_validation_errors(
+    handler_config: dict[str, object],
+    expected_error: str,
+) -> None:
+    """Test various handler validation errors in dictConfig."""
     reset_manager()
     cfg = {
         "version": 1,
-        "handlers": {"h": {"class": "femtologging.StreamHandler", "args": b"bytes"}},
+        "handlers": {"h": {"class": "femtologging.StreamHandler", **handler_config}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    with pytest.raises(
-        ValueError, match="handler 'h' args must not be bytes or bytearray"
-    ):
-        dictConfig(cfg)
-
-
-def test_dict_config_kwargs_reject_bytes_value() -> None:
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "handlers": {
-            "h": {
-                "class": "femtologging.StreamHandler",
-                "kwargs": {"path": b"oops"},
-            }
-        },
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    with pytest.raises(
-        ValueError,
-        match="handler 'h' kwargs values must not be bytes or bytearray",
-    ):
-        dictConfig(cfg)
-
-
-def test_dict_config_args_require_sequence() -> None:
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "handlers": {"h": {"class": "femtologging.StreamHandler", "args": 1}},
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    with pytest.raises(ValueError, match="handler 'h' args must be a sequence"):
-        dictConfig(cfg)
-
-
-def test_dict_config_kwargs_require_mapping() -> None:
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "handlers": {"h": {"class": "femtologging.StreamHandler", "kwargs": []}},
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    with pytest.raises(ValueError, match="handler 'h' kwargs must be a mapping"):
+    with pytest.raises(ValueError, match=expected_error):
         dictConfig(cfg)
 
 
@@ -158,22 +139,6 @@ def test_process_formatters_apply_to_handlers() -> None:
     assert fmt["format"] == "%(message)s"
     assert fmt["datefmt"] == "%H:%M"
     assert state["handlers"]["h"]["formatter_id"] == "f"
-
-
-def test_dict_config_handler_filters_presence() -> None:
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "handlers": {
-            "h": {
-                "class": "femtologging.StreamHandler",
-                "filters": [],
-            }
-        },
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    with pytest.raises(ValueError, match="handler filters are not supported"):
-        dictConfig(cfg)
 
 
 def test_dict_config_logger_filters_presence() -> None:
