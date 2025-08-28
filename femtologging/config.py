@@ -269,7 +269,9 @@ def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
 
 def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
     """Configure the root logger."""
-    root = config.get("root")
+    if "root" not in config:
+        raise ValueError("root logger configuration is required")
+    root = config["root"]
     if not isinstance(root, Mapping):
         raise ValueError("root logger configuration must be a mapping")
     builder.with_root_logger(

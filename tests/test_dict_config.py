@@ -8,8 +8,15 @@ import time
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from femtologging import ConfigBuilder, dictConfig, get_logger, reset_manager
-from femtologging.config import _process_formatters, _process_handlers
+from femtologging import (
+    ConfigBuilder,
+    FormatterBuilder,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
+    dictConfig,
+    get_logger,
+    reset_manager,
+)
 
 scenarios("features/dict_config.feature")
 
@@ -45,7 +52,7 @@ def dict_config_incremental_fails() -> None:
     parsers.parse('I configure dictConfig with handler class "{cls}"'),
     target_fixture="config_error",
 )
-def configure_with_handler_class(cls: str) -> BaseException:
+def configure_with_handler_class(cls: str) -> ValueError:
     cfg = {
         "version": 1,
         "handlers": {"h": {"class": cls}},
@@ -57,7 +64,7 @@ def configure_with_handler_class(cls: str) -> BaseException:
 
 
 @then("dictConfig raises ValueError")
-def dict_config_raises_value_error(config_error: BaseException) -> None:
+def dict_config_raises_value_error(config_error: ValueError) -> None:
     assert isinstance(config_error, ValueError)
 
 
@@ -79,9 +86,16 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     dictConfig(cfg)
     logger = get_logger("root")
     logger.log("INFO", "file")
-    time.sleep(0.05)
-    assert path.exists()
-    contents = path.read_text()
+    contents = ""
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        if path.exists():
+            contents = path.read_text()
+            if "file" in contents:
+                break
+        time.sleep(0.01)
+    else:
+        pytest.fail("log file not written")
     assert "file" in contents
 
 
@@ -120,25 +134,19 @@ def test_dict_config_handler_validation_errors(
         dictConfig(cfg)
 
 
-def test_process_formatters_apply_to_handlers() -> None:
-    """Formatters defined in config are built and linked to handlers."""
+def test_config_builder_formatters_apply_to_handlers() -> None:
+    """Formatters are built and linked to handlers via the builder API."""
     builder = ConfigBuilder().with_version(1)
-    cfg = {
-        "formatters": {"f": {"format": "%(message)s", "datefmt": "%H:%M"}},
-        "handlers": {
-            "h": {
-                "class": "femtologging.StreamHandler",
-                "formatter": "f",
-            }
-        },
-    }
-    _process_formatters(builder, cfg)
-    _process_handlers(builder, cfg)
+    fmt = FormatterBuilder().with_format("{message}").with_datefmt("%H:%M")
+    handler = StreamHandlerBuilder.stderr().with_formatter("fmt")
+    builder.with_formatter("fmt", fmt)
+    builder.with_handler("h", handler)
+    builder.with_root_logger(LoggerConfigBuilder().with_handlers(["h"]))
     state = builder.as_dict()
-    fmt = state["formatters"]["f"]
-    assert fmt["format"] == "%(message)s"
-    assert fmt["datefmt"] == "%H:%M"
-    assert state["handlers"]["h"]["formatter_id"] == "f"
+    fmt_state = state["formatters"]["fmt"]
+    assert fmt_state["format"] == "{message}"
+    assert fmt_state["datefmt"] == "%H:%M"
+    assert state["handlers"]["h"]["formatter_id"] == "fmt"
 
 
 def test_dict_config_logger_filters_presence() -> None:
@@ -153,20 +161,29 @@ def test_dict_config_logger_filters_presence() -> None:
 
 
 @pytest.mark.parametrize(
-    "config",
+    ("config", "msg"),
     [
-        {"version": 2, "root": {}},
-        {
-            "version": 1,
-            "handlers": {"h": {"class": "unknown"}},
-            "root": {"handlers": ["h"]},
-        },
-        {"version": 1, "filters": {"f": {}}, "root": {}},
+        ({"version": 1}, r"root logger configuration is required"),
+        ({"version": 2, "root": {}}, r"(unsupported|invalid).+version"),
+        (
+            {
+                "version": 1,
+                "handlers": {"h": {"class": "unknown"}},
+                "root": {"handlers": ["h"]},
+            },
+            r"(unknown|unsupported).+handler class",
+        ),
+        ({"version": 1, "filters": {"f": {}}, "root": {}}, r"filters.+not supported"),
     ],
-    ids=["version-unsupported", "handler-class-unknown", "filters-unsupported"],
+    ids=[
+        "root-missing",
+        "version-unsupported",
+        "handler-class-unknown",
+        "filters-unsupported",
+    ],
 )
-def test_dict_config_invalid_configs(config: dict[str, object]) -> None:
+def test_dict_config_invalid_configs(config: dict[str, object], msg: str) -> None:
     """Invalid configurations raise ``ValueError``."""
     reset_manager()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=msg):
         dictConfig(config)
