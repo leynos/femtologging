@@ -8,7 +8,8 @@ import time
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from femtologging import dictConfig, get_logger, reset_manager
+from femtologging import ConfigBuilder, dictConfig, get_logger, reset_manager
+from femtologging.config import _process_formatters, _process_handlers
 
 scenarios("features/dict_config.feature")
 
@@ -91,8 +92,49 @@ def test_dict_config_args_reject_bytes() -> None:
         "handlers": {"h": {"class": "femtologging.StreamHandler", "args": b"bytes"}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    with pytest.raises(ValueError, match="args must not be bytes or bytearray"):
+    with pytest.raises(
+        ValueError, match="handler 'h' args must not be bytes or bytearray"
+    ):
         dictConfig(cfg)
+
+
+def test_dict_config_kwargs_reject_bytes_value() -> None:
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "handlers": {
+            "h": {
+                "class": "femtologging.StreamHandler",
+                "kwargs": {"path": b"oops"},
+            }
+        },
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(
+        ValueError,
+        match="handler 'h' kwargs values must not be bytes or bytearray",
+    ):
+        dictConfig(cfg)
+
+
+def test_process_formatters_apply_to_handlers() -> None:
+    builder = ConfigBuilder().with_version(1)
+    cfg = {
+        "formatters": {"f": {"format": "%(message)s", "datefmt": "%H:%M"}},
+        "handlers": {
+            "h": {
+                "class": "femtologging.StreamHandler",
+                "formatter": "f",
+            }
+        },
+    }
+    _process_formatters(builder, cfg)
+    _process_handlers(builder, cfg)
+    state = builder.as_dict()
+    fmt = state["formatters"]["f"]
+    assert fmt["format"] == "%(message)s"
+    assert fmt["datefmt"] == "%H:%M"
+    assert state["handlers"]["h"]["formatter_id"] == "f"
 
 
 def test_dict_config_handler_filters_presence() -> None:

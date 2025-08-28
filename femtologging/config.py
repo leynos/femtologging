@@ -68,29 +68,29 @@ def _validate_string_keys(
     return cast(Mapping[str, object], mapping)
 
 
-def _coerce_args(args: object) -> list[object]:
+def _coerce_args(args: object, ctx: str) -> list[object]:
     """Convert ``args`` into a list for handler construction."""
     if isinstance(args, str):
-        args = _evaluate_string_safely(args, "args")
+        args = _evaluate_string_safely(args, f"{ctx} args")
     if args is None:
         return []
-    _validate_no_bytes(args, "args")
+    _validate_no_bytes(args, f"{ctx} args")
     if not isinstance(args, Sequence):
-        raise ValueError("args must be a sequence")
+        raise ValueError(f"{ctx} args must be a sequence")
     return list(cast(Sequence[object], args))
 
 
-def _coerce_kwargs(kwargs: object) -> dict[str, object]:
+def _coerce_kwargs(kwargs: object, ctx: str) -> dict[str, object]:
     """Convert ``kwargs`` into a dictionary for handler construction."""
     if isinstance(kwargs, str):
-        kwargs = _evaluate_string_safely(kwargs, "kwargs")
+        kwargs = _evaluate_string_safely(kwargs, f"{ctx} kwargs")
     if kwargs is None:
         return {}
-    mapping = _validate_mapping_type(kwargs, "kwargs")
-    mapping = _validate_string_keys(mapping, "kwargs")
+    mapping = _validate_mapping_type(kwargs, f"{ctx} kwargs")
+    mapping = _validate_string_keys(mapping, f"{ctx} kwargs")
     result: dict[str, object] = {}
     for key, value in mapping.items():
-        _validate_no_bytes(value, "kwargs values")
+        _validate_no_bytes(value, f"{ctx} kwargs values")
         result[key] = value
     return result
 
@@ -133,8 +133,9 @@ def _validate_handler_config(
     _validate_handler_keys(hid, data)
     cls_name = _validate_handler_class(hid, data.get("class"))
     _validate_unsupported_features(data)
-    args = _coerce_args(data.get("args"))
-    kwargs = _coerce_kwargs(data.get("kwargs"))
+    ctx = f"handler {hid!r}"
+    args = _coerce_args(data.get("args"), ctx)
+    kwargs = _coerce_kwargs(data.get("kwargs"), ctx)
     return cls_name, args, kwargs, data.get("formatter")
 
 
@@ -147,7 +148,7 @@ def _create_handler_instance(
         args_t = tuple(args)
         kwargs_d = dict(kwargs)
         return cast(Any, builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
-    except Exception as exc:  # pragma: no cover - constructor errors propagated
+    except (TypeError, ValueError) as exc:
         raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
 
 
