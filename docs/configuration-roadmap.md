@@ -65,9 +65,8 @@ expanded with specifics for the configuration design.
     constructors.**
 
   - [x] **Implement ordered processing of** `version`,
-    `disable_existing_loggers`,
-    **formatters, handlers, loggers, and root.** Filters are not supported yet
-    and must raise `ValueError` if present.
+    `disable_existing_loggers`, **formatters, handlers, loggers, and root.**
+    Filters are not supported yet and must raise `ValueError` if present.
 
   - [x] **Ensure proper error handling for invalid** `dictConfig` **structures
     or unsupported features like** `incremental=True`**.**

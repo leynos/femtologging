@@ -375,9 +375,11 @@ classDiagram
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> LoggerConfigBuilder
-    class HandlerBuilderTrait
-    FileHandlerBuilder ..|> HandlerBuilderTrait
-    StreamHandlerBuilder ..|> HandlerBuilderTrait
+    FileHandlerBuilder <|-- StreamHandlerBuilder
+    LoggerConfigBuilder --> FileHandlerBuilder
+    LoggerConfigBuilder --> StreamHandlerBuilder
+    FileHandlerBuilder --> FormatterBuilder
+    StreamHandlerBuilder --> FormatterBuilder
     LoggerConfigBuilder --> "uses" FormatterBuilder
     LoggerConfigBuilder --> "references" FileHandlerBuilder
     LoggerConfigBuilder --> "references" StreamHandlerBuilder
