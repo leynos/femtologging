@@ -10,6 +10,8 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use thiserror::Error;
 
 use crate::{
+    filter::FemtoFilter,
+    filters::{FilterBuildError, FilterBuilder, LevelFilterBuilder, NameFilterBuilder},
     handler::FemtoHandlerTrait,
     handlers::{FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, StreamHandlerBuilder},
     level::FemtoLevel,
@@ -71,6 +73,16 @@ pub enum ConfigError {
     /// A logger referenced a handler identifier that was not defined.
     #[error("unknown handler id: {0}")]
     UnknownHandlerId(String),
+    /// A logger referenced a filter identifier that was not defined.
+    #[error("unknown filter id: {0}")]
+    UnknownFilterId(String),
+    /// Building a filter failed.
+    #[error("failed to build filter {id}: {source}")]
+    FilterBuild {
+        id: String,
+        #[source]
+        source: FilterBuildError,
+    },
     /// Building a handler failed.
     #[error("failed to build handler {id}: {source}")]
     HandlerBuild {
@@ -216,10 +228,14 @@ impl LoggerConfigBuilder {
     pub fn level_opt(&self) -> Option<FemtoLevel> {
         self.level
     }
-
     /// Retrieve the propagate flag if configured.
     pub fn propagate_opt(&self) -> Option<bool> {
         self.propagate
+    }
+
+    /// Retrieve the configured filter identifiers.
+    pub fn filter_ids(&self) -> &[String] {
+        &self.filters
     }
 
     /// Retrieve the configured handler identifiers.
@@ -252,6 +268,7 @@ pub struct ConfigBuilder {
     disable_existing_loggers: bool,
     default_level: Option<FemtoLevel>,
     formatters: BTreeMap<String, FormatterBuilder>,
+    filters: BTreeMap<String, FilterBuilder>,
     /// Registered handler builders keyed by identifier.
     ///
     /// `HandlerBuilder` is a concrete enum rather than a trait object to make
@@ -268,6 +285,7 @@ impl Default for ConfigBuilder {
             disable_existing_loggers: false,
             default_level: None,
             formatters: BTreeMap::new(),
+            filters: BTreeMap::new(),
             handlers: BTreeMap::new(),
             loggers: BTreeMap::new(),
             root_logger: None,
@@ -304,6 +322,13 @@ impl ConfigBuilder {
     /// Any existing formatter with the same identifier is replaced.
     pub fn with_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self {
         self.formatters.insert(id.into(), builder);
+        self
+    }
+    /// Add a filter by identifier.
+    ///
+    /// Any existing filter with the same identifier is replaced.
+    pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
+        self.filters.insert(id.into(), builder);
         self
     }
 
@@ -357,6 +382,14 @@ impl ConfigBuilder {
                 })?;
             built_handlers.insert(id.clone(), handler);
         }
+        let mut built_filters: BTreeMap<String, Arc<dyn FemtoFilter>> = BTreeMap::new();
+        for (id, builder) in &self.filters {
+            let filter = builder.build().map_err(|source| ConfigError::FilterBuild {
+                id: id.clone(),
+                source,
+            })?;
+            built_filters.insert(id.clone(), filter);
+        }
 
         Python::with_gil(|py| -> Result<(), ConfigError> {
             let mut targets: Vec<(&str, &LoggerConfigBuilder)> = Vec::new();
@@ -367,7 +400,7 @@ impl ConfigBuilder {
 
             for (name, cfg) in targets {
                 let logger = self.fetch_logger(py, name)?;
-                self.apply_logger_config(py, &logger, cfg, &built_handlers)?;
+                self.apply_logger_config(py, &logger, cfg, &built_handlers, &built_filters)?;
             }
             Ok(())
         })?;
@@ -388,6 +421,7 @@ impl ConfigBuilder {
         logger: &Py<FemtoLogger>,
         cfg: &LoggerConfigBuilder,
         handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+        filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
         if let Some(level) = cfg.level_opt() {
             logger.borrow(py).set_level(level);
@@ -398,6 +432,12 @@ impl ConfigBuilder {
                 .ok_or_else(|| ConfigError::UnknownHandlerId(hid.clone()))?;
             logger.borrow(py).add_handler(h.clone());
         }
+        for fid in cfg.filter_ids() {
+            let f = filters
+                .get(fid)
+                .ok_or_else(|| ConfigError::UnknownFilterId(fid.clone()))?;
+            logger.borrow(py).add_filter(f.clone());
+        }
         Ok(())
     }
 }
@@ -407,6 +447,7 @@ impl_as_pydict!(ConfigBuilder {
     set_val disable_existing_loggers => "disable_existing_loggers",
     set_opt_to_string default_level => "default_level",
     set_map formatters => "formatters",
+    set_map filters => "filters",
     set_map handlers => "handlers",
     set_map loggers => "loggers",
     set_optmap root_logger => "root",
@@ -449,6 +490,18 @@ py_setters!(ConfigBuilder {
         slf
     }
 
+    /// Add a filter by identifier.
+    #[pyo3(name = "with_filter")]
+    fn py_with_filter<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        id: String,
+        builder: Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let fb = Self::extract_filter_builder(&builder)?;
+        slf.filters.insert(id, fb);
+        Ok(slf)
+    }
+
     /// Add a handler by identifier.
     #[pyo3(name = "with_handler")]
     fn py_with_handler<'py>(
@@ -469,6 +522,18 @@ py_setters!(ConfigBuilder {
 );
 
 impl ConfigBuilder {
+    fn extract_filter_builder(builder: &Bound<'_, PyAny>) -> PyResult<FilterBuilder> {
+        if let Ok(b) = builder.extract::<LevelFilterBuilder>() {
+            Ok(FilterBuilder::Level(b))
+        } else if let Ok(b) = builder.extract::<NameFilterBuilder>() {
+            Ok(FilterBuilder::Name(b))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "builder must be LevelFilterBuilder or NameFilterBuilder",
+            ))
+        }
+    }
+
     fn extract_handler_builder(builder: &Bound<'_, PyAny>) -> PyResult<HandlerBuilder> {
         if let Ok(b) = builder.extract::<StreamHandlerBuilder>() {
             Ok(HandlerBuilder::Stream(b))
@@ -485,6 +550,7 @@ impl ConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filters::{FilterBuilder, LevelFilterBuilder};
     use pyo3::Python;
     use rstest::rstest;
     use serial_test::serial;
@@ -544,5 +610,36 @@ mod tests {
             .with_logger("child", logger_cfg);
         let err = builder.build_and_init().unwrap_err();
         assert!(matches!(err, ConfigError::UnknownHandlerId(id) if id == "missing"));
+    }
+    #[rstest]
+    #[serial]
+    fn unknown_filter_id_rejected() {
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
+        let builder = ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_logger("child", logger_cfg);
+        let err = builder.build_and_init().unwrap_err();
+        assert!(matches!(err, ConfigError::UnknownFilterId(id) if id == "missing"));
+    }
+
+    #[rstest]
+    #[serial]
+    fn level_filter_blocks_records() {
+        Python::with_gil(|py| {
+            manager::reset_manager();
+            let filter =
+                FilterBuilder::Level(LevelFilterBuilder::new().with_max_level(FemtoLevel::Info));
+            let logger_cfg = LoggerConfigBuilder::new().with_filters(["f"]);
+            let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Debug);
+            let builder = ConfigBuilder::new()
+                .with_filter("f", filter)
+                .with_root_logger(root)
+                .with_logger("child", logger_cfg);
+            builder.build_and_init().expect("build should succeed");
+            let logger = manager::get_logger(py, "child").unwrap();
+            assert!(logger.borrow(py).log(FemtoLevel::Info, "ok").is_some());
+            assert!(logger.borrow(py).log(FemtoLevel::Error, "nope").is_none());
+        });
     }
 }

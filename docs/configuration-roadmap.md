@@ -71,7 +71,7 @@ expanded with specifics for the configuration design.
   - [x] **Ensure proper error handling for invalid** `dictConfig` **structures
     or unsupported features like** `incremental=True`**.**
 
-- [ ] Define the `FemtoFilter` trait and implement common filter types (e.g.,
+- [x] Define the `FemtoFilter` trait and implement common filter types (e.g.,
   `LevelFilter`, `NameFilter`), with builder API integration for filters.
 
 - [ ] Expand test coverage and start benchmarking for the configuration system

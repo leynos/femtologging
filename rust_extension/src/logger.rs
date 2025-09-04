@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
 
+use crate::filter::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
 
 use crate::{
@@ -97,6 +98,7 @@ pub struct FemtoLogger {
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
@@ -122,6 +124,11 @@ impl FemtoLogger {
             return None;
         }
         let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
+        for f in self.filters.read().iter() {
+            if !f.should_log(&record) {
+                return None;
+            }
+        }
         let msg = self.formatter.format(&record);
         if let Some(tx) = &self.tx {
             let handlers = self.handlers.read().clone();
@@ -194,6 +201,11 @@ impl FemtoLogger {
         self.handlers.write().push(handler);
     }
 
+    /// Attach a filter to this logger.
+    pub fn add_filter(&self, filter: Arc<dyn FemtoFilter>) {
+        self.filters.write().push(filter);
+    }
+
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
@@ -212,6 +224,20 @@ impl FemtoLogger {
     /// dispatched to those handlers.
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
+    }
+
+    pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
+        let mut filters = self.filters.write();
+        if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
+            filters.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clear_filters(&self) {
+        self.filters.write().clear();
     }
 
     #[cfg(test)]
@@ -235,6 +261,7 @@ impl FemtoLogger {
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
         let handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>> =
             Arc::new(RwLock::new(Vec::new()));
+        let filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>> = Arc::new(RwLock::new(Vec::new()));
 
         let (tx, rx) = bounded::<QueuedRecord>(DEFAULT_CHANNEL_CAPACITY);
         let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
@@ -248,6 +275,7 @@ impl FemtoLogger {
             formatter,
             level: AtomicU8::new(FemtoLevel::Info as u8),
             handlers,
+            filters,
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
             handle: Mutex::new(Some(handle)),

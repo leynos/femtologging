@@ -26,7 +26,7 @@ pub struct ConfigBuilder {
     disable_existing_loggers: bool,
     default_level: Option<Level>,
     formatters: BTreeMap<String, FormatterBuilder>,
-    filters: BTreeMap<String, FilterBuilder>, // Future: FilterBuilder
+    filters: BTreeMap<String, FilterBuilder>,
     handlers: BTreeMap<String, HandlerBuilder>,
     // `HandlerBuilder` is a concrete enum; later insertions with the same ID
     // overwrite earlier ones.
@@ -53,9 +53,10 @@ impl ConfigBuilder {
     }
 
     /// Adds a filter configuration by its unique ID.
-    // pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
-    //     /* ... */
-    // } // Future
+        /// Adds a filter configuration by its unique ID.
+    pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
+        /* ... */
+    }
 
     /// Adds a handler configuration by its unique ID.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
@@ -264,6 +265,17 @@ semantics intentionally differ: file handlers flush after a set number of
 records, whereas stream handlers flush after a period of inactivity. Their
 dictionary representations mirror these names to avoid ambiguity.
 
+### 1.1.1. Filters
+
+The builder now supports a `FilterBuilder` registry. Filters implement the
+`FemtoFilter` trait and determine whether a `FemtoLogRecord` should be
+processed. Two filter builders are provided:
+
+- `LevelFilterBuilder` limits records to a maximum level.
+- `NameFilterBuilder` admits records whose logger name starts with a given
+  prefix. Filters are registered via `ConfigBuilder.with_filter()` and
+  referenced by loggers through `LoggerConfigBuilder.with_filters()`.
+
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
 The Python API will mirror the Rust builder's semantics, providing a familiar
@@ -281,7 +293,7 @@ class ConfigBuilder:
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
     def with_default_level(self, level: Union[str, Level]) -> "ConfigBuilder": ...
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
-    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ... # Future
+    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...
     def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
     def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
     def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger

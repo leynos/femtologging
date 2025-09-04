@@ -29,6 +29,8 @@ FileHandlerBuilder = rust.FileHandlerBuilder  # type: ignore[attr-defined]
 ConfigBuilder = rust.ConfigBuilder  # type: ignore[attr-defined]
 LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
 FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
+LevelFilterBuilder = rust.LevelFilterBuilder  # type: ignore[attr-defined]
+NameFilterBuilder = rust.NameFilterBuilder  # type: ignore[attr-defined]
 HandlerConfigError = rust.HandlerConfigError  # type: ignore[attr-defined]
 HandlerIOError = rust.HandlerIOError  # type: ignore[attr-defined]
 
@@ -237,6 +239,8 @@ __all__ = [
     "FemtoFileHandler",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
+    "LevelFilterBuilder",
+    "NameFilterBuilder",
     "ConfigBuilder",
     "LoggerConfigBuilder",
     "FormatterBuilder",

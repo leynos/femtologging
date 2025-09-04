@@ -32,6 +32,8 @@ FileHandlerBuilder = rust.FileHandlerBuilder  # type: ignore[attr-defined]
 ConfigBuilder = rust.ConfigBuilder  # type: ignore[attr-defined]
 LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
 FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
+LevelFilterBuilder = rust.LevelFilterBuilder  # type: ignore[attr-defined]
+NameFilterBuilder = rust.NameFilterBuilder  # type: ignore[attr-defined]
 
 
 _HANDLER_CLASS_MAP: Final[dict[str, object]] = {
@@ -388,6 +390,8 @@ __all__ = [
     "FormatterBuilder",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
+    "LevelFilterBuilder",
+    "NameFilterBuilder",
     "dictConfig",
     "OverflowPolicy",
 ]
