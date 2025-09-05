@@ -26,7 +26,7 @@ pub struct ConfigBuilder {
     disable_existing_loggers: bool,
     default_level: Option<FemtoLevel>,
     formatters: BTreeMap<String, FormatterBuilder>,
-    filters: BTreeMap<String, FilterBuilder>,
+    filters: BTreeMap<String, FilterBuilder>, // see §1.1.1 "Filters"
     handlers: BTreeMap<String, HandlerBuilder>,
     // `HandlerBuilder` is a concrete enum; later insertions with the same ID
     // overwrite earlier ones.
@@ -53,7 +53,6 @@ impl ConfigBuilder {
     }
 
     /// Adds a filter configuration by its unique ID.
-        /// Adds a filter configuration by its unique ID.
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         /* ... */
     }
@@ -268,18 +267,21 @@ dictionary representations mirror these names to avoid ambiguity.
 ### 1.1.1. Filters
 
 The builder now supports a `FilterBuilder` registry. Filters implement the
-`FemtoFilter` trait and determine whether a `FemtoLogRecord` should be
-processed. Two filter builders are provided:
+`FemtoFilter` trait and decide whether a `FemtoLogRecord` is processed. Two
+built-in builders are provided with these semantics:
 
-- `LevelFilterBuilder` limits records to a maximum level.
+- `LevelFilterBuilder` admits records whose level is less than or equal to the
+  configured maximum.
 - `NameFilterBuilder` admits records whose logger name starts with a given
-  prefix. Filters are registered via `ConfigBuilder.with_filter()` and
-  referenced by loggers through `LoggerConfigBuilder.with_filters()`. Filter
-  builders self-register with the Rust registry to avoid binding boilerplate.
+  prefix.
+
+Filters are registered via `ConfigBuilder.with_filter()` and referenced by
+loggers through `LoggerConfigBuilder.with_filters()`. Filter builders
+self-register with the Rust registry to avoid binding boilerplate.
 
 Filters run only after the logger has accepted the record based on its level.
-Records failing the logger's level check are dropped before any filter is
-invoked, so filters merely further narrow which records proceed to handlers.
+Records failing the logger's level check are dropped before any filter runs, so
+filters merely further narrow which records proceed to handlers.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 

@@ -31,6 +31,7 @@ LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
 FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
 LevelFilterBuilder = rust.LevelFilterBuilder  # type: ignore[attr-defined]
 NameFilterBuilder = rust.NameFilterBuilder  # type: ignore[attr-defined]
+FilterBuildError = rust.FilterBuildError  # type: ignore[attr-defined]
 HandlerConfigError = rust.HandlerConfigError  # type: ignore[attr-defined]
 HandlerIOError = rust.HandlerIOError  # type: ignore[attr-defined]
 
@@ -241,6 +242,7 @@ __all__ = [
     "FileHandlerBuilder",
     "LevelFilterBuilder",
     "NameFilterBuilder",
+    "FilterBuildError",
     "ConfigBuilder",
     "LoggerConfigBuilder",
     "FormatterBuilder",

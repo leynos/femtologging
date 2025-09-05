@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc as cabc
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 from syrupy import SnapshotAssertion
@@ -12,11 +13,12 @@ from femtologging import (
     NameFilterBuilder,
     get_logger,
     reset_manager,
+    FilterBuildError,
 )
 
 
 @pytest.fixture(autouse=True)
-def reset_logger_state() -> None:
+def reset_logger_state() -> cabc.Iterator[None]:
     reset_manager()
     yield
     reset_manager()
@@ -51,21 +53,21 @@ def add_name_filter(config_builder: ConfigBuilder, fid: str, prefix: str) -> Non
 
 @when(
     parsers.parse(
-        'I add logger "{name}" with handler "{handler}" and filter "{filter}"'
+        'I add logger "{name}" with handler "{handler}" and filter "{filter_id}"'
     )
 )
 def add_logger_with_filter(
-    config_builder: ConfigBuilder, name: str, handler: str, filter: str
+    config_builder: ConfigBuilder, name: str, handler: str, filter_id: str
 ) -> None:
-    logger = LoggerConfigBuilder().with_handlers([handler]).with_filters([filter])
+    logger = LoggerConfigBuilder().with_handlers([handler]).with_filters([filter_id])
     config_builder.with_logger(name, logger)
 
 
-@when(parsers.parse('I add logger "{name}" with filter "{filter}"'))
+@when(parsers.parse('I add logger "{name}" with filter "{filter_id}"'))
 def add_logger_only_filter(
-    config_builder: ConfigBuilder, name: str, filter: str
+    config_builder: ConfigBuilder, name: str, filter_id: str
 ) -> None:
-    logger = LoggerConfigBuilder().with_filters([filter])
+    logger = LoggerConfigBuilder().with_filters([filter_id])
     config_builder.with_logger(name, logger)
 
 
@@ -97,13 +99,13 @@ def logger_suppresses(name: str, level: str) -> None:
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises((FilterBuildError, ValueError)):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
 def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises((FilterBuildError, ValueError)) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)
 
