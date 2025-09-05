@@ -124,18 +124,11 @@ impl FemtoLogger {
             return None;
         }
         let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
-        for f in self.filters.read().iter() {
-            if !f.should_log(&record) {
-                return None;
-            }
+        if !self.passes_all_filters(&record) {
+            return None;
         }
         let msg = self.formatter.format(&record);
-        if let Some(tx) = &self.tx {
-            let handlers = self.handlers.read().clone();
-            if tx.try_send(QueuedRecord { record, handlers }).is_err() {
-                warn!("FemtoLogger: queue full or shutting down, dropping record");
-            }
-        }
+        self.queue_record_to_handlers(record);
         Some(msg)
     }
 
@@ -196,6 +189,32 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Return `true` if every configured filter approves the record.
+    ///
+    /// Iterates over each filter and returns `false` on the first rejection.
+    /// If no filters are configured, the record passes.
+    fn passes_all_filters(&self, record: &FemtoLogRecord) -> bool {
+        for f in self.filters.read().iter() {
+            if !f.should_log(record) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Queue a record for asynchronous processing by the logger's handlers.
+    ///
+    /// The record is sent to the worker thread if a channel is configured.
+    /// When the queue is full or the logger is shutting down, the record is
+    /// dropped and a warning is logged.
+    fn queue_record_to_handlers(&self, record: FemtoLogRecord) {
+        if let Some(tx) = &self.tx {
+            let handlers = self.handlers.read().clone();
+            if tx.try_send(QueuedRecord { record, handlers }).is_err() {
+                warn!("FemtoLogger: queue full or shutting down, dropping record");
+            }
+        }
+    }
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
