@@ -270,15 +270,14 @@ The builder now supports a `FilterBuilder` registry. Filters implement the
 `FemtoFilter` trait and decide whether a `FemtoLogRecord` is processed. Two
 built-in builders are provided with these semantics:
 
-- `LevelFilterBuilder` admits records whose level is less than or equal to the
-  configured maximum (inclusive). This check runs after any per-logger level
-  gating.
+- `LevelFilterBuilder` admits records whose level is less than or equal to
+  `max_level` (inclusive). This acts after any per-logger level gating.
 - `NameFilterBuilder` admits records whose logger name starts with a given
-  prefix.
+  prefix. Filters are registered via `ConfigBuilder.with_filter()` and
+  referenced by loggers through `LoggerConfigBuilder.with_filters()`.
 
-Filters are registered via `ConfigBuilder.with_filter()` and referenced by
-loggers through `LoggerConfigBuilder.with_filters()`. Filter builders
-self-register with the Rust registry to avoid binding boilerplate.
+Filter builders self-register with the Rust registry to avoid binding
+boilerplate.
 
 Filters run only after the logger has accepted the record based on its level.
 Records failing the logger's level check are dropped before any filter runs, so
@@ -311,8 +310,9 @@ class ConfigBuilder:
     def with_version(self, version: int) -> "ConfigBuilder": ...
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
     def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder": ...
+        # accepts "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
-    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...
+    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
     def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
     def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
     def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
@@ -321,6 +321,7 @@ class ConfigBuilder:
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
     def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder": ...
+        # accepts "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"
     def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing filters
     def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing handlers
@@ -335,6 +336,7 @@ class FormatterBuilder:
 class HandlerBuilder: # Abstract base class or conceptual union
     # Common methods
     def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder": ...
+        # accepts "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"
     def with_formatter(self, formatter_id: str) -> "HandlerBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
     def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
