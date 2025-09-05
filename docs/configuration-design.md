@@ -277,6 +277,10 @@ processed. Two filter builders are provided:
   referenced by loggers through `LoggerConfigBuilder.with_filters()`. Filter
   builders self-register with the Rust registry to avoid binding boilerplate.
 
+Filters run only after the logger has accepted the record based on its level.
+Records failing the logger's level check are dropped before any filter is
+invoked, so filters merely further narrow which records proceed to handlers.
+
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
 The Python API will mirror the Rust builder's semantics, providing a familiar
