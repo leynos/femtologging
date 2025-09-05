@@ -323,9 +323,7 @@ impl ConfigBuilder {
         self.formatters.insert(id.into(), builder);
         self
     }
-    /// Add a filter by identifier.
-    ///
-    /// Any existing filter with the same identifier is replaced.
+    /// Adds a filter configuration by its unique ID, replacing any existing entry.
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
@@ -499,7 +497,7 @@ py_setters!(ConfigBuilder {
         slf
     }
 
-    /// Add a filter by identifier.
+    /// Adds a filter configuration by its unique ID, replacing any existing entry.
     #[pyo3(name = "with_filter")]
     fn py_with_filter<'py>(
         mut slf: PyRefMut<'py, Self>,

@@ -26,7 +26,7 @@ pub struct ConfigBuilder {
     disable_existing_loggers: bool,
     default_level: Option<FemtoLevel>,
     formatters: BTreeMap<String, FormatterBuilder>,
-    filters: BTreeMap<String, FilterBuilder>, // see §1.1.1 "Filters"
+    filters: BTreeMap<String, FilterBuilder>, // see §1.1.1 "Filters" (<#111-filters>)
     handlers: BTreeMap<String, HandlerBuilder>,
     // `HandlerBuilder` is a concrete enum; later insertions with the same ID
     // overwrite earlier ones.
@@ -271,7 +271,8 @@ The builder now supports a `FilterBuilder` registry. Filters implement the
 built-in builders are provided with these semantics:
 
 - `LevelFilterBuilder` admits records whose level is less than or equal to the
-  configured maximum.
+  configured maximum (inclusive). This check runs after any per-logger level
+  gating.
 - `NameFilterBuilder` admits records whose logger name starts with a given
   prefix.
 
@@ -289,10 +290,16 @@ The Python API will mirror the Rust builder's semantics, providing a familiar
 and idiomatic Python interface. This will involve exposing builder classes and
 methods via `PyO3` bindings. Type hints will be used for clarity.
 
+`FilterBuilder` refers to the filter types described in §1.1.1
+[Filters](#111-filters). The module exposes two constructors:
+
+- `LevelFilterBuilder(max_level: Union[str, FemtoLevel])`.
+- `NameFilterBuilder(prefix: str)`.
+
 ```python
 # In femtologging.config
 from typing import List, Optional, Union
-from .levels import FemtoLevel  # Assuming an enum or similar for levels
+from .levels import FemtoLevel  # Enum of logging levels
 
 class ConfigBuilder:
     def __init__(self) -> None: ...
@@ -343,6 +350,9 @@ class StreamHandlerBuilder(HandlerBuilder):
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
 
+String level parameters accept case-insensitive names: "CRITICAL", "ERROR",
+"WARNING", "INFO", "DEBUG", and "NOTSET".
+
 ### 1.3. Implemented handler builders
 
 The initial implementation provides `FileHandlerBuilder` and
@@ -364,6 +374,7 @@ classDiagram
         +with_version(version: int)
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
+        +with_filter(id: str, builder: FilterBuilder)
         +with_handler(id: str, builder: FileHandlerBuilder|StreamHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
@@ -381,8 +392,12 @@ classDiagram
         +__init__(*args, **kwargs)
         +with_formatter(fmt: str)
     }
+    class FilterBuilder {
+        +build()
+    }
     class LoggerConfigBuilder {
         +with_level(level: str|int)
+        +with_filters(filters: list)
         +with_handlers(handlers: list)
         +with_propagate(flag: bool)
     }
@@ -393,12 +408,14 @@ classDiagram
     ConfigBuilder --> FormatterBuilder
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
+    ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
     FileHandlerBuilder <|-- StreamHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
     StreamHandlerBuilder --> FormatterBuilder
+    LoggerConfigBuilder --> FilterBuilder
     LoggerConfigBuilder --> "uses" FormatterBuilder
     LoggerConfigBuilder --> "references" FileHandlerBuilder
     LoggerConfigBuilder --> "references" StreamHandlerBuilder
