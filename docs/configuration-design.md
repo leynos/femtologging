@@ -274,7 +274,8 @@ processed. Two filter builders are provided:
 - `LevelFilterBuilder` limits records to a maximum level.
 - `NameFilterBuilder` admits records whose logger name starts with a given
   prefix. Filters are registered via `ConfigBuilder.with_filter()` and
-  referenced by loggers through `LoggerConfigBuilder.with_filters()`.
+  referenced by loggers through `LoggerConfigBuilder.with_filters()`. Filter
+  builders self-register with the Rust registry to avoid binding boilerplate.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 

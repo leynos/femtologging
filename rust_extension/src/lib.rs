@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 
 mod config;
-mod filter;
 mod filters;
 mod formatter;
 mod handler;
@@ -18,8 +17,9 @@ mod rate_limited_warner;
 mod stream_handler;
 
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
-pub use filter::FemtoFilter;
-pub use filters::{FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
+pub use filters::{
+    FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
+};
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use handlers::{

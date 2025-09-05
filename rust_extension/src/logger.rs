@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
 
-use crate::filter::FemtoFilter;
+use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
 
 use crate::{

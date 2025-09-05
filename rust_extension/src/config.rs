@@ -10,8 +10,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use thiserror::Error;
 
 use crate::{
-    filter::FemtoFilter,
-    filters::{FilterBuildError, FilterBuilder, LevelFilterBuilder, NameFilterBuilder},
+    filters::{self, FemtoFilter, FilterBuildError, FilterBuilder},
     handler::FemtoHandlerTrait,
     handlers::{FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, StreamHandlerBuilder},
     level::FemtoLevel,
@@ -497,7 +496,7 @@ py_setters!(ConfigBuilder {
         id: String,
         builder: Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let fb = Self::extract_filter_builder(&builder)?;
+        let fb = filters::extract_filter_builder(&builder)?;
         slf.filters.insert(id, fb);
         Ok(slf)
     }
@@ -522,18 +521,6 @@ py_setters!(ConfigBuilder {
 );
 
 impl ConfigBuilder {
-    fn extract_filter_builder(builder: &Bound<'_, PyAny>) -> PyResult<FilterBuilder> {
-        if let Ok(b) = builder.extract::<LevelFilterBuilder>() {
-            Ok(FilterBuilder::Level(b))
-        } else if let Ok(b) = builder.extract::<NameFilterBuilder>() {
-            Ok(FilterBuilder::Name(b))
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "builder must be LevelFilterBuilder or NameFilterBuilder",
-            ))
-        }
-    }
-
     fn extract_handler_builder(builder: &Bound<'_, PyAny>) -> PyResult<HandlerBuilder> {
         if let Ok(b) = builder.extract::<StreamHandlerBuilder>() {
             Ok(HandlerBuilder::Stream(b))

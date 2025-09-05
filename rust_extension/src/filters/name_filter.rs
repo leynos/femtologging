@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 
 use crate::{
-    filter::FemtoFilter,
+    filters::FemtoFilter,
     log_record::FemtoLogRecord,
     macros::{impl_as_pydict, py_setters, AsPyDict},
 };
@@ -59,6 +59,18 @@ py_setters!(NameFilterBuilder {
     prefix: py_with_prefix => "with_prefix", String, Some,
         "Set the accepted logger name prefix.",
 });
+
+fn extractor(obj: &Bound<'_, PyAny>) -> PyResult<Option<super::FilterBuilder>> {
+    if let Ok(b) = obj.extract::<NameFilterBuilder>() {
+        Ok(Some(super::FilterBuilder::Name(b)))
+    } else {
+        Ok(None)
+    }
+}
+
+inventory::submit! {
+    super::FilterExtractor(extractor)
+}
 
 #[cfg(test)]
 mod tests {
