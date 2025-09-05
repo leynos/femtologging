@@ -52,7 +52,7 @@ impl ConfigBuilder {
         /* ... */
     }
 
-    /// Adds a filter configuration by its unique ID.
+    /// Adds a filter configuration by its unique ID, replacing any existing entry.
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         /* ... */
     }
