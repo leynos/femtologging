@@ -128,3 +128,24 @@ def test_logger_with_multiple_filters() -> None:
     logger = get_logger("multi")
     assert logger.log("INFO", "emit") is not None
     assert logger.log("DEBUG", "suppress") is None
+
+
+def test_reconfig_replaces_filters() -> None:
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("WARNING"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    cb.build_and_init()
+    logger = get_logger("core")
+    assert logger.log("ERROR", "drop") is None
+
+    cb2 = (
+        ConfigBuilder()
+        .with_logger("core", LoggerConfigBuilder())
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    cb2.build_and_init()
+    logger_after = get_logger("core")
+    assert logger_after.log("ERROR", "emit") is not None

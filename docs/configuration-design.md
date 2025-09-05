@@ -282,7 +282,9 @@ self-register with the Rust registry to avoid binding boilerplate.
 
 Filters run only after the logger has accepted the record based on its level.
 Records failing the logger's level check are dropped before any filter runs, so
-filters merely further narrow which records proceed to handlers.
+filters merely further narrow which records proceed to handlers. Reconfiguring
+a logger replaces its filter set: `apply_logger_config` clears any existing
+filters before attaching the newly specified ones.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
