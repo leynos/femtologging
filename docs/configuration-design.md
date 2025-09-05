@@ -296,6 +296,9 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 - `LevelFilterBuilder(max_level: Union[str, FemtoLevel])`.
 - `NameFilterBuilder(prefix: str)`.
 
+String level parameters accept case-insensitive names: "CRITICAL", "ERROR",
+"WARNING", "INFO", "DEBUG", and "NOTSET".
+
 ```python
 # In femtologging.config
 from typing import List, Optional, Union
@@ -349,9 +352,6 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
-
-String level parameters accept case-insensitive names: "CRITICAL", "ERROR",
-"WARNING", "INFO", "DEBUG", and "NOTSET".
 
 ### 1.3. Implemented handler builders
 
