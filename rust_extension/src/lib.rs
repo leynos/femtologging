@@ -18,7 +18,8 @@ mod stream_handler;
 
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 pub use filters::{
-    FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
+    FemtoFilter, FilterBuildError, FilterBuildErrorPy, FilterBuilderTrait, LevelFilterBuilder,
+    NameFilterBuilder,
 };
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
@@ -61,6 +62,7 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NameFilterBuilder>()?;
     m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;
     m.add("HandlerIOError", py.get_type::<HandlerIOError>())?;
+    m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
     m.add_class::<ConfigBuilder>()?;
     m.add_class::<LoggerConfigBuilder>()?;
     m.add_class::<FormatterBuilder>()?;

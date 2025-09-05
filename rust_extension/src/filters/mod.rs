@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use pyo3::prelude::*;
+use pyo3::{create_exception, prelude::*};
 use thiserror::Error;
 
 use crate::{log_record::FemtoLogRecord, macros::AsPyDict};
@@ -30,6 +30,18 @@ pub enum FilterBuildError {
     /// Invalid user supplied configuration.
     #[error("invalid filter configuration: {0}")]
     InvalidConfig(String),
+}
+
+create_exception!(
+    _femtologging_rs,
+    FilterBuildErrorPy,
+    pyo3::exceptions::PyException
+);
+
+impl From<FilterBuildError> for PyErr {
+    fn from(err: FilterBuildError) -> PyErr {
+        FilterBuildErrorPy::new_err(err.to_string())
+    }
 }
 
 /// Trait implemented by all filter builders.
@@ -92,15 +104,20 @@ pub struct FilterExtractor(pub ExtractFilterBuilder);
 
 inventory::collect!(FilterExtractor);
 
-/// Try to extract a [`FilterBuilder`] from a Python object by consulting the
-/// registered extractors.
-pub fn extract_filter_builder(obj: &Bound<'_, PyAny>) -> PyResult<FilterBuilder> {
-    for extractor in inventory::iter::<FilterExtractor> {
-        if let Some(builder) = (extractor.0)(obj)? {
-            return Ok(builder);
+impl<'py> FromPyObject<'py> for FilterBuilder {
+    fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
+        for extractor in inventory::iter::<FilterExtractor> {
+            if let Some(builder) = (extractor.0)(obj)? {
+                return Ok(builder);
+            }
         }
+        let ty = obj
+            .get_type()
+            .name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "<unknown>".into());
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+            "unknown filter builder (got Python type: {ty})"
+        )))
     }
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "unknown filter builder",
-    ))
 }

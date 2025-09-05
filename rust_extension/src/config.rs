@@ -10,7 +10,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use thiserror::Error;
 
 use crate::{
-    filters::{self, FemtoFilter, FilterBuildError, FilterBuilder},
+    filters::{FemtoFilter, FilterBuildError, FilterBuilder},
     handler::FemtoHandlerTrait,
     handlers::{FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, StreamHandlerBuilder},
     level::FemtoLevel,
@@ -371,24 +371,16 @@ impl ConfigBuilder {
         if self.root_logger.is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
-        let mut built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>> = BTreeMap::new();
-        for (id, builder) in &self.handlers {
-            let handler = builder
-                .build()
-                .map_err(|source| ConfigError::HandlerBuild {
-                    id: id.clone(),
-                    source,
-                })?;
-            built_handlers.insert(id.clone(), handler);
-        }
-        let mut built_filters: BTreeMap<String, Arc<dyn FemtoFilter>> = BTreeMap::new();
-        for (id, builder) in &self.filters {
-            let filter = builder.build().map_err(|source| ConfigError::FilterBuild {
-                id: id.clone(),
-                source,
-            })?;
-            built_filters.insert(id.clone(), filter);
-        }
+        let built_handlers = Self::build_map(
+            &self.handlers,
+            |b| b.build(),
+            |id, source| ConfigError::HandlerBuild { id, source },
+        )?;
+        let built_filters = Self::build_map(
+            &self.filters,
+            |b| b.build(),
+            |id, source| ConfigError::FilterBuild { id, source },
+        )?;
 
         Python::with_gil(|py| -> Result<(), ConfigError> {
             let mut targets: Vec<(&str, &LoggerConfigBuilder)> = Vec::new();
@@ -404,6 +396,23 @@ impl ConfigBuilder {
             Ok(())
         })?;
         Ok(())
+    }
+
+    fn build_map<B, O, E, F, G>(
+        items: &BTreeMap<String, B>,
+        mut build: F,
+        wrap_err: G,
+    ) -> Result<BTreeMap<String, O>, ConfigError>
+    where
+        F: FnMut(&B) -> Result<O, E>,
+        G: Fn(String, E) -> ConfigError,
+    {
+        let mut built = BTreeMap::new();
+        for (id, builder) in items {
+            let obj = build(builder).map_err(|e| wrap_err(id.clone(), e))?;
+            built.insert(id.clone(), obj);
+        }
+        Ok(built)
     }
 
     fn fetch_logger<'py>(
@@ -496,7 +505,7 @@ py_setters!(ConfigBuilder {
         id: String,
         builder: Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let fb = filters::extract_filter_builder(&builder)?;
+        let fb = builder.extract::<FilterBuilder>()?;
         slf.filters.insert(id, fb);
         Ok(slf)
     }
@@ -508,7 +517,7 @@ py_setters!(ConfigBuilder {
         id: String,
         builder: Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let hb = Self::extract_handler_builder(&builder)?;
+        let hb = builder.extract::<HandlerBuilder>()?;
         slf.handlers.insert(id, hb);
         Ok(slf)
     }
@@ -520,19 +529,7 @@ py_setters!(ConfigBuilder {
     }
 );
 
-impl ConfigBuilder {
-    fn extract_handler_builder(builder: &Bound<'_, PyAny>) -> PyResult<HandlerBuilder> {
-        if let Ok(b) = builder.extract::<StreamHandlerBuilder>() {
-            Ok(HandlerBuilder::Stream(b))
-        } else if let Ok(b) = builder.extract::<FileHandlerBuilder>() {
-            Ok(HandlerBuilder::File(b))
-        } else {
-            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "builder must be StreamHandlerBuilder or FileHandlerBuilder",
-            ))
-        }
-    }
-}
+impl ConfigBuilder {}
 
 #[cfg(test)]
 mod tests {
@@ -628,5 +625,23 @@ mod tests {
             assert!(logger.borrow(py).log(FemtoLevel::Info, "ok").is_some());
             assert!(logger.borrow(py).log(FemtoLevel::Error, "nope").is_none());
         });
+    }
+}
+impl<'py> FromPyObject<'py> for HandlerBuilder {
+    fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(b) = obj.extract::<StreamHandlerBuilder>() {
+            Ok(HandlerBuilder::Stream(b))
+        } else if let Ok(b) = obj.extract::<FileHandlerBuilder>() {
+            Ok(HandlerBuilder::File(b))
+        } else {
+            let ty = obj
+                .get_type()
+                .name()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|_| "<unknown>".into());
+            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "builder must be StreamHandlerBuilder or FileHandlerBuilder (got Python type: {ty})"
+            )))
+        }
     }
 }

@@ -11,7 +11,15 @@ from femtologging import (
     LevelFilterBuilder,
     NameFilterBuilder,
     get_logger,
+    reset_manager,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_logger_state() -> None:
+    reset_manager()
+    yield
+    reset_manager()
 
 
 @given("a ConfigBuilder", target_fixture="config_builder")
@@ -101,3 +109,20 @@ def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
 
 
 scenarios("features/filters.feature")
+
+
+def test_logger_with_multiple_filters() -> None:
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("INFO"))
+        .with_filter("name", NameFilterBuilder().with_prefix("multi"))
+        .with_logger(
+            "multi",
+            LoggerConfigBuilder().with_filters(["lvl", "name"]),
+        )
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    )
+    cb.build_and_init()
+    logger = get_logger("multi")
+    assert logger.log("INFO", "emit") is not None
+    assert logger.log("DEBUG", "suppress") is None

@@ -24,7 +24,7 @@ pub struct ConfigBuilder {
     // Internal state to hold configuration parts
     version: u8,
     disable_existing_loggers: bool,
-    default_level: Option<Level>,
+    default_level: Option<FemtoLevel>,
     formatters: BTreeMap<String, FormatterBuilder>,
     filters: BTreeMap<String, FilterBuilder>,
     handlers: BTreeMap<String, HandlerBuilder>,
@@ -45,7 +45,7 @@ impl ConfigBuilder {
     pub fn with_disable_existing_loggers(mut self, disable: bool) -> Self { /* ... */ }
 
     /// Sets the default log level for loggers that do not have an explicit level configured.
-    pub fn with_default_level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_default_level(mut self, level: FemtoLevel) -> Self { /* ... */ }
 
     /// Adds a formatter configuration by its unique ID, replacing any existing entry.
     pub fn with_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self {
@@ -91,7 +91,7 @@ impl ConfigBuilder {
 
 // In femtologging::config::LoggerConfigBuilder
 pub struct LoggerConfigBuilder {
-    level: Option<Level>,
+    level: Option<FemtoLevel>,
     propagate: Option<bool>,
     filters: Vec<String>,
     handlers: Vec<String>,
@@ -102,7 +102,7 @@ impl LoggerConfigBuilder {
     pub fn new() -> Self { /* ... */ }
 
     /// Sets the log level for this logger.
-    pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_level(mut self, level: FemtoLevel) -> Self { /* ... */ }
 
     /// Sets whether messages should propagate to parent loggers.
     pub fn with_propagate(mut self, propagate: bool) -> Self { /* ... */ }
@@ -169,7 +169,7 @@ pub struct FileHandlerBuilder {
     path: String,
     mode: Option<String>,
     encoding: Option<String>,
-    level: Option<Level>,
+    level: Option<FemtoLevel>,
     formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
@@ -187,7 +187,7 @@ impl FileHandlerBuilder {
     pub fn encoding(mut self, encoding: impl Into<String>) -> Self { /* ... */ }
 
     /// Sets the log level for this handler.
-    pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_level(mut self, level: FemtoLevel) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
     pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
@@ -216,7 +216,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
 // Example: In femtologging::handlers::StreamHandlerBuilder
 pub struct StreamHandlerBuilder {
     stream_target: String, // "stdout", "stderr", or "ext://sys.stdout", "ext://sys.stderr"
-    level: Option<Level>,
+    level: Option<FemtoLevel>,
     formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
@@ -234,7 +234,7 @@ impl StreamHandlerBuilder {
     pub fn stream_target(mut self, target: impl Into<String>) -> Self { /* ... */ }
 
     /// Sets the log level for this handler.
-    pub fn with_level(mut self, level: Level) -> Self { /* ... */ }
+    pub fn with_level(mut self, level: FemtoLevel) -> Self { /* ... */ }
 
     /// Sets the ID of the formatter to be used by this handler.
     pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
@@ -290,13 +290,13 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 ```python
 # In femtologging.config
 from typing import List, Optional, Union
-from .levels import Level  # Assuming an enum or similar for levels
+from .levels import FemtoLevel  # Assuming an enum or similar for levels
 
 class ConfigBuilder:
     def __init__(self) -> None: ...
     def with_version(self, version: int) -> "ConfigBuilder": ...
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
-    def with_default_level(self, level: Union[str, Level]) -> "ConfigBuilder": ...
+    def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder": ...
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
     def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...
     def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
@@ -306,7 +306,7 @@ class ConfigBuilder:
 
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
-    def with_level(self, level: Union[str, Level]) -> "LoggerConfigBuilder": ...
+    def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder": ...
     def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing filters
     def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing handlers
@@ -320,7 +320,7 @@ class FormatterBuilder:
 # In femtologging.handlers
 class HandlerBuilder: # Abstract base class or conceptual union
     # Common methods
-    def with_level(self, level: Union[str, Level]) -> "HandlerBuilder": ...
+    def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder": ...
     def with_formatter(self, formatter_id: str) -> "HandlerBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
     def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers

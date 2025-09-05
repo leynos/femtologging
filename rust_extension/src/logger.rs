@@ -353,6 +353,7 @@ impl Drop for FemtoLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
     use parking_lot::Mutex;
     use std::sync::Arc;
 
@@ -461,5 +462,49 @@ mod tests {
         assert_eq!(logger.handler_ptrs_for_test().len(), 1);
         logger.clear_handlers();
         assert!(logger.handler_ptrs_for_test().is_empty());
+    }
+
+    #[test]
+    fn multiple_filters_must_all_pass() {
+        let logger = FemtoLogger::new("multi".into());
+        let lvl = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
+        let name = NameFilterBuilder::new().with_prefix("multi");
+        logger.add_filter(lvl.build().expect("level build should succeed"));
+        logger.add_filter(name.build().expect("name build should succeed"));
+
+        assert!(logger.log(FemtoLevel::Info, "ok").is_some());
+        assert!(logger.log(FemtoLevel::Debug, "no").is_none());
+
+        let other = FemtoLogger::new("other".into());
+        other.add_filter(lvl.build().expect("level build should succeed"));
+        other.add_filter(name.build().expect("name build should succeed"));
+        assert!(other.log(FemtoLevel::Info, "no").is_none());
+    }
+
+    #[test]
+    fn removing_and_clearing_filters() {
+        let logger = FemtoLogger::new("remove".into());
+        let filt = LevelFilterBuilder::new()
+            .with_max_level(FemtoLevel::Info)
+            .build()
+            .expect("build should succeed");
+        logger.add_filter(filt.clone());
+        assert!(logger.log(FemtoLevel::Error, "msg").is_none());
+        assert!(logger.remove_filter(&filt));
+        assert!(logger.log(FemtoLevel::Error, "msg").is_some());
+
+        let f1 = LevelFilterBuilder::new()
+            .with_max_level(FemtoLevel::Error)
+            .build()
+            .expect("build should succeed");
+        let f2 = NameFilterBuilder::new()
+            .with_prefix("other")
+            .build()
+            .expect("build should succeed");
+        logger.add_filter(f1);
+        logger.add_filter(f2);
+        assert!(logger.log(FemtoLevel::Error, "msg").is_none());
+        logger.clear_filters();
+        assert!(logger.log(FemtoLevel::Error, "msg").is_some());
     }
 }
