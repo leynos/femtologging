@@ -16,7 +16,13 @@ pub struct LevelFilter {
 
 impl FemtoFilter for LevelFilter {
     fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        let record_level = record.level.parse().unwrap_or(FemtoLevel::Info);
+        let record_level: FemtoLevel = match record.level.parse::<FemtoLevel>() {
+            Ok(level) => level,
+            Err(e) => {
+                eprintln!("FemtoLog: Failed to parse log level '{}' for record from logger '{}'. Error: {:?}. Filtering out this record.", record.level, record.logger, e);
+                return false;
+            }
+        };
         record_level <= self.max_level
     }
 }

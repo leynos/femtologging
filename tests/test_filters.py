@@ -4,6 +4,7 @@ import collections.abc as cabc
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 from syrupy import SnapshotAssertion
+from typing import Callable
 
 from femtologging import (
     ConfigBuilder,
@@ -130,44 +131,41 @@ def test_logger_with_multiple_filters() -> None:
     assert logger.log("DEBUG", "suppress") is None
 
 
-def test_reconfig_replaces_filters() -> None:
-    cb = (
+def _initial_config() -> ConfigBuilder:
+    return (
         ConfigBuilder()
         .with_filter("lvl", LevelFilterBuilder().with_max_level("WARNING"))
         .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
     )
-    cb.build_and_init()
-    logger = get_logger("core")
-    assert logger.log("ERROR", "drop") is None
 
-    cb2 = (
+
+def _reconfig_no_filter() -> ConfigBuilder:
+    return (
         ConfigBuilder()
         .with_logger("core", LoggerConfigBuilder())
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
     )
-    cb2.build_and_init()
-    logger_after = get_logger("core")
-    assert logger_after.log("ERROR", "emit") is not None
 
 
-def test_reconfig_replaces_with_new_filter() -> None:
-    cb1 = (
-        ConfigBuilder()
-        .with_filter("lvl", LevelFilterBuilder().with_max_level("WARNING"))
-        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
-        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
-    )
-    cb1.build_and_init()
-    logger = get_logger("core")
-    assert logger.log("ERROR", "drop") is None
-
-    cb2 = (
+def _reconfig_with_new_filter() -> ConfigBuilder:
+    return (
         ConfigBuilder()
         .with_filter("name", NameFilterBuilder().with_prefix("core"))
         .with_logger("core", LoggerConfigBuilder().with_filters(["name"]))
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
     )
-    cb2.build_and_init()
+
+
+@pytest.mark.parametrize(
+    "next_config", [_reconfig_no_filter, _reconfig_with_new_filter]
+)
+def test_reconfig_replaces_filters(next_config: Callable[[], ConfigBuilder]) -> None:
+    cb = _initial_config()
+    cb.build_and_init()
+    logger = get_logger("core")
+    assert logger.log("ERROR", "drop") is None
+
+    next_config().build_and_init()
     logger_after = get_logger("core")
     assert logger_after.log("ERROR", "emit") is not None

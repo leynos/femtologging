@@ -1,3 +1,4 @@
+//! Python bindings and public re-exports for the femtologging Rust extension.
 use pyo3::prelude::*;
 
 mod config;

@@ -100,6 +100,7 @@ impl AsPyDict for FilterBuilder {
 /// integrate without modifying central dispatch code.
 pub type ExtractFilterBuilder = fn(&Bound<'_, PyAny>) -> PyResult<Option<FilterBuilder>>;
 
+/// Wrapper type for registering filter builder extractors with `inventory`.
 pub struct FilterExtractor(pub ExtractFilterBuilder);
 
 inventory::collect!(FilterExtractor);
