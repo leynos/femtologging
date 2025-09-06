@@ -41,20 +41,20 @@ if _typing.TYPE_CHECKING:
         NameFilterBuilder as NameFilterBuilder,
     )
 
-from . import _femtologging_rs as rust  # type: ignore[attr-defined]
+from . import _femtologging_rs as rust
 from .overflow_policy import OverflowPolicy
 
 rust = cast(Any, rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
-StreamHandlerBuilder = rust.StreamHandlerBuilder  # type: ignore[attr-defined]
-FileHandlerBuilder = rust.FileHandlerBuilder  # type: ignore[attr-defined]
-ConfigBuilder = rust.ConfigBuilder  # type: ignore[attr-defined]
-LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
-FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
-LevelFilterBuilder = rust.LevelFilterBuilder  # type: ignore[attr-defined]
-NameFilterBuilder = rust.NameFilterBuilder  # type: ignore[attr-defined]
+StreamHandlerBuilder = rust.StreamHandlerBuilder
+FileHandlerBuilder = rust.FileHandlerBuilder
+ConfigBuilder = rust.ConfigBuilder
+LoggerConfigBuilder = rust.LoggerConfigBuilder
+FormatterBuilder = rust.FormatterBuilder
+LevelFilterBuilder = rust.LevelFilterBuilder
+NameFilterBuilder = rust.NameFilterBuilder
 
 
 _HANDLER_CLASS_MAP: Final[dict[str, object]] = {
