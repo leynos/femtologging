@@ -427,6 +427,56 @@ classDiagram
     StreamHandlerBuilder --> "uses" FormatterBuilder
 ```
 
+### 1.5. Interaction sequences
+
+The configuration flow and runtime log path are illustrated below to show how
+Python builders cooperate with the Rust registry and how filters gate records
+before handlers run.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor PyApp as Python App
+  participant PyCB as Py ConfigBuilder
+  participant RsCB as Rust ConfigBuilder
+  participant FReg as Filter Registry
+  participant Ld as LoggerConfigBuilder
+  participant LG as FemtoLogger
+
+  PyApp->>PyCB: with_filter("only_info", LevelFilterBuilder(...))
+  PyCB->>RsCB: with_filter(id, builder)
+  PyApp->>PyCB: add_logger(... filter_ids=["only_info"])
+  PyApp->>PyCB: build_and_init()
+  PyCB->>RsCB: build_and_init()
+  RsCB->>FReg: build FilterBuilders -> Arc<dyn FemtoFilter>
+  FReg-->>RsCB: built_filters map
+  RsCB->>Ld: apply_logger_config(filter_ids, built_filters)
+  Ld->>LG: create logger and attach filters
+  RsCB-->>PyCB: initialised
+  PyCB-->>PyApp: ready
+```
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant App as Caller
+  participant LG as FemtoLogger
+  participant FS as Filters
+  participant HD as Handlers
+
+  App->>LG: log(record)
+  LG->>FS: for each filter: should_log(record)?
+  alt any filter denies
+    FS-->>LG: denied
+    LG-->>App: suppressed (None)
+  else all allow
+    FS-->>LG: allowed
+    LG->>HD: dispatch(record)
+    HD-->>LG: handled
+    LG-->>App: handled (Some)
+  end
+```
+
 ## 2. Backwards Compatibility APIs
 
 `femtologging` will provide functions in the Python package to ensure backwards
