@@ -1,5 +1,6 @@
 //! Builder and implementation for a level-based filter.
 
+use log::warn;
 use pyo3::prelude::*;
 
 use crate::{
@@ -19,7 +20,13 @@ impl FemtoFilter for LevelFilter {
         let record_level: FemtoLevel = match record.level.parse::<FemtoLevel>() {
             Ok(level) => level,
             Err(e) => {
-                eprintln!("FemtoLog: Failed to parse log level '{}' for record from logger '{}'. Error: {:?}. Filtering out this record.", record.level, record.logger, e);
+                warn!(
+                    concat!(
+                        "FemtoLog: Failed to parse log level '{}' for record from ",
+                        "logger '{}'. Error: {:?}. Filtering out this record."
+                    ),
+                    record.level, record.logger, e
+                );
                 return false;
             }
         };

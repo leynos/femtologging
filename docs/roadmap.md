@@ -57,7 +57,8 @@ from that design.
   with their respective rotation logic.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
   reconnection handling.
-- [x] Define the `FemtoFilter` trait and implement common filter types.
+- [x] Define the `FemtoFilter` trait and implement common filter
+  types.[^pr198-filters]
 - [ ] Support dynamic log level updates at runtime using atomic variables.
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
 - [ ] Expand test coverage and start benchmarking.
@@ -76,3 +77,5 @@ These phases will lead to a robust Rust implementation that matches the
 performance goals of picologging while leveraging Rust's safety guarantees.
 Development should start with Phase 1 to deliver a minimal, testable product
 and iterate from there.
+
+[^pr198-filters]: completed in PR #198 on 6 September 2025.

@@ -9,6 +9,7 @@ from .overflow_policy import OverflowPolicy
 from .config import dictConfig
 import logging
 import sys
+import typing as _typing
 from dataclasses import dataclass
 from typing import (
     Iterable,
@@ -16,6 +17,12 @@ from typing import (
     cast,
     overload,
 )
+
+if _typing.TYPE_CHECKING:
+    from ._femtologging_rs import (  # noqa: F401
+        LevelFilterBuilder as LevelFilterBuilder,
+        NameFilterBuilder as NameFilterBuilder,
+    )
 
 hello = rust.hello  # type: ignore[attr-defined]
 FemtoLogger = rust.FemtoLogger  # type: ignore[attr-defined]
@@ -76,7 +83,7 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     Other Parameters
     ----------------
     level : str or int, optional
-        Logging level.
+        Logging level. Accepts case-insensitive "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", and "NOTSET".
     filename : str, optional
         File to write logs to.
     stream : TextIO, optional

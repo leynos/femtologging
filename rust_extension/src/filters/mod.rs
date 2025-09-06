@@ -57,6 +57,7 @@ pub trait FilterBuilderTrait: Send + Sync {
 
 /// Concrete filter builder variants.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum FilterBuilder {
     /// Build a [`LevelFilter`].
     Level(LevelFilterBuilder),
@@ -98,9 +99,11 @@ impl AsPyDict for FilterBuilder {
 ///
 /// Builders register their extractor via [`inventory`], allowing new builders to
 /// integrate without modifying central dispatch code.
+#[doc(hidden)]
 pub type ExtractFilterBuilder = fn(&Bound<'_, PyAny>) -> PyResult<Option<FilterBuilder>>;
 
 /// Wrapper type for registering filter builder extractors with `inventory`.
+#[doc(hidden)]
 pub struct FilterExtractor(pub ExtractFilterBuilder);
 
 inventory::collect!(FilterExtractor);

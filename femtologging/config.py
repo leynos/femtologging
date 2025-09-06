@@ -5,6 +5,8 @@ This module implements :func:`dictConfig`, a restricted variant of
 recognized: ``filters`` sections, handler ``level`` attributes, and
 incremental configuration are unsupported.
 
+String level parameters accept case-insensitive names: "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", and "NOTSET".
+
 Example
 -------
 >>> dictConfig({
@@ -12,6 +14,16 @@ Example
 ...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
 ...     "root": {"level": "INFO", "handlers": ["h"]},
 ... })
+
+The ``dictConfig`` format does not support ``filters`` and will raise ``ValueError`` if a ``filters`` section is provided. To attach filters, use the builder API:
+
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("INFO"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    )
+    cb.build_and_init()
 """
 
 from __future__ import annotations
@@ -19,6 +31,13 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from typing import Any, Callable, Final, Mapping, Sequence, cast
+import typing as _typing
+
+if _typing.TYPE_CHECKING:
+    from ._femtologging_rs import (  # noqa: F401
+        LevelFilterBuilder as LevelFilterBuilder,
+        NameFilterBuilder as NameFilterBuilder,
+    )
 
 from . import _femtologging_rs as rust  # type: ignore[attr-defined]
 from .overflow_policy import OverflowPolicy
