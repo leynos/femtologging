@@ -1,4 +1,8 @@
-from typing import Any as _Any
+from typing import Any as _Any, Literal, Union
+
+FemtoLevel: _Any
+LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
+LevelArg = Union[LevelName, FemtoLevel]
 
 FemtoLogger: _Any
 FemtoHandler: _Any

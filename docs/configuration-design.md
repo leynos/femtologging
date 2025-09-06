@@ -299,7 +299,7 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 
 String level parameters accept case-insensitive names: "TRACE", "DEBUG",
 "INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are
-equivalent.
+equivalent. ``NOTSET`` is not supported.
 
 ```python
 # In femtologging.config
