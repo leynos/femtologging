@@ -297,8 +297,9 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 - `LevelFilterBuilder(max_level: Union[str, FemtoLevel])`.
 - `NameFilterBuilder(prefix: str)`.
 
-String level parameters accept case-insensitive names: "CRITICAL", "ERROR",
-"WARNING", "INFO", "DEBUG", and "NOTSET".
+String level parameters accept case-insensitive names: "TRACE", "DEBUG",
+"INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are
+equivalent.
 
 ```python
 # In femtologging.config
@@ -310,7 +311,7 @@ class ConfigBuilder:
     def with_version(self, version: int) -> "ConfigBuilder": ...
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
     def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder": ...
-        # accepts "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"
+        # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
     def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
     def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
@@ -321,7 +322,7 @@ class ConfigBuilder:
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
     def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder": ...
-        # accepts "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"
+        # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing filters
     def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing handlers
@@ -336,7 +337,7 @@ class FormatterBuilder:
 class HandlerBuilder: # Abstract base class or conceptual union
     # Common methods
     def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder": ...
-        # accepts "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"
+        # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_formatter(self, formatter_id: str) -> "HandlerBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
     def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers

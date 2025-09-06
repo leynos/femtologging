@@ -5,7 +5,9 @@ This module implements :func:`dictConfig`, a restricted variant of
 recognized: ``filters`` sections, handler ``level`` attributes, and
 incremental configuration are unsupported.
 
-String level parameters accept case-insensitive names: "CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", and "NOTSET".
+String level parameters accept case-insensitive names: "TRACE", "DEBUG",
+"INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING"
+are equivalent.
 
 Example
 -------
