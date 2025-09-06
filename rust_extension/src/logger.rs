@@ -179,6 +179,12 @@ impl FemtoLogger {
         self.clear_handlers();
     }
 
+    /// Remove all attached filters.
+    #[pyo3(name = "clear_filters", text_signature = "(self)")]
+    pub fn py_clear_filters(&self) {
+        self.clear_filters();
+    }
+
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()

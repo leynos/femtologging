@@ -135,12 +135,12 @@ def test_logger_with_multiple_filters() -> None:
     [
         (
             "remove_all_filters",
-            ("lvl", LevelFilterBuilder().with_max_level("WARNING")),
+            ("lvl", LevelFilterBuilder().with_max_level("DEBUG")),
             None,
         ),
         (
             "replace_with_name_filter",
-            ("lvl", LevelFilterBuilder().with_max_level("WARNING")),
+            ("lvl", LevelFilterBuilder().with_max_level("DEBUG")),
             ("name", NameFilterBuilder().with_prefix("core")),
         ),
     ],
@@ -173,3 +173,17 @@ def test_reconfig_replaces_filters(
 
     logger_after = get_logger("core")
     assert logger_after.log("ERROR", "emit") is not None
+
+
+def test_filter_clearing() -> None:
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    )
+    cb.build_and_init()
+    logger = get_logger("core")
+    assert logger.log("INFO", "drop") is None
+    logger.clear_filters()
+    assert logger.log("INFO", "emit") is not None
