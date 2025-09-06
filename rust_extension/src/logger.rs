@@ -128,7 +128,7 @@ impl FemtoLogger {
             return None;
         }
         let msg = self.formatter.format(&record);
-        self.queue_record_to_handlers(record);
+        self.dispatch_to_handlers(record);
         Some(msg)
     }
 
@@ -202,12 +202,12 @@ impl FemtoLogger {
         true
     }
 
-    /// Queue a record for asynchronous processing by the logger's handlers.
+    /// Dispatch a record to the logger's handlers via the background queue.
     ///
     /// The record is sent to the worker thread if a channel is configured.
     /// When the queue is full or the logger is shutting down, the record is
     /// dropped and a warning is logged.
-    fn queue_record_to_handlers(&self, record: FemtoLogRecord) {
+    fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
             let handlers = self.handlers.read().clone();
             if tx.try_send(QueuedRecord { record, handlers }).is_err() {
