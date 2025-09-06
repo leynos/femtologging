@@ -438,6 +438,7 @@ impl ConfigBuilder {
                 .ok_or_else(|| ConfigError::UnknownHandlerId(hid.clone()))?;
             logger.borrow(py).add_handler(h.clone());
         }
+        // Replace existing filters so reconfiguration is idempotent.
         logger.borrow(py).clear_filters();
         for fid in cfg.filter_ids() {
             let f = filters

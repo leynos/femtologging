@@ -149,3 +149,25 @@ def test_reconfig_replaces_filters() -> None:
     cb2.build_and_init()
     logger_after = get_logger("core")
     assert logger_after.log("ERROR", "emit") is not None
+
+
+def test_reconfig_replaces_with_new_filter() -> None:
+    cb1 = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("WARNING"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    cb1.build_and_init()
+    logger = get_logger("core")
+    assert logger.log("ERROR", "drop") is None
+
+    cb2 = (
+        ConfigBuilder()
+        .with_filter("name", NameFilterBuilder().with_prefix("core"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["name"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    cb2.build_and_init()
+    logger_after = get_logger("core")
+    assert logger_after.log("ERROR", "emit") is not None
