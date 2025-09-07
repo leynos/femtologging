@@ -1,6 +1,7 @@
 //! Unit tests for configuration builders.
 
 use super::*;
+use crate::filters::{FilterBuilder, LevelFilterBuilder};
 use crate::manager;
 use pyo3::Python;
 use rstest::rstest;
@@ -61,6 +62,33 @@ fn unknown_handler_id_rejected() {
         .with_logger("child", logger_cfg);
     let err = builder.build_and_init().unwrap_err();
     assert!(matches!(err, ConfigError::UnknownHandlerId(id) if id == "missing"));
+}
+
+#[rstest]
+#[serial]
+fn reconfig_with_unknown_filter_preserves_existing_filters() {
+    Python::with_gil(|py| {
+        manager::reset_manager();
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
+        let builder = ConfigBuilder::new()
+            .with_filter("lvl", FilterBuilder::Level(filt))
+            .with_root_logger(root.clone())
+            .with_logger("core", LoggerConfigBuilder::new().with_filters(["lvl"]));
+        builder
+            .build_and_init()
+            .expect("initial build should succeed");
+        let logger = manager::get_logger(py, "core").unwrap();
+        assert!(logger.borrow(py).log(FemtoLevel::Error, "drop").is_none());
+        let bad = ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_logger("core", LoggerConfigBuilder::new().with_filters(["missing"]));
+        assert!(bad.build_and_init().is_err());
+        assert!(logger
+            .borrow(py)
+            .log(FemtoLevel::Error, "still drop")
+            .is_none());
+    });
 }
 
 #[rstest]

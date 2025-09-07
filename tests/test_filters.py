@@ -175,6 +175,29 @@ def test_reconfig_replaces_filters(
     assert logger_after.log("ERROR", "emit") is not None
 
 
+def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    cb.build_and_init()
+    logger = get_logger("core")
+    assert logger.log("ERROR", "drop") is None
+
+    bad = (
+        ConfigBuilder()
+        .with_logger("core", LoggerConfigBuilder().with_filters(["missing"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    with pytest.raises((FilterBuildError, ValueError)):
+        bad.build_and_init()
+
+    logger_after = get_logger("core")
+    assert logger_after.log("ERROR", "still drop") is None
+
+
 def test_filter_clearing() -> None:
     cb = (
         ConfigBuilder()
