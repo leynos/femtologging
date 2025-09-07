@@ -267,8 +267,8 @@ dictionary representations mirror these names to avoid ambiguity.
 #### 1.1.1 Filters
 
 Filters implement the `FemtoFilter` trait and decide whether a `FemtoLogRecord`
-is processed. The builder recognises two concrete filter builders with these
-semantics:
+is processed. The builder currently recognises two concrete filter builders
+with these semantics:
 
 - `LevelFilterBuilder` admits records whose level is less than or equal to
   `max_level` (inclusive). This acts after any per-logger level gating.
