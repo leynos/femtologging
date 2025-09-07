@@ -37,8 +37,8 @@ import typing as _typing
 
 if _typing.TYPE_CHECKING:
     from ._femtologging_rs import (  # noqa: F401
-        LevelFilterBuilder as LevelFilterBuilder,
-        NameFilterBuilder as NameFilterBuilder,
+        LevelFilterBuilder,
+        NameFilterBuilder,
     )
 
 from . import _femtologging_rs as rust

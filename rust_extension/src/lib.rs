@@ -21,10 +21,11 @@ mod rate_limited_warner;
 mod stream_handler;
 
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+use filters::FilterBuildErrorPy;
 pub use filters::{
-    FemtoFilter, FilterBuildError, FilterBuildErrorPy, FilterBuilderTrait, LevelFilterBuilder,
-    NameFilterBuilder,
+    FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
 };
+
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use handlers::{
