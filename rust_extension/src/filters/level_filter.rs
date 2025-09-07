@@ -71,20 +71,8 @@ impl_as_pydict!(LevelFilterBuilder {
 
 py_setters!(LevelFilterBuilder {
     max_level: py_with_max_level => "with_max_level", FemtoLevel, Some,
-        "Set the maximum level to allow.",
+        "Set the maximum level permitted.",
 });
-
-fn extractor(obj: &Bound<'_, PyAny>) -> PyResult<Option<super::FilterBuilder>> {
-    if let Ok(b) = obj.extract::<LevelFilterBuilder>() {
-        Ok(Some(super::FilterBuilder::Level(b)))
-    } else {
-        Ok(None)
-    }
-}
-
-inventory::submit! {
-    super::FilterExtractor(extractor)
-}
 
 #[cfg(test)]
 mod tests {

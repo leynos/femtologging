@@ -15,7 +15,6 @@ log = "0.4"
 once_cell = "1"
 parking_lot = "0.12"
 thiserror = "1"
-inventory = "0.3"
 
 [features]
 default = ["extension-module"]

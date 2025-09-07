@@ -210,3 +210,23 @@ def test_filter_clearing() -> None:
     assert logger.log("INFO", "drop") is None
     logger.clear_filters()
     assert logger.log("INFO", "emit") is not None
+
+
+def test_multiple_filters_clearing() -> None:
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
+        .with_filter("name", NameFilterBuilder().with_prefix("other"))
+        .with_logger(
+            "core",
+            LoggerConfigBuilder().with_level("DEBUG").with_filters(["lvl", "name"]),
+        )
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    )
+    cb.build_and_init()
+    logger = get_logger("core")
+    assert logger.log("ERROR", "blocked by level filter") is None
+    assert logger.log("DEBUG", "blocked by name") is None
+    logger.clear_filters()
+    assert logger.log("ERROR", "allowed now") is not None
+    assert logger.log("DEBUG", "also allowed") is not None

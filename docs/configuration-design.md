@@ -266,9 +266,9 @@ dictionary representations mirror these names to avoid ambiguity.
 
 ### 1.1.1. Filters
 
-The builder now supports a `FilterBuilder` registry. Filters implement the
-`FemtoFilter` trait and decide whether a `FemtoLogRecord` is processed. Two
-built-in builders are provided with these semantics:
+Filters implement the `FemtoFilter` trait and decide whether a `FemtoLogRecord`
+is processed. The builder recognises two concrete filter builders with these
+semantics:
 
 - `LevelFilterBuilder` admits records whose level is less than or equal to
   `max_level` (inclusive). This acts after any per-logger level gating.
@@ -276,8 +276,8 @@ built-in builders are provided with these semantics:
   prefix. Filters are registered via `ConfigBuilder.with_filter()` and
   referenced by loggers through `LoggerConfigBuilder.with_filters()`.
 
-Filter builders self-register with the Rust registry to avoid binding
-boilerplate.
+`ConfigBuilder` attempts to extract known builders in order, so adding a new
+filter requires updating this extraction logic.
 
 Filters run only after the logger has accepted the record based on its level.
 Records failing the logger's level check are dropped before any filter runs, so
@@ -431,7 +431,7 @@ classDiagram
 ### 1.5. Interaction sequences
 
 The configuration flow and runtime log path are illustrated below to show how
-Python builders cooperate with the Rust registry and how filters gate records
+Python builders cooperate with the Rust filter map and how filters gate records
 before handlers run.
 
 ```mermaid

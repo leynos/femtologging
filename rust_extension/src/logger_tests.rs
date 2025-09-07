@@ -155,3 +155,14 @@ fn removing_and_clearing_filters() {
     logger.clear_filters();
     assert!(logger.log(FemtoLevel::Error, "msg").is_some());
 }
+
+#[test]
+fn removing_unknown_filter_returns_false() {
+    let logger = FemtoLogger::new("unknown".into());
+    let filt = LevelFilterBuilder::new()
+        .with_max_level(FemtoLevel::Info)
+        .build()
+        .expect("build should succeed");
+    assert!(!logger.remove_filter(&filt));
+    assert!(logger.log(FemtoLevel::Error, "err").is_some());
+}

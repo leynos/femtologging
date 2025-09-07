@@ -1,11 +1,11 @@
 //! Filtering components for log records.
 //!
-//! Provides the [`FemtoFilter`] trait along with builders and a registry for
+//! Provides the [`FemtoFilter`] trait along with concrete filter builders for
 //! constructing filters.
 
 use std::sync::Arc;
 
-use pyo3::{create_exception, prelude::*};
+use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
 use thiserror::Error;
 
 use crate::{log_record::FemtoLogRecord, macros::AsPyDict};
@@ -95,33 +95,25 @@ impl AsPyDict for FilterBuilder {
     }
 }
 
-/// Function type used to extract a [`FilterBuilder`] from Python objects.
-///
-/// Builders register their extractor via [`inventory`], allowing new builders to
-/// integrate without modifying central dispatch code.
-#[doc(hidden)]
-pub type ExtractFilterBuilder = fn(&Bound<'_, PyAny>) -> PyResult<Option<FilterBuilder>>;
-
-/// Wrapper type for registering filter builder extractors with `inventory`.
-#[doc(hidden)]
-pub struct FilterExtractor(pub ExtractFilterBuilder);
-
-inventory::collect!(FilterExtractor);
-
 impl<'py> FromPyObject<'py> for FilterBuilder {
     fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
-        for extractor in inventory::iter::<FilterExtractor> {
-            if let Some(builder) = (extractor.0)(obj)? {
-                return Ok(builder);
-            }
+        match LevelFilterBuilder::extract_bound(obj) {
+            Ok(b) => return Ok(FilterBuilder::Level(b)),
+            Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
+            Err(e) => return Err(e),
+        }
+        match NameFilterBuilder::extract_bound(obj) {
+            Ok(b) => return Ok(FilterBuilder::Name(b)),
+            Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
+            Err(e) => return Err(e),
         }
         let ty = obj
             .get_type()
             .name()
             .map(|s| s.to_string())
             .unwrap_or_else(|_| "<unknown>".into());
-        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-            "unknown filter builder (got Python type: {ty})"
+        Err(PyTypeError::new_err(format!(
+            "unknown filter builder type (got Python type: {ty})",
         )))
     }
 }
