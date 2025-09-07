@@ -33,13 +33,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from typing import Any, Callable, Final, Mapping, Sequence, cast
-import typing as _typing
 
-if _typing.TYPE_CHECKING:
-    from ._femtologging_rs import (  # noqa: F401
-        LevelFilterBuilder,
-        NameFilterBuilder,
-    )
 
 from . import _femtologging_rs as rust
 from .overflow_policy import OverflowPolicy
