@@ -298,8 +298,8 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 - `LevelFilterBuilder(max_level: Union[str, FemtoLevel])`.
 - `NameFilterBuilder(prefix: str)`.
 
-String level parameters accept case-insensitive names: "TRACE", "DEBUG",
-"INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are
+String level parameters accept case-insensitive names: `TRACE`, `DEBUG`,
+`INFO`, `WARN`, `WARNING`, `ERROR`, and `CRITICAL`. `WARN` and `WARNING` are
 equivalent. `NOTSET` is not supported.
 
 ```python
