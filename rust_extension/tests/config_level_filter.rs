@@ -22,7 +22,7 @@ fn level_filter_blocks_records() {
             .with_root_logger(root)
             .with_logger("child", logger_cfg);
         builder.build_and_init().expect("build should succeed");
-        let logger = manager::get_logger(py, "child").unwrap();
+        let logger = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
         assert!(logger.borrow(py).log(FemtoLevel::Info, "ok").is_some());
         assert!(logger.borrow(py).log(FemtoLevel::Error, "nope").is_none());
     });

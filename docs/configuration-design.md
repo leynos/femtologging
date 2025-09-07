@@ -264,7 +264,7 @@ semantics intentionally differ: file handlers flush after a set number of
 records, whereas stream handlers flush after a period of inactivity. Their
 dictionary representations mirror these names to avoid ambiguity.
 
-### 1.1.1. Filters
+#### 1.1.1 Filters
 
 Filters implement the `FemtoFilter` trait and decide whether a `FemtoLogRecord`
 is processed. The builder recognises two concrete filter builders with these

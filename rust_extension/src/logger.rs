@@ -17,7 +17,7 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 use crossbeam_channel::{bounded, select, Receiver, Sender};
-use log::warn;
+use log::{debug, warn};
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::{
@@ -217,7 +217,7 @@ impl FemtoLogger {
         if let Some(tx) = &self.tx {
             let handlers = self.handlers.read().clone();
             if tx.try_send(QueuedRecord { record, handlers }).is_err() {
-                warn!("FemtoLogger: queue full or shutting down, dropping record");
+                debug!("FemtoLogger: queue full or shutting down, dropping record");
             }
         }
     }

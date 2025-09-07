@@ -20,8 +20,8 @@ fn name_filter_blocks_non_matching_records() {
             .with_logger("allowed", LoggerConfigBuilder::new().with_filters(["n"]))
             .with_logger("blocked", LoggerConfigBuilder::new().with_filters(["n"]));
         builder.build_and_init().expect("build should succeed");
-        let ok = manager::get_logger(py, "allowed").unwrap();
-        let bad = manager::get_logger(py, "blocked").unwrap();
+        let ok = manager::get_logger(py, "allowed").expect("get_logger('allowed') should succeed");
+        let bad = manager::get_logger(py, "blocked").expect("get_logger('blocked') should succeed");
         assert!(ok.borrow(py).log(FemtoLevel::Info, "ok").is_some());
         assert!(bad.borrow(py).log(FemtoLevel::Info, "blocked").is_none());
     });

@@ -41,8 +41,9 @@ fn shared_handler_attached_once() {
             .with_logger("first", logger_cfg.clone())
             .with_logger("second", logger_cfg);
         builder.build_and_init().expect("build should succeed");
-        let first = manager::get_logger(py, "first").unwrap();
-        let second = manager::get_logger(py, "second").unwrap();
+        let first = manager::get_logger(py, "first").expect("get_logger('first') should succeed");
+        let second =
+            manager::get_logger(py, "second").expect("get_logger('second') should succeed");
         let h1 = first.borrow(py).handlers_for_test();
         let h2 = second.borrow(py).handlers_for_test();
         assert!(
@@ -78,7 +79,7 @@ fn reconfig_with_unknown_filter_preserves_existing_filters() {
         builder
             .build_and_init()
             .expect("initial build should succeed");
-        let logger = manager::get_logger(py, "core").unwrap();
+        let logger = manager::get_logger(py, "core").expect("get_logger('core') should succeed");
         assert!(logger.borrow(py).log(FemtoLevel::Error, "drop").is_none());
         let bad = ConfigBuilder::new()
             .with_root_logger(root)

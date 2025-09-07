@@ -99,13 +99,24 @@ def logger_suppresses(name: str, level: str) -> None:
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
-    with pytest.raises((FilterBuildError, ValueError)):
+    with pytest.raises(ValueError):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
 def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises((FilterBuildError, ValueError)) as excinfo:
+    with pytest.raises(FilterBuildError) as excinfo:
+        config_builder.build_and_init()
+    assert msg in str(excinfo.value)
+
+
+@then(
+    parsers.parse(
+        'building the configuration fails with value error containing "{msg}"'
+    )
+)
+def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)
 
@@ -191,7 +202,7 @@ def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
         .with_logger("core", LoggerConfigBuilder().with_filters(["missing"]))
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
     )
-    with pytest.raises((FilterBuildError, ValueError)):
+    with pytest.raises(ValueError):
         bad.build_and_init()
 
     logger_after = get_logger("core")
