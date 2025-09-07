@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
 
+use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
 
 use crate::{
@@ -97,6 +98,7 @@ pub struct FemtoLogger {
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
@@ -122,13 +124,11 @@ impl FemtoLogger {
             return None;
         }
         let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
-        let msg = self.formatter.format(&record);
-        if let Some(tx) = &self.tx {
-            let handlers = self.handlers.read().clone();
-            if tx.try_send(QueuedRecord { record, handlers }).is_err() {
-                warn!("FemtoLogger: queue full or shutting down, dropping record");
-            }
+        if !self.passes_all_filters(&record) {
+            return None;
         }
+        let msg = self.formatter.format(&record);
+        self.dispatch_to_handlers(record);
         Some(msg)
     }
 
@@ -179,6 +179,12 @@ impl FemtoLogger {
         self.clear_handlers();
     }
 
+    /// Remove all attached filters.
+    #[pyo3(name = "clear_filters", text_signature = "(self)")]
+    pub fn py_clear_filters(&self) {
+        self.clear_filters();
+    }
+
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -189,9 +195,40 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Return `true` if every configured filter approves the record.
+    ///
+    /// Iterates over each filter and returns `false` on the first rejection.
+    /// If no filters are configured, the record passes.
+    fn passes_all_filters(&self, record: &FemtoLogRecord) -> bool {
+        for f in self.filters.read().iter() {
+            if !f.should_log(record) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Dispatch a record to the logger's handlers via the background queue.
+    ///
+    /// The record is sent to the worker thread if a channel is configured.
+    /// When the queue is full or the logger is shutting down, the record is
+    /// dropped and a warning is logged.
+    fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
+        if let Some(tx) = &self.tx {
+            let handlers = self.handlers.read().clone();
+            if tx.try_send(QueuedRecord { record, handlers }).is_err() {
+                warn!("FemtoLogger: queue full or shutting down, dropping record");
+            }
+        }
+    }
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
+    }
+
+    /// Attach a filter to this logger.
+    pub fn add_filter(&self, filter: Arc<dyn FemtoFilter>) {
+        self.filters.write().push(filter);
     }
 
     /// Detach a handler previously added to this logger.
@@ -212,6 +249,20 @@ impl FemtoLogger {
     /// dispatched to those handlers.
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
+    }
+
+    pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
+        let mut filters = self.filters.write();
+        if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
+            filters.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clear_filters(&self) {
+        self.filters.write().clear();
     }
 
     #[cfg(test)]
@@ -235,6 +286,7 @@ impl FemtoLogger {
         let formatter: Arc<dyn FemtoFormatter> = Arc::new(DefaultFormatter);
         let handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>> =
             Arc::new(RwLock::new(Vec::new()));
+        let filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>> = Arc::new(RwLock::new(Vec::new()));
 
         let (tx, rx) = bounded::<QueuedRecord>(DEFAULT_CHANNEL_CAPACITY);
         let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
@@ -248,6 +300,7 @@ impl FemtoLogger {
             formatter,
             level: AtomicU8::new(FemtoLevel::Info as u8),
             handlers,
+            filters,
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
             handle: Mutex::new(Some(handle)),
@@ -323,115 +376,5 @@ impl Drop for FemtoLogger {
     }
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use parking_lot::Mutex;
-    use std::sync::Arc;
-
-    #[derive(Clone, Default)]
-    struct CollectingHandler {
-        records: Arc<Mutex<Vec<FemtoLogRecord>>>,
-    }
-
-    impl CollectingHandler {
-        fn new() -> Self {
-            Self {
-                records: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        fn collected(&self) -> Vec<FemtoLogRecord> {
-            self.records.lock().clone()
-        }
-    }
-
-    impl FemtoHandlerTrait for CollectingHandler {
-        fn handle(&self, record: FemtoLogRecord) {
-            self.records.lock().push(record);
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-    }
-
-    #[test]
-    fn handle_log_record_dispatches() {
-        let h1 = Arc::new(CollectingHandler::new());
-        let h2 = Arc::new(CollectingHandler::new());
-        let record = QueuedRecord {
-            record: FemtoLogRecord::new("core", "INFO", "msg"),
-            handlers: vec![
-                h1.clone() as Arc<dyn FemtoHandlerTrait>,
-                h2.clone() as Arc<dyn FemtoHandlerTrait>,
-            ],
-        };
-
-        FemtoLogger::handle_log_record(record);
-
-        let r1 = h1.collected();
-        let r2 = h2.collected();
-        assert_eq!(r1.len(), 1);
-        assert_eq!(r2.len(), 1);
-        assert_eq!(r1[0].message, "msg");
-        assert_eq!(r2[0].message, "msg");
-    }
-
-    #[test]
-    fn drain_remaining_records_pulls_all() {
-        let (tx, rx) = crossbeam_channel::bounded(4);
-        let h = Arc::new(CollectingHandler::new());
-        for i in 0..3 {
-            tx.send(QueuedRecord {
-                record: FemtoLogRecord::new("core", "INFO", &format!("{i}")),
-                handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
-            })
-            .expect("Failed to send test record");
-        }
-        drop(tx);
-
-        FemtoLogger::drain_remaining_records(&rx);
-
-        let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
-        assert_eq!(msgs, vec!["0", "1", "2"]);
-    }
-
-    #[test]
-    fn worker_thread_loop_processes_and_drains() {
-        let (tx, rx) = crossbeam_channel::bounded(4);
-        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
-        let h = Arc::new(CollectingHandler::new());
-
-        let thread = std::thread::spawn(move || {
-            FemtoLogger::worker_thread_loop(rx, shutdown_rx);
-        });
-
-        tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", "INFO", "one"),
-            handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
-        })
-        .expect("Failed to send first test record");
-        tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", "INFO", "two"),
-            handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
-        })
-        .expect("Failed to send second test record");
-        shutdown_tx
-            .send(())
-            .expect("Failed to send shutdown signal");
-        thread.join().expect("Worker thread panicked");
-
-        let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
-        assert_eq!(msgs, vec!["one", "two"]);
-    }
-
-    #[test]
-    fn clear_handlers_removes_all() {
-        let logger = FemtoLogger::new("test".into());
-        let h = Arc::new(CollectingHandler::new()) as Arc<dyn FemtoHandlerTrait>;
-        logger.add_handler(h);
-        assert_eq!(logger.handler_ptrs_for_test().len(), 1);
-        logger.clear_handlers();
-        assert!(logger.handler_ptrs_for_test().is_empty());
-    }
-}
+#[path = "logger_tests.rs"]
+mod logger_tests;

@@ -5,6 +5,10 @@ This module implements :func:`dictConfig`, a restricted variant of
 recognized: ``filters`` sections, handler ``level`` attributes, and
 incremental configuration are unsupported.
 
+String level parameters accept case-insensitive names: "TRACE", "DEBUG",
+"INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING"
+are equivalent.
+
 Example
 -------
 >>> dictConfig({
@@ -12,6 +16,16 @@ Example
 ...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
 ...     "root": {"level": "INFO", "handlers": ["h"]},
 ... })
+
+The ``dictConfig`` format does not support ``filters`` and will raise ``ValueError`` if a ``filters`` section is provided. To attach filters, use the builder API:
+
+    cb = (
+        ConfigBuilder()
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("INFO"))
+        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    )
+    cb.build_and_init()
 """
 
 from __future__ import annotations
@@ -19,19 +33,28 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from typing import Any, Callable, Final, Mapping, Sequence, cast
+import typing as _typing
 
-from . import _femtologging_rs as rust  # type: ignore[attr-defined]
+if _typing.TYPE_CHECKING:
+    from ._femtologging_rs import (  # noqa: F401
+        LevelFilterBuilder as LevelFilterBuilder,
+        NameFilterBuilder as NameFilterBuilder,
+    )
+
+from . import _femtologging_rs as rust
 from .overflow_policy import OverflowPolicy
 
 rust = cast(Any, rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
-StreamHandlerBuilder = rust.StreamHandlerBuilder  # type: ignore[attr-defined]
-FileHandlerBuilder = rust.FileHandlerBuilder  # type: ignore[attr-defined]
-ConfigBuilder = rust.ConfigBuilder  # type: ignore[attr-defined]
-LoggerConfigBuilder = rust.LoggerConfigBuilder  # type: ignore[attr-defined]
-FormatterBuilder = rust.FormatterBuilder  # type: ignore[attr-defined]
+StreamHandlerBuilder = rust.StreamHandlerBuilder
+FileHandlerBuilder = rust.FileHandlerBuilder
+ConfigBuilder = rust.ConfigBuilder
+LoggerConfigBuilder = rust.LoggerConfigBuilder
+FormatterBuilder = rust.FormatterBuilder
+LevelFilterBuilder = rust.LevelFilterBuilder
+NameFilterBuilder = rust.NameFilterBuilder
 
 
 _HANDLER_CLASS_MAP: Final[dict[str, object]] = {
@@ -388,6 +411,8 @@ __all__ = [
     "FormatterBuilder",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
+    "LevelFilterBuilder",
+    "NameFilterBuilder",
     "dictConfig",
     "OverflowPolicy",
 ]
