@@ -3,6 +3,7 @@
 use super::*;
 use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
 use parking_lot::Mutex;
+use std::any::Any;
 use std::sync::Arc;
 
 #[derive(Clone, Default)]
@@ -165,4 +166,44 @@ fn removing_unknown_filter_returns_false() {
         .expect("build should succeed");
     assert!(!logger.remove_filter(&filt));
     assert!(logger.log(FemtoLevel::Error, "err").is_some());
+}
+
+#[test]
+fn drop_counter_increments_on_queue_overflow() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Barrier,
+    };
+
+    struct BlockingHandler {
+        barrier: Arc<Barrier>,
+        waited: AtomicBool,
+    }
+
+    impl FemtoHandlerTrait for BlockingHandler {
+        fn handle(&self, _record: FemtoLogRecord) {
+            if !self.waited.swap(true, Ordering::SeqCst) {
+                self.barrier.wait();
+            }
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    let barrier = Arc::new(Barrier::new(2));
+    let handler = Arc::new(BlockingHandler {
+        barrier: Arc::clone(&barrier),
+        waited: AtomicBool::new(false),
+    }) as Arc<dyn FemtoHandlerTrait>;
+    let logger = FemtoLogger::new("drop".to_string());
+    logger.add_handler(handler);
+    logger.log(FemtoLevel::Info, "block");
+    for _ in 0..super::DEFAULT_CHANNEL_CAPACITY {
+        logger.log(FemtoLevel::Info, "fill");
+    }
+    logger.log(FemtoLevel::Info, "overflow");
+    assert_eq!(logger.get_dropped(), 1);
+    barrier.wait();
 }

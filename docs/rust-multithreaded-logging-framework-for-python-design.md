@@ -172,6 +172,10 @@ The logging process will follow these steps:
    `thingbuf::mpsc` offer different trade-offs in terms of speed, blocking
    behavior, and features.
 
+   The logger tracks how many records are dropped when the queue is full. The
+   running count is available via `FemtoLogger.get_dropped()` for tests and
+   dashboards, and a rate-limited warning surfaces the total periodically.
+
 5. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.
 

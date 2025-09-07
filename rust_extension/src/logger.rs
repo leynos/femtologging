@@ -10,6 +10,7 @@ use std::any::Any;
 
 use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
+use crate::rate_limited_warner::RateLimitedWarner;
 
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
@@ -17,11 +18,11 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 use crossbeam_channel::{bounded, select, Receiver, Sender};
-use log::{debug, warn};
+use log::warn;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU64, AtomicU8, Ordering},
     Arc,
 };
 use std::thread::{self, JoinHandle};
@@ -99,6 +100,8 @@ pub struct FemtoLogger {
     level: AtomicU8,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    dropped_records: AtomicU64,
+    drop_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
@@ -185,6 +188,14 @@ impl FemtoLogger {
         self.clear_filters();
     }
 
+    /// Return the number of records dropped due to a full queue.
+    ///
+    /// Useful for tests and monitoring dashboards.
+    #[pyo3(text_signature = "(self)")]
+    pub fn get_dropped(&self) -> u64 {
+        self.dropped_records.load(Ordering::Relaxed)
+    }
+
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -212,12 +223,17 @@ impl FemtoLogger {
     ///
     /// The record is sent to the worker thread if a channel is configured.
     /// When the queue is full or the logger is shutting down, the record is
-    /// dropped and a debug message is logged.
+    /// dropped; a drop counter increments and a rate-limited warning is
+    /// emitted.
     fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
             let handlers = self.handlers.read().clone();
             if tx.try_send(QueuedRecord { record, handlers }).is_err() {
-                debug!("FemtoLogger: queue full or shutting down, dropping record");
+                self.dropped_records.fetch_add(1, Ordering::Relaxed);
+                self.drop_warner.record_drop();
+                self.drop_warner.warn_if_due(|count| {
+                    warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+                });
             }
         }
     }
@@ -301,6 +317,8 @@ impl FemtoLogger {
             level: AtomicU8::new(FemtoLevel::Info as u8),
             handlers,
             filters,
+            dropped_records: AtomicU64::new(0),
+            drop_warner: RateLimitedWarner::default(),
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
             handle: Mutex::new(Some(handle)),
