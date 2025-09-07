@@ -438,14 +438,17 @@ impl ConfigBuilder {
                 .ok_or_else(|| ConfigError::UnknownHandlerId(hid.clone()))?;
             logger.borrow(py).add_handler(h.clone());
         }
-        let mut resolved_filters = Vec::new();
-        for fid in cfg.filter_ids() {
-            let f = filters
-                .get(fid)
-                .ok_or_else(|| ConfigError::UnknownFilterId(fid.clone()))?;
-            resolved_filters.push(f.clone());
-        }
-        // Replace existing filters so reconfiguration is idempotent.
+        let resolved_filters: Vec<_> = cfg
+            .filter_ids()
+            .iter()
+            .map(|fid| {
+                filters
+                    .get(fid)
+                    .cloned()
+                    .ok_or_else(|| ConfigError::UnknownFilterId(fid.clone()))
+            })
+            .collect::<Result<_, _>>()?;
+        // Replace existing filters only after all filter IDs validate.
         {
             let logger_ref = logger.borrow(py);
             logger_ref.clear_filters();
