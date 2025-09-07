@@ -212,7 +212,7 @@ impl FemtoLogger {
     ///
     /// The record is sent to the worker thread if a channel is configured.
     /// When the queue is full or the logger is shutting down, the record is
-    /// dropped and a warning is logged.
+    /// dropped and a debug message is logged.
     fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
         if let Some(tx) = &self.tx {
             let handlers = self.handlers.read().clone();

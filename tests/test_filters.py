@@ -99,7 +99,7 @@ def logger_suppresses(name: str, level: str) -> None:
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(FilterBuildError):
         config_builder.build_and_init()
 
 
