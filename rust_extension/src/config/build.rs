@@ -86,50 +86,43 @@ impl ConfigBuilder {
             logger_ref.set_level(level);
         }
 
-        Self::apply_collection(
-            &logger_ref,
-            cfg.handler_ids(),
-            handlers,
-            None::<fn(&PyRef<FemtoLogger>)>,
-            |l, h| l.add_handler(h),
-        )?;
-
-        Self::apply_collection(
-            &logger_ref,
-            cfg.filter_ids(),
-            filters,
-            Some(|l: &PyRef<FemtoLogger>| l.clear_filters()),
-            |l, f| l.add_filter(f),
-        )?;
+        Self::apply_handlers(&logger_ref, cfg.handler_ids(), handlers)?;
+        Self::apply_filters(&logger_ref, cfg.filter_ids(), filters)?;
 
         Ok(())
     }
 
-    fn apply_collection<L, T: ?Sized, ClearFn, AddFn>(
-        logger_ref: &L,
+    fn collect_items<T: ?Sized, F>(
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
-        clear: Option<ClearFn>,
-        add: AddFn,
-    ) -> Result<(), ConfigError>
+        mk_err: F,
+    ) -> Result<Vec<Arc<T>>, ConfigError>
     where
-        ClearFn: Fn(&L),
-        AddFn: Fn(&L, Arc<T>),
+        F: Fn(String) -> ConfigError,
     {
-        let items = ids
-            .iter()
-            .map(|id| {
-                pool.get(id)
-                    .cloned()
-                    .ok_or_else(|| ConfigError::UnknownId(id.clone()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        ids.iter()
+            .map(|id| pool.get(id).cloned().ok_or_else(|| mk_err(id.clone())))
+            .collect()
+    }
 
-        if let Some(clear_fn) = clear {
-            clear_fn(logger_ref);
-        }
+    fn apply_handlers(
+        logger_ref: &PyRef<FemtoLogger>,
+        ids: &[String],
+        handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+    ) -> Result<(), ConfigError> {
+        let items = Self::collect_items(ids, handlers, ConfigError::UnknownHandlerId)?;
+        items.into_iter().for_each(|h| logger_ref.add_handler(h));
+        Ok(())
+    }
 
-        items.into_iter().for_each(|item| add(logger_ref, item));
+    fn apply_filters(
+        logger_ref: &PyRef<FemtoLogger>,
+        ids: &[String],
+        filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
+    ) -> Result<(), ConfigError> {
+        let items = Self::collect_items(ids, filters, ConfigError::UnknownFilterId)?;
+        logger_ref.clear_filters();
+        items.into_iter().for_each(|f| logger_ref.add_filter(f));
         Ok(())
     }
 }

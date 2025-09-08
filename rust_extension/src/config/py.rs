@@ -14,7 +14,9 @@ use crate::config::ConfigError;
 impl From<ConfigError> for PyErr {
     fn from(err: ConfigError) -> Self {
         match err {
-            ConfigError::UnknownId(id) => PyKeyError::new_err(id),
+            ConfigError::UnknownHandlerId(id) | ConfigError::UnknownFilterId(id) => {
+                PyKeyError::new_err(id)
+            }
             ConfigError::LoggerInit(msg) => PyRuntimeError::new_err(msg),
             _ => PyValueError::new_err(err.to_string()),
         }
