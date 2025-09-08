@@ -147,3 +147,39 @@ fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
         .expect_err("build_and_init should fail for duplicate filter ids");
     assert!(matches!(err, ConfigError::DuplicateFilterIds(ids) if ids == vec!["f".to_string()]));
 }
+#[rstest]
+#[serial]
+fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let handler = StreamHandlerBuilder::stderr();
+        let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", handler)
+            .with_filter("f", FilterBuilder::Level(filt))
+            .with_root_logger(root.clone())
+            .with_logger(
+                "stale",
+                LoggerConfigBuilder::new()
+                    .with_handlers(["h"])
+                    .with_filters(["f"]),
+            );
+        builder
+            .build_and_init()
+            .expect("initial build should succeed");
+
+        let stale = manager::get_logger(py, "stale").expect("get_logger('stale') should succeed");
+        assert!(!stale.borrow(py).handlers_for_test().is_empty());
+
+        let rebuild = ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_disable_existing_loggers(true);
+        rebuild.build_and_init().expect("rebuild should succeed");
+
+        let stale = manager::get_logger(py, "stale").expect("get_logger('stale') should succeed");
+        assert!(
+            stale.borrow(py).handlers_for_test().is_empty(),
+            "stale logger should be disabled",
+        );
+    });
+}

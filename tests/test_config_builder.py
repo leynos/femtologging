@@ -192,6 +192,32 @@ def test_unknown_handler_id_raises_key_error() -> None:
         builder.build_and_init()
 
 
+def test_disable_existing_loggers_clears_unmentioned() -> None:
+    """Loggers not present in new config are disabled."""
+    handler = StreamHandlerBuilder.stderr()
+    root = LoggerConfigBuilder().with_level("INFO")
+    builder = (
+        ConfigBuilder()
+        .with_handler("h", handler)
+        .with_root_logger(root)
+        .with_logger("stale", LoggerConfigBuilder().with_handlers(["h"]))
+    )
+    builder.build_and_init()
+
+    stale = get_logger("stale")
+    assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
+
+    rebuild = (
+        ConfigBuilder()
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_disable_existing_loggers(True)
+    )
+    rebuild.build_and_init()
+
+    stale = get_logger("stale")
+    assert stale.handler_ptrs_for_test() == [], "stale logger should be disabled"
+
+
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [
