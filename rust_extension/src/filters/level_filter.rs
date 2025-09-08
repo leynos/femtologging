@@ -1,6 +1,5 @@
 //! Builder and implementation for a level-based filter.
 
-use log::warn;
 use pyo3::prelude::*;
 
 use crate::{
@@ -17,20 +16,10 @@ pub struct LevelFilter {
 
 impl FemtoFilter for LevelFilter {
     fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        let record_level: FemtoLevel = match record.level.parse::<FemtoLevel>() {
-            Ok(level) => level,
-            Err(e) => {
-                warn!(
-                    concat!(
-                        "FemtoLog: Failed to parse log level '{}' for record from ",
-                        "logger '{}'. Error: {:?}. Filtering out this record."
-                    ),
-                    record.level, record.logger, e
-                );
-                return false;
-            }
-        };
-        record_level <= self.max_level
+        match record.parsed_level {
+            Some(level) => level <= self.max_level,
+            None => false,
+        }
     }
 }
 
@@ -48,6 +37,8 @@ impl LevelFilterBuilder {
     }
 
     /// Set the maximum level allowed.
+    ///
+    /// When called from Python, `level` may be a `FemtoLevel` instance or a recognised level string.
     pub fn with_max_level(mut self, level: FemtoLevel) -> Self {
         self.max_level = Some(level);
         self
@@ -59,7 +50,10 @@ impl super::FilterBuilderTrait for LevelFilterBuilder {
 
     fn build_inner(&self) -> Result<Self::Filter, super::FilterBuildError> {
         let lvl = self.max_level.ok_or_else(|| {
-            super::FilterBuildError::InvalidConfig("max_level is required".into())
+            super::FilterBuildError::InvalidConfig(
+                "max_level is required; expected one of TRACE|DEBUG|INFO|WARN|ERROR|CRITICAL"
+                    .into(),
+            )
         })?;
         Ok(LevelFilter { max_level: lvl })
     }
@@ -87,6 +81,8 @@ mod tests {
     #[rstest]
     #[case(FemtoLevel::Info, FemtoLevel::Info, true)]
     #[case(FemtoLevel::Info, FemtoLevel::Error, false)]
+    #[case(FemtoLevel::Error, FemtoLevel::Critical, false)]
+    #[case(FemtoLevel::Error, FemtoLevel::Warn, true)]
     fn level_filter_behaviour(
         #[case] max: FemtoLevel,
         #[case] rec_level: FemtoLevel,
@@ -95,5 +91,14 @@ mod tests {
         let builder = LevelFilterBuilder::new().with_max_level(max);
         let filter = builder.build().expect("build should succeed");
         assert_eq!(filter.should_log(&record(rec_level)), expected);
+    }
+    #[test]
+    fn rejects_unparseable_level() {
+        let filter = LevelFilterBuilder::new()
+            .with_max_level(FemtoLevel::Info)
+            .build()
+            .expect("build should succeed");
+        let record = FemtoLogRecord::new("core", "NOPE", "msg");
+        assert!(!filter.should_log(&record));
     }
 }

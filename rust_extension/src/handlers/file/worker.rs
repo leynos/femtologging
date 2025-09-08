@@ -20,7 +20,7 @@ use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
 /// Commands sent to the worker thread.
 pub enum FileCommand {
-    Record(FemtoLogRecord),
+    Record(Box<FemtoLogRecord>),
     Flush,
 }
 
@@ -126,9 +126,12 @@ where
         for cmd in rx {
             match cmd {
                 FileCommand::Record(record) => {
-                    if let Err(e) =
-                        super::mod_impl::write_record(&mut writer, &formatter, record, &mut tracker)
-                    {
+                    if let Err(e) = super::mod_impl::write_record(
+                        &mut writer,
+                        &formatter,
+                        *record,
+                        &mut tracker,
+                    ) {
                         warn!("FemtoFileHandler write error: {e}");
                     }
                 }

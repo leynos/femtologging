@@ -333,21 +333,24 @@ impl FemtoHandlerTrait for FemtoFileHandler {
         if let Some(tx) = &self.tx {
             match self.overflow_policy {
                 OverflowPolicy::Drop => {
-                    if tx.try_send(FileCommand::Record(record)).is_err() {
+                    if tx.try_send(FileCommand::Record(Box::new(record))).is_err() {
                         log::warn!(
                             "FemtoFileHandler (Drop): queue full or shutting down, dropping record"
                         );
                     }
                 }
                 OverflowPolicy::Block => {
-                    if tx.send(FileCommand::Record(record)).is_err() {
+                    if tx.send(FileCommand::Record(Box::new(record))).is_err() {
                         log::warn!(
                             "FemtoFileHandler (Block): queue full or shutting down, dropping record"
                         );
                     }
                 }
                 OverflowPolicy::Timeout(dur) => {
-                    if tx.send_timeout(FileCommand::Record(record), dur).is_err() {
+                    if tx
+                        .send_timeout(FileCommand::Record(Box::new(record)), dur)
+                        .is_err()
+                    {
                         log::warn!(
                             "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
                         );
