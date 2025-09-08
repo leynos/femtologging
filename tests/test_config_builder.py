@@ -82,8 +82,11 @@ def build_fails(config_builder: ConfigBuilder) -> None:
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
+@then(
+    parsers.parse('building the configuration fails with key error containing "{msg}"')
+)
 def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(KeyError) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)
 
@@ -179,13 +182,13 @@ def test_no_root_logger_behavior() -> None:
         builder.build_and_init()
 
 
-def test_unknown_handler_id_raises_value_error() -> None:
-    """Building with an unknown handler identifier fails."""
+def test_unknown_handler_id_raises_key_error() -> None:
+    """Building with an unknown handler identifier raises KeyError."""
     builder = ConfigBuilder()
     logger = LoggerConfigBuilder().with_handlers(["missing"])
     builder.with_logger("core", logger)
     builder.with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-    with pytest.raises(ValueError, match="unknown handler id: missing"):
+    with pytest.raises(KeyError, match="missing"):
         builder.build_and_init()
 
 

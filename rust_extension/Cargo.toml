@@ -17,8 +17,9 @@ parking_lot = "0.12"
 thiserror = "1"
 
 [features]
-default = ["extension-module"]
+default = ["extension-module", "python"]
 extension-module = ["pyo3/extension-module"]
+python = []
 test-util = []
 
 [dev-dependencies]

@@ -1,3 +1,4 @@
+#![cfg(feature = "python")]
 //! Integration test for logger filter application via ConfigBuilder.
 
 use _femtologging_rs::{

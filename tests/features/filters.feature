@@ -24,4 +24,4 @@ Feature: Filters
     Given a ConfigBuilder
     When I add logger "core" with filter "missing"
     And I set root logger with level "INFO"
-    Then building the configuration fails with value error containing "unknown filter id: missing"
+    Then building the configuration fails with key error containing "missing"
