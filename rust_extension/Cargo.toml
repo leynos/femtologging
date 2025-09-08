@@ -18,7 +18,7 @@ thiserror = "1"
 
 [features]
 default = ["extension-module", "python"]
-extension-module = ["pyo3/extension-module"]
+extension-module = ["python", "pyo3/extension-module"]
 python = []
 test-util = []
 
