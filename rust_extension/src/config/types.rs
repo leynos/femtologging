@@ -1,12 +1,17 @@
 //! Type definitions and builder structs for femtologging configuration.
 
+#[cfg(feature = "python")]
 use std::convert::identity;
 use std::{collections::BTreeMap, sync::Arc};
 
-use pyo3::{prelude::*, Bound};
+use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::Bound;
 use thiserror::Error;
 
-use crate::macros::{impl_as_pydict, py_setters, AsPyDict};
+#[cfg(feature = "python")]
+use crate::macros::py_setters;
+use crate::macros::{impl_as_pydict, AsPyDict};
 
 fn normalise_vec(mut ids: Vec<String>) -> Vec<String> {
     ids.sort();
@@ -307,6 +312,7 @@ impl_as_pydict!(FormatterBuilder {
     set_opt datefmt => "datefmt",
 });
 
+#[cfg(feature = "python")]
 py_setters!(FormatterBuilder {
     format: py_with_format => "with_format", String, Some, "Set the format string.",
     datefmt: py_with_datefmt => "with_datefmt", String, Some, "Set the date format string.",
@@ -319,6 +325,7 @@ impl_as_pydict!(LoggerConfigBuilder {
     set_vec handlers => "handlers",
 });
 
+#[cfg(feature = "python")]
 py_setters!(LoggerConfigBuilder {
     level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level.",
     propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour.",
@@ -338,6 +345,7 @@ impl_as_pydict!(ConfigBuilder {
     set_map loggers => "loggers",
     set_optmap root_logger => "root",
 });
+#[cfg(feature = "python")]
 py_setters!(ConfigBuilder {
     version: py_with_version => "with_version", u8, identity,
         "Set the schema version.",

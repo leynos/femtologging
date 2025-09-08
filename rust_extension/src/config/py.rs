@@ -1,14 +1,25 @@
 //! Python bindings for configuration builders.
 
-use pyo3::{exceptions::PyValueError, prelude::*, Bound};
+use pyo3::{
+    exceptions::{PyKeyError, PyRuntimeError, PyValueError},
+    prelude::*,
+    Bound,
+};
 
 use crate::handlers::{FileHandlerBuilder, StreamHandlerBuilder};
 
-use super::types::{ConfigError, HandlerBuilder};
+use super::types::HandlerBuilder;
+use crate::config::ConfigError;
 
 impl From<ConfigError> for PyErr {
     fn from(err: ConfigError) -> Self {
-        PyValueError::new_err(err.to_string())
+        match err {
+            ConfigError::UnknownHandlerId(id) | ConfigError::UnknownFilterId(id) => {
+                PyKeyError::new_err(id)
+            }
+            ConfigError::LoggerInit(msg) => PyRuntimeError::new_err(msg),
+            _ => PyValueError::new_err(err.to_string()),
+        }
     }
 }
 

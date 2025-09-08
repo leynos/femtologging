@@ -4,9 +4,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use pyo3::prelude::*;
 
+use crate::config::ConfigError;
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogger, manager};
 
-use super::types::{ConfigBuilder, ConfigError, LoggerConfigBuilder};
+use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.

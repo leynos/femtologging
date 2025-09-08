@@ -111,12 +111,10 @@ def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
 
 
 @then(
-    parsers.parse(
-        'building the configuration fails with value error containing "{msg}"'
-    )
+    parsers.parse('building the configuration fails with key error containing "{msg}"')
 )
-def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(ValueError) as excinfo:
+def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
+    with pytest.raises(KeyError) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)
 
@@ -202,7 +200,7 @@ def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
         .with_logger("core", LoggerConfigBuilder().with_filters(["missing"]))
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError, match="missing"):
         bad.build_and_init()
 
     logger_after = get_logger("core")
