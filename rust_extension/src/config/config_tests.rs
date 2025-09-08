@@ -64,7 +64,7 @@ fn unknown_handler_id_rejected() {
         .with_root_logger(root)
         .with_logger("child", logger_cfg);
     let err = builder.build_and_init().unwrap_err();
-    assert!(matches!(err, ConfigError::UnknownHandlerId(id) if id == "missing"));
+    assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
 #[rstest]
@@ -103,5 +103,5 @@ fn unknown_filter_id_rejected() {
         .with_root_logger(root)
         .with_logger("child", logger_cfg);
     let err = builder.build_and_init().unwrap_err();
-    assert!(matches!(err, ConfigError::UnknownFilterId(id) if id == "missing"));
+    assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }

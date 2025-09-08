@@ -91,7 +91,6 @@ impl ConfigBuilder {
             handlers,
             None::<fn(&PyRef<FemtoLogger>)>,
             |l, h| l.add_handler(h),
-            ConfigError::UnknownHandlerId,
         )?;
 
         Self::apply_collection(
@@ -100,37 +99,36 @@ impl ConfigBuilder {
             filters,
             Some(|l: &PyRef<FemtoLogger>| l.clear_filters()),
             |l, f| l.add_filter(f),
-            ConfigError::UnknownFilterId,
         )?;
 
         Ok(())
     }
 
-    fn apply_collection<L, T: ?Sized, ClearFn, AddFn, ErrFn>(
+    fn apply_collection<L, T: ?Sized, ClearFn, AddFn>(
         logger_ref: &L,
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
         clear: Option<ClearFn>,
         add: AddFn,
-        err: ErrFn,
     ) -> Result<(), ConfigError>
     where
         ClearFn: Fn(&L),
         AddFn: Fn(&L, Arc<T>),
-        ErrFn: Fn(String) -> ConfigError,
     {
-        let items: Vec<_> = ids
+        let items = ids
             .iter()
-            .map(|id| pool.get(id).cloned().ok_or_else(|| err(id.clone())))
-            .collect::<Result<_, _>>()?;
+            .map(|id| {
+                pool.get(id)
+                    .cloned()
+                    .ok_or_else(|| ConfigError::UnknownId(id.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         if let Some(clear_fn) = clear {
             clear_fn(logger_ref);
         }
 
-        for item in items {
-            add(logger_ref, item);
-        }
+        items.into_iter().for_each(|item| add(logger_ref, item));
         Ok(())
     }
 }

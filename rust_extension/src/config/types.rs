@@ -76,12 +76,9 @@ pub enum ConfigError {
     /// No root logger configuration was provided.
     #[error("missing root logger configuration")]
     MissingRootLogger,
-    /// A logger referenced a handler identifier that was not defined.
-    #[error("unknown handler id: {0}")]
-    UnknownHandlerId(String),
-    /// A logger referenced a filter identifier that was not defined.
-    #[error("unknown filter id: {0}")]
-    UnknownFilterId(String),
+    /// A logger referenced an identifier that was not defined.
+    #[error("unknown id: {0}")]
+    UnknownId(String),
     /// Building a filter failed.
     #[error("failed to build filter {id}: {source}")]
     FilterBuild {
