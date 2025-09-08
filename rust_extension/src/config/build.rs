@@ -96,14 +96,11 @@ impl ConfigBuilder {
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
-
+        self.apply_handlers(&logger_ref, cfg.handler_ids(), handlers)?;
+        self.apply_filters(&logger_ref, cfg.filter_ids(), filters)?;
         if let Some(level) = cfg.level_opt() {
             logger_ref.set_level(level);
         }
-
-        self.apply_handlers(&logger_ref, cfg.handler_ids(), handlers)?;
-        self.apply_filters(&logger_ref, cfg.filter_ids(), filters)?;
-
         Ok(())
     }
 
