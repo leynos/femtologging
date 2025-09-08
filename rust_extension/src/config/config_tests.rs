@@ -1,8 +1,10 @@
 //! Unit tests for configuration builders.
 
 use super::*;
+use crate::config::types::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
 use crate::manager;
+use crate::{FemtoLevel, StreamHandlerBuilder};
 use pyo3::Python;
 use rstest::rstest;
 use serial_test::serial;
