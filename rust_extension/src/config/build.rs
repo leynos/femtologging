@@ -121,7 +121,7 @@ impl ConfigBuilder {
             let handler = pool
                 .get(id)
                 .cloned()
-                .ok_or_else(|| ConfigError::UnknownHandlerId(id.clone()))?;
+                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
             items.push(handler);
         }
         if !dup.is_empty() {
@@ -151,7 +151,7 @@ impl ConfigBuilder {
             let filter = pool
                 .get(id)
                 .cloned()
-                .ok_or_else(|| ConfigError::UnknownFilterId(id.clone()))?;
+                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
             items.push(filter);
         }
         if !dup.is_empty() {

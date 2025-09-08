@@ -71,7 +71,7 @@ fn unknown_handler_id_rejected(_gil_and_clean_manager: ()) {
     let err = builder
         .build_and_init()
         .expect_err("build_and_init should fail for unknown handler id");
-    assert!(matches!(err, ConfigError::UnknownHandlerId(id) if id == "missing"));
+    assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
 #[rstest]
@@ -111,7 +111,7 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let err = builder
         .build_and_init()
         .expect_err("build_and_init should fail for unknown filter id");
-    assert!(matches!(err, ConfigError::UnknownFilterId(id) if id == "missing"));
+    assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
 #[rstest]

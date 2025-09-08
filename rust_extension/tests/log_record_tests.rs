@@ -2,34 +2,7 @@ use _femtologging_rs::FemtoLogRecord;
 use rstest::rstest;
 use std::collections::BTreeMap;
 use std::thread;
-use std::time::{Duration, SystemTime};
-
-#[test]
-fn new_populates_metadata() {
-    let before = SystemTime::now();
-    let record = FemtoLogRecord::new("core", "INFO", "hello");
-    assert_eq!(record.logger, "core");
-    assert_eq!(record.level, "INFO");
-    assert_eq!(record.message, "hello");
-    let now = SystemTime::now();
-    assert!(
-        record.metadata.timestamp <= now,
-        "timestamp is in the future"
-    );
-    assert!(
-        record.metadata.timestamp >= before - Duration::from_secs(5),
-        "timestamp is too far in the past"
-    );
-    assert_eq!(record.metadata.module_path, "");
-    assert_eq!(record.metadata.filename, "");
-    assert_eq!(record.metadata.line_number, 0);
-    assert_eq!(record.metadata.thread_id, thread::current().id());
-    assert_eq!(
-        record.metadata.thread_name.as_deref(),
-        thread::current().name()
-    );
-    assert!(record.metadata.key_values.is_empty());
-}
+use std::time::SystemTime;
 
 #[rstest]
 #[case("INFO", "", "", None)]
