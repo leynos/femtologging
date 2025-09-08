@@ -9,7 +9,6 @@ from .overflow_policy import OverflowPolicy
 from .config import dictConfig
 import logging
 import sys
-import typing as _typing
 from dataclasses import dataclass
 from typing import (
     Iterable,
@@ -18,11 +17,6 @@ from typing import (
     overload,
 )
 
-if _typing.TYPE_CHECKING:
-    from ._femtologging_rs import (  # noqa: F401
-        LevelFilterBuilder as LevelFilterBuilder,
-        NameFilterBuilder as NameFilterBuilder,
-    )
 
 hello = rust.hello
 FemtoLogger = rust.FemtoLogger
