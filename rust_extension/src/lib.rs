@@ -1,6 +1,8 @@
+//! Python bindings and public re-exports for the femtologging Rust extension.
 use pyo3::prelude::*;
 
 mod config;
+mod filters;
 mod formatter;
 mod handler;
 mod handlers;
@@ -8,6 +10,9 @@ mod level;
 mod log_record;
 mod logger;
 mod macros;
+#[cfg(feature = "test-util")]
+pub mod manager;
+#[cfg(not(feature = "test-util"))]
 mod manager;
 #[cfg(feature = "test-util")]
 pub mod rate_limited_warner;
@@ -16,6 +21,11 @@ mod rate_limited_warner;
 mod stream_handler;
 
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+use filters::FilterBuildErrorPy;
+pub use filters::{
+    FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
+};
+
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
 pub use handlers::{
@@ -53,8 +63,11 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoFileHandler>()?;
     m.add_class::<StreamHandlerBuilder>()?;
     m.add_class::<FileHandlerBuilder>()?;
+    m.add_class::<LevelFilterBuilder>()?;
+    m.add_class::<NameFilterBuilder>()?;
     m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;
     m.add("HandlerIOError", py.get_type::<HandlerIOError>())?;
+    m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
     m.add_class::<ConfigBuilder>()?;
     m.add_class::<LoggerConfigBuilder>()?;
     m.add_class::<FormatterBuilder>()?;

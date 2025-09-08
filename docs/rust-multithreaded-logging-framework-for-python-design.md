@@ -172,6 +172,10 @@ The logging process will follow these steps:
    `thingbuf::mpsc` offer different trade-offs in terms of speed, blocking
    behavior, and features.
 
+   The logger tracks how many records are dropped when the queue is full. The
+   running count is available via `FemtoLogger.get_dropped()` for tests and
+   dashboards, and a rate-limited warning surfaces the total periodically.
+
 5. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.
 
@@ -636,8 +640,8 @@ Inspired by `tracing::span!`,
 femtologging could also offer span-like macros for logging the entry and exit
 of a block of code, automatically including duration:
 
-let result = info_span!("Processing request", request_id = id; { /\*... code...
-\*/ result_value });
+let result = info_span!("Processing request", request_id = id; { /\*… code… \*/
+result_value });
 
 This would create two log events, one at the beginning and one at the end of
 the block, potentially with the duration of the block included in the exit
@@ -657,20 +661,20 @@ potential future enhancement.
   Rust
 
   ```rust
-  use femtologging::{Config, Level, FemtoFileHandler, MyCustomFormatter}; // Hypothetical types
+  use femtologging::{Config, FemtoLevel, FemtoFileHandler, MyCustomFormatter}; // Hypothetical types
 
   fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
       Config::builder()
-         .default_level(Level::Info)
+         .default_level(FemtoLevel::Info)
          .add_handler(
               "file_handler_1", // Unique name for the handler
               FemtoFileHandler::builder()
                  .path("application.log")
                  .formatter(Box::new(MyCustomFormatter::new())) // Formatters are boxed trait objects
-                 .level(Level::Debug) // Handler-specific level
+                 .level(FemtoLevel::Debug) // Handler-specific level
                  .build()?
           )
-         .add_logger_config("my_app::network", Level::Trace, vec!["file_handler_1"]) // Logger-specific config
+         .add_logger_config("my_app::network", FemtoLevel::Trace, vec!["file_handler_1"]) // Logger-specific config
          .build_and_init()?; // Initializes the global logging system
       Ok(())
   }

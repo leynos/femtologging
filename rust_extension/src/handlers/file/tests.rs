@@ -95,9 +95,9 @@ fn build_from_worker_wires_handler_components() {
     let done_rx = handler.done_rx.clone();
     let handle = handler.handle.take().expect("handle missing");
 
-    tx.send(FileCommand::Record(FemtoLogRecord::new(
+    tx.send(FileCommand::Record(Box::new(FemtoLogRecord::new(
         "core", "INFO", "test",
-    )))
+    ))))
     .expect("send");
     drop(tx);
 

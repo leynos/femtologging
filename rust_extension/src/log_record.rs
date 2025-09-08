@@ -4,6 +4,7 @@
 //! along with their contextual metadata such as timestamps, source location,
 //! and thread information.
 
+use crate::level::FemtoLevel;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::thread::{self, ThreadId};
@@ -61,6 +62,8 @@ pub struct FemtoLogRecord {
     pub logger: String,
     /// The log level as a string (e.g. "INFO" or "ERROR").
     pub level: String,
+    /// Cached parsed representation of the level.
+    pub parsed_level: Option<FemtoLevel>,
     /// The log message content.
     pub message: String,
     /// Contextual metadata for the record.
@@ -73,6 +76,7 @@ impl FemtoLogRecord {
         Self {
             logger: logger.to_owned(),
             level: level.to_owned(),
+            parsed_level: level.parse().ok(),
             message: message.to_owned(),
             metadata: RecordMetadata::default(),
         }
@@ -92,6 +96,7 @@ impl FemtoLogRecord {
         Self {
             logger: logger.to_owned(),
             level: level.to_owned(),
+            parsed_level: level.parse().ok(),
             message: message.to_owned(),
             metadata,
         }

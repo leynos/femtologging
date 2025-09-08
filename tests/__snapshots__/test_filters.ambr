@@ -1,0 +1,67 @@
+# serializer version: 1
+# name: test_level_filter_suppresses_high_severity
+  dict({
+    'disable_existing_loggers': False,
+    'filters': dict({
+      'only_info': dict({
+        'max_level': 'INFO',
+      }),
+    }),
+    'handlers': dict({
+      'console': dict({
+        'target': 'stderr',
+      }),
+    }),
+    'loggers': dict({
+      'core': dict({
+        'filters': list([
+          'only_info',
+        ]),
+        'handlers': list([
+          'console',
+        ]),
+      }),
+    }),
+    'root': dict({
+      'level': 'DEBUG',
+    }),
+    'version': 1,
+  })
+# ---
+# name: test_name_filter_matches_prefix
+  dict({
+    'disable_existing_loggers': False,
+    'filters': dict({
+      'core_only': dict({
+        'prefix': 'core',
+      }),
+    }),
+    'handlers': dict({
+      'console': dict({
+        'target': 'stderr',
+      }),
+    }),
+    'loggers': dict({
+      'core.child': dict({
+        'filters': list([
+          'core_only',
+        ]),
+        'handlers': list([
+          'console',
+        ]),
+      }),
+      'other': dict({
+        'filters': list([
+          'core_only',
+        ]),
+        'handlers': list([
+          'console',
+        ]),
+      }),
+    }),
+    'root': dict({
+      'level': 'DEBUG',
+    }),
+    'version': 1,
+  })
+# ---

@@ -71,8 +71,8 @@ expanded with specifics for the configuration design.
   - [x] **Ensure proper error handling for invalid** `dictConfig` **structures
     or unsupported features like** `incremental=True`**.**
 
-- [ ] Define the `FemtoFilter` trait and implement common filter types (e.g.,
-  `LevelFilter`, `NameFilter`), with builder API integration for filters.
+- [x] Define the `FemtoFilter` trait and implement common filter types (e.g.,
+  `LevelFilter`, `NameFilter`), with builder API integration for filters.[^1]
 
 - [ ] Expand test coverage and start benchmarking for the configuration system
   and `basicConfig`/`dictConfig` compatibility.
@@ -96,6 +96,9 @@ expanded with specifics for the configuration design.
 - [ ] Investigate and implement more sophisticated dynamic reconfiguration
   capabilities for handlers and filters at runtime via the builder API (as a
   V1.1 or V2 feature).
+
+[^1]: Completed in PR [#198](https://github.com/leynos/femtologging/pull/198)
+      on 6 September 2025.
 
 - [ ] Provide a `tracing_subscriber::Layer` so `femtologging` handlers can
   process `tracing` spans and events.
