@@ -1,7 +1,7 @@
 //! Unit tests for configuration builders.
 
 use super::*;
-use crate::config::types::ConfigError;
+use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
 use crate::manager;
 use crate::{FemtoLevel, StreamHandlerBuilder};

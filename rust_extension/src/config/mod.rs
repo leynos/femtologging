@@ -4,7 +4,8 @@ mod build;
 mod py;
 mod types;
 
-pub use types::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+#[allow(unused_imports)] // re-export for external consumers
+pub use types::{ConfigBuilder, ConfigError, FormatterBuilder, LoggerConfigBuilder};
 
 #[cfg(test)]
 mod config_tests;

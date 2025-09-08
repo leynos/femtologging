@@ -1,11 +1,19 @@
 //! Type definitions and builder structs for femtologging configuration.
 
-use std::{collections::BTreeMap, convert::identity, sync::Arc};
+use std::convert::identity;
+use std::{collections::BTreeMap, sync::Arc};
 
 use pyo3::{prelude::*, Bound};
 use thiserror::Error;
 
 use crate::macros::{impl_as_pydict, py_setters, AsPyDict};
+
+fn normalise_vec(mut ids: Vec<String>) -> Vec<String> {
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 use crate::{
     filters::{FilterBuildError, FilterBuilder},
     handler::FemtoHandlerTrait,
@@ -42,6 +50,15 @@ impl From<StreamHandlerBuilder> for HandlerBuilder {
 impl From<FileHandlerBuilder> for HandlerBuilder {
     fn from(value: FileHandlerBuilder) -> Self {
         Self::File(value)
+    }
+}
+
+impl AsPyDict for HandlerBuilder {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match self {
+            Self::Stream(b) => b.as_pydict(py),
+            Self::File(b) => b.as_pydict(py),
+        }
     }
 }
 
@@ -154,7 +171,7 @@ impl LoggerConfigBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.filters = filter_ids.into_iter().map(Into::into).collect();
+        self.filters = normalise_vec(filter_ids.into_iter().map(Into::into).collect());
         self
     }
 
@@ -164,7 +181,7 @@ impl LoggerConfigBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.handlers = handler_ids.into_iter().map(Into::into).collect();
+        self.handlers = normalise_vec(handler_ids.into_iter().map(Into::into).collect());
         self
     }
 
@@ -305,9 +322,9 @@ impl_as_pydict!(LoggerConfigBuilder {
 py_setters!(LoggerConfigBuilder {
     level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level.",
     propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour.",
-    filters: py_with_filters => "with_filters", Vec<String>, identity,
+    filters: py_with_filters => "with_filters", Vec<String>, normalise_vec,
         "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.",
-    handlers: py_with_handlers => "with_handlers", Vec<String>, identity,
+    handlers: py_with_handlers => "with_handlers", Vec<String>, normalise_vec,
         "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.",
 });
 

@@ -28,12 +28,13 @@ impl ConfigBuilder {
             |id, source| ConfigError::FilterBuild { id, source },
         )?;
 
-        Python::with_gil(|py| -> Result<(), ConfigError> {
-            let mut targets: Vec<(&str, &LoggerConfigBuilder)> = Vec::new();
-            if let Some(root_cfg) = &self.root_logger {
-                targets.push(("root", root_cfg));
-            }
-            targets.extend(self.loggers.iter().map(|(n, c)| (n.as_str(), c)));
+        Python::with_gil(|py| -> Result<_, ConfigError> {
+            let targets = self
+                .root_logger
+                .as_ref()
+                .map(|c| ("root", c))
+                .into_iter()
+                .chain(self.loggers.iter().map(|(n, c)| (n.as_str(), c)));
 
             for (name, cfg) in targets {
                 let logger = self.fetch_logger(py, name)?;
@@ -77,34 +78,58 @@ impl ConfigBuilder {
         handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
+        let logger_ref = logger.borrow(py);
+
         if let Some(level) = cfg.level_opt() {
-            logger.borrow(py).set_level(level);
-        }
-        for hid in cfg.handler_ids() {
-            let h = handlers
-                .get(hid)
-                .ok_or_else(|| ConfigError::UnknownHandlerId(hid.clone()))?;
-            logger.borrow(py).add_handler(h.clone());
-        }
-        let resolved_filters: Vec<_> = cfg
-            .filter_ids()
-            .iter()
-            .map(|fid| {
-                filters
-                    .get(fid)
-                    .cloned()
-                    .ok_or_else(|| ConfigError::UnknownFilterId(fid.clone()))
-            })
-            .collect::<Result<_, _>>()?;
-        // Replace existing filters only after all filter IDs validate.
-        {
-            let logger_ref = logger.borrow(py);
-            logger_ref.clear_filters();
-            for f in resolved_filters {
-                logger_ref.add_filter(f);
-            }
+            logger_ref.set_level(level);
         }
 
+        Self::apply_collection(
+            &logger_ref,
+            cfg.handler_ids(),
+            handlers,
+            None::<fn(&PyRef<FemtoLogger>)>,
+            |l, h| l.add_handler(h),
+            ConfigError::UnknownHandlerId,
+        )?;
+
+        Self::apply_collection(
+            &logger_ref,
+            cfg.filter_ids(),
+            filters,
+            Some(|l: &PyRef<FemtoLogger>| l.clear_filters()),
+            |l, f| l.add_filter(f),
+            ConfigError::UnknownFilterId,
+        )?;
+
+        Ok(())
+    }
+
+    fn apply_collection<L, T: ?Sized, ClearFn, AddFn, ErrFn>(
+        logger_ref: &L,
+        ids: &[String],
+        pool: &BTreeMap<String, Arc<T>>,
+        clear: Option<ClearFn>,
+        add: AddFn,
+        err: ErrFn,
+    ) -> Result<(), ConfigError>
+    where
+        ClearFn: Fn(&L),
+        AddFn: Fn(&L, Arc<T>),
+        ErrFn: Fn(String) -> ConfigError,
+    {
+        let items: Vec<_> = ids
+            .iter()
+            .map(|id| pool.get(id).cloned().ok_or_else(|| err(id.clone())))
+            .collect::<Result<_, _>>()?;
+
+        if let Some(clear_fn) = clear {
+            clear_fn(logger_ref);
+        }
+
+        for item in items {
+            add(logger_ref, item);
+        }
         Ok(())
     }
 }
