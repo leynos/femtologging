@@ -39,41 +39,6 @@ impl RecordMetadata {
             current.name().map(ToString::to_string),
         )
     }
-
-    /// Return the module path where the log call originated.
-    pub fn module_path(&self) -> &str {
-        &self.module_path
-    }
-
-    /// Return the source file name.
-    pub fn filename(&self) -> &str {
-        &self.filename
-    }
-
-    /// Return the line number in the source file.
-    pub fn line_number(&self) -> u32 {
-        self.line_number
-    }
-
-    /// Return the timestamp when the record was created.
-    pub fn timestamp(&self) -> SystemTime {
-        self.timestamp
-    }
-
-    /// Return the identifier of the thread that created the record.
-    pub fn thread_id(&self) -> ThreadId {
-        self.thread_id
-    }
-
-    /// Return the name of the thread that created the record, if any.
-    pub fn thread_name(&self) -> Option<&str> {
-        self.thread_name.as_deref()
-    }
-
-    /// Return structured key-value pairs attached to the record.
-    pub fn key_values(&self) -> &BTreeMap<String, String> {
-        &self.key_values
-    }
 }
 
 impl Default for RecordMetadata {
@@ -135,31 +100,6 @@ impl FemtoLogRecord {
             message: message.to_owned(),
             metadata,
         }
-    }
-
-    /// Return the name of the originating logger.
-    pub fn logger(&self) -> &str {
-        &self.logger
-    }
-
-    /// Return the log level as a string.
-    pub fn level(&self) -> &str {
-        &self.level
-    }
-
-    /// Return the parsed level enum, if available.
-    pub fn parsed_level(&self) -> Option<&FemtoLevel> {
-        self.parsed_level.as_ref()
-    }
-
-    /// Return the log message.
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Return the record metadata.
-    pub fn metadata(&self) -> &RecordMetadata {
-        &self.metadata
     }
 }
 

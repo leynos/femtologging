@@ -113,3 +113,37 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
         .expect_err("build_and_init should fail for unknown filter id");
     assert!(matches!(err, ConfigError::UnknownFilterId(id) if id == "missing"));
 }
+
+#[rstest]
+#[serial]
+fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
+    let handler = StreamHandlerBuilder::stderr();
+    let mut logger_cfg = LoggerConfigBuilder::new();
+    logger_cfg.handlers = vec!["h".into(), "h".into()];
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = ConfigBuilder::new()
+        .with_handler("h", handler)
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate handler ids");
+    assert!(matches!(err, ConfigError::DuplicateHandlerIds(ids) if ids == vec!["h".to_string()]));
+}
+
+#[rstest]
+#[serial]
+fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
+    let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
+    let mut logger_cfg = LoggerConfigBuilder::new();
+    logger_cfg.filters = vec!["f".into(), "f".into()];
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = ConfigBuilder::new()
+        .with_filter("f", FilterBuilder::Level(filt))
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate filter ids");
+    assert!(matches!(err, ConfigError::DuplicateFilterIds(ids) if ids == vec!["f".to_string()]));
+}

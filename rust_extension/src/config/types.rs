@@ -90,6 +90,12 @@ pub enum ConfigError {
     /// A filter identifier was referenced but not defined.
     #[error("unknown filter id: {0}")]
     UnknownFilterId(String),
+    /// Duplicate handler identifiers were provided.
+    #[error("duplicate handler ids: {0:?}")]
+    DuplicateHandlerIds(Vec<String>),
+    /// Duplicate filter identifiers were provided.
+    #[error("duplicate filter ids: {0:?}")]
+    DuplicateFilterIds(Vec<String>),
     /// Building a filter failed.
     #[error("failed to build filter {id}: {source}")]
     FilterBuild {
