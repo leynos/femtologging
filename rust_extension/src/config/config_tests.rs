@@ -6,9 +6,14 @@ use crate::filters::{FilterBuilder, LevelFilterBuilder};
 use crate::manager;
 use crate::{FemtoLevel, StreamHandlerBuilder};
 use pyo3::Python;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 use serial_test::serial;
 use std::sync::Arc;
+
+#[fixture]
+fn gil_and_clean_manager() {
+    Python::with_gil(|_| manager::reset_manager());
+}
 
 #[rstest]
 fn build_rejects_invalid_version() {
@@ -23,7 +28,9 @@ fn build_rejects_missing_root() {
 }
 
 #[rstest]
+#[serial]
 fn build_accepts_default_version() {
+    Python::with_gil(|_| manager::reset_manager());
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
@@ -31,9 +38,8 @@ fn build_accepts_default_version() {
 
 #[rstest]
 #[serial]
-fn shared_handler_attached_once() {
+fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
-        manager::reset_manager();
         let handler = StreamHandlerBuilder::stderr();
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["h"]);
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -63,15 +69,16 @@ fn unknown_handler_id_rejected() {
     let builder = ConfigBuilder::new()
         .with_root_logger(root)
         .with_logger("child", logger_cfg);
-    let err = builder.build_and_init().unwrap_err();
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for unknown handler id");
     assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
 #[rstest]
 #[serial]
-fn reconfig_with_unknown_filter_preserves_existing_filters() {
+fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
-        manager::reset_manager();
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
         let builder = ConfigBuilder::new()
@@ -102,6 +109,8 @@ fn unknown_filter_id_rejected() {
     let builder = ConfigBuilder::new()
         .with_root_logger(root)
         .with_logger("child", logger_cfg);
-    let err = builder.build_and_init().unwrap_err();
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for unknown filter id");
     assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }

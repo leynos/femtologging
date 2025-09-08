@@ -155,13 +155,13 @@ impl LoggerConfigBuilder {
         Self::default()
     }
 
-    /// Set the logger level.
+    /// Set the logger level, replacing any existing value.
     pub fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
     }
 
-    /// Set propagation behaviour.
+    /// Set propagation behaviour, replacing any existing value.
     pub fn with_propagate(mut self, propagate: bool) -> Self {
         self.propagate = Some(propagate);
         self
@@ -247,19 +247,19 @@ impl ConfigBuilder {
         Self::default()
     }
 
-    /// Set the schema version.
+    /// Set the schema version, replacing any existing value.
     pub fn with_version(mut self, version: u8) -> Self {
         self.version = version;
         self
     }
 
-    /// Set whether existing loggers are disabled.
+    /// Set whether existing loggers are disabled, replacing any existing value.
     pub fn with_disable_existing_loggers(mut self, disable: bool) -> Self {
         self.disable_existing_loggers = disable;
         self
     }
 
-    /// Set the default log level.
+    /// Set the default log level, replacing any existing value.
     pub fn with_default_level(mut self, level: FemtoLevel) -> Self {
         self.default_level = Some(level);
         self
@@ -299,7 +299,7 @@ impl ConfigBuilder {
     }
 
     /// Return the configured version.
-    pub fn version_get(&self) -> u8 {
+    pub fn version(&self) -> u8 {
         self.version
     }
 }
@@ -324,8 +324,8 @@ impl_as_pydict!(LoggerConfigBuilder {
 
 #[cfg(feature = "python")]
 py_setters!(LoggerConfigBuilder {
-    level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level.",
-    propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour.",
+    level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level, replacing any existing value.",
+    propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour, replacing any existing value.",
     filters: py_with_filters => "with_filters", Vec<String>, normalise_vec,
         "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.",
     handlers: py_with_handlers => "with_handlers", Vec<String>, normalise_vec,
@@ -345,12 +345,12 @@ impl_as_pydict!(ConfigBuilder {
 #[cfg(feature = "python")]
 py_setters!(ConfigBuilder {
     version: py_with_version => "with_version", u8, identity,
-        "Set the schema version.",
+        "Set the schema version, replacing any existing value.",
     disable_existing_loggers: py_with_disable_existing_loggers =>
         "with_disable_existing_loggers", bool, identity,
-        "Set whether existing loggers are disabled.",
+        "Set whether existing loggers are disabled, replacing any existing value.",
     default_level: py_with_default_level => "with_default_level",
-        FemtoLevel, Some, "Set the default log level.",
+        FemtoLevel, Some, "Set the default log level, replacing any existing value.",
     root_logger: py_with_root_logger => "with_root_logger",
         LoggerConfigBuilder, Some,
         "Set the root logger configuration.\n\nCalling this multiple times replaces the previous root logger.",
@@ -358,7 +358,7 @@ py_setters!(ConfigBuilder {
     /// Add a formatter by identifier.
     ///
     /// Any existing formatter with the same identifier is replaced.
-    #[pyo3(name = "with_formatter")]
+    #[pyo3(name = "with_formatter", text_signature = "(self, id, builder, /)")]
     fn py_with_formatter<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
@@ -371,7 +371,7 @@ py_setters!(ConfigBuilder {
     /// Add a logger by name.
     ///
     /// Any existing logger with the same name is replaced.
-    #[pyo3(name = "with_logger")]
+    #[pyo3(name = "with_logger", text_signature = "(self, name, builder, /)")]
     fn py_with_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
         name: String,
@@ -382,7 +382,7 @@ py_setters!(ConfigBuilder {
     }
 
     /// Adds a filter configuration by its unique ID, replacing any existing entry.
-    #[pyo3(name = "with_filter")]
+    #[pyo3(name = "with_filter", text_signature = "(self, id, builder, /)")]
     fn py_with_filter<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
@@ -393,8 +393,8 @@ py_setters!(ConfigBuilder {
         Ok(slf)
     }
 
-    /// Add a handler by identifier.
-    #[pyo3(name = "with_handler")]
+    /// Add a handler by identifier. Any existing handler with the same id is replaced.
+    #[pyo3(name = "with_handler", text_signature = "(self, id, builder, /)")]
     fn py_with_handler<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
@@ -405,9 +405,9 @@ py_setters!(ConfigBuilder {
         Ok(slf)
     }
 
-    /// Finalise configuration, raising ``ValueError`` on error.
-    #[pyo3(name = "build_and_init")]
+    /// Finalise configuration and initialise loggers.
+    #[pyo3(name = "build_and_init", text_signature = "(self, /)")]
     fn py_build_and_init(&self) -> PyResult<()> {
-        self.build_and_init().map_err(PyErr::from)
+        self.build_and_init().map_err(Into::into)
     }
 );

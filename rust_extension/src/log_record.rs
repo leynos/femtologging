@@ -147,6 +147,11 @@ impl FemtoLogRecord {
         &self.level
     }
 
+    /// Return the parsed level enum, if available.
+    pub fn parsed_level(&self) -> Option<&FemtoLevel> {
+        self.parsed_level.as_ref()
+    }
+
     /// Return the log message.
     pub fn message(&self) -> &str {
         &self.message

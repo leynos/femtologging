@@ -1,4 +1,4 @@
-//! Construction and realisation of configuration.
+//! Construction and realization of configuration.
 
 use std::{collections::BTreeMap, sync::Arc};
 
