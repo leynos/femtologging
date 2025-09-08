@@ -4,6 +4,7 @@
 use std::convert::identity;
 use std::{collections::BTreeMap, sync::Arc};
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::Bound;
@@ -11,6 +12,7 @@ use thiserror::Error;
 
 #[cfg(feature = "python")]
 use crate::macros::py_setters;
+#[cfg(feature = "python")]
 use crate::macros::{impl_as_pydict, AsPyDict};
 
 fn normalise_vec(mut ids: Vec<String>) -> Vec<String> {
@@ -62,6 +64,7 @@ impl From<FileHandlerBuilder> for HandlerBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl AsPyDict for HandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         match self {
@@ -120,7 +123,7 @@ pub enum ConfigError {
 }
 
 /// Builder for formatter definitions.
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct FormatterBuilder {
     pub(crate) format: Option<String>,
@@ -157,7 +160,7 @@ impl FormatterBuilder {
 }
 
 /// Builder for logger configuration.
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerConfigBuilder {
     pub(crate) level: Option<FemtoLevel>,
@@ -226,7 +229,7 @@ impl LoggerConfigBuilder {
 }
 
 /// Builder for the overall configuration.
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
     pub(crate) version: u8,
@@ -321,6 +324,7 @@ impl ConfigBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl_as_pydict!(FormatterBuilder {
     set_opt format => "format",
     set_opt datefmt => "datefmt",
@@ -332,6 +336,7 @@ py_setters!(FormatterBuilder {
     datefmt: py_with_datefmt => "with_datefmt", String, Some, "Set the date format string.",
 });
 
+#[cfg(feature = "python")]
 impl_as_pydict!(LoggerConfigBuilder {
     set_opt_to_string level => "level",
     set_opt propagate => "propagate",
@@ -349,6 +354,7 @@ py_setters!(LoggerConfigBuilder {
         "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.",
 });
 
+#[cfg(feature = "python")]
 impl_as_pydict!(ConfigBuilder {
     set_val version => "version",
     set_val disable_existing_loggers => "disable_existing_loggers",

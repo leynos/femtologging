@@ -68,8 +68,11 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;
     m.add("HandlerIOError", py.get_type::<HandlerIOError>())?;
     m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
+    #[cfg(feature = "python")]
     m.add_class::<ConfigBuilder>()?;
+    #[cfg(feature = "python")]
     m.add_class::<LoggerConfigBuilder>()?;
+    #[cfg(feature = "python")]
     m.add_class::<FormatterBuilder>()?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
