@@ -75,7 +75,7 @@ pub fn disable_existing_loggers(
 ) -> PyResult<()> {
     let mgr = MANAGER.read();
     for (name, logger) in &mgr.loggers {
-        if !keep_names.contains(name) {
+        if name != "root" && !keep_names.contains(name) {
             let logger_ref = logger.borrow(py);
             logger_ref.clear_handlers();
             logger_ref.clear_filters();

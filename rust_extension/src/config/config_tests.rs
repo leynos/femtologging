@@ -18,13 +18,19 @@ fn gil_and_clean_manager() {
 #[rstest]
 fn build_rejects_invalid_version() {
     let builder = ConfigBuilder::new().with_version(2);
-    assert!(builder.build_and_init().is_err());
+    let err = builder
+        .build_and_init()
+        .expect_err("version 2 should be rejected");
+    assert!(matches!(err, ConfigError::UnsupportedVersion(2)));
 }
 
 #[rstest]
 fn build_rejects_missing_root() {
     let builder = ConfigBuilder::new();
-    assert!(builder.build_and_init().is_err());
+    let err = builder
+        .build_and_init()
+        .expect_err("root logger is required");
+    assert!(matches!(err, ConfigError::MissingRootLogger));
 }
 
 #[rstest]

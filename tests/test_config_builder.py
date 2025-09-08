@@ -82,10 +82,16 @@ def build_fails(config_builder: ConfigBuilder) -> None:
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
+def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        config_builder.build_and_init()
+    assert msg in str(excinfo.value)
+
+
 @then(
     parsers.parse('building the configuration fails with key error containing "{msg}"')
 )
-def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
+def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
     with pytest.raises(KeyError) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)

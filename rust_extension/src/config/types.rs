@@ -15,10 +15,12 @@ use crate::macros::py_setters;
 #[cfg(feature = "python")]
 use crate::macros::{impl_as_pydict, AsPyDict};
 
-fn normalise_vec(mut ids: Vec<String>) -> Vec<String> {
-    ids.sort();
-    ids.dedup();
-    ids
+fn normalise_vec(ids: Vec<String>) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    ids.into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
 }
 
 use crate::{
@@ -185,6 +187,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier, replacing any existing filters.
+    /// IDs are deduplicated; see `normalise_vec`.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -195,6 +198,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set handlers by identifier, replacing any existing handlers.
+    /// IDs are deduplicated; see `normalise_vec`.
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,

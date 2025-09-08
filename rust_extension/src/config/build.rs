@@ -84,7 +84,7 @@ impl ConfigBuilder {
         py: Python<'py>,
         name: &str,
     ) -> Result<Py<FemtoLogger>, ConfigError> {
-        manager::get_logger(py, name).map_err(|e| ConfigError::LoggerInit(e.to_string()))
+        manager::get_logger(py, name).map_err(|e| ConfigError::LoggerInit(format!("{name}: {e}")))
     }
 
     fn apply_logger_config<'py>(
