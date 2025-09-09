@@ -224,6 +224,33 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
     assert stale.handler_ptrs_for_test() == [], "stale logger should be disabled"
 
 
+def test_disable_existing_loggers_keeps_ancestors() -> None:
+    """Ancestor loggers remain active when child logger is kept."""
+    handler = StreamHandlerBuilder.stderr()
+    parent_builder = (
+        ConfigBuilder()
+        .with_handler("h", handler)
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_logger("parent", LoggerConfigBuilder().with_handlers(["h"]))
+    )
+    parent_builder.build_and_init()
+
+    parent = get_logger("parent")
+    assert parent.handler_ptrs_for_test(), "parent should have a handler"
+
+    rebuild = (
+        ConfigBuilder()
+        .with_handler("h", StreamHandlerBuilder.stderr())
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_logger("parent.child", LoggerConfigBuilder().with_handlers(["h"]))
+        .with_disable_existing_loggers(True)
+    )
+    rebuild.build_and_init()
+
+    parent = get_logger("parent")
+    assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
+
+
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [
