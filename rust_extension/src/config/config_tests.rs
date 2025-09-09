@@ -190,3 +190,39 @@ fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
         );
     });
 }
+
+#[rstest]
+#[serial]
+fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", StreamHandlerBuilder::stderr())
+            .with_root_logger(root.clone())
+            .with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]));
+        builder
+            .build_and_init()
+            .expect("initial build should succeed");
+
+        let parent =
+            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        assert!(!parent.borrow(py).handlers_for_test().is_empty());
+
+        let rebuild = ConfigBuilder::new()
+            .with_handler("h", StreamHandlerBuilder::stderr())
+            .with_root_logger(root)
+            .with_logger(
+                "parent.child",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            )
+            .with_disable_existing_loggers(true);
+        rebuild.build_and_init().expect("rebuild should succeed");
+
+        let parent =
+            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        assert!(
+            !parent.borrow(py).handlers_for_test().is_empty(),
+            "ancestor logger should remain active",
+        );
+    });
+}
