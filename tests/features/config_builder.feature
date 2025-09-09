@@ -24,4 +24,4 @@ Feature: ConfigBuilder
     Given a ConfigBuilder
     When I add logger "core" with handler "missing"
     And I set root logger with level "INFO"
-    Then building the configuration fails with error containing "unknown handler id: missing"
+    Then building the configuration fails with key error containing "missing"

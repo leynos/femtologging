@@ -1,11 +1,13 @@
 //! Builder and implementation for a name-based filter.
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+#[cfg(feature = "python")]
+use crate::macros::{impl_as_pydict, py_setters, AsPyDict};
 use crate::{
     filters::{FemtoFilter, FilterBuildError},
     log_record::FemtoLogRecord,
-    macros::{impl_as_pydict, py_setters, AsPyDict},
 };
 
 #[derive(Debug)]
@@ -21,7 +23,7 @@ impl FemtoFilter for NameFilter {
 }
 
 /// Builder for [`NameFilter`].
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct NameFilterBuilder {
     prefix: Option<String>,
@@ -58,10 +60,12 @@ impl super::FilterBuilderTrait for NameFilterBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl_as_pydict!(NameFilterBuilder {
     set_opt prefix => "prefix",
 });
 
+#[cfg(feature = "python")]
 py_setters!(NameFilterBuilder {
     prefix: py_with_prefix => "with_prefix", String, Some,
         "Set the accepted logger-name prefix.",

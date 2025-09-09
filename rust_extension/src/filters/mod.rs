@@ -5,10 +5,13 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "python")]
 use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
 use thiserror::Error;
 
-use crate::{log_record::FemtoLogRecord, macros::AsPyDict};
+use crate::log_record::FemtoLogRecord;
+#[cfg(feature = "python")]
+use crate::macros::AsPyDict;
 
 /// Trait implemented by all log filters.
 ///
@@ -32,12 +35,14 @@ pub enum FilterBuildError {
     InvalidConfig(String),
 }
 
+#[cfg(feature = "python")]
 create_exception!(
     _femtologging_rs,
     FilterBuildErrorPy,
     pyo3::exceptions::PyException
 );
 
+#[cfg(feature = "python")]
 impl From<FilterBuildError> for PyErr {
     fn from(err: FilterBuildError) -> PyErr {
         FilterBuildErrorPy::new_err(err.to_string())
@@ -86,6 +91,7 @@ impl From<NameFilterBuilder> for FilterBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl AsPyDict for FilterBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         match self {
@@ -95,6 +101,7 @@ impl AsPyDict for FilterBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl<'py> FromPyObject<'py> for FilterBuilder {
     fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
         match LevelFilterBuilder::extract_bound(obj) {

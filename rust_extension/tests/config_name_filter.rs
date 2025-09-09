@@ -1,3 +1,4 @@
+#![cfg(feature = "python")]
 //! Integration test for name-based filter application via ConfigBuilder.
 
 use _femtologging_rs::{

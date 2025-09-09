@@ -64,6 +64,26 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     }
 }
 
+/// Disable existing loggers not mentioned in the provided keep list.
+///
+/// Iterates through all loggers and clears handlers and filters for any
+/// whose name is absent from `keep_names`.
+#[cfg(feature = "python")]
+pub fn disable_existing_loggers(
+    py: Python<'_>,
+    keep_names: &std::collections::HashSet<String>,
+) -> PyResult<()> {
+    let mgr = MANAGER.read();
+    for (name, logger) in &mgr.loggers {
+        if name != "root" && !keep_names.contains(name) {
+            let logger_ref = logger.borrow(py);
+            logger_ref.clear_handlers();
+            logger_ref.clear_filters();
+        }
+    }
+    Ok(())
+}
+
 #[pyfunction]
 pub fn reset_manager() {
     let mut mgr = MANAGER.write();

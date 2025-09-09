@@ -82,8 +82,17 @@ def build_fails(config_builder: ConfigBuilder) -> None:
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
-def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
+def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
     with pytest.raises(ValueError) as excinfo:
+        config_builder.build_and_init()
+    assert msg in str(excinfo.value)
+
+
+@then(
+    parsers.parse('building the configuration fails with key error containing "{msg}"')
+)
+def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
+    with pytest.raises(KeyError) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)
 
@@ -179,14 +188,40 @@ def test_no_root_logger_behavior() -> None:
         builder.build_and_init()
 
 
-def test_unknown_handler_id_raises_value_error() -> None:
-    """Building with an unknown handler identifier fails."""
+def test_unknown_handler_id_raises_key_error() -> None:
+    """Building with an unknown handler identifier raises KeyError."""
     builder = ConfigBuilder()
     logger = LoggerConfigBuilder().with_handlers(["missing"])
     builder.with_logger("core", logger)
     builder.with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-    with pytest.raises(ValueError, match="unknown handler id: missing"):
+    with pytest.raises(KeyError, match="missing"):
         builder.build_and_init()
+
+
+def test_disable_existing_loggers_clears_unmentioned() -> None:
+    """Loggers not present in new config are disabled."""
+    handler = StreamHandlerBuilder.stderr()
+    root = LoggerConfigBuilder().with_level("INFO")
+    builder = (
+        ConfigBuilder()
+        .with_handler("h", handler)
+        .with_root_logger(root)
+        .with_logger("stale", LoggerConfigBuilder().with_handlers(["h"]))
+    )
+    builder.build_and_init()
+
+    stale = get_logger("stale")
+    assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
+
+    rebuild = (
+        ConfigBuilder()
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_disable_existing_loggers(True)
+    )
+    rebuild.build_and_init()
+
+    stale = get_logger("stale")
+    assert stale.handler_ptrs_for_test() == [], "stale logger should be disabled"
 
 
 @pytest.mark.parametrize(

@@ -4,6 +4,7 @@
 
 use std::num::NonZeroUsize;
 
+#[cfg(feature = "python")]
 use pyo3::{prelude::*, types::PyDict, Bound};
 
 use super::FormatterId;
@@ -49,6 +50,7 @@ impl CommonBuilder {
     }
 
     /// Extend a Python dictionary with common builder fields.
+    #[cfg(feature = "python")]
     pub(crate) fn extend_py_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if let Some(cap) = self.capacity {
             d.set_item("capacity", cap.get())?;

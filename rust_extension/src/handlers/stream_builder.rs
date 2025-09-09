@@ -7,14 +7,13 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
-use crate::{
-    formatter::DefaultFormatter,
-    macros::{dict_into_py, AsPyDict},
-    stream_handler::FemtoStreamHandler,
-};
+#[cfg(feature = "python")]
+use crate::macros::{dict_into_py, AsPyDict};
+use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
 
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
@@ -23,6 +22,7 @@ enum StreamTarget {
 }
 
 impl StreamTarget {
+    #[cfg(feature = "python")]
     fn as_str(&self) -> &'static str {
         match self {
             StreamTarget::Stdout => "stdout",
@@ -32,7 +32,7 @@ impl StreamTarget {
 }
 
 /// Builder for constructing [`FemtoStreamHandler`] instances.
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct StreamHandlerBuilder {
     target: StreamTarget,
@@ -90,6 +90,7 @@ impl StreamHandlerBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl AsPyDict for StreamHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         use pyo3::types::PyDict;
@@ -100,6 +101,7 @@ impl AsPyDict for StreamHandlerBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl StreamHandlerBuilder {
     /// Create a new `StreamHandlerBuilder` defaulting to `stderr`.

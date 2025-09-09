@@ -1,13 +1,11 @@
 //! Builder and implementation for a level-based filter.
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use crate::{
-    filters::FemtoFilter,
-    level::FemtoLevel,
-    log_record::FemtoLogRecord,
-    macros::{impl_as_pydict, py_setters, AsPyDict},
-};
+#[cfg(feature = "python")]
+use crate::macros::{impl_as_pydict, py_setters, AsPyDict};
+use crate::{filters::FemtoFilter, level::FemtoLevel, log_record::FemtoLogRecord};
 
 #[derive(Debug)]
 pub struct LevelFilter {
@@ -24,7 +22,7 @@ impl FemtoFilter for LevelFilter {
 }
 
 /// Builder for [`LevelFilter`].
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct LevelFilterBuilder {
     max_level: Option<FemtoLevel>,
@@ -59,10 +57,12 @@ impl super::FilterBuilderTrait for LevelFilterBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl_as_pydict!(LevelFilterBuilder {
     set_opt_to_string max_level => "max_level",
 });
 
+#[cfg(feature = "python")]
 py_setters!(LevelFilterBuilder {
     max_level: py_with_max_level => "with_max_level", FemtoLevel, Some,
         "Set the maximum level permitted.",
