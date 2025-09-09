@@ -36,12 +36,20 @@ impl ConfigBuilder {
         Python::with_gil(|py| -> Result<_, ConfigError> {
             // Handle disable_existing_loggers if requested
             if self.disable_existing_loggers {
-                let keep_names: HashSet<String> = self
+                let mut keep_names: HashSet<String> = self
                     .loggers
                     .keys()
                     .cloned()
                     .chain(std::iter::once("root".to_string()))
                     .collect();
+                // Include ancestors of each kept logger (e.g., "a.b.c" keeps "a.b" and "a").
+                for name in self.loggers.keys() {
+                    let mut cur = name.as_str();
+                    while let Some((parent, _)) = cur.rsplit_once('.') {
+                        keep_names.insert(parent.to_string());
+                        cur = parent;
+                    }
+                }
                 manager::disable_existing_loggers(py, &keep_names)
                     .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
             }

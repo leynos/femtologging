@@ -8,16 +8,16 @@
 
 use std::num::NonZeroUsize;
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait};
-use crate::{
-    formatter::DefaultFormatter,
-    macros::{dict_into_py, AsPyDict},
-};
+use crate::formatter::DefaultFormatter;
+#[cfg(feature = "python")]
+use crate::macros::{dict_into_py, AsPyDict};
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct FileHandlerBuilder {
     path: String,
@@ -91,6 +91,7 @@ impl FileHandlerBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl FileHandlerBuilder {
     /// Populate a Python dictionary with the builder's fields.
     fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
@@ -111,6 +112,7 @@ impl FileHandlerBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 impl AsPyDict for FileHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = pyo3::types::PyDict::new(py);
@@ -119,6 +121,7 @@ impl AsPyDict for FileHandlerBuilder {
     }
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl FileHandlerBuilder {
     #[new]

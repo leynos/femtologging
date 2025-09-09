@@ -9,6 +9,7 @@ mod handlers;
 mod level;
 mod log_record;
 mod logger;
+#[cfg(feature = "python")]
 mod macros;
 #[cfg(feature = "test-util")]
 pub mod manager;
@@ -21,6 +22,7 @@ mod rate_limited_warner;
 mod stream_handler;
 
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+#[cfg(feature = "python")]
 use filters::FilterBuildErrorPy;
 pub use filters::{
     FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
@@ -61,12 +63,17 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    #[cfg(feature = "python")]
     m.add_class::<StreamHandlerBuilder>()?;
+    #[cfg(feature = "python")]
     m.add_class::<FileHandlerBuilder>()?;
+    #[cfg(feature = "python")]
     m.add_class::<LevelFilterBuilder>()?;
+    #[cfg(feature = "python")]
     m.add_class::<NameFilterBuilder>()?;
     m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;
     m.add("HandlerIOError", py.get_type::<HandlerIOError>())?;
+    #[cfg(feature = "python")]
     m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
     #[cfg(feature = "python")]
     m.add_class::<ConfigBuilder>()?;

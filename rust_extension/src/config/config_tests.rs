@@ -1,4 +1,5 @@
 //! Unit tests for configuration builders.
+#![cfg(all(test, feature = "python"))]
 
 use super::*;
 use crate::config::ConfigError;
