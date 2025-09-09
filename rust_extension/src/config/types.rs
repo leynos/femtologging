@@ -187,7 +187,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier, replacing any existing filters.
-    /// IDs are deduplicated; see [`normalise_vec`].
+    /// IDs are deduplicated and order may be normalised; see [`normalise_vec`].
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -198,7 +198,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set handlers by identifier, replacing any existing handlers.
-    /// IDs are deduplicated; see [`normalise_vec`].
+    /// IDs are deduplicated and order may be normalised; see [`normalise_vec`].
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -350,9 +350,9 @@ py_setters!(LoggerConfigBuilder {
     level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level, replacing any existing value.",
     propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour, replacing any existing value.",
     filters: py_with_filters => "with_filters", Vec<String>, normalise_vec,
-        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.\nIDs are deduplicated; see `normalise_vec`.",
+        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.\nIDs are deduplicated and order may be normalised; see `normalise_vec`.",
     handlers: py_with_handlers => "with_handlers", Vec<String>, normalise_vec,
-        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.\nIDs are deduplicated; see `normalise_vec`.",
+        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.\nIDs are deduplicated and order may be normalised; see `normalise_vec`.",
 });
 
 #[cfg(feature = "python")]
