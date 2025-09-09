@@ -48,5 +48,5 @@ fn metadata_sets_fields(
         })
         .expect("spawn thread")
         .join()
-        .unwrap();
+        .expect("thread joined without panic");
 }
