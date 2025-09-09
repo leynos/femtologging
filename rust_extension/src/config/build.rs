@@ -147,18 +147,42 @@ impl ConfigBuilder {
         Ok(items)
     }
 
+    /// Generic helper for both handlers and filters
+    ///
+    /// Uses `collect_items` from `main` to preserve improved duplicate
+    /// reporting and allocation behaviour, then applies the items via the
+    /// provided closures to avoid duplication across handlers/filters.
+    fn apply_items<T: ?Sized>(
+        &self,
+        logger_ref: &PyRef<FemtoLogger>,
+        ids: &[String],
+        pool: &BTreeMap<String, Arc<T>>,
+        clear_fn: impl Fn(&PyRef<FemtoLogger>),
+        add_fn: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
+        dup_err: fn(Vec<String>) -> ConfigError,
+    ) -> Result<(), ConfigError> {
+        let items = Self::collect_items(ids, pool, dup_err)?;
+        clear_fn(logger_ref);
+        for item in items {
+            add_fn(logger_ref, item);
+        }
+        Ok(())
+    }
+
     fn apply_handlers(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
     ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, ConfigError::DuplicateHandlerIds)?;
-        logger_ref.clear_handlers();
-        for h in items {
-            logger_ref.add_handler(h);
-        }
-        Ok(())
+        self.apply_items(
+            logger_ref,
+            ids,
+            pool,
+            |l| l.clear_handlers(),
+            |l, h| l.add_handler(h),
+            ConfigError::DuplicateHandlerIds,
+        )
     }
 
     fn apply_filters(
@@ -167,11 +191,13 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, ConfigError::DuplicateFilterIds)?;
-        logger_ref.clear_filters();
-        for f in items {
-            logger_ref.add_filter(f);
-        }
-        Ok(())
+        self.apply_items(
+            logger_ref,
+            ids,
+            pool,
+            |l| l.clear_filters(),
+            |l, f| l.add_filter(f),
+            ConfigError::DuplicateFilterIds,
+        )
     }
 }
