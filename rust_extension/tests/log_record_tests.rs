@@ -4,28 +4,14 @@ use std::collections::BTreeMap;
 use std::thread;
 use std::time::SystemTime;
 
+// Exercise combinations of level, module path, filename and thread name.
+
 #[rstest]
-#[case("INFO", "", "", None)]
-#[case("INFO", "mod::path", "", None)]
-#[case("INFO", "", "file.rs", None)]
-#[case("INFO", "mod::path", "file.rs", None)]
-#[case("INFO", "", "", Some("worker"))]
-#[case("INFO", "mod::path", "", Some("worker"))]
-#[case("INFO", "", "file.rs", Some("worker"))]
-#[case("INFO", "mod::path", "file.rs", Some("worker"))]
-#[case("ERROR", "", "", None)]
-#[case("ERROR", "mod::path", "", None)]
-#[case("ERROR", "", "file.rs", None)]
-#[case("ERROR", "mod::path", "file.rs", None)]
-#[case("ERROR", "", "", Some("worker"))]
-#[case("ERROR", "mod::path", "", Some("worker"))]
-#[case("ERROR", "", "file.rs", Some("worker"))]
-#[case("ERROR", "mod::path", "file.rs", Some("worker"))]
 fn metadata_sets_fields(
-    #[case] level: &'static str,
-    #[case] module_path: &'static str,
-    #[case] filename: &'static str,
-    #[case] thread_name: Option<&'static str>,
+    #[values("INFO", "ERROR")] level: &'static str,
+    #[values("", "mod::path")] module_path: &'static str,
+    #[values("", "file.rs")] filename: &'static str,
+    #[values(None, Some("worker"))] thread_name: Option<&'static str>,
 ) {
     let expected_thread = thread_name.map(str::to_string);
     let builder = thread::Builder::new();

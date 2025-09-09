@@ -350,9 +350,9 @@ py_setters!(LoggerConfigBuilder {
     level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level, replacing any existing value.",
     propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour, replacing any existing value.",
     filters: py_with_filters => "with_filters", Vec<String>, normalise_vec,
-        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.",
+        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.\nIDs are deduplicated; see `normalise_vec`.",
     handlers: py_with_handlers => "with_handlers", Vec<String>, normalise_vec,
-        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.",
+        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.\nIDs are deduplicated; see `normalise_vec`.",
 });
 
 #[cfg(feature = "python")]
