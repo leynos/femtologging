@@ -104,19 +104,36 @@ impl ConfigBuilder {
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
-        self.apply_handlers(&logger_ref, cfg.handler_ids(), handlers)?;
-        self.apply_filters(&logger_ref, cfg.filter_ids(), filters)?;
+        self.apply_items(
+            &logger_ref,
+            cfg.handler_ids(),
+            handlers,
+            |l| l.clear_handlers(),
+            |l, h| l.add_handler(h),
+            ConfigError::DuplicateHandlerIds,
+        )?;
+        self.apply_items(
+            &logger_ref,
+            cfg.filter_ids(),
+            filters,
+            |l| l.clear_filters(),
+            |l, f| l.add_filter(f),
+            ConfigError::DuplicateFilterIds,
+        )?;
         if let Some(level) = cfg.level_opt() {
             logger_ref.set_level(level);
         }
         Ok(())
     }
 
-    fn apply_handlers(
+    fn apply_items<T: ?Sized>(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
         ids: &[String],
-        pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+        pool: &BTreeMap<String, Arc<T>>,
+        clear: impl Fn(&PyRef<FemtoLogger>),
+        add: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
+        dup_err: impl Fn(Vec<String>) -> ConfigError,
     ) -> Result<(), ConfigError> {
         let mut seen = HashSet::new();
         let mut dup = Vec::new();
@@ -126,48 +143,18 @@ impl ConfigBuilder {
                 dup.push(id.clone());
                 continue;
             }
-            let handler = pool
+            let item = pool
                 .get(id)
                 .cloned()
                 .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(handler);
+            items.push(item);
         }
         if !dup.is_empty() {
-            return Err(ConfigError::DuplicateHandlerIds(dup));
+            return Err(dup_err(dup));
         }
-        logger_ref.clear_handlers();
-        for handler in items {
-            logger_ref.add_handler(handler);
-        }
-        Ok(())
-    }
-
-    fn apply_filters(
-        &self,
-        logger_ref: &PyRef<FemtoLogger>,
-        ids: &[String],
-        pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
-    ) -> Result<(), ConfigError> {
-        let mut seen = HashSet::new();
-        let mut dup = Vec::new();
-        let mut items = Vec::new();
-        for id in ids {
-            if !seen.insert(id) {
-                dup.push(id.clone());
-                continue;
-            }
-            let filter = pool
-                .get(id)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(filter);
-        }
-        if !dup.is_empty() {
-            return Err(ConfigError::DuplicateFilterIds(dup));
-        }
-        logger_ref.clear_filters();
-        for filter in items {
-            logger_ref.add_filter(filter);
+        clear(logger_ref);
+        for item in items {
+            add(logger_ref, item);
         }
         Ok(())
     }
