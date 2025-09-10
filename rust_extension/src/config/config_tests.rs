@@ -16,6 +16,20 @@ fn gil_and_clean_manager() {
     Python::with_gil(|_| manager::reset_manager());
 }
 
+#[fixture]
+fn builder_with_root(root: LoggerConfigBuilder) -> ConfigBuilder {
+    ConfigBuilder::new()
+        .with_handler("h", StreamHandlerBuilder::stderr())
+        .with_root_logger(root)
+}
+
+#[fixture]
+fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = builder_with_root(root.clone());
+    (builder, root)
+}
+
 #[rstest]
 fn build_rejects_invalid_version() {
     let builder = ConfigBuilder::new().with_version(2);
@@ -156,15 +170,15 @@ fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
 }
 #[rstest]
 #[serial]
-fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
+fn disable_existing_loggers_clears_unmentioned(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
     Python::with_gil(|py| {
-        let handler = StreamHandlerBuilder::stderr();
+        let (builder, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-        let builder = ConfigBuilder::new()
-            .with_handler("h", handler)
+        let builder = builder
             .with_filter("f", FilterBuilder::Level(filt))
-            .with_root_logger(root.clone())
             .with_logger(
                 "stale",
                 LoggerConfigBuilder::new()
@@ -193,13 +207,14 @@ fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
 
 #[rstest]
 #[serial]
-fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
+fn disable_existing_loggers_keeps_ancestors(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
     Python::with_gil(|py| {
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-        let builder = ConfigBuilder::new()
-            .with_handler("h", StreamHandlerBuilder::stderr())
-            .with_root_logger(root.clone())
-            .with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]));
+        let (builder, root) = base_logger_builder;
+        let builder =
+            builder.with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]));
         builder
             .build_and_init()
             .expect("initial build should succeed");
@@ -208,9 +223,7 @@ fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
             manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
         assert!(!parent.borrow(py).handlers_for_test().is_empty());
 
-        let rebuild = ConfigBuilder::new()
-            .with_handler("h", StreamHandlerBuilder::stderr())
-            .with_root_logger(root)
+        let rebuild = builder_with_root(root)
             .with_logger(
                 "parent.child",
                 LoggerConfigBuilder::new().with_handlers(["h"]),
