@@ -249,6 +249,36 @@ def test_disable_existing_loggers_keeps_ancestors() -> None:
     assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
 
 
+def test_disable_existing_loggers_keeps_all_ancestors() -> None:
+    """All ancestor loggers remain active when a grandchild logger is configured."""
+    builder = (
+        make_info_stderr_builder()
+        .with_logger("grandparent", LoggerConfigBuilder().with_handlers(["h"]))
+        .with_logger("grandparent.parent", LoggerConfigBuilder().with_handlers(["h"]))
+    )
+    builder.build_and_init()
+
+    grandparent = get_logger("grandparent")
+    parent = get_logger("grandparent.parent")
+    assert grandparent.handler_ptrs_for_test(), "grandparent should have a handler"
+    assert parent.handler_ptrs_for_test(), "parent should have a handler"
+
+    rebuild = (
+        make_info_stderr_builder()
+        .with_logger(
+            "grandparent.parent.child",
+            LoggerConfigBuilder().with_handlers(["h"]),
+        )
+        .with_disable_existing_loggers(True)
+    )
+    rebuild.build_and_init()
+
+    grandparent = get_logger("grandparent")
+    parent = get_logger("grandparent.parent")
+    assert grandparent.handler_ptrs_for_test(), "ancestor logger should remain active"
+    assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
+
+
 @pytest.mark.parametrize(
     ("first", "second", "expected"),
     [

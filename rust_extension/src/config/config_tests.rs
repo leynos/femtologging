@@ -213,26 +213,42 @@ fn disable_existing_loggers_keeps_ancestors(
 ) {
     Python::with_gil(|py| {
         let (builder, root) = base_logger_builder;
-        let builder =
-            builder.with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]));
+        let builder = builder
+            .with_logger(
+                "grandparent",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            )
+            .with_logger(
+                "grandparent.parent",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            );
         builder
             .build_and_init()
             .expect("initial build should succeed");
 
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        let grandparent = manager::get_logger(py, "grandparent")
+            .expect("get_logger('grandparent') should succeed");
+        let parent = manager::get_logger(py, "grandparent.parent")
+            .expect("get_logger('grandparent.parent') should succeed");
+        assert!(!grandparent.borrow(py).handlers_for_test().is_empty());
         assert!(!parent.borrow(py).handlers_for_test().is_empty());
 
         let rebuild = builder_with_root(root)
             .with_logger(
-                "parent.child",
+                "grandparent.parent.child",
                 LoggerConfigBuilder::new().with_handlers(["h"]),
             )
             .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
 
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        let grandparent = manager::get_logger(py, "grandparent")
+            .expect("get_logger('grandparent') should succeed");
+        let parent = manager::get_logger(py, "grandparent.parent")
+            .expect("get_logger('grandparent.parent') should succeed");
+        assert!(
+            !grandparent.borrow(py).handlers_for_test().is_empty(),
+            "ancestor logger should remain active",
+        );
         assert!(
             !parent.borrow(py).handlers_for_test().is_empty(),
             "ancestor logger should remain active",
