@@ -21,6 +21,7 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 /// # Examples
 /// ```
 /// use std::collections::BTreeMap;
+/// use crate::config::build::logger_names_with_ancestors;
 /// use crate::config::LoggerConfigBuilder;
 /// let mut loggers = BTreeMap::new();
 /// loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
@@ -29,7 +30,9 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 /// assert!(names.contains("a"));
 /// assert!(names.contains("root"));
 /// ```
-fn logger_names_with_ancestors(loggers: &BTreeMap<String, LoggerConfigBuilder>) -> HashSet<String> {
+pub(crate) fn logger_names_with_ancestors(
+    loggers: &BTreeMap<String, LoggerConfigBuilder>,
+) -> HashSet<String> {
     let mut keep_names: HashSet<String> = loggers
         .keys()
         .cloned()
@@ -207,6 +210,27 @@ mod tests {
             .map(String::from)
             .collect();
 
+        assert_eq!(names, expected);
+    }
+    #[test]
+    fn logger_names_with_ancestors_empty_map_returns_root() {
+        let loggers = BTreeMap::new();
+        let names = logger_names_with_ancestors(&loggers);
+        let expected: HashSet<_> = ["root"].into_iter().map(String::from).collect();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn logger_names_with_ancestors_handles_single_level() {
+        let mut loggers = BTreeMap::new();
+        loggers.insert("alpha".to_string(), LoggerConfigBuilder::new());
+        loggers.insert("beta".to_string(), LoggerConfigBuilder::new());
+
+        let names = logger_names_with_ancestors(&loggers);
+        let expected: HashSet<_> = ["alpha", "beta", "root"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         assert_eq!(names, expected);
     }
 }
