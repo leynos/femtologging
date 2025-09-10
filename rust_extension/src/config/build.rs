@@ -105,20 +105,20 @@ impl ConfigBuilder {
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
         self.apply_items(
-            &logger_ref,
-            cfg.handler_ids(),
-            handlers,
-            |l| l.clear_handlers(),
-            |l, h| l.add_handler(h),
-            ConfigError::DuplicateHandlerIds,
+            &logger_ref,                       // logger to mutate
+            cfg.handler_ids(),                 // declared handler identifiers
+            handlers,                          // pool of built handlers
+            |l| l.clear_handlers(),            // reset existing handlers
+            |l, h| l.add_handler(h),           // attach handler to logger
+            Self::duplicate_handler_ids_error, // error builder for duplicates
         )?;
         self.apply_items(
-            &logger_ref,
-            cfg.filter_ids(),
-            filters,
-            |l| l.clear_filters(),
-            |l, f| l.add_filter(f),
-            ConfigError::DuplicateFilterIds,
+            &logger_ref,                      // logger to mutate
+            cfg.filter_ids(),                 // declared filter identifiers
+            filters,                          // pool of built filters
+            |l| l.clear_filters(),            // reset existing filters
+            |l, f| l.add_filter(f),           // attach filter to logger
+            Self::duplicate_filter_ids_error, // error builder for duplicates
         )?;
         if let Some(level) = cfg.level_opt() {
             logger_ref.set_level(level);
@@ -126,6 +126,22 @@ impl ConfigBuilder {
         Ok(())
     }
 
+    fn duplicate_handler_ids_error(ids: Vec<String>) -> ConfigError {
+        ConfigError::DuplicateHandlerIds(ids)
+    }
+
+    fn duplicate_filter_ids_error(ids: Vec<String>) -> ConfigError {
+        ConfigError::DuplicateFilterIds(ids)
+    }
+
+    /// Apply a sequence of items to `logger_ref`.
+    ///
+    /// * `logger_ref` - logger being mutated.
+    /// * `ids` - ordered identifiers to resolve.
+    /// * `pool` - mapping of identifiers to built items.
+    /// * `clear` - clears existing items before attachment.
+    /// * `add` - attaches a resolved item to the logger.
+    /// * `dup_err` - constructs a duplicate identifier error.
     fn apply_items<T: ?Sized>(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
