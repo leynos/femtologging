@@ -236,12 +236,27 @@ fn disable_existing_loggers_keeps_ancestors(
     Python::with_gil(|py| {
         let (builder, root) = base_logger_builder;
         let builder = builder
+<<<<<<< HEAD
             .with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]))
             .with_logger("parent.child", LoggerConfigBuilder::new());
+||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
+        let builder =
+            builder.with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]));
+=======
+            .with_logger(
+                "grandparent",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            )
+            .with_logger(
+                "grandparent.parent",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            );
+>>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
         builder
             .build_and_init()
             .expect("initial build should succeed");
 
+<<<<<<< HEAD
         let parent =
             manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
         let parent_handlers_before = parent.borrow(py).handlers_for_test();
@@ -249,15 +264,55 @@ fn disable_existing_loggers_keeps_ancestors(
             !parent_handlers_before.is_empty(),
             "ancestor logger should have a handler",
         );
+||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
+        let parent =
+            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        assert!(!parent.borrow(py).handlers_for_test().is_empty());
+=======
+        let grandparent = manager::get_logger(py, "grandparent")
+            .expect("get_logger('grandparent') should succeed");
+        let parent = manager::get_logger(py, "grandparent.parent")
+            .expect("get_logger('grandparent.parent') should succeed");
+        assert!(!grandparent.borrow(py).handlers_for_test().is_empty());
+        assert!(!parent.borrow(py).handlers_for_test().is_empty());
+>>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
 
         let rebuild = builder_with_root(root)
+<<<<<<< HEAD
             .with_disable_existing_loggers(true)
             .with_logger("parent.child", LoggerConfigBuilder::new());
+||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
+            .with_logger(
+                "parent.child",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            )
+            .with_disable_existing_loggers(true);
+=======
+            .with_logger(
+                "grandparent.parent.child",
+                LoggerConfigBuilder::new().with_handlers(["h"]),
+            )
+            .with_disable_existing_loggers(true);
+>>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
         rebuild.build_and_init().expect("rebuild should succeed");
 
+<<<<<<< HEAD
         let parent =
             manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
         let parent_handlers_after = parent.borrow(py).handlers_for_test();
+||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
+        let parent =
+            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+=======
+        let grandparent = manager::get_logger(py, "grandparent")
+            .expect("get_logger('grandparent') should succeed");
+        let parent = manager::get_logger(py, "grandparent.parent")
+            .expect("get_logger('grandparent.parent') should succeed");
+        assert!(
+            !grandparent.borrow(py).handlers_for_test().is_empty(),
+            "ancestor logger should remain active",
+        );
+>>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
         assert!(
             !parent_handlers_after.is_empty(),
             "ancestor logger should be retained",
