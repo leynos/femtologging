@@ -56,31 +56,35 @@ fn reset_manager_py() {
     reset_manager();
 }
 
+/// Register Python-only classes and errors with the module.
+/// Group Python-only registrations to avoid scattered #[cfg] attributes.
+#[cfg(feature = "python")]
+fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
+    m.add_class::<StreamHandlerBuilder>()?;
+    m.add_class::<FileHandlerBuilder>()?;
+    m.add_class::<LevelFilterBuilder>()?;
+    m.add_class::<NameFilterBuilder>()?;
+    m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
+    m.add_class::<ConfigBuilder>()?;
+    m.add_class::<LoggerConfigBuilder>()?;
+    m.add_class::<FormatterBuilder>()?;
+    Ok(())
+}
+
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    m.add(
+        "HandlerConfigError",
+        m.py().get_type::<HandlerConfigError>(),
+    )?;
+    m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
     #[cfg(feature = "python")]
-    m.add_class::<StreamHandlerBuilder>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<FileHandlerBuilder>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<LevelFilterBuilder>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<NameFilterBuilder>()?;
-    m.add("HandlerConfigError", py.get_type::<HandlerConfigError>())?;
-    m.add("HandlerIOError", py.get_type::<HandlerIOError>())?;
-    #[cfg(feature = "python")]
-    m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
-    #[cfg(feature = "python")]
-    m.add_class::<ConfigBuilder>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<LoggerConfigBuilder>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<FormatterBuilder>()?;
+    add_python_bindings(m)?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
