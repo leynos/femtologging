@@ -13,6 +13,38 @@ use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogge
 
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
+/// Collect logger names and their ancestors for disable_existing_loggers.
+///
+/// When disabling existing loggers, direct ancestors must also be kept so
+/// they are not inadvertently removed.
+///
+/// # Examples
+/// ```
+/// use std::collections::BTreeMap;
+/// use crate::config::LoggerConfigBuilder;
+/// let mut loggers = BTreeMap::new();
+/// loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
+/// let names = logger_names_with_ancestors(&loggers);
+/// assert!(names.contains("a.b"));
+/// assert!(names.contains("a"));
+/// assert!(names.contains("root"));
+/// ```
+fn logger_names_with_ancestors(loggers: &BTreeMap<String, LoggerConfigBuilder>) -> HashSet<String> {
+    let mut keep_names: HashSet<String> = loggers
+        .keys()
+        .cloned()
+        .chain(std::iter::once("root".to_string()))
+        .collect();
+    for name in loggers.keys() {
+        let mut cur = name.as_str();
+        while let Some((parent, _)) = cur.rsplit_once('.') {
+            keep_names.insert(parent.to_string());
+            cur = parent;
+        }
+    }
+    keep_names
+}
+
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
@@ -36,20 +68,7 @@ impl ConfigBuilder {
         Python::with_gil(|py| -> Result<_, ConfigError> {
             // Handle disable_existing_loggers if requested
             if self.disable_existing_loggers {
-                let mut keep_names: HashSet<String> = self
-                    .loggers
-                    .keys()
-                    .cloned()
-                    .chain(std::iter::once("root".to_string()))
-                    .collect();
-                // Include ancestors of each kept logger (e.g., "a.b.c" keeps "a.b" and "a").
-                for name in self.loggers.keys() {
-                    let mut cur = name.as_str();
-                    while let Some((parent, _)) = cur.rsplit_once('.') {
-                        keep_names.insert(parent.to_string());
-                        cur = parent;
-                    }
-                }
+                let keep_names = logger_names_with_ancestors(&self.loggers);
                 manager::disable_existing_loggers(py, &keep_names)
                     .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
             }
@@ -170,5 +189,24 @@ impl ConfigBuilder {
             logger_ref.add_filter(filter);
         }
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logger_names_with_ancestors_collects_all() {
+        let mut loggers = BTreeMap::new();
+        loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
+        loggers.insert("top".to_string(), LoggerConfigBuilder::new());
+
+        let names = logger_names_with_ancestors(&loggers);
+        let expected: HashSet<_> = ["a.b.c", "a.b", "a", "top", "root"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert_eq!(names, expected);
     }
 }
