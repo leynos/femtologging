@@ -198,15 +198,19 @@ def test_unknown_handler_id_raises_key_error() -> None:
         builder.build_and_init()
 
 
+def make_info_stderr_builder() -> ConfigBuilder:
+    """Create a builder with an INFO root logger and stderr handler."""
+    return (
+        ConfigBuilder()
+        .with_handler("h", StreamHandlerBuilder.stderr())
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    )
+
+
 def test_disable_existing_loggers_clears_unmentioned() -> None:
     """Loggers not present in new config are disabled."""
-    handler = StreamHandlerBuilder.stderr()
-    root = LoggerConfigBuilder().with_level("INFO")
-    builder = (
-        ConfigBuilder()
-        .with_handler("h", handler)
-        .with_root_logger(root)
-        .with_logger("stale", LoggerConfigBuilder().with_handlers(["h"]))
+    builder = make_info_stderr_builder().with_logger(
+        "stale", LoggerConfigBuilder().with_handlers(["h"])
     )
     builder.build_and_init()
 
@@ -226,12 +230,8 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
 
 def test_disable_existing_loggers_keeps_ancestors() -> None:
     """Ancestor loggers remain active when child logger is kept."""
-    handler = StreamHandlerBuilder.stderr()
-    parent_builder = (
-        ConfigBuilder()
-        .with_handler("h", handler)
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_logger("parent", LoggerConfigBuilder().with_handlers(["h"]))
+    parent_builder = make_info_stderr_builder().with_logger(
+        "parent", LoggerConfigBuilder().with_handlers(["h"])
     )
     parent_builder.build_and_init()
 
@@ -239,9 +239,7 @@ def test_disable_existing_loggers_keeps_ancestors() -> None:
     assert parent.handler_ptrs_for_test(), "parent should have a handler"
 
     rebuild = (
-        ConfigBuilder()
-        .with_handler("h", StreamHandlerBuilder.stderr())
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        make_info_stderr_builder()
         .with_logger("parent.child", LoggerConfigBuilder().with_handlers(["h"]))
         .with_disable_existing_loggers(True)
     )
