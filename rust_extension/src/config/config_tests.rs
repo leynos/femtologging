@@ -121,23 +121,40 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
+/// Build a config expected to fail due to duplicate IDs.
+/// `setup` attaches handlers or filters before the error is triggered.
+fn build_with_duplicate_ids<F>(mut logger_cfg: LoggerConfigBuilder, setup: F) -> ConfigError
+where
+    F: FnOnce(ConfigBuilder) -> ConfigBuilder,
+{
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    setup(ConfigBuilder::new())
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg)
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate ids")
+}
+
+/// Sort IDs and compare to expected, ignoring order.
+fn assert_unordered_ids(mut ids: Vec<String>, expected: &[&str]) {
+    ids.sort();
+    let mut expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    expected.sort();
+    assert_eq!(ids, expected);
+}
+
 #[rstest]
 #[serial]
 fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
     let handler = StreamHandlerBuilder::stderr();
     let mut logger_cfg = LoggerConfigBuilder::new();
     logger_cfg.handlers = vec!["h".into(), "i".into(), "h".into(), "i".into()];
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    let builder = ConfigBuilder::new()
-        .with_handler("h", handler)
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg);
-    let err = builder
-        .build_and_init()
-        .expect_err("build_and_init should fail for duplicate handler ids");
-    assert!(
-        matches!(err, ConfigError::DuplicateHandlerIds(ids) if ids == vec!["h".to_string(), "i".to_string()])
-    );
+    let err = build_with_duplicate_ids(logger_cfg, |b| b.with_handler("h", handler));
+    if let ConfigError::DuplicateHandlerIds(ids) = err {
+        assert_unordered_ids(ids, &["h", "i"]);
+    } else {
+        panic!("expected DuplicateHandlerIds error");
+    }
 }
 
 #[rstest]
@@ -146,18 +163,16 @@ fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
     let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
     let mut logger_cfg = LoggerConfigBuilder::new();
     logger_cfg.filters = vec!["f".into(), "g".into(), "f".into(), "g".into()];
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    let builder = ConfigBuilder::new()
-        .with_filter("f", FilterBuilder::Level(filt))
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg);
-    let err = builder
-        .build_and_init()
-        .expect_err("build_and_init should fail for duplicate filter ids");
-    assert!(
-        matches!(err, ConfigError::DuplicateFilterIds(ids) if ids == vec!["f".to_string(), "g".to_string()])
-    );
+    let err = build_with_duplicate_ids(logger_cfg, |b| {
+        b.with_filter("f", FilterBuilder::Level(filt))
+    });
+    if let ConfigError::DuplicateFilterIds(ids) = err {
+        assert_unordered_ids(ids, &["f", "g"]);
+    } else {
+        panic!("expected DuplicateFilterIds error");
+    }
 }
+
 #[rstest]
 #[serial]
 fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
@@ -227,6 +242,13 @@ fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
         assert!(
             !parent.borrow(py).handlers_for_test().is_empty(),
             "ancestor logger should be retained",
+        );
+
+        let child = manager::get_logger(py, "parent.child")
+            .expect("get_logger('parent.child') should succeed");
+        assert!(
+            child.borrow(py).handlers_for_test().is_empty(),
+            "child logger should have no handlers",
         );
     });
 }
