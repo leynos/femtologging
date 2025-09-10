@@ -662,3 +662,29 @@ This design makes each struct implement `Send` and `Sync`, so loggers and
 handlers can be shared safely across threads without resorting to `unsafe`
 code. Compile‑time assertions in `rust_extension/tests/send_sync.rs` enforce
 these guarantees.
+
+### `apply_collection` helper flow
+
+The `ConfigBuilder` uses a generic `apply_collection` helper to deduplicate
+identifiers, report unknown IDs, clear existing entries, and then attach
+handlers or filters to a logger. The flow is outlined below:
+
+```mermaid
+flowchart TD
+    A["Start apply_collection"] --> B["Initialize seen, dup, items"]
+    B --> C["For each id in ids"]
+    C --> D{Is id in seen?}
+    D -- Yes --> E["Add id to dup"]
+    D -- No --> F["Try to get object from pool"]
+    F --> G{Object found?}
+    G -- No --> H["Return UnknownId error"]
+    G -- Yes --> I["Add object to items"]
+    E --> C
+    I --> C
+    C --> J["All ids processed"]
+    J --> K{dup is empty?}
+    K -- No --> L["Return dup_err(dup)"]
+    K -- Yes --> M["Call clear(logger_ref)"]
+    M --> N["For each item in items: call add(logger_ref, item)"]
+    N --> O["Return Ok"]
+```
