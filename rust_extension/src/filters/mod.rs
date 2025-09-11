@@ -73,9 +73,10 @@ impl From<NameFilterBuilder> for FilterBuilder {
     }
 }
 
-// Group Python-specific helpers to avoid repeated cfg attributes.
+/// Python-specific helpers grouped to avoid repeated #[cfg] attributes.
 #[cfg(feature = "python")]
 mod python {
+    //! Python-specific helpers (exceptions, conversions, dict adapters).
     use super::*;
     use crate::macros::AsPyDict;
     use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
@@ -113,13 +114,22 @@ mod python {
                 Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
                 Err(e) => return Err(e),
             }
-            let ty = obj
-                .get_type()
-                .name()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|_| "<unknown>".into());
+            let ty = obj.get_type();
+            let module = ty
+                .getattr("__module__")
+                .and_then(|m| m.extract::<String>())
+                .unwrap_or_else(|_| String::new());
+            let qualname = ty
+                .getattr("__qualname__")
+                .and_then(|n| n.extract::<String>())
+                .unwrap_or_else(|_| String::new());
+            let fq = if module == "builtins" {
+                qualname.clone()
+            } else {
+                format!("{module}.{qualname}")
+            };
             Err(PyTypeError::new_err(format!(
-                "unknown filter builder type (got Python type: {ty})",
+                "builder must be LevelFilterBuilder or NameFilterBuilder (got Python type: {fq})",
             )))
         }
     }

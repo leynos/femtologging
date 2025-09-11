@@ -60,12 +60,11 @@ fn reset_manager_py() {
 /// Group Python-only registrations to avoid scattered #[cfg] attributes.
 #[cfg(feature = "python")]
 fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
     m.add_class::<StreamHandlerBuilder>()?;
     m.add_class::<FileHandlerBuilder>()?;
     m.add_class::<LevelFilterBuilder>()?;
     m.add_class::<NameFilterBuilder>()?;
-    m.add("FilterBuildError", py.get_type::<FilterBuildErrorPy>())?;
+    m.add("FilterBuildError", m.py().get_type::<FilterBuildErrorPy>())?;
     m.add_class::<ConfigBuilder>()?;
     m.add_class::<LoggerConfigBuilder>()?;
     m.add_class::<FormatterBuilder>()?;
