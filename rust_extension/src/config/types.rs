@@ -308,4 +308,4 @@ impl ConfigBuilder {
 }
 
 #[cfg(feature = "python")]
-mod types_python;
+mod python_bindings;
