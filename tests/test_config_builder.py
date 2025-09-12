@@ -239,17 +239,20 @@ def test_disable_existing_loggers_keeps_ancestors() -> None:
     parent_builder.build_and_init()
 
     parent = get_logger("parent")
-    assert parent.handler_ptrs_for_test(), "parent should have a handler"
+    initial_handlers = parent.handler_ptrs_for_test()
+    assert initial_handlers, "parent should have a handler"
 
-    rebuild = (
-        make_info_stderr_builder()
-        .with_logger("parent.child", LoggerConfigBuilder().with_handlers(["h"]))
-        .with_disable_existing_loggers(True)
+    rebuild = make_builder_with_logger("parent.child").with_disable_existing_loggers(
+        True
     )
     rebuild.build_and_init()
 
     parent = get_logger("parent")
-    assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
+    child = get_logger("parent.child")
+    assert child.handler_ptrs_for_test(), "child should have a handler"
+    assert parent.handler_ptrs_for_test() == initial_handlers, (
+        "ancestor logger should retain its handler"
+    )
 
 
 def test_disable_existing_loggers_keeps_all_ancestors() -> None:

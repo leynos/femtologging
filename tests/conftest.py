@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
 
+import femtologging
 from femtologging import FemtoFileHandler
 import pytest
 
@@ -41,3 +42,13 @@ def file_handler_factory() -> FileHandlerFactory:
             gc.collect()
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def reset_manager() -> Generator[None, None, None]:
+    """Reset global logger manager before and after each test."""
+    femtologging.reset_manager()
+    try:
+        yield
+    finally:
+        femtologging.reset_manager()
