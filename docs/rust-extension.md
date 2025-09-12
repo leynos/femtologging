@@ -23,6 +23,12 @@ splits responsibilities into three modules:
 use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
 ```
 
+The module initialiser `_femtologging_rs` delegates registration of
+Python-specific builders and errors to `add_python_bindings`. This helper keeps
+conditional compilation concise by grouping Python-only items in one place. The
+Rust crate re-exports these builder types so they remain available from the
+public API.
+
 Packaging is handled by [maturin](https://maturin.rs/). Use version
 `>=1.9.1,<2.0.0` as declared in `pyproject.toml`. The `[tool.maturin]` section
 declares the extension module as `femtologging._femtologging_rs`, so running

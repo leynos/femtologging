@@ -79,6 +79,7 @@ mod python {
     //! Python-specific helpers (exceptions, conversions, dict adapters).
     use super::*;
     use crate::macros::AsPyDict;
+    use crate::python::fq_py_type;
     use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
 
     create_exception!(
@@ -114,20 +115,7 @@ mod python {
                 Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
                 Err(e) => return Err(e),
             }
-            let ty = obj.get_type();
-            let module = ty
-                .getattr("__module__")
-                .and_then(|m| m.extract::<String>())
-                .unwrap_or_else(|_| String::new());
-            let qualname = ty
-                .getattr("__qualname__")
-                .and_then(|n| n.extract::<String>())
-                .unwrap_or_else(|_| String::new());
-            let fq = if module == "builtins" {
-                qualname.clone()
-            } else {
-                format!("{module}.{qualname}")
-            };
+            let fq = fq_py_type(obj);
             Err(PyTypeError::new_err(format!(
                 "builder must be LevelFilterBuilder or NameFilterBuilder (got Python type: {fq})",
             )))

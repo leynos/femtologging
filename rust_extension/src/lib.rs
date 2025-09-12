@@ -15,30 +15,41 @@ mod macros;
 pub mod manager;
 #[cfg(not(feature = "test-util"))]
 mod manager;
+#[cfg(feature = "python")]
+mod python;
 #[cfg(feature = "test-util")]
 pub mod rate_limited_warner;
 #[cfg(not(feature = "test-util"))]
 mod rate_limited_warner;
 mod stream_handler;
 
+/// Re-export configuration builders for external consumers.
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 #[cfg(feature = "python")]
 use filters::FilterBuildErrorPy;
+/// Re-export filter builders and traits.
 pub use filters::{
     FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
 };
 
+/// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
+/// Re-export the base handler trait and wrapper.
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
+/// Re-export handler builders and errors.
 pub use handlers::{
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
     FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
     StreamHandlerBuilder,
 };
+/// Re-export logging levels.
 pub use level::FemtoLevel;
+/// Re-export log record types.
 pub use log_record::{FemtoLogRecord, RecordMetadata};
+/// Re-export the logger and queued record handle.
 pub use logger::{FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
+/// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 
 #[pyfunction]
