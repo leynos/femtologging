@@ -198,16 +198,25 @@ def test_unknown_handler_id_raises_key_error() -> None:
         builder.build_and_init()
 
 
+def make_info_stderr_builder() -> ConfigBuilder:
+    """Create a builder with an INFO root logger and stderr handler."""
+    return (
+        ConfigBuilder()
+        .with_handler("h", StreamHandlerBuilder.stderr())
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+    )
+
+
+def make_builder_with_logger(logger_name: str) -> ConfigBuilder:
+    """Create a builder with INFO root logger, stderr handler, and a named logger."""
+    return make_info_stderr_builder().with_logger(
+        logger_name, LoggerConfigBuilder().with_handlers(["h"])
+    )
+
+
 def test_disable_existing_loggers_clears_unmentioned() -> None:
     """Loggers not present in new config are disabled."""
-    handler = StreamHandlerBuilder.stderr()
-    root = LoggerConfigBuilder().with_level("INFO")
-    builder = (
-        ConfigBuilder()
-        .with_handler("h", handler)
-        .with_root_logger(root)
-        .with_logger("stale", LoggerConfigBuilder().with_handlers(["h"]))
-    )
+    builder = make_builder_with_logger("stale")
     builder.build_and_init()
 
     stale = get_logger("stale")
@@ -222,6 +231,55 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
 
     stale = get_logger("stale")
     assert stale.handler_ptrs_for_test() == [], "stale logger should be disabled"
+
+
+def test_disable_existing_loggers_keeps_ancestors() -> None:
+    """Ancestor loggers remain active when child logger is kept."""
+    parent_builder = make_builder_with_logger("parent")
+    parent_builder.build_and_init()
+
+    parent = get_logger("parent")
+    assert parent.handler_ptrs_for_test(), "parent should have a handler"
+
+    rebuild = (
+        make_info_stderr_builder()
+        .with_logger("parent.child", LoggerConfigBuilder().with_handlers(["h"]))
+        .with_disable_existing_loggers(True)
+    )
+    rebuild.build_and_init()
+
+    parent = get_logger("parent")
+    assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
+
+
+def test_disable_existing_loggers_keeps_all_ancestors() -> None:
+    """All ancestor loggers remain active when a grandchild logger is configured."""
+    builder = (
+        make_info_stderr_builder()
+        .with_logger("grandparent", LoggerConfigBuilder().with_handlers(["h"]))
+        .with_logger("grandparent.parent", LoggerConfigBuilder().with_handlers(["h"]))
+    )
+    builder.build_and_init()
+
+    grandparent = get_logger("grandparent")
+    parent = get_logger("grandparent.parent")
+    assert grandparent.handler_ptrs_for_test(), "grandparent should have a handler"
+    assert parent.handler_ptrs_for_test(), "parent should have a handler"
+
+    rebuild = (
+        make_info_stderr_builder()
+        .with_logger(
+            "grandparent.parent.child",
+            LoggerConfigBuilder().with_handlers(["h"]),
+        )
+        .with_disable_existing_loggers(True)
+    )
+    rebuild.build_and_init()
+
+    grandparent = get_logger("grandparent")
+    parent = get_logger("grandparent.parent")
+    assert grandparent.handler_ptrs_for_test(), "ancestor logger should remain active"
+    assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
 
 
 @pytest.mark.parametrize(
