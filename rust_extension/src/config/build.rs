@@ -164,9 +164,9 @@ impl ConfigBuilder {
         logger_ref: &PyRef<FemtoLogger>,
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
-        clear_fn: impl Fn(&PyRef<FemtoLogger>),
+        clear_fn: impl FnOnce(&PyRef<FemtoLogger>),
         add_fn: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
-        dup_err: fn(Vec<String>) -> ConfigError,
+        dup_err: impl FnOnce(Vec<String>) -> ConfigError,
     ) -> Result<(), ConfigError> {
         let items = Self::collect_items(ids, pool, dup_err)?;
         clear_fn(logger_ref);
