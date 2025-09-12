@@ -1,4 +1,4 @@
-# add_python_bindings Entry Point
+# add_python_bindings entry point
 
 `add_python_bindings` registers Python-only builders and errors with the
 `_femtologging_rs` module. It keeps conditional compilation concise by grouping

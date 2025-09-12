@@ -1,6 +1,6 @@
 //! Python bindings and public re-exports for the femtologging Rust extension.
 //!
-//! The [_femtologging_rs] module exposes core logging types to Python.
+//! The [`_femtologging_rs`] module exposes core logging types to Python.
 //! When the `python` feature is enabled, [`add_python_bindings`] registers
 //! builders and errors that are otherwise conditionally compiled. The crate
 //! re-exports these types so they remain usable from Rust.
@@ -31,7 +31,7 @@ mod stream_handler;
 /// Re-export configuration builders for external consumers.
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 #[cfg(feature = "python")]
-use filters::FilterBuildErrorPy;
+pub use filters::FilterBuildErrorPy;
 /// Re-export filter builders and traits.
 pub use filters::{
     FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,

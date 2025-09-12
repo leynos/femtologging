@@ -26,3 +26,41 @@ pub(crate) fn fq_py_type(obj: &Bound<'_, PyAny>) -> String {
         format!("{module}.{qualname}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyo3::types::{PyList, PyModule};
+
+    #[test]
+    fn returns_builtin_name_without_module() {
+        Python::with_gil(|py| {
+            let list = PyList::empty(py);
+            let name = fq_py_type(list.as_any());
+            assert_eq!(name, "list");
+        });
+    }
+
+    #[test]
+    fn returns_user_defined_fq_name() {
+        Python::with_gil(|py| {
+            let module = PyModule::from_code(py, "class Foo: pass\n", "mymod.py", "mymod").unwrap();
+            let obj = module.getattr("Foo").unwrap().call0().unwrap();
+            let name = fq_py_type(&obj);
+            assert_eq!(name, "mymod.Foo");
+        });
+    }
+
+    #[test]
+    fn falls_back_when_attrs_missing() {
+        Python::with_gil(|py| {
+            let module = PyModule::from_code(py, "class Bar: pass\n", "mymod.py", "mymod").unwrap();
+            let class = module.getattr("Bar").unwrap();
+            class.delattr("__module__").unwrap();
+            class.delattr("__qualname__").unwrap();
+            let obj = class.call0().unwrap();
+            let name = fq_py_type(&obj);
+            assert_eq!(name, "<unknown>.<unknown>");
+        });
+    }
+}
