@@ -207,11 +207,16 @@ def make_info_stderr_builder() -> ConfigBuilder:
     )
 
 
+def make_builder_with_logger(logger_name: str) -> ConfigBuilder:
+    """Create a builder with INFO root logger, stderr handler, and a named logger."""
+    return make_info_stderr_builder().with_logger(
+        logger_name, LoggerConfigBuilder().with_handlers(["h"])
+    )
+
+
 def test_disable_existing_loggers_clears_unmentioned() -> None:
     """Loggers not present in new config are disabled."""
-    builder = make_info_stderr_builder().with_logger(
-        "stale", LoggerConfigBuilder().with_handlers(["h"])
-    )
+    builder = make_builder_with_logger("stale")
     builder.build_and_init()
 
     stale = get_logger("stale")
@@ -230,9 +235,7 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
 
 def test_disable_existing_loggers_keeps_ancestors() -> None:
     """Ancestor loggers remain active when child logger is kept."""
-    parent_builder = make_info_stderr_builder().with_logger(
-        "parent", LoggerConfigBuilder().with_handlers(["h"])
-    )
+    parent_builder = make_builder_with_logger("parent")
     parent_builder.build_and_init()
 
     parent = get_logger("parent")
