@@ -1,4 +1,9 @@
 //! Python bindings and public re-exports for the femtologging Rust extension.
+//!
+//! The [_femtologging_rs] module exposes core logging types to Python.
+//! When the `python` feature is enabled, [`add_python_bindings`] registers
+//! builders and errors that are otherwise conditionally compiled. The crate
+//! re-exports these types so they remain usable from Rust.
 use pyo3::prelude::*;
 
 mod config;
@@ -67,8 +72,11 @@ fn reset_manager_py() {
     reset_manager();
 }
 
-/// Register Python-only classes and errors with the module.
-/// Group Python-only registrations to avoid scattered #[cfg] attributes.
+/// Register Python-only builders and errors with the module.
+///
+/// The helper runs when the `python` feature is enabled and keeps
+/// conditional compilation tidy by collecting registrations in one place.
+/// It is invoked by [`_femtologging_rs`] during initialisation.
 #[cfg(feature = "python")]
 fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StreamHandlerBuilder>()?;
@@ -94,6 +102,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
     #[cfg(feature = "python")]
+    // Register builder types and errors that are only compiled when the
+    // `python` feature is enabled.
     add_python_bindings(m)?;
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
