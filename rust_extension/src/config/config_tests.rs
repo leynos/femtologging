@@ -84,6 +84,31 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     });
 }
 
+<<<<<<< HEAD
+||||||| parent of 2788bd6 (Expose propagate flag)
+#[rstest]
+#[serial]
+=======
+#[rstest]
+#[serial]
+fn propagate_flag_applied(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let child_cfg = LoggerConfigBuilder::new()
+            .with_level(FemtoLevel::Info)
+            .with_propagate(false);
+        let builder = ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_logger("child", child_cfg);
+        builder.build_and_init().expect("build should succeed");
+        let logger = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        assert!(!logger.borrow(py).propagate());
+    });
+}
+
+#[rstest]
+#[serial]
+>>>>>>> 2788bd6 (Expose propagate flag)
 fn unknown_handler_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_handlers(["missing"]);

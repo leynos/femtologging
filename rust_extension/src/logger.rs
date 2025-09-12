@@ -146,6 +146,12 @@ impl FemtoLogger {
         self.level.store(level as u8, Ordering::Relaxed);
     }
 
+    /// Return whether this logger propagates records to its parent.
+    #[getter]
+    pub fn propagate(&self) -> bool {
+        self.propagate.load(Ordering::Relaxed)
+    }
+
     /// Set whether this logger propagates records to its parent.
     #[pyo3(text_signature = "(self, flag)")]
     pub fn set_propagate(&self, flag: bool) {
