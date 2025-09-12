@@ -1,5 +1,5 @@
-//! Construction and realisation of configuration.
 #![cfg(feature = "python")]
+//! Construction and realisation of configuration.
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -12,7 +12,6 @@ use crate::config::ConfigError;
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogger, manager};
 
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
-
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
