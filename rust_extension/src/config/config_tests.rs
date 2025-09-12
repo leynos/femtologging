@@ -162,12 +162,13 @@ fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
 #[rstest]
 #[serial]
 fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
-    let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
     let mut logger_cfg = LoggerConfigBuilder::new();
     logger_cfg.filters = vec!["f".into(), "g".into(), "f".into(), "g".into()];
-    let err = build_with_duplicate_ids(logger_cfg, |b| {
-        b.with_filter("f", FilterBuilder::Level(filt.clone()))
-            .with_filter("g", FilterBuilder::Level(filt))
+    let filt_f = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
+    let filt_g = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
+    let err = build_with_duplicate_ids(logger_cfg, move |b| {
+        b.with_filter("f", FilterBuilder::Level(filt_f))
+            .with_filter("g", FilterBuilder::Level(filt_g))
     });
     if let ConfigError::DuplicateFilterIds(ids) = err {
         assert_unordered_ids(ids, &["f", "g"]);
