@@ -245,6 +245,8 @@ fn disable_existing_loggers_keeps_ancestors(
             .expect("get_logger('grandparent') should succeed");
         let parent = manager::get_logger(py, "grandparent.parent")
             .expect("get_logger('grandparent.parent') should succeed");
+        let child = manager::get_logger(py, "grandparent.parent.child")
+            .expect("get_logger('grandparent.parent.child') should succeed");
         assert!(
             !grandparent.borrow(py).handlers_for_test().is_empty(),
             "ancestor logger should remain active",
@@ -252,6 +254,11 @@ fn disable_existing_loggers_keeps_ancestors(
         assert!(
             !parent.borrow(py).handlers_for_test().is_empty(),
             "ancestor logger should remain active",
+        );
+        assert_eq!(
+            child.borrow(py).handlers_for_test().len(),
+            1,
+            "child logger should retain its handler",
         );
     });
 }
