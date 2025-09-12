@@ -124,25 +124,30 @@ impl ConfigBuilder {
         pool: &BTreeMap<String, Arc<T>>,
         dup_err: impl FnOnce(Vec<String>) -> ConfigError,
     ) -> Result<Vec<Arc<T>>, ConfigError> {
+        // 1) Detect duplicates first (report each duplicate once, preserve
+        // first-seen order) so we fail deterministically before any pool
+        // lookups. This keeps error behaviour stable regardless of map
+        // contents or lookup costs.
         let mut seen = HashSet::with_capacity(ids.len());
+        let mut dup_once: HashSet<&str> = HashSet::new();
         let mut dup = Vec::new();
-        let mut dup_seen: HashSet<&str> = HashSet::new();
+        for id in ids {
+            if !seen.insert(id) && dup_once.insert(id.as_str()) {
+                dup.push(id.clone());
+            }
+        }
+        if !dup.is_empty() {
+            return Err(dup_err(dup));
+        }
+
+        // 2) Perform lookups only after confirming no duplicates exist.
         let mut items = Vec::with_capacity(ids.len());
         for id in ids {
-            if !seen.insert(id) {
-                if dup_seen.insert(id.as_str()) {
-                    dup.push(id.clone());
-                }
-                continue;
-            }
             let obj = pool
                 .get(id)
                 .cloned()
                 .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
             items.push(obj);
-        }
-        if !dup.is_empty() {
-            return Err(dup_err(dup));
         }
         Ok(items)
     }
