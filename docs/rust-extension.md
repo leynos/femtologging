@@ -23,6 +23,48 @@ splits responsibilities into three modules:
 use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
 ```
 
+The module initialiser `_femtologging_rs` delegates registration of
+Python-specific builders and errors to
+[`add_python_bindings`](./add-python-bindings.md). This helper keeps
+conditional compilation concise by grouping Python-only items in one place. The
+crate re-exports these builder types, and `FilterBuildErrorPy` when the
+`python` feature is enabled, so they remain available from the public API.
+
+## Public API Re-exports
+
+The crate exposes selected types from its internal modules so consumers can
+configure loggers without digging into submodules. These items are always
+available, though they are added to the Python module only when the `python`
+feature is enabled via [`add_python_bindings`](./add-python-bindings.md).
+
+| Symbol                 | Source module                                  |
+| ---------------------- | ---------------------------------------------- |
+| `ConfigBuilder`        | `config::ConfigBuilder`                        |
+| `FormatterBuilder`     | `config::FormatterBuilder`                     |
+| `LoggerConfigBuilder`  | `config::LoggerConfigBuilder`                  |
+| `FemtoFilter`          | `filters::FemtoFilter`                         |
+| `FilterBuildError`     | `filters::FilterBuildError`                    |
+| `FilterBuildErrorPy`   | `filters::FilterBuildErrorPy` (python feature) |
+| `FilterBuilderTrait`   | `filters::FilterBuilderTrait`                  |
+| `LevelFilterBuilder`   | `filters::LevelFilterBuilder`                  |
+| `NameFilterBuilder`    | `filters::NameFilterBuilder`                   |
+| `DefaultFormatter`     | `formatter::DefaultFormatter`                  |
+| `FemtoFormatter`       | `formatter::FemtoFormatter`                    |
+| `FemtoHandler`         | `handler::FemtoHandler`                        |
+| `FemtoHandlerTrait`    | `handler::FemtoHandlerTrait`                   |
+| `FileHandlerBuilder`   | `handlers::FileHandlerBuilder`                 |
+| `HandlerBuilderTrait`  | `handlers::HandlerBuilderTrait`                |
+| `HandlerConfigError`   | `handlers::HandlerConfigError`                 |
+| `HandlerIOError`       | `handlers::HandlerIOError`                     |
+| `StreamHandlerBuilder` | `handlers::StreamHandlerBuilder`               |
+| `FemtoLevel`           | `level::FemtoLevel`                            |
+| `FemtoLogRecord`       | `log_record::FemtoLogRecord`                   |
+| `RecordMetadata`       | `log_record::RecordMetadata`                   |
+| `FemtoLogger`          | `logger::FemtoLogger`                          |
+| `QueuedRecord`         | `logger::QueuedRecord`                         |
+| `FemtoStreamHandler`   | `stream_handler::FemtoStreamHandler`           |
+| `StreamHandlerConfig`  | `stream_handler::HandlerConfig`                |
+
 Packaging is handled by [maturin](https://maturin.rs/). Use version
 `>=1.9.1,<2.0.0` as declared in `pyproject.toml`. The `[tool.maturin]` section
 declares the extension module as `femtologging._femtologging_rs`, so running

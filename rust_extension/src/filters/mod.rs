@@ -5,13 +5,9 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "python")]
-use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
 use thiserror::Error;
 
 use crate::log_record::FemtoLogRecord;
-#[cfg(feature = "python")]
-use crate::macros::AsPyDict;
 
 /// Trait implemented by all log filters.
 ///
@@ -33,20 +29,6 @@ pub enum FilterBuildError {
     /// Invalid user supplied configuration.
     #[error("invalid filter configuration: {0}")]
     InvalidConfig(String),
-}
-
-#[cfg(feature = "python")]
-create_exception!(
-    _femtologging_rs,
-    FilterBuildErrorPy,
-    pyo3::exceptions::PyException
-);
-
-#[cfg(feature = "python")]
-impl From<FilterBuildError> for PyErr {
-    fn from(err: FilterBuildError) -> PyErr {
-        FilterBuildErrorPy::new_err(err.to_string())
-    }
 }
 
 /// Trait implemented by all filter builders.
@@ -91,36 +73,55 @@ impl From<NameFilterBuilder> for FilterBuilder {
     }
 }
 
+/// Python-specific filter helpers grouped to avoid repeated #[cfg] attributes.
 #[cfg(feature = "python")]
-impl AsPyDict for FilterBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        match self {
-            Self::Level(b) => b.as_pydict(py),
-            Self::Name(b) => b.as_pydict(py),
+mod py_helpers {
+    //! Filter-specific Python helpers (exceptions, conversions, dict adapters).
+    use super::*;
+    use crate::macros::AsPyDict;
+    use crate::python::fq_py_type;
+    use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
+
+    create_exception!(
+        _femtologging_rs,
+        FilterBuildErrorPy,
+        pyo3::exceptions::PyException
+    );
+
+    impl From<FilterBuildError> for PyErr {
+        fn from(err: FilterBuildError) -> PyErr {
+            FilterBuildErrorPy::new_err(err.to_string())
+        }
+    }
+
+    impl AsPyDict for FilterBuilder {
+        fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+            match self {
+                Self::Level(b) => b.as_pydict(py),
+                Self::Name(b) => b.as_pydict(py),
+            }
+        }
+    }
+
+    impl<'py> FromPyObject<'py> for FilterBuilder {
+        fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
+            match LevelFilterBuilder::extract_bound(obj) {
+                Ok(b) => return Ok(FilterBuilder::Level(b)),
+                Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
+                Err(e) => return Err(e),
+            }
+            match NameFilterBuilder::extract_bound(obj) {
+                Ok(b) => return Ok(FilterBuilder::Name(b)),
+                Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
+                Err(e) => return Err(e),
+            }
+            let fq = fq_py_type(obj);
+            Err(PyTypeError::new_err(format!(
+                "builder must be LevelFilterBuilder or NameFilterBuilder (got Python type: {fq})",
+            )))
         }
     }
 }
 
 #[cfg(feature = "python")]
-impl<'py> FromPyObject<'py> for FilterBuilder {
-    fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
-        match LevelFilterBuilder::extract_bound(obj) {
-            Ok(b) => return Ok(FilterBuilder::Level(b)),
-            Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
-            Err(e) => return Err(e),
-        }
-        match NameFilterBuilder::extract_bound(obj) {
-            Ok(b) => return Ok(FilterBuilder::Name(b)),
-            Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
-            Err(e) => return Err(e),
-        }
-        let ty = obj
-            .get_type()
-            .name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|_| "<unknown>".into());
-        Err(PyTypeError::new_err(format!(
-            "unknown filter builder type (got Python type: {ty})",
-        )))
-    }
-}
+pub use py_helpers::FilterBuildErrorPy;

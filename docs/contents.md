@@ -44,6 +44,8 @@ libraries. Use the links below to explore each topic.
     names.
 - [rust-extension.md](./rust-extension.md)
   - Describes the small PyO3-based Rust extension shipped in the project.
+- [add-python-bindings.md](./add-python-bindings.md)
+  - Explains the `add_python_bindings` entry point and its feature gating.
 - <!-- markdownlint-disable-next-line MD013 -->
 - [cpython-abi-management-in-rust-with-pyo3.md](./cpython-abi-management-in-
   rust-with-pyo3.md)
