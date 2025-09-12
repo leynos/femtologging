@@ -335,5 +335,17 @@ fn disable_existing_loggers_keeps_ancestors(
             1,
             "child logger should retain its handler",
         );
+        let logging = py.import("logging").expect("import logging");
+        let py_child = logging
+            .call_method1("getLogger", ("grandparent.parent.child",))
+            .expect("getLogger('grandparent.parent.child') should succeed");
+        let py_handlers = py_child
+            .getattr("handlers")
+            .expect("child logger should expose handlers");
+        assert_eq!(
+            py_handlers.len().unwrap(),
+            1,
+            "child logger should retain its handler",
+        );
     });
 }
