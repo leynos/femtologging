@@ -230,8 +230,9 @@ fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
 
         let parent =
             manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        let parent_handlers_before = parent.borrow(py).handlers_for_test();
         assert!(
-            !parent.borrow(py).handlers_for_test().is_empty(),
+            !parent_handlers_before.is_empty(),
             "ancestor logger should have a handler",
         );
 
@@ -243,9 +244,14 @@ fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
 
         let parent =
             manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
+        let parent_handlers_after = parent.borrow(py).handlers_for_test();
         assert!(
-            !parent.borrow(py).handlers_for_test().is_empty(),
+            !parent_handlers_after.is_empty(),
             "ancestor logger should be retained",
+        );
+        assert!(
+            Arc::ptr_eq(&parent_handlers_before[0], &parent_handlers_after[0]),
+            "ancestor handler should be reused",
         );
 
         let child = manager::get_logger(py, "parent.child")
