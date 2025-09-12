@@ -16,7 +16,6 @@ fn gil_and_clean_manager() {
     Python::with_gil(|_| manager::reset_manager());
 }
 
-#[fixture]
 fn builder_with_root(root: LoggerConfigBuilder) -> ConfigBuilder {
     ConfigBuilder::new()
         .with_handler("h", StreamHandlerBuilder::stderr())

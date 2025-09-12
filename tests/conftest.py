@@ -45,7 +45,7 @@ def file_handler_factory() -> FileHandlerFactory:
 
 
 @pytest.fixture(autouse=True)
-def reset_manager() -> Generator[None, None, None]:
+def _reset_manager() -> Generator[None, None, None]:
     """Reset global logger manager before and after each test."""
     femtologging.reset_manager()
     try:

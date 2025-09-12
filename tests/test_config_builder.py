@@ -249,7 +249,7 @@ def test_disable_existing_loggers_keeps_ancestors() -> None:
 
     parent = get_logger("parent")
     child = get_logger("parent.child")
-    assert child.handler_ptrs_for_test(), "child should have a handler"
+    assert len(child.handler_ptrs_for_test()) == 1, "child should have one handler"
     assert parent.handler_ptrs_for_test() == initial_handlers, (
         "ancestor logger should retain its handler"
     )
