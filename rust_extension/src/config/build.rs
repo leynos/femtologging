@@ -11,8 +11,42 @@ use pyo3::prelude::*;
 use crate::config::ConfigError;
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogger, manager};
 
-use super::apply::apply_items;
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
+
+macro_rules! apply_items {
+    (
+        $logger_ref:expr,
+        $ids:expr,
+        $pool:expr,
+        $clear:ident,
+        $add:ident,
+        $dup_err:ident
+    ) => {{
+        let mut seen = HashSet::new();
+        let mut dup = Vec::new();
+        let mut items = Vec::new();
+
+        for id in $ids {
+            if !seen.insert(id) {
+                dup.push(id.clone());
+                continue;
+            }
+            let item = $pool
+                .get(id)
+                .cloned()
+                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
+            items.push(item);
+        }
+        if !dup.is_empty() {
+            return Err(ConfigError::$dup_err(dup));
+        }
+        $logger_ref.$clear();
+        for item in items {
+            $logger_ref.$add(item);
+        }
+        Ok(())
+    }};
+}
 
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.
@@ -105,33 +139,25 @@ impl ConfigBuilder {
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
-        apply_items(
-            &logger_ref,                       // logger to mutate
-            cfg.handler_ids(),                 // declared handler identifiers
-            handlers,                          // pool of built handlers
-            |l| l.clear_handlers(),            // reset existing handlers
-            |l, h| l.add_handler(h),           // attach handler to logger
-            Self::duplicate_handler_ids_error, // error builder for duplicates
+        apply_items!(
+            logger_ref,          // logger to mutate
+            cfg.handler_ids(),   // declared handler identifiers
+            handlers,            // pool of built handlers
+            clear_handlers,      // reset existing handlers
+            add_handler,         // attach handler to logger
+            DuplicateHandlerIds  // error builder for duplicates
         )?;
-        apply_items(
-            &logger_ref,                      // logger to mutate
-            cfg.filter_ids(),                 // declared filter identifiers
-            filters,                          // pool of built filters
-            |l| l.clear_filters(),            // reset existing filters
-            |l, f| l.add_filter(f),           // attach filter to logger
-            Self::duplicate_filter_ids_error, // error builder for duplicates
+        apply_items!(
+            logger_ref,         // logger to mutate
+            cfg.filter_ids(),   // declared filter identifiers
+            filters,            // pool of built filters
+            clear_filters,      // reset existing filters
+            add_filter,         // attach filter to logger
+            DuplicateFilterIds  // error builder for duplicates
         )?;
         if let Some(level) = cfg.level_opt() {
             logger_ref.set_level(level);
         }
         Ok(())
-    }
-
-    fn duplicate_handler_ids_error(ids: Vec<String>) -> ConfigError {
-        ConfigError::DuplicateHandlerIds(ids)
-    }
-
-    fn duplicate_filter_ids_error(ids: Vec<String>) -> ConfigError {
-        ConfigError::DuplicateFilterIds(ids)
     }
 }
