@@ -1,6 +1,8 @@
 //! Configuration builders for femtologging.
 
 #[cfg(feature = "python")]
+mod apply;
+#[cfg(feature = "python")]
 mod build;
 #[cfg(feature = "python")]
 mod py;
