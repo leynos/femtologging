@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use crate::config::ConfigError;
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogger, manager};
 
+use super::apply::apply_items;
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
 impl ConfigBuilder {
@@ -104,7 +105,7 @@ impl ConfigBuilder {
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
-        self.apply_items(
+        apply_items(
             &logger_ref,                       // logger to mutate
             cfg.handler_ids(),                 // declared handler identifiers
             handlers,                          // pool of built handlers
@@ -112,7 +113,7 @@ impl ConfigBuilder {
             |l, h| l.add_handler(h),           // attach handler to logger
             Self::duplicate_handler_ids_error, // error builder for duplicates
         )?;
-        self.apply_items(
+        apply_items(
             &logger_ref,                      // logger to mutate
             cfg.filter_ids(),                 // declared filter identifiers
             filters,                          // pool of built filters
@@ -132,46 +133,5 @@ impl ConfigBuilder {
 
     fn duplicate_filter_ids_error(ids: Vec<String>) -> ConfigError {
         ConfigError::DuplicateFilterIds(ids)
-    }
-
-    /// Apply a sequence of items to `logger_ref`.
-    ///
-    /// * `logger_ref` - logger being mutated.
-    /// * `ids` - ordered identifiers to resolve.
-    /// * `pool` - mapping of identifiers to built items.
-    /// * `clear` - clears existing items before attachment.
-    /// * `add` - attaches a resolved item to the logger.
-    /// * `dup_err` - constructs a duplicate identifier error.
-    fn apply_items<T: ?Sized>(
-        &self,
-        logger_ref: &PyRef<FemtoLogger>,
-        ids: &[String],
-        pool: &BTreeMap<String, Arc<T>>,
-        clear: impl Fn(&PyRef<FemtoLogger>),
-        add: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
-        dup_err: impl Fn(Vec<String>) -> ConfigError,
-    ) -> Result<(), ConfigError> {
-        let mut seen = HashSet::new();
-        let mut dup = Vec::new();
-        let mut items = Vec::new();
-        for id in ids {
-            if !seen.insert(id) {
-                dup.push(id.clone());
-                continue;
-            }
-            let item = pool
-                .get(id)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(item);
-        }
-        if !dup.is_empty() {
-            return Err(dup_err(dup));
-        }
-        clear(logger_ref);
-        for item in items {
-            add(logger_ref, item);
-        }
-        Ok(())
     }
 }
