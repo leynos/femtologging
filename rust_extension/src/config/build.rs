@@ -121,9 +121,9 @@ impl ConfigBuilder {
         pool: &BTreeMap<String, Arc<T>>,
         dup_err: impl FnOnce(Vec<String>) -> ConfigError,
     ) -> Result<Vec<Arc<T>>, ConfigError> {
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::with_capacity(ids.len());
         let mut dup = Vec::new();
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(ids.len());
         for id in ids {
             if !seen.insert(id) {
                 dup.push(id.clone());
