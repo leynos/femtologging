@@ -113,6 +113,8 @@ impl ConfigBuilder {
     }
     /// Collect items for later application to a logger.
     ///
+    /// Preallocates internal buffers to avoid reallocations.
+    ///
     /// Deduplicates `ids`, raising `dup_err` if any repeats are found, and
     /// returns the objects fetched from `pool`. Callers should clear existing
     /// logger state and attach the returned items.
