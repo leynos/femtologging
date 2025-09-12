@@ -71,9 +71,9 @@ pub enum ConfigError {
     /// No root logger configuration was provided.
     #[error("missing root logger configuration")]
     MissingRootLogger,
-    /// A handler or filter identifier was referenced but not defined.
-    #[error("unknown id: {0}")]
-    UnknownId(String),
+    /// One or more handler or filter identifiers were referenced but not defined.
+    #[error("unknown ids: {0:?}")]
+    UnknownIds(Vec<String>),
     /// Duplicate handler identifiers were provided.
     #[error("duplicate handler ids: {0:?}")]
     DuplicateHandlerIds(Vec<String>),

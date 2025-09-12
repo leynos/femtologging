@@ -24,6 +24,7 @@ macro_rules! apply_items {
     ) => {{
         let mut seen = HashSet::new();
         let mut dup = Vec::new();
+        let mut missing = Vec::new();
         let mut items = Vec::new();
 
         for id in $ids {
@@ -31,14 +32,16 @@ macro_rules! apply_items {
                 dup.push(id.clone());
                 continue;
             }
-            let item = $pool
-                .get(id)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(item);
+            match $pool.get(id).cloned() {
+                Some(item) => items.push(item),
+                None => missing.push(id.clone()),
+            }
         }
         if !dup.is_empty() {
             return Err(ConfigError::$dup_err(dup));
+        }
+        if !missing.is_empty() {
+            return Err(ConfigError::UnknownIds(missing));
         }
         $logger_ref.$clear();
         for item in items {
@@ -157,6 +160,9 @@ impl ConfigBuilder {
         )?;
         if let Some(level) = cfg.level_opt() {
             logger_ref.set_level(level);
+        }
+        if let Some(propagate) = cfg.propagate_opt() {
+            logger_ref.set_propagate(propagate);
         }
         Ok(())
     }

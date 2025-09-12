@@ -22,7 +22,7 @@ use log::warn;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::{
-    atomic::{AtomicU64, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Arc,
 };
 use std::thread::{self, JoinHandle};
@@ -98,6 +98,7 @@ pub struct FemtoLogger {
     parent: Option<String>,
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
+    propagate: AtomicBool,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
@@ -143,6 +144,12 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Set whether this logger propagates records to its parent.
+    #[pyo3(text_signature = "(self, flag)")]
+    pub fn set_propagate(&self, flag: bool) {
+        self.propagate.store(flag, Ordering::Relaxed);
     }
 
     /// Attach a handler implemented in Python or Rust.
@@ -315,6 +322,7 @@ impl FemtoLogger {
             parent,
             formatter,
             level: AtomicU8::new(FemtoLevel::Info as u8),
+            propagate: AtomicBool::new(true),
             handlers,
             filters,
             dropped_records: AtomicU64::new(0),
