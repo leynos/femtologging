@@ -117,5 +117,41 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+
     Ok(())
+}
+
+#[cfg(all(test, feature = "python"))]
+mod tests {
+    //! Ensure Python-only bindings register expected types.
+
+    use super::*;
+    use pyo3::{
+        types::{PyModule, PyType},
+        Python,
+    };
+
+    #[test]
+    fn registers_bindings() {
+        // The module should expose builder types and the build error when the
+        // `python` feature is enabled.
+        Python::with_gil(|py| {
+            let module = PyModule::new(py, "test").unwrap().bind(py);
+            add_python_bindings(&module).unwrap();
+            for name in [
+                "StreamHandlerBuilder",
+                "FileHandlerBuilder",
+                "LevelFilterBuilder",
+                "NameFilterBuilder",
+                "FilterBuildError",
+                "ConfigBuilder",
+                "LoggerConfigBuilder",
+                "FormatterBuilder",
+            ] {
+                // Ensure each registration exists and is a Python type.
+                let attr = module.getattr(name).unwrap();
+                attr.downcast::<PyType>().unwrap();
+            }
+        });
+    }
 }
