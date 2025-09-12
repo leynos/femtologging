@@ -233,4 +233,16 @@ mod tests {
             .collect();
         assert_eq!(names, expected);
     }
+
+    #[test]
+    fn logger_names_with_ancestors_handles_consecutive_dots() {
+        let mut loggers = BTreeMap::new();
+        loggers.insert("a..b...c".to_string(), LoggerConfigBuilder::new());
+        let names = logger_names_with_ancestors(&loggers);
+        let expected: HashSet<_> = ["a..b...c", "a..b..", "a..b.", "a..b", "a.", "a", "root"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(names, expected);
+    }
 }
