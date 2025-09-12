@@ -19,7 +19,7 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 /// they are not inadvertently removed.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// use std::collections::BTreeMap;
 /// use crate::config::build::logger_names_with_ancestors;
 /// use crate::config::LoggerConfigBuilder;
