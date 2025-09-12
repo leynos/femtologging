@@ -33,11 +33,14 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 pub(crate) fn logger_names_with_ancestors(
     loggers: &BTreeMap<String, LoggerConfigBuilder>,
 ) -> HashSet<String> {
-    let mut keep_names: HashSet<String> = loggers
-        .keys()
-        .cloned()
-        .chain(std::iter::once("root".to_string()))
-        .collect();
+    // Pre-size to minimise reallocations when adding ancestors.
+    let mut keep_names: HashSet<String> = HashSet::with_capacity(loggers.len() * 2 + 1);
+    keep_names.extend(
+        loggers
+            .keys()
+            .cloned()
+            .chain(std::iter::once("root".to_string())),
+    );
     for name in loggers.keys() {
         let mut cur = name.as_str();
         while let Some((parent, _)) = cur.rsplit_once('.') {
