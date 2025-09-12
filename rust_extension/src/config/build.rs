@@ -154,9 +154,11 @@ impl ConfigBuilder {
 
     /// Generic helper for both handlers and filters
     ///
-    /// Uses `collect_items` from `main` to preserve improved duplicate
+    /// Uses `collect_items` in this module to preserve improved duplicate
     /// reporting and allocation behaviour, then applies the items via the
-    /// provided closures to avoid duplication across handlers/filters.
+    /// provided closures to avoid duplication across handlers/filters. When
+    /// both duplicate IDs and unknown IDs are present, duplicate-ID errors
+    /// take precedence and return before unknown-ID errors.
     fn apply_items<T: ?Sized>(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
