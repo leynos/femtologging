@@ -33,8 +33,13 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 pub(crate) fn logger_names_with_ancestors(
     loggers: &BTreeMap<String, LoggerConfigBuilder>,
 ) -> HashSet<String> {
-    // Pre-size to minimise reallocations when adding ancestors.
-    let mut keep_names: HashSet<String> = HashSet::with_capacity(loggers.len() * 2 + 1);
+    // Pre-size to minimise reallocations: keys + approx ancestors ("." count) + "root".
+    let approx_ancestors = loggers
+        .keys()
+        .map(|k| k.matches('.').count())
+        .sum::<usize>();
+    let mut keep_names: HashSet<String> =
+        HashSet::with_capacity(loggers.len() + approx_ancestors + 1);
     keep_names.extend(
         loggers
             .keys()
