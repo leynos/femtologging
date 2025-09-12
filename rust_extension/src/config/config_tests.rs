@@ -146,10 +146,12 @@ fn assert_unordered_ids(mut ids: Vec<String>, expected: &[&str]) {
 #[rstest]
 #[serial]
 fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
-    let handler = StreamHandlerBuilder::stderr();
     let mut logger_cfg = LoggerConfigBuilder::new();
     logger_cfg.handlers = vec!["h".into(), "i".into(), "h".into(), "i".into()];
-    let err = build_with_duplicate_ids(logger_cfg, |b| b.with_handler("h", handler));
+    let err = build_with_duplicate_ids(logger_cfg, |b| {
+        b.with_handler("h", StreamHandlerBuilder::stderr())
+            .with_handler("i", StreamHandlerBuilder::stderr())
+    });
     if let ConfigError::DuplicateHandlerIds(ids) = err {
         assert_unordered_ids(ids, &["h", "i"]);
     } else {
@@ -164,7 +166,8 @@ fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
     let mut logger_cfg = LoggerConfigBuilder::new();
     logger_cfg.filters = vec!["f".into(), "g".into(), "f".into(), "g".into()];
     let err = build_with_duplicate_ids(logger_cfg, |b| {
-        b.with_filter("f", FilterBuilder::Level(filt))
+        b.with_filter("f", FilterBuilder::Level(filt.clone()))
+            .with_filter("g", FilterBuilder::Level(filt))
     });
     if let ConfigError::DuplicateFilterIds(ids) = err {
         assert_unordered_ids(ids, &["f", "g"]);
