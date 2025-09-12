@@ -13,46 +13,6 @@ use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogge
 
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
-enum NamedItemError {
-    Duplicate(Vec<String>),
-    UnknownId(String),
-}
-
-/// Collect objects identified by `ids` from `pool`.
-///
-/// Duplicated identifiers or unknown identifiers yield an error.
-///
-/// - `ids`: ordered list of item identifiers.
-/// - `pool`: available items keyed by identifier.
-///
-/// # Errors
-/// Returns [`NamedItemError::Duplicate`] when an identifier is repeated.
-/// Returns [`NamedItemError::UnknownId`] when an identifier is absent from
-/// `pool`.
-fn gather_named_items<T: ?Sized>(
-    ids: &[String],
-    pool: &BTreeMap<String, Arc<T>>,
-) -> Result<Vec<Arc<T>>, NamedItemError> {
-    let mut seen = HashSet::new();
-    let mut dup = Vec::new();
-    let mut items = Vec::new();
-    for id in ids {
-        if !seen.insert(id) {
-            dup.push(id.clone());
-            continue;
-        }
-        let item = pool
-            .get(id)
-            .cloned()
-            .ok_or_else(|| NamedItemError::UnknownId(id.clone()))?;
-        items.push(item);
-    }
-    if !dup.is_empty() {
-        return Err(NamedItemError::Duplicate(dup));
-    }
-    Ok(items)
-}
-
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
@@ -187,7 +147,6 @@ impl ConfigBuilder {
         Ok(items)
     }
 
-<<<<<<< HEAD
     /// Generic helper for both handlers and filters
     ///
     /// Uses `collect_items` from `main` to preserve improved duplicate
@@ -209,59 +168,20 @@ impl ConfigBuilder {
         }
         Ok(())
     }
-
-||||||| parent of 868408b (Remove stale helper comment)
-    /// Generic helper for both handlers and filters
-    fn apply_items<T: ?Sized>(
-        &self,
-        logger_ref: &PyRef<FemtoLogger>,
-        ids: &[String],
-        pool: &BTreeMap<String, Arc<T>>,
-        clear_fn: impl Fn(&PyRef<FemtoLogger>),
-        add_fn: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
-        dup_err: fn(Vec<String>) -> ConfigError,
-    ) -> Result<(), ConfigError> {
-        let mut seen = HashSet::new();
-        let mut dup = Vec::new();
-        let mut items = Vec::new();
-        for id in ids {
-            if !seen.insert(id) {
-                dup.push(id.clone());
-                continue;
-            }
-            let item = pool
-                .get(id)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(item);
-        }
-        if !dup.is_empty() {
-            return Err(dup_err(dup));
-        }
-        clear_fn(logger_ref);
-        for item in items {
-            add_fn(logger_ref, item);
-        }
-        Ok(())
-    }
-
-=======
->>>>>>> 868408b (Remove stale helper comment)
     fn apply_handlers(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
     ) -> Result<(), ConfigError> {
-        let items = gather_named_items(ids, pool).map_err(|e| match e {
-            NamedItemError::Duplicate(v) => ConfigError::DuplicateHandlerIds(v),
-            NamedItemError::UnknownId(id) => ConfigError::UnknownId(id),
-        })?;
-        logger_ref.clear_handlers();
-        for h in items {
-            logger_ref.add_handler(h);
-        }
-        Ok(())
+        self.apply_items(
+            logger_ref,
+            ids,
+            pool,
+            |l| l.clear_handlers(),
+            |l, h| l.add_handler(h),
+            ConfigError::DuplicateHandlerIds,
+        )
     }
 
     fn apply_filters(
@@ -270,14 +190,13 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
-        let items = gather_named_items(ids, pool).map_err(|e| match e {
-            NamedItemError::Duplicate(v) => ConfigError::DuplicateFilterIds(v),
-            NamedItemError::UnknownId(id) => ConfigError::UnknownId(id),
-        })?;
-        logger_ref.clear_filters();
-        for f in items {
-            logger_ref.add_filter(f);
-        }
-        Ok(())
+        self.apply_items(
+            logger_ref,
+            ids,
+            pool,
+            |l| l.clear_filters(),
+            |l, f| l.add_filter(f),
+            ConfigError::DuplicateFilterIds,
+        )
     }
 }
