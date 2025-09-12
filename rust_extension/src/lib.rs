@@ -79,14 +79,23 @@ fn reset_manager_py() {
 /// It is invoked by [`_femtologging_rs`] during initialisation.
 #[cfg(feature = "python")]
 fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<StreamHandlerBuilder>()?;
-    m.add_class::<FileHandlerBuilder>()?;
-    m.add_class::<LevelFilterBuilder>()?;
-    m.add_class::<NameFilterBuilder>()?;
-    m.add("FilterBuildError", m.py().get_type::<FilterBuildErrorPy>())?;
-    m.add_class::<ConfigBuilder>()?;
-    m.add_class::<LoggerConfigBuilder>()?;
-    m.add_class::<FormatterBuilder>()?;
+    let py = m.py();
+    // Group type registrations to keep future additions concise.
+    for (name, ty) in [
+        (
+            "StreamHandlerBuilder",
+            py.get_type::<StreamHandlerBuilder>(),
+        ),
+        ("FileHandlerBuilder", py.get_type::<FileHandlerBuilder>()),
+        ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
+        ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
+        ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
+        ("ConfigBuilder", py.get_type::<ConfigBuilder>()),
+        ("LoggerConfigBuilder", py.get_type::<LoggerConfigBuilder>()),
+        ("FormatterBuilder", py.get_type::<FormatterBuilder>()),
+    ] {
+        m.add(name, ty)?;
+    }
     Ok(())
 }
 
