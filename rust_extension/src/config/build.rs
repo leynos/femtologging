@@ -111,20 +111,16 @@ impl ConfigBuilder {
         }
         Ok(())
     }
-    fn apply_collection<T: ?Sized, FClear, FAdd, FDup>(
-        &self,
-        logger_ref: &PyRef<FemtoLogger>,
+    /// Collect items for later application to a logger.
+    ///
+    /// Deduplicates `ids`, raising `dup_err` if any repeats are found, and
+    /// returns the objects fetched from `pool`. Callers should clear existing
+    /// logger state and attach the returned items.
+    fn collect_items<T: ?Sized>(
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
-        clear: FClear,
-        add: FAdd,
-        dup_err: FDup,
-    ) -> Result<(), ConfigError>
-    where
-        FClear: Fn(&PyRef<FemtoLogger>),
-        FAdd: Fn(&PyRef<FemtoLogger>, Arc<T>),
-        FDup: Fn(Vec<String>) -> ConfigError,
-    {
+        dup_err: impl FnOnce(Vec<String>) -> ConfigError,
+    ) -> Result<Vec<Arc<T>>, ConfigError> {
         let mut seen = HashSet::new();
         let mut dup = Vec::new();
         let mut items = Vec::new();
@@ -142,11 +138,7 @@ impl ConfigBuilder {
         if !dup.is_empty() {
             return Err(dup_err(dup));
         }
-        clear(logger_ref);
-        for item in items {
-            add(logger_ref, item);
-        }
-        Ok(())
+        Ok(items)
     }
 
     fn apply_handlers(
@@ -155,14 +147,12 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
     ) -> Result<(), ConfigError> {
-        self.apply_collection(
-            logger_ref,
-            ids,
-            pool,
-            |l| l.clear_handlers(),
-            |l, h| l.add_handler(h),
-            ConfigError::DuplicateHandlerIds,
-        )
+        let items = Self::collect_items(ids, pool, ConfigError::DuplicateHandlerIds)?;
+        logger_ref.clear_handlers();
+        for h in items {
+            logger_ref.add_handler(h);
+        }
+        Ok(())
     }
 
     fn apply_filters(
@@ -171,13 +161,11 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
-        self.apply_collection(
-            logger_ref,
-            ids,
-            pool,
-            |l| l.clear_filters(),
-            |l, f| l.add_filter(f),
-            ConfigError::DuplicateFilterIds,
-        )
+        let items = Self::collect_items(ids, pool, ConfigError::DuplicateFilterIds)?;
+        logger_ref.clear_filters();
+        for f in items {
+            logger_ref.add_filter(f);
+        }
+        Ok(())
     }
 }
