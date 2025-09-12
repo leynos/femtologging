@@ -124,41 +124,71 @@ impl ConfigBuilder {
         pool: &BTreeMap<String, Arc<T>>,
         dup_err: impl FnOnce(Vec<String>) -> ConfigError,
     ) -> Result<Vec<Arc<T>>, ConfigError> {
+        // 1) Detect duplicates first (report each duplicate once, preserve
+        // first-seen order) so we fail deterministically before any pool
+        // lookups. This keeps error behaviour stable regardless of map
+        // contents or lookup costs.
         let mut seen = HashSet::with_capacity(ids.len());
+        let mut dup_once: HashSet<&str> = HashSet::new();
         let mut dup = Vec::new();
-        let mut dup_seen: HashSet<&str> = HashSet::new();
+        for id in ids {
+            if !seen.insert(id) && dup_once.insert(id.as_str()) {
+                dup.push(id.clone());
+            }
+        }
+        if !dup.is_empty() {
+            return Err(dup_err(dup));
+        }
+
+        // 2) Perform lookups only after confirming no duplicates exist.
         let mut items = Vec::with_capacity(ids.len());
         for id in ids {
-            if !seen.insert(id) {
-                if dup_seen.insert(id.as_str()) {
-                    dup.push(id.clone());
-                }
-                continue;
-            }
             let obj = pool
                 .get(id)
                 .cloned()
                 .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
             items.push(obj);
         }
-        if !dup.is_empty() {
-            return Err(dup_err(dup));
-        }
         Ok(items)
     }
 
+    /// Generic helper for both handlers and filters
+    ///
+    /// Uses `collect_items` in this module to preserve improved duplicate
+    /// reporting and allocation behaviour, then applies the items via the
+    /// provided closures to avoid duplication across handlers/filters. When
+    /// both duplicate IDs and unknown IDs are present, duplicate-ID errors
+    /// take precedence and return before unknown-ID errors.
+    fn apply_items<T: ?Sized>(
+        &self,
+        logger_ref: &PyRef<FemtoLogger>,
+        ids: &[String],
+        pool: &BTreeMap<String, Arc<T>>,
+        clear_fn: impl FnOnce(&PyRef<FemtoLogger>),
+        add_fn: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
+        dup_err: impl FnOnce(Vec<String>) -> ConfigError,
+    ) -> Result<(), ConfigError> {
+        let items = Self::collect_items(ids, pool, dup_err)?;
+        clear_fn(logger_ref);
+        for item in items {
+            add_fn(logger_ref, item);
+        }
+        Ok(())
+    }
     fn apply_handlers(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
     ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, ConfigError::DuplicateHandlerIds)?;
-        logger_ref.clear_handlers();
-        for h in items {
-            logger_ref.add_handler(h);
-        }
-        Ok(())
+        self.apply_items(
+            logger_ref,
+            ids,
+            pool,
+            |l| l.clear_handlers(),
+            |l, h| l.add_handler(h),
+            ConfigError::DuplicateHandlerIds,
+        )
     }
 
     fn apply_filters(
@@ -167,11 +197,13 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, ConfigError::DuplicateFilterIds)?;
-        logger_ref.clear_filters();
-        for f in items {
-            logger_ref.add_filter(f);
-        }
-        Ok(())
+        self.apply_items(
+            logger_ref,
+            ids,
+            pool,
+            |l| l.clear_filters(),
+            |l, f| l.add_filter(f),
+            ConfigError::DuplicateFilterIds,
+        )
     }
 }
