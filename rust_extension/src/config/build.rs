@@ -111,6 +111,41 @@ impl ConfigBuilder {
         }
         Ok(())
     }
+    /// Collect items for later application to a logger.
+    ///
+    /// Preallocates internal buffers to avoid reallocations.
+    ///
+    /// Deduplicates `ids`, raising `dup_err` if any repeats are found. Each
+    /// duplicate identifier is reported once. The matched objects are
+    /// returned so callers can clear any existing logger state and attach
+    /// the items.
+    fn collect_items<T: ?Sized>(
+        ids: &[String],
+        pool: &BTreeMap<String, Arc<T>>,
+        dup_err: impl FnOnce(Vec<String>) -> ConfigError,
+    ) -> Result<Vec<Arc<T>>, ConfigError> {
+        let mut seen = HashSet::with_capacity(ids.len());
+        let mut dup = Vec::new();
+        let mut dup_seen: HashSet<&str> = HashSet::new();
+        let mut items = Vec::with_capacity(ids.len());
+        for id in ids {
+            if !seen.insert(id) {
+                if dup_seen.insert(id.as_str()) {
+                    dup.push(id.clone());
+                }
+                continue;
+            }
+            let obj = pool
+                .get(id)
+                .cloned()
+                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
+            items.push(obj);
+        }
+        if !dup.is_empty() {
+            return Err(dup_err(dup));
+        }
+        Ok(items)
+    }
 
     fn apply_handlers(
         &self,
@@ -118,26 +153,10 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
     ) -> Result<(), ConfigError> {
-        let mut seen = HashSet::new();
-        let mut dup = Vec::new();
-        let mut items = Vec::new();
-        for id in ids {
-            if !seen.insert(id) {
-                dup.push(id.clone());
-                continue;
-            }
-            let handler = pool
-                .get(id)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(handler);
-        }
-        if !dup.is_empty() {
-            return Err(ConfigError::DuplicateHandlerIds(dup));
-        }
+        let items = Self::collect_items(ids, pool, ConfigError::DuplicateHandlerIds)?;
         logger_ref.clear_handlers();
-        for handler in items {
-            logger_ref.add_handler(handler);
+        for h in items {
+            logger_ref.add_handler(h);
         }
         Ok(())
     }
@@ -148,26 +167,10 @@ impl ConfigBuilder {
         ids: &[String],
         pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
-        let mut seen = HashSet::new();
-        let mut dup = Vec::new();
-        let mut items = Vec::new();
-        for id in ids {
-            if !seen.insert(id) {
-                dup.push(id.clone());
-                continue;
-            }
-            let filter = pool
-                .get(id)
-                .cloned()
-                .ok_or_else(|| ConfigError::UnknownId(id.clone()))?;
-            items.push(filter);
-        }
-        if !dup.is_empty() {
-            return Err(ConfigError::DuplicateFilterIds(dup));
-        }
+        let items = Self::collect_items(ids, pool, ConfigError::DuplicateFilterIds)?;
         logger_ref.clear_filters();
-        for filter in items {
-            logger_ref.add_filter(filter);
+        for f in items {
+            logger_ref.add_filter(f);
         }
         Ok(())
     }
