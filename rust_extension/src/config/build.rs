@@ -20,9 +20,10 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 ///
 /// # Examples
 /// ```ignore
-/// use std::collections::BTreeMap;
+///
 /// use crate::config::build::logger_names_with_ancestors;
 /// use crate::config::LoggerConfigBuilder;
+/// use std::collections::BTreeMap;
 /// let mut loggers = BTreeMap::new();
 /// loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
 /// let names = logger_names_with_ancestors(&loggers);
