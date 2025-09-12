@@ -73,10 +73,10 @@ impl From<NameFilterBuilder> for FilterBuilder {
     }
 }
 
-/// Python-specific helpers grouped to avoid repeated #[cfg] attributes.
+/// Python-specific filter helpers grouped to avoid repeated #[cfg] attributes.
 #[cfg(feature = "python")]
-mod python {
-    //! Python-specific helpers (exceptions, conversions, dict adapters).
+mod py_helpers {
+    //! Filter-specific Python helpers (exceptions, conversions, dict adapters).
     use super::*;
     use crate::macros::AsPyDict;
     use crate::python::fq_py_type;
@@ -124,4 +124,4 @@ mod python {
 }
 
 #[cfg(feature = "python")]
-pub use python::FilterBuildErrorPy;
+pub use py_helpers::FilterBuildErrorPy;
