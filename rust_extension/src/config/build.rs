@@ -115,9 +115,10 @@ impl ConfigBuilder {
     ///
     /// Preallocates internal buffers to avoid reallocations.
     ///
-    /// Deduplicates `ids`, raising `dup_err` if any repeats are found, and
-    /// returns the objects fetched from `pool`. Callers should clear existing
-    /// logger state and attach the returned items.
+    /// Deduplicates `ids`, raising `dup_err` if any repeats are found. Each
+    /// duplicate identifier is reported once. The matched objects are
+    /// returned so callers can clear any existing logger state and attach
+    /// the items.
     fn collect_items<T: ?Sized>(
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
@@ -125,10 +126,13 @@ impl ConfigBuilder {
     ) -> Result<Vec<Arc<T>>, ConfigError> {
         let mut seen = HashSet::with_capacity(ids.len());
         let mut dup = Vec::new();
+        let mut dup_seen: HashSet<&str> = HashSet::new();
         let mut items = Vec::with_capacity(ids.len());
         for id in ids {
             if !seen.insert(id) {
-                dup.push(id.clone());
+                if dup_seen.insert(id.as_str()) {
+                    dup.push(id.clone());
+                }
                 continue;
             }
             let obj = pool

@@ -666,15 +666,16 @@ these guarantees.
 ### `collect_items` helper flow
 
 The `ConfigBuilder` uses a `collect_items` helper to deduplicate identifiers,
-report unknown IDs, and return the matched objects. Callers clear any existing
-entries on the logger and attach the returned items. The flow is outlined below:
+report unknown IDs, and return the matched objects. Duplicate identifiers are
+reported once. Callers clear any existing entries on the logger and attach the
+returned items. The flow is outlined below:
 
 ```mermaid
 flowchart TD
-    A["Start collect_items"] --> B["Initialize seen, dup, items"]
+    A["Start collect_items"] --> B["Initialise seen, dup, items"]
     B --> C["For each id in ids"]
     C --> D{Is id in seen?}
-    D -- Yes --> E["Add id to dup"]
+    D -- Yes --> E["Record id in dup if first duplicate"]
     D -- No --> F["Try to get object from pool"]
     F --> G{Object found?}
     G -- No --> H["Return UnknownId error"]
