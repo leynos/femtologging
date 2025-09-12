@@ -83,6 +83,23 @@ fn unknown_handler_id_rejected(_gil_and_clean_manager: ()) {
 
 #[rstest]
 #[serial]
+fn multiple_unknown_handler_ids_rejected(_gil_and_clean_manager: ()) {
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let logger_cfg = LoggerConfigBuilder::new().with_handlers(["missing1", "missing2"]);
+    let builder = ConfigBuilder::new()
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for multiple unknown handler ids");
+    assert!(matches!(
+        err,
+        ConfigError::UnknownIds(ids) if ids == vec!["missing1".to_string(), "missing2".to_string()]
+    ));
+}
+
+#[rstest]
+#[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -119,6 +136,23 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
         .build_and_init()
         .expect_err("build_and_init should fail for unknown filter id");
     assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
+}
+
+#[rstest]
+#[serial]
+fn multiple_unknown_filter_ids_rejected(_gil_and_clean_manager: ()) {
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing1", "missing2"]);
+    let builder = ConfigBuilder::new()
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for multiple unknown filter ids");
+    assert!(matches!(
+        err,
+        ConfigError::UnknownIds(ids) if ids == vec!["missing1".to_string(), "missing2".to_string()]
+    ));
 }
 
 #[rstest]
