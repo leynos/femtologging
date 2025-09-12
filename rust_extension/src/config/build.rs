@@ -199,53 +199,64 @@ impl ConfigBuilder {
 }
 #[cfg(test)]
 mod tests {
+    //! Tests for logger ancestor collection helper.
+
     use super::*;
+    use rstest::rstest;
 
-    #[test]
-    fn logger_names_with_ancestors_collects_all() {
-        let mut loggers = BTreeMap::new();
-        loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
-        loggers.insert("top".to_string(), LoggerConfigBuilder::new());
-
-        let names = logger_names_with_ancestors(&loggers);
-        let expected: HashSet<_> = ["a.b.c", "a.b", "a", "top", "root"]
+    #[rstest]
+    #[case(
+        {
+            let mut loggers = BTreeMap::new();
+            loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
+            loggers.insert("top".to_string(), LoggerConfigBuilder::new());
+            loggers
+        },
+        ["a.b.c", "a.b", "a", "top", "root"]
             .into_iter()
             .map(String::from)
-            .collect();
-
-        assert_eq!(names, expected);
-    }
-    #[test]
-    fn logger_names_with_ancestors_empty_map_returns_root() {
-        let loggers = BTreeMap::new();
-        let names = logger_names_with_ancestors(&loggers);
-        let expected: HashSet<_> = ["root"].into_iter().map(String::from).collect();
-        assert_eq!(names, expected);
-    }
-
-    #[test]
-    fn logger_names_with_ancestors_handles_single_level() {
-        let mut loggers = BTreeMap::new();
-        loggers.insert("alpha".to_string(), LoggerConfigBuilder::new());
-        loggers.insert("beta".to_string(), LoggerConfigBuilder::new());
-
-        let names = logger_names_with_ancestors(&loggers);
-        let expected: HashSet<_> = ["alpha", "beta", "root"]
+            .collect::<HashSet<_>>()
+    )]
+    #[case(
+        BTreeMap::new(),
+        ["root"].into_iter().map(String::from).collect::<HashSet<_>>()
+    )]
+    #[case(
+        {
+            let mut loggers = BTreeMap::new();
+            loggers.insert("alpha".to_string(), LoggerConfigBuilder::new());
+            loggers.insert("beta".to_string(), LoggerConfigBuilder::new());
+            loggers
+        },
+        ["alpha", "beta", "root"]
             .into_iter()
             .map(String::from)
-            .collect();
-        assert_eq!(names, expected);
-    }
-
-    #[test]
-    fn logger_names_with_ancestors_handles_consecutive_dots() {
-        let mut loggers = BTreeMap::new();
-        loggers.insert("a..b...c".to_string(), LoggerConfigBuilder::new());
+            .collect::<HashSet<_>>()
+    )]
+    #[case(
+        {
+            let mut loggers = BTreeMap::new();
+            loggers.insert("a..b...c".to_string(), LoggerConfigBuilder::new());
+            loggers
+        },
+        [
+            "a..b...c",
+            "a..b..",
+            "a..b.",
+            "a..b",
+            "a.",
+            "a",
+            "root"
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<HashSet<_>>()
+    )]
+    fn logger_names_with_ancestors_returns_expected(
+        #[case] loggers: BTreeMap<String, LoggerConfigBuilder>,
+        #[case] expected: HashSet<String>,
+    ) {
         let names = logger_names_with_ancestors(&loggers);
-        let expected: HashSet<_> = ["a..b...c", "a..b..", "a..b.", "a..b", "a.", "a", "root"]
-            .into_iter()
-            .map(String::from)
-            .collect();
         assert_eq!(names, expected);
     }
 }
