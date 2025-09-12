@@ -13,6 +13,50 @@ use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogge
 
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
+/// Collect logger names and their ancestors for disable_existing_loggers.
+///
+/// When disabling existing loggers, direct ancestors must also be kept so
+/// they are not inadvertently removed.
+///
+/// # Examples
+/// ```ignore
+///
+/// use crate::config::build::logger_names_with_ancestors;
+/// use crate::config::LoggerConfigBuilder;
+/// use std::collections::BTreeMap;
+/// let mut loggers = BTreeMap::new();
+/// loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
+/// let names = logger_names_with_ancestors(&loggers);
+/// assert!(names.contains("a.b"));
+/// assert!(names.contains("a"));
+/// assert!(names.contains("root"));
+/// ```
+pub(crate) fn logger_names_with_ancestors(
+    loggers: &BTreeMap<String, LoggerConfigBuilder>,
+) -> HashSet<String> {
+    // Pre-size to minimise reallocations: keys + approx ancestors ("." count) + "root".
+    let approx_ancestors = loggers
+        .keys()
+        .map(|k| k.matches('.').count())
+        .sum::<usize>();
+    let mut keep_names: HashSet<String> =
+        HashSet::with_capacity(loggers.len() + approx_ancestors + 1);
+    keep_names.extend(
+        loggers
+            .keys()
+            .cloned()
+            .chain(std::iter::once("root".to_string())),
+    );
+    for name in loggers.keys() {
+        let mut cur = name.as_str();
+        while let Some((parent, _)) = cur.rsplit_once('.') {
+            keep_names.insert(parent.to_string());
+            cur = parent;
+        }
+    }
+    keep_names
+}
+
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
@@ -36,20 +80,7 @@ impl ConfigBuilder {
         Python::with_gil(|py| -> Result<_, ConfigError> {
             // Handle disable_existing_loggers if requested
             if self.disable_existing_loggers {
-                let mut keep_names: HashSet<String> = self
-                    .loggers
-                    .keys()
-                    .cloned()
-                    .chain(std::iter::once("root".to_string()))
-                    .collect();
-                // Include ancestors of each kept logger (e.g., "a.b.c" keeps "a.b" and "a").
-                for name in self.loggers.keys() {
-                    let mut cur = name.as_str();
-                    while let Some((parent, _)) = cur.rsplit_once('.') {
-                        keep_names.insert(parent.to_string());
-                        cur = parent;
-                    }
-                }
+                let keep_names = logger_names_with_ancestors(&self.loggers);
                 manager::disable_existing_loggers(py, &keep_names)
                     .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
             }
@@ -205,5 +236,68 @@ impl ConfigBuilder {
             |l, f| l.add_filter(f),
             ConfigError::DuplicateFilterIds,
         )
+    }
+}
+#[cfg(test)]
+mod tests {
+    //! Tests for logger ancestor collection helper.
+
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(
+        {
+            let mut loggers = BTreeMap::new();
+            loggers.insert("a.b.c".to_string(), LoggerConfigBuilder::new());
+            loggers.insert("top".to_string(), LoggerConfigBuilder::new());
+            loggers
+        },
+        ["a.b.c", "a.b", "a", "top", "root"]
+            .into_iter()
+            .map(String::from)
+            .collect::<HashSet<_>>()
+    )]
+    #[case(
+        BTreeMap::new(),
+        ["root"].into_iter().map(String::from).collect::<HashSet<_>>()
+    )]
+    #[case(
+        {
+            let mut loggers = BTreeMap::new();
+            loggers.insert("alpha".to_string(), LoggerConfigBuilder::new());
+            loggers.insert("beta".to_string(), LoggerConfigBuilder::new());
+            loggers
+        },
+        ["alpha", "beta", "root"]
+            .into_iter()
+            .map(String::from)
+            .collect::<HashSet<_>>()
+    )]
+    #[case(
+        {
+            let mut loggers = BTreeMap::new();
+            loggers.insert("a..b...c".to_string(), LoggerConfigBuilder::new());
+            loggers
+        },
+        [
+            "a..b...c",
+            "a..b..",
+            "a..b.",
+            "a..b",
+            "a.",
+            "a",
+            "root"
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<HashSet<_>>()
+    )]
+    fn logger_names_with_ancestors_returns_expected(
+        #[case] loggers: BTreeMap<String, LoggerConfigBuilder>,
+        #[case] expected: HashSet<String>,
+    ) {
+        let names = logger_names_with_ancestors(&loggers);
+        assert_eq!(names, expected);
     }
 }
