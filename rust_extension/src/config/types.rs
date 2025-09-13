@@ -107,8 +107,8 @@ pub enum ConfigError {
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct FormatterBuilder {
-    pub(crate) format: Option<String>,
-    pub(crate) datefmt: Option<String>,
+    format: Option<String>,
+    datefmt: Option<String>,
 }
 
 impl FormatterBuilder {
@@ -144,10 +144,10 @@ impl FormatterBuilder {
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerConfigBuilder {
-    pub(crate) level: Option<FemtoLevel>,
-    pub(crate) propagate: Option<bool>,
-    pub(crate) filters: Vec<String>,
-    pub(crate) handlers: Vec<String>,
+    level: Option<FemtoLevel>,
+    propagate: Option<bool>,
+    filters: Vec<String>,
+    handlers: Vec<String>,
 }
 
 impl LoggerConfigBuilder {
@@ -215,18 +215,18 @@ impl LoggerConfigBuilder {
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
-    pub(crate) version: u8,
-    pub(crate) disable_existing_loggers: bool,
-    pub(crate) default_level: Option<FemtoLevel>,
-    pub(crate) formatters: BTreeMap<String, FormatterBuilder>,
-    pub(crate) filters: BTreeMap<String, FilterBuilder>,
+    version: u8,
+    disable_existing_loggers: bool,
+    default_level: Option<FemtoLevel>,
+    formatters: BTreeMap<String, FormatterBuilder>,
+    filters: BTreeMap<String, FilterBuilder>,
     /// Registered handler builders keyed by identifier.
     ///
     /// `HandlerBuilder` is a concrete enum rather than a trait object to make
     /// cloning and serialization straightforward.
-    pub(crate) handlers: BTreeMap<String, HandlerBuilder>,
-    pub(crate) loggers: BTreeMap<String, LoggerConfigBuilder>,
-    pub(crate) root_logger: Option<LoggerConfigBuilder>,
+    handlers: BTreeMap<String, HandlerBuilder>,
+    loggers: BTreeMap<String, LoggerConfigBuilder>,
+    root_logger: Option<LoggerConfigBuilder>,
 }
 
 impl Default for ConfigBuilder {
@@ -299,6 +299,31 @@ impl ConfigBuilder {
     pub fn with_root_logger(mut self, builder: LoggerConfigBuilder) -> Self {
         self.root_logger = Some(builder);
         self
+    }
+
+    /// Determine whether existing loggers should be disabled.
+    pub fn disable_existing_loggers(&self) -> bool {
+        self.disable_existing_loggers
+    }
+
+    /// Retrieve configured handler builders.
+    pub fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
+        &self.handlers
+    }
+
+    /// Retrieve configured filter builders.
+    pub fn filter_builders(&self) -> &BTreeMap<String, FilterBuilder> {
+        &self.filters
+    }
+
+    /// Retrieve configured logger builders.
+    pub fn logger_builders(&self) -> &BTreeMap<String, LoggerConfigBuilder> {
+        &self.loggers
+    }
+
+    /// Retrieve the root logger configuration if set.
+    pub fn root_logger(&self) -> Option<&LoggerConfigBuilder> {
+        self.root_logger.as_ref()
     }
 
     /// Return the configured version.

@@ -16,34 +16,34 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 impl ConfigBuilder {
     /// Finalise the configuration and initialise loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
-        if self.version != 1 {
-            return Err(ConfigError::UnsupportedVersion(self.version));
+        if self.version() != 1 {
+            return Err(ConfigError::UnsupportedVersion(self.version()));
         }
-        if self.root_logger.is_none() {
+        if self.root_logger().is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
         let built_handlers = Self::build_map(
-            &self.handlers,
+            self.handler_builders(),
             |b| b.build(),
             |id, source| ConfigError::HandlerBuild { id, source },
         )?;
         let built_filters = Self::build_map(
-            &self.filters,
+            self.filter_builders(),
             |b| b.build(),
             |id, source| ConfigError::FilterBuild { id, source },
         )?;
 
         Python::with_gil(|py| -> Result<_, ConfigError> {
             // Handle disable_existing_loggers if requested
-            if self.disable_existing_loggers {
+            if self.disable_existing_loggers() {
                 let mut keep_names: HashSet<String> = self
-                    .loggers
+                    .logger_builders()
                     .keys()
                     .cloned()
                     .chain(std::iter::once("root".to_string()))
                     .collect();
                 // Include ancestors of each kept logger (e.g., "a.b.c" keeps "a.b" and "a").
-                for name in self.loggers.keys() {
+                for name in self.logger_builders().keys() {
                     let mut cur = name.as_str();
                     while let Some((parent, _)) = cur.rsplit_once('.') {
                         keep_names.insert(parent.to_string());
@@ -55,11 +55,10 @@ impl ConfigBuilder {
             }
 
             let targets = self
-                .root_logger
-                .as_ref()
+                .root_logger()
                 .map(|c| ("root", c))
                 .into_iter()
-                .chain(self.loggers.iter().map(|(n, c)| (n.as_str(), c)));
+                .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
 
             for (name, cfg) in targets {
                 let logger = self.fetch_logger(py, name)?;
@@ -125,32 +124,32 @@ impl ConfigBuilder {
         Ok(items)
     }
 
-    fn apply_handlers(
+    // Apply a sequence of items to a logger, clearing existing state first.
+    // - `clear` removes existing handlers or filters.
+    // - `add` attaches each collected item.
+    fn apply_items<T: ?Sized>(
         &self,
         logger_ref: &PyRef<FemtoLogger>,
         ids: &[String],
-        pool: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+        pool: &BTreeMap<String, Arc<T>>,
+        clear: impl Fn(&PyRef<FemtoLogger>),
+        add: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
+        dup_err: impl Fn(Vec<String>) -> ConfigError,
     ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, ConfigError::DuplicateHandlerIds)?;
-        logger_ref.clear_handlers();
-        for h in items {
-            logger_ref.add_handler(h);
+        let items = Self::collect_items(ids, pool, dup_err)?;
+        clear(logger_ref);
+        for item in items {
+            add(logger_ref, item);
         }
         Ok(())
     }
 
-    fn apply_filters(
-        &self,
-        logger_ref: &PyRef<FemtoLogger>,
-        ids: &[String],
-        pool: &BTreeMap<String, Arc<dyn FemtoFilter>>,
-    ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, ConfigError::DuplicateFilterIds)?;
-        logger_ref.clear_filters();
-        for f in items {
-            logger_ref.add_filter(f);
-        }
-        Ok(())
+    fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
+        ConfigError::DuplicateHandlerIds(ids)
+    }
+
+    fn duplicate_filter_ids(ids: Vec<String>) -> ConfigError {
+        ConfigError::DuplicateFilterIds(ids)
     }
 
     fn apply_logger_config<'py>(
@@ -162,8 +161,22 @@ impl ConfigBuilder {
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
-        self.apply_handlers(&logger_ref, cfg.handler_ids(), handlers)?;
-        self.apply_filters(&logger_ref, cfg.filter_ids(), filters)?;
+        self.apply_items(
+            &logger_ref,
+            cfg.handler_ids(),
+            handlers,
+            |l| l.clear_handlers(),
+            |l, h| l.add_handler(h),
+            Self::duplicate_handler_ids,
+        )?;
+        self.apply_items(
+            &logger_ref,
+            cfg.filter_ids(),
+            filters,
+            |l| l.clear_filters(),
+            |l, f| l.add_filter(f),
+            Self::duplicate_filter_ids,
+        )?;
         if let Some(level) = cfg.level_opt() {
             logger_ref.set_level(level);
         }
