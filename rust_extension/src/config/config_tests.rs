@@ -16,6 +16,27 @@ fn gil_and_clean_manager() {
     Python::with_gil(|_| manager::reset_manager());
 }
 
+fn builder_with_root(root: LoggerConfigBuilder) -> ConfigBuilder {
+    ConfigBuilder::new()
+        .with_handler("h", StreamHandlerBuilder::stderr())
+        .with_root_logger(root)
+}
+
+#[fixture]
+fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = builder_with_root(root.clone());
+    (builder, root)
+}
+
+fn assert_handler_count(py: Python<'_>, name: &str, expected: usize, reason: &str) {
+    // Fetch a logger and assert it exposes the expected number of handlers.
+    let msg = format!("get_logger('{name}') should succeed");
+    let logger = manager::get_logger(py, name).expect(&msg);
+    let count = logger.borrow(py).handlers_for_test().len();
+    assert_eq!(count, expected, "{}", reason);
+}
+
 #[rstest]
 fn build_rejects_invalid_version() {
     let builder = ConfigBuilder::new().with_version(2);
@@ -34,16 +55,12 @@ fn build_rejects_missing_root() {
     assert!(matches!(err, ConfigError::MissingRootLogger));
 }
 
-#[rstest]
-#[serial]
 fn build_accepts_default_version(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
 }
 
-#[rstest]
-#[serial]
 fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let handler = StreamHandlerBuilder::stderr();
@@ -67,8 +84,6 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     });
 }
 
-#[rstest]
-#[serial]
 fn unknown_handler_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_handlers(["missing"]);
@@ -81,8 +96,6 @@ fn unknown_handler_id_rejected(_gil_and_clean_manager: ()) {
     assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
-#[rstest]
-#[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -107,8 +120,6 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
     });
 }
 
-#[rstest]
-#[serial]
 fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
@@ -121,73 +132,44 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
-/// Build a config expected to fail due to duplicate IDs.
-/// `setup` attaches handlers or filters before the error is triggered.
-fn build_with_duplicate_ids<F>(mut logger_cfg: LoggerConfigBuilder, setup: F) -> ConfigError
-where
-    F: FnOnce(ConfigBuilder) -> ConfigBuilder,
-{
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    setup(ConfigBuilder::new())
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg)
-        .build_and_init()
-        .expect_err("build_and_init should fail for duplicate ids")
-}
-
-/// Sort IDs and compare to expected, ignoring order.
-fn assert_unordered_ids(mut ids: Vec<String>, expected: &[&str]) {
-    ids.sort();
-    let mut expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
-    expected.sort();
-    assert_eq!(ids, expected);
-}
-
-#[rstest]
-#[serial]
 fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
+    let handler = StreamHandlerBuilder::stderr();
     let mut logger_cfg = LoggerConfigBuilder::new();
-    logger_cfg.handlers = vec!["h".into(), "i".into(), "h".into(), "i".into()];
-    let err = build_with_duplicate_ids(logger_cfg, |b| {
-        b.with_handler("h", StreamHandlerBuilder::stderr())
-            .with_handler("i", StreamHandlerBuilder::stderr())
-    });
-    if let ConfigError::DuplicateHandlerIds(ids) = err {
-        assert_unordered_ids(ids, &["h", "i"]);
-    } else {
-        panic!("expected DuplicateHandlerIds error");
-    }
+    logger_cfg.handlers = vec!["h".into(), "h".into()];
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = ConfigBuilder::new()
+        .with_handler("h", handler)
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate handler ids");
+    assert!(matches!(err, ConfigError::DuplicateHandlerIds(ids) if ids == vec!["h".to_string()]));
 }
 
-#[rstest]
-#[serial]
 fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
+    let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
     let mut logger_cfg = LoggerConfigBuilder::new();
-    logger_cfg.filters = vec!["f".into(), "g".into(), "f".into(), "g".into()];
-    let filt_f = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
-    let filt_g = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
-    let err = build_with_duplicate_ids(logger_cfg, move |b| {
-        b.with_filter("f", FilterBuilder::Level(filt_f))
-            .with_filter("g", FilterBuilder::Level(filt_g))
-    });
-    if let ConfigError::DuplicateFilterIds(ids) = err {
-        assert_unordered_ids(ids, &["f", "g"]);
-    } else {
-        panic!("expected DuplicateFilterIds error");
-    }
+    logger_cfg.filters = vec!["f".into(), "f".into()];
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = ConfigBuilder::new()
+        .with_filter("f", FilterBuilder::Level(filt))
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate filter ids");
+    assert!(matches!(err, ConfigError::DuplicateFilterIds(ids) if ids == vec!["f".to_string()]));
 }
-
-#[rstest]
-#[serial]
-fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
+fn disable_existing_loggers_clears_unmentioned(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
     Python::with_gil(|py| {
-        let handler = StreamHandlerBuilder::stderr();
+        let (builder, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-        let builder = ConfigBuilder::new()
-            .with_handler("h", handler)
+        let builder = builder
             .with_filter("f", FilterBuilder::Level(filt))
-            .with_root_logger(root.clone())
             .with_logger(
                 "stale",
                 LoggerConfigBuilder::new()
@@ -198,67 +180,66 @@ fn disable_existing_loggers_clears_unmentioned(_gil_and_clean_manager: ()) {
             .build_and_init()
             .expect("initial build should succeed");
 
-        let stale = manager::get_logger(py, "stale").expect("get_logger('stale') should succeed");
-        assert!(!stale.borrow(py).handlers_for_test().is_empty());
+        assert_handler_count(py, "stale", 1, "stale logger should start active");
 
         let rebuild = ConfigBuilder::new()
             .with_root_logger(root)
             .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
 
-        let stale = manager::get_logger(py, "stale").expect("get_logger('stale') should succeed");
-        assert!(
-            stale.borrow(py).handlers_for_test().is_empty(),
-            "stale logger should be disabled",
-        );
+        assert_handler_count(py, "stale", 0, "stale logger should be disabled");
     });
 }
-#[rstest]
+
+#[rstest(
+    ancestor_names,
+    case::parent(&["parent"]),
+    case::grandparent(&["grandparent", "grandparent.parent"]),
+)]
 #[serial]
-fn disable_existing_loggers_keeps_ancestors(_gil_and_clean_manager: ()) {
+fn disable_existing_loggers_keeps_ancestors(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+    ancestor_names: &[&str],
+) {
     Python::with_gil(|py| {
-        let handler = StreamHandlerBuilder::stderr();
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-        let builder = ConfigBuilder::new()
-            .with_handler("h", handler)
-            .with_root_logger(root.clone())
-            .with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]))
-            .with_logger("parent.child", LoggerConfigBuilder::new());
+        let (mut builder, root) = base_logger_builder;
+        for name in ancestor_names {
+            builder = builder.with_logger(name, LoggerConfigBuilder::new().with_handlers(["h"]));
+        }
         builder
             .build_and_init()
             .expect("initial build should succeed");
 
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
-        let parent_handlers_before = parent.borrow(py).handlers_for_test();
-        assert!(
-            !parent_handlers_before.is_empty(),
-            "ancestor logger should have a handler",
-        );
+        for name in ancestor_names {
+            assert_handler_count(py, name, 1, "ancestor logger should start active");
+        }
 
-        let rebuild = ConfigBuilder::new()
-            .with_root_logger(root)
-            .with_disable_existing_loggers(true)
-            .with_logger("parent.child", LoggerConfigBuilder::new());
+        let child_name = format!(
+            "{}.child",
+            ancestor_names.last().expect("at least one ancestor")
+        );
+        let rebuild = builder_with_root(root)
+            .with_logger(&child_name, LoggerConfigBuilder::new().with_handlers(["h"]))
+            .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
 
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
-        let parent_handlers_after = parent.borrow(py).handlers_for_test();
-        assert!(
-            !parent_handlers_after.is_empty(),
-            "ancestor logger should be retained",
-        );
-        assert!(
-            Arc::ptr_eq(&parent_handlers_before[0], &parent_handlers_after[0]),
-            "ancestor handler should be reused",
-        );
+        for name in ancestor_names {
+            assert_handler_count(py, name, 1, "ancestor logger should remain active");
+        }
+        assert_handler_count(py, &child_name, 1, "child logger should retain its handler");
 
-        let child = manager::get_logger(py, "parent.child")
-            .expect("get_logger('parent.child') should succeed");
-        assert!(
-            child.borrow(py).handlers_for_test().is_empty(),
-            "child logger should have no handlers",
+        let logging = py.import("logging").expect("import logging");
+        let py_child = logging
+            .call_method1("getLogger", (&child_name,))
+            .expect("getLogger should succeed");
+        let py_handlers = py_child
+            .getattr("handlers")
+            .expect("child logger should expose handlers");
+        assert_eq!(
+            py_handlers.len().unwrap(),
+            1,
+            "child logger should retain its handler",
         );
     });
 }
