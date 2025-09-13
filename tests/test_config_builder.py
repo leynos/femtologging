@@ -233,56 +233,39 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
     assert stale.handler_ptrs_for_test() == [], "stale logger should be disabled"
 
 
-def test_disable_existing_loggers_keeps_ancestors() -> None:
-    """Ancestor loggers remain active when child logger is kept."""
-    parent_builder = make_builder_with_logger("parent")
-    parent_builder.build_and_init()
-
-    parent = get_logger("parent")
-    initial_handlers = parent.handler_ptrs_for_test()
-    assert initial_handlers, "parent should have a handler"
-
-    rebuild = make_builder_with_logger("parent.child").with_disable_existing_loggers(
-        True
-    )
-    rebuild.build_and_init()
-
-    parent = get_logger("parent")
-    child = get_logger("parent.child")
-    assert len(child.handler_ptrs_for_test()) == 1, "child should have one handler"
-    assert parent.handler_ptrs_for_test() == initial_handlers, (
-        "ancestor logger should retain its handler"
-    )
-
-
-def test_disable_existing_loggers_keeps_all_ancestors() -> None:
-    """All ancestor loggers remain active when a grandchild logger is configured."""
-    builder = (
-        make_info_stderr_builder()
-        .with_logger("grandparent", LoggerConfigBuilder().with_handlers(["h"]))
-        .with_logger("grandparent.parent", LoggerConfigBuilder().with_handlers(["h"]))
-    )
+@pytest.mark.parametrize(
+    "ancestors",
+    [
+        ["parent"],
+        ["grandparent", "grandparent.parent"],
+    ],
+    ids=["parent", "grandparent"],
+)
+def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
+    """Ancestor loggers remain active when their descendants are configured."""
+    builder = make_info_stderr_builder()
+    for name in ancestors:
+        builder = builder.with_logger(name, LoggerConfigBuilder().with_handlers(["h"]))
     builder.build_and_init()
 
-    grandparent = get_logger("grandparent")
-    parent = get_logger("grandparent.parent")
-    assert grandparent.handler_ptrs_for_test(), "grandparent should have a handler"
-    assert parent.handler_ptrs_for_test(), "parent should have a handler"
+    initial_handlers = {
+        name: get_logger(name).handler_ptrs_for_test() for name in ancestors
+    }
 
+    child_name = f"{ancestors[-1]}.child"
     rebuild = (
         make_info_stderr_builder()
-        .with_logger(
-            "grandparent.parent.child",
-            LoggerConfigBuilder().with_handlers(["h"]),
-        )
+        .with_logger(child_name, LoggerConfigBuilder().with_handlers(["h"]))
         .with_disable_existing_loggers(True)
     )
     rebuild.build_and_init()
 
-    grandparent = get_logger("grandparent")
-    parent = get_logger("grandparent.parent")
-    assert grandparent.handler_ptrs_for_test(), "ancestor logger should remain active"
-    assert parent.handler_ptrs_for_test(), "ancestor logger should remain active"
+    child = get_logger(child_name)
+    assert len(child.handler_ptrs_for_test()) == 1, "child should have one handler"
+    for name in ancestors:
+        assert get_logger(name).handler_ptrs_for_test() == initial_handlers[name], (
+            "ancestor logger should retain its handler"
+        )
 
 
 @pytest.mark.parametrize(
