@@ -150,13 +150,13 @@ impl FemtoLogger {
     /// Return whether this logger propagates records to its parent (affecting parent-propagation behaviour).
     #[getter]
     pub fn propagate(&self) -> bool {
-        self.propagate.load(Ordering::Relaxed)
+        self.propagate.load(Ordering::SeqCst)
     }
 
-    /// Set whether this logger propagates records to its parent.
+    /// Set whether this logger propagates records to its parent, controlling parent-propagation behaviour.
     #[pyo3(text_signature = "(self, flag)")]
     pub fn set_propagate(&self, flag: bool) {
-        self.propagate.store(flag, Ordering::Relaxed);
+        self.propagate.store(flag, Ordering::SeqCst);
     }
 
     /// Attach a handler implemented in Python or Rust.
@@ -234,7 +234,7 @@ impl FemtoLogger {
     }
 
     fn should_propagate_to_parent(&self) -> bool {
-        self.propagate.load(Ordering::Relaxed) && self.parent.is_some()
+        self.propagate.load(Ordering::SeqCst) && self.parent.is_some()
     }
 
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {

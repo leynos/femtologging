@@ -413,3 +413,31 @@ fn disable_existing_loggers_keeps_ancestors(
         );
     });
 }
+
+#[rstest]
+#[serial]
+fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root_handler = CollectingHandlerBuilder::new();
+        let collector = root_handler.handle();
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(root)
+            .with_logger("child", child_cfg);
+        builder.build_and_init().expect("build should succeed");
+        let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        child.borrow(py).set_propagate(false);
+        child.borrow(py).log(FemtoLevel::Info, "one");
+        assert!(
+            collector.collected().is_empty(),
+            "records should not propagate when disabled"
+        );
+        child.borrow(py).set_propagate(true);
+        child.borrow(py).log(FemtoLevel::Info, "two");
+        let records = collector.collected();
+        assert_eq!(records.len(), 1, "record should propagate after enabling");
+        assert_eq!(records[0].message, "two");
+    });
+}
