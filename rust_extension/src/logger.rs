@@ -233,6 +233,36 @@ impl FemtoLogger {
         true
     }
 
+    fn should_propagate_to_parent(&self) -> bool {
+        self.propagate.load(Ordering::Relaxed) && self.parent.is_some()
+    }
+
+    fn handle_parent_propagation(&self, record: FemtoLogRecord) {
+        let Some(parent_name) = &self.parent else {
+            return;
+        };
+        Python::with_gil(|py| {
+            if let Ok(parent) = manager::get_logger(py, parent_name) {
+                parent.borrow(py).dispatch_to_handlers(record);
+            }
+        });
+    }
+
+    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
+        let Some(tx) = &self.tx else {
+            return;
+        };
+        let handlers = self.handlers.read().clone();
+        if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
+            return;
+        }
+        self.dropped_records.fetch_add(1, Ordering::Relaxed);
+        self.drop_warner.record_drop();
+        self.drop_warner.warn_if_due(|count| {
+            warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+        });
+    }
+
     /// Dispatch a record to the logger's handlers via the background queue.
     ///
     /// The record is sent to the worker thread if a channel is configured.
@@ -240,29 +270,10 @@ impl FemtoLogger {
     /// dropped; a drop counter increments and a rate-limited warning is
     /// emitted.
     fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
-        let parent_record = if self.propagate.load(Ordering::Relaxed) && self.parent.is_some() {
-            Some(record.clone())
-        } else {
-            None
-        };
-        if let Some(tx) = &self.tx {
-            let handlers = self.handlers.read().clone();
-            if tx.try_send(QueuedRecord { record, handlers }).is_err() {
-                self.dropped_records.fetch_add(1, Ordering::Relaxed);
-                self.drop_warner.record_drop();
-                self.drop_warner.warn_if_due(|count| {
-                    warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
-                });
-            }
-        }
+        let parent_record = self.should_propagate_to_parent().then(|| record.clone());
+        self.send_to_local_handlers(record);
         if let Some(pr) = parent_record {
-            if let Some(parent_name) = &self.parent {
-                Python::with_gil(|py| {
-                    if let Ok(parent) = manager::get_logger(py, parent_name) {
-                        parent.borrow(py).dispatch_to_handlers(pr);
-                    }
-                });
-            }
+            self.handle_parent_propagation(pr);
         }
     }
     /// Attach a handler to this logger.
