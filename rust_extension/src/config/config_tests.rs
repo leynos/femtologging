@@ -237,7 +237,6 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
     });
 }
 
-<<<<<<< HEAD
 fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
@@ -250,26 +249,7 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
 }
 
-#[rstest(kind, cfg)]
-||||||| parent of cba951f (Apply review feedback for configuration and propagation)
-#[rstest]
-#[serial]
-fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
-    let builder = ConfigBuilder::new()
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg);
-    let err = builder
-        .build_and_init()
-        .expect_err("build_and_init should fail for unknown filter id");
-    assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
-}
-
-#[rstest(kind, cfg)]
-=======
 #[rstest(kind, add, cfg)]
->>>>>>> cba951f (Apply review feedback for configuration and propagation)
 #[case::handler(
     "handler",
     |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
