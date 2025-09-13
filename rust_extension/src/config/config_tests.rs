@@ -4,12 +4,63 @@
 use super::*;
 use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
+use crate::handler::FemtoHandlerTrait;
+use crate::handlers::{HandlerBuildError, HandlerBuilderTrait};
+use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::{FemtoLevel, StreamHandlerBuilder};
+use parking_lot::Mutex;
 use pyo3::Python;
 use rstest::{fixture, rstest};
 use serial_test::serial;
+use std::any::Any;
 use std::sync::Arc;
+
+#[derive(Clone, Default)]
+struct CollectingHandler {
+    records: Arc<Mutex<Vec<FemtoLogRecord>>>,
+}
+
+impl CollectingHandler {
+    fn collected(&self) -> Vec<FemtoLogRecord> {
+        self.records.lock().clone()
+    }
+}
+
+impl FemtoHandlerTrait for CollectingHandler {
+    fn handle(&self, record: FemtoLogRecord) {
+        self.records.lock().push(record);
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(Clone)]
+struct CollectingHandlerBuilder {
+    handler: CollectingHandler,
+}
+
+impl CollectingHandlerBuilder {
+    fn new() -> Self {
+        Self {
+            handler: CollectingHandler::default(),
+        }
+    }
+
+    fn handle(&self) -> CollectingHandler {
+        self.handler.clone()
+    }
+}
+
+impl HandlerBuilderTrait for CollectingHandlerBuilder {
+    type Handler = CollectingHandler;
+
+    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
+        Ok(self.handler.clone())
+    }
+}
 
 #[fixture]
 fn gil_and_clean_manager() {
@@ -88,16 +139,44 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
 #[serial]
 fn propagate_flag_applied(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
+        let root_handler = CollectingHandlerBuilder::new();
+        let collector = root_handler.handle();
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let child_cfg = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
             .with_propagate(false);
         let builder = ConfigBuilder::new()
+            .with_handler("h", root_handler)
             .with_root_logger(root)
             .with_logger("child", child_cfg);
         builder.build_and_init().expect("build should succeed");
-        let logger = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
-        assert!(!logger.borrow(py).propagate());
+        let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        assert!(child.borrow(py).handlers_for_test().is_empty());
+        child.borrow(py).log(FemtoLevel::Info, "msg");
+        assert!(
+            collector.collected().is_empty(),
+            "root handler should receive no records"
+        );
+    });
+}
+
+#[rstest]
+#[serial]
+fn record_propagates_to_root(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root_handler = CollectingHandlerBuilder::new();
+        let collector = root_handler.handle();
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(root)
+            .with_logger("child", child_cfg);
+        builder.build_and_init().expect("build should succeed");
+        let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        child.borrow(py).log(FemtoLevel::Info, "msg");
+        let records = collector.collected();
+        assert_eq!(records.len(), 1, "root handler should receive one record");
     });
 }
 
