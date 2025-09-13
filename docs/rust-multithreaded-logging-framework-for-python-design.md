@@ -170,7 +170,7 @@ The logging process will follow these steps:
    that logger. The choice of MPSC channel implementation is critical for
    performance and will be discussed further. Implementations like `flume` or
    `thingbuf::mpsc` offer different trade-offs in terms of speed, blocking
-   behavior, and features.
+   behaviour, and features.
 
    The logger tracks how many records are dropped when the queue is full. The
    running count is available via `FemtoLogger.get_dropped()` for tests and
@@ -581,7 +581,7 @@ Simultaneously, the API will be thoroughly Rust-idiomatic:
 
 - **Traits for Extensibility:** Core functionalities like formatting
   (`FemtoFormatter`), filtering (`FemtoFilter`), and handling (`FemtoHandler`)
-  will be defined by traits, allowing users to implement custom behaviors.
+  will be defined by traits, allowing users to implement custom behaviours.
 
 - **Rust Error Handling:** Operations that can fail (e.g., handler construction
   due to I/O errors, configuration parsing) will return `Result<T, E>`,
@@ -778,7 +778,7 @@ established interfaces.
 ## 7. Configuration and Runtime Control
 
 Effective logging requires not only initial setup but also the ability to
-control and modify logging behavior at runtime.
+control and modify logging behaviour at runtime.
 
 ### 7.1. Initial Setup: Levels, Handlers, Formatters
 
@@ -812,7 +812,7 @@ involves:
 A common operational requirement is the ability to change logging
 configurations, especially log levels, without restarting the application.
 
-- **The Challenge:** Modifying logging behavior in a live, concurrent
+- **The Challenge:** Modifying logging behaviour in a live, concurrent
   application requires careful synchronization to avoid inconsistencies or
   crashes.
 
