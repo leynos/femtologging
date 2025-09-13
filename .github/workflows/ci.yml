@@ -14,7 +14,7 @@ jobs:
       BUILD_PROFILE: debug
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install rust
         uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9
         with:
