@@ -29,6 +29,14 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
     (builder, root)
 }
 
+fn assert_handler_count(py: Python<'_>, name: &str, expected: usize, reason: &str) {
+    // Fetch a logger and assert it exposes the expected number of handlers.
+    let msg = format!("get_logger('{name}') should succeed");
+    let logger = manager::get_logger(py, name).expect(&msg);
+    let count = logger.borrow(py).handlers_for_test().len();
+    assert_eq!(count, expected, "{}", reason);
+}
+
 #[rstest]
 fn build_rejects_invalid_version() {
     let builder = ConfigBuilder::new().with_version(2);
@@ -134,62 +142,39 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
 }
 
-/// Build a config expected to fail due to duplicate IDs.
-/// `setup` attaches handlers or filters before the error is triggered.
-fn build_with_duplicate_ids<F>(mut logger_cfg: LoggerConfigBuilder, setup: F) -> ConfigError
-where
-    F: FnOnce(ConfigBuilder) -> ConfigBuilder,
-{
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    setup(ConfigBuilder::new())
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg)
-        .build_and_init()
-        .expect_err("build_and_init should fail for duplicate ids")
-}
-
-/// Sort IDs and compare to expected, ignoring order.
-fn assert_unordered_ids(mut ids: Vec<String>, expected: &[&str]) {
-    ids.sort();
-    let mut expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
-    expected.sort();
-    assert_eq!(ids, expected);
-}
-
 #[rstest]
 #[serial]
 fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
+    let handler = StreamHandlerBuilder::stderr();
     let mut logger_cfg = LoggerConfigBuilder::new();
-    logger_cfg.handlers = vec!["h".into(), "i".into(), "h".into(), "i".into()];
-    let err = build_with_duplicate_ids(logger_cfg, |b| {
-        b.with_handler("h", StreamHandlerBuilder::stderr())
-            .with_handler("i", StreamHandlerBuilder::stderr())
-    });
-    if let ConfigError::DuplicateHandlerIds(ids) = err {
-        assert_unordered_ids(ids, &["h", "i"]);
-    } else {
-        panic!("expected DuplicateHandlerIds error");
-    }
+    logger_cfg.handlers = vec!["h".into(), "h".into()];
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = ConfigBuilder::new()
+        .with_handler("h", handler)
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate handler ids");
+    assert!(matches!(err, ConfigError::DuplicateHandlerIds(ids) if ids == vec!["h".to_string()]));
 }
 
 #[rstest]
 #[serial]
 fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
+    let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
     let mut logger_cfg = LoggerConfigBuilder::new();
-    logger_cfg.filters = vec!["f".into(), "g".into(), "f".into(), "g".into()];
-    let filt_f = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
-    let filt_g = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
-    let err = build_with_duplicate_ids(logger_cfg, move |b| {
-        b.with_filter("f", FilterBuilder::Level(filt_f))
-            .with_filter("g", FilterBuilder::Level(filt_g))
-    });
-    if let ConfigError::DuplicateFilterIds(ids) = err {
-        assert_unordered_ids(ids, &["f", "g"]);
-    } else {
-        panic!("expected DuplicateFilterIds error");
-    }
+    logger_cfg.filters = vec!["f".into(), "f".into()];
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = ConfigBuilder::new()
+        .with_filter("f", FilterBuilder::Level(filt))
+        .with_root_logger(root)
+        .with_logger("child", logger_cfg);
+    let err = builder
+        .build_and_init()
+        .expect_err("build_and_init should fail for duplicate filter ids");
+    assert!(matches!(err, ConfigError::DuplicateFilterIds(ids) if ids == vec!["f".to_string()]));
 }
-
 #[rstest]
 #[serial]
 fn disable_existing_loggers_clears_unmentioned(
@@ -211,21 +196,17 @@ fn disable_existing_loggers_clears_unmentioned(
             .build_and_init()
             .expect("initial build should succeed");
 
-        let stale = manager::get_logger(py, "stale").expect("get_logger('stale') should succeed");
-        assert!(!stale.borrow(py).handlers_for_test().is_empty());
+        assert_handler_count(py, "stale", 1, "stale logger should start active");
 
         let rebuild = ConfigBuilder::new()
             .with_root_logger(root)
             .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
 
-        let stale = manager::get_logger(py, "stale").expect("get_logger('stale') should succeed");
-        assert!(
-            stale.borrow(py).handlers_for_test().is_empty(),
-            "stale logger should be disabled",
-        );
+        assert_handler_count(py, "stale", 0, "stale logger should be disabled");
     });
 }
+
 #[rstest]
 #[serial]
 fn disable_existing_loggers_keeps_ancestors(
@@ -235,13 +216,6 @@ fn disable_existing_loggers_keeps_ancestors(
     Python::with_gil(|py| {
         let (builder, root) = base_logger_builder;
         let builder = builder
-<<<<<<< HEAD
-            .with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]))
-            .with_logger("parent.child", LoggerConfigBuilder::new());
-||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
-        let builder =
-            builder.with_logger("parent", LoggerConfigBuilder::new().with_handlers(["h"]));
-=======
             .with_logger(
                 "grandparent",
                 LoggerConfigBuilder::new().with_handlers(["h"]),
@@ -250,90 +224,35 @@ fn disable_existing_loggers_keeps_ancestors(
                 "grandparent.parent",
                 LoggerConfigBuilder::new().with_handlers(["h"]),
             );
->>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
         builder
             .build_and_init()
             .expect("initial build should succeed");
 
-<<<<<<< HEAD
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
-        let parent_handlers_before = parent.borrow(py).handlers_for_test();
-        assert!(
-            !parent_handlers_before.is_empty(),
-            "ancestor logger should have a handler",
-        );
-||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
-        assert!(!parent.borrow(py).handlers_for_test().is_empty());
-=======
-        let grandparent = manager::get_logger(py, "grandparent")
-            .expect("get_logger('grandparent') should succeed");
-        let parent = manager::get_logger(py, "grandparent.parent")
-            .expect("get_logger('grandparent.parent') should succeed");
-        assert!(!grandparent.borrow(py).handlers_for_test().is_empty());
-        assert!(!parent.borrow(py).handlers_for_test().is_empty());
->>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
+        assert_handler_count(py, "grandparent", 1, "grandparent should start active");
+        assert_handler_count(py, "grandparent.parent", 1, "parent should start active");
 
         let rebuild = builder_with_root(root)
-<<<<<<< HEAD
-            .with_disable_existing_loggers(true)
-            .with_logger("parent.child", LoggerConfigBuilder::new());
-||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
-            .with_logger(
-                "parent.child",
-                LoggerConfigBuilder::new().with_handlers(["h"]),
-            )
-            .with_disable_existing_loggers(true);
-=======
             .with_logger(
                 "grandparent.parent.child",
                 LoggerConfigBuilder::new().with_handlers(["h"]),
             )
             .with_disable_existing_loggers(true);
->>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
         rebuild.build_and_init().expect("rebuild should succeed");
 
-<<<<<<< HEAD
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
-        let parent_handlers_after = parent.borrow(py).handlers_for_test();
-||||||| parent of d8e03f5 (Test multi-level ancestor loggers remain active)
-        let parent =
-            manager::get_logger(py, "parent").expect("get_logger('parent') should succeed");
-=======
-        let grandparent = manager::get_logger(py, "grandparent")
-            .expect("get_logger('grandparent') should succeed");
-        let parent = manager::get_logger(py, "grandparent.parent")
-            .expect("get_logger('grandparent.parent') should succeed");
-        let child = manager::get_logger(py, "grandparent.parent.child")
-            .expect("get_logger('grandparent.parent.child') should succeed");
-        assert!(
-            !grandparent.borrow(py).handlers_for_test().is_empty(),
+        assert_handler_count(py, "grandparent", 1, "ancestor logger should remain active");
+        assert_handler_count(
+            py,
+            "grandparent.parent",
+            1,
             "ancestor logger should remain active",
         );
->>>>>>> d8e03f5 (Test multi-level ancestor loggers remain active)
-        assert!(
-            !parent_handlers_after.is_empty(),
-            "ancestor logger should be retained",
-        );
-        assert!(
-            Arc::ptr_eq(&parent_handlers_before[0], &parent_handlers_after[0]),
-            "ancestor handler should be reused",
-        );
-
-        let child = manager::get_logger(py, "parent.child")
-            .expect("get_logger('parent.child') should succeed");
-        assert!(
-            child.borrow(py).handlers_for_test().is_empty(),
-            "child logger should have no handlers",
-        );
-        assert_eq!(
-            child.borrow(py).handlers_for_test().len(),
+        assert_handler_count(
+            py,
+            "grandparent.parent.child",
             1,
             "child logger should retain its handler",
         );
+
         let logging = py.import("logging").expect("import logging");
         let py_child = logging
             .call_method1("getLogger", ("grandparent.parent.child",))
