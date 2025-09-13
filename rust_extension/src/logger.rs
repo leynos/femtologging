@@ -10,6 +10,7 @@ use std::any::Any;
 
 use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
+use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 
 use crate::{
@@ -146,7 +147,7 @@ impl FemtoLogger {
         self.level.store(level as u8, Ordering::Relaxed);
     }
 
-    /// Return whether this logger propagates records to its parent.
+    /// Return whether this logger propagates records to its parent (affecting parent-propagation behaviour).
     #[getter]
     pub fn propagate(&self) -> bool {
         self.propagate.load(Ordering::Relaxed)
@@ -239,6 +240,11 @@ impl FemtoLogger {
     /// dropped; a drop counter increments and a rate-limited warning is
     /// emitted.
     fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
+        let parent_record = if self.propagate.load(Ordering::Relaxed) && self.parent.is_some() {
+            Some(record.clone())
+        } else {
+            None
+        };
         if let Some(tx) = &self.tx {
             let handlers = self.handlers.read().clone();
             if tx.try_send(QueuedRecord { record, handlers }).is_err() {
@@ -246,6 +252,15 @@ impl FemtoLogger {
                 self.drop_warner.record_drop();
                 self.drop_warner.warn_if_due(|count| {
                     warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+                });
+            }
+        }
+        if let Some(pr) = parent_record {
+            if let Some(parent_name) = &self.parent {
+                Python::with_gil(|py| {
+                    if let Ok(parent) = manager::get_logger(py, parent_name) {
+                        parent.borrow(py).dispatch_to_handlers(pr);
+                    }
                 });
             }
         }

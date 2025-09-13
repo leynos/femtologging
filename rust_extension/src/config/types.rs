@@ -306,6 +306,11 @@ impl ConfigBuilder {
         self.disable_existing_loggers
     }
 
+    /// Retrieve the default log level if configured.
+    pub fn default_level(&self) -> Option<FemtoLevel> {
+        self.default_level
+    }
+
     /// Retrieve configured handler builders.
     pub fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
         &self.handlers

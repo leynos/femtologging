@@ -15,7 +15,13 @@ use crate::config::ConfigError;
 impl From<ConfigError> for PyErr {
     fn from(err: ConfigError) -> Self {
         match err {
-            ConfigError::UnknownIds(ids) => PyKeyError::new_err(ids),
+            ConfigError::UnknownIds(ids) => {
+                use pyo3::types::PyTuple;
+                Python::with_gil(|py| {
+                    let tup: Py<PyTuple> = PyTuple::new(py, ids).unwrap().into();
+                    PyErr::new::<PyKeyError, _>(tup)
+                })
+            }
             ConfigError::LoggerInit(msg) => PyRuntimeError::new_err(msg),
             _ => PyValueError::new_err(err.to_string()),
         }
