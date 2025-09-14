@@ -205,6 +205,18 @@ All handlers spawn their consumer threads on creation and expose a
 created, ensuring log messages are dispatched without blocking. Dropping the
 sender signals the consumer to finish once the queue is drained.
 
+#### RotatingFileHandler
+
+`FemtoRotatingFileHandler` mirrors Python's `RotatingFileHandler` and rotates
+when the log file exceeds a configured `max_bytes`.
+
+- The worker thread checks the active file size before each write and performs
+  rotation without blocking producers.
+- Rotation renames existing files with incremental numeric suffixes and opens a
+  fresh file; once `backup_count` is exceeded the oldest file is removed.
+- `max_bytes` and `backup_count` are surfaced through the Rust builder and
+  Python API to keep configuration familiar.
+
 ## Thread Safety Considerations
 
 - `FemtoLogRecord` and any user data it carries must implement `Send` so records

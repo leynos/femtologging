@@ -55,6 +55,16 @@ from that design.
 - [x] Implement `femtologging.dictConfig()` translating to the builder API.
 - [ ] Implement `FemtoRotatingFileHandler` and `FemtoTimedRotatingFileHandler`
   with their respective rotation logic.
+  - `FemtoRotatingFileHandler`:
+    - [ ] Expose `max_bytes` and `backup_count` options in Rust builders and
+      Python wrappers.
+    - [ ] Check file size in the worker thread and trigger rotation without
+      blocking producers.
+    - [ ] Implement rotation algorithm that cascades file renames from highest
+      to lowest index before opening a new file.
+    - [ ] Provide a file name strategy producing `<path>.<n>` sequences and
+      pruning entries beyond `backup_count`.
+    - [ ] Add builder and Python tests verifying size-based rollover.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
   reconnection handling.
 - [x] Define the `FemtoFilter` trait and implement common filter
