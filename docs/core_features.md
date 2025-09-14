@@ -41,7 +41,7 @@ are ordered by priority for the Rust port.
 
 ## Prioritization for Rust Port
 
-1. **Logging API Compatibility** – essential drop‑in behavior
+1. **Logging API Compatibility** – essential drop‑in behaviour
 2. **Core Data Structures** – backbone of the system
 3. **StreamHandler** and **FileHandler** – basic output paths
 4. **Formatter** and styles – human‑readable logs

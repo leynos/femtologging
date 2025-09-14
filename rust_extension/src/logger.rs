@@ -10,6 +10,7 @@ use std::any::Any;
 
 use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
+use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 
 use crate::{
@@ -22,7 +23,7 @@ use log::warn;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::{
-    atomic::{AtomicU64, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Arc,
 };
 use std::thread::{self, JoinHandle};
@@ -98,6 +99,7 @@ pub struct FemtoLogger {
     parent: Option<String>,
     formatter: Arc<dyn FemtoFormatter>,
     level: AtomicU8,
+    propagate: AtomicBool,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
@@ -143,6 +145,18 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
+    }
+
+    /// Return whether this logger propagates records to its parent (affecting parent-propagation behaviour).
+    #[getter]
+    pub fn propagate(&self) -> bool {
+        self.propagate.load(Ordering::SeqCst)
+    }
+
+    /// Set whether this logger propagates records to its parent, controlling parent-propagation behaviour.
+    #[pyo3(text_signature = "(self, flag)")]
+    pub fn set_propagate(&self, flag: bool) {
+        self.propagate.store(flag, Ordering::SeqCst);
     }
 
     /// Attach a handler implemented in Python or Rust.
@@ -219,6 +233,36 @@ impl FemtoLogger {
         true
     }
 
+    fn should_propagate_to_parent(&self) -> bool {
+        self.propagate.load(Ordering::SeqCst) && self.parent.is_some()
+    }
+
+    fn handle_parent_propagation(&self, record: FemtoLogRecord) {
+        let Some(parent_name) = &self.parent else {
+            return;
+        };
+        Python::with_gil(|py| {
+            if let Ok(parent) = manager::get_logger(py, parent_name) {
+                parent.borrow(py).dispatch_to_handlers(record);
+            }
+        });
+    }
+
+    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
+        let Some(tx) = &self.tx else {
+            return;
+        };
+        let handlers = self.handlers.read().clone();
+        if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
+            return;
+        }
+        self.dropped_records.fetch_add(1, Ordering::Relaxed);
+        self.drop_warner.record_drop();
+        self.drop_warner.warn_if_due(|count| {
+            warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+        });
+    }
+
     /// Dispatch a record to the logger's handlers via the background queue.
     ///
     /// The record is sent to the worker thread if a channel is configured.
@@ -226,15 +270,10 @@ impl FemtoLogger {
     /// dropped; a drop counter increments and a rate-limited warning is
     /// emitted.
     fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
-        if let Some(tx) = &self.tx {
-            let handlers = self.handlers.read().clone();
-            if tx.try_send(QueuedRecord { record, handlers }).is_err() {
-                self.dropped_records.fetch_add(1, Ordering::Relaxed);
-                self.drop_warner.record_drop();
-                self.drop_warner.warn_if_due(|count| {
-                    warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
-                });
-            }
+        let parent_record = self.should_propagate_to_parent().then(|| record.clone());
+        self.send_to_local_handlers(record);
+        if let Some(pr) = parent_record {
+            self.handle_parent_propagation(pr);
         }
     }
     /// Attach a handler to this logger.
@@ -315,6 +354,7 @@ impl FemtoLogger {
             parent,
             formatter,
             level: AtomicU8::new(FemtoLevel::Info as u8),
+            propagate: AtomicBool::new(true),
             handlers,
             filters,
             dropped_records: AtomicU64::new(0),

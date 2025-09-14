@@ -1,19 +1,11 @@
 //! Type definitions and builder structs for femtologging configuration.
 
-#[cfg(feature = "python")]
-use std::convert::identity;
 use std::{collections::BTreeMap, sync::Arc};
 
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
-#[cfg(feature = "python")]
-use pyo3::Bound;
 use thiserror::Error;
 
 #[cfg(feature = "python")]
-use crate::macros::py_setters;
-#[cfg(feature = "python")]
-use crate::macros::{impl_as_pydict, AsPyDict};
+use pyo3::prelude::pyclass;
 
 fn normalise_vec(ids: Vec<String>) -> Vec<String> {
     use std::collections::HashSet;
@@ -66,16 +58,6 @@ impl From<FileHandlerBuilder> for HandlerBuilder {
     }
 }
 
-#[cfg(feature = "python")]
-impl AsPyDict for HandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        match self {
-            Self::Stream(b) => b.as_pydict(py),
-            Self::File(b) => b.as_pydict(py),
-        }
-    }
-}
-
 /// Errors that may occur while building a configuration.
 #[derive(Debug, Error)]
 #[cfg_attr(
@@ -89,9 +71,9 @@ pub enum ConfigError {
     /// No root logger configuration was provided.
     #[error("missing root logger configuration")]
     MissingRootLogger,
-    /// A handler or filter identifier was referenced but not defined.
-    #[error("unknown id: {0}")]
-    UnknownId(String),
+    /// One or more handler or filter identifiers were referenced but not defined.
+    #[error("unknown ids: {0:?}")]
+    UnknownIds(Vec<String>),
     /// Duplicate handler identifiers were provided.
     #[error("duplicate handler ids: {0:?}")]
     DuplicateHandlerIds(Vec<String>),
@@ -125,8 +107,8 @@ pub enum ConfigError {
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct FormatterBuilder {
-    pub(crate) format: Option<String>,
-    pub(crate) datefmt: Option<String>,
+    format: Option<String>,
+    datefmt: Option<String>,
 }
 
 impl FormatterBuilder {
@@ -162,10 +144,10 @@ impl FormatterBuilder {
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerConfigBuilder {
-    pub(crate) level: Option<FemtoLevel>,
-    pub(crate) propagate: Option<bool>,
-    pub(crate) filters: Vec<String>,
-    pub(crate) handlers: Vec<String>,
+    level: Option<FemtoLevel>,
+    propagate: Option<bool>,
+    filters: Vec<String>,
+    handlers: Vec<String>,
 }
 
 impl LoggerConfigBuilder {
@@ -233,18 +215,18 @@ impl LoggerConfigBuilder {
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
-    pub(crate) version: u8,
-    pub(crate) disable_existing_loggers: bool,
-    pub(crate) default_level: Option<FemtoLevel>,
-    pub(crate) formatters: BTreeMap<String, FormatterBuilder>,
-    pub(crate) filters: BTreeMap<String, FilterBuilder>,
+    version: u8,
+    disable_existing_loggers: bool,
+    default_level: Option<FemtoLevel>,
+    formatters: BTreeMap<String, FormatterBuilder>,
+    filters: BTreeMap<String, FilterBuilder>,
     /// Registered handler builders keyed by identifier.
     ///
     /// `HandlerBuilder` is a concrete enum rather than a trait object to make
     /// cloning and serialization straightforward.
-    pub(crate) handlers: BTreeMap<String, HandlerBuilder>,
-    pub(crate) loggers: BTreeMap<String, LoggerConfigBuilder>,
-    pub(crate) root_logger: Option<LoggerConfigBuilder>,
+    handlers: BTreeMap<String, HandlerBuilder>,
+    loggers: BTreeMap<String, LoggerConfigBuilder>,
+    root_logger: Option<LoggerConfigBuilder>,
 }
 
 impl Default for ConfigBuilder {
@@ -319,6 +301,36 @@ impl ConfigBuilder {
         self
     }
 
+    /// Determine whether existing loggers should be disabled.
+    pub fn disable_existing_loggers(&self) -> bool {
+        self.disable_existing_loggers
+    }
+
+    /// Retrieve the default log level if configured.
+    pub fn default_level(&self) -> Option<FemtoLevel> {
+        self.default_level
+    }
+
+    /// Retrieve configured handler builders.
+    pub fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
+        &self.handlers
+    }
+
+    /// Retrieve configured filter builders.
+    pub fn filter_builders(&self) -> &BTreeMap<String, FilterBuilder> {
+        &self.filters
+    }
+
+    /// Retrieve configured logger builders.
+    pub fn logger_builders(&self) -> &BTreeMap<String, LoggerConfigBuilder> {
+        &self.loggers
+    }
+
+    /// Retrieve the root logger configuration if set.
+    pub fn root_logger(&self) -> Option<&LoggerConfigBuilder> {
+        self.root_logger.as_ref()
+    }
+
     /// Return the configured version.
     pub fn version(&self) -> u8 {
         self.version
@@ -326,112 +338,4 @@ impl ConfigBuilder {
 }
 
 #[cfg(feature = "python")]
-impl_as_pydict!(FormatterBuilder {
-    set_opt format => "format",
-    set_opt datefmt => "datefmt",
-});
-
-#[cfg(feature = "python")]
-py_setters!(FormatterBuilder {
-    format: py_with_format => "with_format", String, Some, "Set the format string.",
-    datefmt: py_with_datefmt => "with_datefmt", String, Some, "Set the date format string.",
-});
-
-#[cfg(feature = "python")]
-impl_as_pydict!(LoggerConfigBuilder {
-    set_opt_to_string level => "level",
-    set_opt propagate => "propagate",
-    set_vec filters => "filters",
-    set_vec handlers => "handlers",
-});
-
-#[cfg(feature = "python")]
-py_setters!(LoggerConfigBuilder {
-    level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level, replacing any existing value.",
-    propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour, replacing any existing value.",
-    filters: py_with_filters => "with_filters", Vec<String>, normalise_vec,
-        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.\nIDs are deduplicated and order may be normalised; see `normalise_vec`.",
-    handlers: py_with_handlers => "with_handlers", Vec<String>, normalise_vec,
-        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.\nIDs are deduplicated and order may be normalised; see `normalise_vec`.",
-});
-
-#[cfg(feature = "python")]
-impl_as_pydict!(ConfigBuilder {
-    set_val version => "version",
-    set_val disable_existing_loggers => "disable_existing_loggers",
-    set_opt_to_string default_level => "default_level",
-    set_map formatters => "formatters",
-    set_map filters => "filters",
-    set_map handlers => "handlers",
-    set_map loggers => "loggers",
-    set_optmap root_logger => "root",
-});
-#[cfg(feature = "python")]
-py_setters!(ConfigBuilder {
-    version: py_with_version => "with_version", u8, identity,
-        "Set the schema version, replacing any existing value.",
-    disable_existing_loggers: py_with_disable_existing_loggers =>
-        "with_disable_existing_loggers", bool, identity,
-        "Set whether existing loggers are disabled, replacing any existing value.",
-    default_level: py_with_default_level => "with_default_level",
-        FemtoLevel, Some, "Set the default log level, replacing any existing value.",
-    root_logger: py_with_root_logger => "with_root_logger",
-        LoggerConfigBuilder, Some,
-        "Set the root logger configuration.\n\nCalling this multiple times replaces the previous root logger.",
-};
-    /// Add a formatter by identifier.
-    ///
-    /// Any existing formatter with the same identifier is replaced.
-    #[pyo3(name = "with_formatter", text_signature = "(self, id, builder, /)")]
-    fn py_with_formatter<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        id: String,
-        builder: FormatterBuilder,
-    ) -> PyRefMut<'py, Self> {
-        slf.formatters.insert(id, builder);
-        slf
-    }
-
-    /// Add a logger by name.
-    ///
-    /// Any existing logger with the same name is replaced.
-    #[pyo3(name = "with_logger", text_signature = "(self, name, builder, /)")]
-    fn py_with_logger<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        name: String,
-        builder: LoggerConfigBuilder,
-    ) -> PyRefMut<'py, Self> {
-        slf.loggers.insert(name, builder);
-        slf
-    }
-
-    /// Adds a filter configuration by its unique ID, replacing any existing entry.
-    #[pyo3(name = "with_filter", text_signature = "(self, id, builder, /)")]
-    fn py_with_filter<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        id: String,
-        builder: Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let fb = builder.extract::<FilterBuilder>()?;
-        slf.filters.insert(id, fb);
-        Ok(slf)
-    }
-
-    /// Add a handler by identifier. Any existing handler with the same id is replaced.
-    #[pyo3(name = "with_handler", text_signature = "(self, id, builder, /)")]
-    fn py_with_handler<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        id: String,
-        builder: Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let hb = builder.extract::<HandlerBuilder>()?;
-        slf.handlers.insert(id, hb);
-        Ok(slf)
-    }
-
-    /// Finalise configuration and initialise loggers.
-    #[pyo3(name = "build_and_init", text_signature = "(self, /)")]
-    fn py_build_and_init(&self) -> PyResult<()> {
-        self.build_and_init().map_err(Into::into)
-    }
-);
+mod python_bindings;

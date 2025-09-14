@@ -97,7 +97,7 @@ registers, for example, `rdi` and `rsi`. The old, un-recompiled `main` binary,
 however, is unaware of this change. It will still place the entire 64-bit value
 in `rdi` and leave `rsi` untouched. When `do_stuff` executes, it will read from
 both `rdi` and `rsi`, interpreting garbage data from `rsi` as part of the
-number, leading to incorrect behavior or a crash. This mismatch is a
+number, leading to incorrect behaviour or a crash. This mismatch is a
 fundamental ABI break, even though the function name and its apparent purpose
 remain the same.
 
@@ -405,9 +405,9 @@ effectively solving the "build matrix explosion" problem.
 The core concept of the `abi3` strategy is to compile the Rust extension
 against a restricted subset of the CPython C API known as the "Limited API," as
 defined in PEP 384. This subset consists of functions and data structures whose
-binary layout and behavior are guaranteed to remain stable across future Python
-3.x releases. The resulting binary wheel is tagged with `abi3` and can be
-loaded by any compatible Python interpreter from a specified minimum version
+binary layout and behaviour are guaranteed to remain stable across future
+Python 3.x releases. The resulting binary wheel is tagged with `abi3` and can
+be loaded by any compatible Python interpreter from a specified minimum version
 onwards.
 
 Configuration for an `abi3` build is managed through Cargo features in

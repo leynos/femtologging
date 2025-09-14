@@ -17,14 +17,15 @@ The CPython logging framework is built entirely in Python with classes like
 `LogRecord`, and `LoggerAdapter`. Loggers are organized hierarchically (in a
 tree) under a root logger via a `Manager` holding a `loggerDict` of names to
 logger instances. Each `Logger` has attributes like `name`, `level`, a list of
-child handlers, and links to its parent logger, and inherits filtering behavior
-via the `Filterer` mixin. Handlers (e.g. `StreamHandler`, `FileHandler`) hold
-output streams and optional `Formatter` objects, each with a dedicated lock for
-thread-safe I/O. When a logger emits, it creates a `LogRecord` (a Python object
-with fields like `msg`, `args`, `levelno`, timestamp, etc.), runs it through
-logger filters, then calls each handler’s `handle()` method. The handler
-filters it again, formats it (via `Formatter.format(record)`), and writes to
-its destination (often wrapped in `with self.lock:`).
+child handlers, and links to its parent logger, and inherits filtering
+behaviour via the `Filterer` mixin. Handlers (e.g. `StreamHandler`,
+`FileHandler`) hold output streams and optional `Formatter` objects, each with
+a dedicated lock for thread-safe I/O. When a logger emits, it creates a
+`LogRecord` (a Python object with fields like `msg`, `args`, `levelno`,
+timestamp, etc.), runs it through logger filters, then calls each handler’s
+`handle()` method. The handler filters it again, formats it (via
+`Formatter.format(record)`), and writes to its destination (often wrapped in
+`with self.lock:`).
 
 In contrast, **picologging** implements most core classes in C++ (exposed as
 Python types) for speed. It has analogous classes: `Logger`, `Handler`,
@@ -332,5 +333,5 @@ but watch out for unimplemented hooks like `setLogRecordFactory`.
 **Sources:** This analysis is based on the CPython source code for `logging`
 and the picologging source/docs, which highlight the implementation and
 performance characteristics of each library. These concrete references
-illustrate how design decisions translate into runtime behavior and performance
-differences.
+illustrate how design decisions translate into runtime behaviour and
+performance differences.

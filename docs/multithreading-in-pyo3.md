@@ -158,18 +158,18 @@ details a common deadlock scenario 6:
 
 1. A Rust thread (Thread A) acquires the GIL.
 
-1. Thread A then locks a standard Rust `Mutex`.
+2. Thread A then locks a standard Rust `Mutex`.
 
-1. Thread A proceeds to call a Python function (e.g., `py.import()`, or any
+3. Thread A proceeds to call a Python function (e.g., `py.import()`, or any
    method on a Python object) which, under the hood, might temporarily release
    and then attempt to re-acquire the GIL.
 
-1. Another thread (Thread B) seizes the opportunity to acquire the now-free GIL.
+4. Another thread (Thread B) seizes the opportunity to acquire the now-free GIL.
 
-1. Thread B then attempts to lock the same `Mutex` that Thread A is holding,
+5. Thread B then attempts to lock the same `Mutex` that Thread A is holding,
    causing Thread B to block.
 
-1. Meanwhile, the Python operation in Thread A completes and tries to re-acquire
+6. Meanwhile, the Python operation in Thread A completes and tries to re-acquire
    the GIL, but it is held by the blocked Thread B. Both threads are now
    waiting on a resource held by the other, resulting in a deadlock.
 
@@ -253,21 +253,21 @@ manipulation:
 1. **Acquire GIL:** In the source thread, acquire the GIL (e.g., within a
    `Python::with_gil` block).
 
-1. **Create/Obtain Object:** Create a new Python object or receive one from
+2. **Create/Obtain Object:** Create a new Python object or receive one from
    Python code. At this point, it is represented by a `Bound<'py, T>`.
 
-1. **Unbind:** Before sending the reference to another thread, call `.unbind()`
+3. **Unbind:** Before sending the reference to another thread, call `.unbind()`
    on the `Bound` handle. This consumes the `Bound` and returns a `Py<T>`,
    stripping away the GIL lifetime and producing a `Send`-able handle.
 
-1. **Send:** Move the `Py<T>` to the destination thread (e.g., via a channel or
+4. **Send:** Move the `Py<T>` to the destination thread (e.g., via a channel or
    by storing it in a shared `Arc<Mutex<...>>`).
 
-1. **Re-bind:** In the destination thread, acquire the GIL (again, with
+5. **Re-bind:** In the destination thread, acquire the GIL (again, with
    `Python::with_gil`) to get a new `Python<'py>` token. Call `.bind(py)` on
    the received `Py<T>` to create a new, temporary `Bound<'py, T>` handle.
 
-1. **Operate:** Use this temporary `Bound` handle to safely call methods on the
+6. **Operate:** Use this temporary `Bound` handle to safely call methods on the
    Python object.
 
 This bind-unbind-rebind cycle ensures that all interactions with Python objects
@@ -425,15 +425,15 @@ straightforward 7:
 
 1. A Python function calls a Rust function exposed via `#[pyfunction]`.
 
-1. The arguments are converted from Python types (e.g., `PyList`) into native
+2. The arguments are converted from Python types (e.g., `PyList`) into native
    Rust types (e.g., `Vec<f64>`). This happens while the GIL is still held.
 
-1. The Rust function calls `py.allow_threads()` to release the GIL.
+3. The Rust function calls `py.allow_threads()` to release the GIL.
 
-1. Inside the `allow_threads` closure, the now GIL-free Rust code performs the
+4. Inside the `allow_threads` closure, the now GIL-free Rust code performs the
    heavy computation in parallel, typically using a library like Rayon.
 
-1. Upon completion, the closure exits, `allow_threads` re-acquires the GIL, and
+5. Upon completion, the closure exits, `allow_threads` re-acquires the GIL, and
    the Rust result is converted back into a Python object to be returned to the
    caller.
 
@@ -547,12 +547,12 @@ ultimately handled or raised in another thread. The workflow is idiomatic Rust:
 1. A worker thread (which may or may not hold the GIL) encounters an error. It
    creates a `PyErr` instance and returns it as the `Err` variant of a `Result`.
 
-1. Because `PyErr` is `Send`, this `Result` can be safely sent back to the main
+2. Because `PyErr` is `Send`, this `Result` can be safely sent back to the main
    thread that initiated the concurrent operation.
 
-1. The main thread receives the `Result::Err(py_err)`.
+3. The main thread receives the `Result::Err(py_err)`.
 
-1. If this main thread is in the context of a `#[pyfunction]`, it can simply
+4. If this main thread is in the context of a `#[pyfunction]`, it can simply
    return this `Result`. PyO3 will automatically catch the `Err` variant and
    raise the contained `PyErr` as a Python exception in the calling Python
    code.[^23]

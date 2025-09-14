@@ -4,12 +4,63 @@
 use super::*;
 use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
+use crate::handler::FemtoHandlerTrait;
+use crate::handlers::{HandlerBuildError, HandlerBuilderTrait};
+use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::{FemtoLevel, StreamHandlerBuilder};
+use parking_lot::Mutex;
 use pyo3::Python;
 use rstest::{fixture, rstest};
 use serial_test::serial;
+use std::any::Any;
 use std::sync::Arc;
+
+#[derive(Clone, Default)]
+struct CollectingHandler {
+    records: Arc<Mutex<Vec<FemtoLogRecord>>>,
+}
+
+impl CollectingHandler {
+    fn collected(&self) -> Vec<FemtoLogRecord> {
+        self.records.lock().clone()
+    }
+}
+
+impl FemtoHandlerTrait for CollectingHandler {
+    fn handle(&self, record: FemtoLogRecord) {
+        self.records.lock().push(record);
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(Clone)]
+struct CollectingHandlerBuilder {
+    handler: CollectingHandler,
+}
+
+impl CollectingHandlerBuilder {
+    fn new() -> Self {
+        Self {
+            handler: CollectingHandler::default(),
+        }
+    }
+
+    fn handle(&self) -> CollectingHandler {
+        self.handler.clone()
+    }
+}
+
+impl HandlerBuilderTrait for CollectingHandlerBuilder {
+    type Handler = CollectingHandler;
+
+    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
+        Ok(self.handler.clone())
+    }
+}
 
 #[fixture]
 fn gil_and_clean_manager() {
@@ -84,16 +135,82 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     });
 }
 
-fn unknown_handler_id_rejected(_gil_and_clean_manager: ()) {
+#[rstest]
+#[serial]
+fn propagate_flag_applied(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root_handler = CollectingHandlerBuilder::new();
+        let collector = root_handler.handle();
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let child_cfg = LoggerConfigBuilder::new()
+            .with_level(FemtoLevel::Info)
+            .with_propagate(false);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(root)
+            .with_logger("child", child_cfg);
+        builder.build_and_init().expect("build should succeed");
+        let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        assert!(child.borrow(py).handlers_for_test().is_empty());
+        child.borrow(py).log(FemtoLevel::Info, "msg");
+        assert!(
+            collector.collected().is_empty(),
+            "root handler should receive no records"
+        );
+    });
+}
+
+#[rstest]
+#[serial]
+fn record_propagates_to_root(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root_handler = CollectingHandlerBuilder::new();
+        let collector = root_handler.handle();
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(root)
+            .with_logger("child", child_cfg);
+        builder.build_and_init().expect("build should succeed");
+        let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        child.borrow(py).log(FemtoLevel::Info, "msg");
+        let records = collector.collected();
+        assert_eq!(records.len(), 1, "root handler should receive one record");
+    });
+}
+
+#[rstest(kind, add, cfg)]
+#[case::handler(
+    "handler",
+    |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
+    LoggerConfigBuilder::new().with_handlers(["missing"]),
+)]
+#[case::filter(
+    "filter",
+    |b: ConfigBuilder| b.with_filter("exists", FilterBuilder::Level(LevelFilterBuilder::new())),
+    LoggerConfigBuilder::new().with_filters(["missing"]),
+)]
+#[serial]
+fn unknown_id_rejected(
+    _gil_and_clean_manager: (),
+    #[case] _kind: &str,
+    #[case] add: fn(ConfigBuilder) -> ConfigBuilder,
+    #[case] cfg: LoggerConfigBuilder,
+) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    let logger_cfg = LoggerConfigBuilder::new().with_handlers(["missing"]);
-    let builder = ConfigBuilder::new()
+    let builder = add(ConfigBuilder::new()
         .with_root_logger(root)
-        .with_logger("child", logger_cfg);
+        .with_logger("child", cfg));
     let err = builder
         .build_and_init()
-        .expect_err("build_and_init should fail for unknown handler id");
-    assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
+        .expect_err("build_and_init should fail for unknown id");
+    if let ConfigError::UnknownIds(mut ids) = err {
+        ids.sort();
+        assert_eq!(ids, vec!["missing".to_string()]);
+    } else {
+        panic!("expected UnknownIds");
+    }
 }
 
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
@@ -129,9 +246,42 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let err = builder
         .build_and_init()
         .expect_err("build_and_init should fail for unknown filter id");
-    assert!(matches!(err, ConfigError::UnknownId(id) if id == "missing"));
+    assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
 }
 
+#[rstest(kind, add, cfg)]
+#[case::handler(
+    "handler",
+    |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
+    LoggerConfigBuilder::new().with_handlers(["missing1","missing2"]),
+)]
+#[case::filter(
+    "filter",
+    |b: ConfigBuilder| b.with_filter("exists", FilterBuilder::Level(LevelFilterBuilder::new())),
+    LoggerConfigBuilder::new().with_filters(["missing1","missing2"]),
+)]
+#[serial]
+fn multiple_unknown_ids_rejected(
+    _gil_and_clean_manager: (),
+    #[case] _kind: &str,
+    #[case] add: fn(ConfigBuilder) -> ConfigBuilder,
+    #[case] cfg: LoggerConfigBuilder,
+) {
+    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let builder = add(ConfigBuilder::new()
+        .with_root_logger(root)
+        .with_logger("child", cfg));
+    let err = builder.build_and_init().expect_err("should fail");
+    if let ConfigError::UnknownIds(mut ids) = err {
+        ids.sort();
+        assert_eq!(ids, vec!["missing1".to_string(), "missing2".to_string()]);
+    } else {
+        panic!("expected UnknownIds");
+    }
+}
+
+#[rstest]
+#[serial]
 fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
     let handler = StreamHandlerBuilder::stderr();
     let mut logger_cfg = LoggerConfigBuilder::new();
@@ -241,5 +391,33 @@ fn disable_existing_loggers_keeps_ancestors(
             1,
             "child logger should retain its handler",
         );
+    });
+}
+
+#[rstest]
+#[serial]
+fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let root_handler = CollectingHandlerBuilder::new();
+        let collector = root_handler.handle();
+        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let builder = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(root)
+            .with_logger("child", child_cfg);
+        builder.build_and_init().expect("build should succeed");
+        let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        child.borrow(py).set_propagate(false);
+        child.borrow(py).log(FemtoLevel::Info, "one");
+        assert!(
+            collector.collected().is_empty(),
+            "records should not propagate when disabled"
+        );
+        child.borrow(py).set_propagate(true);
+        child.borrow(py).log(FemtoLevel::Info, "two");
+        let records = collector.collected();
+        assert_eq!(records.len(), 1, "record should propagate after enabling");
+        assert_eq!(records[0].message, "two");
     });
 }
