@@ -211,8 +211,9 @@ sender signals the consumer to finish once the queue is drained.
 when the log file exceeds a configured `max_bytes`.
 
 By default `max_bytes` and `backup_count` are `0`. A `max_bytes` of `0`
-disables rotation entirely, and a `backup_count` of `0` retains no history.
-These defaults are consistent across the Rust builder and Python API.
+disables rotation entirely. A `backup_count` of `0` retains no history, so a
+rollover truncates the base file and stops. These defaults are consistent
+across the Rust builder and Python API.
 
 - The worker thread evaluates rotation without blocking producers using the
   formatted record length. Let `tracked_bytes` be the number of bytes the
@@ -228,9 +229,9 @@ These defaults are consistent across the Rust builder and Python API.
   files.
 - Rotation closes the active file handle, then renames existing files from
   highest to lowest index (``<path>.<n>`` → ``<path>.<n+1>``, …, ``<path>`` →
-  ``<path>.1``), and finally opens a fresh base file. Once `backup_count` is
-  exceeded, remove the oldest file. Closing the handle first is required on
-  Windows.
+  ``<path>.1``), and finally opens a fresh base file. The cascade deletes any
+  file whose new index would exceed `backup_count`, so only the configured
+  number of backups remain. Closing the handle first is required on Windows.
 - Filename indices start at `1` and increase sequentially up to
   `backup_count`; rollover prunes any files numbered above that cap.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and
