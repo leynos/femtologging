@@ -210,12 +210,19 @@ sender signals the consumer to finish once the queue is drained.
 `FemtoRotatingFileHandler` mirrors Python's `RotatingFileHandler` and rotates
 when the log file exceeds a configured `max_bytes`.
 
-- The worker thread checks the active file size before each write and performs
-  rotation without blocking producers.
+By default `max_bytes` and `backup_count` are `0`. A `max_bytes` of `0`
+disables rotation entirely, and a `backup_count` of `0` retains no history.
+These defaults are consistent across the Rust builder and Python API.
+
+- The worker thread evaluates rotation without blocking producers by computing
+  `current_file_len + next_record_bytes > max_bytes` using the formatted record
+  length to avoid flush-induced drift.
 - Rotation renames existing files with incremental numeric suffixes and opens a
   fresh file; once `backup_count` is exceeded the oldest file is removed.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and
-  Python API to keep configuration familiar.
+  Python API to keep configuration familiar. When `backup_count == 0`, rollover
+  truncates the base file and does not create any backup files (matching
+  CPython).
 
 ## Thread Safety Considerations
 

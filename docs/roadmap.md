@@ -62,9 +62,20 @@ from that design.
       blocking producers.
     - [ ] Implement rotation algorithm that cascades file renames from highest
       to lowest index before opening a new file.
-    - [ ] Provide a file name strategy producing `<path>.<n>` sequences and
+    - [ ] Provide a filename strategy producing `<path>.<n>` sequences and
       pruning entries beyond `backup_count`.
     - [ ] Add builder and Python tests verifying size-based rollover.
+      - [ ] Cover boundaries: exactly `max_bytes`, one byte over, and an
+        individual
+        record larger than `max_bytes`.
+      - [ ] Verify `backup_count == 0` truncates base file with no backups.
+      - [ ] Verify cascade renames run highest→lowest and never overwrite
+        existing
+        files.
+      - [ ] Close-and-rename behaviour passes on Windows (no renaming of open
+        files).
+      - [ ] Assert rotation happens on the worker thread and producers remain
+        non-blocking under load.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
   reconnection handling.
 - [x] Define the `FemtoFilter` trait and implement common filter
