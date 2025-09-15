@@ -62,16 +62,16 @@ from that design.
       blocking producers.
     - [ ] Implement rotation algorithm that cascades file renames from highest
       to lowest index before opening a new file.
-    - [ ] Provide a filename strategy producing `<path>.<n>` sequences and
-      pruning entries beyond `backup_count`.
+    - [ ] Provide a filename strategy producing `<path>.<n>` sequences starting
+      at `1` and capping at `backup_count`, pruning anything beyond that cap.
     - [ ] Add builder and Python tests verifying size-based rollover.
       - [ ] Cover boundaries: exactly `max_bytes`, one byte over, and an
-        individual
-        record larger than `max_bytes`.
+        individual record larger than `max_bytes`.
       - [ ] Verify `backup_count == 0` truncates base file with no backups.
+      - [ ] Verify lowering `backup_count` prunes excess backups on the next
+        rollover.
       - [ ] Verify cascade renames run highest→lowest and never overwrite
-        existing
-        files.
+        existing files.
       - [ ] Close-and-rename behaviour passes on Windows (no renaming of open
         files).
       - [ ] Assert rotation happens on the worker thread and producers remain

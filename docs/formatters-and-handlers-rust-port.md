@@ -217,8 +217,12 @@ These defaults are consistent across the Rust builder and Python API.
 - The worker thread evaluates rotation without blocking producers by computing
   `current_file_len + next_record_bytes > max_bytes` using the formatted record
   length to avoid flush-induced drift.
-- Rotation renames existing files with incremental numeric suffixes and opens a
-  fresh file; once `backup_count` is exceeded the oldest file is removed.
+- Rotation closes the active file handle before cascading existing backups from
+  the highest index to the lowest (for example, ``<base>.3`` → ``<base>.4``, …,
+  ``<base>`` → ``<base>.1``), then opens a fresh base file. Files beyond
+  `backup_count` are deleted after the cascade.
+- Filename indices start at `1` and increase sequentially up to
+  `backup_count`; rollover prunes any files numbered above that cap.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and
   Python API to keep configuration familiar. When `backup_count == 0`, rollover
   truncates the base file and does not create any backup files (matching
