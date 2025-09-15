@@ -60,6 +60,9 @@ from that design.
       Python wrappers.
     - [ ] Check file size in the worker thread and trigger rotation without
       blocking producers.
+      - [ ] Define the predicate as UTF-8 byte measurement:
+        `current_file_len + buffered_bytes + next_record_bytes > max_bytes` (do
+        not flush solely to measure).
     - [ ] Implement rotation algorithm that cascades file renames from highest
       to lowest index before opening a new file.
     - [ ] Provide a filename strategy producing `<path>.<n>` sequences starting
@@ -67,6 +70,8 @@ from that design.
     - [ ] Add builder and Python tests verifying size-based rollover.
       - [ ] Cover boundaries: exactly `max_bytes`, one byte over, and an
         individual record larger than `max_bytes`.
+      - [ ] Verify records containing multi-byte UTF-8 characters trigger
+        rotation based on byte length, not character count.
       - [ ] Verify `backup_count == 0` truncates base file with no backups.
       - [ ] Verify lowering `backup_count` prunes excess backups on the next
         rollover.

@@ -229,9 +229,7 @@ These defaults are consistent across the Rust builder and Python API.
 - Filename indices start at `1` and increase sequentially up to
   `backup_count`; rollover prunes any files numbered above that cap.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and
-  Python API to keep configuration familiar. When `backup_count == 0`, rollover
-  truncates the base file and does not create any backup files (matching
-  CPython).
+  Python API to keep configuration familiar.
 
 ## Thread Safety Considerations
 
