@@ -217,6 +217,11 @@ These defaults are consistent across the Rust builder and Python API.
 - The worker thread evaluates rotation without blocking producers by computing
   `current_file_len + next_record_bytes > max_bytes` using the formatted record
   length to avoid flush-induced drift.
+- If `next_record_bytes` alone exceeds `max_bytes`, the worker triggers an
+  immediate rollover whenever rotation is enabled. After the cascade it
+  truncates the base file and writes the oversized record to the freshly
+  truncated base file in full, mirroring CPython so no record is split across
+  files.
 - Rotation closes the active file handle before cascading existing backups from
   the highest index to the lowest (for example, ``<base>.3`` → ``<base>.4``, …,
   ``<base>`` → ``<base>.1``), then opens a fresh base file. Files beyond
