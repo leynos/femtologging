@@ -361,13 +361,18 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 ### 1.3. Implemented handler builders
 
-The initial implementation provides `FileHandlerBuilder` and
-`StreamHandlerBuilder` as thin wrappers over the existing handler types.
-`FileHandlerBuilder` supports capacity, flush interval, and overflow policy,
-while `StreamHandlerBuilder` configures the stream target and capacity. Both
-builders expose `build()` methods returning ready‑to‑use handlers. Advanced
-options such as file encoding or custom writers are deferred until the
-corresponding handler features are ported from picologging.
+The initial implementation provides `FileHandlerBuilder`,
+`RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
+the existing handler types. `FileHandlerBuilder` supports capacity, flush
+interval, and overflow policy, while `RotatingFileHandlerBuilder` layers on
+`max_bytes` and `backup_count` rotation thresholds (both default to `0`,
+matching CPython). `StreamHandlerBuilder` configures the stream target and
+capacity. All builders expose `build()` methods returning ready‑to‑use
+handlers. Advanced options such as file encoding or custom writers are deferred
+until the corresponding handler features are ported from picologging. The Rust
+implementation stores the configured thresholds on `FemtoRotatingFileHandler`
+so later work can wire in the rotation algorithm without changing the builder
+API.
 
 ### 1.4. Class diagram
 
@@ -381,7 +386,7 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|StreamHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|StreamHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -393,6 +398,12 @@ classDiagram
     class FileHandlerBuilder {
         +__init__(*args, **kwargs)
         +with_formatter(fmt: str)
+    }
+    class RotatingFileHandlerBuilder {
+        +__init__(*args, **kwargs)
+        +with_formatter(fmt: str)
+        +with_max_bytes(max_bytes: int)
+        +with_backup_count(count: int)
     }
     class StreamHandlerBuilder {
         +__init__(*args, **kwargs)
@@ -416,6 +427,7 @@ classDiagram
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
+    FileHandlerBuilder <|-- RotatingFileHandlerBuilder
     FileHandlerBuilder <|-- StreamHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder

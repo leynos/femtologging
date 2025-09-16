@@ -56,7 +56,7 @@ from that design.
 - [ ] Implement `FemtoRotatingFileHandler` and `FemtoTimedRotatingFileHandler`
   with their respective rotation logic.
   - `FemtoRotatingFileHandler`:
-    - [ ] Expose `max_bytes` and `backup_count` options in Rust builders and
+    - [x] Expose `max_bytes` and `backup_count` options in Rust builders and
       Python wrappers.
     - [ ] Check file size in the worker thread and trigger rotation without
       blocking producers.

@@ -44,6 +44,7 @@ HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 FileHandlerBuilder = rust.FileHandlerBuilder
+RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
 LoggerConfigBuilder = rust.LoggerConfigBuilder
 FormatterBuilder = rust.FormatterBuilder
@@ -56,6 +57,10 @@ _HANDLER_CLASS_MAP: Final[dict[str, object]] = {
     "femtologging.StreamHandler": StreamHandlerBuilder,
     "logging.FileHandler": FileHandlerBuilder,
     "femtologging.FileHandler": FileHandlerBuilder,
+    "logging.handlers.RotatingFileHandler": RotatingFileHandlerBuilder,
+    "logging.RotatingFileHandler": RotatingFileHandlerBuilder,
+    "femtologging.RotatingFileHandler": RotatingFileHandlerBuilder,
+    "femtologging.FemtoRotatingFileHandler": RotatingFileHandlerBuilder,
 }
 
 
