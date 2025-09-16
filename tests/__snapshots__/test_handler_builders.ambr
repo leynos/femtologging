@@ -8,6 +8,17 @@
     'path': 'test.log',
   })
 # ---
+# name: test_build_rotating_file_handler_builder
+  dict({
+    'backup_count': 5,
+    'capacity': 10,
+    'flush_record_interval': 2,
+    'formatter_id': 'default',
+    'max_bytes': 1024,
+    'overflow_policy': 'drop',
+    'path': 'test.log',
+  })
+# ---
 # name: test_build_stream_handler_builder
   dict({
     'capacity': 8,

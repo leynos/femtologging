@@ -44,8 +44,8 @@ pub use handler::{FemtoHandler, FemtoHandlerTrait};
 /// Re-export handler builders and errors.
 pub use handlers::{
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
-    FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
-    StreamHandlerBuilder,
+    FemtoRotatingFileHandler, FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError,
+    HandlerIOError, RotatingFileHandlerBuilder, StreamHandlerBuilder,
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
@@ -87,6 +87,10 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             py.get_type::<StreamHandlerBuilder>(),
         ),
         ("FileHandlerBuilder", py.get_type::<FileHandlerBuilder>()),
+        (
+            "RotatingFileHandlerBuilder",
+            py.get_type::<RotatingFileHandlerBuilder>(),
+        ),
         ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
         ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
         ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
@@ -105,6 +109,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<FemtoRotatingFileHandler>()?;
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),
@@ -141,6 +147,7 @@ mod tests {
             for name in [
                 "StreamHandlerBuilder",
                 "FileHandlerBuilder",
+                "RotatingFileHandlerBuilder",
                 "LevelFilterBuilder",
                 "NameFilterBuilder",
                 "FilterBuildError",
