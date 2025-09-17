@@ -54,6 +54,46 @@ impl Default for RotationConfig {
     }
 }
 
+/// Python options for configuring rotating file handlers during instantiation.
+///
+/// The options map onto the capacity and flushing controls exposed by
+/// [`FemtoFileHandler`] and default to the existing values to preserve backwards
+/// compatibility.
+///
+/// # Examples
+///
+/// ```ignore
+/// let options = HandlerOptions::new(64, 2, "drop".to_string());
+/// assert_eq!(options.capacity, 64);
+/// assert_eq!(options.flush_interval, 2);
+/// assert_eq!(options.policy, "drop");
+/// ```
+#[cfg(feature = "python")]
+#[pyclass]
+#[derive(Clone)]
+pub struct HandlerOptions {
+    #[pyo3(get, set)]
+    pub capacity: usize,
+    #[pyo3(get, set)]
+    pub flush_interval: isize,
+    #[pyo3(get, set)]
+    pub policy: String,
+}
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl HandlerOptions {
+    #[new]
+    #[pyo3(signature = (capacity = DEFAULT_CHANNEL_CAPACITY, flush_interval = 1, policy = "drop".to_string()))]
+    fn new(capacity: usize, flush_interval: isize, policy: String) -> Self {
+        Self {
+            capacity,
+            flush_interval,
+            policy,
+        }
+    }
+}
+
 /// File handler variant configured for size-based rotation.
 ///
 /// The handler currently delegates all I/O to [`FemtoFileHandler`], recording
@@ -128,26 +168,20 @@ impl FemtoRotatingFileHandler {
 #[pymethods]
 impl FemtoRotatingFileHandler {
     #[new]
-    #[pyo3(signature = (
-        path,
-        max_bytes = 0,
-        backup_count = 0,
-        capacity = DEFAULT_CHANNEL_CAPACITY,
-        flush_interval = 1,
-        policy = "drop"
-    ))]
+    #[pyo3(signature = (path, max_bytes = 0, backup_count = 0, options = None))]
     fn py_new(
         path: String,
         max_bytes: u64,
         backup_count: usize,
-        capacity: usize,
-        flush_interval: isize,
-        policy: &str,
+        options: Option<HandlerOptions>,
     ) -> PyResult<Self> {
-        let overflow_policy = file::parse_overflow_policy(policy)?;
-        let flush_interval = file::validate_params(capacity, flush_interval)?;
+        let opts = options.unwrap_or_else(|| {
+            HandlerOptions::new(DEFAULT_CHANNEL_CAPACITY, 1, "drop".to_string())
+        });
+        let overflow_policy = file::parse_overflow_policy(&opts.policy)?;
+        let flush_interval = file::validate_params(opts.capacity, opts.flush_interval)?;
         let handler_cfg = HandlerConfig {
-            capacity,
+            capacity: opts.capacity,
             flush_interval,
             overflow_policy,
         };

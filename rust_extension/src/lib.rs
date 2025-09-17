@@ -41,6 +41,8 @@ pub use filters::{
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
+#[cfg(feature = "python")]
+pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.
 pub use handlers::{
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
@@ -111,6 +113,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoFileHandler>()?;
     #[cfg(feature = "python")]
     m.add_class::<FemtoRotatingFileHandler>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<HandlerOptions>()?;
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),

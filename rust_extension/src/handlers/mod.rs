@@ -25,6 +25,8 @@ pub mod test_helpers;
 pub use file_builder::FileHandlerBuilder;
 pub use formatter_id::FormatterId;
 pub use rotating::FemtoRotatingFileHandler;
+#[cfg(feature = "python")]
+pub use rotating::HandlerOptions;
 pub use rotating_builder::RotatingFileHandlerBuilder;
 pub use stream_builder::StreamHandlerBuilder;
 
