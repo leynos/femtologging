@@ -14,6 +14,7 @@
 //! record.
 
 mod config;
+pub(crate) mod policy;
 mod worker;
 
 use std::{
@@ -70,38 +71,6 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
-    use pyo3::exceptions::PyValueError;
-    let policy = policy.trim().to_ascii_lowercase();
-    if policy == "drop" {
-        return Ok(OverflowPolicy::Drop);
-    }
-    if policy == "block" {
-        return Ok(OverflowPolicy::Block);
-    }
-    // Provide a targeted error for a bare "timeout" to guide users toward
-    // the correct syntax. Other malformed variants (e.g., non-integer or
-    // non-positive values after the colon) are handled below.
-    if policy == "timeout" {
-        return Err(PyValueError::new_err(
-            "timeout requires a positive integer N, use 'timeout:N'",
-        ));
-    }
-    if let Some(rest) = policy.strip_prefix("timeout:") {
-        let ms: i64 = rest.trim().parse().map_err(|_| {
-            PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
-        })?;
-        if ms <= 0 {
-            return Err(PyValueError::new_err("timeout must be greater than zero"));
-        }
-        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
-    }
-    let valid = "drop, block, timeout:N";
-    Err(PyValueError::new_err(format!(
-        "invalid overflow policy '{policy}'. Valid options are: {valid}",
-    )))
-}
-
 fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
     use pyo3::exceptions::PyValueError;
     if capacity == 0 {
@@ -156,7 +125,7 @@ impl FemtoFileHandler {
         flush_interval: isize,
         policy: &str,
     ) -> PyResult<Self> {
-        let overflow_policy = parse_overflow_policy(policy)?;
+        let overflow_policy = policy::parse_policy_string(policy)?;
         let flush_interval = validate_params(capacity, flush_interval)?;
         let handler_cfg = HandlerConfig {
             capacity,
