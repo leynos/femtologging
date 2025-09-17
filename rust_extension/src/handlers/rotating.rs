@@ -21,6 +21,39 @@ use crate::{
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY},
 };
 
+/// Rotation thresholds controlling when a file rolls over.
+///
+/// Grouping the limits together keeps the handler constructor concise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RotationConfig {
+    pub max_bytes: u64,
+    pub backup_count: usize,
+}
+
+impl RotationConfig {
+    /// Create a rotation configuration with explicit limits.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let config = RotationConfig::new(1024, 3);
+    /// assert_eq!(config.max_bytes, 1024);
+    /// assert_eq!(config.backup_count, 3);
+    /// ```
+    pub const fn new(max_bytes: u64, backup_count: usize) -> Self {
+        Self {
+            max_bytes,
+            backup_count,
+        }
+    }
+}
+
+impl Default for RotationConfig {
+    fn default() -> Self {
+        Self::new(0, 0)
+    }
+}
+
 /// File handler variant configured for size-based rotation.
 ///
 /// The handler currently delegates all I/O to [`FemtoFileHandler`], recording
@@ -52,14 +85,17 @@ impl FemtoRotatingFileHandler {
         path: P,
         formatter: F,
         config: HandlerConfig,
-        max_bytes: u64,
-        backup_count: usize,
+        rotation_config: RotationConfig,
     ) -> io::Result<Self>
     where
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
         let inner = FemtoFileHandler::with_capacity_flush_policy(path, formatter, config)?;
+        let RotationConfig {
+            max_bytes,
+            backup_count,
+        } = rotation_config;
         Ok(Self::from_parts(inner, max_bytes, backup_count))
     }
 
