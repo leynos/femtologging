@@ -6,26 +6,25 @@
 //! evolves. Flushing is driven by a `flush_record_interval`
 //! measured in records.
 
-use std::num::NonZeroUsize;
-
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-#[cfg(feature = "python")]
-use super::file;
-use super::{common::CommonBuilder, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait};
+use super::{
+    common::FileLikeBuilderState, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait,
+};
 use crate::formatter::DefaultFormatter;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
+
+#[cfg(feature = "python")]
+use super::common::CommonBuilder;
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct FileHandlerBuilder {
     path: String,
-    common: CommonBuilder,
-    flush_record_interval: Option<usize>,
-    overflow_policy: OverflowPolicy,
+    state: FileLikeBuilderState,
 }
 
 impl FileHandlerBuilder {
@@ -33,63 +32,33 @@ impl FileHandlerBuilder {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            common: CommonBuilder::default(),
-            flush_record_interval: None,
-            overflow_policy: OverflowPolicy::Drop,
+            state: FileLikeBuilderState::default(),
         }
     }
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.common.capacity = NonZeroUsize::new(capacity);
-        self.common.capacity_set = true;
+        self.state = self.state.with_capacity(capacity);
         self
     }
 
     /// Set the periodic flush interval measured in records. Must be greater
     /// than zero.
     pub fn with_flush_record_interval(mut self, interval: usize) -> Self {
-        self.flush_record_interval = Some(interval);
+        self.state = self.state.with_flush_record_interval(interval);
         self
     }
 
     /// Set the formatter identifier.
     pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
-        self.common.formatter_id = Some(formatter_id.into());
+        self.state = self.state.with_formatter(formatter_id);
         self
     }
 
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.overflow_policy = policy;
+        self.state = self.state.with_overflow_policy(policy);
         self
-    }
-
-    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()
-    }
-
-    fn is_flush_record_interval_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero(
-            "flush_record_interval",
-            self.flush_record_interval.map(|v| v as u64),
-        )
-    }
-
-    fn is_overflow_policy_valid(&self) -> Result<(), HandlerBuildError> {
-        match self.overflow_policy {
-            OverflowPolicy::Timeout(dur) if dur.is_zero() => Err(HandlerBuildError::InvalidConfig(
-                "timeout_ms must be greater than zero".into(),
-            )),
-            _ => Ok(()),
-        }
-    }
-
-    fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.is_capacity_valid()?;
-        self.is_flush_record_interval_valid()?;
-        self.is_overflow_policy_valid()?;
-        Ok(())
     }
 }
 
@@ -98,18 +67,7 @@ impl FileHandlerBuilder {
     /// Populate a Python dictionary with the builder's fields.
     fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         d.set_item("path", &self.path)?;
-        self.common.extend_py_dict(d)?;
-        if let Some(flush) = self.flush_record_interval {
-            d.set_item("flush_record_interval", flush)?;
-        }
-        match self.overflow_policy {
-            OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,
-            OverflowPolicy::Block => d.set_item("overflow_policy", "block")?,
-            OverflowPolicy::Timeout(dur) => {
-                d.set_item("timeout_ms", dur.as_millis() as u64)?;
-                d.set_item("overflow_policy", "timeout")?;
-            }
-        }
+        self.state.extend_py_dict(d)?;
         Ok(())
     }
 }
@@ -132,8 +90,7 @@ impl FileHandlerBuilder {
     }
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.common.capacity = NonZeroUsize::new(capacity);
-        slf.common.capacity_set = true;
+        slf.state.set_capacity(capacity);
         slf
     }
 
@@ -142,7 +99,7 @@ impl FileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         interval: usize,
     ) -> PyRefMut<'py, Self> {
-        slf.flush_record_interval = Some(interval);
+        slf.state.set_flush_record_interval(interval);
         slf
     }
 
@@ -151,7 +108,7 @@ impl FileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id.into());
+        slf.state.set_formatter(formatter_id);
         slf
     }
 
@@ -161,7 +118,24 @@ impl FileHandlerBuilder {
         policy: &str,
         timeout_ms: Option<u64>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        slf.overflow_policy = file::policy::parse_policy_with_timeout(policy, timeout_ms)?;
+        let policy_value = if policy.eq_ignore_ascii_case("drop") {
+            OverflowPolicy::Drop
+        } else if policy.eq_ignore_ascii_case("block") {
+            OverflowPolicy::Block
+        } else if policy.eq_ignore_ascii_case("timeout") {
+            let ms = timeout_ms.ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "timeout_ms required for timeout policy",
+                )
+            })?;
+            CommonBuilder::ensure_non_zero("timeout_ms", Some(ms)).map_err(PyErr::from)?;
+            OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "invalid overflow policy: {policy}",
+            )));
+        };
+        slf.state.set_overflow_policy(policy_value);
         Ok(slf)
     }
 
@@ -184,16 +158,9 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
     ///
     /// `DEFAULT_CHANNEL_CAPACITY` (1024) when `with_capacity` is not called.
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
-        self.validate()?;
-        let mut cfg = HandlerConfig::default();
-        if let Some(cap) = self.common.capacity {
-            cfg.capacity = cap.get();
-        }
-        if let Some(flush) = self.flush_record_interval {
-            cfg.flush_interval = flush;
-        }
-        cfg.overflow_policy = self.overflow_policy;
-        let handler = match self.common.formatter_id.as_ref() {
+        self.state.validate()?;
+        let cfg = self.state.handler_config();
+        let handler = match self.state.formatter_id() {
             Some(FormatterId::Default) | None => {
                 FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?
             }

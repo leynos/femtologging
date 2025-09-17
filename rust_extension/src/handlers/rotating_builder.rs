@@ -3,14 +3,14 @@
 //! Extends the file handler builder with rotation-specific parameters such as
 //! ``max_bytes`` and ``backup_count``.
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 use super::{
-    common::CommonBuilder,
-    file::{HandlerConfig, OverflowPolicy},
+    common::FileLikeBuilderState,
+    file::OverflowPolicy,
     rotating::{FemtoRotatingFileHandler, RotationConfig},
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
@@ -18,16 +18,19 @@ use crate::formatter::DefaultFormatter;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
+#[cfg(feature = "python")]
+use super::common::CommonBuilder;
+
 /// Builder for constructing [`FemtoRotatingFileHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct RotatingFileHandlerBuilder {
     path: String,
-    common: CommonBuilder,
-    flush_record_interval: Option<usize>,
-    overflow_policy: OverflowPolicy,
-    max_bytes: u64,
-    backup_count: usize,
+    state: FileLikeBuilderState,
+    max_bytes: Option<NonZeroU64>,
+    max_bytes_set: bool,
+    backup_count: Option<NonZeroUsize>,
+    backup_count_set: bool,
 }
 
 impl RotatingFileHandlerBuilder {
@@ -35,77 +38,78 @@ impl RotatingFileHandlerBuilder {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            common: CommonBuilder::default(),
-            flush_record_interval: None,
-            overflow_policy: OverflowPolicy::Drop,
-            max_bytes: 0,
-            backup_count: 0,
+            state: FileLikeBuilderState::default(),
+            max_bytes: None,
+            max_bytes_set: false,
+            backup_count: None,
+            backup_count_set: false,
         }
     }
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.common.capacity = NonZeroUsize::new(capacity);
-        self.common.capacity_set = true;
+        self.state = self.state.with_capacity(capacity);
         self
     }
 
     /// Set the periodic flush interval measured in records. Must be greater
     /// than zero.
     pub fn with_flush_record_interval(mut self, interval: usize) -> Self {
-        self.flush_record_interval = Some(interval);
+        self.state = self.state.with_flush_record_interval(interval);
         self
     }
 
     /// Set the formatter identifier.
     pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
-        self.common.formatter_id = Some(formatter_id.into());
+        self.state = self.state.with_formatter(formatter_id);
         self
     }
 
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.overflow_policy = policy;
+        self.state = self.state.with_overflow_policy(policy);
         self
     }
 
     /// Set the maximum number of bytes before rotation occurs.
     pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
-        self.max_bytes = max_bytes;
+        self.max_bytes = NonZeroU64::new(max_bytes);
+        self.max_bytes_set = true;
         self
     }
 
     /// Set how many backup files to retain during rotation.
     pub fn with_backup_count(mut self, backup_count: usize) -> Self {
-        self.backup_count = backup_count;
+        self.backup_count = NonZeroUsize::new(backup_count);
+        self.backup_count_set = true;
         self
     }
 
-    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()
-    }
-
-    fn is_flush_record_interval_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero(
-            "flush_record_interval",
-            self.flush_record_interval.map(|v| v as u64),
-        )
-    }
-
-    fn is_overflow_policy_valid(&self) -> Result<(), HandlerBuildError> {
-        match self.overflow_policy {
-            OverflowPolicy::Timeout(dur) if dur.is_zero() => Err(HandlerBuildError::InvalidConfig(
-                "timeout_ms must be greater than zero".into(),
+    fn ensure_rotation_limits_valid(&self) -> Result<(), HandlerBuildError> {
+        if self.max_bytes_set && self.max_bytes.is_none() {
+            return Err(HandlerBuildError::InvalidConfig(
+                "max_bytes must be greater than zero".into(),
+            ));
+        }
+        if self.backup_count_set && self.backup_count.is_none() {
+            return Err(HandlerBuildError::InvalidConfig(
+                "backup_count must be greater than zero".into(),
+            ));
+        }
+        match (self.max_bytes, self.backup_count) {
+            (Some(_), Some(_)) | (None, None) => Ok(()),
+            (Some(_), None) => Err(HandlerBuildError::InvalidConfig(
+                "backup_count must be provided when max_bytes is set".into(),
             )),
-            _ => Ok(()),
+            (None, Some(_)) => Err(HandlerBuildError::InvalidConfig(
+                "max_bytes must be provided when backup_count is set".into(),
+            )),
         }
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.is_capacity_valid()?;
-        self.is_flush_record_interval_valid()?;
-        self.is_overflow_policy_valid()?;
-        Ok(())
+        self.state.validate()?;
+        self.ensure_rotation_limits_valid()
     }
 }
 
@@ -114,20 +118,12 @@ impl RotatingFileHandlerBuilder {
     /// Populate a Python dictionary with the builder's fields.
     fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         d.set_item("path", &self.path)?;
-        self.common.extend_py_dict(d)?;
-        if let Some(flush) = self.flush_record_interval {
-            d.set_item("flush_record_interval", flush)?;
-        }
-        match self.overflow_policy {
-            OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,
-            OverflowPolicy::Block => d.set_item("overflow_policy", "block")?,
-            OverflowPolicy::Timeout(dur) => {
-                d.set_item("timeout_ms", dur.as_millis() as u64)?;
-                d.set_item("overflow_policy", "timeout")?;
-            }
-        }
-        d.set_item("max_bytes", self.max_bytes)?;
-        d.set_item("backup_count", self.backup_count)?;
+        self.state.extend_py_dict(d)?;
+        d.set_item("max_bytes", self.max_bytes.map_or(0, NonZeroU64::get))?;
+        d.set_item(
+            "backup_count",
+            self.backup_count.map_or(0, NonZeroUsize::get),
+        )?;
         Ok(())
     }
 }
@@ -151,8 +147,7 @@ impl RotatingFileHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.common.capacity = NonZeroUsize::new(capacity);
-        slf.common.capacity_set = true;
+        slf.state.set_capacity(capacity);
         slf
     }
 
@@ -161,7 +156,7 @@ impl RotatingFileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         interval: usize,
     ) -> PyRefMut<'py, Self> {
-        slf.flush_record_interval = Some(interval);
+        slf.state.set_flush_record_interval(interval);
         slf
     }
 
@@ -170,7 +165,7 @@ impl RotatingFileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id.into());
+        slf.state.set_formatter(formatter_id);
         slf
     }
 
@@ -180,7 +175,7 @@ impl RotatingFileHandlerBuilder {
         policy: &str,
         timeout_ms: Option<u64>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        slf.overflow_policy = if policy.eq_ignore_ascii_case("drop") {
+        let policy_value = if policy.eq_ignore_ascii_case("drop") {
             OverflowPolicy::Drop
         } else if policy.eq_ignore_ascii_case("block") {
             OverflowPolicy::Block
@@ -197,12 +192,14 @@ impl RotatingFileHandlerBuilder {
                 "invalid overflow policy: {policy}",
             )));
         };
+        slf.state.set_overflow_policy(policy_value);
         Ok(slf)
     }
 
     #[pyo3(name = "with_max_bytes")]
     fn py_with_max_bytes<'py>(mut slf: PyRefMut<'py, Self>, max_bytes: u64) -> PyRefMut<'py, Self> {
-        slf.max_bytes = max_bytes;
+        slf.max_bytes = NonZeroU64::new(max_bytes);
+        slf.max_bytes_set = true;
         slf
     }
 
@@ -211,7 +208,8 @@ impl RotatingFileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         backup_count: usize,
     ) -> PyRefMut<'py, Self> {
-        slf.backup_count = backup_count;
+        slf.backup_count = NonZeroUsize::new(backup_count);
+        slf.backup_count_set = true;
         slf
     }
 
@@ -232,24 +230,27 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
 
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
-        let mut cfg = HandlerConfig::default();
-        if let Some(cap) = self.common.capacity {
-            cfg.capacity = cap.get();
-        }
-        if let Some(flush) = self.flush_record_interval {
-            cfg.flush_interval = flush;
-        }
-        cfg.overflow_policy = self.overflow_policy;
-        match self.common.formatter_id.as_ref() {
+        let cfg = self.state.handler_config();
+        let rotation = RotationConfig::new(
+            self.max_bytes.map_or(0, NonZeroU64::get),
+            self.backup_count.map_or(0, NonZeroUsize::get),
+        );
+        match self.state.formatter_id() {
             Some(FormatterId::Default) | None => {
                 let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
                     &self.path,
                     DefaultFormatter,
                     cfg,
-                    RotationConfig::new(self.max_bytes, self.backup_count),
+                    rotation,
                 )?;
                 let limits = handler.rotation_limits();
-                debug_assert_eq!(limits, (self.max_bytes, self.backup_count));
+                debug_assert_eq!(
+                    limits,
+                    (
+                        self.max_bytes.map_or(0, NonZeroU64::get),
+                        self.backup_count.map_or(0, NonZeroUsize::get),
+                    )
+                );
                 let _ = limits;
                 Ok(handler)
             }
@@ -315,5 +316,35 @@ mod tests {
         let builder = RotatingFileHandlerBuilder::new("log.txt")
             .with_overflow_policy(OverflowPolicy::Timeout(std::time::Duration::from_millis(0)));
         assert_build_err(&builder, "build_inner must fail for zero timeout_ms");
+    }
+    #[rstest]
+    fn reject_zero_max_bytes() {
+        let builder = RotatingFileHandlerBuilder::new("log.txt")
+            .with_max_bytes(0)
+            .with_backup_count(1);
+        assert_build_err(&builder, "build_inner must fail for zero max_bytes");
+    }
+
+    #[rstest]
+    fn reject_zero_backup_count() {
+        let builder = RotatingFileHandlerBuilder::new("log.txt")
+            .with_max_bytes(1024)
+            .with_backup_count(0);
+        assert_build_err(&builder, "build_inner must fail for zero backup_count");
+    }
+
+    #[rstest]
+    fn reject_missing_backup_count() {
+        let builder = RotatingFileHandlerBuilder::new("log.txt").with_max_bytes(1024);
+        assert_build_err(
+            &builder,
+            "build_inner must fail when backup_count is missing",
+        );
+    }
+
+    #[rstest]
+    fn reject_missing_max_bytes() {
+        let builder = RotatingFileHandlerBuilder::new("log.txt").with_backup_count(2);
+        assert_build_err(&builder, "build_inner must fail when max_bytes is missing");
     }
 }

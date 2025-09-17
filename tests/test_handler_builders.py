@@ -22,6 +22,13 @@ from femtologging import (
 
 FileBuilder = Union[FileHandlerBuilder, RotatingFileHandlerBuilder]
 
+
+def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
+    if isinstance(builder, RotatingFileHandlerBuilder):
+        return builder
+    pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+
+
 scenarios("features/handler_builders.feature")
 
 
@@ -91,18 +98,14 @@ def when_set_file_formatter(
 
 @when(parsers.parse("I set max bytes {max_bytes:d}"))
 def when_set_max_bytes(file_builder: FileBuilder, max_bytes: int) -> FileBuilder:
-    assert isinstance(file_builder, RotatingFileHandlerBuilder), (
-        "max bytes step requires rotating builder"
-    )
-    return file_builder.with_max_bytes(max_bytes)
+    rotating = _require_rotating_builder(file_builder)
+    return rotating.with_max_bytes(max_bytes)
 
 
 @when(parsers.parse("I set backup count {backup_count:d}"))
 def when_set_backup_count(file_builder: FileBuilder, backup_count: int) -> FileBuilder:
-    assert isinstance(file_builder, RotatingFileHandlerBuilder), (
-        "backup count step requires rotating builder"
-    )
-    return file_builder.with_backup_count(backup_count)
+    rotating = _require_rotating_builder(file_builder)
+    return rotating.with_backup_count(backup_count)
 
 
 @when(parsers.parse('I set stream formatter "{formatter_id}"'))
@@ -127,13 +130,11 @@ def then_file_builder_snapshot(
 def then_rotating_file_builder_snapshot(
     file_builder: FileBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    assert isinstance(file_builder, RotatingFileHandlerBuilder), (
-        "rotating builder step requires RotatingFileHandlerBuilder"
-    )
-    data = file_builder.as_dict()
+    rotating = _require_rotating_builder(file_builder)
+    data = rotating.as_dict()
     data["path"] = Path(data["path"]).name
     assert data == snapshot, "rotating file builder dict must match snapshot"
-    handler = file_builder.build()
+    handler = rotating.build()
     handler.close()
 
 
@@ -158,11 +159,9 @@ def then_file_builder_fails(file_builder: FileHandlerBuilder) -> None:
 
 @then("building the rotating file handler fails")
 def then_rotating_file_builder_fails(file_builder: FileBuilder) -> None:
-    assert isinstance(file_builder, RotatingFileHandlerBuilder), (
-        "rotating builder step requires RotatingFileHandlerBuilder"
-    )
+    rotating = _require_rotating_builder(file_builder)
     with pytest.raises(HandlerConfigError):
-        file_builder.build()
+        rotating.build()
 
 
 @then("the stream handler builder matches snapshot")

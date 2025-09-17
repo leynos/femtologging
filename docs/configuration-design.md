@@ -365,14 +365,18 @@ The initial implementation provides `FileHandlerBuilder`,
 `RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
 the existing handler types. `FileHandlerBuilder` supports capacity, flush
 interval, and overflow policy, while `RotatingFileHandlerBuilder` layers on
-`max_bytes` and `backup_count` rotation thresholds (both default to `0`,
-matching CPython). `StreamHandlerBuilder` configures the stream target and
-capacity. All builders expose `build()` methods returning ready‑to‑use
-handlers. Advanced options such as file encoding or custom writers are deferred
-until the corresponding handler features are ported from picologging. The Rust
-implementation stores the configured thresholds on `FemtoRotatingFileHandler`
-so later work can wire in the rotation algorithm without changing the builder
-API.
+`max_bytes` and `backup_count` rotation thresholds. Rotation is opt-in: both
+limits must be provided with positive values, otherwise the builder raises a
+configuration error so invalid rollover settings fail fast.
+`StreamHandlerBuilder` configures the stream target and capacity. All builders
+expose `build()` methods returning ready‑to‑use handlers. Advanced options such
+as file encoding or custom writers are deferred until the corresponding handler
+features are ported from picologging. The Rust implementation stores the
+configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
+the rotation algorithm without changing the builder API. Internally, a shared
+`FileLikeBuilderState` keeps the queue configuration logic in one place for
+both file-based builders, reducing duplication and ensuring validation stays
+consistent.
 
 ### 1.4. Class diagram
 

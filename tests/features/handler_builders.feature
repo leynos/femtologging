@@ -35,6 +35,28 @@ Feature: Handler builders
     When I set file capacity 0
     Then building the rotating file handler fails
 
+  Scenario: invalid rotating file handler zero max bytes
+    Given a RotatingFileHandlerBuilder for path "test.log"
+    When I set max bytes 0
+    And I set backup count 1
+    Then building the rotating file handler fails
+
+  Scenario: invalid rotating file handler zero backup count
+    Given a RotatingFileHandlerBuilder for path "test.log"
+    When I set max bytes 1024
+    And I set backup count 0
+    Then building the rotating file handler fails
+
+  Scenario: missing rotating backup count
+    Given a RotatingFileHandlerBuilder for path "test.log"
+    When I set max bytes 1024
+    Then building the rotating file handler fails
+
+  Scenario: missing rotating max bytes
+    Given a RotatingFileHandlerBuilder for path "test.log"
+    When I set backup count 2
+    Then building the rotating file handler fails
+
   Scenario: build stream handler builder
     Given a StreamHandlerBuilder targeting stdout
     When I set stream capacity 8
