@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use super::{
     common::CommonBuilder,
     file::{HandlerConfig, OverflowPolicy},
-    rotating::FemtoRotatingFileHandler,
+    rotating::{FemtoRotatingFileHandler, RotationConfig},
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
 use crate::formatter::DefaultFormatter;
@@ -246,8 +246,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
                     &self.path,
                     DefaultFormatter,
                     cfg,
-                    self.max_bytes,
-                    self.backup_count,
+                    RotationConfig::new(self.max_bytes, self.backup_count),
                 )?;
                 let limits = handler.rotation_limits();
                 debug_assert_eq!(limits, (self.max_bytes, self.backup_count));
