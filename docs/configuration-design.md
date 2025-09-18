@@ -578,9 +578,8 @@ components in a fixed order to honour dependencies:
    - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
      → ``FileHandlerBuilder``
    - ``"logging.handlers.RotatingFileHandler"``,
-     ``"logging.RotatingFileHandler"``,
-     ``"femtologging.RotatingFileHandler"``, and
-     ``"femtologging.FemtoRotatingFileHandler"`` →
+     ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
+     and ``"femtologging.FemtoRotatingFileHandler"`` →
      ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
      ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
      structures or as strings, which are safely evaluated with
