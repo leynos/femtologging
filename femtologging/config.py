@@ -410,6 +410,7 @@ __all__ = [
     "FormatterBuilder",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
+    "RotatingFileHandlerBuilder",
     "LevelFilterBuilder",
     "NameFilterBuilder",
     "dictConfig",

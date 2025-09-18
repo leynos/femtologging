@@ -185,10 +185,9 @@ impl FemtoRotatingFileHandler {
             flush_interval,
             overflow_policy,
         };
-        let inner =
-            FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, handler_cfg)
-                .map_err(|err| pyo3::exceptions::PyIOError::new_err(format!("{path}: {err}")))?;
-        Ok(Self::from_parts(inner, max_bytes, backup_count))
+        let rotation = RotationConfig::new(max_bytes, backup_count);
+        Self::with_capacity_flush_policy(&path, DefaultFormatter, handler_cfg, rotation)
+            .map_err(|err| pyo3::exceptions::PyIOError::new_err(format!("{path}: {err}")))
     }
 
     /// Expose the configured maximum number of bytes before rotation.
