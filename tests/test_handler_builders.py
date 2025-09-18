@@ -7,12 +7,13 @@ and build-time failures.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union
+from typing import cast
 
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
 from syrupy import SnapshotAssertion
 
+import femtologging.config as config_module
 from femtologging import (
     FileHandlerBuilder,
     RotatingFileHandlerBuilder,
@@ -20,7 +21,7 @@ from femtologging import (
     HandlerConfigError,
 )
 
-FileBuilder = Union[FileHandlerBuilder, RotatingFileHandlerBuilder]
+type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 
 def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
@@ -44,6 +45,23 @@ def given_file_builder(tmp_path) -> FileHandlerBuilder:
 def given_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
     path = tmp_path / "test.log"
     return RotatingFileHandlerBuilder(str(path))
+
+
+@given(
+    'a dictConfig RotatingFileHandlerBuilder for path "test.log"',
+    target_fixture="file_builder",
+)
+def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
+    path = tmp_path / "test.log"
+    builder = config_module._build_handler_from_dict(
+        "h",
+        {
+            "class": "logging.handlers.RotatingFileHandler",
+            "args": [str(path)],
+        },
+    )
+    assert isinstance(builder, RotatingFileHandlerBuilder)
+    return cast(RotatingFileHandlerBuilder, builder)
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
@@ -157,11 +175,12 @@ def then_file_builder_fails(file_builder: FileHandlerBuilder) -> None:
         file_builder.build()
 
 
-@then("building the rotating file handler fails")
-def then_rotating_file_builder_fails(file_builder: FileBuilder) -> None:
+@then(parsers.parse('building the rotating file handler fails with "{message}"'))
+def then_rotating_file_builder_fails(file_builder: FileBuilder, message: str) -> None:
     rotating = _require_rotating_builder(file_builder)
-    with pytest.raises(HandlerConfigError):
+    with pytest.raises(HandlerConfigError) as excinfo:
         rotating.build()
+    assert str(excinfo.value) == message
 
 
 @then("the stream handler builder matches snapshot")

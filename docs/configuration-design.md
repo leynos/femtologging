@@ -367,16 +367,18 @@ the existing handler types. `FileHandlerBuilder` supports capacity, flush
 interval, and overflow policy, while `RotatingFileHandlerBuilder` layers on
 `max_bytes` and `backup_count` rotation thresholds. Rotation is opt-in: both
 limits must be provided with positive values, otherwise the builder raises a
-configuration error so invalid rollover settings fail fast.
-`StreamHandlerBuilder` configures the stream target and capacity. All builders
-expose `build()` methods returning ready‑to‑use handlers. Advanced options such
-as file encoding or custom writers are deferred until the corresponding handler
-features are ported from picologging. The Rust implementation stores the
-configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
-the rotation algorithm without changing the builder API. Internally, a shared
-`FileLikeBuilderState` keeps the queue configuration logic in one place for
-both file-based builders, reducing duplication and ensuring validation stays
-consistent.
+configuration error so invalid rollover settings fail fast. When thresholds are
+omitted the handler stores `(0, 0)`, disabling rotation entirely. Explicit zero
+values are rejected so misconfigured rollovers fail loudly rather than silently
+logging without retention. `StreamHandlerBuilder` configures the stream target
+and capacity. All builders expose `build()` methods returning ready‑to‑use
+handlers. Advanced options such as file encoding or custom writers are deferred
+until the corresponding handler features are ported from picologging. The Rust
+implementation stores the configured thresholds on `FemtoRotatingFileHandler`
+so later work can wire in the rotation algorithm without changing the builder
+API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
+logic in one place for both file-based builders, reducing duplication and
+ensuring validation stays consistent.
 
 ### 1.4. Class diagram
 
@@ -574,12 +576,17 @@ components in a fixed order to honour dependencies:
    - ``"logging.StreamHandler"`` and ``"femtologging.StreamHandler"``
      → ``StreamHandlerBuilder``
    - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
-     → ``FileHandlerBuilder`` Unsupported handler classes raise ``ValueError``.
-     ``args`` and ``kwargs`` may be provided either as native structures or as
-     strings, which are safely evaluated with ``ast.literal_eval``. For stream
-     handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
-     targets. Handler ``level`` and ``filters`` settings are currently
-     unsupported and produce ``ValueError``.
+     → ``FileHandlerBuilder``
+   - ``"logging.handlers.RotatingFileHandler"``,
+     ``"logging.RotatingFileHandler"``,
+     ``"femtologging.RotatingFileHandler"``, and
+     ``"femtologging.FemtoRotatingFileHandler"`` →
+     ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
+     ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
+     structures or as strings, which are safely evaluated with
+     ``ast.literal_eval``. For stream handlers, ``ext://sys.stdout`` and
+     ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
+     ``filters`` settings are currently unsupported and produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
    ``propagate`` settings. Logger ``filters`` are not yet supported and trigger
