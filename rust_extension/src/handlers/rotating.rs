@@ -122,11 +122,15 @@ pub struct FemtoRotatingFileHandler {
 }
 
 impl FemtoRotatingFileHandler {
-    /// Construct a handler from its constituent parts.
+    /// Construct a handler by pairing a file handler with rotation limits.
     ///
     /// Internal visibility allows the builder to construct instances whilst
     /// preventing external crates from bypassing validation.
-    pub(crate) fn from_parts(inner: FemtoFileHandler, max_bytes: u64, backup_count: usize) -> Self {
+    pub(crate) fn new_with_rotation_limits(
+        inner: FemtoFileHandler,
+        max_bytes: u64,
+        backup_count: usize,
+    ) -> Self {
         Self {
             inner,
             max_bytes,
@@ -155,7 +159,11 @@ impl FemtoRotatingFileHandler {
             max_bytes,
             backup_count,
         } = rotation_config;
-        Ok(Self::from_parts(inner, max_bytes, backup_count))
+        Ok(Self::new_with_rotation_limits(
+            inner,
+            max_bytes,
+            backup_count,
+        ))
     }
 
     /// Build a handler for tests using the in-memory writer helper.
@@ -169,7 +177,7 @@ impl FemtoRotatingFileHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let inner = FemtoFileHandler::with_writer_for_test(config);
-        Self::from_parts(inner, max_bytes, backup_count)
+        Self::new_with_rotation_limits(inner, max_bytes, backup_count)
     }
 
     delegate! {
