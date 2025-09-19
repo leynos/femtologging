@@ -26,6 +26,35 @@ fn invalid_policy_error(policy: &str) -> PyErr {
     ))
 }
 
+fn ensure_timeout_positive(ms: u64) -> PyResult<u64> {
+    if ms == 0 {
+        Err(timeout_zero_error())
+    } else {
+        Ok(ms)
+    }
+}
+
+fn parse_timeout_ms(raw: &str) -> PyResult<u64> {
+    let ms: u64 = raw.trim().parse().map_err(|_| timeout_parse_error())?;
+    ensure_timeout_positive(ms)
+}
+
+fn parse_timeout_policy(
+    timeout_ms: Option<u64>,
+    expects_external_timeout: bool,
+) -> PyResult<OverflowPolicy> {
+    match (expects_external_timeout, timeout_ms) {
+        (false, _) => Err(PyValueError::new_err(
+            "timeout requires a positive integer N, use 'timeout:N'",
+        )),
+        (true, Some(ms)) => ensure_timeout_positive(ms)
+            .map(|value| OverflowPolicy::Timeout(Duration::from_millis(value))),
+        (true, None) => Err(PyValueError::new_err(
+            "timeout_ms required for timeout policy",
+        )),
+    }
+}
+
 fn parse_overflow_policy(
     policy: &str,
     timeout_ms: Option<u64>,
@@ -35,32 +64,13 @@ fn parse_overflow_policy(
     let normalized = trimmed.to_ascii_lowercase();
 
     if let Some(rest) = normalized.strip_prefix("timeout:") {
-        let ms: u64 = rest.trim().parse().map_err(|_| timeout_parse_error())?;
-        if ms == 0 {
-            return Err(timeout_zero_error());
-        }
-        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms)));
+        return parse_timeout_ms(rest).map(|ms| OverflowPolicy::Timeout(Duration::from_millis(ms)));
     }
 
     match normalized.as_str() {
         "drop" => Ok(OverflowPolicy::Drop),
         "block" => Ok(OverflowPolicy::Block),
-        "timeout" => {
-            if !expects_external_timeout {
-                return Err(PyValueError::new_err(
-                    "timeout requires a positive integer N, use 'timeout:N'",
-                ));
-            }
-
-            let ms = timeout_ms
-                .ok_or_else(|| PyValueError::new_err("timeout_ms required for timeout policy"))?;
-
-            if ms == 0 {
-                return Err(timeout_zero_error());
-            }
-
-            Ok(OverflowPolicy::Timeout(Duration::from_millis(ms)))
-        }
+        "timeout" => parse_timeout_policy(timeout_ms, expects_external_timeout),
         _ => Err(invalid_policy_error(&normalized)),
     }
 }
@@ -196,7 +206,7 @@ mod tests {
         fn parse_policy_with_timeout_rejects_zero_timeout_value() {
             assert_value_error_message(
                 parse_policy_with_timeout("timeout", Some(0)).unwrap_err(),
-                "timeout_ms must be greater than zero",
+                "timeout must be greater than zero",
             );
         }
 
