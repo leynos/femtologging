@@ -109,6 +109,9 @@ pub struct FemtoRotatingFileHandler {
 
 impl FemtoRotatingFileHandler {
     /// Construct a handler from its constituent parts.
+    ///
+    /// Internal visibility allows the builder to construct instances whilst
+    /// preventing external crates from bypassing validation.
     pub(crate) fn from_parts(inner: FemtoFileHandler, max_bytes: u64, backup_count: usize) -> Self {
         Self {
             inner,

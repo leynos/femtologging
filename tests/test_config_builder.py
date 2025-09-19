@@ -144,7 +144,7 @@ def test_duplicate_handler_overwrites() -> None:
 
 def test_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
     """ConfigBuilder should accept rotating file handler builders."""
-    builder = ConfigBuilder()
+    builder = ConfigBuilder().with_disable_existing_loggers(True)
     log_path = tmp_path / "rotating.log"
     rotating = (
         RotatingFileHandlerBuilder(str(log_path))

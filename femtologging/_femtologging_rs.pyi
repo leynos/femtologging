@@ -9,6 +9,7 @@ FemtoHandler: _Any
 FemtoStreamHandler: _Any
 FemtoFileHandler: _Any
 FemtoRotatingFileHandler: _Any
+HandlerOptions: _Any
 StreamHandlerBuilder: _Any
 FileHandlerBuilder: _Any
 RotatingFileHandlerBuilder: _Any
