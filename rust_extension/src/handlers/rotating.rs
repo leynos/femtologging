@@ -5,6 +5,8 @@
 
 use std::{any::Any, io, path::Path};
 
+use delegate::delegate;
+
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
@@ -153,14 +155,13 @@ impl FemtoRotatingFileHandler {
         Self::from_parts(inner, max_bytes, backup_count)
     }
 
-    /// Flush any queued log records.
-    pub fn flush(&self) -> bool {
-        self.inner.flush()
-    }
-
-    /// Close the handler, waiting for the worker thread to shut down.
-    pub fn close(&mut self) {
-        self.inner.close();
+    delegate! {
+        to self.inner {
+            /// Flush any queued log records.
+            pub fn flush(&self) -> bool;
+            /// Close the handler, waiting for the worker thread to shut down.
+            pub fn close(&mut self);
+        }
     }
 }
 
@@ -219,12 +220,11 @@ impl FemtoRotatingFileHandler {
 }
 
 impl FemtoHandlerTrait for FemtoRotatingFileHandler {
-    fn handle(&self, record: FemtoLogRecord) {
-        FemtoHandlerTrait::handle(&self.inner, record);
-    }
-
-    fn flush(&self) -> bool {
-        self.inner.flush()
+    delegate! {
+        to self.inner {
+            fn handle(&self, record: FemtoLogRecord);
+            fn flush(&self) -> bool;
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
