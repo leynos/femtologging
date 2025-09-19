@@ -163,7 +163,7 @@ def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
     """Zero timeout values are rejected for timeout overflow policy."""
 
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_zero.log"))
-    with pytest.raises(ValueError, match="timeout_ms must be greater than zero"):
+    with pytest.raises(ValueError, match="timeout must be greater than zero"):
         builder.with_overflow_policy("timeout", timeout_ms=0)
 
 

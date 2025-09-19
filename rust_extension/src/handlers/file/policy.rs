@@ -12,6 +12,20 @@ use super::config::OverflowPolicy;
 
 const VALID_POLICIES: &str = "drop, block, timeout:N";
 
+fn timeout_parse_error() -> PyErr {
+    PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
+}
+
+fn timeout_zero_error() -> PyErr {
+    PyValueError::new_err("timeout must be greater than zero")
+}
+
+fn invalid_policy_error(policy: &str) -> PyErr {
+    PyValueError::new_err(format!(
+        "invalid overflow policy '{policy}'. Valid options are: {VALID_POLICIES}"
+    ))
+}
+
 fn parse_overflow_policy(
     policy: &str,
     timeout_ms: Option<u64>,
@@ -21,13 +35,11 @@ fn parse_overflow_policy(
     let normalized = trimmed.to_ascii_lowercase();
 
     if let Some(rest) = normalized.strip_prefix("timeout:") {
-        let ms: i64 = rest.trim().parse().map_err(|_| {
-            PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
-        })?;
-        if ms <= 0 {
-            return Err(PyValueError::new_err("timeout must be greater than zero"));
+        let ms: u64 = rest.trim().parse().map_err(|_| timeout_parse_error())?;
+        if ms == 0 {
+            return Err(timeout_zero_error());
         }
-        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
+        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms)));
     }
 
     match normalized.as_str() {
@@ -44,16 +56,12 @@ fn parse_overflow_policy(
                 .ok_or_else(|| PyValueError::new_err("timeout_ms required for timeout policy"))?;
 
             if ms == 0 {
-                return Err(PyValueError::new_err(
-                    "timeout_ms must be greater than zero",
-                ));
+                return Err(timeout_zero_error());
             }
 
             Ok(OverflowPolicy::Timeout(Duration::from_millis(ms)))
         }
-        _ => Err(PyValueError::new_err(format!(
-            "invalid overflow policy '{normalized}'. Valid options are: {VALID_POLICIES}"
-        ))),
+        _ => Err(invalid_policy_error(&normalized)),
     }
 }
 
