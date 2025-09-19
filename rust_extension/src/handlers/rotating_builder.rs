@@ -258,10 +258,15 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let cfg = self.state.handler_config();
-        let rotation = RotationConfig::new(
-            self.max_bytes.map_or(0, NonZeroU64::get),
-            self.backup_count.map_or(0, NonZeroUsize::get),
-        );
+        let rotation = match self.max_bytes {
+            Some(max_bytes) => RotationConfig::new(
+                max_bytes.get(),
+                self.backup_count
+                    .expect("validation ensures backup_count is set when max_bytes is set")
+                    .get(),
+            ),
+            None => RotationConfig::disabled(),
+        };
         match self.state.formatter_id() {
             Some(FormatterId::Default) | None => {
                 let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(

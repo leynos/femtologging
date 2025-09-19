@@ -48,11 +48,24 @@ impl RotationConfig {
             backup_count,
         }
     }
+
+    /// Return a configuration that disables rotation.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let config = RotationConfig::disabled();
+    /// assert_eq!(config.max_bytes, 0);
+    /// assert_eq!(config.backup_count, 0);
+    /// ```
+    pub const fn disabled() -> Self {
+        Self::new(0, 0)
+    }
 }
 
 impl Default for RotationConfig {
     fn default() -> Self {
-        Self::new(0, 0)
+        Self::disabled()
     }
 }
 
@@ -172,6 +185,7 @@ impl FemtoRotatingFileHandler {
 #[pymethods]
 impl FemtoRotatingFileHandler {
     #[new]
+    #[pyo3(text_signature = "(path, max_bytes=0, backup_count=0, options=None)")]
     #[pyo3(signature = (path, max_bytes = 0, backup_count = 0, options = None))]
     fn py_new(
         path: String,
@@ -179,6 +193,11 @@ impl FemtoRotatingFileHandler {
         backup_count: usize,
         options: Option<HandlerOptions>,
     ) -> PyResult<Self> {
+        if (max_bytes == 0) != (backup_count == 0) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "both max_bytes and backup_count must be > 0 to enable rotation; set both to 0 to disable",
+            ));
+        }
         let opts = options.unwrap_or_else(|| {
             HandlerOptions::new(DEFAULT_CHANNEL_CAPACITY, 1, "drop".to_string())
         });
@@ -189,7 +208,11 @@ impl FemtoRotatingFileHandler {
             flush_interval,
             overflow_policy,
         };
-        let rotation = RotationConfig::new(max_bytes, backup_count);
+        let rotation = if max_bytes == 0 {
+            RotationConfig::disabled()
+        } else {
+            RotationConfig::new(max_bytes, backup_count)
+        };
         Self::with_capacity_flush_policy(&path, DefaultFormatter, handler_cfg, rotation)
             .map_err(|err| pyo3::exceptions::PyIOError::new_err(format!("{path}: {err}")))
     }
@@ -208,7 +231,8 @@ impl FemtoRotatingFileHandler {
 
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) {
-        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+        self.inner
+            .handle(FemtoLogRecord::new(logger, level, message));
     }
 
     #[pyo3(name = "flush")]
