@@ -60,18 +60,23 @@ fn parse_overflow_policy(
     timeout_ms: Option<u64>,
     expects_external_timeout: bool,
 ) -> PyResult<OverflowPolicy> {
-    let trimmed = policy.trim();
-    let normalized = trimmed.to_ascii_lowercase();
+    let normalized = policy.trim().to_ascii_lowercase();
+    // Split inline timeout once, then dispatch via a single match.
+    let (kind, inline_ms) = if let Some(rest) = normalized.strip_prefix("timeout:") {
+        ("timeout", Some(parse_timeout_ms(rest)?))
+    } else {
+        (normalized.as_str(), None)
+    };
 
-    if let Some(rest) = normalized.strip_prefix("timeout:") {
-        return parse_timeout_ms(rest).map(|ms| OverflowPolicy::Timeout(Duration::from_millis(ms)));
-    }
-
-    match normalized.as_str() {
-        "drop" => Ok(OverflowPolicy::Drop),
-        "block" => Ok(OverflowPolicy::Block),
-        "timeout" => parse_timeout_policy(timeout_ms, expects_external_timeout),
-        _ => Err(invalid_policy_error(&normalized)),
+    match (kind, inline_ms, expects_external_timeout) {
+        ("drop", _, _) => Ok(OverflowPolicy::Drop),
+        ("block", _, _) => Ok(OverflowPolicy::Block),
+        ("timeout", Some(ms), _) => Ok(OverflowPolicy::Timeout(Duration::from_millis(ms))),
+        ("timeout", None, true) => parse_timeout_policy(timeout_ms, true),
+        ("timeout", None, false) => Err(PyValueError::new_err(
+            "timeout requires a positive integer N, use 'timeout:N'",
+        )),
+        (_, _, _) => Err(invalid_policy_error(&normalized)),
     }
 }
 
