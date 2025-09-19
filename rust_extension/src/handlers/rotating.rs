@@ -99,6 +99,7 @@ pub struct HandlerOptions {
 #[pymethods]
 impl HandlerOptions {
     #[new]
+    #[pyo3(text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')")]
     #[pyo3(signature = (capacity = DEFAULT_CHANNEL_CAPACITY, flush_interval = 1, policy = "drop".to_string()))]
     fn new(capacity: usize, flush_interval: isize, policy: String) -> Self {
         Self {

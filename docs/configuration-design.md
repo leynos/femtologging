@@ -439,7 +439,6 @@ classDiagram
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
     FileHandlerBuilder <|-- RotatingFileHandlerBuilder
-    FileHandlerBuilder <|-- StreamHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
