@@ -1,4 +1,5 @@
 //! Python bindings for configuration builders.
+#![cfg(feature = "python")]
 
 use pyo3::{
     exceptions::{PyKeyError, PyRuntimeError, PyValueError},

@@ -380,6 +380,11 @@ API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
 logic in one place for both file-based builders, reducing duplication and
 ensuring validation stays consistent.
 
+To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
+optional `HandlerOptions` object bundling queue capacity, flush interval, and
+overflow policy. The parameter object mirrors the builder defaults so direct
+handler construction stays aligned with builder-powered configuration.
+
 ### 1.4. Class diagram
 
 The relationships among the builder types and the `dictConfig` helper are
