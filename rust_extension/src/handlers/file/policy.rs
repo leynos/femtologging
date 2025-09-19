@@ -90,11 +90,11 @@ fn parse_overflow_policy(
 /// # use femtologging_rs::handlers::file::policy;
 /// # use femtologging_rs::handlers::file::OverflowPolicy;
 /// assert!(matches!(
-///     policy::parse_policy_string("drop").unwrap(),
+///     policy::parse_policy_string("drop").expect("parse drop"),
 ///     OverflowPolicy::Drop
 /// ));
 /// assert!(matches!(
-///     policy::parse_policy_string("timeout:1000").unwrap(),
+///     policy::parse_policy_string("timeout:1000").expect("parse timeout:1000"),
 ///     OverflowPolicy::Timeout(_)
 /// ));
 /// ```
@@ -102,6 +102,10 @@ pub(crate) fn parse_policy_string(policy: &str) -> PyResult<OverflowPolicy> {
     parse_overflow_policy(policy, None, false)
 }
 
+/// Parses a policy string with an optional external timeout.
+///
+/// Precedence: if `policy` contains `timeout:N`, that inline value is used and
+/// any provided `timeout_ms` is ignored.
 #[cfg(feature = "python")]
 pub(crate) fn parse_policy_with_timeout(
     policy: &str,
@@ -116,18 +120,24 @@ mod tests {
 
     #[test]
     fn parse_policy_string_accepts_drop_whitespace() {
-        assert_eq!(parse_policy_string(" drop ").unwrap(), OverflowPolicy::Drop);
+        assert_eq!(
+            parse_policy_string(" drop ").expect("parse drop"),
+            OverflowPolicy::Drop
+        );
     }
 
     #[test]
     fn parse_policy_string_accepts_block_case_insensitive() {
-        assert_eq!(parse_policy_string("BLOCK").unwrap(), OverflowPolicy::Block);
+        assert_eq!(
+            parse_policy_string("BLOCK").expect("parse block"),
+            OverflowPolicy::Block
+        );
     }
 
     #[test]
     fn parse_policy_string_parses_timeout_values() {
         assert_eq!(
-            parse_policy_string("timeout:250").unwrap(),
+            parse_policy_string("timeout:250").expect("parse timeout:250"),
             OverflowPolicy::Timeout(Duration::from_millis(250))
         );
     }
@@ -157,7 +167,7 @@ mod tests {
         #[test]
         fn parse_policy_string_rejects_non_numeric_timeout_value() {
             assert_value_error_message(
-                parse_policy_string("timeout:abc").unwrap_err(),
+                parse_policy_string("timeout:abc").expect_err("expect parse error for timeout:abc"),
                 "timeout must be a positive integer (N in 'timeout:N')",
             );
         }
@@ -165,7 +175,7 @@ mod tests {
         #[test]
         fn parse_policy_string_rejects_zero_timeout_value() {
             assert_value_error_message(
-                parse_policy_string("timeout:0").unwrap_err(),
+                parse_policy_string("timeout:0").expect_err("expect parse error for zero timeout"),
                 "timeout must be greater than zero",
             );
         }
@@ -173,7 +183,7 @@ mod tests {
         #[test]
         fn parse_policy_string_reports_missing_timeout_hint() {
             assert_value_error_message(
-                parse_policy_string("timeout").unwrap_err(),
+                parse_policy_string("timeout").expect_err("expect parse error for missing timeout"),
                 "timeout requires a positive integer N, use 'timeout:N'",
             );
         }
@@ -181,7 +191,7 @@ mod tests {
         #[test]
         fn parse_policy_string_rejects_unknown_policy_message() {
             assert_value_error_message(
-                parse_policy_string("unknown").unwrap_err(),
+                parse_policy_string("unknown").expect_err("expect parse error for unknown policy"),
                 "invalid overflow policy 'unknown'. Valid options are: drop, block, timeout:N",
             );
         }
@@ -189,7 +199,7 @@ mod tests {
         #[test]
         fn parse_policy_with_timeout_supports_drop() {
             assert_eq!(
-                parse_policy_with_timeout("drop", None).unwrap(),
+                parse_policy_with_timeout("drop", None).expect("parse drop with external"),
                 OverflowPolicy::Drop
             );
         }
@@ -197,7 +207,8 @@ mod tests {
         #[test]
         fn parse_policy_with_timeout_requires_timeout_value() {
             assert_value_error_message(
-                parse_policy_with_timeout("timeout", None).unwrap_err(),
+                parse_policy_with_timeout("timeout", None)
+                    .expect_err("expect missing external timeout"),
                 "timeout_ms required for timeout policy",
             );
         }
@@ -205,7 +216,8 @@ mod tests {
         #[test]
         fn parse_policy_with_timeout_rejects_zero_timeout_value() {
             assert_value_error_message(
-                parse_policy_with_timeout("timeout", Some(0)).unwrap_err(),
+                parse_policy_with_timeout("timeout", Some(0))
+                    .expect_err("expect zero external timeout error"),
                 "timeout must be greater than zero",
             );
         }
@@ -213,7 +225,8 @@ mod tests {
         #[test]
         fn parse_policy_with_timeout_accepts_timeout_value() {
             assert_eq!(
-                parse_policy_with_timeout("timeout", Some(500)).unwrap(),
+                parse_policy_with_timeout("timeout", Some(500))
+                    .expect("parse timeout with external"),
                 OverflowPolicy::Timeout(Duration::from_millis(500))
             );
         }
@@ -221,7 +234,17 @@ mod tests {
         #[test]
         fn parse_policy_with_timeout_handles_inline_value() {
             assert_eq!(
-                parse_policy_with_timeout("timeout:125", None).unwrap(),
+                parse_policy_with_timeout("timeout:125", None)
+                    .expect("parse inline timeout with external path"),
+                OverflowPolicy::Timeout(Duration::from_millis(125))
+            );
+        }
+
+        #[test]
+        fn parse_policy_with_timeout_prefers_inline_timeout() {
+            assert_eq!(
+                parse_policy_with_timeout("timeout:125", Some(500))
+                    .expect("inline timeout should take precedence"),
                 OverflowPolicy::Timeout(Duration::from_millis(125))
             );
         }
