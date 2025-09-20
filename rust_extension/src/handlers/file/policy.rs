@@ -26,7 +26,8 @@ fn invalid_policy_error(policy: &str) -> PyErr {
     ))
 }
 
-fn ensure_timeout_positive(ms: u64) -> PyResult<u64> {
+fn parse_timeout_ms(raw: &str) -> PyResult<u64> {
+    let ms: u64 = raw.trim().parse().map_err(|_| timeout_parse_error())?;
     if ms == 0 {
         Err(timeout_zero_error())
     } else {
@@ -34,24 +35,23 @@ fn ensure_timeout_positive(ms: u64) -> PyResult<u64> {
     }
 }
 
-fn parse_timeout_ms(raw: &str) -> PyResult<u64> {
-    let ms: u64 = raw.trim().parse().map_err(|_| timeout_parse_error())?;
-    ensure_timeout_positive(ms)
-}
-
 fn parse_timeout_policy(
     timeout_ms: Option<u64>,
     expects_external_timeout: bool,
 ) -> PyResult<OverflowPolicy> {
-    match (expects_external_timeout, timeout_ms) {
-        (false, _) => Err(PyValueError::new_err(
+    if !expects_external_timeout {
+        return Err(PyValueError::new_err(
             "timeout requires a positive integer N, use 'timeout:N'",
-        )),
-        (true, Some(ms)) => ensure_timeout_positive(ms)
-            .map(|value| OverflowPolicy::Timeout(Duration::from_millis(value))),
-        (true, None) => Err(PyValueError::new_err(
-            "timeout_ms required for timeout policy",
-        )),
+        ));
+    }
+
+    let ms = timeout_ms
+        .ok_or_else(|| PyValueError::new_err("timeout_ms required for timeout policy"))?;
+
+    if ms == 0 {
+        Err(timeout_zero_error())
+    } else {
+        Ok(OverflowPolicy::Timeout(Duration::from_millis(ms)))
     }
 }
 
@@ -72,10 +72,7 @@ fn parse_overflow_policy(
         ("drop", _, _) => Ok(OverflowPolicy::Drop),
         ("block", _, _) => Ok(OverflowPolicy::Block),
         ("timeout", Some(ms), _) => Ok(OverflowPolicy::Timeout(Duration::from_millis(ms))),
-        ("timeout", None, true) => parse_timeout_policy(timeout_ms, true),
-        ("timeout", None, false) => Err(PyValueError::new_err(
-            "timeout requires a positive integer N, use 'timeout:N'",
-        )),
+        ("timeout", None, _) => parse_timeout_policy(timeout_ms, expects_external_timeout),
         (_, _, _) => Err(invalid_policy_error(&normalized)),
     }
 }
