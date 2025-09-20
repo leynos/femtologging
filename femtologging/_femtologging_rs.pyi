@@ -10,6 +10,7 @@ FemtoStreamHandler: _Any
 FemtoFileHandler: _Any
 FemtoRotatingFileHandler: _Any
 HandlerOptions: _Any
+ROTATION_VALIDATION_MSG: str
 StreamHandlerBuilder: _Any
 FileHandlerBuilder: _Any
 RotatingFileHandlerBuilder: _Any
