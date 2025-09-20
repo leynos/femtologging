@@ -11,6 +11,8 @@ use std::num::NonZeroUsize;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+#[cfg(feature = "python")]
+use super::file;
 use super::{common::CommonBuilder, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait};
 use crate::formatter::DefaultFormatter;
 #[cfg(feature = "python")]
@@ -159,23 +161,7 @@ impl FileHandlerBuilder {
         policy: &str,
         timeout_ms: Option<u64>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        slf.overflow_policy = if policy.eq_ignore_ascii_case("drop") {
-            OverflowPolicy::Drop
-        } else if policy.eq_ignore_ascii_case("block") {
-            OverflowPolicy::Block
-        } else if policy.eq_ignore_ascii_case("timeout") {
-            let ms = timeout_ms.ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "timeout_ms required for timeout policy",
-                )
-            })?;
-            CommonBuilder::ensure_non_zero("timeout_ms", Some(ms)).map_err(PyErr::from)?;
-            OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
-        } else {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "invalid overflow policy: {policy}",
-            )));
-        };
+        slf.overflow_policy = file::policy::parse_policy_with_timeout(policy, timeout_ms)?;
         Ok(slf)
     }
 

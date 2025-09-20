@@ -268,7 +268,10 @@ def test_timeout_policy_validation(tmp_path: Path) -> None:
     path = tmp_path / "bad_timeout.log"
     with pytest.raises(ValueError, match="timeout must be greater than zero"):
         FemtoFileHandler(str(path), policy="timeout:0")
-    with pytest.raises(ValueError, match="timeout must be greater than zero"):
+    with pytest.raises(
+        ValueError,
+        match=r"timeout must be a positive integer \(N in 'timeout:N'\)",
+    ):
         FemtoFileHandler(str(path), policy="timeout:-1")
 
 
