@@ -1,5 +1,6 @@
 import pathlib
 import re
+import typing as t
 from contextlib import contextmanager
 
 import pytest
@@ -19,7 +20,7 @@ def fixture_log_path(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 @contextmanager
-def rotating_handler(*args, **kwargs):
+def rotating_handler(*args, **kwargs) -> t.Iterator[FemtoRotatingFileHandler]:
     """Context manager for rotating handler lifecycle."""
 
     handler = FemtoRotatingFileHandler(*args, **kwargs)
