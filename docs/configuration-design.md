@@ -315,7 +315,15 @@ class ConfigBuilder:
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
     def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
-    def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
+    def with_handler(
+        self,
+        id: str,
+        builder: Union[
+            "FileHandlerBuilder",
+            "RotatingFileHandlerBuilder",
+            "StreamHandlerBuilder",
+        ],
+    ) -> "ConfigBuilder": ...
     def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
     def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
     def build_and_init(self) -> None: ...
@@ -361,13 +369,29 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 ### 1.3. Implemented handler builders
 
-The initial implementation provides `FileHandlerBuilder` and
-`StreamHandlerBuilder` as thin wrappers over the existing handler types.
-`FileHandlerBuilder` supports capacity, flush interval, and overflow policy,
-while `StreamHandlerBuilder` configures the stream target and capacity. Both
-builders expose `build()` methods returning ready‑to‑use handlers. Advanced
-options such as file encoding or custom writers are deferred until the
-corresponding handler features are ported from picologging.
+The initial implementation provides `FileHandlerBuilder`,
+`RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
+the existing handler types. `FileHandlerBuilder` supports capacity, flush
+interval, and overflow policy, while `RotatingFileHandlerBuilder` layers on
+`max_bytes` and `backup_count` rotation thresholds. Rotation is opt-in: both
+limits must be provided with positive values, otherwise the builder raises a
+configuration error so invalid rollover settings fail fast. When thresholds are
+omitted the handler stores `(0, 0)`, disabling rotation entirely. Explicit zero
+values are rejected so misconfigured rollovers fail loudly rather than silently
+logging without retention. `StreamHandlerBuilder` configures the stream target
+and capacity. All builders expose `build()` methods returning ready‑to‑use
+handlers. Advanced options such as file encoding or custom writers are deferred
+until the corresponding handler features are ported from picologging. The Rust
+implementation stores the configured thresholds on `FemtoRotatingFileHandler`
+so later work can wire in the rotation algorithm without changing the builder
+API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
+logic in one place for both file-based builders, reducing duplication and
+ensuring validation stays consistent.
+
+To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
+optional `HandlerOptions` object bundling queue capacity, flush interval, and
+overflow policy. The parameter object mirrors the builder defaults so direct
+handler construction stays aligned with builder-powered configuration.
 
 ### 1.4. Class diagram
 
@@ -381,7 +405,7 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|StreamHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|StreamHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -393,6 +417,12 @@ classDiagram
     class FileHandlerBuilder {
         +__init__(*args, **kwargs)
         +with_formatter(fmt: str)
+    }
+    class RotatingFileHandlerBuilder {
+        +__init__(path: str)
+        +with_formatter(fmt: str)
+        +with_max_bytes(max_bytes: int)
+        +with_backup_count(count: int)
     }
     class StreamHandlerBuilder {
         +__init__(*args, **kwargs)
@@ -416,7 +446,7 @@ classDiagram
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
-    FileHandlerBuilder <|-- StreamHandlerBuilder
+    FileHandlerBuilder <|-- RotatingFileHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
@@ -558,12 +588,16 @@ components in a fixed order to honour dependencies:
    - ``"logging.StreamHandler"`` and ``"femtologging.StreamHandler"``
      → ``StreamHandlerBuilder``
    - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
-     → ``FileHandlerBuilder`` Unsupported handler classes raise ``ValueError``.
-     ``args`` and ``kwargs`` may be provided either as native structures or as
-     strings, which are safely evaluated with ``ast.literal_eval``. For stream
-     handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
-     targets. Handler ``level`` and ``filters`` settings are currently
-     unsupported and produce ``ValueError``.
+     → ``FileHandlerBuilder``
+   - ``"logging.handlers.RotatingFileHandler"``,
+     ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
+     and ``"femtologging.FemtoRotatingFileHandler"`` →
+     ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
+     ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
+     structures or as strings, which are safely evaluated with
+     ``ast.literal_eval``. For stream handlers, ``ext://sys.stdout`` and
+     ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
+     ``filters`` settings are currently unsupported and produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
    ``propagate`` settings. Logger ``filters`` are not yet supported and trigger

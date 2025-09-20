@@ -70,7 +70,7 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
+pub(crate) fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
     use pyo3::exceptions::PyValueError;
     let policy = policy.trim().to_ascii_lowercase();
     if policy == "drop" {
@@ -102,7 +102,7 @@ fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
     )))
 }
 
-fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
+pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
     use pyo3::exceptions::PyValueError;
     if capacity == 0 {
         return Err(PyValueError::new_err("capacity must be greater than zero"));

@@ -25,8 +25,12 @@ reset_manager = rust.reset_manager_py
 FemtoHandler = rust.FemtoHandler
 FemtoStreamHandler = rust.FemtoStreamHandler
 FemtoFileHandler = rust.FemtoFileHandler
+FemtoRotatingFileHandler = rust.FemtoRotatingFileHandler
+HandlerOptions = rust.HandlerOptions
+ROTATION_VALIDATION_MSG = rust.ROTATION_VALIDATION_MSG
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 FileHandlerBuilder = rust.FileHandlerBuilder
+RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
 LoggerConfigBuilder = rust.LoggerConfigBuilder
 FormatterBuilder = rust.FormatterBuilder
@@ -240,8 +244,12 @@ __all__ = [
     "reset_manager",
     "FemtoStreamHandler",
     "FemtoFileHandler",
+    "FemtoRotatingFileHandler",
+    "HandlerOptions",
+    "ROTATION_VALIDATION_MSG",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
+    "RotatingFileHandlerBuilder",
     "LevelFilterBuilder",
     "NameFilterBuilder",
     "FilterBuildError",

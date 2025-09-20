@@ -11,6 +11,7 @@ impl AsPyDict for HandlerBuilder {
         match self {
             Self::Stream(b) => b.as_pydict(py),
             Self::File(b) => b.as_pydict(py),
+            Self::Rotating(b) => b.as_pydict(py),
         }
     }
 }

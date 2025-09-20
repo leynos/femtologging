@@ -18,7 +18,10 @@ fn normalise_vec(ids: Vec<String>) -> Vec<String> {
 use crate::{
     filters::{FilterBuildError, FilterBuilder},
     handler::FemtoHandlerTrait,
-    handlers::{FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, StreamHandlerBuilder},
+    handlers::{
+        FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, RotatingFileHandlerBuilder,
+        StreamHandlerBuilder,
+    },
     level::FemtoLevel,
 };
 
@@ -29,6 +32,8 @@ pub enum HandlerBuilder {
     Stream(StreamHandlerBuilder),
     /// Build a [`FemtoFileHandler`].
     File(FileHandlerBuilder),
+    /// Build a [`FemtoRotatingFileHandler`].
+    Rotating(RotatingFileHandlerBuilder),
 }
 
 impl HandlerBuilder {
@@ -42,6 +47,10 @@ impl HandlerBuilder {
                 .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
             Self::File(b) => <FileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
                 .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
+            Self::Rotating(b) => {
+                <RotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
+                    .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
+            }
         }
     }
 }
@@ -55,6 +64,12 @@ impl From<StreamHandlerBuilder> for HandlerBuilder {
 impl From<FileHandlerBuilder> for HandlerBuilder {
     fn from(value: FileHandlerBuilder) -> Self {
         Self::File(value)
+    }
+}
+
+impl From<RotatingFileHandlerBuilder> for HandlerBuilder {
+    fn from(value: RotatingFileHandlerBuilder) -> Self {
+        Self::Rotating(value)
     }
 }
 

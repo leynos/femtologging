@@ -1,4 +1,6 @@
 import pytest
+import pathlib
+
 from pytest_bdd import given, when, then, scenarios, parsers
 from syrupy import SnapshotAssertion
 
@@ -6,6 +8,7 @@ from femtologging import (
     ConfigBuilder,
     FormatterBuilder,
     LoggerConfigBuilder,
+    RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
     get_logger,
 )
@@ -137,6 +140,26 @@ def test_duplicate_handler_overwrites() -> None:
     assert config["handlers"]["console"]["target"] == "stdout", (
         "Later handler should overwrite earlier one",
     )
+
+
+def test_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
+    """ConfigBuilder should accept rotating file handler builders."""
+    builder = ConfigBuilder().with_disable_existing_loggers(True)
+    log_path = tmp_path / "rotating.log"
+    rotating = (
+        RotatingFileHandlerBuilder(str(log_path))
+        .with_max_bytes(1024)
+        .with_backup_count(3)
+    )
+    builder.with_handler("rot", rotating)
+    builder.with_root_logger(LoggerConfigBuilder().with_handlers(["rot"]))
+
+    # Building should succeed and preserve the rotating handler configuration.
+    builder.build_and_init()
+    config = builder.as_dict()
+    assert config["handlers"]["rot"]["path"] == str(log_path)
+    assert config["handlers"]["rot"]["max_bytes"] == 1024
+    assert config["handlers"]["rot"]["backup_count"] == 3
 
 
 def test_duplicate_logger_overwrites() -> None:

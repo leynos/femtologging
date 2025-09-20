@@ -1,0 +1,64 @@
+import pathlib
+import re
+import typing as t
+from contextlib import contextmanager
+
+import pytest
+
+from femtologging import (
+    FemtoRotatingFileHandler,
+    HandlerOptions,
+    ROTATION_VALIDATION_MSG,
+)
+
+
+@pytest.fixture(name="log_path")
+def fixture_log_path(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Provide a unique log file path for rotating handler tests."""
+
+    return tmp_path / "rotating.log"
+
+
+@contextmanager
+def rotating_handler(*args, **kwargs) -> t.Iterator[FemtoRotatingFileHandler]:
+    """Context manager for rotating handler lifecycle."""
+
+    handler = FemtoRotatingFileHandler(*args, **kwargs)
+    try:
+        yield handler
+    finally:
+        handler.close()
+
+
+def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
+    """Constructing with defaults should disable rotation thresholds."""
+
+    with rotating_handler(str(log_path)) as handler:
+        assert handler.max_bytes == 0, "defaults must disable rollover"
+        assert handler.backup_count == 0, "defaults must disable backups"
+
+
+def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
+    """Supplying HandlerOptions should configure queue behaviour."""
+
+    options = HandlerOptions(capacity=32, flush_interval=2, policy="block")
+    with rotating_handler(
+        str(log_path), max_bytes=1024, backup_count=3, options=options
+    ) as handler:
+        assert handler.max_bytes == 1024, "max_bytes setter must persist"
+        assert handler.backup_count == 3, "backup_count setter must persist"
+
+
+@pytest.mark.parametrize(
+    ("max_bytes", "backup_count"),
+    [(1024, 0), (512, 0), (0, 3), (0, 1)],
+)
+def test_rotating_handler_rejects_partial_thresholds(
+    log_path: pathlib.Path, max_bytes: int, backup_count: int
+) -> None:
+    """Partial rotation thresholds should raise a clear error."""
+
+    with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
+        FemtoRotatingFileHandler(
+            str(log_path), max_bytes=max_bytes, backup_count=backup_count
+        )
