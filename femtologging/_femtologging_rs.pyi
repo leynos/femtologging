@@ -8,12 +8,53 @@ FemtoLogger: _Any
 FemtoHandler: _Any
 FemtoStreamHandler: _Any
 FemtoFileHandler: _Any
-FemtoRotatingFileHandler: _Any
-HandlerOptions: _Any
+
+class HandlerOptions:
+    capacity: int
+    flush_interval: int
+    policy: str
+
+    def __init__(
+        self,
+        capacity: int = ...,
+        flush_interval: int = ...,
+        policy: str = ...,
+    ) -> None: ...
+
 ROTATION_VALIDATION_MSG: str
 StreamHandlerBuilder: _Any
 FileHandlerBuilder: _Any
-RotatingFileHandlerBuilder: _Any
+
+class FemtoRotatingFileHandler:
+    max_bytes: int
+    backup_count: int
+
+    def __init__(
+        self,
+        path: str,
+        max_bytes: int = ...,
+        backup_count: int = ...,
+        options: HandlerOptions | None = ...,
+    ) -> None: ...
+    def handle(self, logger: str, level: LevelArg, message: str) -> None: ...
+    def flush(self) -> bool: ...
+    def close(self) -> None: ...
+
+class RotatingFileHandlerBuilder:
+    def __init__(self, path: str) -> None: ...
+    def with_capacity(self, capacity: int) -> RotatingFileHandlerBuilder: ...
+    def with_flush_record_interval(
+        self, interval: int
+    ) -> RotatingFileHandlerBuilder: ...
+    def with_formatter(self, fmt: str) -> RotatingFileHandlerBuilder: ...
+    def with_max_bytes(self, max_bytes: int) -> RotatingFileHandlerBuilder: ...
+    def with_backup_count(self, count: int) -> RotatingFileHandlerBuilder: ...
+    def with_overflow_policy(
+        self, policy: str, timeout_ms: int | None = ...
+    ) -> RotatingFileHandlerBuilder: ...
+    def as_dict(self) -> dict[str, object]: ...
+    def build(self) -> FemtoRotatingFileHandler: ...
+
 ConfigBuilder: _Any
 LoggerConfigBuilder: _Any
 FormatterBuilder: _Any
