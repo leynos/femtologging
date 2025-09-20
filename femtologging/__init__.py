@@ -27,6 +27,7 @@ FemtoStreamHandler = rust.FemtoStreamHandler
 FemtoFileHandler = rust.FemtoFileHandler
 FemtoRotatingFileHandler = rust.FemtoRotatingFileHandler
 HandlerOptions = rust.HandlerOptions
+ROTATION_VALIDATION_MSG = rust.ROTATION_VALIDATION_MSG
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 FileHandlerBuilder = rust.FileHandlerBuilder
 RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
@@ -245,6 +246,7 @@ __all__ = [
     "FemtoFileHandler",
     "FemtoRotatingFileHandler",
     "HandlerOptions",
+    "ROTATION_VALIDATION_MSG",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
     "RotatingFileHandlerBuilder",

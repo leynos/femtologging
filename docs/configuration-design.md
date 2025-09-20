@@ -315,7 +315,15 @@ class ConfigBuilder:
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
     def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
-    def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
+    def with_handler(
+        self,
+        id: str,
+        builder: Union[
+            "FileHandlerBuilder",
+            "RotatingFileHandlerBuilder",
+            "StreamHandlerBuilder",
+        ],
+    ) -> "ConfigBuilder": ...
     def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
     def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
     def build_and_init(self) -> None: ...
@@ -411,7 +419,7 @@ classDiagram
         +with_formatter(fmt: str)
     }
     class RotatingFileHandlerBuilder {
-        +__init__(*args, **kwargs)
+        +__init__(path: str)
         +with_formatter(fmt: str)
         +with_max_bytes(max_bytes: int)
         +with_backup_count(count: int)

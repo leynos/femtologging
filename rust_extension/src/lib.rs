@@ -115,6 +115,11 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoRotatingFileHandler>()?;
     #[cfg(feature = "python")]
     m.add_class::<HandlerOptions>()?;
+    #[cfg(feature = "python")]
+    m.add(
+        "ROTATION_VALIDATION_MSG",
+        handlers::rotating::ROTATION_VALIDATION_MSG,
+    )?;
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),
@@ -136,6 +141,7 @@ mod tests {
     //! Ensure Python-only bindings register expected types.
 
     use super::*;
+    use crate::handlers::rotating::ROTATION_VALIDATION_MSG;
     use pyo3::{
         types::{PyModule, PyType},
         Python,
@@ -175,6 +181,9 @@ mod tests {
                 let attr = module.getattr(name).unwrap();
                 attr.downcast::<PyType>().unwrap();
             }
+            let message = module.getattr("ROTATION_VALIDATION_MSG").unwrap();
+            let value: &str = message.extract().unwrap();
+            assert_eq!(value, ROTATION_VALIDATION_MSG);
         });
     }
 }
