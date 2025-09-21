@@ -74,19 +74,29 @@ impl Default for RotationConfig {
 pub const ROTATION_VALIDATION_MSG: &str =
     "both max_bytes and backup_count must be > 0 to enable rotation; set both to 0 to disable";
 
-/// Python options for configuring rotating file handlers during instantiation.
+/// Python options bundling queue and rotation configuration for rotating
+/// file handlers during instantiation.
 ///
-/// The options map onto the capacity and flushing controls exposed by
-/// [`FemtoFileHandler`] and default to the existing values to preserve backwards
-/// compatibility.
+/// The options map onto the capacity, flushing, overflow policy, and rotation
+/// thresholds exposed by [`FemtoFileHandler`] and default to the existing
+/// values to preserve backwards compatibility.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let options = HandlerOptions::new(64, 2, "drop".to_string()).expect("valid options");
+/// let options = HandlerOptions::new(
+///     64,
+///     2,
+///     "drop".to_string(),
+///     1024,
+///     3,
+/// )
+/// .expect("valid options");
 /// assert_eq!(options.capacity, 64);
 /// assert_eq!(options.flush_interval, 2);
 /// assert_eq!(options.policy, "drop");
+/// assert_eq!(options.max_bytes, 1024);
+/// assert_eq!(options.backup_count, 3);
 /// ```
 #[cfg(feature = "python")]
 #[pyclass]
@@ -98,20 +108,49 @@ pub struct HandlerOptions {
     pub flush_interval: isize,
     #[pyo3(get, set)]
     pub policy: String,
+    #[pyo3(get, set)]
+    pub max_bytes: u64,
+    #[pyo3(get, set)]
+    pub backup_count: usize,
 }
 
 #[cfg(feature = "python")]
 #[pymethods]
 impl HandlerOptions {
     #[new]
-    #[pyo3(text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')")]
-    #[pyo3(signature = (capacity = DEFAULT_CHANNEL_CAPACITY, flush_interval = 1, policy = "drop".to_string()))]
-    fn new(capacity: usize, flush_interval: isize, policy: String) -> PyResult<Self> {
-        file::validate_params(capacity, flush_interval)?;
+    #[pyo3(
+        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', max_bytes=0, backup_count=0)"
+    )]
+    #[pyo3(signature = (
+        capacity = DEFAULT_CHANNEL_CAPACITY,
+        flush_interval = 1,
+        policy = "drop".to_string(),
+        max_bytes = 0,
+        backup_count = 0,
+    ))]
+    fn new(
+        capacity: usize,
+        flush_interval: isize,
+        policy: String,
+        max_bytes: u64,
+        backup_count: usize,
+    ) -> PyResult<Self> {
+        if flush_interval == -1 {
+            file::validate_params(capacity, 1)?;
+        } else {
+            file::validate_params(capacity, flush_interval)?;
+        }
+        if (max_bytes == 0) != (backup_count == 0) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                ROTATION_VALIDATION_MSG,
+            ));
+        }
         Ok(Self {
             capacity,
             flush_interval,
             policy,
+            max_bytes,
+            backup_count,
         })
     }
 }
@@ -121,8 +160,10 @@ impl Default for HandlerOptions {
     fn default() -> Self {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
-            flush_interval: 1,
+            flush_interval: -1,
             policy: "drop".to_string(),
+            max_bytes: 0,
+            backup_count: 0,
         }
     }
 }
@@ -211,24 +252,31 @@ impl FemtoRotatingFileHandler {
 #[pymethods]
 impl FemtoRotatingFileHandler {
     #[new]
-    #[pyo3(text_signature = "(path, max_bytes=0, backup_count=0, options=None)")]
-    #[pyo3(signature = (path, max_bytes = 0, backup_count = 0, options = None))]
-    fn py_new(
-        path: String,
-        max_bytes: u64,
-        backup_count: usize,
-        options: Option<HandlerOptions>,
-    ) -> PyResult<Self> {
+    #[pyo3(text_signature = "(path, options=None)")]
+    #[pyo3(signature = (path, options = None))]
+    fn py_new(path: String, options: Option<HandlerOptions>) -> PyResult<Self> {
+        let provided_options = options.is_some();
+        let opts = options.unwrap_or_else(HandlerOptions::default);
+        let HandlerOptions {
+            capacity,
+            flush_interval,
+            policy,
+            max_bytes,
+            backup_count,
+        } = opts;
         if (max_bytes == 0) != (backup_count == 0) {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 ROTATION_VALIDATION_MSG,
             ));
         }
-        let opts = options.unwrap_or_else(HandlerOptions::default);
-        let overflow_policy = file::parse_overflow_policy(&opts.policy)?;
-        let flush_interval = file::validate_params(opts.capacity, opts.flush_interval)?;
+        let overflow_policy = file::parse_overflow_policy(&policy)?;
+        let flush_interval = if provided_options || flush_interval > 0 {
+            file::validate_params(capacity, flush_interval)?
+        } else {
+            file::validate_params(capacity, 1)?
+        };
         let handler_cfg = HandlerConfig {
-            capacity: opts.capacity,
+            capacity,
             flush_interval,
             overflow_policy,
         };

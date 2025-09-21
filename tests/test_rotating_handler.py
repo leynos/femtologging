@@ -41,10 +41,14 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
 def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
     """Supplying HandlerOptions should configure queue behaviour."""
 
-    options = HandlerOptions(capacity=32, flush_interval=2, policy="block")
-    with rotating_handler(
-        str(log_path), max_bytes=1024, backup_count=3, options=options
-    ) as handler:
+    options = HandlerOptions(
+        capacity=32,
+        flush_interval=2,
+        policy="block",
+        max_bytes=1024,
+        backup_count=3,
+    )
+    with rotating_handler(str(log_path), options=options) as handler:
         assert handler.max_bytes == 1024, "max_bytes setter must persist"
         assert handler.backup_count == 3, "backup_count setter must persist"
 
@@ -60,5 +64,6 @@ def test_rotating_handler_rejects_partial_thresholds(
 
     with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
         FemtoRotatingFileHandler(
-            str(log_path), max_bytes=max_bytes, backup_count=backup_count
+            str(log_path),
+            options=HandlerOptions(max_bytes=max_bytes, backup_count=backup_count),
         )

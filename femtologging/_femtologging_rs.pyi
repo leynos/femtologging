@@ -13,12 +13,16 @@ class HandlerOptions:
     capacity: int
     flush_interval: int
     policy: str
+    max_bytes: int
+    backup_count: int
 
     def __init__(
         self,
         capacity: int = ...,
         flush_interval: int = ...,
         policy: str = ...,
+        max_bytes: int = ...,
+        backup_count: int = ...,
     ) -> None: ...
 
 ROTATION_VALIDATION_MSG: str
@@ -32,8 +36,6 @@ class FemtoRotatingFileHandler:
     def __init__(
         self,
         path: str,
-        max_bytes: int = ...,
-        backup_count: int = ...,
         options: HandlerOptions | None = ...,
     ) -> None: ...
     def handle(self, logger: str, level: LevelArg, message: str) -> None: ...

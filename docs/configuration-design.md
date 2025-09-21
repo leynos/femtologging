@@ -389,9 +389,11 @@ logic in one place for both file-based builders, reducing duplication and
 ensuring validation stays consistent.
 
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
-optional `HandlerOptions` object bundling queue capacity, flush interval, and
-overflow policy. The parameter object mirrors the builder defaults so direct
-handler construction stays aligned with builder-powered configuration.
+optional `HandlerOptions` object bundling queue capacity, flush interval,
+overflow policy, and rotation thresholds. The parameter object mirrors the
+builder defaults so direct handler construction stays aligned with
+builder-powered configuration while still allowing rotation to be configured in
+a single argument.
 
 ### 1.4. Class diagram
 
