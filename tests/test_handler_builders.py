@@ -149,3 +149,28 @@ def test_stream_builder_negative_capacity(ctor) -> None:
     builder = ctor()
     with pytest.raises(OverflowError):
         builder.with_capacity(-1)
+
+
+def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
+    """Timeout policy without a timeout raises ``ValueError``."""
+
+    builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_missing.log"))
+    with pytest.raises(ValueError, match="timeout_ms required for timeout policy"):
+        builder.with_overflow_policy("timeout", timeout_ms=None)
+
+
+def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
+    """Zero timeout values are rejected for timeout overflow policy."""
+
+    builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_zero.log"))
+    with pytest.raises(ValueError, match="timeout must be greater than zero"):
+        builder.with_overflow_policy("timeout", timeout_ms=0)
+
+
+def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
+    """Inline timeout syntax is accepted for builder configuration."""
+
+    builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_inline.log"))
+    builder = builder.with_overflow_policy("timeout:125", timeout_ms=None)
+    handler = builder.build()
+    handler.close()
