@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import re
-from collections.abc import Iterator
+import typing as t
 from contextlib import contextmanager
 
 import pytest
@@ -27,11 +27,21 @@ def fixture_log_path(tmp_path: pathlib.Path) -> pathlib.Path:
 def rotating_handler(
     path: str,
     *,
+    max_bytes: int = 0,
+    backup_count: int = 0,
     options: HandlerOptions | None = None,
-) -> Iterator[FemtoRotatingFileHandler]:
+) -> t.Iterator[FemtoRotatingFileHandler]:
     """Context manager for rotating handler lifecycle."""
 
-    handler = FemtoRotatingFileHandler(path, options=options)
+    derived_options = options
+    if derived_options is None:
+        derived_options = HandlerOptions(rotation=(max_bytes, backup_count))
+    elif max_bytes or backup_count:
+        raise ValueError(
+            "rotating_handler options already provided; do not pass rotation"
+        )
+
+    handler = FemtoRotatingFileHandler(path, options=derived_options)
     try:
         yield handler
     finally:
