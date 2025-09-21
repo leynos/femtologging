@@ -432,7 +432,7 @@ adjusted after creation when tests need to manipulate individual thresholds.
 ### 1.4. Class diagram
 
 The relationships among the builder types and the `dictConfig` helper are
-summarized below:
+summarised below:
 
 ```mermaid
 classDiagram

@@ -39,6 +39,10 @@ Feature: Handler builders
     And I set file formatter "default"
     Then the rotating file handler builder matches snapshot
 
+  Scenario: dictConfig rotating builder zero thresholds
+    Given a dictConfig RotatingFileHandlerBuilder for path "test.log"
+    Then setting zero rotation thresholds fails with "max_bytes must be greater than zero"
+
   Scenario: invalid rotating file handler capacity
     Given a RotatingFileHandlerBuilder for path "test.log"
     When I set file capacity 0
@@ -55,6 +59,10 @@ Feature: Handler builders
     When I set max bytes 1024
     And I set backup count 0
     Then building the rotating file handler fails with "backup_count must be greater than zero"
+
+  Scenario: invalid rotating file handler zero thresholds
+    Given a RotatingFileHandlerBuilder for path "test.log"
+    Then setting zero rotation thresholds fails with "max_bytes must be greater than zero"
 
   Scenario: missing rotating backup count
     Given a RotatingFileHandlerBuilder for path "test.log"

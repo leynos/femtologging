@@ -183,7 +183,7 @@ mod tests {
 
     #[rstest]
     fn build_file_handler() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
         let builder = FileHandlerBuilder::new(path.to_string_lossy())
             .with_capacity(16)
