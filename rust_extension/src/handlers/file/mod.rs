@@ -71,48 +71,6 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-pub(crate) fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
-    use pyo3::exceptions::PyValueError;
-    let policy = policy.trim().to_ascii_lowercase();
-    if policy == "drop" {
-        return Ok(OverflowPolicy::Drop);
-    }
-    if policy == "block" {
-        return Ok(OverflowPolicy::Block);
-    }
-    if policy == "timeout" {
-        return Err(PyValueError::new_err(
-            "timeout requires a positive integer N, use 'timeout:N'",
-        ));
-    }
-    if let Some(rest) = policy.strip_prefix("timeout:") {
-        let ms: i64 = rest.trim().parse().map_err(|_| {
-            PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
-        })?;
-        if ms <= 0 {
-            return Err(PyValueError::new_err("timeout must be greater than zero"));
-        }
-        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
-    }
-    let valid = "drop, block, timeout:N";
-    Err(PyValueError::new_err(format!(
-        "invalid overflow policy '{policy}'. Valid options are: {valid}",
-    )))
-}
-
-pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
-    use pyo3::exceptions::PyValueError;
-    if capacity == 0 {
-        return Err(PyValueError::new_err("capacity must be greater than zero"));
-    }
-    if flush_interval <= 0 {
-        return Err(PyValueError::new_err(
-            "flush_interval must be greater than zero",
-        ));
-    }
-    Ok(flush_interval as usize)
-}
-
 fn open_log_file(path: &str) -> PyResult<File> {
     use pyo3::exceptions::PyIOError;
     #[expect(
@@ -125,35 +83,6 @@ fn open_log_file(path: &str) -> PyResult<File> {
         .append(true)
         .open(path)
         .map_err(|e| PyIOError::new_err(format!("{path}: {e}")))
-}
-
-pub(crate) fn parse_overflow_policy(policy: &str) -> PyResult<OverflowPolicy> {
-    use pyo3::exceptions::PyValueError;
-    let policy = policy.trim().to_ascii_lowercase();
-    if policy == "drop" {
-        return Ok(OverflowPolicy::Drop);
-    }
-    if policy == "block" {
-        return Ok(OverflowPolicy::Block);
-    }
-    if policy == "timeout" {
-        return Err(PyValueError::new_err(
-            "timeout requires a positive integer N, use 'timeout:N'",
-        ));
-    }
-    if let Some(rest) = policy.strip_prefix("timeout:") {
-        let ms: i64 = rest.trim().parse().map_err(|_| {
-            PyValueError::new_err("timeout must be a positive integer (N in 'timeout:N')")
-        })?;
-        if ms <= 0 {
-            return Err(PyValueError::new_err("timeout must be greater than zero"));
-        }
-        return Ok(OverflowPolicy::Timeout(Duration::from_millis(ms as u64)));
-    }
-    let valid = "drop, block, timeout:N";
-    Err(PyValueError::new_err(format!(
-        "invalid overflow policy '{policy}'. Valid options are: {valid}",
-    )))
 }
 
 pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {

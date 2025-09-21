@@ -268,7 +268,7 @@ impl FemtoRotatingFileHandler {
                 ROTATION_VALIDATION_MSG,
             ));
         }
-        let overflow_policy = file::parse_overflow_policy(&policy)?;
+        let overflow_policy = file::policy::parse_policy_string(&policy)?;
         let flush_interval = match flush_interval {
             -1 => file::validate_params(capacity, 1)?,
             value => file::validate_params(capacity, value)?,
