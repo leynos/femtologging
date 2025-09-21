@@ -13,6 +13,8 @@ use super::{
     common::FileLikeBuilderState, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
 use crate::formatter::DefaultFormatter;
+
+use crate::handlers::builder_macros::{builder_method_rust, file_like_builder_methods};
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
@@ -33,28 +35,26 @@ impl FileHandlerBuilder {
         }
     }
 
-    /// Set the bounded channel capacity.
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.state = self.state.with_capacity(capacity);
-        self
+    file_like_builder_methods!(builder_method_rust);
+
+    #[cfg(feature = "python")]
+    fn apply_capacity(&mut self, capacity: usize) {
+        self.state.set_capacity(capacity);
     }
 
-    /// Set the periodic flush interval measured in records. Must be greater
-    /// than zero.
-    pub fn with_flush_record_interval(mut self, interval: usize) -> Self {
-        self.state = self.state.with_flush_record_interval(interval);
-        self
+    #[cfg(feature = "python")]
+    fn apply_flush_record_interval(&mut self, interval: usize) {
+        self.state.set_flush_record_interval(interval);
     }
 
-    /// Set the formatter identifier.
-    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
-        self.state = self.state.with_formatter(formatter_id);
-        self
+    #[cfg(feature = "python")]
+    fn apply_formatter(&mut self, formatter_id: FormatterId) {
+        self.state.set_formatter(formatter_id);
     }
 
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.state = self.state.with_overflow_policy(policy);
+        self.state.set_overflow_policy(policy);
         self
     }
 }
@@ -87,7 +87,7 @@ impl FileHandlerBuilder {
     }
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.state.set_capacity(capacity);
+        slf.apply_capacity(capacity);
         slf
     }
 
@@ -96,7 +96,7 @@ impl FileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         interval: usize,
     ) -> PyRefMut<'py, Self> {
-        slf.state.set_flush_record_interval(interval);
+        slf.apply_flush_record_interval(interval);
         slf
     }
 
@@ -105,7 +105,7 @@ impl FileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.state.set_formatter(formatter_id);
+        slf.apply_formatter(FormatterId::from(formatter_id));
         slf
     }
 

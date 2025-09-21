@@ -11,6 +11,8 @@ use std::{num::NonZeroUsize, time::Duration};
 use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
+
+use crate::handlers::builder_macros::{builder_method_rust, stream_builder_methods};
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
@@ -56,23 +58,22 @@ impl StreamHandlerBuilder {
         }
     }
 
-    /// Set the bounded channel capacity.
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
+    stream_builder_methods!(builder_method_rust);
+
+    #[cfg(feature = "python")]
+    fn apply_capacity(&mut self, capacity: usize) {
         self.common.capacity = NonZeroUsize::new(capacity);
         self.common.capacity_set = true;
-        self
     }
 
-    /// Set the flush timeout in milliseconds. Must be greater than zero.
-    pub fn with_flush_timeout_ms(mut self, timeout_ms: u64) -> Self {
+    #[cfg(feature = "python")]
+    fn apply_flush_timeout_ms(&mut self, timeout_ms: u64) {
         self.common.flush_timeout_ms = Some(timeout_ms);
-        self
     }
 
-    /// Set the formatter identifier.
-    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
-        self.common.formatter_id = Some(formatter_id.into());
-        self
+    #[cfg(feature = "python")]
+    fn apply_formatter(&mut self, formatter_id: FormatterId) {
+        self.common.formatter_id = Some(formatter_id);
     }
 
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
@@ -126,8 +127,7 @@ impl StreamHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.common.capacity = NonZeroUsize::new(capacity);
-        slf.common.capacity_set = true;
+        slf.apply_capacity(capacity);
         slf
     }
 
@@ -136,7 +136,7 @@ impl StreamHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
     ) -> PyRefMut<'py, Self> {
-        slf.common.flush_timeout_ms = Some(timeout_ms);
+        slf.apply_flush_timeout_ms(timeout_ms);
         slf
     }
 
@@ -145,7 +145,7 @@ impl StreamHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         formatter_id: String,
     ) -> PyRefMut<'py, Self> {
-        slf.common.formatter_id = Some(formatter_id.into());
+        slf.apply_formatter(FormatterId::from(formatter_id));
         slf
     }
 
