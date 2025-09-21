@@ -16,7 +16,6 @@ use crate::formatter::DefaultFormatter;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
-
 /// Builder for constructing [`FemtoFileHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
