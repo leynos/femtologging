@@ -64,16 +64,29 @@ def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("max_bytes", "backup_count"),
-    [(1024, 0), (512, 0), (0, 3), (0, 1)],
+    ("max_bytes", "backup_count", "should_error"),
+    [
+        (1024, 0, True),
+        (512, 0, True),
+        (0, 3, True),
+        (0, 1, True),
+        (0, 0, False),
+    ],
 )
-def test_rotating_handler_rejects_partial_thresholds(
-    log_path: pathlib.Path, max_bytes: int, backup_count: int
+def test_rotating_handler_threshold_validation(
+    log_path: pathlib.Path, max_bytes: int, backup_count: int, should_error: bool
 ) -> None:
-    """Partial rotation thresholds should raise a clear error."""
+    """Rotation thresholds must be paired or omitted entirely."""
 
-    with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
-        FemtoRotatingFileHandler(
+    if should_error:
+        with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
+            FemtoRotatingFileHandler(
+                str(log_path),
+                options=HandlerOptions(max_bytes=max_bytes, backup_count=backup_count),
+            )
+    else:
+        with rotating_handler(
             str(log_path),
             options=HandlerOptions(max_bytes=max_bytes, backup_count=backup_count),
-        )
+        ):
+            pass

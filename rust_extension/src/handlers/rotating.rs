@@ -135,11 +135,13 @@ impl HandlerOptions {
         max_bytes: u64,
         backup_count: usize,
     ) -> PyResult<Self> {
-        if flush_interval == -1 {
-            file::validate_params(capacity, 1)?;
+        let flush_interval = if flush_interval == -1 {
+            file::validate_params(capacity, 1)?
         } else {
-            file::validate_params(capacity, flush_interval)?;
-        }
+            file::validate_params(capacity, flush_interval)?
+        };
+        let flush_interval = isize::try_from(flush_interval)
+            .expect("validated flush_interval must fit within isize bounds");
         if (max_bytes == 0) != (backup_count == 0) {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 ROTATION_VALIDATION_MSG,
@@ -160,7 +162,7 @@ impl Default for HandlerOptions {
     fn default() -> Self {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
-            flush_interval: -1,
+            flush_interval: 1,
             policy: "drop".to_string(),
             max_bytes: 0,
             backup_count: 0,
@@ -255,7 +257,6 @@ impl FemtoRotatingFileHandler {
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
     fn py_new(path: String, options: Option<HandlerOptions>) -> PyResult<Self> {
-        let provided_options = options.is_some();
         let opts = options.unwrap_or_else(HandlerOptions::default);
         let HandlerOptions {
             capacity,
@@ -270,10 +271,9 @@ impl FemtoRotatingFileHandler {
             ));
         }
         let overflow_policy = file::parse_overflow_policy(&policy)?;
-        let flush_interval = if provided_options || flush_interval > 0 {
-            file::validate_params(capacity, flush_interval)?
-        } else {
-            file::validate_params(capacity, 1)?
+        let flush_interval = match flush_interval {
+            -1 => file::validate_params(capacity, 1)?,
+            value => file::validate_params(capacity, value)?,
         };
         let handler_cfg = HandlerConfig {
             capacity,

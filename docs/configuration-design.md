@@ -371,15 +371,15 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 The initial implementation provides `FileHandlerBuilder`,
 `RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
-the existing handler types. `FileHandlerBuilder` supports capacity, flush
-interval, and overflow policy, while `RotatingFileHandlerBuilder` layers on
-`max_bytes` and `backup_count` rotation thresholds. Rotation is opt-in: both
-limits must be provided with positive values, otherwise the builder raises a
-configuration error so invalid rollover settings fail fast. When thresholds are
-omitted the handler stores `(0, 0)`, disabling rotation entirely. Explicit zero
-values are rejected so misconfigured rollovers fail loudly rather than silently
-logging without retention. `StreamHandlerBuilder` configures the stream target
-and capacity. All builders expose `build()` methods returning ready‑to‑use
+the existing handler types. `FileHandlerBuilder` supports capacity and flush
+interval, while `RotatingFileHandlerBuilder` layers on `max_bytes` and
+`backup_count` rotation thresholds. Rotation is opt-in: both limits must be
+provided with positive values, otherwise the builder raises a configuration
+error so invalid rollover settings fail fast. When thresholds are omitted the
+handler stores `(0, 0)`, disabling rotation entirely. Explicit zero values are
+rejected so misconfigured rollovers fail loudly rather than silently logging
+without retention. `StreamHandlerBuilder` configures the stream target and
+capacity. All builders expose `build()` methods returning ready‑to‑use
 handlers. Advanced options such as file encoding or custom writers are deferred
 until the corresponding handler features are ported from picologging. The Rust
 implementation stores the configured thresholds on `FemtoRotatingFileHandler`
@@ -390,10 +390,20 @@ ensuring validation stays consistent.
 
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
 optional `HandlerOptions` object bundling queue capacity, flush interval,
-overflow policy, and rotation thresholds. The parameter object mirrors the
-builder defaults so direct handler construction stays aligned with
-builder-powered configuration while still allowing rotation to be configured in
-a single argument.
+overflow policy, and rotation thresholds. The options expose:
+
+- `capacity` (default `DEFAULT_CHANNEL_CAPACITY`) and `flush_interval` (default
+  `1`), validated by `file::validate_params`. Passing `flush_interval=-1`
+  normalises to the default interval so callers can opt into implicit values.
+- `policy` (default `"drop"`) forwarded to `file::parse_overflow_policy`,
+  preserving the same accepted values as the plain file handler.
+- `max_bytes` and `backup_count`, each defaulting to `0`. Both must be supplied
+  with positive values to enable rotation; otherwise the handler stores
+  `(0, 0)` to disable rollover explicitly.
+
+These defaults mirror the builder behaviour so direct handler construction
+stays aligned with builder-powered configuration while still allowing rotation
+to be configured in a single argument.
 
 ### 1.4. Class diagram
 
@@ -417,7 +427,7 @@ classDiagram
         +with_datefmt(datefmt: str)
     }
     class FileHandlerBuilder {
-        +__init__(*args, **kwargs)
+        +__init__(path: str)
         +with_formatter(fmt: str)
     }
     class RotatingFileHandlerBuilder {
@@ -427,7 +437,8 @@ classDiagram
         +with_backup_count(count: int)
     }
     class StreamHandlerBuilder {
-        +__init__(*args, **kwargs)
+        +stdout()
+        +stderr()
         +with_formatter(fmt: str)
     }
     class FilterBuilder {
