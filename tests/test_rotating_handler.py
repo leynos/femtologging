@@ -1,6 +1,10 @@
+"""Tests for FemtoRotatingFileHandler Python bindings and rotation thresholds."""
+
+from __future__ import annotations
+
 import pathlib
 import re
-import typing as t
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
@@ -20,10 +24,14 @@ def fixture_log_path(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 @contextmanager
-def rotating_handler(*args, **kwargs) -> t.Iterator[FemtoRotatingFileHandler]:
+def rotating_handler(
+    path: str,
+    *,
+    options: HandlerOptions | None = None,
+) -> Iterator[FemtoRotatingFileHandler]:
     """Context manager for rotating handler lifecycle."""
 
-    handler = FemtoRotatingFileHandler(*args, **kwargs)
+    handler = FemtoRotatingFileHandler(path, options=options)
     try:
         yield handler
     finally:
@@ -51,6 +59,8 @@ def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
     with rotating_handler(str(log_path), options=options) as handler:
         assert handler.max_bytes == 1024, "max_bytes setter must persist"
         assert handler.backup_count == 3, "backup_count setter must persist"
+        handler.handle("rotating", "INFO", "probe message")
+        assert isinstance(handler.flush(), bool), "flush must return a boolean"
 
 
 @pytest.mark.parametrize(
