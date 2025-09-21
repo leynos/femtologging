@@ -104,7 +104,7 @@ def _coerce_args(args: object, ctx: str) -> list[object]:
     _validate_no_bytes(args, f"{ctx} args")
     if not isinstance(args, Sequence):
         raise ValueError(f"{ctx} args must be a sequence")
-    return list(cast(Sequence[object], args))
+    return list(args)
 
 
 def _coerce_kwargs(kwargs: object, ctx: str) -> dict[str, object]:
