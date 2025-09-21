@@ -388,12 +388,17 @@ API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
 logic in one place for both file-based builders, reducing duplication and
 ensuring validation stays consistent.
 
+#### Overflow policy options
+
 Both file-derived builders expose a `with_overflow_policy` fluent that applies
 back-pressure rules to the worker queue. The policy defaults to `"drop"` but
 also accepts `"block"` (callers enqueue until space is available) and
 `"timeout:N"`, where `N` is a positive integer specifying milliseconds to wait
 before giving up. Supplying a bare `"timeout"` raises a configuration error to
-help users discover the `timeout:N` syntax.
+help users discover the `timeout:N` syntax. The same semantics apply when
+constructing handlers directly: the policy string is forwarded to
+`file::parse_overflow_policy`, so validation rules are consistent regardless of
+the entry point.
 
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
 optional `HandlerOptions` object bundling queue capacity, flush interval,
@@ -404,9 +409,11 @@ overflow policy, and rotation thresholds. The options expose:
 - `flush_interval`, defaulting to `1`. Positive values are validated by
   `file::validate_params`; passing `-1` normalises to the default interval so
   callers can opt into implicit behaviour without repeating the constant.
-- `policy`, defaulting to `"drop"`. The value is forwarded to
-  `file::parse_overflow_policy`, so only `"drop"`, `"block"`, or `"timeout:N"`
-  with positive integer `N` are accepted.
+- `policy`, defaulting to `"drop"`. The field uses the overflow policy options
+  described above and is forwarded to `file::parse_overflow_policy`, so only
+  `"drop"`, `"block"`, or `"timeout:N"` with positive integer `N` are accepted.
+  Passing `"timeout"` without the timeout component triggers the same
+  validation error as the builder fluent.
 - `rotation`, defaulting to ``None``. Provide a `(max_bytes, backup_count)`
   tuple with positive values to enable rotation; passing `None` or `(0, 0)`
   disables rollover while keeping the attributes set to zero.
