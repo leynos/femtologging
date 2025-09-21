@@ -391,14 +391,15 @@ ensuring validation stays consistent.
 #### Overflow policy options
 
 Both file-derived builders expose a `with_overflow_policy` fluent that applies
-back-pressure rules to the worker queue. The policy defaults to `"drop"` but
-also accepts `"block"` (callers enqueue until space is available) and
-`"timeout:N"`, where `N` is a positive integer specifying milliseconds to wait
-before giving up. Supplying a bare `"timeout"` raises a configuration error to
-help users discover the `timeout:N` syntax. The same semantics apply when
-constructing handlers directly: the policy string is forwarded to
-`file::parse_overflow_policy`, so validation rules are consistent regardless of
-the entry point.
+back-pressure rules to the worker queue. Passing `"drop"` or `"block"` requires
+no additional arguments and configures the corresponding `OverflowPolicy`.
+Supplying `"timeout"` demands a `timeout_ms` keyword argument; the builder
+ensures the supplied integer is positive before enabling the bounded wait. The
+fluent stores the resolved `OverflowPolicy`, keeping subsequent calls and the
+Rust build pipeline aligned. Direct construction uses `HandlerOptions.policy`,
+which accepts the string forms parsed by `file::parse_overflow_policy`:
+`"drop"`, `"block"`, or `"timeout:N"` with a positive integer suffix. A bare
+`"timeout"` still raises the targeted guidance error emitted by the parser.
 
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
 optional `HandlerOptions` instance bundling queue capacity, flush interval,
@@ -413,9 +414,9 @@ fluents so direct construction honours the same validation rules:
   interval to preserve the "flush on every record" behaviour without repeating
   the constant.
 - `policy` defaults to `"drop"`. The field accepts exactly `"drop"`,
-  `"block"`, or `"timeout:N"` (with positive integer `N`), and forwards to
-  `file::parse_overflow_policy`. Supplying a bare `"timeout"` raises the same
-  error as the builders' `with_overflow_policy` fluent.
+  `"block"`, or `"timeout:N"` (with positive integer `N`). The string feeds
+  `file::parse_overflow_policy`, so providing `"timeout"` without a suffix
+  still surfaces the explicit guidance about the required numeric value.
 - `rotation` is an optional `(max_bytes, backup_count)` tuple. When provided,
   both values must be positive or construction fails with
   `ROTATION_VALIDATION_MSG`. Omitting it or passing `(0, 0)` disables rotation,
