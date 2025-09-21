@@ -388,18 +388,28 @@ API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
 logic in one place for both file-based builders, reducing duplication and
 ensuring validation stays consistent.
 
+Both file-derived builders expose a `with_overflow_policy` fluent that applies
+back-pressure rules to the worker queue. The policy defaults to `"drop"` but
+also accepts `"block"` (callers enqueue until space is available) and
+`"timeout:N"`, where `N` is a positive integer specifying milliseconds to wait
+before giving up. Supplying a bare `"timeout"` raises a configuration error to
+help users discover the `timeout:N` syntax.
+
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
 optional `HandlerOptions` object bundling queue capacity, flush interval,
 overflow policy, and rotation thresholds. The options expose:
 
-- `capacity` (default `DEFAULT_CHANNEL_CAPACITY`) and `flush_interval` (default
-  `1`), validated by `file::validate_params`. Passing `flush_interval=-1`
-  normalises to the default interval so callers can opt into implicit values.
-- `policy` (default `"drop"`) forwarded to `file::parse_overflow_policy`,
-  preserving the same accepted values as the plain file handler.
-- `max_bytes` and `backup_count`, each defaulting to `0`. Both must be supplied
-  with positive values to enable rotation; otherwise the handler stores
-  `(0, 0)` to disable rollover explicitly.
+- `capacity`, defaulting to `DEFAULT_CHANNEL_CAPACITY` and required to be
+  greater than zero.
+- `flush_interval`, defaulting to `1`. Positive values are validated by
+  `file::validate_params`; passing `-1` normalises to the default interval so
+  callers can opt into implicit behaviour without repeating the constant.
+- `policy`, defaulting to `"drop"`. The value is forwarded to
+  `file::parse_overflow_policy`, so only `"drop"`, `"block"`, or `"timeout:N"`
+  with positive integer `N` are accepted.
+- `max_bytes` and `backup_count`, both defaulting to `0`. Positive values must
+  be supplied together to enable rotation; if either is zero the handler stores
+  `(0, 0)` and rotation remains disabled.
 
 These defaults mirror the builder behaviour so direct handler construction
 stays aligned with builder-powered configuration while still allowing rotation

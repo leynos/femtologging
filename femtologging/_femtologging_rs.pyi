@@ -1,4 +1,4 @@
-from typing import Any as _Any, Literal, Self, Union, overload
+from typing import Any as _Any, Final, Literal, Self, Union, overload
 
 FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
@@ -25,7 +25,7 @@ class HandlerOptions:
         backup_count: int = ...,
     ) -> None: ...
 
-ROTATION_VALIDATION_MSG: str
+ROTATION_VALIDATION_MSG: Final[str]
 StreamHandlerBuilder: _Any
 FileHandlerBuilder: _Any
 
