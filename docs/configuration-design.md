@@ -401,28 +401,32 @@ constructing handlers directly: the policy string is forwarded to
 the entry point.
 
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
-optional `HandlerOptions` object bundling queue capacity, flush interval,
-overflow policy, and rotation thresholds. The options expose:
+optional `HandlerOptions` instance bundling queue capacity, flush interval,
+overflow policy, and rotation thresholds. The constructor mirrors the builder
+fluents so direct construction honours the same validation rules:
 
-- `capacity`, defaulting to `DEFAULT_CHANNEL_CAPACITY` and required to be
-  greater than zero.
-- `flush_interval`, defaulting to `1`. Positive values are validated by
-  `file::validate_params`; passing `-1` normalises to the default interval so
-  callers can opt into implicit behaviour without repeating the constant.
-- `policy`, defaulting to `"drop"`. The field uses the overflow policy options
-  described above and is forwarded to `file::parse_overflow_policy`, so only
-  `"drop"`, `"block"`, or `"timeout:N"` with positive integer `N` are accepted.
-  Passing `"timeout"` without the timeout component triggers the same
-  validation error as the builder fluent.
-- `rotation`, defaulting to ``None``. Provide a `(max_bytes, backup_count)`
-  tuple with positive values to enable rotation; passing `None` or `(0, 0)`
-  disables rollover while keeping the attributes set to zero.
-- `max_bytes` and `backup_count`, exposed as writable attributes that mirror the
-  rotation tuple so direct adjustments stay possible.
+- `capacity` defaults to `DEFAULT_CHANNEL_CAPACITY` and must be greater than
+  zero. It feeds `with_capacity` on the file builders and the underlying queue
+  limits on the Rust side.
+- `flush_interval` defaults to `1`. Positive values are validated by
+  `file::validate_params`, while passing `-1` normalises to the default
+  interval to preserve the "flush on every record" behaviour without repeating
+  the constant.
+- `policy` defaults to `"drop"`. The field accepts exactly `"drop"`,
+  `"block"`, or `"timeout:N"` (with positive integer `N`), and forwards to
+  `file::parse_overflow_policy`. Supplying a bare `"timeout"` raises the same
+  error as the builders' `with_overflow_policy` fluent.
+- `rotation` is an optional `(max_bytes, backup_count)` tuple. When provided,
+  both values must be positive or construction fails with
+  `ROTATION_VALIDATION_MSG`. Omitting it or passing `(0, 0)` disables rotation,
+  matching the builder defaults.
+- `max_bytes` and `backup_count` are writable attributes storing the validated
+  thresholds. They default to zero so rotation stays disabled until explicitly
+  configured and track any updates performed after instantiation.
 
-These defaults mirror the builder behaviour so direct handler construction
-stays aligned with builder-powered configuration while still allowing rotation
-to be configured in a single argument.
+The options object therefore aligns the handler constructor with the builder
+surface whilst still allowing rotation to be configured in a single argument or
+adjusted after creation when tests need to manipulate individual thresholds.
 
 ### 1.4. Class diagram
 
