@@ -12,7 +12,7 @@ FemtoFileHandler: _Any
 class HandlerOptions:
     capacity: int
     flush_interval: int
-    policy: str
+    policy: Literal["drop", "block", "timeout"]
     max_bytes: int
     backup_count: int
 
@@ -20,7 +20,7 @@ class HandlerOptions:
         self,
         capacity: int = ...,
         flush_interval: int = ...,
-        policy: str = ...,
+        policy: Literal["drop", "block", "timeout"] = ...,
         rotation: tuple[int, int] | None = ...,
     ) -> None: ...
 
