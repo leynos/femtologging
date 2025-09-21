@@ -44,6 +44,7 @@ HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 FileHandlerBuilder = rust.FileHandlerBuilder
+RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
 LoggerConfigBuilder = rust.LoggerConfigBuilder
 FormatterBuilder = rust.FormatterBuilder
@@ -56,6 +57,10 @@ _HANDLER_CLASS_MAP: Final[dict[str, object]] = {
     "femtologging.StreamHandler": StreamHandlerBuilder,
     "logging.FileHandler": FileHandlerBuilder,
     "femtologging.FileHandler": FileHandlerBuilder,
+    "logging.handlers.RotatingFileHandler": RotatingFileHandlerBuilder,
+    "logging.RotatingFileHandler": RotatingFileHandlerBuilder,
+    "femtologging.RotatingFileHandler": RotatingFileHandlerBuilder,
+    "femtologging.FemtoRotatingFileHandler": RotatingFileHandlerBuilder,
 }
 
 
@@ -99,7 +104,7 @@ def _coerce_args(args: object, ctx: str) -> list[object]:
     _validate_no_bytes(args, f"{ctx} args")
     if not isinstance(args, Sequence):
         raise ValueError(f"{ctx} args must be a sequence")
-    return list(cast(Sequence[object], args))
+    return list(args)
 
 
 def _coerce_kwargs(kwargs: object, ctx: str) -> dict[str, object]:
@@ -405,6 +410,7 @@ __all__ = [
     "FormatterBuilder",
     "StreamHandlerBuilder",
     "FileHandlerBuilder",
+    "RotatingFileHandlerBuilder",
     "LevelFilterBuilder",
     "NameFilterBuilder",
     "dictConfig",

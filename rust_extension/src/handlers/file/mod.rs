@@ -71,19 +71,6 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
-    use pyo3::exceptions::PyValueError;
-    if capacity == 0 {
-        return Err(PyValueError::new_err("capacity must be greater than zero"));
-    }
-    if flush_interval <= 0 {
-        return Err(PyValueError::new_err(
-            "flush_interval must be greater than zero",
-        ));
-    }
-    Ok(flush_interval as usize)
-}
-
 fn open_log_file(path: &str) -> PyResult<File> {
     use pyo3::exceptions::PyIOError;
     #[expect(
@@ -96,6 +83,19 @@ fn open_log_file(path: &str) -> PyResult<File> {
         .append(true)
         .open(path)
         .map_err(|e| PyIOError::new_err(format!("{path}: {e}")))
+}
+
+pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
+    use pyo3::exceptions::PyValueError;
+    if capacity == 0 {
+        return Err(PyValueError::new_err("capacity must be greater than zero"));
+    }
+    if flush_interval <= 0 {
+        return Err(PyValueError::new_err(
+            "flush_interval must be greater than zero",
+        ));
+    }
+    Ok(flush_interval as usize)
 }
 
 #[pymethods]

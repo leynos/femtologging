@@ -315,7 +315,15 @@ class ConfigBuilder:
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
     def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
-    def with_handler(self, id: str, builder: "HandlerBuilder") -> "ConfigBuilder": ... # Union of specific handler builders
+    def with_handler(
+        self,
+        id: str,
+        builder: Union[
+            "FileHandlerBuilder",
+            "RotatingFileHandlerBuilder",
+            "StreamHandlerBuilder",
+        ],
+    ) -> "ConfigBuilder": ...
     def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
     def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
     def build_and_init(self) -> None: ...
@@ -361,18 +369,70 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 ### 1.3. Implemented handler builders
 
-The initial implementation provides `FileHandlerBuilder` and
-`StreamHandlerBuilder` as thin wrappers over the existing handler types.
-`FileHandlerBuilder` supports capacity, flush interval, and overflow policy,
-while `StreamHandlerBuilder` configures the stream target and capacity. Both
-builders expose `build()` methods returning ready‑to‑use handlers. Advanced
-options such as file encoding or custom writers are deferred until the
-corresponding handler features are ported from picologging.
+The initial implementation provides `FileHandlerBuilder`,
+`RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
+the existing handler types. `FileHandlerBuilder` supports capacity and flush
+interval, while `RotatingFileHandlerBuilder` layers on `max_bytes` and
+`backup_count` rotation thresholds. Rotation is opt-in: both limits must be
+provided with positive values, otherwise the builder raises a configuration
+error so invalid rollover settings fail fast. When thresholds are omitted the
+handler stores `(0, 0)`, disabling rotation entirely. Explicit zero values are
+rejected so misconfigured rollovers fail loudly rather than silently logging
+without retention. `StreamHandlerBuilder` configures the stream target and
+capacity. All builders expose `build()` methods returning ready‑to‑use
+handlers. Advanced options such as file encoding or custom writers are deferred
+until the corresponding handler features are ported from picologging. The Rust
+implementation stores the configured thresholds on `FemtoRotatingFileHandler`
+so later work can wire in the rotation algorithm without changing the builder
+API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
+logic in one place for both file-based builders, reducing duplication and
+ensuring validation stays consistent.
+
+#### Overflow policy options
+
+Both file-derived builders expose a `with_overflow_policy` fluent that applies
+back-pressure rules to the worker queue. Passing `"drop"` or `"block"` requires
+no additional arguments and configures the corresponding `OverflowPolicy`.
+Supplying `"timeout"` demands a `timeout_ms` keyword argument; the builder
+ensures the supplied integer is positive before enabling the bounded wait. The
+fluent stores the resolved `OverflowPolicy`, keeping subsequent calls and the
+Rust build pipeline aligned. Direct construction uses `HandlerOptions.policy`,
+which accepts the string forms parsed by `file::parse_overflow_policy`:
+`"drop"`, `"block"`, or `"timeout:N"` with a positive integer suffix. A bare
+`"timeout"` still raises the targeted guidance error emitted by the parser.
+
+To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
+optional `HandlerOptions` instance bundling queue capacity, flush interval,
+overflow policy, and rotation thresholds. The constructor mirrors the builder
+fluents so direct construction honours the same validation rules:
+
+- `capacity` defaults to `DEFAULT_CHANNEL_CAPACITY` and must be greater than
+  zero. It feeds `with_capacity` on the file builders and the underlying queue
+  limits on the Rust side.
+- `flush_interval` defaults to `1`. Positive values are validated by
+  `file::validate_params`, while passing `-1` normalises to the default
+  interval to preserve the "flush on every record" behaviour without repeating
+  the constant.
+- `policy` defaults to `"drop"`. The field accepts exactly `"drop"`,
+  `"block"`, or `"timeout:N"` (with positive integer `N`). The string feeds
+  `file::parse_overflow_policy`, so providing `"timeout"` without a suffix
+  still surfaces the explicit guidance about the required numeric value.
+- `rotation` is an optional `(max_bytes, backup_count)` tuple. When provided,
+  both values must be positive or construction fails with
+  `ROTATION_VALIDATION_MSG`. Omitting it or passing `(0, 0)` disables rotation,
+  matching the builder defaults.
+- `max_bytes` and `backup_count` are writable attributes storing the validated
+  thresholds. They default to zero so rotation stays disabled until explicitly
+  configured and track any updates performed after instantiation.
+
+The options object therefore aligns the handler constructor with the builder
+surface whilst still allowing rotation to be configured in a single argument or
+adjusted after creation when tests need to manipulate individual thresholds.
 
 ### 1.4. Class diagram
 
 The relationships among the builder types and the `dictConfig` helper are
-summarized below:
+summarised below:
 
 ```mermaid
 classDiagram
@@ -381,7 +441,7 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|StreamHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|StreamHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -391,11 +451,18 @@ classDiagram
         +with_datefmt(datefmt: str)
     }
     class FileHandlerBuilder {
-        +__init__(*args, **kwargs)
+        +__init__(path: str)
         +with_formatter(fmt: str)
     }
+    class RotatingFileHandlerBuilder {
+        +__init__(path: str)
+        +with_formatter(fmt: str)
+        +with_max_bytes(max_bytes: int)
+        +with_backup_count(count: int)
+    }
     class StreamHandlerBuilder {
-        +__init__(*args, **kwargs)
+        +stdout()
+        +stderr()
         +with_formatter(fmt: str)
     }
     class FilterBuilder {
@@ -416,7 +483,7 @@ classDiagram
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
-    FileHandlerBuilder <|-- StreamHandlerBuilder
+    FileHandlerBuilder <|-- RotatingFileHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
@@ -558,12 +625,16 @@ components in a fixed order to honour dependencies:
    - ``"logging.StreamHandler"`` and ``"femtologging.StreamHandler"``
      → ``StreamHandlerBuilder``
    - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
-     → ``FileHandlerBuilder`` Unsupported handler classes raise ``ValueError``.
-     ``args`` and ``kwargs`` may be provided either as native structures or as
-     strings, which are safely evaluated with ``ast.literal_eval``. For stream
-     handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted
-     targets. Handler ``level`` and ``filters`` settings are currently
-     unsupported and produce ``ValueError``.
+     → ``FileHandlerBuilder``
+   - ``"logging.handlers.RotatingFileHandler"``,
+     ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
+     and ``"femtologging.FemtoRotatingFileHandler"`` →
+     ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
+     ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
+     structures or as strings, which are safely evaluated with
+     ``ast.literal_eval``. For stream handlers, ``ext://sys.stdout`` and
+     ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
+     ``filters`` settings are currently unsupported and produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
    ``propagate`` settings. Logger ``filters`` are not yet supported and trigger

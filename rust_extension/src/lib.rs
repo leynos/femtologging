@@ -41,11 +41,13 @@ pub use filters::{
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
 pub use handler::{FemtoHandler, FemtoHandlerTrait};
+#[cfg(feature = "python")]
+pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.
 pub use handlers::{
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
-    FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
-    StreamHandlerBuilder,
+    FemtoRotatingFileHandler, FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError,
+    HandlerIOError, RotatingFileHandlerBuilder, StreamHandlerBuilder,
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
@@ -87,6 +89,10 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             py.get_type::<StreamHandlerBuilder>(),
         ),
         ("FileHandlerBuilder", py.get_type::<FileHandlerBuilder>()),
+        (
+            "RotatingFileHandlerBuilder",
+            py.get_type::<RotatingFileHandlerBuilder>(),
+        ),
         ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
         ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
         ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
@@ -105,6 +111,15 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<FemtoRotatingFileHandler>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<HandlerOptions>()?;
+    #[cfg(feature = "python")]
+    m.add(
+        "ROTATION_VALIDATION_MSG",
+        handlers::rotating::ROTATION_VALIDATION_MSG,
+    )?;
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),
@@ -126,6 +141,7 @@ mod tests {
     //! Ensure Python-only bindings register expected types.
 
     use super::*;
+    use crate::handlers::rotating::ROTATION_VALIDATION_MSG;
     use pyo3::{
         types::{PyModule, PyType},
         Python,
@@ -141,6 +157,7 @@ mod tests {
             for name in [
                 "StreamHandlerBuilder",
                 "FileHandlerBuilder",
+                "RotatingFileHandlerBuilder",
                 "LevelFilterBuilder",
                 "NameFilterBuilder",
                 "FilterBuildError",
@@ -152,6 +169,21 @@ mod tests {
                 let attr = module.getattr(name).unwrap();
                 attr.downcast::<PyType>().unwrap();
             }
+        });
+    }
+
+    #[test]
+    fn module_registers_rotating_classes() {
+        Python::with_gil(|py| {
+            let module = PyModule::new(py, "_femtologging_rs").unwrap().bind(py);
+            super::_femtologging_rs(&module).unwrap();
+            for name in ["FemtoRotatingFileHandler", "HandlerOptions"] {
+                let attr = module.getattr(name).unwrap();
+                attr.downcast::<PyType>().unwrap();
+            }
+            let message = module.getattr("ROTATION_VALIDATION_MSG").unwrap();
+            let value: &str = message.extract().unwrap();
+            assert_eq!(value, ROTATION_VALIDATION_MSG);
         });
     }
 }

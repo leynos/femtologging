@@ -9,6 +9,7 @@ name = "_femtologging_rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+delegate = "0.13.4"
 pyo3 = { version = "0.25.1", default-features = false, features = ["macros", "auto-initialize"] }
 crossbeam-channel = "0.5.15"
 log = "0.4"

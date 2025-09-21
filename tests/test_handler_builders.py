@@ -6,17 +6,30 @@ and build-time failures.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
 from syrupy import SnapshotAssertion
 
+import femtologging.config as config_module
 from femtologging import (
     FileHandlerBuilder,
+    RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
     HandlerConfigError,
 )
+
+type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
+
+
+def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
+    if isinstance(builder, RotatingFileHandlerBuilder):
+        return builder
+    pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+
 
 scenarios("features/handler_builders.feature")
 
@@ -25,6 +38,31 @@ scenarios("features/handler_builders.feature")
 def given_file_builder(tmp_path) -> FileHandlerBuilder:
     path = tmp_path / "test.log"
     return FileHandlerBuilder(str(path))
+
+
+@given(
+    'a RotatingFileHandlerBuilder for path "test.log"', target_fixture="file_builder"
+)
+def given_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
+    path = tmp_path / "test.log"
+    return RotatingFileHandlerBuilder(str(path))
+
+
+@given(
+    'a dictConfig RotatingFileHandlerBuilder for path "test.log"',
+    target_fixture="file_builder",
+)
+def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
+    path = tmp_path / "test.log"
+    builder = config_module._build_handler_from_dict(
+        "h",
+        {
+            "class": "logging.handlers.RotatingFileHandler",
+            "args": [str(path)],
+        },
+    )
+    assert isinstance(builder, RotatingFileHandlerBuilder)
+    return cast(RotatingFileHandlerBuilder, builder)
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
@@ -38,9 +76,7 @@ def given_stream_stderr() -> StreamHandlerBuilder:
 
 
 @when(parsers.parse("I set file capacity {capacity:d}"))
-def when_set_file_capacity(
-    file_builder: FileHandlerBuilder, capacity: int
-) -> FileHandlerBuilder:
+def when_set_file_capacity(file_builder: FileBuilder, capacity: int) -> FileBuilder:
     return file_builder.with_capacity(capacity)
 
 
@@ -60,23 +96,35 @@ def when_set_stream_flush_timeout(
 
 @when(parsers.parse("I set flush record interval {interval:d}"))
 def when_set_flush_record_interval(
-    file_builder: FileHandlerBuilder, interval: int
-) -> FileHandlerBuilder:
+    file_builder: FileBuilder, interval: int
+) -> FileBuilder:
     return file_builder.with_flush_record_interval(interval)
 
 
 @when("I set overflow policy to timeout with 500ms")
 def when_set_overflow_policy_timeout(
-    file_builder: FileHandlerBuilder,
-) -> FileHandlerBuilder:
+    file_builder: FileBuilder,
+) -> FileBuilder:
     return file_builder.with_overflow_policy("timeout", timeout_ms=500)
 
 
 @when(parsers.parse('I set file formatter "{formatter_id}"'))
 def when_set_file_formatter(
-    file_builder: FileHandlerBuilder, formatter_id: str
-) -> FileHandlerBuilder:
+    file_builder: FileBuilder, formatter_id: str
+) -> FileBuilder:
     return file_builder.with_formatter(formatter_id)
+
+
+@when(parsers.parse("I set max bytes {max_bytes:d}"))
+def when_set_max_bytes(file_builder: FileBuilder, max_bytes: int) -> FileBuilder:
+    rotating = _require_rotating_builder(file_builder)
+    return rotating.with_max_bytes(max_bytes)
+
+
+@when(parsers.parse("I set backup count {backup_count:d}"))
+def when_set_backup_count(file_builder: FileBuilder, backup_count: int) -> FileBuilder:
+    rotating = _require_rotating_builder(file_builder)
+    return rotating.with_backup_count(backup_count)
 
 
 @when(parsers.parse('I set stream formatter "{formatter_id}"'))
@@ -97,6 +145,18 @@ def then_file_builder_snapshot(
     handler.close()
 
 
+@then("the rotating file handler builder matches snapshot")
+def then_rotating_file_builder_snapshot(
+    file_builder: FileBuilder, snapshot: SnapshotAssertion
+) -> None:
+    rotating = _require_rotating_builder(file_builder)
+    data = rotating.as_dict()
+    data["path"] = Path(data["path"]).name
+    assert data == snapshot, "rotating file builder dict must match snapshot"
+    handler = rotating.build()
+    handler.close()
+
+
 @then("the file handler builder with timeout overflow matches snapshot")
 def then_file_builder_timeout_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
@@ -114,6 +174,20 @@ def then_file_builder_timeout_snapshot(
 def then_file_builder_fails(file_builder: FileHandlerBuilder) -> None:
     with pytest.raises(HandlerConfigError):
         file_builder.build()
+
+
+@then(parsers.parse('building the rotating file handler fails with "{message}"'))
+def then_rotating_file_builder_fails(file_builder: FileBuilder, message: str) -> None:
+    rotating = _require_rotating_builder(file_builder)
+    with pytest.raises(HandlerConfigError, match=re.escape(message)):
+        rotating.build()
+
+
+@then(parsers.parse('setting zero rotation thresholds fails with "{message}"'))
+def then_zero_rotation_thresholds_fail(file_builder: FileBuilder, message: str) -> None:
+    rotating = _require_rotating_builder(file_builder)
+    with pytest.raises(HandlerConfigError, match=re.escape(message)):
+        rotating.with_max_bytes(0).with_backup_count(0).build()
 
 
 @then("the stream handler builder matches snapshot")
