@@ -407,9 +407,11 @@ overflow policy, and rotation thresholds. The options expose:
 - `policy`, defaulting to `"drop"`. The value is forwarded to
   `file::parse_overflow_policy`, so only `"drop"`, `"block"`, or `"timeout:N"`
   with positive integer `N` are accepted.
-- `max_bytes` and `backup_count`, both defaulting to `0`. Positive values must
-  be supplied together to enable rotation; if either is zero the handler stores
-  `(0, 0)` and rotation remains disabled.
+- `rotation`, defaulting to ``None``. Provide a `(max_bytes, backup_count)`
+  tuple with positive values to enable rotation; passing `None` or `(0, 0)`
+  disables rollover while keeping the attributes set to zero.
+- `max_bytes` and `backup_count`, exposed as writable attributes that mirror the
+  rotation tuple so direct adjustments stay possible.
 
 These defaults mirror the builder behaviour so direct handler construction
 stays aligned with builder-powered configuration while still allowing rotation

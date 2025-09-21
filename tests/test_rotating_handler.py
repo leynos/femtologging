@@ -53,8 +53,7 @@ def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
         capacity=32,
         flush_interval=2,
         policy="block",
-        max_bytes=1024,
-        backup_count=3,
+        rotation=(1024, 3),
     )
     with rotating_handler(str(log_path), options=options) as handler:
         assert handler.max_bytes == 1024, "max_bytes setter must persist"
@@ -82,11 +81,11 @@ def test_rotating_handler_threshold_validation(
         with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
             FemtoRotatingFileHandler(
                 str(log_path),
-                options=HandlerOptions(max_bytes=max_bytes, backup_count=backup_count),
+                options=HandlerOptions(rotation=(max_bytes, backup_count)),
             )
     else:
         with rotating_handler(
             str(log_path),
-            options=HandlerOptions(max_bytes=max_bytes, backup_count=backup_count),
+            options=HandlerOptions(rotation=(max_bytes, backup_count)),
         ):
             pass

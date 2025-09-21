@@ -21,8 +21,7 @@ class HandlerOptions:
         capacity: int = ...,
         flush_interval: int = ...,
         policy: str = ...,
-        max_bytes: int = ...,
-        backup_count: int = ...,
+        rotation: tuple[int, int] | None = ...,
     ) -> None: ...
 
 ROTATION_VALIDATION_MSG: Final[str]

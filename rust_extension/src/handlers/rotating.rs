@@ -88,8 +88,7 @@ pub const ROTATION_VALIDATION_MSG: &str =
 ///     64,
 ///     2,
 ///     "drop".to_string(),
-///     1024,
-///     3,
+///     Some((1024, 3)),
 /// )
 /// .expect("valid options");
 /// assert_eq!(options.capacity, 64);
@@ -119,22 +118,21 @@ pub struct HandlerOptions {
 impl HandlerOptions {
     #[new]
     #[pyo3(
-        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', max_bytes=0, backup_count=0)"
+        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', rotation=None)"
     )]
     #[pyo3(signature = (
         capacity = DEFAULT_CHANNEL_CAPACITY,
         flush_interval = 1,
         policy = "drop".to_string(),
-        max_bytes = 0,
-        backup_count = 0,
+        rotation = None,
     ))]
     fn new(
         capacity: usize,
         flush_interval: isize,
         policy: String,
-        max_bytes: u64,
-        backup_count: usize,
+        rotation: Option<(u64, usize)>,
     ) -> PyResult<Self> {
+        let (max_bytes, backup_count) = rotation.unwrap_or((0, 0));
         let flush_interval = if flush_interval == -1 {
             file::validate_params(capacity, 1)?
         } else {
