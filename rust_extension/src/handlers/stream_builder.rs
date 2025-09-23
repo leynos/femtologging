@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
 
-use crate::handlers::builder_macros::{builder_method_rust, stream_builder_methods};
+use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
@@ -58,24 +58,6 @@ impl StreamHandlerBuilder {
         }
     }
 
-    stream_builder_methods!(builder_method_rust);
-
-    #[cfg(feature = "python")]
-    fn apply_capacity(&mut self, capacity: usize) {
-        self.common.capacity = NonZeroUsize::new(capacity);
-        self.common.capacity_set = true;
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_flush_timeout_ms(&mut self, timeout_ms: u64) {
-        self.common.flush_timeout_ms = Some(timeout_ms);
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_formatter(&mut self, formatter_id: FormatterId) {
-        self.common.formatter_id = Some(formatter_id);
-    }
-
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()
     }
@@ -91,6 +73,85 @@ impl StreamHandlerBuilder {
     }
 }
 
+builder_methods! {
+    impl StreamHandlerBuilder {
+        methods {
+            method {
+                doc: "Set the bounded channel capacity.",
+                rust_name: with_capacity,
+                apply_name: apply_capacity,
+                py_fn: py_with_capacity,
+                py_name: "with_capacity",
+                rust_args: (capacity: usize),
+                py_args: (capacity: usize),
+                self_ident: builder,
+                body: {
+                    builder.common.capacity = NonZeroUsize::new(capacity);
+                    builder.common.capacity_set = true;
+                }
+            }
+            method {
+                doc: "Set the flush timeout in milliseconds. Must be greater than zero.",
+                rust_name: with_flush_timeout_ms,
+                apply_name: apply_flush_timeout_ms,
+                py_fn: py_with_flush_timeout_ms,
+                py_name: "with_flush_timeout_ms",
+                rust_args: (timeout_ms: u64),
+                py_args: (timeout_ms: u64),
+                self_ident: builder,
+                body: {
+                    builder.common.flush_timeout_ms = Some(timeout_ms);
+                }
+            }
+            method {
+                doc: "Set the formatter identifier.",
+                rust_name: with_formatter,
+                apply_name: apply_formatter,
+                py_fn: py_with_formatter,
+                py_name: "with_formatter",
+                rust_args: (formatter_id: impl Into<FormatterId>),
+                py_args: (formatter_id: String),
+                self_ident: builder,
+                body: {
+                    builder.common.formatter_id = Some(formatter_id.into());
+                }
+            }
+        }
+        extra_py_methods {
+            /// Create a new `StreamHandlerBuilder` defaulting to `stderr`.
+            ///
+            /// Mirrors Python's `logging.StreamHandler` default stream.
+            #[new]
+            fn py_new() -> Self {
+                Self::stderr()
+            }
+
+            #[staticmethod]
+            #[pyo3(name = "stdout")]
+            fn py_stdout() -> Self {
+                Self::stdout()
+            }
+
+            #[staticmethod]
+            #[pyo3(name = "stderr")]
+            fn py_stderr() -> Self {
+                Self::stderr()
+            }
+
+            /// Return a dictionary describing the builder configuration.
+            fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+                self.as_pydict(py)
+            }
+
+            /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
+            /// failure.
+            fn build(&self) -> PyResult<FemtoStreamHandler> {
+                <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
+            }
+        }
+    }
+}
+
 #[cfg(feature = "python")]
 impl AsPyDict for StreamHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
@@ -99,65 +160,6 @@ impl AsPyDict for StreamHandlerBuilder {
         d.set_item("target", self.target.as_str())?;
         self.common.extend_py_dict(&d)?;
         dict_into_py(d, py)
-    }
-}
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl StreamHandlerBuilder {
-    /// Create a new `StreamHandlerBuilder` defaulting to `stderr`.
-    ///
-    /// Mirrors Python's `logging.StreamHandler` default stream.
-    #[new]
-    fn py_new() -> Self {
-        Self::stderr()
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "stdout")]
-    fn py_stdout() -> Self {
-        Self::stdout()
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "stderr")]
-    fn py_stderr() -> Self {
-        Self::stderr()
-    }
-
-    #[pyo3(name = "with_capacity")]
-    fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.apply_capacity(capacity);
-        slf
-    }
-
-    #[pyo3(name = "with_flush_timeout_ms")]
-    fn py_with_flush_timeout_ms<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        timeout_ms: u64,
-    ) -> PyRefMut<'py, Self> {
-        slf.apply_flush_timeout_ms(timeout_ms);
-        slf
-    }
-
-    #[pyo3(name = "with_formatter")]
-    fn py_with_formatter<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        formatter_id: String,
-    ) -> PyRefMut<'py, Self> {
-        slf.apply_formatter(FormatterId::from(formatter_id));
-        slf
-    }
-
-    /// Return a dictionary describing the builder configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        self.as_pydict(py)
-    }
-
-    /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
-    /// failure.
-    fn build(&self) -> PyResult<FemtoStreamHandler> {
-        <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
     }
 }
 

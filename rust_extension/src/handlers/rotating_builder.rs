@@ -16,9 +16,7 @@ use super::{
 };
 use crate::formatter::DefaultFormatter;
 
-use crate::handlers::builder_macros::{
-    builder_method_rust, file_like_builder_methods, rotating_limit_methods,
-};
+use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
@@ -50,41 +48,10 @@ impl RotatingFileHandlerBuilder {
         }
     }
 
-    file_like_builder_methods!(builder_method_rust);
-
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.state.set_overflow_policy(policy);
         self
-    }
-
-    rotating_limit_methods!(builder_method_rust);
-
-    #[cfg(feature = "python")]
-    fn apply_capacity(&mut self, capacity: usize) {
-        self.state.set_capacity(capacity);
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_flush_record_interval(&mut self, interval: usize) {
-        self.state.set_flush_record_interval(interval);
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_formatter(&mut self, formatter_id: FormatterId) {
-        self.state.set_formatter(formatter_id);
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_max_bytes(&mut self, max_bytes: u64) {
-        self.max_bytes = NonZeroU64::new(max_bytes);
-        self.max_bytes_set = true;
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_backup_count(&mut self, backup_count: usize) {
-        self.backup_count = NonZeroUsize::new(backup_count);
-        self.backup_count_set = true;
     }
 
     fn ensure_rotation_limits_valid(&self) -> Result<(), HandlerBuildError> {
@@ -130,98 +97,131 @@ impl RotatingFileHandlerBuilder {
     }
 }
 
+builder_methods! {
+    impl RotatingFileHandlerBuilder {
+        methods {
+            method {
+                doc: "Set the bounded channel capacity.",
+                rust_name: with_capacity,
+                apply_name: apply_capacity,
+                py_fn: py_with_capacity,
+                py_name: "with_capacity",
+                rust_args: (capacity: usize),
+                py_args: (capacity: usize),
+                self_ident: builder,
+                body: {
+                    builder.state.set_capacity(capacity);
+                }
+            }
+            method {
+                doc: "Set the periodic flush interval measured in records. Must be greater than zero.",
+                rust_name: with_flush_record_interval,
+                apply_name: apply_flush_record_interval,
+                py_fn: py_with_flush_record_interval,
+                py_name: "with_flush_record_interval",
+                rust_args: (interval: usize),
+                py_args: (interval: usize),
+                self_ident: builder,
+                body: {
+                    builder.state.set_flush_record_interval(interval);
+                }
+            }
+            method {
+                doc: "Set the formatter identifier.",
+                rust_name: with_formatter,
+                apply_name: apply_formatter,
+                py_fn: py_with_formatter,
+                py_name: "with_formatter",
+                rust_args: (formatter_id: impl Into<FormatterId>),
+                py_args: (formatter_id: String),
+                self_ident: builder,
+                body: {
+                    let formatter_id: FormatterId = formatter_id.into();
+                    builder.state.set_formatter(formatter_id);
+                }
+            }
+            method {
+                doc: "Set the maximum number of bytes before rotation occurs.",
+                rust_name: with_max_bytes,
+                apply_name: apply_max_bytes,
+                py_fn: py_with_max_bytes,
+                py_name: "with_max_bytes",
+                rust_args: (max_bytes: u64),
+                py_args: (max_bytes: u64),
+                self_ident: builder,
+                body: {
+                    builder.max_bytes = NonZeroU64::new(max_bytes);
+                    builder.max_bytes_set = true;
+                }
+            }
+            method {
+                doc: "Set how many backup files to retain during rotation.",
+                rust_name: with_backup_count,
+                apply_name: apply_backup_count,
+                py_fn: py_with_backup_count,
+                py_name: "with_backup_count",
+                rust_args: (backup_count: usize),
+                py_args: (backup_count: usize),
+                self_ident: builder,
+                body: {
+                    builder.backup_count = NonZeroUsize::new(backup_count);
+                    builder.backup_count_set = true;
+                }
+            }
+        }
+        extra_py_methods {
+            #[new]
+            fn py_new(path: String) -> Self {
+                Self::new(path)
+            }
+
+            #[pyo3(name = "with_overflow_policy")]
+            fn py_with_overflow_policy<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                policy: &str,
+                timeout_ms: Option<u64>,
+            ) -> PyResult<PyRefMut<'py, Self>> {
+                let policy_value = if policy.eq_ignore_ascii_case("drop") {
+                    OverflowPolicy::Drop
+                } else if policy.eq_ignore_ascii_case("block") {
+                    OverflowPolicy::Block
+                } else if policy.eq_ignore_ascii_case("timeout") {
+                    let ms = timeout_ms.ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "timeout_ms required for timeout policy",
+                        )
+                    })?;
+                    CommonBuilder::ensure_non_zero("timeout_ms", Some(ms)).map_err(PyErr::from)?;
+                    OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "invalid overflow policy: {policy}",
+                    )));
+                };
+                slf.state.set_overflow_policy(policy_value);
+                Ok(slf)
+            }
+
+            /// Return a dictionary describing the builder configuration.
+            fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+                self.as_pydict(py)
+            }
+
+            /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
+            /// failure.
+            fn build(&self) -> PyResult<FemtoRotatingFileHandler> {
+                <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
+            }
+        }
+    }
+}
+
 #[cfg(feature = "python")]
 impl AsPyDict for RotatingFileHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = pyo3::types::PyDict::new(py);
         self.fill_pydict(&d)?;
         dict_into_py(d, py)
-    }
-}
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl RotatingFileHandlerBuilder {
-    #[new]
-    fn py_new(path: String) -> Self {
-        Self::new(path)
-    }
-
-    #[pyo3(name = "with_capacity")]
-    fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.apply_capacity(capacity);
-        slf
-    }
-
-    #[pyo3(name = "with_flush_record_interval")]
-    fn py_with_flush_record_interval<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        interval: usize,
-    ) -> PyRefMut<'py, Self> {
-        slf.apply_flush_record_interval(interval);
-        slf
-    }
-
-    #[pyo3(name = "with_formatter")]
-    fn py_with_formatter<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        formatter_id: String,
-    ) -> PyRefMut<'py, Self> {
-        slf.apply_formatter(FormatterId::from(formatter_id));
-        slf
-    }
-
-    #[pyo3(name = "with_max_bytes")]
-    fn py_with_max_bytes<'py>(mut slf: PyRefMut<'py, Self>, max_bytes: u64) -> PyRefMut<'py, Self> {
-        slf.apply_max_bytes(max_bytes);
-        slf
-    }
-
-    #[pyo3(name = "with_backup_count")]
-    fn py_with_backup_count<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        backup_count: usize,
-    ) -> PyRefMut<'py, Self> {
-        slf.apply_backup_count(backup_count);
-        slf
-    }
-
-    #[pyo3(name = "with_overflow_policy")]
-    fn py_with_overflow_policy<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        policy: &str,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let policy_value = if policy.eq_ignore_ascii_case("drop") {
-            OverflowPolicy::Drop
-        } else if policy.eq_ignore_ascii_case("block") {
-            OverflowPolicy::Block
-        } else if policy.eq_ignore_ascii_case("timeout") {
-            let ms = timeout_ms.ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "timeout_ms required for timeout policy",
-                )
-            })?;
-            CommonBuilder::ensure_non_zero("timeout_ms", Some(ms)).map_err(PyErr::from)?;
-            OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
-        } else {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "invalid overflow policy: {policy}",
-            )));
-        };
-        slf.state.set_overflow_policy(policy_value);
-        Ok(slf)
-    }
-
-    /// Return a dictionary describing the builder configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        self.as_pydict(py)
-    }
-
-    /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
-    /// failure.
-    fn build(&self) -> PyResult<FemtoRotatingFileHandler> {
-        <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
     }
 }
 

@@ -4,140 +4,201 @@
 //! These macros centralise the shared method definitions so the two bindings
 //! remain in sync and avoid repetitive boilerplate.
 
-macro_rules! builder_method_rust {
+/// Generate fluent builder methods for Rust and matching Python wrappers.
+///
+/// The macro accepts a builder type and a list of methods. Each method is
+/// described once and the macro expands to:
+/// - a consuming Rust method returning `Self`;
+/// - a Python-only `apply_*` helper that mutates the builder in place; and
+/// - `#[pymethods]` exposing the helpers to Python using the provided method
+///   names.
+///
+/// # Examples
+///
+/// ```ignore
+/// use pyo3::prelude::*;
+///
+/// #[cfg_attr(feature = "python", pyclass)]
+/// #[derive(Default)]
+/// struct ExampleBuilder {
+///     value: usize,
+/// }
+///
+/// builder_methods! {
+///     impl ExampleBuilder {
+///         methods {
+///             method {
+///                 doc: "Set the numeric value.",
+///                 rust_name: with_value,
+///                 apply_name: apply_value,
+///                 py_fn: py_with_value,
+///                 py_name: "with_value",
+///                 rust_args: (value: usize),
+///                 py_args: (value: usize),
+///                 self_ident: builder,
+///                 body: {
+///                     builder.value = value;
+///                 }
+///             }
+///         }
+///     }
+/// }
+///
+/// let builder = ExampleBuilder::default().with_value(3);
+/// assert_eq!(builder.value, 3);
+/// ```
+macro_rules! builder_methods {
     (
-        $doc:expr,
-        $rust_fn:ident,
-        $py_fn:ident,
-        $py_name:literal,
-        ( $( $rarg:ident : $rty:ty ),* ),
-        ( $( $parg:ident : $pty:ty ),* ),
-        $builder:ident,
-        $body:block
+        impl $builder:ident {
+            methods {
+                $(
+                    method {
+                        doc: $doc:expr,
+                        rust_name: $rust_name:ident,
+                        apply_name: $apply_name:ident,
+                        py_fn: $py_fn:ident,
+                        py_name: $py_name:literal,
+                        rust_args: ( $( $rarg:ident : $rty:ty ),* $(,)? ),
+                        py_args: ( $( $parg:ident : $pty:ty ),* $(,)? ),
+                        self_ident: $self_ident:ident,
+                        body: $body:block
+                    }
+                )*
+            }
+            $(extra_py_methods { $($extra_py_methods:tt)* })?
+        }
     ) => {
-        #[doc = $doc]
-        pub fn $rust_fn(mut self, $( $rarg : $rty ),* ) -> Self {
-            let $builder = &mut self;
-            $body
-            self
+        impl $builder {
+            $(
+                #[doc = $doc]
+                pub fn $rust_name(mut self, $( $rarg : $rty ),* ) -> Self {
+                    let $self_ident = &mut self;
+                    $body
+                    self
+                }
+            )*
+        }
+
+        #[cfg(feature = "python")]
+        impl $builder {
+            $(
+                fn $apply_name(&mut self, $( $parg : $pty ),* ) {
+                    let $self_ident = self;
+                    $body
+                }
+            )*
+        }
+
+        #[cfg(feature = "python")]
+        #[pyo3::pymethods]
+        impl $builder {
+            $(
+                #[pyo3(name = $py_name)]
+                fn $py_fn<'py>(mut slf: pyo3::PyRefMut<'py, Self>, $( $parg : $pty ),* ) -> pyo3::PyRefMut<'py, Self> {
+                    slf.$apply_name($( $parg ),*);
+                    slf
+                }
+            )*
+            $( $($extra_py_methods)* )?
         }
     };
 }
-pub(crate) use builder_method_rust;
+pub(crate) use builder_methods;
 
-macro_rules! file_like_builder_methods {
-    ($callback:ident) => {
-        $callback!(
-            "Set the bounded channel capacity.",
-            with_capacity,
-            py_with_capacity,
-            "with_capacity",
-            (capacity: usize),
-            (capacity: usize),
-            builder,
-            {
-                builder.state.set_capacity(capacity);
-            }
-        );
-        $callback!(
-            "Set the periodic flush interval measured in records. Must be greater than zero.",
-            with_flush_record_interval,
-            py_with_flush_record_interval,
-            "with_flush_record_interval",
-            (interval: usize),
-            (interval: usize),
-            builder,
-            {
-                builder.state.set_flush_record_interval(interval);
-            }
-        );
-        $callback!(
-            "Set the formatter identifier.",
-            with_formatter,
-            py_with_formatter,
-            "with_formatter",
-            (formatter_id: impl Into<FormatterId>),
-            (formatter_id: String),
-            builder,
-            {
-                builder.state.set_formatter(formatter_id);
-            }
-        );
-    };
-}
-pub(crate) use file_like_builder_methods;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-macro_rules! stream_builder_methods {
-    ($callback:ident) => {
-        $callback!(
-            "Set the bounded channel capacity.",
-            with_capacity,
-            py_with_capacity,
-            "with_capacity",
-            (capacity: usize),
-            (capacity: usize),
-            builder,
-            {
-                builder.common.capacity = NonZeroUsize::new(capacity);
-                builder.common.capacity_set = true;
-            }
-        );
-        $callback!(
-            "Set the flush timeout in milliseconds. Must be greater than zero.",
-            with_flush_timeout_ms,
-            py_with_flush_timeout_ms,
-            "with_flush_timeout_ms",
-            (timeout_ms: u64),
-            (timeout_ms: u64),
-            builder,
-            {
-                builder.common.flush_timeout_ms = Some(timeout_ms);
-            }
-        );
-        $callback!(
-            "Set the formatter identifier.",
-            with_formatter,
-            py_with_formatter,
-            "with_formatter",
-            (formatter_id: impl Into<FormatterId>),
-            (formatter_id: String),
-            builder,
-            {
-                builder.common.formatter_id = Some(formatter_id.into());
-            }
-        );
-    };
-}
-pub(crate) use stream_builder_methods;
+    #[cfg(feature = "python")]
+    use pyo3::prelude::*;
 
-macro_rules! rotating_limit_methods {
-    ($callback:ident) => {
-        $callback!(
-            "Set the maximum number of bytes before rotation occurs.",
-            with_max_bytes,
-            py_with_max_bytes,
-            "with_max_bytes",
-            (max_bytes: u64),
-            (max_bytes: u64),
-            builder,
-            {
-                builder.max_bytes = NonZeroU64::new(max_bytes);
-                builder.max_bytes_set = true;
+    #[cfg_attr(feature = "python", pyo3::pyclass)]
+    #[derive(Clone, Debug, Default)]
+    struct DummyBuilder {
+        value: usize,
+        label: Option<String>,
+    }
+
+    impl DummyBuilder {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn label(&self) -> Option<&str> {
+            self.label.as_deref()
+        }
+    }
+
+    builder_methods! {
+        impl DummyBuilder {
+            methods {
+                method {
+                    doc: "Set the stored value.",
+                    rust_name: with_value,
+                    apply_name: apply_value,
+                    py_fn: py_with_value,
+                    py_name: "with_value",
+                    rust_args: (value: usize),
+                    py_args: (value: usize),
+                    self_ident: builder,
+                    body: {
+                        builder.value = value;
+                    }
+                }
+                method {
+                    doc: "Set an optional label.",
+                    rust_name: with_label,
+                    apply_name: apply_label,
+                    py_fn: py_with_label,
+                    py_name: "with_label",
+                    rust_args: (label: impl Into<String>),
+                    py_args: (label: String),
+                    self_ident: builder,
+                    body: {
+                        builder.label = Some(label.into());
+                    }
+                }
             }
-        );
-        $callback!(
-            "Set how many backup files to retain during rotation.",
-            with_backup_count,
-            py_with_backup_count,
-            "with_backup_count",
-            (backup_count: usize),
-            (backup_count: usize),
-            builder,
-            {
-                builder.backup_count = NonZeroUsize::new(backup_count);
-                builder.backup_count_set = true;
+            extra_py_methods {
+                #[new]
+                fn py_new() -> Self {
+                    Self::default()
+                }
             }
-        );
-    };
+        }
+    }
+
+    #[test]
+    fn rust_methods_chain() {
+        let builder = DummyBuilder::new().with_value(7).with_label("alpha");
+        assert_eq!(builder.value, 7);
+        assert_eq!(builder.label(), Some("alpha"));
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn apply_helpers_mutate_state() {
+        let mut builder = DummyBuilder::new();
+        builder.apply_value(5);
+        builder.apply_label("beta".to_string());
+        assert_eq!(builder.value, 5);
+        assert_eq!(builder.label(), Some("beta"));
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_methods_are_callable() {
+        Python::with_gil(|py| {
+            let obj = pyo3::Py::new(py, DummyBuilder::default())
+                .expect("Py::new must create DummyBuilder");
+            let any = obj.as_ref(py);
+            any.call_method1("with_value", (11,))
+                .expect("with_value must succeed");
+            any.call_method1("with_label", ("gamma",))
+                .expect("with_label must succeed");
+            let guard = obj.borrow(py);
+            assert_eq!(guard.value, 11);
+            assert_eq!(guard.label(), Some("gamma"));
+        });
+    }
 }
-pub(crate) use rotating_limit_methods;
