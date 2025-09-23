@@ -2,7 +2,7 @@
 //!
 //! Stores fields common to multiple handler builders.
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 
 #[cfg(feature = "python")]
 use pyo3::{prelude::*, types::PyDict, Bound};
@@ -16,7 +16,7 @@ use super::{
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
-    pub(crate) flush_timeout_ms: Option<u64>,
+    pub(crate) flush_timeout_ms: Option<NonZeroU64>,
     pub(crate) formatter_id: Option<FormatterId>,
 }
 
@@ -59,7 +59,7 @@ impl CommonBuilder {
             d.set_item("capacity", cap.get())?;
         }
         if let Some(ms) = self.flush_timeout_ms {
-            d.set_item("flush_timeout_ms", ms)?;
+            d.set_item("flush_timeout_ms", ms.get())?;
         }
         if let Some(fid) = &self.formatter_id {
             d.set_item("formatter_id", fid.as_str())?;

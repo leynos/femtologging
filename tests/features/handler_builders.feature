@@ -87,8 +87,7 @@ Feature: Handler builders
 
   Scenario: invalid stream handler flush timeout
     Given a StreamHandlerBuilder targeting stdout
-    When I set stream flush timeout 0
-    Then building the stream handler fails
+    Then setting stream flush timeout 0 fails
 
   Scenario: build stream handler builder with flush timeout
     Given a StreamHandlerBuilder targeting stdout

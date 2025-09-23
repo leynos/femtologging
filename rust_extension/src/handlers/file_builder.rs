@@ -10,7 +10,9 @@
 use pyo3::prelude::*;
 
 use super::{
-    common::FileLikeBuilderState, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    common::FileLikeBuilderState,
+    file::{FemtoFileHandler, OverflowPolicy},
+    FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
 use crate::formatter::DefaultFormatter;
 
@@ -56,26 +58,30 @@ builder_methods! {
     impl FileHandlerBuilder {
         methods {
             method {
-                doc: "Set the bounded channel capacity.",
+                doc: "Set the bounded channel capacity.
+
+# Validation
+
+The capacity must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_capacity,
-                apply_name: apply_capacity,
                 py_fn: py_with_capacity,
                 py_name: "with_capacity",
                 rust_args: (capacity: usize),
-                py_args: (capacity: usize),
                 self_ident: builder,
                 body: {
                     builder.state.set_capacity(capacity);
                 }
             }
             method {
-                doc: "Set the periodic flush interval measured in records. Must be greater than zero.",
+                doc: "Set the periodic flush interval measured in records.
+
+# Validation
+
+The interval must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_flush_record_interval,
-                apply_name: apply_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
                 rust_args: (interval: usize),
-                py_args: (interval: usize),
                 self_ident: builder,
                 body: {
                     builder.state.set_flush_record_interval(interval);
@@ -84,7 +90,6 @@ builder_methods! {
             method {
                 doc: "Set the formatter identifier.",
                 rust_name: with_formatter,
-                apply_name: apply_formatter,
                 py_fn: py_with_formatter,
                 py_name: "with_formatter",
                 rust_args: (formatter_id: impl Into<FormatterId>),
@@ -108,7 +113,7 @@ builder_methods! {
                 policy: &str,
                 timeout_ms: Option<u64>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                let policy_value = policy::parse_policy_with_timeout(policy, timeout_ms)?;
+                let policy_value = super::file::policy::parse_policy_with_timeout(policy, timeout_ms)?;
                 slf.state.set_overflow_policy(policy_value);
                 Ok(slf)
             }

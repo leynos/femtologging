@@ -9,9 +9,13 @@
 /// The macro accepts a builder type and a list of methods. Each method is
 /// described once and the macro expands to:
 /// - a consuming Rust method returning `Self`;
-/// - a Python-only `apply_*` helper that mutates the builder in place; and
-/// - `#[pymethods]` exposing the helpers to Python using the provided method
-///   names.
+/// - `#[pymethods]` wrappers calling the same body on a `PyRefMut`;
+/// - optional additional Python methods appended verbatim.
+///
+/// The Python signature defaults to the Rust signature; specify `py_args` only
+/// when the Python API needs different argument types.
+/// Use `py_prelude` when a Python wrapper needs to coerce or validate its
+/// arguments before running the shared method body.
 ///
 /// # Examples
 ///
@@ -30,14 +34,24 @@
 ///             method {
 ///                 doc: "Set the numeric value.",
 ///                 rust_name: with_value,
-///                 apply_name: apply_value,
 ///                 py_fn: py_with_value,
 ///                 py_name: "with_value",
 ///                 rust_args: (value: usize),
-///                 py_args: (value: usize),
 ///                 self_ident: builder,
 ///                 body: {
 ///                     builder.value = value;
+///                 }
+///             }
+///             method {
+///                 doc: "Attach a label string.",
+///                 rust_name: with_label,
+///                 py_fn: py_with_label,
+///                 py_name: "with_label",
+///                 rust_args: (label: impl Into<String>),
+///                 py_args: (label: String),
+///                 self_ident: builder,
+///                 body: {
+///                     builder.label = Some(label.into());
 ///                 }
 ///             }
 ///         }
@@ -55,11 +69,11 @@ macro_rules! builder_methods {
                     method {
                         doc: $doc:expr,
                         rust_name: $rust_name:ident,
-                        apply_name: $apply_name:ident,
                         py_fn: $py_fn:ident,
                         py_name: $py_name:literal,
                         rust_args: ( $( $rarg:ident : $rty:ty ),* $(,)? ),
-                        py_args: ( $( $parg:ident : $pty:ty ),* $(,)? ),
+                        $(py_args: ( $( $parg:ident : $pty:ty ),* $(,)? ),)?
+                        $(py_prelude: { $($py_prelude:tt)* },)?
                         self_ident: $self_ident:ident,
                         body: $body:block
                     }
@@ -68,41 +82,152 @@ macro_rules! builder_methods {
             $(extra_py_methods { $($extra_py_methods:tt)* })?
         }
     ) => {
-        impl $builder {
-            $(
-                #[doc = $doc]
-                pub fn $rust_name(mut self, $( $rarg : $rty ),* ) -> Self {
-                    let $self_ident = &mut self;
-                    $body
-                    self
-                }
-            )*
-        }
+        builder_methods!(
+            @process_methods
+            $builder,
+            [],
+            [],
+            [
+                $(method {
+                    doc: $doc,
+                    rust_name: $rust_name,
+                    py_fn: $py_fn,
+                    py_name: $py_name,
+                    rust_args: ( $( $rarg : $rty ),* ),
+                    $(py_args: ( $( $parg : $pty ),* ),)?
+                    $(py_prelude: { $($py_prelude)* },)?
+                    self_ident: $self_ident,
+                    body: $body
+                })*
+            ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
 
-        #[cfg(feature = "python")]
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
         impl $builder {
-            $(
-                fn $apply_name(&mut self, $( $parg : $pty ),* ) {
-                    let $self_ident = self;
-                    $body
-                }
-            )*
+            $($rust_methods)*
         }
 
         #[cfg(feature = "python")]
         #[pyo3::pymethods]
         impl $builder {
-            $(
-                #[pyo3(name = $py_name)]
-                fn $py_fn<'py>(mut slf: pyo3::PyRefMut<'py, Self>, $( $parg : $pty ),* ) -> pyo3::PyRefMut<'py, Self> {
-                    slf.$apply_name($( $parg ),*);
-                    slf
-                }
-            )*
+            $($py_methods)*
             $( $($extra_py_methods)* )?
         }
     };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            method {
+                doc: $doc:expr,
+                rust_name: $rust_name:ident,
+                py_fn: $py_fn:ident,
+                py_name: $py_name:literal,
+                rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+                py_args: ( $( $parg:ident : $pty:ty ),* ),
+                $(py_prelude: { $($py_prelude:tt)* },)?
+                self_ident: $self_ident:ident,
+                body: $body:block
+            }
+            $(,)?
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                builder_methods!(@rust_method_tokens $doc, $rust_name, ( $( $rarg : $rty ),* ), $self_ident, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                fn $py_fn<'py>(
+                    mut slf: pyo3::PyRefMut<'py, Self>
+                    $(, $parg : $pty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let $self_ident = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            method {
+                doc: $doc:expr,
+                rust_name: $rust_name:ident,
+                py_fn: $py_fn:ident,
+                py_name: $py_name:literal,
+                rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+                $(py_prelude: { $($py_prelude:tt)* },)?
+                self_ident: $self_ident:ident,
+                body: $body:block
+            }
+            $(,)?
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                builder_methods!(@rust_method_tokens $doc, $rust_name, ( $( $rarg : $rty ),* ), $self_ident, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                fn $py_fn<'py>(
+                    mut slf: pyo3::PyRefMut<'py, Self>
+                    $(, $rarg : $rty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let $self_ident = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@rust_method_tokens $doc:expr, $rust_name:ident, ( $( $rarg:ident : $rty:ty ),* ), $self_ident:ident, $body:block) => {
+        #[doc = $doc]
+        pub fn $rust_name(mut self $(, $rarg : $rty )* ) -> Self {
+            let $self_ident = &mut self;
+            $body
+            self
+        }
+    };
 }
+
 pub(crate) use builder_methods;
 
 #[cfg(test)]
@@ -135,11 +260,9 @@ mod tests {
                 method {
                     doc: "Set the stored value.",
                     rust_name: with_value,
-                    apply_name: apply_value,
                     py_fn: py_with_value,
                     py_name: "with_value",
                     rust_args: (value: usize),
-                    py_args: (value: usize),
                     self_ident: builder,
                     body: {
                         builder.value = value;
@@ -148,7 +271,6 @@ mod tests {
                 method {
                     doc: "Set an optional label.",
                     rust_name: with_label,
-                    apply_name: apply_label,
                     py_fn: py_with_label,
                     py_name: "with_label",
                     rust_args: (label: impl Into<String>),
@@ -156,6 +278,18 @@ mod tests {
                     self_ident: builder,
                     body: {
                         builder.label = Some(label.into());
+                    }
+                }
+                method {
+                    doc: "Reset to defaults.",
+                    rust_name: reset,
+                    py_fn: py_reset,
+                    py_name: "reset",
+                    rust_args: (),
+                    self_ident: builder,
+                    body: {
+                        builder.value = 0;
+                        builder.label = None;
                     }
                 }
             }
@@ -170,19 +304,12 @@ mod tests {
 
     #[test]
     fn rust_methods_chain() {
-        let builder = DummyBuilder::new().with_value(7).with_label("alpha");
-        assert_eq!(builder.value, 7);
-        assert_eq!(builder.label(), Some("alpha"));
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn apply_helpers_mutate_state() {
-        let mut builder = DummyBuilder::new();
-        builder.apply_value(5);
-        builder.apply_label("beta".to_string());
-        assert_eq!(builder.value, 5);
-        assert_eq!(builder.label(), Some("beta"));
+        let builder = DummyBuilder::new()
+            .with_value(7)
+            .with_label("alpha")
+            .reset();
+        assert_eq!(builder.value, 0);
+        assert_eq!(builder.label(), None);
     }
 
     #[cfg(feature = "python")]
@@ -196,9 +323,10 @@ mod tests {
                 .expect("with_value must succeed");
             any.call_method1("with_label", ("gamma",))
                 .expect("with_label must succeed");
+            any.call_method0("reset").expect("reset must succeed");
             let guard = obj.borrow(py);
-            assert_eq!(guard.value, 11);
-            assert_eq!(guard.label(), Some("gamma"));
+            assert_eq!(guard.value, 0);
+            assert_eq!(guard.label(), None);
         });
     }
 }

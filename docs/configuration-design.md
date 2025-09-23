@@ -219,7 +219,7 @@ pub struct StreamHandlerBuilder {
     formatter_id: Option<FormatterId>,
     filters: Vec<String>,
     capacity: Option<usize>,
-    flush_timeout_ms: Option<i64>, // milliseconds
+    flush_timeout_ms: Option<NonZeroU64>, // milliseconds
 }
 
 impl StreamHandlerBuilder {
@@ -251,7 +251,7 @@ impl StreamHandlerBuilder {
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
 
     /// Sets the flush timeout in milliseconds. Must be greater than zero.
-    pub fn with_flush_timeout_ms(mut self, timeout_ms: i64) -> Self { /* ... */ }
+    pub fn with_flush_timeout_ms(mut self, timeout_ms: NonZeroU64) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
@@ -263,6 +263,11 @@ stream builder's `flush_timeout_ms` is a duration in milliseconds. These
 semantics intentionally differ: file handlers flush after a set number of
 records, whereas stream handlers flush after a period of inactivity. Their
 dictionary representations mirror these names to avoid ambiguity.
+
+Both bindings expose the timeout as a `NonZeroU64`, so Rust callers must
+construct a non-zero duration and Python callers receive a ``ValueError`` if
+zero is provided. This keeps the API consistent and prevents silent acceptance
+of invalid values.
 
 #### 1.1.1 Filters
 

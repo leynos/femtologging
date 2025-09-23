@@ -5,7 +5,10 @@
 //! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::{
+    num::{NonZeroU64, NonZeroUsize},
+    time::Duration,
+};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -63,7 +66,10 @@ impl StreamHandlerBuilder {
     }
 
     fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
-        CommonBuilder::ensure_non_zero("flush_timeout_ms", self.common.flush_timeout_ms)
+        CommonBuilder::ensure_non_zero(
+            "flush_timeout_ms",
+            self.common.flush_timeout_ms.map(NonZeroU64::get),
+        )
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -77,13 +83,15 @@ builder_methods! {
     impl StreamHandlerBuilder {
         methods {
             method {
-                doc: "Set the bounded channel capacity.",
+                doc: "Set the bounded channel capacity.
+
+# Validation
+
+The capacity must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_capacity,
-                apply_name: apply_capacity,
                 py_fn: py_with_capacity,
                 py_name: "with_capacity",
                 rust_args: (capacity: usize),
-                py_args: (capacity: usize),
                 self_ident: builder,
                 body: {
                     builder.common.capacity = NonZeroUsize::new(capacity);
@@ -91,13 +99,23 @@ builder_methods! {
                 }
             }
             method {
-                doc: "Set the flush timeout in milliseconds. Must be greater than zero.",
+                doc: "Set the flush timeout in milliseconds.
+
+# Validation
+
+Accepts a `NonZeroU64` so both Rust and Python callers must provide a timeout greater than zero.",
                 rust_name: with_flush_timeout_ms,
-                apply_name: apply_flush_timeout_ms,
                 py_fn: py_with_flush_timeout_ms,
                 py_name: "with_flush_timeout_ms",
-                rust_args: (timeout_ms: u64),
+                rust_args: (timeout_ms: NonZeroU64),
                 py_args: (timeout_ms: u64),
+                py_prelude: {
+                    let timeout_ms = NonZeroU64::new(timeout_ms).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "flush_timeout_ms must be greater than zero",
+                        )
+                    })?;
+                },
                 self_ident: builder,
                 body: {
                     builder.common.flush_timeout_ms = Some(timeout_ms);
@@ -106,7 +124,6 @@ builder_methods! {
             method {
                 doc: "Set the formatter identifier.",
                 rust_name: with_formatter,
-                apply_name: apply_formatter,
                 py_fn: py_with_formatter,
                 py_name: "with_formatter",
                 rust_args: (formatter_id: impl Into<FormatterId>),
@@ -169,7 +186,12 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
-        let timeout = Duration::from_millis(self.common.flush_timeout_ms.unwrap_or(1000));
+        let timeout = Duration::from_millis(
+            self.common
+                .flush_timeout_ms
+                .map(NonZeroU64::get)
+                .unwrap_or(1000),
+        );
         let formatter = match self.common.formatter_id.as_ref() {
             Some(FormatterId::Default) | None => DefaultFormatter,
             Some(FormatterId::Custom(other)) => {
@@ -200,6 +222,8 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
 mod tests {
     use super::super::test_helpers::assert_build_err;
     use super::*;
+    #[cfg(feature = "python")]
+    use pyo3::Python;
     use rstest::rstest;
 
     #[rstest]
@@ -222,12 +246,18 @@ mod tests {
         assert_build_err(&builder, "build_inner must fail for zero capacity");
     }
 
-    #[rstest]
-    #[case(StreamHandlerBuilder::stdout())]
-    #[case(StreamHandlerBuilder::stderr())]
-    fn reject_zero_flush_timeout(#[case] builder: StreamHandlerBuilder) {
-        let builder = builder.with_flush_timeout_ms(0);
-        assert_build_err(&builder, "build_inner must fail for zero flush timeout");
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_rejects_zero_flush_timeout() {
+        Python::with_gil(|py| {
+            let builder = pyo3::Py::new(py, StreamHandlerBuilder::stderr())
+                .expect("Py::new must create a stream builder");
+            let err = builder
+                .as_ref(py)
+                .call_method1("with_flush_timeout_ms", (0,))
+                .expect_err("with_flush_timeout_ms must reject zero");
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
     }
 
     #[rstest]

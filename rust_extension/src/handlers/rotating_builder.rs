@@ -20,9 +20,6 @@ use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
-#[cfg(feature = "python")]
-use super::common::CommonBuilder;
-
 /// Builder for constructing [`FemtoRotatingFileHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
@@ -101,26 +98,30 @@ builder_methods! {
     impl RotatingFileHandlerBuilder {
         methods {
             method {
-                doc: "Set the bounded channel capacity.",
+                doc: "Set the bounded channel capacity.
+
+# Validation
+
+The capacity must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_capacity,
-                apply_name: apply_capacity,
                 py_fn: py_with_capacity,
                 py_name: "with_capacity",
                 rust_args: (capacity: usize),
-                py_args: (capacity: usize),
                 self_ident: builder,
                 body: {
                     builder.state.set_capacity(capacity);
                 }
             }
             method {
-                doc: "Set the periodic flush interval measured in records. Must be greater than zero.",
+                doc: "Set the periodic flush interval measured in records.
+
+# Validation
+
+The interval must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_flush_record_interval,
-                apply_name: apply_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
                 rust_args: (interval: usize),
-                py_args: (interval: usize),
                 self_ident: builder,
                 body: {
                     builder.state.set_flush_record_interval(interval);
@@ -129,7 +130,6 @@ builder_methods! {
             method {
                 doc: "Set the formatter identifier.",
                 rust_name: with_formatter,
-                apply_name: apply_formatter,
                 py_fn: py_with_formatter,
                 py_name: "with_formatter",
                 rust_args: (formatter_id: impl Into<FormatterId>),
@@ -143,7 +143,6 @@ builder_methods! {
             method {
                 doc: "Set the maximum number of bytes before rotation occurs.",
                 rust_name: with_max_bytes,
-                apply_name: apply_max_bytes,
                 py_fn: py_with_max_bytes,
                 py_name: "with_max_bytes",
                 rust_args: (max_bytes: u64),
@@ -157,7 +156,6 @@ builder_methods! {
             method {
                 doc: "Set how many backup files to retain during rotation.",
                 rust_name: with_backup_count,
-                apply_name: apply_backup_count,
                 py_fn: py_with_backup_count,
                 py_name: "with_backup_count",
                 rust_args: (backup_count: usize),
@@ -181,23 +179,7 @@ builder_methods! {
                 policy: &str,
                 timeout_ms: Option<u64>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                let policy_value = if policy.eq_ignore_ascii_case("drop") {
-                    OverflowPolicy::Drop
-                } else if policy.eq_ignore_ascii_case("block") {
-                    OverflowPolicy::Block
-                } else if policy.eq_ignore_ascii_case("timeout") {
-                    let ms = timeout_ms.ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "timeout_ms required for timeout policy",
-                        )
-                    })?;
-                    CommonBuilder::ensure_non_zero("timeout_ms", Some(ms)).map_err(PyErr::from)?;
-                    OverflowPolicy::Timeout(std::time::Duration::from_millis(ms))
-                } else {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "invalid overflow policy: {policy}",
-                    )));
-                };
+                let policy_value = super::file::policy::parse_policy_with_timeout(policy, timeout_ms)?;
                 slf.state.set_overflow_policy(policy_value);
                 Ok(slf)
             }
