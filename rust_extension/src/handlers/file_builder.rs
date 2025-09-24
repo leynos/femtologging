@@ -96,12 +96,12 @@ The interval must be greater than zero; invalid values cause `build` to error.",
                 py_args: (formatter_id: String),
                 self_ident: builder,
                 body: {
-                    let formatter_id: FormatterId = formatter_id.into();
                     builder.state.set_formatter(formatter_id);
                 }
             }
         }
         extra_py_methods {
+            /// Create a new `FileHandlerBuilder`.
             #[new]
             fn py_new(path: String) -> Self {
                 Self::new(path)

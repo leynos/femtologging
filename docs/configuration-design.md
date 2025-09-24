@@ -266,8 +266,9 @@ dictionary representations mirror these names to avoid ambiguity.
 
 Both bindings expose the timeout as a `NonZeroU64`, so Rust callers must
 construct a non-zero duration and Python callers receive a ``ValueError`` if
-zero is provided. This keeps the API consistent and prevents silent acceptance
-of invalid values.
+zero is provided. Values must also fit within an unsigned 64-bit millisecond
+range; excessively large durations overflow the shared representation and are
+rejected, matching the Python dictionary emission.
 
 #### 1.1.1 Filters
 
