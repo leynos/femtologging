@@ -212,7 +212,8 @@ def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
 def then_setting_stream_flush_timeout_fails(
     stream_builder: StreamHandlerBuilder, timeout: int
 ) -> None:
-    with pytest.raises(OverflowError):
+    exc = ValueError if timeout == 0 else OverflowError
+    with pytest.raises(exc):
         stream_builder.with_flush_timeout_ms(timeout)
 
 

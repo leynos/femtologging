@@ -10,9 +10,13 @@
 use pyo3::prelude::*;
 
 use super::{
-    common::FileLikeBuilderState, file::*, FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    common::FileLikeBuilderState,
+    file::{FemtoFileHandler, OverflowPolicy},
+    FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
 use crate::formatter::DefaultFormatter;
+
+use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
@@ -33,28 +37,9 @@ impl FileHandlerBuilder {
         }
     }
 
-    /// Set the bounded channel capacity.
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.state = self.state.with_capacity(capacity);
-        self
-    }
-
-    /// Set the periodic flush interval measured in records. Must be greater
-    /// than zero.
-    pub fn with_flush_record_interval(mut self, interval: usize) -> Self {
-        self.state = self.state.with_flush_record_interval(interval);
-        self
-    }
-
-    /// Set the formatter identifier.
-    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
-        self.state = self.state.with_formatter(formatter_id);
-        self
-    }
-
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.state = self.state.with_overflow_policy(policy);
+        self.state.set_overflow_policy(policy);
         self
     }
 }
@@ -69,66 +54,97 @@ impl FileHandlerBuilder {
     }
 }
 
+builder_methods! {
+    impl FileHandlerBuilder {
+        methods {
+            method {
+                doc: "Set the bounded channel capacity.
+
+# Validation
+
+The capacity must be greater than zero; invalid values cause `build` to error.",
+                rust_name: with_capacity,
+                py_fn: py_with_capacity,
+                py_name: "with_capacity",
+                py_text_signature: "(self, capacity)",
+                rust_args: (capacity: usize),
+                self_ident: builder,
+                body: {
+                    builder.state.set_capacity(capacity);
+                }
+            }
+            method {
+                doc: "Set the periodic flush interval measured in records.
+
+# Validation
+
+The interval must be greater than zero; invalid values cause `build` to error.",
+                rust_name: with_flush_record_interval,
+                py_fn: py_with_flush_record_interval,
+                py_name: "with_flush_record_interval",
+                py_text_signature: "(self, interval)",
+                rust_args: (interval: usize),
+                self_ident: builder,
+                body: {
+                    builder.state.set_flush_record_interval(interval);
+                }
+            }
+            method {
+                doc: "Set the formatter identifier.",
+                rust_name: with_formatter,
+                py_fn: py_with_formatter,
+                py_name: "with_formatter",
+                py_text_signature: "(self, formatter_id)",
+                rust_args: (formatter_id: impl Into<FormatterId>),
+                py_args: (formatter_id: String),
+                self_ident: builder,
+                body: {
+                    builder.state.set_formatter(formatter_id);
+                }
+            }
+        }
+        extra_py_methods {
+            /// Create a new `FileHandlerBuilder`.
+            ///
+            /// Mirrors Python's `logging.FileHandler` constructor by accepting the
+            /// filesystem path directly so Python callers can pass the same
+            /// `filename` argument.
+            #[new]
+            fn py_new(path: String) -> Self {
+                Self::new(path)
+            }
+
+            #[pyo3(name = "with_overflow_policy")]
+            fn py_with_overflow_policy<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                policy: &str,
+                timeout_ms: Option<u64>,
+            ) -> PyResult<PyRefMut<'py, Self>> {
+                let policy_value = super::file::policy::parse_policy_with_timeout(policy, timeout_ms)?;
+                slf.state.set_overflow_policy(policy_value);
+                Ok(slf)
+            }
+
+            /// Return a dictionary describing the builder configuration.
+            fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+                self.as_pydict(py)
+            }
+
+            /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
+            /// failure.
+            fn build(&self) -> PyResult<FemtoFileHandler> {
+                <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
+            }
+        }
+    }
+}
+
 #[cfg(feature = "python")]
 impl AsPyDict for FileHandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let d = pyo3::types::PyDict::new(py);
         self.fill_pydict(&d)?;
         dict_into_py(d, py)
-    }
-}
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl FileHandlerBuilder {
-    #[new]
-    fn py_new(path: String) -> Self {
-        Self::new(path)
-    }
-    #[pyo3(name = "with_capacity")]
-    fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
-        slf.state.set_capacity(capacity);
-        slf
-    }
-
-    #[pyo3(name = "with_flush_record_interval")]
-    fn py_with_flush_record_interval<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        interval: usize,
-    ) -> PyRefMut<'py, Self> {
-        slf.state.set_flush_record_interval(interval);
-        slf
-    }
-
-    #[pyo3(name = "with_formatter")]
-    fn py_with_formatter<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        formatter_id: String,
-    ) -> PyRefMut<'py, Self> {
-        slf.state.set_formatter(formatter_id);
-        slf
-    }
-
-    #[pyo3(name = "with_overflow_policy")]
-    fn py_with_overflow_policy<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        policy: &str,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let policy_value = policy::parse_policy_with_timeout(policy, timeout_ms)?;
-        slf.state.set_overflow_policy(policy_value);
-        Ok(slf)
-    }
-
-    /// Return a dictionary describing the builder configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        self.as_pydict(py)
-    }
-
-    /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
-    /// failure.
-    fn build(&self) -> PyResult<FemtoFileHandler> {
-        <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
     }
 }
 

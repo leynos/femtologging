@@ -2,7 +2,7 @@
 //!
 //! Stores fields common to multiple handler builders.
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 
 #[cfg(feature = "python")]
 use pyo3::{prelude::*, types::PyDict, Bound};
@@ -16,7 +16,7 @@ use super::{
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
-    pub(crate) flush_timeout_ms: Option<u64>,
+    pub(crate) flush_timeout_ms: Option<NonZeroU64>,
     pub(crate) formatter_id: Option<FormatterId>,
 }
 
@@ -59,7 +59,7 @@ impl CommonBuilder {
             d.set_item("capacity", cap.get())?;
         }
         if let Some(ms) = self.flush_timeout_ms {
-            d.set_item("flush_timeout_ms", ms)?;
+            d.set_item("flush_timeout_ms", ms.get())?;
         }
         if let Some(fid) = &self.formatter_id {
             d.set_item("formatter_id", fid.as_str())?;
@@ -90,22 +90,10 @@ impl FileLikeBuilderState {
         }
     }
 
-    /// Return a copy of this state with a configured capacity.
-    pub(crate) fn with_capacity(mut self, capacity: usize) -> Self {
-        self.set_capacity(capacity);
-        self
-    }
-
     /// Update the bounded channel capacity in place.
     pub(crate) fn set_capacity(&mut self, capacity: usize) {
         self.common.capacity = NonZeroUsize::new(capacity);
         self.common.capacity_set = true;
-    }
-
-    /// Return a copy of this state with a configured flush interval.
-    pub(crate) fn with_flush_record_interval(mut self, interval: usize) -> Self {
-        self.set_flush_record_interval(interval);
-        self
     }
 
     /// Update the flush interval in place.
@@ -113,21 +101,9 @@ impl FileLikeBuilderState {
         self.flush_record_interval = Some(interval);
     }
 
-    /// Return a copy of this state with a formatter identifier.
-    pub(crate) fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self {
-        self.set_formatter(formatter_id);
-        self
-    }
-
     /// Update the formatter identifier in place.
     pub(crate) fn set_formatter(&mut self, formatter_id: impl Into<FormatterId>) {
         self.common.formatter_id = Some(formatter_id.into());
-    }
-
-    /// Return a copy of this state with an overflow policy.
-    pub(crate) fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.set_overflow_policy(policy);
-        self
     }
 
     /// Update the overflow policy in place.
