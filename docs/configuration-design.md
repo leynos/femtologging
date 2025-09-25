@@ -206,7 +206,7 @@ impl FileHandlerBuilder {
     /// Sets how often the worker thread flushes the file. Measured in
     /// records and must be greater than zero so periodic flushing always
     /// occurs.
-    pub fn flush_record_interval(mut self, interval: usize) -> Self { /* ... */ }
+    pub fn with_flush_record_interval(mut self, interval: usize) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
@@ -361,7 +361,7 @@ class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
     def mode(self, mode: str) -> "FileHandlerBuilder": ...
     def encoding(self, encoding: str) -> "FileHandlerBuilder": ...
-    def flush_record_interval(self, interval: int) -> "FileHandlerBuilder": ...
+    def with_flush_record_interval(self, interval: int) -> "FileHandlerBuilder": ...
 
 class StreamHandlerBuilder(HandlerBuilder):
     @classmethod
