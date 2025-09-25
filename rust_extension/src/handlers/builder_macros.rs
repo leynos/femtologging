@@ -10,15 +10,17 @@
 /// described once and the macro expands to:
 /// - a consuming Rust method returning `Self`;
 /// - `#[pymethods]` wrappers calling the same body on a `PyRefMut` with
-///   generated `#[pyo3(signature = ...)]` metadata;
+///   generated `#[pyo3(signature = ...)]` metadata and derived
+///   `#[pyo3(text_signature = ...)]` strings;
 /// - optional additional Python methods appended verbatim.
 ///
 /// The Python signature defaults to the Rust signature; specify `py_args` only
-/// when the Python API needs different argument types.
+/// when the Python API needs different argument types. Provide
+/// `py_text_signature` when the generated text signature must be overridden.
 /// Use `py_prelude` when a Python wrapper needs to coerce or validate its
-/// arguments before running the shared method body.
-/// The builder binding defaults to `builder`; set `self_ident` when a
-/// different name is clearer in the method body.
+/// arguments before running the shared method body. The builder binding defaults
+/// to `builder`; set `self_ident` when a different name is clearer in the method
+/// body.
 ///
 /// ```ignore
 /// use pyo3::prelude::*;
@@ -37,7 +39,6 @@
 ///                 rust_name: with_value,
 ///                 py_fn: py_with_value,
 ///                 py_name: "with_value",
-///                 py_text_signature: "(self, value)",
 ///                 rust_args: (value: usize),
 ///                 self_ident: builder,
 ///                 body: {
@@ -74,7 +75,7 @@ macro_rules! builder_methods {
                         rust_name: $rust_name:ident,
                         py_fn: $py_fn:ident,
                         py_name: $py_name:literal,
-                        py_text_signature: $py_text_signature:literal,
+                        $(py_text_signature: $py_text_signature:literal,)?
                         rust_args: ( $( $rarg:ident : $rty:ty ),* $(,)? ),
                         $(py_args: ( $( $parg:ident : $pty:ty ),* $(,)? ),)?
                         $(py_prelude: { $($py_prelude:tt)* },)?
@@ -97,7 +98,7 @@ macro_rules! builder_methods {
                     rust_name: $rust_name,
                     py_fn: $py_fn,
                     py_name: $py_name,
-                    py_text_signature: $py_text_signature,
+                    $(py_text_signature: $py_text_signature,)?
                     rust_args: ( $( $rarg : $rty ),* ),
                     $(py_args: ( $( $parg : $pty ),* ),)?
                     $(py_prelude: { $($py_prelude)* },)?
@@ -138,7 +139,7 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
-                        py_text_signature: $py_text_signature:literal,
+                py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 py_args: ( $( $parg:ident : $pty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
@@ -188,7 +189,56 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
-                        py_text_signature: $py_text_signature:literal,
+                rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+                py_args: ( $( $parg:ident : $pty:ty ),* ),
+                $(py_prelude: { $($py_prelude:tt)* },)?
+                body: $body:block
+            }
+            $(,)?
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                builder_methods!(@rust_method_tokens $doc, $rust_name, ( $( $rarg : $rty ),* ), builder, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                #[pyo3(signature = ( $( $parg ),* ))]
+                #[pyo3(text_signature = concat!("(", "self" $(, ", ", stringify!($parg))* , ")"))]
+                fn $py_fn<'py>(
+                    mut slf: pyo3::PyRefMut<'py, Self>
+                    $(, $parg : $pty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let builder = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            method {
+                doc: $doc:expr,
+                rust_name: $rust_name:ident,
+                py_fn: $py_fn:ident,
+                py_name: $py_name:literal,
+                py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 py_args: ( $( $parg:ident : $pty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
@@ -239,7 +289,57 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
-                        py_text_signature: $py_text_signature:literal,
+                rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+                py_args: ( $( $parg:ident : $pty:ty ),* ),
+                $(py_prelude: { $($py_prelude:tt)* },)?
+                self_ident: $self_ident:ident,
+                body: $body:block
+            }
+            $(,)?
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                builder_methods!(@rust_method_tokens $doc, $rust_name, ( $( $rarg : $rty ),* ), $self_ident, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                #[pyo3(signature = ( $( $parg ),* ))]
+                #[pyo3(text_signature = concat!("(", "self" $(, ", ", stringify!($parg))* , ")"))]
+                fn $py_fn<'py>(
+                    mut slf: pyo3::PyRefMut<'py, Self>
+                    $(, $parg : $pty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let $self_ident = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            method {
+                doc: $doc:expr,
+                rust_name: $rust_name:ident,
+                py_fn: $py_fn:ident,
+                py_name: $py_name:literal,
+                py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
                 body: $body:block
@@ -288,7 +388,55 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
-                        py_text_signature: $py_text_signature:literal,
+                rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+                $(py_prelude: { $($py_prelude:tt)* },)?
+                body: $body:block
+            }
+            $(,)?
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                builder_methods!(@rust_method_tokens $doc, $rust_name, ( $( $rarg : $rty ),* ), builder, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                #[pyo3(signature = ( $( $rarg ),* ))]
+                #[pyo3(text_signature = concat!("(", "self" $(, ", ", stringify!($rarg))* , ")"))]
+                fn $py_fn<'py>(
+                    mut slf: pyo3::PyRefMut<'py, Self>
+                    $(, $rarg : $rty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let builder = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            method {
+                doc: $doc:expr,
+                rust_name: $rust_name:ident,
+                py_fn: $py_fn:ident,
+                py_name: $py_name:literal,
+                py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
                 self_ident: $self_ident:ident,
@@ -311,6 +459,55 @@ macro_rules! builder_methods {
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $rarg ),* ))]
                 #[pyo3(text_signature = $py_text_signature)]
+                fn $py_fn<'py>(
+                    mut slf: pyo3::PyRefMut<'py, Self>
+                    $(, $rarg : $rty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let $self_ident = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            method {
+                doc: $doc:expr,
+                rust_name: $rust_name:ident,
+                py_fn: $py_fn:ident,
+                py_name: $py_name:literal,
+                rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+                $(py_prelude: { $($py_prelude:tt)* },)?
+                self_ident: $self_ident:ident,
+                body: $body:block
+            }
+            $(,)?
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                builder_methods!(@rust_method_tokens $doc, $rust_name, ( $( $rarg : $rty ),* ), $self_ident, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                #[pyo3(signature = ( $( $rarg ),* ))]
+                #[pyo3(text_signature = concat!("(", "self" $(, ", ", stringify!($rarg))* , ")"))]
                 fn $py_fn<'py>(
                     mut slf: pyo3::PyRefMut<'py, Self>
                     $(, $rarg : $rty )*
@@ -372,7 +569,6 @@ mod tests {
                     rust_name: with_value,
                     py_fn: py_with_value,
                     py_name: "with_value",
-                    py_text_signature: "(self, value)",
                     rust_args: (value: usize),
                     self_ident: builder,
                     body: {
@@ -384,7 +580,6 @@ mod tests {
                     rust_name: with_label,
                     py_fn: py_with_label,
                     py_name: "with_label",
-                    py_text_signature: "(self, label)",
                     rust_args: (label: impl Into<String>),
                     py_args: (label: String),
                     self_ident: builder,
@@ -397,7 +592,6 @@ mod tests {
                     rust_name: reset,
                     py_fn: py_reset,
                     py_name: "reset",
-                    py_text_signature: "(self)",
                     rust_args: (),
                     self_ident: builder,
                     body: {
@@ -440,6 +634,40 @@ mod tests {
             let guard = obj.borrow(py);
             assert_eq!(guard.value, 0);
             assert_eq!(guard.label(), None);
+        });
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_text_signatures_match_arguments() {
+        Python::with_gil(|py| {
+            let builder_type = py.get_type::<DummyBuilder>();
+            let value_sig: &str = builder_type
+                .getattr("with_value")
+                .expect("type must expose with_value")
+                .getattr("__text_signature__")
+                .expect("with_value must have text signature")
+                .extract()
+                .expect("text signature must be a string");
+            assert_eq!(value_sig, "(self, value)");
+
+            let label_sig: &str = builder_type
+                .getattr("with_label")
+                .expect("type must expose with_label")
+                .getattr("__text_signature__")
+                .expect("with_label must have text signature")
+                .extract()
+                .expect("text signature must be a string");
+            assert_eq!(label_sig, "(self, label)");
+
+            let reset_sig: &str = builder_type
+                .getattr("reset")
+                .expect("type must expose reset")
+                .getattr("__text_signature__")
+                .expect("reset must have text signature")
+                .extract()
+                .expect("text signature must be a string");
+            assert_eq!(reset_sig, "(self)");
         });
     }
 }
