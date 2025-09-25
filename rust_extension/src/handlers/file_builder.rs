@@ -66,6 +66,7 @@ The capacity must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_capacity,
                 py_fn: py_with_capacity,
                 py_name: "with_capacity",
+                py_text_signature: "(self, capacity)",
                 rust_args: (capacity: usize),
                 self_ident: builder,
                 body: {
@@ -81,6 +82,7 @@ The interval must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
+                py_text_signature: "(self, interval)",
                 rust_args: (interval: usize),
                 self_ident: builder,
                 body: {
@@ -92,6 +94,7 @@ The interval must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_formatter,
                 py_fn: py_with_formatter,
                 py_name: "with_formatter",
+                py_text_signature: "(self, formatter_id)",
                 rust_args: (formatter_id: impl Into<FormatterId>),
                 py_args: (formatter_id: String),
                 self_ident: builder,
@@ -102,6 +105,10 @@ The interval must be greater than zero; invalid values cause `build` to error.",
         }
         extra_py_methods {
             /// Create a new `FileHandlerBuilder`.
+            ///
+            /// Mirrors Python's `logging.FileHandler` constructor by accepting the
+            /// filesystem path directly so Python callers can pass the same
+            /// `filename` argument.
             #[new]
             fn py_new(path: String) -> Self {
                 Self::new(path)

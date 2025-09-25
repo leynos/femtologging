@@ -91,6 +91,7 @@ The capacity must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_capacity,
                 py_fn: py_with_capacity,
                 py_name: "with_capacity",
+                py_text_signature: "(self, capacity)",
                 rust_args: (capacity: usize),
                 self_ident: builder,
                 body: {
@@ -107,6 +108,7 @@ Accepts a `NonZeroU64` so both Rust and Python callers must provide a timeout gr
                 rust_name: with_flush_timeout_ms,
                 py_fn: py_with_flush_timeout_ms,
                 py_name: "with_flush_timeout_ms",
+                py_text_signature: "(self, timeout_ms)",
                 rust_args: (timeout_ms: NonZeroU64),
                 py_args: (timeout_ms: u64),
                 py_prelude: {
@@ -126,6 +128,7 @@ Accepts a `NonZeroU64` so both Rust and Python callers must provide a timeout gr
                 rust_name: with_formatter,
                 py_fn: py_with_formatter,
                 py_name: "with_formatter",
+                py_text_signature: "(self, formatter_id)",
                 rust_args: (formatter_id: impl Into<FormatterId>),
                 py_args: (formatter_id: String),
                 self_ident: builder,

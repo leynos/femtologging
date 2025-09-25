@@ -37,6 +37,7 @@
 ///                 rust_name: with_value,
 ///                 py_fn: py_with_value,
 ///                 py_name: "with_value",
+///                 py_text_signature: "(self, value)",
 ///                 rust_args: (value: usize),
 ///                 self_ident: builder,
 ///                 body: {
@@ -48,6 +49,7 @@
 ///                 rust_name: with_label,
 ///                 py_fn: py_with_label,
 ///                 py_name: "with_label",
+///                 py_text_signature: "(self, label)",
 ///                 rust_args: (label: impl Into<String>),
 ///                 py_args: (label: String),
 ///                 self_ident: builder,
@@ -72,6 +74,7 @@ macro_rules! builder_methods {
                         rust_name: $rust_name:ident,
                         py_fn: $py_fn:ident,
                         py_name: $py_name:literal,
+                        py_text_signature: $py_text_signature:literal,
                         rust_args: ( $( $rarg:ident : $rty:ty ),* $(,)? ),
                         $(py_args: ( $( $parg:ident : $pty:ty ),* $(,)? ),)?
                         $(py_prelude: { $($py_prelude:tt)* },)?
@@ -94,6 +97,7 @@ macro_rules! builder_methods {
                     rust_name: $rust_name,
                     py_fn: $py_fn,
                     py_name: $py_name,
+                    py_text_signature: $py_text_signature,
                     rust_args: ( $( $rarg : $rty ),* ),
                     $(py_args: ( $( $parg : $pty ),* ),)?
                     $(py_prelude: { $($py_prelude)* },)?
@@ -134,6 +138,7 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
+                        py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 py_args: ( $( $parg:ident : $pty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
@@ -155,6 +160,7 @@ macro_rules! builder_methods {
                 $($py_methods)*
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $parg ),* ))]
+                #[pyo3(text_signature = $py_text_signature)]
                 fn $py_fn<'py>(
                     mut slf: pyo3::PyRefMut<'py, Self>
                     $(, $parg : $pty )*
@@ -182,6 +188,7 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
+                        py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 py_args: ( $( $parg:ident : $pty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
@@ -204,6 +211,7 @@ macro_rules! builder_methods {
                 $($py_methods)*
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $parg ),* ))]
+                #[pyo3(text_signature = $py_text_signature)]
                 fn $py_fn<'py>(
                     mut slf: pyo3::PyRefMut<'py, Self>
                     $(, $parg : $pty )*
@@ -231,6 +239,7 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
+                        py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
                 body: $body:block
@@ -251,6 +260,7 @@ macro_rules! builder_methods {
                 $($py_methods)*
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $rarg ),* ))]
+                #[pyo3(text_signature = $py_text_signature)]
                 fn $py_fn<'py>(
                     mut slf: pyo3::PyRefMut<'py, Self>
                     $(, $rarg : $rty )*
@@ -278,6 +288,7 @@ macro_rules! builder_methods {
                 rust_name: $rust_name:ident,
                 py_fn: $py_fn:ident,
                 py_name: $py_name:literal,
+                        py_text_signature: $py_text_signature:literal,
                 rust_args: ( $( $rarg:ident : $rty:ty ),* ),
                 $(py_prelude: { $($py_prelude:tt)* },)?
                 self_ident: $self_ident:ident,
@@ -299,6 +310,7 @@ macro_rules! builder_methods {
                 $($py_methods)*
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $rarg ),* ))]
+                #[pyo3(text_signature = $py_text_signature)]
                 fn $py_fn<'py>(
                     mut slf: pyo3::PyRefMut<'py, Self>
                     $(, $rarg : $rty )*
@@ -360,6 +372,7 @@ mod tests {
                     rust_name: with_value,
                     py_fn: py_with_value,
                     py_name: "with_value",
+                    py_text_signature: "(self, value)",
                     rust_args: (value: usize),
                     self_ident: builder,
                     body: {
@@ -371,6 +384,7 @@ mod tests {
                     rust_name: with_label,
                     py_fn: py_with_label,
                     py_name: "with_label",
+                    py_text_signature: "(self, label)",
                     rust_args: (label: impl Into<String>),
                     py_args: (label: String),
                     self_ident: builder,
@@ -383,6 +397,7 @@ mod tests {
                     rust_name: reset,
                     py_fn: py_reset,
                     py_name: "reset",
+                    py_text_signature: "(self)",
                     rust_args: (),
                     self_ident: builder,
                     body: {
