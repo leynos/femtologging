@@ -1,0 +1,26 @@
+# serializer version: 1
+# name: test_leaves_logs_intact_when_rotation_is_disabled
+  dict({
+    'rotating.log': '''
+      rotate [INFO] first message
+      rotate [INFO] second message
+  
+    ''',
+  })
+# ---
+# name: test_respects_multibyte_characters_when_evaluating_record_sizes
+  dict({
+    'rotating.log': '''
+      rotate [INFO] emoji 😁
+  
+    ''',
+  })
+# ---
+# name: test_rotates_when_the_next_record_exceeds_the_byte_budget
+  dict({
+    'rotating.log': '''
+      rotate [INFO] second message
+  
+    ''',
+  })
+# ---

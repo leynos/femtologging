@@ -78,14 +78,14 @@ fn worker_config_from_handlerconfig_copies_values() {
 fn build_from_worker_wires_handler_components() {
     let buffer = SharedBuf::default();
     let writer = buffer.clone();
-    let worker_cfg = WorkerConfig {
+    let handler_cfg = HandlerConfig {
         capacity: 1,
         flush_interval: 1,
-        start_barrier: None,
+        overflow_policy: OverflowPolicy::Block,
     };
-    let policy = OverflowPolicy::Block;
+    let policy = handler_cfg.overflow_policy;
     let mut handler =
-        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, worker_cfg, policy);
+        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, None, None);
 
     assert!(handler.tx.is_some());
     assert!(handler.handle.is_some());
@@ -232,17 +232,13 @@ fn femto_file_handler_flush_and_close_idempotency() {
     };
 
     // Disable periodic flushing to ensure deterministic counter checks.
-    let worker_cfg = WorkerConfig {
+    let handler_cfg = HandlerConfig {
         capacity: 10,
         flush_interval: 0,
-        start_barrier: None,
+        overflow_policy: OverflowPolicy::Block,
     };
-    let mut handler = FemtoFileHandler::build_from_worker(
-        writer,
-        DefaultFormatter,
-        worker_cfg,
-        OverflowPolicy::Block,
-    );
+    let mut handler =
+        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, None, None);
 
     assert!(handler.flush());
     assert_eq!(flushed.load(Ordering::Relaxed), 1);

@@ -716,6 +716,24 @@ potential future enhancement.
   dictConfig (often from JSON or YAML). In the Rust ecosystem, YAML (used by
   `log4rs`) and TOML are common choices for configuration files.
 
+#### 6.3.1. Rotating file handler configuration decisions
+
+- The rotating handler remains a thin wrapper around the file handler builder.
+  Rotation thresholds are stored on `FemtoRotatingFileHandler`, while the
+  worker thread owns the logic that evaluates when a rollover must occur.
+- The worker evaluates the predicate
+  `current_file_len + buffered_bytes + next_record_bytes > max_bytes` before
+  each write. `next_record_bytes` counts the UTF-8 payload plus the newline
+  that `writeln!` appends so the check mirrors the eventual I/O.
+- Measuring never flushes buffered data. When the predicate fires, the worker
+  flushes once, truncates the base file, and then writes the new record. Future
+  work will extend the rotation strategy to cascade renames when backups are
+  enabled.
+- `max_bytes == 0` and `backup_count == 0` disable rotation. Builder validation
+  in Rust and the Python `HandlerOptions` mirror this rule, ensuring both
+  values are set together and exposing the builder API as the canonical
+  configuration surface in both languages.
+
   `tracing-logger-config` also demonstrates configuration via structs, implying
   `serde` for deserialization from files.
 

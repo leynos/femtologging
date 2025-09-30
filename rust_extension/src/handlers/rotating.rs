@@ -3,7 +3,12 @@
 //! The struct stores rotation thresholds so future updates can implement the
 //! actual rollover logic without changing the builder interface.
 
-use std::{any::Any, io, path::Path};
+use std::{
+    any::Any,
+    fs::{File, OpenOptions},
+    io::{self, BufWriter, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+};
 
 use delegate::delegate;
 
@@ -13,7 +18,7 @@ use pyo3::prelude::*;
 use crate::{
     formatter::FemtoFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{FemtoFileHandler, HandlerConfig, TestConfig},
+    handlers::file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig},
     log_record::FemtoLogRecord,
 };
 
@@ -66,6 +71,53 @@ impl RotationConfig {
 impl Default for RotationConfig {
     fn default() -> Self {
         Self::disabled()
+    }
+}
+
+struct FileRotationStrategy {
+    _path: PathBuf,
+    max_bytes: u64,
+    _backup_count: usize,
+}
+
+impl FileRotationStrategy {
+    fn new(path: PathBuf, max_bytes: u64, backup_count: usize) -> Self {
+        Self {
+            _path: path,
+            max_bytes,
+            _backup_count: backup_count,
+        }
+    }
+
+    fn next_record_bytes(message: &str) -> u64 {
+        message.len() as u64 + 1
+    }
+
+    fn should_rotate(&self, writer: &BufWriter<File>, next_record_bytes: u64) -> io::Result<bool> {
+        if self.max_bytes == 0 {
+            return Ok(false);
+        }
+        let current_file_len = writer.get_ref().metadata()?.len();
+        let buffered_bytes = writer.buffer().len() as u64;
+        Ok(current_file_len + buffered_bytes + next_record_bytes > self.max_bytes)
+    }
+
+    fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<()> {
+        writer.flush()?;
+        let file = writer.get_mut();
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        Ok(())
+    }
+}
+
+impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
+    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<()> {
+        let next_bytes = Self::next_record_bytes(formatted);
+        if self.should_rotate(writer, next_bytes)? {
+            self.rotate(writer)?;
+        }
+        Ok(())
     }
 }
 
@@ -212,15 +264,28 @@ impl FemtoRotatingFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
-        let inner = FemtoFileHandler::with_capacity_flush_policy(path, formatter, config)?;
-        let RotationConfig {
-            max_bytes,
-            backup_count,
-        } = rotation_config;
+        let path_ref = path.as_ref();
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path_ref)?;
+        let writer = BufWriter::new(file);
+        let rotation: Option<Box<dyn RotationStrategy<BufWriter<File>>>> =
+            if rotation_config.max_bytes == 0 {
+                None
+            } else {
+                Some(Box::new(FileRotationStrategy::new(
+                    path_ref.to_path_buf(),
+                    rotation_config.max_bytes,
+                    rotation_config.backup_count,
+                )))
+            };
+        let handler =
+            FemtoFileHandler::build_from_worker(writer, formatter, config, rotation, None);
         Ok(Self::new_with_rotation_limits(
-            inner,
-            max_bytes,
-            backup_count,
+            handler,
+            rotation_config.max_bytes,
+            rotation_config.backup_count,
         ))
     }
 
@@ -332,5 +397,62 @@ impl FemtoHandlerTrait for FemtoRotatingFileHandler {
 impl Drop for FemtoRotatingFileHandler {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use std::fs;
+    use std::io::{self, Write};
+    use tempfile::tempdir;
+
+    #[rstest]
+    #[case::rotates_when_existing_file_and_next_record_exceed_budget(
+        "012345678901234567890123456789",
+        "",
+        "next",
+        34,
+        true,
+        0
+    )]
+    #[case::stays_below_threshold("012345678901234567890123456789", "", "next", 35, false, 1)]
+    #[case::counts_buffered_bytes("seed\n", "pending", "next", 15, true, 1)]
+    #[case::buffered_fits_exactly("seed\n", "pending", "next", 17, false, 1)]
+    #[case::multibyte_overflows("", "", "😀", 4, true, 1)]
+    #[case::multibyte_boundary("", "", "😀", 5, false, 1)]
+    #[case::single_record_exceeds_limit("", "", "toolong", 5, true, 1)]
+    #[case::rotation_disabled("", "", "message", 0, false, 0)]
+    fn rotation_predicate_respects_byte_lengths(
+        #[case] initial: &str,
+        #[case] buffered: &str,
+        #[case] message: &str,
+        #[case] max_bytes: u64,
+        #[case] should_rotate: bool,
+        #[case] backup_count: usize,
+    ) -> io::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("rotating.log");
+        fs::write(&path, initial)?;
+        let file = OpenOptions::new().append(true).open(&path)?;
+        let mut writer = BufWriter::new(file);
+        if !buffered.is_empty() {
+            writer.write_all(buffered.as_bytes())?;
+        }
+        let mut strategy = FileRotationStrategy::new(path.clone(), max_bytes, backup_count);
+        strategy.before_write(&mut writer, message)?;
+        writer.write_all(message.as_bytes())?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        drop(writer);
+        let final_contents = fs::read_to_string(&path)?;
+        let expected = if should_rotate {
+            format!("{message}\n")
+        } else {
+            format!("{initial}{buffered}{message}\n")
+        };
+        assert_eq!(final_contents, expected);
+        Ok(())
     }
 }

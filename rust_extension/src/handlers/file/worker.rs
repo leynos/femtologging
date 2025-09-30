@@ -24,6 +24,10 @@ pub enum FileCommand {
     Flush,
 }
 
+pub trait RotationStrategy<W>: Send {
+    fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<()>;
+}
+
 /// Configuration for the background worker thread.
 pub struct WorkerConfig {
     pub capacity: usize,
@@ -104,6 +108,7 @@ pub fn spawn_worker<W, F>(
     formatter: F,
     config: WorkerConfig,
     ack_tx: Sender<()>,
+    rotation: Option<Box<dyn RotationStrategy<W>>>,
 ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
     W: Write + Send + 'static,
@@ -117,6 +122,7 @@ where
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
     let handle = thread::spawn(move || {
+        let mut rotation = rotation;
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -126,12 +132,16 @@ where
         for cmd in rx {
             match cmd {
                 FileCommand::Record(record) => {
-                    if let Err(e) = super::mod_impl::write_record(
-                        &mut writer,
-                        &formatter,
-                        *record,
-                        &mut tracker,
-                    ) {
+                    let record = *record;
+                    let message = formatter.format(&record);
+                    if let Some(strategy) = rotation.as_mut() {
+                        if let Err(err) = strategy.before_write(&mut writer, &message) {
+                            warn!("FemtoFileHandler rotation error: {err}");
+                        }
+                    }
+                    if let Err(e) =
+                        super::mod_impl::write_record(&mut writer, &message, &mut tracker)
+                    {
                         warn!("FemtoFileHandler write error: {e}");
                     }
                 }

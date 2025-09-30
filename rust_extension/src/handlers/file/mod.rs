@@ -16,11 +16,13 @@
 mod config;
 pub(crate) mod policy;
 mod worker;
+pub(crate) use worker::RotationStrategy;
 
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufWriter, Write},
     path::Path,
+    sync::{Arc, Barrier},
     thread::JoinHandle,
     time::Duration,
 };
@@ -42,18 +44,15 @@ use worker::{spawn_worker, FileCommand, WorkerConfig};
 mod mod_impl {
     use super::*;
 
-    pub(super) fn write_record<W, F>(
+    pub(super) fn write_record<W>(
         writer: &mut W,
-        formatter: &F,
-        record: FemtoLogRecord,
+        message: &str,
         flush_tracker: &mut worker::FlushTracker,
     ) -> io::Result<()>
     where
         W: Write,
-        F: FemtoFormatter,
     {
-        let msg = formatter.format(&record);
-        writeln!(writer, "{msg}")?;
+        writeln!(writer, "{message}")?;
         flush_tracker.record_write(writer)
     }
 }
@@ -213,13 +212,12 @@ impl FemtoFileHandler {
     where
         F: FemtoFormatter + Send + 'static,
     {
-        let worker_cfg = WorkerConfig::from(&config);
         // Use a buffered writer so flush policies control when records are
         // persisted to disk. Without buffering each write reaches the OS
         // immediately, causing premature flushes and defeating the configured
         // `flush_interval`.
         let writer = BufWriter::new(file);
-        Self::build_from_worker(writer, formatter, worker_cfg, config.overflow_policy)
+        Self::build_from_worker(writer, formatter, config, None, None)
     }
 
     pub fn flush(&self) -> bool {
@@ -253,23 +251,27 @@ impl FemtoFileHandler {
         }
     }
 
-    fn build_from_worker<W, F>(
+    pub(crate) fn build_from_worker<W, F>(
         writer: W,
         formatter: F,
-        worker_cfg: WorkerConfig,
-        policy: OverflowPolicy,
+        config: HandlerConfig,
+        rotation: Option<Box<dyn worker::RotationStrategy<W>>>,
+        start_barrier: Option<Arc<Barrier>>,
     ) -> Self
     where
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
+        let mut worker_cfg = WorkerConfig::from(&config);
+        worker_cfg.start_barrier = start_barrier;
+        let overflow_policy = config.overflow_policy;
         let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
-        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, ack_tx);
+        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, ack_tx, rotation);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
-            overflow_policy: policy,
+            overflow_policy,
             ack_rx,
         }
     }
@@ -287,13 +289,12 @@ impl FemtoFileHandler {
             overflow_policy,
             start_barrier,
         } = config;
-        let mut worker_cfg = WorkerConfig::from(&HandlerConfig {
+        let handler_config = HandlerConfig {
             capacity,
             flush_interval,
             overflow_policy,
-        });
-        worker_cfg.start_barrier = start_barrier;
-        Self::build_from_worker(writer, formatter, worker_cfg, overflow_policy)
+        };
+        Self::build_from_worker(writer, formatter, handler_config, None, start_barrier)
     }
 }
 
