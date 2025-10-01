@@ -155,6 +155,20 @@ impl FemtoFileHandler {
     }
 }
 
+pub(crate) struct BuilderOptions<W> {
+    pub(crate) rotation: Option<Box<dyn RotationStrategy<W>>>,
+    pub(crate) start_barrier: Option<Arc<Barrier>>,
+}
+
+impl<W> Default for BuilderOptions<W> {
+    fn default() -> Self {
+        Self {
+            rotation: None,
+            start_barrier: None,
+        }
+    }
+}
+
 impl FemtoFileHandler {
     /// Create a handler writing to `path` with default settings.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
@@ -217,7 +231,7 @@ impl FemtoFileHandler {
         // immediately, causing premature flushes and defeating the configured
         // `flush_interval`.
         let writer = BufWriter::new(file);
-        Self::build_from_worker(writer, formatter, config, None, None)
+        Self::build_from_worker(writer, formatter, config, BuilderOptions::default())
     }
 
     pub fn flush(&self) -> bool {
@@ -255,13 +269,16 @@ impl FemtoFileHandler {
         writer: W,
         formatter: F,
         config: HandlerConfig,
-        rotation: Option<Box<dyn worker::RotationStrategy<W>>>,
-        start_barrier: Option<Arc<Barrier>>,
+        options: BuilderOptions<W>,
     ) -> Self
     where
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
+        let BuilderOptions {
+            rotation,
+            start_barrier,
+        } = options;
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
@@ -294,7 +311,11 @@ impl FemtoFileHandler {
             flush_interval,
             overflow_policy,
         };
-        Self::build_from_worker(writer, formatter, handler_config, None, start_barrier)
+        let options = BuilderOptions {
+            rotation: None,
+            start_barrier,
+        };
+        Self::build_from_worker(writer, formatter, handler_config, options)
     }
 }
 

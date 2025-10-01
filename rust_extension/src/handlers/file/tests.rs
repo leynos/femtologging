@@ -84,8 +84,12 @@ fn build_from_worker_wires_handler_components() {
         overflow_policy: OverflowPolicy::Block,
     };
     let policy = handler_cfg.overflow_policy;
-    let mut handler =
-        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, None, None);
+    let mut handler = FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        handler_cfg,
+        BuilderOptions::default(),
+    );
 
     assert!(handler.tx.is_some());
     assert!(handler.handle.is_some());
@@ -237,8 +241,12 @@ fn femto_file_handler_flush_and_close_idempotency() {
         flush_interval: 0,
         overflow_policy: OverflowPolicy::Block,
     };
-    let mut handler =
-        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, None, None);
+    let mut handler = FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        handler_cfg,
+        BuilderOptions::default(),
+    );
 
     assert!(handler.flush());
     assert_eq!(flushed.load(Ordering::Relaxed), 1);

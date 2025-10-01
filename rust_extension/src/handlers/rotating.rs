@@ -18,7 +18,9 @@ use pyo3::prelude::*;
 use crate::{
     formatter::FemtoFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig},
+    handlers::file::{
+        BuilderOptions, FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig,
+    },
     log_record::FemtoLogRecord,
 };
 
@@ -280,8 +282,11 @@ impl FemtoRotatingFileHandler {
                     rotation_config.backup_count,
                 )))
             };
-        let handler =
-            FemtoFileHandler::build_from_worker(writer, formatter, config, rotation, None);
+        let options = BuilderOptions {
+            rotation,
+            start_barrier: None,
+        };
+        let handler = FemtoFileHandler::build_from_worker(writer, formatter, config, options);
         Ok(Self::new_with_rotation_limits(
             handler,
             rotation_config.max_bytes,
