@@ -7,13 +7,13 @@
 //! verify flushing behaviour.
 
 use std::{
-    io::{self, Write},
+    io::{self, Seek, Write},
     sync::{Arc, Barrier},
     thread::{self, JoinHandle},
 };
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use log::warn;
+use log::{error, warn};
 
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
@@ -24,8 +24,17 @@ pub enum FileCommand {
     Flush,
 }
 
-pub trait RotationStrategy<W>: Send {
+pub trait RotationStrategy<W>: Send
+where
+    W: Write + Seek,
+{
     fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<()>;
+}
+
+impl<W: Write + Seek> RotationStrategy<W> for () {
+    fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Configuration for the background worker thread.
@@ -103,16 +112,17 @@ impl FlushTracker {
     }
 }
 
-pub fn spawn_worker<W, F>(
+pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     ack_tx: Sender<()>,
-    rotation: Option<Box<dyn RotationStrategy<W>>>,
+    rotation: Option<R>,
 ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
-    W: Write + Send + 'static,
+    W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
+    R: RotationStrategy<W> + Send + 'static,
 {
     let WorkerConfig {
         capacity,
@@ -134,10 +144,13 @@ where
                 FileCommand::Record(record) => {
                     let record = *record;
                     let message = formatter.format(&record);
-                    if let Some(strategy) = rotation.as_mut() {
-                        if let Err(err) = strategy.before_write(&mut writer, &message) {
-                            warn!("FemtoFileHandler rotation error: {err}");
-                        }
+                    let rotation_result = rotation
+                        .as_mut()
+                        .map(|strategy| strategy.before_write(&mut writer, &message))
+                        .unwrap_or(Ok(()));
+                    if let Err(err) = rotation_result {
+                        error!("FemtoFileHandler rotation error: {err}");
+                        continue;
                     }
                     if let Err(e) =
                         super::mod_impl::write_record(&mut writer, &message, &mut tracker)

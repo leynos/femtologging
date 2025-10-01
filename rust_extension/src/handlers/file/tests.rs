@@ -5,7 +5,7 @@
 
 use super::*;
 use serial_test::serial;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Barrier, Mutex};
 use std::thread;
@@ -30,6 +30,15 @@ impl Write for SharedBuf {
 
     fn flush(&mut self) -> io::Result<()> {
         self.buffer.lock().expect("lock").flush()
+    }
+}
+
+impl Seek for SharedBuf {
+    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+        Err(io::Error::new(
+            ErrorKind::Unsupported,
+            "seek unsupported for SharedBuf",
+        ))
     }
 }
 
@@ -88,7 +97,7 @@ fn build_from_worker_wires_handler_components() {
         writer,
         DefaultFormatter,
         handler_cfg,
-        BuilderOptions::default(),
+        BuilderOptions::<SharedBuf, ()>::default(),
     );
 
     assert!(handler.tx.is_some());
@@ -185,6 +194,15 @@ fn femto_file_handler_worker_thread_failure() {
         }
     }
 
+    impl Seek for BlockingWriter {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "seek unsupported for BlockingWriter",
+            ))
+        }
+    }
+
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(2));
     let mut cfg = TestConfig::new(
@@ -222,6 +240,15 @@ fn femto_file_handler_flush_and_close_idempotency() {
         }
     }
 
+    impl Seek for TestWriter {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "seek unsupported for TestWriter",
+            ))
+        }
+    }
+
     impl Drop for TestWriter {
         fn drop(&mut self) {
             self.closed.fetch_add(1, Ordering::Relaxed);
@@ -245,7 +272,7 @@ fn femto_file_handler_flush_and_close_idempotency() {
         writer,
         DefaultFormatter,
         handler_cfg,
-        BuilderOptions::default(),
+        BuilderOptions::<TestWriter, ()>::default(),
     );
 
     assert!(handler.flush());

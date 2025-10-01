@@ -20,7 +20,8 @@ pub(crate) use worker::RotationStrategy;
 
 use std::{
     fs::{File, OpenOptions},
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, Seek, Write},
+    marker::PhantomData,
     path::Path,
     sync::{Arc, Barrier},
     thread::JoinHandle,
@@ -155,16 +156,28 @@ impl FemtoFileHandler {
     }
 }
 
-pub(crate) struct BuilderOptions<W> {
-    pub(crate) rotation: Option<Box<dyn RotationStrategy<W>>>,
+pub(crate) struct BuilderOptions<W, R = ()> {
+    pub(crate) rotation: Option<R>,
     pub(crate) start_barrier: Option<Arc<Barrier>>,
+    _phantom: PhantomData<W>,
 }
 
-impl<W> Default for BuilderOptions<W> {
+impl<W, R> Default for BuilderOptions<W, R> {
     fn default() -> Self {
         Self {
             rotation: None,
             start_barrier: None,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<W, R> BuilderOptions<W, R> {
+    pub(crate) fn new(rotation: Option<R>, start_barrier: Option<Arc<Barrier>>) -> Self {
+        Self {
+            rotation,
+            start_barrier,
+            _phantom: PhantomData,
         }
     }
 }
@@ -231,7 +244,12 @@ impl FemtoFileHandler {
         // immediately, causing premature flushes and defeating the configured
         // `flush_interval`.
         let writer = BufWriter::new(file);
-        Self::build_from_worker(writer, formatter, config, BuilderOptions::default())
+        Self::build_from_worker(
+            writer,
+            formatter,
+            config,
+            BuilderOptions::<BufWriter<File>, ()>::default(),
+        )
     }
 
     pub fn flush(&self) -> bool {
@@ -265,19 +283,21 @@ impl FemtoFileHandler {
         }
     }
 
-    pub(crate) fn build_from_worker<W, F>(
+    pub(crate) fn build_from_worker<W, F, R>(
         writer: W,
         formatter: F,
         config: HandlerConfig,
-        options: BuilderOptions<W>,
+        options: BuilderOptions<W, R>,
     ) -> Self
     where
-        W: Write + Send + 'static,
+        W: Write + Seek + Send + 'static,
         F: FemtoFormatter + Send + 'static,
+        R: worker::RotationStrategy<W> + Send + 'static,
     {
         let BuilderOptions {
             rotation,
             start_barrier,
+            _phantom: _,
         } = options;
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
@@ -295,7 +315,7 @@ impl FemtoFileHandler {
 
     pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
-        W: Write + Send + 'static,
+        W: Write + Seek + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
         let TestConfig {
@@ -311,10 +331,7 @@ impl FemtoFileHandler {
             flush_interval,
             overflow_policy,
         };
-        let options = BuilderOptions {
-            rotation: None,
-            start_barrier,
-        };
+        let options = BuilderOptions::<W, ()>::new(None, start_barrier);
         Self::build_from_worker(writer, formatter, handler_config, options)
     }
 }

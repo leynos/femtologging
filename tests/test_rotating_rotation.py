@@ -74,7 +74,8 @@ def then_log_files_snapshot(
         rotating_ctx.closed = True
 
     base = rotating_ctx.path
-    contents = {}
-    for candidate in sorted(base.parent.glob(f"{base.name}*")):
-        contents[candidate.name] = candidate.read_text()
-    assert contents == snapshot
+    contents = {
+        candidate.name: candidate.read_text().rstrip("\n")
+        for candidate in sorted(base.parent.glob(f"{base.name}*"))
+    }
+    snapshot.assert_match(contents)
