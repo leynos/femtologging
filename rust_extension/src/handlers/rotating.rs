@@ -122,12 +122,24 @@ impl FileRotationStrategy {
         Ok(())
     }
 
-    fn rotate_backups(&self) -> io::Result<()> {
-        let max = self.backup_count;
-        if max == 0 {
-            return Ok(());
+    fn remove_file_if_exists(path: &Path) -> io::Result<()> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
         }
-        let mut extra = max + 1;
+    }
+
+    fn rename_file_if_exists(src: &Path, dst: &Path) -> io::Result<()> {
+        match fs::rename(src, dst) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn remove_excess_backups(&self) -> io::Result<()> {
+        let mut extra = self.backup_count + 1;
         loop {
             let candidate = self.backup_path(extra);
             match fs::remove_file(&candidate) {
@@ -142,25 +154,28 @@ impl FileRotationStrategy {
                 }
             }
         }
-        let oldest = self.backup_path(max);
-        if oldest.exists() {
-            if let Err(err) = fs::remove_file(&oldest) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    return Err(err);
-                }
-            }
-        }
-        for idx in (1..max).rev() {
+        Ok(())
+    }
+
+    fn cascade_backups(&self) -> io::Result<()> {
+        for idx in (1..self.backup_count).rev() {
             let src = self.backup_path(idx);
             if src.exists() {
                 let dst = self.backup_path(idx + 1);
-                if let Err(err) = fs::rename(&src, &dst) {
-                    if err.kind() != io::ErrorKind::NotFound {
-                        return Err(err);
-                    }
-                }
+                Self::rename_file_if_exists(&src, &dst)?;
             }
         }
+        Ok(())
+    }
+
+    fn rotate_backups(&self) -> io::Result<()> {
+        if self.backup_count == 0 {
+            return Ok(());
+        }
+        self.remove_excess_backups()?;
+        let oldest = self.backup_path(self.backup_count);
+        Self::remove_file_if_exists(&oldest)?;
+        self.cascade_backups()?;
         Ok(())
     }
 
