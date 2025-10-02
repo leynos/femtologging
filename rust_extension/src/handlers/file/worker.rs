@@ -7,13 +7,13 @@
 //! verify flushing behaviour.
 
 use std::{
-    io::{self, Write},
+    io::{self, Seek, Write},
     sync::{Arc, Barrier},
     thread::{self, JoinHandle},
 };
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use log::warn;
+use log::{error, warn};
 
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
@@ -22,6 +22,19 @@ use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 pub enum FileCommand {
     Record(Box<FemtoLogRecord>),
     Flush,
+}
+
+pub trait RotationStrategy<W>: Send
+where
+    W: Write + Seek,
+{
+    fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<()>;
+}
+
+impl<W: Write + Seek> RotationStrategy<W> for () {
+    fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Configuration for the background worker thread.
@@ -99,15 +112,17 @@ impl FlushTracker {
     }
 }
 
-pub fn spawn_worker<W, F>(
+pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     ack_tx: Sender<()>,
+    rotation: Option<R>,
 ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
-    W: Write + Send + 'static,
+    W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
+    R: RotationStrategy<W> + Send + 'static,
 {
     let WorkerConfig {
         capacity,
@@ -117,6 +132,7 @@ where
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
     let handle = thread::spawn(move || {
+        let mut rotation = rotation;
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -126,12 +142,20 @@ where
         for cmd in rx {
             match cmd {
                 FileCommand::Record(record) => {
-                    if let Err(e) = super::mod_impl::write_record(
-                        &mut writer,
-                        &formatter,
-                        *record,
-                        &mut tracker,
-                    ) {
+                    let record = *record;
+                    let message = formatter.format(&record);
+                    // Keep writing even if rotation fails so producers do not lose data.
+                    // Rotation attempts will continue on subsequent records.
+                    if let Some(strategy) = rotation.as_mut() {
+                        if let Err(err) = strategy.before_write(&mut writer, &message) {
+                            error!(
+                                "FemtoFileHandler rotation error; writing record without rotating: {err}"
+                            );
+                        }
+                    }
+                    if let Err(e) =
+                        super::mod_impl::write_record(&mut writer, &message, &mut tracker)
+                    {
                         warn!("FemtoFileHandler write error: {e}");
                     }
                 }

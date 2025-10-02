@@ -5,7 +5,7 @@
 
 use super::*;
 use serial_test::serial;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Barrier, Mutex};
 use std::thread;
@@ -30,6 +30,15 @@ impl Write for SharedBuf {
 
     fn flush(&mut self) -> io::Result<()> {
         self.buffer.lock().expect("lock").flush()
+    }
+}
+
+impl Seek for SharedBuf {
+    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+        Err(io::Error::new(
+            ErrorKind::Unsupported,
+            "seek unsupported for SharedBuf",
+        ))
     }
 }
 
@@ -78,14 +87,18 @@ fn worker_config_from_handlerconfig_copies_values() {
 fn build_from_worker_wires_handler_components() {
     let buffer = SharedBuf::default();
     let writer = buffer.clone();
-    let worker_cfg = WorkerConfig {
+    let handler_cfg = HandlerConfig {
         capacity: 1,
         flush_interval: 1,
-        start_barrier: None,
+        overflow_policy: OverflowPolicy::Block,
     };
-    let policy = OverflowPolicy::Block;
-    let mut handler =
-        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, worker_cfg, policy);
+    let policy = handler_cfg.overflow_policy;
+    let mut handler = FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        handler_cfg,
+        BuilderOptions::<SharedBuf, ()>::default(),
+    );
 
     assert!(handler.tx.is_some());
     assert!(handler.handle.is_some());
@@ -107,6 +120,44 @@ fn build_from_worker_wires_handler_components() {
     handle.join().expect("worker thread");
 
     assert_eq!(buffer.contents(), "core [INFO] test\n");
+}
+
+#[test]
+fn worker_writes_record_when_rotation_fails() {
+    struct FailingRotation;
+
+    impl RotationStrategy<SharedBuf> for FailingRotation {
+        fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failing rotation for test",
+            ))
+        }
+    }
+
+    let buffer = SharedBuf::default();
+    let writer = buffer.clone();
+    let handler_cfg = HandlerConfig {
+        capacity: 1,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Block,
+    };
+    let options = BuilderOptions::<SharedBuf, FailingRotation>::new(Some(FailingRotation), None);
+    let mut handler =
+        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
+
+    handler.handle(FemtoLogRecord::new(
+        "core",
+        "INFO",
+        "after rotation failure",
+    ));
+    assert!(
+        handler.flush(),
+        "flush should succeed even if rotation reported an error",
+    );
+    handler.close();
+
+    assert_eq!(buffer.contents(), "core [INFO] after rotation failure\n");
 }
 
 #[test]
@@ -181,6 +232,15 @@ fn femto_file_handler_worker_thread_failure() {
         }
     }
 
+    impl Seek for BlockingWriter {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "seek unsupported for BlockingWriter",
+            ))
+        }
+    }
+
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(2));
     let mut cfg = TestConfig::new(
@@ -218,6 +278,15 @@ fn femto_file_handler_flush_and_close_idempotency() {
         }
     }
 
+    impl Seek for TestWriter {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "seek unsupported for TestWriter",
+            ))
+        }
+    }
+
     impl Drop for TestWriter {
         fn drop(&mut self) {
             self.closed.fetch_add(1, Ordering::Relaxed);
@@ -232,16 +301,16 @@ fn femto_file_handler_flush_and_close_idempotency() {
     };
 
     // Disable periodic flushing to ensure deterministic counter checks.
-    let worker_cfg = WorkerConfig {
+    let handler_cfg = HandlerConfig {
         capacity: 10,
         flush_interval: 0,
-        start_barrier: None,
+        overflow_policy: OverflowPolicy::Block,
     };
     let mut handler = FemtoFileHandler::build_from_worker(
         writer,
         DefaultFormatter,
-        worker_cfg,
-        OverflowPolicy::Block,
+        handler_cfg,
+        BuilderOptions::<TestWriter, ()>::default(),
     );
 
     assert!(handler.flush());

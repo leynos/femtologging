@@ -3,7 +3,12 @@
 //! The struct stores rotation thresholds so future updates can implement the
 //! actual rollover logic without changing the builder interface.
 
-use std::{any::Any, io, path::Path};
+use std::{
+    any::Any,
+    fs::{File, OpenOptions},
+    io::{self, BufWriter},
+    path::Path,
+};
 
 use delegate::delegate;
 
@@ -13,9 +18,12 @@ use pyo3::prelude::*;
 use crate::{
     formatter::FemtoFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{FemtoFileHandler, HandlerConfig, TestConfig},
+    handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, TestConfig},
     log_record::FemtoLogRecord,
 };
+
+mod strategy;
+pub(crate) use strategy::FileRotationStrategy;
 
 #[cfg(feature = "python")]
 use crate::{
@@ -212,15 +220,27 @@ impl FemtoRotatingFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
-        let inner = FemtoFileHandler::with_capacity_flush_policy(path, formatter, config)?;
-        let RotationConfig {
-            max_bytes,
-            backup_count,
-        } = rotation_config;
+        let path_ref = path.as_ref();
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path_ref)?;
+        let writer = BufWriter::new(file);
+        let rotation = if rotation_config.max_bytes == 0 {
+            None
+        } else {
+            Some(FileRotationStrategy::new(
+                path_ref.to_path_buf(),
+                rotation_config.max_bytes,
+                rotation_config.backup_count,
+            ))
+        };
+        let options = BuilderOptions::<BufWriter<File>, FileRotationStrategy>::new(rotation, None);
+        let handler = FemtoFileHandler::build_from_worker(writer, formatter, config, options);
         Ok(Self::new_with_rotation_limits(
-            inner,
-            max_bytes,
-            backup_count,
+            handler,
+            rotation_config.max_bytes,
+            rotation_config.backup_count,
         ))
     }
 
@@ -231,7 +251,7 @@ impl FemtoRotatingFileHandler {
         backup_count: usize,
     ) -> Self
     where
-        W: std::io::Write + Send + 'static,
+        W: std::io::Write + std::io::Seek + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
         let inner = FemtoFileHandler::with_writer_for_test(config);
@@ -328,9 +348,11 @@ impl FemtoHandlerTrait for FemtoRotatingFileHandler {
         self
     }
 }
-
 impl Drop for FemtoRotatingFileHandler {
     fn drop(&mut self) {
         self.close();
     }
 }
+
+#[cfg(test)]
+mod tests;

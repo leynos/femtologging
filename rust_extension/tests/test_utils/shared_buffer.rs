@@ -4,7 +4,7 @@
 //! log output in both standard and loom-based scenarios.
 
 pub mod std {
-    use std::io::{self, Write};
+    use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 
     pub type Arc<T> = std::sync::Arc<T>;
     pub type Mutex<T> = std::sync::Mutex<T>;
@@ -59,6 +59,15 @@ pub mod std {
         }
     }
 
+    impl Seek for SharedBuf {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "seek unsupported for SharedBuf",
+            ))
+        }
+    }
+
     #[allow(dead_code)]
     pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
         String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
@@ -68,7 +77,7 @@ pub mod std {
 
 #[allow(dead_code)]
 pub mod loom {
-    use std::io::{self, Write};
+    use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 
     pub type Arc<T> = loom::sync::Arc<T>;
     pub type Mutex<T> = loom::sync::Mutex<T>;
@@ -114,6 +123,15 @@ pub mod loom {
                 .lock()
                 .expect("SharedBuf mutex poisoned")
                 .flush()
+        }
+    }
+
+    impl Seek for SharedBuf {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "seek unsupported for SharedBuf",
+            ))
         }
     }
 
