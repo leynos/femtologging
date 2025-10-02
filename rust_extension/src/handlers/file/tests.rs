@@ -123,6 +123,44 @@ fn build_from_worker_wires_handler_components() {
 }
 
 #[test]
+fn worker_writes_record_when_rotation_fails() {
+    struct FailingRotation;
+
+    impl RotationStrategy<SharedBuf> for FailingRotation {
+        fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failing rotation for test",
+            ))
+        }
+    }
+
+    let buffer = SharedBuf::default();
+    let writer = buffer.clone();
+    let handler_cfg = HandlerConfig {
+        capacity: 1,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Block,
+    };
+    let options = BuilderOptions::<SharedBuf, FailingRotation>::new(Some(FailingRotation), None);
+    let mut handler =
+        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
+
+    handler.handle(FemtoLogRecord::new(
+        "core",
+        "INFO",
+        "after rotation failure",
+    ));
+    assert!(
+        handler.flush(),
+        "flush should succeed even if rotation reported an error",
+    );
+    handler.close();
+
+    assert_eq!(buffer.contents(), "core [INFO] after rotation failure\n");
+}
+
+#[test]
 fn femto_file_handler_invalid_file_path() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("missing").join("out.log");

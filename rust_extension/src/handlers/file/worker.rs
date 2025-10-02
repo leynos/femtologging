@@ -144,13 +144,14 @@ where
                 FileCommand::Record(record) => {
                     let record = *record;
                     let message = formatter.format(&record);
-                    let rotation_result = rotation
-                        .as_mut()
-                        .map(|strategy| strategy.before_write(&mut writer, &message))
-                        .unwrap_or(Ok(()));
-                    if let Err(err) = rotation_result {
-                        error!("FemtoFileHandler rotation error: {err}");
-                        continue;
+                    // Keep writing even if rotation fails so producers do not lose data.
+                    // Rotation attempts will continue on subsequent records.
+                    if let Some(strategy) = rotation.as_mut() {
+                        if let Err(err) = strategy.before_write(&mut writer, &message) {
+                            error!(
+                                "FemtoFileHandler rotation error; writing record without rotating: {err}"
+                            );
+                        }
                     }
                     if let Err(e) =
                         super::mod_impl::write_record(&mut writer, &message, &mut tracker)
