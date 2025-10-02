@@ -3,10 +3,12 @@
 //! These tests verify the wiring between configuration and worker threads as
 //! well as basic flushing behaviour.
 
+use super::test_support::{install_test_logger, take_logged_messages};
 use super::*;
+use log::Level;
 use serial_test::serial;
-use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -40,6 +42,96 @@ impl Seek for SharedBuf {
             "seek unsupported for SharedBuf",
         ))
     }
+}
+
+struct CountingRotation {
+    calls: Arc<AtomicUsize>,
+}
+
+impl CountingRotation {
+    fn new(calls: Arc<AtomicUsize>) -> Self {
+        Self { calls }
+    }
+}
+
+impl RotationStrategy<SharedBuf> for CountingRotation {
+    fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<()> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct FlagRotation {
+    flag: Arc<AtomicBool>,
+}
+
+impl FlagRotation {
+    fn new(flag: Arc<AtomicBool>) -> Self {
+        Self { flag }
+    }
+}
+
+impl RotationStrategy<Cursor<Vec<u8>>> for FlagRotation {
+    fn before_write(&mut self, _writer: &mut Cursor<Vec<u8>>, _formatted: &str) -> io::Result<()> {
+        self.flag.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[test]
+fn builder_options_default_provides_noop_rotation() {
+    let mut options: BuilderOptions<Cursor<Vec<u8>>> = BuilderOptions::default();
+    assert!(options.start_barrier.is_none());
+    let mut writer = Cursor::new(Vec::new());
+    assert!(options.rotation.before_write(&mut writer, "entry").is_ok());
+}
+
+#[test]
+fn builder_options_new_stores_rotation_and_barrier() {
+    let flag = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(1));
+    let mut options = BuilderOptions::<Cursor<Vec<u8>>, FlagRotation>::new(
+        FlagRotation::new(Arc::clone(&flag)),
+        Some(Arc::clone(&barrier)),
+    );
+
+    let stored = options.start_barrier.take().expect("missing barrier");
+    assert!(Arc::ptr_eq(&stored, &barrier));
+
+    let mut writer = Cursor::new(Vec::new());
+    options
+        .rotation
+        .before_write(&mut writer, "check")
+        .expect("rotation should succeed");
+    assert!(flag.load(Ordering::SeqCst));
+}
+
+#[test]
+fn build_from_worker_invokes_rotation_strategy() {
+    let buffer = SharedBuf::default();
+    let writer = buffer.clone();
+    let handler_cfg = HandlerConfig {
+        capacity: 4,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Block,
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let rotation = CountingRotation::new(Arc::clone(&calls));
+    let mut handler = FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        handler_cfg,
+        BuilderOptions::<SharedBuf, _>::new(rotation, None),
+    );
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "one"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "two"));
+
+    assert!(handler.flush());
+    handler.close();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(buffer.contents(), "core [INFO] one\ncore [INFO] two\n");
 }
 
 fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, FemtoFileHandler) {
@@ -97,7 +189,7 @@ fn build_from_worker_wires_handler_components() {
         writer,
         DefaultFormatter,
         handler_cfg,
-        BuilderOptions::<SharedBuf, ()>::default(),
+        BuilderOptions::<SharedBuf>::default(),
     );
 
     assert!(handler.tx.is_some());
@@ -123,6 +215,7 @@ fn build_from_worker_wires_handler_components() {
 }
 
 #[test]
+#[serial]
 fn worker_writes_record_when_rotation_fails() {
     struct FailingRotation;
 
@@ -142,7 +235,8 @@ fn worker_writes_record_when_rotation_fails() {
         flush_interval: 1,
         overflow_policy: OverflowPolicy::Block,
     };
-    let options = BuilderOptions::<SharedBuf, FailingRotation>::new(Some(FailingRotation), None);
+    let options = BuilderOptions::<SharedBuf, FailingRotation>::new(FailingRotation, None);
+    install_test_logger();
     let mut handler =
         FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
 
@@ -156,6 +250,17 @@ fn worker_writes_record_when_rotation_fails() {
         "flush should succeed even if rotation reported an error",
     );
     handler.close();
+
+    let logs = take_logged_messages();
+    assert!(
+        logs.iter().any(|record| {
+            record.level == Level::Error
+                && record
+                    .message
+                    .contains("FemtoFileHandler rotation error; writing record without rotating")
+        }),
+        "rotation error should be logged"
+    );
 
     assert_eq!(buffer.contents(), "core [INFO] after rotation failure\n");
 }
@@ -310,7 +415,7 @@ fn femto_file_handler_flush_and_close_idempotency() {
         writer,
         DefaultFormatter,
         handler_cfg,
-        BuilderOptions::<TestWriter, ()>::default(),
+        BuilderOptions::<TestWriter>::default(),
     );
 
     assert!(handler.flush());
@@ -326,6 +431,12 @@ fn femto_file_handler_flush_and_close_idempotency() {
 
     handler.close();
     assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+
+    assert!(
+        !handler.flush(),
+        "flush after close should be a no-op and report failure"
+    );
     assert_eq!(flushed.load(Ordering::Relaxed), 3);
 
     assert!(!handler.flush());
