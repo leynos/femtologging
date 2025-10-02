@@ -137,3 +137,76 @@ impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, io::Write};
+    use tempfile::tempdir;
+
+    fn write_record(writer: &mut BufWriter<File>, message: &str) -> io::Result<()> {
+        writeln!(writer, "{message}")?;
+        writer.flush()
+    }
+
+    #[test]
+    fn rotates_and_limits_backups() -> io::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("app.log");
+        let file = File::create(&path)?;
+        let mut writer = BufWriter::new(file);
+        let mut strategy = FileRotationStrategy::new(path.clone(), 25, 2);
+
+        for message in ["first record", "second record", "third record"] {
+            strategy.before_write(&mut writer, message)?;
+            write_record(&mut writer, message)?;
+        }
+
+        assert_eq!(fs::read_to_string(&path)?, "third record\n");
+        assert_eq!(
+            fs::read_to_string(strategy.backup_path(1))?,
+            "second record\n"
+        );
+        assert_eq!(
+            fs::read_to_string(strategy.backup_path(2))?,
+            "first record\n"
+        );
+        assert!(!strategy.backup_path(3).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn rotates_without_backups_when_disabled() -> io::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("app.log");
+        let file = File::create(&path)?;
+        let mut writer = BufWriter::new(file);
+        let mut strategy = FileRotationStrategy::new(path.clone(), 8, 0);
+
+        for message in ["alpha", "beta"] {
+            strategy.before_write(&mut writer, message)?;
+            write_record(&mut writer, message)?;
+        }
+
+        assert_eq!(fs::read_to_string(&path)?, "beta\n");
+        assert!(!strategy.backup_path(1).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn disables_rotation_when_max_bytes_is_zero() -> io::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("app.log");
+        let file = File::create(&path)?;
+        let mut writer = BufWriter::new(file);
+        let mut strategy = FileRotationStrategy::new(path.clone(), 0, 3);
+
+        for message in ["one", "two", "three"] {
+            strategy.before_write(&mut writer, message)?;
+            write_record(&mut writer, message)?;
+        }
+
+        assert_eq!(fs::read_to_string(&path)?, "one\ntwo\nthree\n");
+        Ok(())
+    }
+}

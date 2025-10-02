@@ -112,17 +112,16 @@ impl FlushTracker {
     }
 }
 
-pub fn spawn_worker<W, F, R>(
+pub fn spawn_worker<W, F>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     ack_tx: Sender<()>,
-    rotation: Option<R>,
+    mut rotation: Box<dyn RotationStrategy<W> + Send>,
 ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
-    R: RotationStrategy<W> + Send + 'static,
 {
     let WorkerConfig {
         capacity,
@@ -132,7 +131,6 @@ where
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
     let handle = thread::spawn(move || {
-        let mut rotation = rotation;
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -144,14 +142,10 @@ where
                 FileCommand::Record(record) => {
                     let record = *record;
                     let message = formatter.format(&record);
-                    // Keep writing even if rotation fails so producers do not lose data.
-                    // Rotation attempts will continue on subsequent records.
-                    if let Some(strategy) = rotation.as_mut() {
-                        if let Err(err) = strategy.before_write(&mut writer, &message) {
-                            error!(
-                                "FemtoFileHandler rotation error; writing record without rotating: {err}"
-                            );
-                        }
+                    if let Err(err) = rotation.before_write(&mut writer, &message) {
+                        error!(
+                            "FemtoFileHandler rotation error; writing record without rotating: {err}"
+                        );
                     }
                     if let Err(e) =
                         super::mod_impl::write_record(&mut writer, &message, &mut tracker)
