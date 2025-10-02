@@ -31,7 +31,16 @@ where
     fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<()>;
 }
 
-impl<W: Write + Seek> RotationStrategy<W> for () {
+/// Explicit strategy representing the absence of rotation logic.
+///
+/// A dedicated type avoids relying on the unit type to convey intent and keeps
+/// error handling straightforward. The strategy guarantees it never reports an
+/// error so the worker avoids logging spurious rotation failures when
+/// rotation is disabled.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoRotation;
+
+impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
     fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<()> {
         Ok(())
     }
@@ -112,16 +121,17 @@ impl FlushTracker {
     }
 }
 
-pub fn spawn_worker<W, F>(
+pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     ack_tx: Sender<()>,
-    mut rotation: Box<dyn RotationStrategy<W> + Send>,
+    mut rotation: R,
 ) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
+    R: RotationStrategy<W> + Send + 'static,
 {
     let WorkerConfig {
         capacity,
@@ -173,7 +183,7 @@ where
 #[cfg(test)]
 mod flush_tracker_tests {
     use super::*;
-    use logtest::Logger;
+    use crate::handlers::file::test_support;
     use rstest::*;
     use serial_test::serial;
     use std::io::{self, Write};
@@ -228,15 +238,16 @@ mod flush_tracker_tests {
     #[rstest]
     #[serial]
     fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
-        let mut logger = Logger::start();
+        test_support::install_test_logger();
         let mut tracker = FlushTracker::new(1);
         let result = tracker.record_write(&mut writer);
         assert!(result.is_err());
         assert_eq!(writer.flushed, 1);
 
-        let log = logger.pop().expect("no log produced");
-        assert_eq!(log.level(), log::Level::Warn);
-        assert!(log.args().contains("after write"));
-        assert!(log.args().contains("flush failed"));
+        let logs = test_support::take_logged_messages();
+        let log = logs.into_iter().next().expect("no log produced");
+        assert_eq!(log.level, log::Level::Warn);
+        assert!(log.message.contains("after write"));
+        assert!(log.message.contains("flush failed"));
     }
 }

@@ -3,7 +3,9 @@
 //! These tests verify the wiring between configuration and worker threads as
 //! well as basic flushing behaviour.
 
+use super::test_support::{install_test_logger, take_logged_messages};
 use super::*;
+use log::Level;
 use serial_test::serial;
 use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -88,8 +90,8 @@ fn builder_options_default_provides_noop_rotation() {
 fn builder_options_new_stores_rotation_and_barrier() {
     let flag = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(1));
-    let mut options = BuilderOptions::<Cursor<Vec<u8>>>::new(
-        Box::new(FlagRotation::new(Arc::clone(&flag))),
+    let mut options = BuilderOptions::<Cursor<Vec<u8>>, FlagRotation>::new(
+        FlagRotation::new(Arc::clone(&flag)),
         Some(Arc::clone(&barrier)),
     );
 
@@ -119,7 +121,7 @@ fn build_from_worker_invokes_rotation_strategy() {
         writer,
         DefaultFormatter,
         handler_cfg,
-        BuilderOptions::<SharedBuf>::new(Box::new(rotation), None),
+        BuilderOptions::<SharedBuf, _>::new(rotation, None),
     );
 
     handler.handle(FemtoLogRecord::new("core", "INFO", "one"));
@@ -213,6 +215,7 @@ fn build_from_worker_wires_handler_components() {
 }
 
 #[test]
+#[serial]
 fn worker_writes_record_when_rotation_fails() {
     struct FailingRotation;
 
@@ -232,7 +235,8 @@ fn worker_writes_record_when_rotation_fails() {
         flush_interval: 1,
         overflow_policy: OverflowPolicy::Block,
     };
-    let options = BuilderOptions::<SharedBuf>::new(Box::new(FailingRotation), None);
+    let options = BuilderOptions::<SharedBuf, FailingRotation>::new(FailingRotation, None);
+    install_test_logger();
     let mut handler =
         FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
 
@@ -246,6 +250,17 @@ fn worker_writes_record_when_rotation_fails() {
         "flush should succeed even if rotation reported an error",
     );
     handler.close();
+
+    let logs = take_logged_messages();
+    assert!(
+        logs.iter().any(|record| {
+            record.level == Level::Error
+                && record
+                    .message
+                    .contains("FemtoFileHandler rotation error; writing record without rotating")
+        }),
+        "rotation error should be logged"
+    );
 
     assert_eq!(buffer.contents(), "core [INFO] after rotation failure\n");
 }
@@ -416,6 +431,12 @@ fn femto_file_handler_flush_and_close_idempotency() {
 
     handler.close();
     assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+
+    assert!(
+        !handler.flush(),
+        "flush after close should be a no-op and report failure"
+    );
     assert_eq!(flushed.load(Ordering::Relaxed), 3);
 
     assert!(!handler.flush());

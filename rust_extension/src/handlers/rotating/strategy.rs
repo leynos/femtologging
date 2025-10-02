@@ -140,6 +140,7 @@ impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
 
 #[cfg(test)]
 mod tests {
+    //! Tests covering rotation triggers and backup management.
     use super::*;
     use std::{fs, io::Write};
     use tempfile::tempdir;

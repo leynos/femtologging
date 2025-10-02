@@ -18,9 +18,7 @@ use pyo3::prelude::*;
 use crate::{
     formatter::FemtoFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{
-        BuilderOptions, FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig,
-    },
+    handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, NoRotation, TestConfig},
     log_record::FemtoLogRecord,
 };
 
@@ -228,18 +226,18 @@ impl FemtoRotatingFileHandler {
             .append(true)
             .open(path_ref)?;
         let writer = BufWriter::new(file);
-        let rotation: Box<dyn RotationStrategy<BufWriter<File>> + Send> =
-            if rotation_config.max_bytes == 0 {
-                Box::new(())
-            } else {
-                Box::new(FileRotationStrategy::new(
-                    path_ref.to_path_buf(),
-                    rotation_config.max_bytes,
-                    rotation_config.backup_count,
-                ))
-            };
-        let options = BuilderOptions::<BufWriter<File>>::new(rotation, None);
-        let handler = FemtoFileHandler::build_from_worker(writer, formatter, config, options);
+        let handler = if rotation_config.max_bytes == 0 {
+            let options = BuilderOptions::<BufWriter<File>>::new(NoRotation, None);
+            FemtoFileHandler::build_from_worker(writer, formatter, config, options)
+        } else {
+            let rotation = FileRotationStrategy::new(
+                path_ref.to_path_buf(),
+                rotation_config.max_bytes,
+                rotation_config.backup_count,
+            );
+            let options = BuilderOptions::<BufWriter<File>, _>::new(rotation, None);
+            FemtoFileHandler::build_from_worker(writer, formatter, config, options)
+        };
         Ok(Self::new_with_rotation_limits(
             handler,
             rotation_config.max_bytes,
