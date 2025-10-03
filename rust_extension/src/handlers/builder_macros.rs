@@ -4,6 +4,46 @@
 //! These macros centralise the shared method definitions so the two bindings
 //! remain in sync and avoid repetitive boilerplate.
 
+/// Generate fluent builder methods with a shared capacity setter.
+///
+/// Wraps [`builder_methods!`] by injecting a standard `with_capacity` method
+/// before delegating to the remaining method definitions.
+macro_rules! builder_methods_with_capacity {
+    (
+        impl $builder:ident {
+            capacity(
+                self_ident = $self_ident:ident,
+                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
+            );
+            methods { $($method_tokens:tt)* }
+            $(extra_py_methods { $($extra_py_methods:tt)* })?
+        }
+    ) => {
+        builder_methods! {
+            impl $builder {
+                methods {
+                    method {
+                        doc: "Set the bounded channel capacity.\n\n# Validation\n\nThe capacity must be greater than zero; invalid values cause `build` to error.",
+                        rust_name: with_capacity,
+                        py_fn: py_with_capacity,
+                        py_name: "with_capacity",
+                        py_text_signature: "(self, capacity)",
+                        rust_args: (capacity: usize),
+                        self_ident: $self_ident,
+                        body: {
+                            let $setter_self = $self_ident;
+                            let $setter_arg = capacity;
+                            { $($setter_body)* }
+                        }
+                    }
+                    $($method_tokens)*
+                }
+                $(extra_py_methods { $($extra_py_methods)* })?
+            }
+        }
+    };
+}
+
 /// Generate fluent builder methods for Rust and matching Python wrappers.
 ///
 /// The macro accepts a builder type and a list of methods. Each method is
@@ -68,22 +108,7 @@
 macro_rules! builder_methods {
     (
         impl $builder:ident {
-            methods {
-                $(
-                    method {
-                        doc: $doc:expr,
-                        rust_name: $rust_name:ident,
-                        py_fn: $py_fn:ident,
-                        py_name: $py_name:literal,
-                        $(py_text_signature: $py_text_signature:literal,)?
-                        rust_args: ( $( $rarg:ident : $rty:ty ),* $(,)? ),
-                        $(py_args: ( $( $parg:ident : $pty:ty ),* $(,)? ),)?
-                        $(py_prelude: { $($py_prelude:tt)* },)?
-                        $(self_ident: $self_ident:ident,)?
-                        body: $body:block
-                    }
-                )*
-            }
+            methods { $($method_tokens:tt)* }
             $(extra_py_methods { $($extra_py_methods:tt)* })?
         }
     ) => {
@@ -92,20 +117,7 @@ macro_rules! builder_methods {
             $builder,
             [],
             [],
-            [
-                $(method {
-                    doc: $doc,
-                    rust_name: $rust_name,
-                    py_fn: $py_fn,
-                    py_name: $py_name,
-                    $(py_text_signature: $py_text_signature,)?
-                    rust_args: ( $( $rarg : $rty ),* ),
-                    $(py_args: ( $( $parg : $pty ),* ),)?
-                    $(py_prelude: { $($py_prelude)* },)?
-                    $(self_ident: $self_ident,)?
-                    body: $body
-                })*
-            ],
+            [ $($method_tokens)* ],
             $( ($($extra_py_methods)*) )?
         );
     };
@@ -536,6 +548,7 @@ macro_rules! builder_methods {
 }
 
 pub(crate) use builder_methods;
+pub(crate) use builder_methods_with_capacity;
 
 #[cfg(test)]
 mod tests {
