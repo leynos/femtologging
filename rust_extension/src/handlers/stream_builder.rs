@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 
 use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
 
-use crate::handlers::builder_macros::{builder_methods, builder_methods_with_capacity};
+use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
@@ -76,14 +76,14 @@ impl StreamHandlerBuilder {
     }
 }
 
-builder_methods_with_capacity! {
+builder_methods! {
     impl StreamHandlerBuilder {
-        capacity(
+        capacity {
             self_ident = builder,
             setter = |builder, capacity| {
                 builder.common.set_capacity(capacity);
             }
-        );
+        };
         methods {
             method {
                 doc: "Set the flush timeout in milliseconds.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide a timeout greater than zero.",
