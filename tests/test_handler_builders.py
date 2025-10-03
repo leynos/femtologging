@@ -210,7 +210,7 @@ def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
 def then_setting_stream_flush_interval_fails(
     stream_builder: StreamHandlerBuilder, interval: int
 ) -> None:
-    exc = ValueError if interval == 0 else OverflowError
+    exc = ValueError if interval <= 0 else OverflowError
     with pytest.raises(exc):
         stream_builder.with_flush_interval(interval)
 

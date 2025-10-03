@@ -67,7 +67,7 @@ impl StreamHandlerBuilder {
 
     fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
-            "flush_interval_ms",
+            "flush_interval",
             self.common.flush_interval_ms.map(NonZeroU64::get),
         )
     }
@@ -110,9 +110,14 @@ Accepts a `NonZeroU64` so both Rust and Python callers must provide an interval 
                 py_name: "with_flush_interval",
                 py_text_signature: "(self, interval_ms)",
                 rust_args: (interval_ms: NonZeroU64),
-                py_args: (interval_ms: usize),
+                py_args: (interval_ms: i128),
                 py_prelude: {
-                    let interval_ms: u64 = interval_ms.try_into().map_err(|_| {
+                    if interval_ms < 0 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "flush_interval must not be negative",
+                        ));
+                    }
+                    let interval_ms: u64 = u64::try_from(interval_ms).map_err(|_| {
                         pyo3::exceptions::PyOverflowError::new_err(
                             "flush_interval exceeds u64::MAX",
                         )
