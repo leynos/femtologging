@@ -16,7 +16,7 @@ use super::{
 };
 use crate::formatter::DefaultFormatter;
 
-use crate::handlers::builder_macros::{builder_methods, builder_methods_with_capacity};
+use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
@@ -54,14 +54,14 @@ impl FileHandlerBuilder {
     }
 }
 
-builder_methods_with_capacity! {
+builder_methods! {
     impl FileHandlerBuilder {
-        capacity(
+        capacity {
             self_ident = builder,
             setter = |builder, capacity| {
                 builder.state.set_capacity(capacity);
             }
-        );
+        };
         methods {
             method {
                 doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero; invalid values cause `build` to error.",

@@ -4,50 +4,12 @@
 //! These macros centralise the shared method definitions so the two bindings
 //! remain in sync and avoid repetitive boilerplate.
 
-/// Generate fluent builder methods with a shared capacity setter.
-///
-/// Wraps [`builder_methods!`] by injecting a standard `with_capacity` method
-/// before delegating to the remaining method definitions.
-macro_rules! builder_methods_with_capacity {
-    (
-        impl $builder:ident {
-            capacity(
-                self_ident = $self_ident:ident,
-                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
-            );
-            methods { $($method_tokens:tt)* }
-            $(extra_py_methods { $($extra_py_methods:tt)* })?
-        }
-    ) => {
-        builder_methods! {
-            impl $builder {
-                methods {
-                    method {
-                        doc: "Set the bounded channel capacity.\n\n# Validation\n\nThe capacity must be greater than zero; invalid values cause `build` to error.",
-                        rust_name: with_capacity,
-                        py_fn: py_with_capacity,
-                        py_name: "with_capacity",
-                        py_text_signature: "(self, capacity)",
-                        rust_args: (capacity: usize),
-                        self_ident: $self_ident,
-                        body: {
-                            let $setter_self = $self_ident;
-                            let $setter_arg = capacity;
-                            { $($setter_body)* }
-                        }
-                    }
-                    $($method_tokens)*
-                }
-                $(extra_py_methods { $($extra_py_methods)* })?
-            }
-        }
-    };
-}
-
 /// Generate fluent builder methods for Rust and matching Python wrappers.
 ///
-/// The macro accepts a builder type and a list of methods. Each method is
-/// described once and the macro expands to:
+/// The macro accepts a builder type and a list of methods. Provide an optional
+/// `capacity` clause to inject a shared `with_capacity` setter before the
+/// remaining method definitions. Each method is described once and the macro
+/// expands to:
 /// - a consuming Rust method returning `Self`;
 /// - `#[pymethods]` wrappers calling the same body on a `PyRefMut` with
 ///   generated `#[pyo3(signature = ...)]` metadata and derived
@@ -106,6 +68,40 @@ macro_rules! builder_methods_with_capacity {
 /// assert_eq!(builder.value, 3);
 /// ```
 macro_rules! builder_methods {
+    (
+        impl $builder:ident {
+            capacity {
+                self_ident = $self_ident:ident,
+                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
+            };
+            methods { $($method_tokens:tt)* }
+            $(extra_py_methods { $($extra_py_methods:tt)* })?
+        }
+    ) => {
+        builder_methods! {
+            impl $builder {
+                methods {
+                    method {
+                        doc: "Set the bounded channel capacity.\n\n# Validation\n\nThe capacity must be greater than zero; invalid values cause `build` to error.",
+                        rust_name: with_capacity,
+                        py_fn: py_with_capacity,
+                        py_name: "with_capacity",
+                        py_text_signature: "(self, capacity)",
+                        rust_args: (capacity: usize),
+                        self_ident: $self_ident,
+                        body: {
+                            let $setter_self = $self_ident;
+                            let $setter_arg = capacity;
+                            { $($setter_body)* }
+                        }
+                    }
+                    $($method_tokens)*
+                }
+                $(extra_py_methods { $($extra_py_methods)* })?
+            }
+        }
+    };
+
     (
         impl $builder:ident {
             methods { $($method_tokens:tt)* }
@@ -548,11 +544,11 @@ macro_rules! builder_methods {
 }
 
 pub(crate) use builder_methods;
-pub(crate) use builder_methods_with_capacity;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::num::NonZeroUsize;
 
     #[cfg(feature = "python")]
     use pyo3::prelude::*;
@@ -681,6 +677,63 @@ mod tests {
                 .extract()
                 .expect("text signature must be a string");
             assert_eq!(reset_sig, "(self)");
+        });
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct CapacityDummy {
+        capacity: Option<usize>,
+        capacity_attempted: bool,
+    }
+
+    impl CapacityDummy {
+        fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    builder_methods! {
+        impl CapacityDummy {
+            capacity {
+                self_ident = builder,
+                setter = |builder, capacity| {
+                    builder.capacity_attempted = true;
+                    builder.capacity = NonZeroUsize::new(capacity).map(NonZeroUsize::get);
+                }
+            };
+            methods { }
+        }
+    }
+
+    #[test]
+    fn capacity_clause_generates_rust_method() {
+        let builder = CapacityDummy::new().with_capacity(5);
+        assert_eq!(builder.capacity, Some(5));
+        assert!(
+            builder.capacity_attempted,
+            "with_capacity must mark that configuration occurred"
+        );
+
+        let zero_builder = CapacityDummy::new().with_capacity(0);
+        assert_eq!(zero_builder.capacity, None);
+        assert!(
+            zero_builder.capacity_attempted,
+            "with_capacity must still mark attempted configuration for zero capacity"
+        );
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn capacity_clause_generates_python_method() {
+        Python::with_gil(|py| {
+            let obj = pyo3::Py::new(py, CapacityDummy::default())
+                .expect("Py::new must create CapacityDummy");
+            let any = obj.as_ref(py);
+            any.call_method1("with_capacity", (7,))
+                .expect("with_capacity must succeed for positive capacity");
+            let guard = obj.borrow(py);
+            assert_eq!(guard.capacity, Some(7));
+            assert!(guard.capacity_attempted);
         });
     }
 }
