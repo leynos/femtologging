@@ -21,6 +21,12 @@ pub struct CommonBuilder {
 }
 
 impl CommonBuilder {
+    /// Update the bounded channel capacity in place.
+    pub(crate) fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = NonZeroUsize::new(capacity);
+        self.capacity_set = true;
+    }
+
     /// Validate that an optional numeric field (if provided) is greater than zero.
     ///
     /// Returns `InvalidConfig("{field} must be greater than zero")` when `value`
@@ -92,8 +98,7 @@ impl FileLikeBuilderState {
 
     /// Update the bounded channel capacity in place.
     pub(crate) fn set_capacity(&mut self, capacity: usize) {
-        self.common.capacity = NonZeroUsize::new(capacity);
-        self.common.capacity_set = true;
+        self.common.set_capacity(capacity);
     }
 
     /// Update the flush interval in place.

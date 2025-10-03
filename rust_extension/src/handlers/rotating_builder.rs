@@ -16,7 +16,7 @@ use super::{
 };
 use crate::formatter::DefaultFormatter;
 
-use crate::handlers::builder_macros::builder_methods;
+use crate::handlers::builder_macros::{builder_methods, builder_methods_with_capacity};
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
 
@@ -94,31 +94,17 @@ impl RotatingFileHandlerBuilder {
     }
 }
 
-builder_methods! {
+builder_methods_with_capacity! {
     impl RotatingFileHandlerBuilder {
+        capacity(
+            self_ident = builder,
+            setter = |builder, capacity| {
+                builder.state.set_capacity(capacity);
+            }
+        );
         methods {
             method {
-                doc: "Set the bounded channel capacity.
-
-# Validation
-
-The capacity must be greater than zero; invalid values cause `build` to error.",
-                rust_name: with_capacity,
-                py_fn: py_with_capacity,
-                py_name: "with_capacity",
-                py_text_signature: "(self, capacity)",
-                rust_args: (capacity: usize),
-                self_ident: builder,
-                body: {
-                    builder.state.set_capacity(capacity);
-                }
-            }
-            method {
-                doc: "Set the periodic flush interval measured in records.
-
-# Validation
-
-The interval must be greater than zero; invalid values cause `build` to error.",
+                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero; invalid values cause `build` to error.",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
