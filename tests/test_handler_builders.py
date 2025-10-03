@@ -226,6 +226,15 @@ def test_stream_builder_negative_capacity(ctor) -> None:
         builder.with_capacity(-1)
 
 
+@pytest.mark.parametrize(
+    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
+)
+def test_stream_builder_negative_flush_timeout(ctor) -> None:
+    builder = ctor()
+    with pytest.raises((OverflowError, HandlerConfigError)):
+        builder.with_flush_timeout_ms(-1)
+
+
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
     """Timeout policy without a timeout raises ``ValueError``."""
 
