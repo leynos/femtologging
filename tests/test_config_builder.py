@@ -297,8 +297,9 @@ def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
         ("INFO", "ERROR", "ERROR"),
         ("ERROR", "INFO", "INFO"),
         ("DEBUG", "WARN", "WARN"),
+        ("INFO", "INFO", "INFO"),
     ],
-    ids=["INFO→ERROR", "ERROR→INFO", "DEBUG→WARN"],
+    ids=["INFO→ERROR", "ERROR→INFO", "DEBUG→WARN", "INFO→INFO"],
 )
 def test_root_logger_last_assignment_wins(
     first: str, second: str, expected: str
