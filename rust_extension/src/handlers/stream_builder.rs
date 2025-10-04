@@ -77,6 +77,12 @@ impl StreamHandlerBuilder {
         self.is_flush_interval_valid()?;
         Ok(())
     }
+
+    /// Deprecated compatibility alias for `with_flush_interval`.
+    #[deprecated(since = "0.1.0", note = "Use with_flush_interval instead")]
+    pub fn with_flush_timeout_ms(self, timeout_ms: NonZeroU64) -> Self {
+        self.with_flush_interval(timeout_ms)
+    }
 }
 
 builder_methods! {
@@ -166,6 +172,23 @@ Accepts a `NonZeroU64` so both Rust and Python callers must provide an interval 
             #[pyo3(name = "stderr")]
             fn py_stderr() -> Self {
                 Self::stderr()
+            }
+
+            /// Deprecated alias for :meth:`with_flush_interval` accepting milliseconds.
+            #[pyo3(name = "with_flush_timeout_ms")]
+            #[pyo3(signature = (timeout_ms))]
+            #[pyo3(text_signature = "(self, timeout_ms)")]
+            fn py_with_flush_timeout_ms<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                timeout_ms: u64,
+            ) -> PyResult<PyRefMut<'py, Self>> {
+                let timeout_ms = NonZeroU64::new(timeout_ms).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "flush_timeout_ms must be greater than zero",
+                    )
+                })?;
+                slf.common.flush_interval_ms = Some(timeout_ms);
+                Ok(slf)
             }
 
             /// Return a dictionary describing the builder configuration.
