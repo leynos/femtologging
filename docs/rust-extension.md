@@ -19,6 +19,40 @@ splits responsibilities into three modules:
 3. `mod.rs` — the public API exposing `FemtoFileHandler` and re‑exporting the
     configuration items.
 
+## Builder composition
+
+The handler builders reuse a small shared state machine so both the Rust and
+Python APIs surface identical fluent setters. The diagram below illustrates how
+`CommonBuilder` embeds into each handler-specific builder, and how
+`FileLikeBuilderState` composes the shared configuration required by file-based
+handlers.
+
+```mermaid
+classDiagram
+    class CommonBuilder {
+        +set_capacity(capacity: usize)
+        capacity: Option<NonZeroUsize>
+        capacity_set: bool
+    }
+    class FileLikeBuilderState {
+        +set_capacity(capacity: usize)
+        common: CommonBuilder
+    }
+    class FileHandlerBuilder {
+        state: FileLikeBuilderState
+    }
+    class StreamHandlerBuilder {
+        common: CommonBuilder
+    }
+    class RotatingFileHandlerBuilder {
+        state: FileLikeBuilderState
+    }
+    CommonBuilder <|-- FileLikeBuilderState : composition
+    FileLikeBuilderState <|-- FileHandlerBuilder : composition
+    FileLikeBuilderState <|-- RotatingFileHandlerBuilder : composition
+    CommonBuilder <|-- StreamHandlerBuilder : composition
+```
+
 ```rust
 use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
 ```
