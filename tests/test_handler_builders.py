@@ -231,8 +231,39 @@ def test_stream_builder_negative_capacity(ctor) -> None:
 )
 def test_stream_builder_negative_flush_timeout(ctor) -> None:
     builder = ctor()
-    with pytest.raises((OverflowError, HandlerConfigError)):
+    with pytest.raises(OverflowError):
         builder.with_flush_timeout_ms(-1)
+
+
+@pytest.mark.parametrize(
+    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
+)
+def test_stream_builder_zero_flush_timeout(ctor) -> None:
+    builder = ctor()
+    with pytest.raises(ValueError):
+        builder.with_flush_timeout_ms(0)
+
+
+@pytest.mark.parametrize(
+    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
+)
+def test_stream_builder_large_flush_timeout(ctor) -> None:
+    builder = ctor().with_flush_timeout_ms(1_000_000_000)
+    data = builder.as_dict()
+    assert data["flush_timeout_ms"] == 1_000_000_000
+
+
+def test_file_builder_negative_flush_record_interval(tmp_path: Path) -> None:
+    builder = FileHandlerBuilder(str(tmp_path / "negative_flush_interval.log"))
+    with pytest.raises(OverflowError):
+        builder.with_flush_record_interval(-1)
+
+
+def test_file_builder_large_flush_record_interval(tmp_path: Path) -> None:
+    builder = FileHandlerBuilder(str(tmp_path / "large_flush_interval.log"))
+    builder = builder.with_flush_record_interval(1_000_000_000)
+    data = builder.as_dict()
+    assert data["flush_record_interval"] == 1_000_000_000
 
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
