@@ -70,40 +70,11 @@
 macro_rules! builder_methods {
     (
         impl $builder:ident {
-            capacity {
-                self_ident = $self_ident:ident,
-                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
-            };
-            methods { $($method_tokens:tt)* }
-            $(extra_py_methods { $($extra_py_methods:tt)* })?
-        }
-    ) => {
-        builder_methods! {
-            impl $builder {
-                methods {
-                    method {
-                        doc: "Set the bounded channel capacity.\n\n# Validation\n\nThe capacity must be greater than zero; invalid values cause `build` to error.",
-                        rust_name: with_capacity,
-                        py_fn: py_with_capacity,
-                        py_name: "with_capacity",
-                        py_text_signature: "(self, capacity)",
-                        rust_args: (capacity: usize),
-                        self_ident: $self_ident,
-                        body: {
-                            let $setter_self = $self_ident;
-                            let $setter_arg = capacity;
-                            { $($setter_body)* }
-                        }
-                    }
-                    $($method_tokens)*
-                }
-                $(extra_py_methods { $($extra_py_methods)* })?
-            }
-        }
-    };
-
-    (
-        impl $builder:ident {
+            $(
+                capacity {
+                    $($capacity_tokens:tt)*
+                };
+            )?
             methods { $($method_tokens:tt)* }
             $(extra_py_methods { $($extra_py_methods:tt)* })?
         }
@@ -113,7 +84,14 @@ macro_rules! builder_methods {
             $builder,
             [],
             [],
-            [ $($method_tokens)* ],
+            [
+                $(
+                    capacity_method {
+                        $($capacity_tokens)*
+                    }
+                )?
+                $($method_tokens)*
+            ],
             $( ($($extra_py_methods)*) )?
         );
     };
@@ -135,6 +113,45 @@ macro_rules! builder_methods {
             $($py_methods)*
             $( $($extra_py_methods)* )?
         }
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            capacity_method {
+                self_ident = $self_ident:ident,
+                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
+            }
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @process_methods
+            $builder,
+            [$($rust_methods)*],
+            [$($py_methods)*],
+            [
+                method {
+                    doc: "Set the bounded channel capacity.\n\n# Validation\n\nThe capacity must be greater than zero; invalid values cause `build` to error.",
+                    rust_name: with_capacity,
+                    py_fn: py_with_capacity,
+                    py_name: "with_capacity",
+                    py_text_signature: "(self, capacity)",
+                    rust_args: (capacity: usize),
+                    self_ident: $self_ident,
+                    body: {
+                        let $setter_self = $self_ident;
+                        let $setter_arg = capacity;
+                        { $($setter_body)* }
+                    }
+                }
+                $($rest)*
+            ],
+            $( ($($extra_py_methods)*) )?
+        );
     };
 
     (@process_methods
