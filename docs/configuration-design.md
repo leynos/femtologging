@@ -264,10 +264,12 @@ semantics intentionally differ: file handlers flush after a set number of
 records, whereas stream handlers flush after a period of inactivity. Their
 dictionary representations mirror these names to avoid ambiguity.
 
-Both bindings expose the interval as a `NonZeroU64`, requiring Rust code to
-pass a non-zero duration. Python raises ``ValueError`` for zero or negative
-inputs and ``OverflowError`` when the value exceeds the shared unsigned 64-bit
-millisecond range, matching the dictionary representation.
+The file builder accepts a `usize` record count, which Python validates as a
+positive integer, raising ``ValueError`` for zero or negative inputs. The
+stream builder accepts a `NonZeroU64` duration in milliseconds, enforcing the
+non-zero constraint at the type level in Rust. Python raises ``ValueError`` for
+zero or negative inputs and ``OverflowError`` when the value exceeds the
+unsigned 64-bit range, matching the dictionary representation.
 
 #### 1.1.1 Filters
 
