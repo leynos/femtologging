@@ -87,16 +87,18 @@ def when_set_stream_capacity(
     return stream_builder.with_capacity(capacity)
 
 
-@when(parsers.parse("I set stream flush interval {interval:d}"))
-def when_set_stream_flush_interval(
-    stream_builder: StreamHandlerBuilder, interval: int
+@when(parsers.parse("I set stream flush timeout {timeout:d}"))
+def when_set_stream_flush_timeout(
+    stream_builder: StreamHandlerBuilder, timeout: int
 ) -> StreamHandlerBuilder:
-    return stream_builder.with_flush_interval(interval)
+    return stream_builder.with_flush_timeout_ms(timeout)
 
 
-@when(parsers.parse("I set flush interval {interval:d}"))
-def when_set_flush_interval(file_builder: FileBuilder, interval: int) -> FileBuilder:
-    return file_builder.with_flush_interval(interval)
+@when(parsers.parse("I set flush record interval {interval:d}"))
+def when_set_flush_record_interval(
+    file_builder: FileBuilder, interval: int
+) -> FileBuilder:
+    return file_builder.with_flush_record_interval(interval)
 
 
 @when("I set overflow policy to timeout with 500ms")
@@ -206,13 +208,13 @@ def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
         stream_builder.build()
 
 
-@then(parsers.parse("setting stream flush interval {interval:d} fails"))
-def then_setting_stream_flush_interval_fails(
-    stream_builder: StreamHandlerBuilder, interval: int
+@then(parsers.parse("setting stream flush timeout {timeout:d} fails"))
+def then_setting_stream_flush_timeout_fails(
+    stream_builder: StreamHandlerBuilder, timeout: int
 ) -> None:
-    exc = ValueError if interval <= 0 else OverflowError
+    exc = ValueError if timeout == 0 else OverflowError
     with pytest.raises(exc):
-        stream_builder.with_flush_interval(interval)
+        stream_builder.with_flush_timeout_ms(timeout)
 
 
 @pytest.mark.parametrize(
