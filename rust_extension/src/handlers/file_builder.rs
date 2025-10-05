@@ -7,7 +7,7 @@
 //! measured in records.
 
 #[cfg(feature = "python")]
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{
     common::FileLikeBuilderState,
@@ -64,12 +64,20 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero; invalid values cause `build` to error.",
+                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero. Python callers receive ``ValueError``\nwhen the interval is zero; Rust callers observe a ``HandlerBuildError`` during\n``build``.",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
                 py_text_signature: "(self, interval)",
                 rust_args: (interval: usize),
+                py_args: (interval: usize),
+                py_prelude: {
+                    if interval == 0 {
+                        return Err(PyValueError::new_err(
+                            "flush_record_interval must be greater than zero",
+                        ));
+                    }
+                },
                 self_ident: builder,
                 body: {
                     builder.state.set_flush_record_interval(interval);
