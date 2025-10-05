@@ -47,10 +47,10 @@ classDiagram
     class RotatingFileHandlerBuilder {
         state: FileLikeBuilderState
     }
-    CommonBuilder <|-- FileLikeBuilderState : composition
-    FileLikeBuilderState <|-- FileHandlerBuilder : composition
-    FileLikeBuilderState <|-- RotatingFileHandlerBuilder : composition
-    CommonBuilder <|-- StreamHandlerBuilder : composition
+    FileLikeBuilderState *-- CommonBuilder : composition
+    FileHandlerBuilder *-- FileLikeBuilderState : composition
+    RotatingFileHandlerBuilder *-- FileLikeBuilderState : composition
+    StreamHandlerBuilder *-- CommonBuilder : composition
 ```
 
 ```rust
