@@ -119,14 +119,14 @@ The capacity must be greater than zero; invalid values cause `build` to error.",
 # Validation
 
 The interval must be greater than zero; invalid values cause `build` to error.",
-                rust_name: with_flush_record_interval,
-                py_fn: py_with_flush_record_interval,
-                py_name: "with_flush_record_interval",
+                rust_name: with_flush_interval,
+                py_fn: py_with_flush_interval,
+                py_name: "with_flush_interval",
                 py_text_signature: "(self, interval)",
                 rust_args: (interval: usize),
                 self_ident: builder,
                 body: {
-                    builder.state.set_flush_record_interval(interval);
+                    builder.state.set_flush_interval_records(interval);
                 }
             }
             method {
@@ -278,7 +278,7 @@ mod tests {
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy())
             .with_capacity(32)
-            .with_flush_record_interval(2)
+            .with_flush_interval(2)
             .with_max_bytes(1024)
             .with_backup_count(3);
         let mut handler = builder
@@ -295,12 +295,9 @@ mod tests {
     }
 
     #[rstest]
-    fn reject_zero_flush_record_interval() {
-        let builder = RotatingFileHandlerBuilder::new("log.txt").with_flush_record_interval(0);
-        assert_build_err(
-            &builder,
-            "build_inner must fail for zero flush record interval",
-        );
+    fn reject_zero_flush_interval() {
+        let builder = RotatingFileHandlerBuilder::new("log.txt").with_flush_interval(0);
+        assert_build_err(&builder, "build_inner must fail for zero flush interval");
     }
 
     #[rstest]
