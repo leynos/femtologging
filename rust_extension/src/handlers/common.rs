@@ -16,11 +16,30 @@ use super::{
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
-    pub(crate) flush_interval_ms: Option<NonZeroU64>,
+    pub(crate) flush_timeout_ms: Option<NonZeroU64>,
     pub(crate) formatter_id: Option<FormatterId>,
 }
 
 impl CommonBuilder {
+    /// Update the bounded channel capacity in place.
+    ///
+    /// A zero capacity is recorded for validation but does not update the
+    /// stored [`NonZeroUsize`]. Callers rely on [`is_capacity_valid`] to surface
+    /// the configuration error when `build` is invoked.
+    pub(crate) fn set_capacity(&mut self, capacity: usize) {
+        if capacity == 0 {
+            self.capacity = None;
+            self.capacity_set = true;
+            return;
+        }
+
+        self.capacity = Some(
+            NonZeroUsize::new(capacity)
+                .expect("NonZeroUsize::new must succeed for non-zero capacity"),
+        );
+        self.capacity_set = true;
+    }
+
     /// Validate that an optional numeric field (if provided) is greater than zero.
     ///
     /// Returns `InvalidConfig("{field} must be greater than zero")` when `value`
@@ -58,8 +77,8 @@ impl CommonBuilder {
         if let Some(cap) = self.capacity {
             d.set_item("capacity", cap.get())?;
         }
-        if let Some(ms) = self.flush_interval_ms {
-            d.set_item("flush_interval_ms", ms.get())?;
+        if let Some(ms) = self.flush_timeout_ms {
+            d.set_item("flush_timeout_ms", ms.get())?;
         }
         if let Some(fid) = &self.formatter_id {
             d.set_item("formatter_id", fid.as_str())?;
@@ -70,8 +89,50 @@ impl CommonBuilder {
 #[derive(Clone, Debug)]
 pub(crate) struct FileLikeBuilderState {
     pub(crate) common: CommonBuilder,
-    pub(crate) flush_interval_records: Option<usize>,
+    pub(crate) flush_record_interval: Option<usize>,
     pub(crate) overflow_policy: OverflowPolicy,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_capacity_stores_non_zero_value() {
+        let mut builder = CommonBuilder::default();
+        builder.set_capacity(32);
+
+        let stored = builder
+            .capacity
+            .expect("set_capacity must store a NonZeroUsize for non-zero input");
+        assert_eq!(stored.get(), 32);
+        assert!(
+            builder.capacity_set,
+            "set_capacity must mark capacity as configured"
+        );
+    }
+
+    #[test]
+    fn set_capacity_zero_is_reported_invalid() {
+        let mut builder = CommonBuilder::default();
+        builder.set_capacity(0);
+
+        assert!(
+            builder.capacity.is_none(),
+            "zero capacity must not store a value"
+        );
+        assert!(
+            builder.capacity_set,
+            "zero capacity must record that configuration was attempted"
+        );
+        let err = builder
+            .is_capacity_valid()
+            .expect_err("zero capacity must be rejected during validation");
+        assert!(matches!(
+            err,
+            HandlerBuildError::InvalidConfig(message) if message == "capacity must be greater than zero"
+        ));
+    }
 }
 
 impl Default for FileLikeBuilderState {
@@ -85,20 +146,19 @@ impl FileLikeBuilderState {
     pub(crate) fn new() -> Self {
         Self {
             common: CommonBuilder::default(),
-            flush_interval_records: None,
+            flush_record_interval: None,
             overflow_policy: OverflowPolicy::Drop,
         }
     }
 
     /// Update the bounded channel capacity in place.
     pub(crate) fn set_capacity(&mut self, capacity: usize) {
-        self.common.capacity = NonZeroUsize::new(capacity);
-        self.common.capacity_set = true;
+        self.common.set_capacity(capacity);
     }
 
     /// Update the flush interval in place.
-    pub(crate) fn set_flush_interval_records(&mut self, interval: usize) {
-        self.flush_interval_records = Some(interval);
+    pub(crate) fn set_flush_record_interval(&mut self, interval: usize) {
+        self.flush_record_interval = Some(interval);
     }
 
     /// Update the formatter identifier in place.
@@ -115,8 +175,8 @@ impl FileLikeBuilderState {
     pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()?;
         CommonBuilder::ensure_non_zero(
-            "flush_interval_records",
-            self.flush_interval_records.map(|value| value as u64),
+            "flush_record_interval",
+            self.flush_record_interval.map(|value| value as u64),
         )?;
         if let OverflowPolicy::Timeout(duration) = self.overflow_policy {
             if duration.is_zero() {
@@ -134,7 +194,7 @@ impl FileLikeBuilderState {
         if let Some(capacity) = self.common.capacity {
             cfg.capacity = capacity.get();
         }
-        if let Some(interval) = self.flush_interval_records {
+        if let Some(interval) = self.flush_record_interval {
             cfg.flush_interval = interval;
         }
         cfg.overflow_policy = self.overflow_policy;
@@ -150,8 +210,8 @@ impl FileLikeBuilderState {
     #[cfg(feature = "python")]
     pub(crate) fn extend_py_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         self.common.extend_py_dict(d)?;
-        if let Some(flush) = self.flush_interval_records {
-            d.set_item("flush_interval_records", flush)?;
+        if let Some(flush) = self.flush_record_interval {
+            d.set_item("flush_record_interval", flush)?;
         }
         match self.overflow_policy {
             OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,

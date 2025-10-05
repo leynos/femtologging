@@ -2,13 +2,10 @@
 //!
 //! Allows configuration of stream based handlers writing to `stdout` or
 //! `stderr`. The builder exposes basic tuning for channel capacity and
-//! a millisecond-based flush interval. `py_new` defaults to `stderr`
+//! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{
-    num::{NonZeroU64, NonZeroUsize},
-    time::Duration,
-};
+use std::{num::NonZeroU64, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -65,78 +62,47 @@ impl StreamHandlerBuilder {
         self.common.is_capacity_valid()
     }
 
-    fn is_flush_interval_valid(&self) -> Result<(), HandlerBuildError> {
+    fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
-            "flush_interval",
-            self.common.flush_interval_ms.map(NonZeroU64::get),
+            "flush_timeout_ms",
+            self.common.flush_timeout_ms.map(NonZeroU64::get),
         )
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
-        self.is_flush_interval_valid()?;
+        self.is_flush_timeout_valid()?;
         Ok(())
-    }
-
-    /// Deprecated compatibility alias for `with_flush_interval`.
-    #[deprecated(since = "0.1.0", note = "Use with_flush_interval instead")]
-    pub fn with_flush_timeout_ms(self, timeout_ms: NonZeroU64) -> Self {
-        self.with_flush_interval(timeout_ms)
     }
 }
 
 builder_methods! {
     impl StreamHandlerBuilder {
+        capacity {
+            self_ident = builder,
+            setter = |builder, capacity| {
+                builder.common.set_capacity(capacity);
+            }
+        };
         methods {
             method {
-                doc: "Set the bounded channel capacity.
-
-# Validation
-
-The capacity must be greater than zero; invalid values cause `build` to error.",
-                rust_name: with_capacity,
-                py_fn: py_with_capacity,
-                py_name: "with_capacity",
-                py_text_signature: "(self, capacity)",
-                rust_args: (capacity: usize),
-                self_ident: builder,
-                body: {
-                    builder.common.capacity = NonZeroUsize::new(capacity);
-                    builder.common.capacity_set = true;
-                }
-            }
-            method {
-                doc: "Set the flush interval in milliseconds.
-
-# Validation
-
-Accepts a `NonZeroU64` so both Rust and Python callers must provide an interval greater than zero.",
-                rust_name: with_flush_interval,
-                py_fn: py_with_flush_interval,
-                py_name: "with_flush_interval",
-                py_text_signature: "(self, interval_ms)",
-                rust_args: (interval_ms: NonZeroU64),
-                py_args: (interval_ms: i128),
+                doc: "Set the flush timeout in milliseconds.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide a timeout greater than zero.",
+                rust_name: with_flush_timeout_ms,
+                py_fn: py_with_flush_timeout_ms,
+                py_name: "with_flush_timeout_ms",
+                py_text_signature: "(self, timeout_ms)",
+                rust_args: (timeout_ms: NonZeroU64),
+                py_args: (timeout_ms: u64),
                 py_prelude: {
-                    if interval_ms < 0 {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            "flush_interval must not be negative",
-                        ));
-                    }
-                    let interval_ms: u64 = u64::try_from(interval_ms).map_err(|_| {
-                        pyo3::exceptions::PyOverflowError::new_err(
-                            "flush_interval exceeds u64::MAX",
-                        )
-                    })?;
-                    let interval_ms = NonZeroU64::new(interval_ms).ok_or_else(|| {
+                    let timeout_ms = NonZeroU64::new(timeout_ms).ok_or_else(|| {
                         pyo3::exceptions::PyValueError::new_err(
-                            "flush_interval must be greater than zero",
+                            "flush_timeout_ms must be greater than zero",
                         )
                     })?;
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.flush_interval_ms = Some(interval_ms);
+                    builder.common.flush_timeout_ms = Some(timeout_ms);
                 }
             }
             method {
@@ -174,23 +140,6 @@ Accepts a `NonZeroU64` so both Rust and Python callers must provide an interval 
                 Self::stderr()
             }
 
-            /// Deprecated alias for :meth:`with_flush_interval` accepting milliseconds.
-            #[pyo3(name = "with_flush_timeout_ms")]
-            #[pyo3(signature = (timeout_ms))]
-            #[pyo3(text_signature = "(self, timeout_ms)")]
-            fn py_with_flush_timeout_ms<'py>(
-                mut slf: PyRefMut<'py, Self>,
-                timeout_ms: u64,
-            ) -> PyResult<PyRefMut<'py, Self>> {
-                let timeout_ms = NonZeroU64::new(timeout_ms).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "flush_timeout_ms must be greater than zero",
-                    )
-                })?;
-                slf.common.flush_interval_ms = Some(timeout_ms);
-                Ok(slf)
-            }
-
             /// Return a dictionary describing the builder configuration.
             fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
                 self.as_pydict(py)
@@ -224,7 +173,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
         let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
         let timeout = Duration::from_millis(
             self.common
-                .flush_interval_ms
+                .flush_timeout_ms
                 .map(NonZeroU64::get)
                 .unwrap_or(1000),
         );
@@ -284,14 +233,14 @@ mod tests {
 
     #[cfg(feature = "python")]
     #[test]
-    fn python_rejects_zero_flush_interval() {
+    fn python_rejects_zero_flush_timeout() {
         Python::with_gil(|py| {
             let builder = pyo3::Py::new(py, StreamHandlerBuilder::stderr())
                 .expect("Py::new must create a stream builder");
             let err = builder
                 .as_ref(py)
-                .call_method1("with_flush_interval", (0,))
-                .expect_err("with_flush_interval must reject zero");
+                .call_method1("with_flush_timeout_ms", (0,))
+                .expect_err("with_flush_timeout_ms must reject zero");
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
     }
