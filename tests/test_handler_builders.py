@@ -217,6 +217,15 @@ def then_setting_stream_flush_timeout_fails(
         stream_builder.with_flush_timeout_ms(timeout)
 
 
+@then(parsers.parse("setting flush record interval {interval:d} fails"))
+def then_setting_flush_record_interval_fails(
+    file_builder: FileBuilder, interval: int
+) -> None:
+    exc = ValueError if interval == 0 else OverflowError
+    with pytest.raises(exc):
+        file_builder.with_flush_record_interval(interval)
+
+
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
@@ -268,7 +277,17 @@ def test_file_builder_large_flush_record_interval(tmp_path: Path) -> None:
     builder = FileHandlerBuilder(str(tmp_path / "large_flush_interval.log"))
     builder = builder.with_flush_record_interval(1_000_000_000)
     data = builder.as_dict()
-    assert data["flush_record_interval"] == 1_000_000_000
+    assert data["flush_record_interval"] == 1_000_000_000, (
+        "File handler builder flush interval mismatch: "
+        f"builder={builder!r} expected=1_000_000_000 "
+        f"actual={data['flush_record_interval']} data={data}"
+    )
+
+
+def test_file_builder_zero_flush_record_interval(tmp_path: Path) -> None:
+    builder = FileHandlerBuilder(str(tmp_path / "zero_flush_interval.log"))
+    with pytest.raises(ValueError):
+        builder.with_flush_record_interval(0)
 
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:

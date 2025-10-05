@@ -18,8 +18,7 @@ Feature: Handler builders
 
   Scenario: invalid file handler flush interval
     Given a FileHandlerBuilder for path "test.log"
-    When I set flush record interval 0
-    Then building the file handler fails
+    Then setting flush record interval 0 fails
 
   Scenario: build rotating file handler builder
     Given a RotatingFileHandlerBuilder for path "test.log"
