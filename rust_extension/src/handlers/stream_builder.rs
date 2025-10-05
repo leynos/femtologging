@@ -5,10 +5,7 @@
 //! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{
-    num::{NonZeroU64, NonZeroUsize},
-    time::Duration,
-};
+use std::{num::NonZeroU64, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -81,30 +78,15 @@ impl StreamHandlerBuilder {
 
 builder_methods! {
     impl StreamHandlerBuilder {
+        capacity {
+            self_ident = builder,
+            setter = |builder, capacity| {
+                builder.common.set_capacity(capacity);
+            }
+        };
         methods {
             method {
-                doc: "Set the bounded channel capacity.
-
-# Validation
-
-The capacity must be greater than zero; invalid values cause `build` to error.",
-                rust_name: with_capacity,
-                py_fn: py_with_capacity,
-                py_name: "with_capacity",
-                py_text_signature: "(self, capacity)",
-                rust_args: (capacity: usize),
-                self_ident: builder,
-                body: {
-                    builder.common.capacity = NonZeroUsize::new(capacity);
-                    builder.common.capacity_set = true;
-                }
-            }
-            method {
-                doc: "Set the flush timeout in milliseconds.
-
-# Validation
-
-Accepts a `NonZeroU64` so both Rust and Python callers must provide a timeout greater than zero.",
+                doc: "Set the flush timeout in milliseconds.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide a timeout greater than zero.",
                 rust_name: with_flush_timeout_ms,
                 py_fn: py_with_flush_timeout_ms,
                 py_name: "with_flush_timeout_ms",
