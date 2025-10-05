@@ -250,7 +250,12 @@ def test_stream_builder_zero_flush_timeout(ctor) -> None:
 def test_stream_builder_large_flush_timeout(ctor) -> None:
     builder = ctor().with_flush_timeout_ms(1_000_000_000)
     data = builder.as_dict()
-    assert data["flush_timeout_ms"] == 1_000_000_000
+    assert data["flush_timeout_ms"] == 1_000_000_000, (
+        "Stream handler builder flush timeout mismatch: "
+        f"ctor={ctor.__name__} builder={builder!r} "
+        f"expected=1_000_000_000 actual={data['flush_timeout_ms']} "
+        f"data={data}"
+    )
 
 
 def test_file_builder_negative_flush_record_interval(tmp_path: Path) -> None:
