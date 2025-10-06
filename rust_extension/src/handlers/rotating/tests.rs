@@ -151,6 +151,35 @@ fn rotate_promotes_existing_backups() -> io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn rotation_truncates_in_place_when_no_backups() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(b"before\n")?;
+    writer.flush()?;
+
+    let mut reader = OpenOptions::new().read(true).open(&path)?;
+    let mut strategy = FileRotationStrategy::new(path.clone(), 1, 0);
+    strategy.rotate(&mut writer)?;
+
+    writer.write_all(b"after\n")?;
+    writer.flush()?;
+
+    reader.seek(SeekFrom::Start(0))?;
+    let mut observed = String::new();
+    reader.read_to_string(&mut observed)?;
+    assert_eq!(observed, "after\n");
+
+    Ok(())
+}
+
 #[rstest]
 fn rotate_prunes_excess_backups_when_limit_lowered() -> io::Result<()> {
     let dir = tempdir()?;

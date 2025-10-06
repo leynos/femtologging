@@ -53,11 +53,13 @@ impl FileRotationStrategy {
                 return Err(error);
             }
         };
-        drop(file);
 
         let rotation_result = if self.backup_count == 0 {
-            Self::remove_file_if_exists(&self.path)
+            let truncate_result = file.set_len(0);
+            drop(file);
+            truncate_result
         } else {
+            drop(file);
             self.rotate_backups()
                 .and_then(|_| Self::rename_file_if_exists(&self.path, &self.backup_path(1)))
         };
