@@ -1,4 +1,11 @@
 # serializer version: 1
+# name: test_cascades_backups_without_overwriting_newer_files
+  dict({
+    'rotating.log': 'rotate [INFO] fourth message',
+    'rotating.log.1': 'rotate [INFO] third message',
+    'rotating.log.2': 'rotate [INFO] second message',
+  })
+# ---
 # name: test_leaves_logs_intact_when_rotation_is_disabled
   dict({
     'rotating.log': '''

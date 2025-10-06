@@ -1,12 +1,13 @@
 //! Size-based rotation strategy for rotating file handlers.
 
 use std::{
-    fs::{self, File},
-    io::{self, BufWriter, Seek, SeekFrom, Write},
+    fs::{self, File, OpenOptions},
+    io::{self, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
 use crate::handlers::file::RotationStrategy;
+use tempfile::tempfile;
 
 pub(crate) struct FileRotationStrategy {
     path: PathBuf,
@@ -42,20 +43,74 @@ impl FileRotationStrategy {
 
     pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<()> {
         writer.flush()?;
-        if self.backup_count == 0 {
-            let file = writer.get_mut();
-            file.set_len(0)?;
-            file.seek(SeekFrom::Start(0))?;
-            return Ok(());
+        let placeholder = tempfile()?;
+        let original = std::mem::replace(writer, BufWriter::new(placeholder));
+        let file = match original.into_inner() {
+            Ok(file) => file,
+            Err(err) => {
+                let error = io::Error::new(err.error().kind(), err.error().to_string());
+                *writer = err.into_inner();
+                return Err(error);
+            }
+        };
+        drop(file);
+
+        let rotation_result = if self.backup_count == 0 {
+            Self::remove_file_if_exists(&self.path)
+        } else {
+            self.rotate_backups()
+                .and_then(|_| Self::rename_file_if_exists(&self.path, &self.backup_path(1)))
+        };
+
+        if let Err(err) = rotation_result {
+            match Self::open_writer_append(&self.path) {
+                Ok(fallback) => *writer = fallback,
+                Err(fallback_err) => {
+                    return Err(io::Error::new(
+                        err.kind(),
+                        format!(
+                            "{err}; additionally failed to reopen log file after rotation failure: {fallback_err}"
+                        ),
+                    ));
+                }
+            }
+            return Err(err);
         }
-        self.rotate_backups()?;
-        if self.path.exists() {
-            fs::copy(&self.path, self.backup_path(1))?;
+
+        match Self::open_fresh_writer(&self.path) {
+            Ok(new_writer) => {
+                *writer = new_writer;
+                Ok(())
+            }
+            Err(err) => {
+                match Self::open_writer_append(&self.path) {
+                    Ok(fallback) => {
+                        *writer = fallback;
+                        Err(err)
+                    }
+                    Err(fallback_err) => Err(io::Error::new(
+                        err.kind(),
+                        format!(
+                            "{err}; additionally failed to reopen log file after rotation failure: {fallback_err}"
+                        ),
+                    )),
+                }
+            }
         }
-        let file = writer.get_mut();
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        Ok(())
+    }
+
+    fn open_fresh_writer(path: &Path) -> io::Result<BufWriter<File>> {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        Ok(BufWriter::new(file))
+    }
+
+    fn open_writer_append(path: &Path) -> io::Result<BufWriter<File>> {
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(BufWriter::new(file))
     }
 
     pub(crate) fn remove_file_if_exists(path: &Path) -> io::Result<()> {
@@ -129,12 +184,14 @@ impl FileRotationStrategy {
 }
 
 impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
-    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<()> {
+    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<bool> {
         let next_bytes = Self::next_record_bytes(formatted);
         if self.should_rotate(writer, next_bytes)? {
             self.rotate(writer)?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
 }
 

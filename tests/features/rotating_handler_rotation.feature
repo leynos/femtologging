@@ -26,3 +26,12 @@ Feature: Rotating file handler size-based rotation
     And I log record "second message" at level "INFO" for logger "rotate"
     And I close the rotating handler
     Then the rotating log files match snapshot
+
+  Scenario: cascades backups without overwriting newer files
+    Given a rotating handler with max bytes 48 and backup count 2
+    When I log record "first message" at level "INFO" for logger "rotate"
+    And I log record "second message" at level "INFO" for logger "rotate"
+    And I log record "third message" at level "INFO" for logger "rotate"
+    And I log record "fourth message" at level "INFO" for logger "rotate"
+    And I close the rotating handler
+    Then the rotating log files match snapshot

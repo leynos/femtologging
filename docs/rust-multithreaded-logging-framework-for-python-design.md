@@ -726,10 +726,12 @@ potential future enhancement.
   max_bytes` before each write. `next_record_bytes` counts the UTF-8 payload plus the newline that `
   writeln!` appends so the check mirrors the eventual I/O.
 - Measuring never flushes buffered data. When the predicate fires, the worker
-  flushes once, cascades existing backups (dropping the oldest if necessary),
-  copies the current log to `.1`, truncates the base file, and then writes the
-  new record. This keeps rotation non-blocking for producers whilst ensuring
-  backup files remain consistent.
+  flushes once, swaps the live `BufWriter` with a temporary handle so the
+  original file descriptor can be closed, cascades existing backups (dropping
+  the oldest if necessary), renames the just-closed log to `.1`, and finally
+  opens a fresh base file before writing the new record. This keeps rotation
+  non-blocking for producers whilst ensuring backup files remain consistent and
+  compatible with Windows' rename semantics.
 - `max_bytes == 0` and `backup_count == 0` disable rotation. Builder validation
   in Rust and the Python `HandlerOptions` mirror this rule, ensuring both
   values are set together and exposing the builder API as the canonical

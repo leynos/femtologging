@@ -28,7 +28,7 @@ pub trait RotationStrategy<W>: Send
 where
     W: Write + Seek,
 {
-    fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<()>;
+    fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<bool>;
 }
 
 /// Explicit strategy representing the absence of rotation logic.
@@ -41,8 +41,8 @@ where
 pub struct NoRotation;
 
 impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
-    fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<()> {
-        Ok(())
+    fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<bool> {
+        Ok(false)
     }
 }
 
