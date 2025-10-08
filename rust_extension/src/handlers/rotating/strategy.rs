@@ -64,54 +64,31 @@ impl FileRotationStrategy {
             }
         };
 
-        let mut restore_writer = |maybe_file: Option<File>| -> io::Result<()> {
-            if let Some(file) = maybe_file {
+        if let Err(err) = self.rotate_backups() {
+            if let Some(file) = original_file.take() {
                 *writer = BufWriter::with_capacity(capacity, file);
-                Ok(())
-            } else {
-                let fallback = Self::open_append_file(&self.path)?;
-                *writer = BufWriter::with_capacity(capacity, fallback);
-                Ok(())
-            }
-        };
-
-        let rotation_result = (|| -> io::Result<()> {
-            self.rotate_backups()?;
-            let file = original_file
-                .take()
-                .ok_or_else(|| io::Error::other("lost original log file before rename"))?;
-            drop(file);
-            Self::rename_file_if_exists(&self.path, &self.backup_path(1))?;
-            Ok(())
-        })();
-
-        if let Err(err) = rotation_result {
-            if let Err(restore_err) = restore_writer(original_file.take()) {
-                return Err(io::Error::new(
-                    restore_err.kind(),
-                    format!("failed to restore writer after rotation error ({err}): {restore_err}"),
-                ));
             }
             return Err(err);
         }
 
-        match Self::open_fresh_writer(&self.path) {
-            Ok(new_writer) => {
-                *writer = new_writer;
-                Ok(())
-            }
-            Err(err) => {
-                if let Err(restore_err) = restore_writer(None) {
-                    return Err(io::Error::new(
-                        restore_err.kind(),
-                        format!(
-                            "failed to restore writer after reopen error ({err}): {restore_err}"
-                        ),
-                    ));
-                }
-                Err(err)
-            }
+        let file = original_file
+            .take()
+            .ok_or_else(|| io::Error::other("lost original log file before rename"))?;
+        drop(file);
+
+        if let Err(err) = Self::rename_file_if_exists(&self.path, &self.backup_path(1)) {
+            *writer = BufWriter::with_capacity(capacity, Self::open_append_file(&self.path)?);
+            return Err(err);
         }
+
+        let fresh_writer = Self::open_fresh_writer(&self.path).or_else(|fresh_err| {
+            let fallback = BufWriter::with_capacity(capacity, Self::open_append_file(&self.path)?);
+            *writer = fallback;
+            Err(fresh_err)
+        })?;
+
+        *writer = fresh_writer;
+        Ok(())
     }
 
     fn open_fresh_writer(path: &Path) -> io::Result<BufWriter<File>> {
