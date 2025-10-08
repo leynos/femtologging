@@ -51,8 +51,9 @@ impl FileRotationStrategy {
         }
 
         let capacity = writer.capacity();
+        let append_file = Self::open_append_file(&self.path)?;
         let original_writer =
-            std::mem::replace(writer, BufWriter::new(Self::open_append_file(&self.path)?));
+            std::mem::replace(writer, BufWriter::with_capacity(capacity, append_file));
         let mut original_file = match original_writer.into_inner() {
             Ok(file) => Some(file),
             Err(err) => {
@@ -63,18 +64,33 @@ impl FileRotationStrategy {
             }
         };
 
-        let rotation_result = (|| {
-            drop(original_file.take());
+        let mut restore_writer = |maybe_file: Option<File>| -> io::Result<()> {
+            if let Some(file) = maybe_file {
+                *writer = BufWriter::with_capacity(capacity, file);
+                Ok(())
+            } else {
+                let fallback = Self::open_append_file(&self.path)?;
+                *writer = BufWriter::with_capacity(capacity, fallback);
+                Ok(())
+            }
+        };
+
+        let rotation_result = (|| -> io::Result<()> {
             self.rotate_backups()?;
+            let file = original_file
+                .take()
+                .ok_or_else(|| io::Error::other("lost original log file before rename"))?;
+            drop(file);
             Self::rename_file_if_exists(&self.path, &self.backup_path(1))?;
-            Ok::<(), io::Error>(())
+            Ok(())
         })();
 
         if let Err(err) = rotation_result {
-            if let Some(file) = original_file.take() {
-                *writer = BufWriter::with_capacity(capacity, file);
-            } else if let Ok(file) = Self::open_append_file(&self.path) {
-                *writer = BufWriter::with_capacity(capacity, file);
+            if let Err(restore_err) = restore_writer(original_file.take()) {
+                return Err(io::Error::new(
+                    restore_err.kind(),
+                    format!("failed to restore writer after rotation error ({err}): {restore_err}"),
+                ));
             }
             return Err(err);
         }
@@ -85,8 +101,13 @@ impl FileRotationStrategy {
                 Ok(())
             }
             Err(err) => {
-                if let Ok(file) = Self::open_append_file(&self.path) {
-                    *writer = BufWriter::with_capacity(capacity, file);
+                if let Err(restore_err) = restore_writer(None) {
+                    return Err(io::Error::new(
+                        restore_err.kind(),
+                        format!(
+                            "failed to restore writer after reopen error ({err}): {restore_err}"
+                        ),
+                    ));
                 }
                 Err(err)
             }
