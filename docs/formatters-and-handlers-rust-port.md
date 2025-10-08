@@ -232,9 +232,11 @@ across the Rust builder and Python API.
   ``<path>.1``), and finally opens a fresh base file. The cascade deletes any
   file whose new index would exceed `backup_count`, so only the configured
   number of backups remain. Closing the handle first is required on Windows.
-  The implementation swaps the live `BufWriter` with a temporary file handle so
-  the original file descriptor can be released deterministically before the
-  rename sequence begins.
+  The implementation swaps the live `BufWriter` onto an append handle long
+  enough to drop the original descriptor before the rename sequence begins. If
+  reopening the fresh file fails the worker keeps writing through the append
+  handle, and tests can force this path by setting the
+  `FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE` environment variable.
 - Filename indices start at `1` and increase sequentially up to
   `backup_count`; rollover prunes any files numbered above that cap.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and

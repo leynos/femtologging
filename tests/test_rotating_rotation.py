@@ -22,17 +22,11 @@ class RotatingContext:
     closed: bool = False
 
 
-@given(
-    parsers.parse(
-        "a rotating handler with max bytes {max_bytes:d} and backup count {backup_count:d}"
-    ),
-    target_fixture="rotating_ctx",
-)
-def given_rotating_handler(
+def _build_rotating_context(
     tmp_path: pathlib.Path,
+    request: pytest.FixtureRequest,
     max_bytes: int,
     backup_count: int,
-    request: pytest.FixtureRequest,
 ) -> RotatingContext:
     path = tmp_path / "rotating.log"
     handler = FemtoRotatingFileHandler(
@@ -48,6 +42,38 @@ def given_rotating_handler(
 
     request.addfinalizer(_finaliser)
     return ctx
+
+
+@given(
+    parsers.parse(
+        "a rotating handler with max bytes {max_bytes:d} and backup count {backup_count:d}"
+    ),
+    target_fixture="rotating_ctx",
+)
+def given_rotating_handler(
+    tmp_path: pathlib.Path,
+    max_bytes: int,
+    backup_count: int,
+    request: pytest.FixtureRequest,
+) -> RotatingContext:
+    return _build_rotating_context(tmp_path, request, max_bytes, backup_count)
+
+
+@given(
+    parsers.parse(
+        "a rotating handler forcing reopen failure with max bytes {max_bytes:d} and backup count {backup_count:d}"
+    ),
+    target_fixture="rotating_ctx",
+)
+def given_rotating_handler_forcing_reopen_failure(
+    tmp_path: pathlib.Path,
+    max_bytes: int,
+    backup_count: int,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> RotatingContext:
+    monkeypatch.setenv("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE", "once")
+    return _build_rotating_context(tmp_path, request, max_bytes, backup_count)
 
 
 @when(

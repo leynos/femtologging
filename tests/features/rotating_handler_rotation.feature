@@ -35,3 +35,10 @@ Feature: Rotating file handler size-based rotation
     And I log record "fourth message" at level "INFO" for logger "rotate"
     And I close the rotating handler
     Then the rotating log files match snapshot
+
+  Scenario: falls back to append when reopening a rotated file fails
+    Given a rotating handler forcing reopen failure with max bytes 24 and backup count 1
+    When I log record "first message" at level "INFO" for logger "rotate"
+    And I log record "second message" at level "INFO" for logger "rotate"
+    And I close the rotating handler
+    Then the rotating log files match snapshot

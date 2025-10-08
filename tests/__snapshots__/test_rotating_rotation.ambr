@@ -6,6 +6,12 @@
     'rotating.log.2': 'rotate [INFO] second message',
   })
 # ---
+# name: test_falls_back_to_append_when_reopening_a_rotated_file_fails
+  dict({
+    'rotating.log': 'rotate [INFO] second message',
+    'rotating.log.1': 'rotate [INFO] first message',
+  })
+# ---
 # name: test_leaves_logs_intact_when_rotation_is_disabled
   dict({
     'rotating.log': '''

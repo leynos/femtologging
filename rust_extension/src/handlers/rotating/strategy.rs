@@ -1,6 +1,7 @@
 //! Size-based rotation strategy for rotating file handlers.
 
 use std::{
+    env,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -42,40 +43,47 @@ impl FileRotationStrategy {
 
     pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<()> {
         writer.flush()?;
-        let original = std::mem::replace(writer, Self::open_writer_append(&self.path)?);
-        let mut file = match original.into_inner() {
-            Ok(file) => file,
-            Err(err) => {
-                let error = io::Error::new(err.error().kind(), err.error().to_string());
-                *writer = err.into_inner();
-                return Err(error);
-            }
-        };
+        let fallback = Self::open_append_file(&self.path)?;
+        let mut file = std::mem::replace(writer.get_mut(), fallback);
 
         if self.backup_count == 0 {
             if let Err(err) = file.set_len(0) {
-                *writer = BufWriter::new(file);
+                let _ = std::mem::replace(writer.get_mut(), file);
                 return Err(err);
             }
-            file.seek(SeekFrom::Start(0))?;
-            *writer = BufWriter::new(file);
+            if let Err(err) = file.seek(SeekFrom::Start(0)) {
+                let _ = std::mem::replace(writer.get_mut(), file);
+                return Err(err);
+            }
+            let _ = std::mem::replace(writer.get_mut(), file);
             return Ok(());
         }
 
         drop(file);
-        self.rotate_backups()
-            .and_then(|_| Self::rename_file_if_exists(&self.path, &self.backup_path(1)))?;
+        self.rotate_backups()?;
+        Self::rename_file_if_exists(&self.path, &self.backup_path(1))?;
 
         match Self::open_fresh_writer(&self.path) {
             Ok(new_writer) => {
                 *writer = new_writer;
                 Ok(())
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                if let Ok(fallback) = Self::open_append_file(&self.path) {
+                    let _ = std::mem::replace(writer.get_mut(), fallback);
+                }
+                Err(err)
+            }
         }
     }
 
     fn open_fresh_writer(path: &Path) -> io::Result<BufWriter<File>> {
+        if let Some(reason) = env::var_os("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE") {
+            env::remove_var("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE");
+            return Err(io::Error::other(format!(
+                "simulated fresh writer failure for testing ({reason:?})"
+            )));
+        }
         let file = OpenOptions::new()
             .create(true)
             .write(true)
@@ -84,9 +92,12 @@ impl FileRotationStrategy {
         Ok(BufWriter::new(file))
     }
 
-    fn open_writer_append(path: &Path) -> io::Result<BufWriter<File>> {
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(BufWriter::new(file))
+    fn open_append_file(path: &Path) -> io::Result<File> {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(path)
     }
 
     pub(crate) fn remove_file_if_exists(path: &Path) -> io::Result<()> {

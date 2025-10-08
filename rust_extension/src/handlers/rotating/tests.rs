@@ -7,6 +7,7 @@ use crate::handlers::file::{
 };
 use crate::log_record::FemtoLogRecord;
 use rstest::rstest;
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::sync::{
@@ -16,6 +17,23 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+struct EnvVarGuard<'a> {
+    key: &'a str,
+}
+
+impl<'a> EnvVarGuard<'a> {
+    fn set(key: &'a str, value: &str) -> Self {
+        env::set_var(key, value);
+        Self { key }
+    }
+}
+
+impl Drop for EnvVarGuard<'_> {
+    fn drop(&mut self) {
+        env::remove_var(self.key);
+    }
+}
 
 struct ObservedStrategy {
     inner: FileRotationStrategy,
@@ -223,6 +241,55 @@ fn rotating_handler_performs_size_based_rotation() -> io::Result<()> {
     assert!(backup.exists(), "expected first backup file");
     let backup_contents = fs::read_to_string(backup)?;
     assert!(backup_contents.contains("first"));
+
+    Ok(())
+}
+
+#[test]
+fn before_write_reports_rotation_outcome() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+    fs::write(&path, "seed\n")?;
+    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    let mut strategy = FileRotationStrategy::new(path.clone(), 6, 1);
+
+    let rotated = strategy.before_write(&mut writer, "x")?;
+    assert!(rotated, "first append should trigger rotation");
+
+    writer.write_all(b"x\n")?;
+    writer.flush()?;
+
+    let rotated = strategy.before_write(&mut writer, "ok")?;
+    assert!(
+        !rotated,
+        "second append should not rotate once log is empty"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+    fs::write(&path, "seed\n")?;
+    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
+
+    let _guard = EnvVarGuard::set("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE", "once");
+    let err = strategy
+        .rotate(&mut writer)
+        .expect_err("fresh open should fail");
+    assert_eq!(err.kind(), io::ErrorKind::Other);
+
+    writer.write_all(b"after\n")?;
+    writer.flush()?;
+
+    let backup = strategy.backup_path(1);
+    assert_eq!(fs::read_to_string(&backup)?, "seed\n");
+    assert_eq!(fs::read_to_string(&path)?, "after\n");
 
     Ok(())
 }
