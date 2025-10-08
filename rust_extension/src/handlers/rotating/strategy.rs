@@ -2,12 +2,11 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
 use crate::handlers::file::RotationStrategy;
-use tempfile::tempfile;
 
 pub(crate) struct FileRotationStrategy {
     path: PathBuf,
@@ -43,9 +42,8 @@ impl FileRotationStrategy {
 
     pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<()> {
         writer.flush()?;
-        let placeholder = tempfile()?;
-        let original = std::mem::replace(writer, BufWriter::new(placeholder));
-        let file = match original.into_inner() {
+        let original = std::mem::replace(writer, Self::open_writer_append(&self.path)?);
+        let mut file = match original.into_inner() {
             Ok(file) => file,
             Err(err) => {
                 let error = io::Error::new(err.error().kind(), err.error().to_string());
@@ -54,50 +52,26 @@ impl FileRotationStrategy {
             }
         };
 
-        let rotation_result = if self.backup_count == 0 {
-            let truncate_result = file.set_len(0);
-            drop(file);
-            truncate_result
-        } else {
-            drop(file);
-            self.rotate_backups()
-                .and_then(|_| Self::rename_file_if_exists(&self.path, &self.backup_path(1)))
-        };
-
-        if let Err(err) = rotation_result {
-            match Self::open_writer_append(&self.path) {
-                Ok(fallback) => *writer = fallback,
-                Err(fallback_err) => {
-                    return Err(io::Error::new(
-                        err.kind(),
-                        format!(
-                            "{err}; additionally failed to reopen log file after rotation failure: {fallback_err}"
-                        ),
-                    ));
-                }
+        if self.backup_count == 0 {
+            if let Err(err) = file.set_len(0) {
+                *writer = BufWriter::new(file);
+                return Err(err);
             }
-            return Err(err);
+            file.seek(SeekFrom::Start(0))?;
+            *writer = BufWriter::new(file);
+            return Ok(());
         }
+
+        drop(file);
+        self.rotate_backups()
+            .and_then(|_| Self::rename_file_if_exists(&self.path, &self.backup_path(1)))?;
 
         match Self::open_fresh_writer(&self.path) {
             Ok(new_writer) => {
                 *writer = new_writer;
                 Ok(())
             }
-            Err(err) => {
-                match Self::open_writer_append(&self.path) {
-                    Ok(fallback) => {
-                        *writer = fallback;
-                        Err(err)
-                    }
-                    Err(fallback_err) => Err(io::Error::new(
-                        err.kind(),
-                        format!(
-                            "{err}; additionally failed to reopen log file after rotation failure: {fallback_err}"
-                        ),
-                    )),
-                }
-            }
+            Err(err) => Err(err),
         }
     }
 
