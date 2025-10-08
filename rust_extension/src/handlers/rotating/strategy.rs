@@ -43,25 +43,41 @@ impl FileRotationStrategy {
 
     pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<()> {
         writer.flush()?;
-        let fallback = Self::open_append_file(&self.path)?;
-        let mut file = std::mem::replace(writer.get_mut(), fallback);
-
         if self.backup_count == 0 {
-            if let Err(err) = file.set_len(0) {
-                let _ = std::mem::replace(writer.get_mut(), file);
-                return Err(err);
-            }
-            if let Err(err) = file.seek(SeekFrom::Start(0)) {
-                let _ = std::mem::replace(writer.get_mut(), file);
-                return Err(err);
-            }
-            let _ = std::mem::replace(writer.get_mut(), file);
+            let file = writer.get_mut();
+            file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
             return Ok(());
         }
 
-        drop(file);
-        self.rotate_backups()?;
-        Self::rename_file_if_exists(&self.path, &self.backup_path(1))?;
+        let capacity = writer.capacity();
+        let original_writer =
+            std::mem::replace(writer, BufWriter::new(Self::open_append_file(&self.path)?));
+        let mut original_file = match original_writer.into_inner() {
+            Ok(file) => Some(file),
+            Err(err) => {
+                let io_error = io::Error::new(err.error().kind(), err.error().to_string());
+                let original = err.into_inner();
+                *writer = original;
+                return Err(io_error);
+            }
+        };
+
+        let rotation_result = (|| {
+            drop(original_file.take());
+            self.rotate_backups()?;
+            Self::rename_file_if_exists(&self.path, &self.backup_path(1))?;
+            Ok::<(), io::Error>(())
+        })();
+
+        if let Err(err) = rotation_result {
+            if let Some(file) = original_file.take() {
+                *writer = BufWriter::with_capacity(capacity, file);
+            } else if let Ok(file) = Self::open_append_file(&self.path) {
+                *writer = BufWriter::with_capacity(capacity, file);
+            }
+            return Err(err);
+        }
 
         match Self::open_fresh_writer(&self.path) {
             Ok(new_writer) => {
@@ -69,8 +85,8 @@ impl FileRotationStrategy {
                 Ok(())
             }
             Err(err) => {
-                if let Ok(fallback) = Self::open_append_file(&self.path) {
-                    let _ = std::mem::replace(writer.get_mut(), fallback);
+                if let Ok(file) = Self::open_append_file(&self.path) {
+                    *writer = BufWriter::with_capacity(capacity, file);
                 }
                 Err(err)
             }

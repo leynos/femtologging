@@ -295,6 +295,40 @@ fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
 }
 
 #[test]
+fn rotate_restores_writer_when_backup_rename_fails() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+    fs::write(&path, "seed\n")?;
+
+    let conflicting = path.with_extension("log.1");
+    fs::create_dir(&conflicting)?;
+
+    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
+
+    let err = strategy
+        .rotate(&mut writer)
+        .expect_err("rename conflict should fail rotation");
+    assert_ne!(err.kind(), io::ErrorKind::NotFound);
+
+    writer.write_all(b"after\n")?;
+    writer.flush()?;
+
+    let contents = fs::read_to_string(&path)?;
+    assert!(
+        contents.ends_with("after\n"),
+        "log should still receive writes after failed rotation: {contents:?}"
+    );
+    assert!(
+        conflicting.is_dir(),
+        "conflicting directory should remain after failed rename"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn rotation_runs_on_worker_thread() -> io::Result<()> {
     let dir = tempdir()?;
     let path = dir.path().join("worker.log");
