@@ -1,9 +1,7 @@
-//! Python bindings and public re-exports for the femtologging Rust extension.
+//! FemtoLogging Python bindings and public re-exports.
 //!
-//! The [`_femtologging_rs`] module exposes core logging types to Python.
-//! When the `python` feature is enabled, [`add_python_bindings`] registers
-//! builders and errors that are otherwise conditionally compiled. The crate
-//! re-exports these types so they remain usable from Rust.
+//! This module wires up PyO3 classes and functions exposed to Python and
+//! re-exports Rust types used by the Python layer.
 use pyo3::prelude::*;
 
 mod config;
