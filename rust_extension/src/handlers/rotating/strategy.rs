@@ -1,11 +1,16 @@
 //! Size-based rotation strategy for rotating file handlers.
 
 use std::{
-    env,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    },
 };
+
+use once_cell::sync::Lazy;
 
 use crate::handlers::file::RotationStrategy;
 
@@ -110,10 +115,9 @@ impl FileRotationStrategy {
     }
 
     fn open_fresh_writer(path: &Path) -> io::Result<BufWriter<File>> {
-        if let Some(reason) = env::var_os("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE") {
-            env::remove_var("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE");
+        if let Some(reason) = take_forced_fresh_failure_reason() {
             return Err(io::Error::other(format!(
-                "simulated fresh writer failure for testing ({reason:?})"
+                "simulated fresh writer failure for testing ({reason})"
             )));
         }
         let file = OpenOptions::new()
@@ -199,6 +203,120 @@ impl FileRotationStrategy {
         name.push(format!(".{index}"));
         backup.set_file_name(name);
         backup
+    }
+}
+
+struct FreshFailureState {
+    remaining: AtomicUsize,
+    reason: Mutex<Option<String>>,
+}
+
+impl FreshFailureState {
+    fn new() -> Self {
+        Self {
+            remaining: AtomicUsize::new(0),
+            reason: Mutex::new(None),
+        }
+    }
+
+    #[cfg(feature = "python")]
+    fn set_forced(&self, count: usize, reason: String) {
+        self.remaining.store(count, Ordering::SeqCst);
+        *self
+            .reason
+            .lock()
+            .expect("fresh failure reason mutex poisoned") = Some(reason);
+    }
+
+    #[cfg(feature = "python")]
+    fn clear_forced(&self) {
+        self.remaining.store(0, Ordering::SeqCst);
+        *self
+            .reason
+            .lock()
+            .expect("fresh failure reason mutex poisoned") = None;
+    }
+
+    fn take(&self) -> Option<String> {
+        let prev = self
+            .remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                if current == 0 {
+                    None
+                } else {
+                    Some(current - 1)
+                }
+            })
+            .ok()?;
+
+        let mut guard = self
+            .reason
+            .lock()
+            .expect("fresh failure reason mutex poisoned");
+        let reason = guard.clone();
+        if prev == 1 {
+            *guard = None;
+        }
+        reason
+    }
+}
+
+static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureState::new);
+
+fn take_forced_fresh_failure_reason() -> Option<String> {
+    FRESH_FAILURE_STATE.take()
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) {
+    FRESH_FAILURE_STATE.set_forced(count, reason.into());
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn clear_forced_fresh_failure() {
+    FRESH_FAILURE_STATE.clear_forced();
+}
+
+#[cfg(test)]
+pub(crate) fn force_fresh_failure_once_for_test(
+    reason: impl Into<String>,
+) -> ForcedFreshFailureGuard {
+    ForcedFreshFailureGuard::new(1, reason.into())
+}
+
+#[cfg(test)]
+pub(crate) struct ForcedFreshFailureGuard {
+    previous_count: usize,
+    previous_reason: Option<String>,
+}
+
+#[cfg(test)]
+impl ForcedFreshFailureGuard {
+    fn new(count: usize, reason: String) -> Self {
+        let previous_count = FRESH_FAILURE_STATE.remaining.swap(count, Ordering::SeqCst);
+        let mut guard = FRESH_FAILURE_STATE
+            .reason
+            .lock()
+            .expect("fresh failure reason mutex poisoned");
+        let previous_reason = guard.replace(reason);
+        Self {
+            previous_count,
+            previous_reason,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for ForcedFreshFailureGuard {
+    fn drop(&mut self) {
+        FRESH_FAILURE_STATE
+            .remaining
+            .store(self.previous_count, Ordering::SeqCst);
+        let mut guard = FRESH_FAILURE_STATE
+            .reason
+            .lock()
+            .expect("fresh failure reason mutex poisoned");
+        *guard = self.previous_reason.take();
     }
 }
 

@@ -5,9 +5,9 @@ use crate::formatter::DefaultFormatter;
 use crate::handlers::file::{
     BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy, TestConfig,
 };
+use crate::handlers::rotating::strategy::force_fresh_failure_once_for_test;
 use crate::log_record::FemtoLogRecord;
 use rstest::rstest;
-use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::sync::{
@@ -17,23 +17,6 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
-
-struct EnvVarGuard<'a> {
-    key: &'a str,
-}
-
-impl<'a> EnvVarGuard<'a> {
-    fn set(key: &'a str, value: &str) -> Self {
-        env::set_var(key, value);
-        Self { key }
-    }
-}
-
-impl Drop for EnvVarGuard<'_> {
-    fn drop(&mut self) {
-        env::remove_var(self.key);
-    }
-}
 
 struct ObservedStrategy {
     inner: FileRotationStrategy,
@@ -278,7 +261,7 @@ fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
     let mut writer = BufWriter::new(file);
     let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
 
-    let _guard = EnvVarGuard::set("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE", "once");
+    let _guard = force_fresh_failure_once_for_test("once");
     let err = strategy
         .rotate(&mut writer)
         .expect_err("fresh open should fail");

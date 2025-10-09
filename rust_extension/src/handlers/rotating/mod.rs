@@ -31,6 +31,25 @@ use crate::{
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY},
 };
 
+#[cfg(feature = "python")]
+#[pyfunction]
+pub(crate) fn force_rotating_fresh_failure_for_test(
+    count: usize,
+    reason: Option<&str>,
+) -> PyResult<()> {
+    let reason = reason
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "python requested failure".to_string());
+    strategy::set_forced_fresh_failure(count, reason);
+    Ok(())
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+pub(crate) fn clear_rotating_fresh_failure_for_test() {
+    strategy::clear_forced_fresh_failure();
+}
+
 /// Rotation thresholds controlling when a file rolls over.
 ///
 /// Grouping the limits together keeps the handler constructor concise.

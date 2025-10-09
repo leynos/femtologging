@@ -39,6 +39,8 @@ NameFilterBuilder = rust.NameFilterBuilder
 FilterBuildError = rust.FilterBuildError
 HandlerConfigError = rust.HandlerConfigError
 HandlerIOError = rust.HandlerIOError
+_force_rotating_fresh_failure_for_test = rust.force_rotating_fresh_failure_for_test
+_clear_rotating_fresh_failure_for_test = rust.clear_rotating_fresh_failure_for_test
 
 
 @dataclass

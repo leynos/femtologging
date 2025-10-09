@@ -731,10 +731,11 @@ potential future enhancement.
   the oldest if necessary), renames the just-closed log to `.1`, and finally
   opens a fresh base file before writing the new record. If opening the fresh
   file fails the append handle remains active so producers keep logging against
-  a durable descriptor. Tests can trigger this path by exporting the
-  `FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE` environment variable. The design
-  keeps rotation non-blocking for producers whilst ensuring backup files remain
-  consistent and compatible with Windows' rename semantics.
+  a durable descriptor. Tests can trigger this path via the
+  `_force_rotating_fresh_failure_for_test` hook exposed to Python, which flips
+  a thread-safe toggle. The design keeps rotation non-blocking for producers
+  whilst ensuring backup files remain consistent and compatible with Windows'
+  rename semantics.
 - `max_bytes == 0` and `backup_count == 0` disable rotation. Builder validation
   in Rust and the Python `HandlerOptions` mirror this rule, ensuring both
   values are set together and exposing the builder API as the canonical

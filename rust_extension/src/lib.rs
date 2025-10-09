@@ -132,6 +132,16 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(
+        handlers::rotating::force_rotating_fresh_failure_for_test,
+        m
+    )?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(
+        handlers::rotating::clear_rotating_fresh_failure_for_test,
+        m
+    )?)?;
 
     Ok(())
 }

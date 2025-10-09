@@ -9,7 +9,12 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 from syrupy.assertion import SnapshotAssertion
 
-from femtologging import FemtoRotatingFileHandler, HandlerOptions
+from femtologging import (
+    FemtoRotatingFileHandler,
+    HandlerOptions,
+    _clear_rotating_fresh_failure_for_test,
+    _force_rotating_fresh_failure_for_test,
+)
 
 
 scenarios("features/rotating_handler_rotation.feature")
@@ -70,9 +75,9 @@ def given_rotating_handler_forcing_reopen_failure(
     max_bytes: int,
     backup_count: int,
     request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> RotatingContext:
-    monkeypatch.setenv("FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE", "once")
+    _force_rotating_fresh_failure_for_test(1, "python scenario")
+    request.addfinalizer(_clear_rotating_fresh_failure_for_test)
     return _build_rotating_context(tmp_path, request, max_bytes, backup_count)
 
 

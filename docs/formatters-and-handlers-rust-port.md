@@ -235,8 +235,9 @@ across the Rust builder and Python API.
   The implementation swaps the live `BufWriter` onto an append handle long
   enough to drop the original descriptor before the rename sequence begins. If
   reopening the fresh file fails the worker keeps writing through the append
-  handle, and tests can force this path by setting the
-  `FEMTOLOGGING_FORCE_ROTATE_FRESH_FAILURE` environment variable.
+  handle, and tests can force this path by calling the
+  `_force_rotating_fresh_failure_for_test` hook, which toggles a thread-safe
+  failure flag exposed via the Python bindings.
 - Filename indices start at `1` and increase sequentially up to
   `backup_count`; rollover prunes any files numbered above that cap.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and
