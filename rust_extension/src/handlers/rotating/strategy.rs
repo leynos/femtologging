@@ -51,31 +51,49 @@ impl FileRotationStrategy {
         }
 
         let capacity = writer.capacity();
+        let original_file = self.swap_writer_with_temp(writer, capacity)?;
+        let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
+        drop(original_file);
+        self.finalise_rotation(writer, capacity)
+    }
+
+    fn swap_writer_with_temp(
+        &self,
+        writer: &mut BufWriter<File>,
+        capacity: usize,
+    ) -> io::Result<File> {
         let append_file = Self::open_append_file(&self.path)?;
         let original_writer =
             std::mem::replace(writer, BufWriter::with_capacity(capacity, append_file));
-        let mut original_file = match original_writer.into_inner() {
-            Ok(file) => Some(file),
+        match original_writer.into_inner() {
+            Ok(file) => Ok(file),
             Err(err) => {
                 let io_error = io::Error::new(err.error().kind(), err.error().to_string());
                 let original = err.into_inner();
                 *writer = original;
-                return Err(io_error);
+                Err(io_error)
             }
-        };
+        }
+    }
 
+    fn perform_rotation_with_rollback(
+        &mut self,
+        writer: &mut BufWriter<File>,
+        original_file: File,
+        capacity: usize,
+    ) -> io::Result<File> {
         if let Err(err) = self.rotate_backups() {
-            if let Some(file) = original_file.take() {
-                *writer = BufWriter::with_capacity(capacity, file);
-            }
+            *writer = BufWriter::with_capacity(capacity, original_file);
             return Err(err);
         }
+        Ok(original_file)
+    }
 
-        let file = original_file
-            .take()
-            .ok_or_else(|| io::Error::other("lost original log file before rename"))?;
-        drop(file);
-
+    fn finalise_rotation(
+        &mut self,
+        writer: &mut BufWriter<File>,
+        capacity: usize,
+    ) -> io::Result<()> {
         if let Err(err) = Self::rename_file_if_exists(&self.path, &self.backup_path(1)) {
             *writer = BufWriter::with_capacity(capacity, Self::open_append_file(&self.path)?);
             return Err(err);
