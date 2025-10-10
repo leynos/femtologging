@@ -18,6 +18,9 @@ pub trait FemtoFormatter: Send + Sync {
     fn format(&self, record: &FemtoLogRecord) -> String;
 }
 
+/// Shared formatter trait object used across handlers.
+pub type SharedFormatter = Arc<dyn FemtoFormatter + Send + Sync>;
+
 #[derive(Copy, Clone, Debug)]
 pub struct DefaultFormatter;
 
@@ -27,13 +30,13 @@ impl FemtoFormatter for DefaultFormatter {
     }
 }
 
-impl FemtoFormatter for Arc<dyn FemtoFormatter> {
+impl FemtoFormatter for Arc<dyn FemtoFormatter + Send + Sync> {
     fn format(&self, record: &FemtoLogRecord) -> String {
         (**self).format(record)
     }
 }
 
-impl FemtoFormatter for Box<dyn FemtoFormatter> {
+impl FemtoFormatter for Box<dyn FemtoFormatter + Send + Sync> {
     fn format(&self, record: &FemtoLogRecord) -> String {
         (**self).format(record)
     }
@@ -53,7 +56,7 @@ pub mod python {
 
     use crate::{log_record::FemtoLogRecord, python::fq_py_type};
 
-    use super::FemtoFormatter;
+    use super::{FemtoFormatter, SharedFormatter};
 
     #[derive(Clone)]
     struct PythonFormatter {
@@ -153,8 +156,16 @@ pub mod python {
     }
 
     /// Convert a Python formatter object into a boxed [`FemtoFormatter`].
-    pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Arc<dyn FemtoFormatter>> {
-        let formatter = PythonFormatter::try_new(obj)?;
-        Ok(Arc::new(formatter))
+    pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<SharedFormatter> {
+        PythonFormatter::try_new(obj)
+            .map(|formatter| Arc::new(formatter) as SharedFormatter)
+            .map_err(|err| {
+                let py = obj.py();
+                let context = PyTypeError::new_err(
+                    "formatter must be callable or expose a format(record: Mapping) -> str method",
+                );
+                context.set_cause(py, Some(err));
+                context
+            })
     }
 }

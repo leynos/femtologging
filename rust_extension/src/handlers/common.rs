@@ -15,7 +15,7 @@ use super::{
     file::{HandlerConfig, OverflowPolicy},
     FormatterId, HandlerBuildError,
 };
-use crate::formatter::FemtoFormatter;
+use crate::formatter::{FemtoFormatter, SharedFormatter};
 
 /// Formatter configuration stored by handler builders.
 #[derive(Clone)]
@@ -23,7 +23,7 @@ pub enum FormatterConfig {
     /// Formatter referenced by identifier.
     Id(FormatterId),
     /// Formatter provided as an instance.
-    Instance(Arc<dyn FemtoFormatter>),
+    Instance(SharedFormatter),
 }
 
 impl fmt::Debug for FormatterConfig {
@@ -46,7 +46,7 @@ where
     F: FemtoFormatter + Send + Sync + 'static,
 {
     fn into_formatter_config(self) -> FormatterConfig {
-        FormatterConfig::Instance(Arc::new(self))
+        FormatterConfig::Instance(Arc::new(self) as SharedFormatter)
     }
 }
 
@@ -147,8 +147,14 @@ impl CommonBuilder {
         }
         if let Some(fmt) = &self.formatter {
             match fmt {
-                FormatterConfig::Id(fid) => d.set_item("formatter_id", fid.as_str())?,
-                FormatterConfig::Instance(_) => d.set_item("formatter", "instance")?,
+                FormatterConfig::Id(fid) => {
+                    d.set_item("formatter_kind", "id")?;
+                    d.set_item("formatter_id", fid.as_str())?;
+                }
+                FormatterConfig::Instance(_) => {
+                    d.set_item("formatter_kind", "instance")?;
+                    d.set_item("formatter", "instance")?;
+                }
             }
         }
         Ok(())
