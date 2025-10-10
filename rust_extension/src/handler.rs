@@ -7,7 +7,7 @@ use thiserror::Error;
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum HandlerError {
     /// The handler's queue rejected the record because it was already full.
-    #[error("handler queue is full")]
+    #[error("queue full")]
     QueueFull,
     /// The handler is no longer accepting records because it has been closed.
     #[error("handler is closed")]
