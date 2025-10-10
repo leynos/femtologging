@@ -9,6 +9,8 @@
 #[cfg(feature = "python")]
 use pyo3::{exceptions::PyValueError, prelude::*};
 
+use std::path::PathBuf;
+
 use super::{
     common::FileLikeBuilderState,
     file::{FemtoFileHandler, OverflowPolicy},
@@ -24,13 +26,13 @@ use crate::macros::{dict_into_py, AsPyDict};
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug)]
 pub struct FileHandlerBuilder {
-    path: String,
+    path: PathBuf,
     state: FileLikeBuilderState,
 }
 
 impl FileHandlerBuilder {
     /// Create a builder targeting the specified file path.
-    pub fn new(path: impl Into<String>) -> Self {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             state: FileLikeBuilderState::default(),
@@ -48,7 +50,8 @@ impl FileHandlerBuilder {
 impl FileHandlerBuilder {
     /// Populate a Python dictionary with the builder's fields.
     fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
-        d.set_item("path", &self.path)?;
+        let path = self.path.to_string_lossy();
+        d.set_item("path", path.as_ref())?;
         self.state.extend_py_dict(d)?;
         Ok(())
     }
@@ -170,13 +173,14 @@ mod tests {
     use super::super::test_helpers::assert_build_err;
     use super::*;
     use rstest::rstest;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[rstest]
     fn build_file_handler() {
         let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
-        let builder = FileHandlerBuilder::new(path.to_string_lossy())
+        let builder = FileHandlerBuilder::new(path.clone())
             .with_capacity(16)
             .with_flush_record_interval(1);
         let handler = builder
@@ -187,13 +191,14 @@ mod tests {
 
     #[rstest]
     fn reject_zero_capacity() {
-        let builder = FileHandlerBuilder::new("log.txt").with_capacity(0);
+        let builder = FileHandlerBuilder::new(PathBuf::from("log.txt")).with_capacity(0);
         assert_build_err(&builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
     fn reject_zero_flush_record_interval() {
-        let builder = FileHandlerBuilder::new("log.txt").with_flush_record_interval(0);
+        let builder =
+            FileHandlerBuilder::new(PathBuf::from("log.txt")).with_flush_record_interval(0);
         assert_build_err(
             &builder,
             "build_inner must fail for zero flush record interval",
@@ -202,7 +207,7 @@ mod tests {
 
     #[rstest]
     fn reject_zero_overflow_timeout() {
-        let builder = FileHandlerBuilder::new("log.txt")
+        let builder = FileHandlerBuilder::new(PathBuf::from("log.txt"))
             .with_overflow_policy(OverflowPolicy::Timeout(std::time::Duration::from_millis(0)));
         assert_build_err(&builder, "build_inner must fail for zero timeout_ms");
     }
