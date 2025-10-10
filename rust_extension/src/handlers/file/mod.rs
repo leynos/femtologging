@@ -154,8 +154,8 @@ impl FemtoFileHandler {
     /// -------
     /// bool
     ///     ``True`` when pending records are written successfully. ``False``
-    ///     when the handler has already been closed or the flush request could
-    ///     not be sent to the worker thread.
+    ///     when the handler has already been closed or the flush command could
+    ///     not be delivered.
     ///
     /// Examples
     /// --------

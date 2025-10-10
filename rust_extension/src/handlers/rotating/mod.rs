@@ -333,8 +333,8 @@ impl FemtoRotatingFileHandler {
     /// -------
     /// bool
     ///     ``True`` when the worker confirms the flush succeeded. ``False``
-    ///     when the handler is closed or the flush signal cannot be
-    ///     dispatched.
+    ///     when the handler is closed or the flush command cannot be
+    ///     delivered.
     ///
     /// Examples
     /// --------
