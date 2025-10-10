@@ -140,7 +140,12 @@ builder_methods! {
                     use pyo3::exceptions::{PyOverflowError, PyValueError};
 
                     let max_bytes = max_bytes.extract::<i128>()?;
-                    if max_bytes <= 0 {
+                    if max_bytes < 0 {
+                        return Err(PyValueError::new_err(
+                            "max_bytes must be non-negative",
+                        ));
+                    }
+                    if max_bytes == 0 {
                         return Err(PyValueError::new_err(
                             "max_bytes must be greater than zero",
                         ));
