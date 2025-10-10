@@ -225,7 +225,7 @@ mod tests {
     fn build_file_handler() {
         let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
-        let builder = FileHandlerBuilder::new(path.clone())
+        let builder = FileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(16)
             .with_flush_record_interval(1);
         let handler = builder
@@ -238,7 +238,7 @@ mod tests {
     fn build_file_handler_with_custom_formatter() {
         let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("custom.log");
-        let builder = FileHandlerBuilder::new(path.to_string_lossy())
+        let builder = FileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_formatter(PrefixFormatter)
             .with_flush_record_interval(1);
         let mut handler = builder
@@ -258,14 +258,13 @@ mod tests {
 
     #[rstest]
     fn reject_zero_capacity() {
-        let builder = FileHandlerBuilder::new(PathBuf::from("log.txt")).with_capacity(0);
+        let builder = FileHandlerBuilder::new("log.txt").with_capacity(0);
         assert_build_err(&builder, "build_inner must fail for zero capacity");
     }
 
     #[rstest]
     fn reject_zero_flush_record_interval() {
-        let builder =
-            FileHandlerBuilder::new(PathBuf::from("log.txt")).with_flush_record_interval(0);
+        let builder = FileHandlerBuilder::new("log.txt").with_flush_record_interval(0);
         assert_build_err(
             &builder,
             "build_inner must fail for zero flush record interval",
@@ -274,7 +273,7 @@ mod tests {
 
     #[rstest]
     fn reject_zero_overflow_timeout() {
-        let builder = FileHandlerBuilder::new(PathBuf::from("log.txt"))
+        let builder = FileHandlerBuilder::new("log.txt")
             .with_overflow_policy(OverflowPolicy::Timeout(std::time::Duration::from_millis(0)));
         assert_build_err(&builder, "build_inner must fail for zero timeout_ms");
     }

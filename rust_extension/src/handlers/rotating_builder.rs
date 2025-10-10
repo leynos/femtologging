@@ -341,7 +341,7 @@ mod tests {
     fn build_rotating_file_handler_defaults() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.log");
-        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy());
+        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned());
         let mut handler = builder
             .build_inner()
             .expect("build_inner must succeed for defaults");
@@ -353,7 +353,7 @@ mod tests {
     fn build_rotating_file_handler_with_limits() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.log");
-        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy())
+        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(32)
             .with_flush_record_interval(2)
             .with_max_bytes(1024)
@@ -369,7 +369,7 @@ mod tests {
     fn build_rotating_file_handler_with_custom_formatter() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.log");
-        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy())
+        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_formatter(SuffixFormatter)
             .with_capacity(8);
         let mut handler = builder
