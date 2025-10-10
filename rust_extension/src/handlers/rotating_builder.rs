@@ -116,7 +116,7 @@ builder_methods! {
                 }
             }
             method {
-                doc: "Set the formatter identifier.",
+                doc: "Set the formatter identifier.\n\nOnly ``DefaultFormatter`` is supported for\n``FemtoRotatingFileHandler`` at present; specifying any other identifier\ncauses :meth:`build` to return ``HandlerConfigError``.",
                 rust_name: with_formatter,
                 py_fn: py_with_formatter,
                 py_name: "with_formatter",
@@ -213,6 +213,8 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
             ),
             None => RotationConfig::disabled(),
         };
+        // TODO(#218): Support custom formatter identifiers once rotation-aware
+        // formatters can be registered.
         match self.state.formatter_id() {
             Some(FormatterId::Default) | None => {
                 let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
@@ -233,7 +235,12 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
                 Ok(handler)
             }
             Some(FormatterId::Custom(other)) => Err(HandlerBuildError::InvalidConfig(format!(
-                "unknown formatter id: {other}",
+                concat!(
+                    "FemtoRotatingFileHandler only supports ",
+                    "the default formatter; ",
+                    "`{other}` is not supported",
+                ),
+                other = other,
             ))),
         }
     }

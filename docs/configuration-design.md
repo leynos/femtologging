@@ -395,6 +395,11 @@ API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
 logic in one place for both file-based builders, reducing duplication and
 ensuring validation stays consistent.
 
+Formatter support for `RotatingFileHandlerBuilder` is intentionally narrow.
+Only the default formatter can be selected today; providing a custom identifier
+causes `build()` to return `HandlerConfigError`. When the rotation pipeline can
+serialise custom formatters we will extend the builder to accept them.
+
 #### Overflow policy options
 
 Both file-derived builders expose a `with_overflow_policy` fluent that applies
