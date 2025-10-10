@@ -381,11 +381,12 @@ The initial implementation provides `FileHandlerBuilder`,
 the existing handler types. `FileHandlerBuilder` supports capacity and flush
 interval, while `RotatingFileHandlerBuilder` layers on `max_bytes` and
 `backup_count` rotation thresholds. Rotation is opt-in: both limits must be
-provided with positive values, otherwise the builder raises a configuration
-error so invalid rollover settings fail fast. When thresholds are omitted the
-handler stores `(0, 0)`, disabling rotation entirely. Explicit zero values are
-rejected so misconfigured rollovers fail loudly rather than silently logging
-without retention. `StreamHandlerBuilder` configures the stream target and
+provided with positive values. Passing zero or negative integers raises a
+`ValueError` immediately because the PyO3 bindings reject invalid unsigned
+inputs, keeping misconfigurations obvious. When thresholds are omitted the
+handler stores `(0, 0)`, disabling rotation entirely. Mismatched pairs continue
+to raise configuration errors so invalid rollover settings fail fast. The
+`StreamHandlerBuilder` configures the stream target and
 capacity. All builders expose `build()` methods returning ready‑to‑use
 handlers. Advanced options such as file encoding or custom writers are deferred
 until the corresponding handler features are ported from picologging. The Rust

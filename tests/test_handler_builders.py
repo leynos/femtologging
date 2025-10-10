@@ -31,6 +31,22 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
     pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
 
 
+@pytest.mark.parametrize("max_bytes", [-1, -100, -999999])
+def test_with_max_bytes_negative_raises(tmp_path, max_bytes: int) -> None:
+    builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
+
+    with pytest.raises(ValueError):
+        builder.with_max_bytes(max_bytes)
+
+
+@pytest.mark.parametrize("backup_count", [-1, -5, -1000])
+def test_with_backup_count_negative_raises(tmp_path, backup_count: int) -> None:
+    builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
+
+    with pytest.raises(ValueError):
+        builder.with_backup_count(backup_count)
+
+
 scenarios("features/handler_builders.feature")
 
 
