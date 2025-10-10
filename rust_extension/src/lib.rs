@@ -111,10 +111,6 @@ fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
 ///
 /// Intended for tests; not thread-safe.
 ///
-/// # Returns
-///
-/// `()`.
-///
 /// # Examples
 ///
 /// ```rust,ignore
@@ -168,10 +164,6 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// - `m`: The Python module to populate with classes, functions, and
 ///   constants.
-///
-/// # Returns
-///
-/// `Ok(())` on success.
 ///
 /// # Errors
 ///
