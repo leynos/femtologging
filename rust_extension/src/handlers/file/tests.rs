@@ -55,9 +55,9 @@ impl CountingRotation {
 }
 
 impl RotationStrategy<SharedBuf> for CountingRotation {
-    fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<()> {
+    fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<bool> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -72,9 +72,13 @@ impl FlagRotation {
 }
 
 impl RotationStrategy<Cursor<Vec<u8>>> for FlagRotation {
-    fn before_write(&mut self, _writer: &mut Cursor<Vec<u8>>, _formatted: &str) -> io::Result<()> {
+    fn before_write(
+        &mut self,
+        _writer: &mut Cursor<Vec<u8>>,
+        _formatted: &str,
+    ) -> io::Result<bool> {
         self.flag.store(true, Ordering::SeqCst);
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -220,7 +224,7 @@ fn worker_writes_record_when_rotation_fails() {
     struct FailingRotation;
 
     impl RotationStrategy<SharedBuf> for FailingRotation {
-        fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<()> {
+        fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<bool> {
             Err(io::Error::new(
                 io::ErrorKind::Other,
                 "failing rotation for test",

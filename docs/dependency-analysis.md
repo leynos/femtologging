@@ -27,6 +27,9 @@ implementation:
   current implementation uses a bounded channel with a capacity of 1024
   messages so that log producers cannot exhaust memory if the consumer thread
   stalls.
+- **tempfile** is used strictly in tests to provision scratch directories and
+  files when exercising rotation and builder behaviour. Production code no
+  longer depends on temporary swap handles for rotation recovery.
 - **rstest** is used as a development dependency to provide concise test
   fixtures and parameterized tests.
 - **logtest** allows asserting on log output in unit tests.

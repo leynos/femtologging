@@ -4,7 +4,10 @@
 
 The primary and recommended method for configuring `femtologging` in new
 applications will be a fluent builder API. This pattern promotes clarity, type
-safety (especially in Rust), and discoverability.
+safety (especially in Rust), and discoverability. The legacy, logging-style
+helpers (`basicConfig`, `dictConfig`) are retained for backwards compatibility,
+but each translates its inputs into builder invocations so the builder API
+remains the canonical source of configuration truth.
 
 ### 1.1. Rust Builder API Design
 

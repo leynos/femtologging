@@ -22,14 +22,37 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
+mod fresh_failure;
 mod strategy;
 pub(crate) use strategy::FileRotationStrategy;
+
+#[cfg(test)]
+pub(crate) use fresh_failure::force_fresh_failure_once_for_test;
 
 #[cfg(feature = "python")]
 use crate::{
     formatter::DefaultFormatter,
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY},
 };
+
+#[cfg(feature = "python")]
+#[pyfunction]
+pub(crate) fn force_rotating_fresh_failure_for_test(
+    count: usize,
+    reason: Option<&str>,
+) -> PyResult<()> {
+    let reason = reason
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "python requested failure".to_string());
+    fresh_failure::set_forced_fresh_failure(count, reason);
+    Ok(())
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+pub(crate) fn clear_rotating_fresh_failure_for_test() {
+    fresh_failure::clear_forced_fresh_failure();
+}
 
 /// Rotation thresholds controlling when a file rolls over.
 ///

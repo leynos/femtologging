@@ -11,6 +11,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from typing import (
+    Callable,
     Iterable,
     TextIO,
     cast,
@@ -39,6 +40,34 @@ NameFilterBuilder = rust.NameFilterBuilder
 FilterBuildError = rust.FilterBuildError
 HandlerConfigError = rust.HandlerConfigError
 HandlerIOError = rust.HandlerIOError
+_force_rotating_fresh_failure = getattr(
+    rust, "force_rotating_fresh_failure_for_test", None
+)
+_clear_rotating_fresh_failure = getattr(
+    rust, "clear_rotating_fresh_failure_for_test", None
+)
+
+if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
+    _force_rotating_fresh_failure_for_test = cast(
+        Callable[[int, str | None], None],
+        _force_rotating_fresh_failure,
+    )
+    _clear_rotating_fresh_failure_for_test = cast(
+        Callable[[], None],
+        _clear_rotating_fresh_failure,
+    )
+else:
+    # Feature disabled: expose no-ops that fail loudly when invoked.
+
+    def _force_rotating_fresh_failure_for_test(
+        count: int, reason: str | None = None
+    ) -> None:
+        raise RuntimeError(
+            "rotating fresh-failure hook requires the extension built with the 'python' feature"
+        )
+
+    def _clear_rotating_fresh_failure_for_test() -> None:
+        return
 
 
 @dataclass

@@ -232,10 +232,23 @@ across the Rust builder and Python API.
   ``<path>.1``), and finally opens a fresh base file. The cascade deletes any
   file whose new index would exceed `backup_count`, so only the configured
   number of backups remain. Closing the handle first is required on Windows.
+  The implementation swaps the live `BufWriter` onto an append handle long
+  enough to drop the original descriptor before the rename sequence begins. If
+  reopening the fresh file fails the worker keeps writing through the append
+  handle, and tests can force this path by calling the
+  `_force_rotating_fresh_failure_for_test` hook, which toggles a thread-safe
+  failure flag exposed via the Python bindings.
 - Filename indices start at `1` and increase sequentially up to
   `backup_count`; rollover prunes any files numbered above that cap.
 - `max_bytes` and `backup_count` are surfaced through the Rust builder and
   Python API to keep configuration familiar.
+
+Unit tests exercise the rotation predicate, the rename cascade, and the
+behaviour of the `FemtoRotatingFileHandler` when wired through the worker
+thread. Behavioural tests in Python verify size-based rotation, backup pruning,
+and multi-backup cascades via syrupy snapshots. Additional worker-focused tests
+assert that rotation runs on the consumer thread and that producers remain
+non-blocking even if rotation work is artificially stalled.
 
 ## Thread Safety Considerations
 

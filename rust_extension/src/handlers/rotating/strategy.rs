@@ -1,11 +1,14 @@
 //! Size-based rotation strategy for rotating file handlers.
 
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
+use tempfile::NamedTempFile;
+
+use super::fresh_failure::take_forced_fresh_failure_reason;
 use crate::handlers::file::RotationStrategy;
 
 pub(crate) struct FileRotationStrategy {
@@ -48,14 +51,111 @@ impl FileRotationStrategy {
             file.seek(SeekFrom::Start(0))?;
             return Ok(());
         }
-        self.rotate_backups()?;
-        if self.path.exists() {
-            fs::copy(&self.path, self.backup_path(1))?;
+
+        let capacity = writer.capacity();
+        let original_file = self.swap_writer_with_temp(writer, capacity)?;
+        let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
+        self.finalise_rotation(writer, original_file, capacity)
+    }
+
+    fn swap_writer_with_temp(
+        &self,
+        writer: &mut BufWriter<File>,
+        capacity: usize,
+    ) -> io::Result<File> {
+        let dir = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let temp = NamedTempFile::new_in(dir)?;
+        let placeholder_file = temp.reopen()?;
+        drop(temp);
+        let placeholder = BufWriter::with_capacity(capacity, placeholder_file);
+        let original_writer = std::mem::replace(writer, placeholder);
+        match original_writer.into_inner() {
+            Ok(file) => Ok(file),
+            Err(err) => {
+                let io_error = io::Error::new(err.error().kind(), err.error().to_string());
+                let original = err.into_inner();
+                *writer = original;
+                Err(io_error)
+            }
         }
-        let file = writer.get_mut();
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        Ok(())
+    }
+
+    fn perform_rotation_with_rollback(
+        &mut self,
+        writer: &mut BufWriter<File>,
+        original_file: File,
+        capacity: usize,
+    ) -> io::Result<File> {
+        if let Err(err) = self.rotate_backups() {
+            *writer = BufWriter::with_capacity(capacity, original_file);
+            return Err(err);
+        }
+        Ok(original_file)
+    }
+
+    fn finalise_rotation(
+        &mut self,
+        writer: &mut BufWriter<File>,
+        original_file: File,
+        capacity: usize,
+    ) -> io::Result<()> {
+        let mut original_file = Some(original_file);
+        if let Err(err) = Self::rename_file_if_exists(&self.path, &self.backup_path(1)) {
+            let file = original_file
+                .take()
+                .expect("original log file already consumed during rotation");
+            *writer = BufWriter::with_capacity(capacity, file);
+            return Err(err);
+        }
+
+        match Self::open_fresh_writer(&self.path, capacity) {
+            Ok(fresh_writer) => {
+                let _ = original_file.take();
+                *writer = fresh_writer;
+                Ok(())
+            }
+            Err(fresh_err) => match Self::open_append_file(&self.path) {
+                Ok(fallback_file) => {
+                    let _ = original_file.take();
+                    *writer = BufWriter::with_capacity(capacity, fallback_file);
+                    Err(fresh_err)
+                }
+                Err(fallback_err) => {
+                    let file = original_file
+                        .take()
+                        .expect("original log file already consumed during rotation");
+                    *writer = BufWriter::with_capacity(capacity, file);
+                    Err(io::Error::new(
+                        fresh_err.kind(),
+                        format!(
+                            "failed to open fresh writer ({fresh_err}); fallback append failed ({fallback_err})"
+                        ),
+                    ))
+                }
+            },
+        }
+    }
+
+    fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
+        if let Some(reason) = take_forced_fresh_failure_reason() {
+            return Err(io::Error::other(format!(
+                "simulated fresh writer failure for testing ({reason})"
+            )));
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        Ok(BufWriter::with_capacity(capacity, file))
+    }
+
+    fn open_append_file(path: &Path) -> io::Result<File> {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(path)
     }
 
     pub(crate) fn remove_file_if_exists(path: &Path) -> io::Result<()> {
@@ -129,12 +229,14 @@ impl FileRotationStrategy {
 }
 
 impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
-    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<()> {
+    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<bool> {
         let next_bytes = Self::next_record_bytes(formatted);
         if self.should_rotate(writer, next_bytes)? {
             self.rotate(writer)?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
 }
 

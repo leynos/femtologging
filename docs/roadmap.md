@@ -77,9 +77,9 @@ from that design.
         rollover.
       - [x] Verify cascade renames run highest→lowest and never overwrite
         existing files.
-      - [ ] Close-and-rename behaviour passes on Windows (no renaming of open
+      - [x] Close-and-rename behaviour passes on Windows (no renaming of open
         files).
-      - [ ] Assert rotation happens on the worker thread and producers remain
+      - [x] Assert rotation happens on the worker thread and producers remain
         non-blocking under load.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
   reconnection handling.

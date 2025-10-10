@@ -2,12 +2,75 @@
 
 use super::*;
 use crate::formatter::DefaultFormatter;
-use crate::handlers::file::TestConfig;
+use crate::handlers::file::{
+    BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy, TestConfig,
+};
+use crate::handlers::rotating::force_fresh_failure_once_for_test;
 use crate::log_record::FemtoLogRecord;
 use rstest::rstest;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+struct ObservedStrategy {
+    inner: FileRotationStrategy,
+    rotations: Arc<Mutex<Vec<thread::ThreadId>>>,
+    rotation_delay: Option<Duration>,
+    rotation_started: Option<Arc<AtomicBool>>,
+}
+
+impl ObservedStrategy {
+    fn new(inner: FileRotationStrategy, rotations: Arc<Mutex<Vec<thread::ThreadId>>>) -> Self {
+        Self {
+            inner,
+            rotations,
+            rotation_delay: None,
+            rotation_started: None,
+        }
+    }
+
+    fn with_delay(
+        inner: FileRotationStrategy,
+        rotations: Arc<Mutex<Vec<thread::ThreadId>>>,
+        delay: Duration,
+        started: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner,
+            rotations,
+            rotation_delay: Some(delay),
+            rotation_started: Some(started),
+        }
+    }
+}
+
+impl RotationStrategy<BufWriter<File>> for ObservedStrategy {
+    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<bool> {
+        let next_bytes = FileRotationStrategy::next_record_bytes(formatted);
+        if self.inner.should_rotate(writer, next_bytes)? {
+            if let Some(flag) = &self.rotation_started {
+                flag.store(true, Ordering::SeqCst);
+            }
+            if let Some(delay) = self.rotation_delay {
+                thread::sleep(delay);
+            }
+            self.inner.rotate(writer)?;
+            self.rotations
+                .lock()
+                .expect("rotation observer lock poisoned")
+                .push(thread::current().id());
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
 
 #[rstest]
 #[case::rotates_when_existing_file_and_next_record_exceed_budget(
@@ -89,6 +152,35 @@ fn rotate_promotes_existing_backups() -> io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn rotation_truncates_in_place_when_no_backups() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(b"before\n")?;
+    writer.flush()?;
+
+    let mut reader = OpenOptions::new().read(true).open(&path)?;
+    let mut strategy = FileRotationStrategy::new(path.clone(), 1, 0);
+    strategy.rotate(&mut writer)?;
+
+    writer.write_all(b"after\n")?;
+    writer.flush()?;
+
+    reader.seek(SeekFrom::Start(0))?;
+    let mut observed = String::new();
+    reader.read_to_string(&mut observed)?;
+    assert_eq!(observed, "after\n");
+
+    Ok(())
+}
+
 #[rstest]
 fn rotate_prunes_excess_backups_when_limit_lowered() -> io::Result<()> {
     let dir = tempdir()?;
@@ -132,6 +224,191 @@ fn rotating_handler_performs_size_based_rotation() -> io::Result<()> {
     assert!(backup.exists(), "expected first backup file");
     let backup_contents = fs::read_to_string(backup)?;
     assert!(backup_contents.contains("first"));
+
+    Ok(())
+}
+
+#[test]
+fn before_write_reports_rotation_outcome() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+    fs::write(&path, "seed\n")?;
+    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    let mut strategy = FileRotationStrategy::new(path.clone(), 6, 1);
+
+    let rotated = strategy.before_write(&mut writer, "x")?;
+    assert!(rotated, "first append should trigger rotation");
+
+    writer.write_all(b"x\n")?;
+    writer.flush()?;
+
+    let rotated = strategy.before_write(&mut writer, "ok")?;
+    assert!(
+        !rotated,
+        "second append should not rotate once log is empty"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+    fs::write(&path, "seed\n")?;
+    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
+
+    let _guard = force_fresh_failure_once_for_test("once");
+    let err = strategy
+        .rotate(&mut writer)
+        .expect_err("fresh open should fail");
+    assert_eq!(err.kind(), io::ErrorKind::Other);
+
+    writer.write_all(b"after\n")?;
+    writer.flush()?;
+
+    let backup = strategy.backup_path(1);
+    assert_eq!(fs::read_to_string(&backup)?, "seed\n");
+    assert_eq!(fs::read_to_string(&path)?, "after\n");
+
+    Ok(())
+}
+
+#[test]
+fn rotate_restores_writer_when_backup_rename_fails() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("rotating.log");
+    fs::write(&path, "seed\n")?;
+
+    let conflicting = path.with_extension("log.1");
+    fs::create_dir(&conflicting)?;
+
+    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
+
+    let err = strategy
+        .rotate(&mut writer)
+        .expect_err("rename conflict should fail rotation");
+    assert_ne!(err.kind(), io::ErrorKind::NotFound);
+
+    writer.write_all(b"after\n")?;
+    writer.flush()?;
+
+    let contents = fs::read_to_string(&path)?;
+    assert!(
+        contents.ends_with("after\n"),
+        "log should still receive writes after failed rotation: {contents:?}"
+    );
+    assert!(
+        conflicting.is_dir(),
+        "conflicting directory should remain after failed rename"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn rotation_runs_on_worker_thread() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("worker.log");
+    let rotations = Arc::new(Mutex::new(Vec::new()));
+    let strategy = ObservedStrategy::new(
+        FileRotationStrategy::new(path.clone(), 24, 1),
+        Arc::clone(&rotations),
+    );
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(&path)?;
+    let writer = BufWriter::new(file);
+    let handler_cfg = HandlerConfig {
+        capacity: 4,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+    let options = BuilderOptions::new(strategy, None);
+    let inner = FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
+    let mut handler = FemtoRotatingFileHandler::new_with_rotation_limits(inner, 24, 1);
+
+    let producer_id = thread::current().id();
+    handler.handle(FemtoLogRecord::new("core", "INFO", "alpha"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "beta"));
+    assert!(handler.flush());
+    handler.close();
+
+    let recorded = rotations.lock().expect("rotation observer lock poisoned");
+    assert!(
+        !recorded.is_empty(),
+        "expected at least one rotation to be recorded"
+    );
+    assert!(recorded.iter().all(|id| *id != producer_id));
+
+    Ok(())
+}
+
+#[test]
+fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("non_blocking.log");
+    let rotations = Arc::new(Mutex::new(Vec::new()));
+    let started = Arc::new(AtomicBool::new(false));
+    let strategy = ObservedStrategy::with_delay(
+        FileRotationStrategy::new(path.clone(), 20, 1),
+        Arc::clone(&rotations),
+        Duration::from_millis(100),
+        Arc::clone(&started),
+    );
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(&path)?;
+    let writer = BufWriter::new(file);
+    let handler_cfg = HandlerConfig {
+        capacity: 2,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+    let options = BuilderOptions::new(strategy, None);
+    let mut handler = FemtoRotatingFileHandler::new_with_rotation_limits(
+        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options),
+        20,
+        1,
+    );
+
+    handler.handle(FemtoLogRecord::new("core", "INFO", "seed"));
+    handler.handle(FemtoLogRecord::new("core", "INFO", "trigger"));
+
+    let wait_start = Instant::now();
+    while !started.load(Ordering::SeqCst) {
+        if wait_start.elapsed() > Duration::from_secs(2) {
+            panic!("rotation did not begin within the expected time window");
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let start = Instant::now();
+    for idx in 0..8 {
+        handler.handle(FemtoLogRecord::new("core", "INFO", &format!("extra {idx}")));
+    }
+    assert!(
+        start.elapsed() < Duration::from_millis(200),
+        "producing records should remain fast even while rotation is pending"
+    );
+
+    assert!(handler.flush());
+    handler.close();
+
+    let recorded = rotations.lock().expect("rotation observer lock poisoned");
+    assert!(
+        recorded.len() >= 1,
+        "expected the rotation observer to capture at least one rotation"
+    );
 
     Ok(())
 }
