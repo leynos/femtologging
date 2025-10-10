@@ -67,8 +67,7 @@ def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuild
             "args": [str(path)],
         },
     )
-    assert isinstance(builder, RotatingFileHandlerBuilder)
-    return builder
+    return _require_rotating_builder(builder)
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
