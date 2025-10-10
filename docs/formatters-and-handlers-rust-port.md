@@ -57,7 +57,7 @@ common trait:
 
 ```rust
 pub trait FemtoHandlerTrait: Send + Sync {
-    fn handle(&self, record: FemtoLogRecord);
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
     fn flush(&self) -> bool { true }
 }
 
@@ -67,8 +67,10 @@ pub struct FemtoHandler;
 ```
 
 Implementations should forward the record to an internal queue with `try_send`
-so the caller never blocks. If the queue is full, the record is silently
-dropped and a warning is written to `stderr`. This favours throughput over
+so the caller never blocks. If the queue is full, `handle` returns
+`Err(HandlerError::QueueFull)` after logging a warning. When the worker has
+been closed, implementations return `Err(HandlerError::Closed)` to signal the
+caller that the handler is no longer available. This favours throughput over
 completeness: records may be lost to keep the application responsive. Advanced
 use cases can specify an overflow policy when constructing a handler. Python
 callers pass an overflow policy string literal ("drop", "block", or

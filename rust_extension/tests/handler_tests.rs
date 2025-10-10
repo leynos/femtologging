@@ -1,4 +1,4 @@
-use _femtologging_rs::{FemtoHandler, FemtoHandlerTrait, FemtoLogRecord};
+use _femtologging_rs::{FemtoHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerError};
 use std::sync::Mutex;
 
 #[derive(Default)]
@@ -7,7 +7,9 @@ struct DummyHandler {
 }
 
 impl FemtoHandlerTrait for DummyHandler {
-    fn handle(&self, _record: FemtoLogRecord) {}
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
 
     fn flush(&self) -> bool {
         let mut flag = self.flushed.lock().unwrap();

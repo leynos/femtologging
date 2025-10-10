@@ -4,7 +4,7 @@
 use super::*;
 use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::handlers::{HandlerBuildError, HandlerBuilderTrait};
 use crate::log_record::FemtoLogRecord;
 use crate::manager;
@@ -28,8 +28,9 @@ impl CollectingHandler {
 }
 
 impl FemtoHandlerTrait for CollectingHandler {
-    fn handle(&self, record: FemtoLogRecord) {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         self.records.lock().push(record);
+        Ok(())
     }
 
     fn as_any(&self) -> &dyn Any {
