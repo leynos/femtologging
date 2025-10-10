@@ -112,6 +112,18 @@ impl FemtoStreamHandler {
     }
 
     /// Flush pending log records without shutting down the worker thread.
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` when the worker confirms all buffered records were
+    ///     written. ``False`` if the handler has already been closed or the
+    ///     flush command could not be delivered.
+    ///
+    /// Examples
+    /// --------
+    /// >>> handler.flush()
+    /// True
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.flush()

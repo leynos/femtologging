@@ -147,6 +147,20 @@ impl FemtoFileHandler {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
     }
 
+    /// Flush queued log records to the underlying file without closing the
+    /// handler.
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` when pending records are written successfully. ``False``
+    ///     when the handler has already been closed or the flush request could
+    ///     not be sent to the worker thread.
+    ///
+    /// Examples
+    /// --------
+    /// >>> handler.flush()
+    /// True
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.flush()

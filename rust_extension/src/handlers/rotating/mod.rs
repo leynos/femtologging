@@ -326,6 +326,20 @@ impl FemtoRotatingFileHandler {
             .handle(FemtoLogRecord::new(logger, level, message));
     }
 
+    /// Flush queued log records to disk without closing the handler or
+    /// triggering a rotation.
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` when the worker confirms the flush succeeded. ``False``
+    ///     when the handler is closed or the flush signal cannot be
+    ///     dispatched.
+    ///
+    /// Examples
+    /// --------
+    /// >>> handler.flush()
+    /// True
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.flush()
