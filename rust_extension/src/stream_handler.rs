@@ -12,13 +12,13 @@ use std::{
     time::Duration,
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use log::warn;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
 use std::any::Any;
 
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -107,8 +107,9 @@ impl FemtoStreamHandler {
 
     /// Dispatch a log record to the handler's worker thread.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) {
-        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush pending log records without shutting down the worker thread.
@@ -252,16 +253,30 @@ impl FemtoStreamHandler {
 }
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
-    fn handle(&self, record: FemtoLogRecord) {
-        let send_failed = match &self.tx {
-            Some(tx) => tx.try_send(StreamCommand::Record(record)).is_err(),
-            None => true,
-        };
-        if send_failed {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let Some(tx) = &self.tx else {
             self.warner.record_drop();
             self.warner.warn_if_due(|count| {
                 warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
             });
+            return Err(HandlerError::Closed);
+        };
+        match tx.try_send(StreamCommand::Record(record)) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                self.warner.record_drop();
+                self.warner.warn_if_due(|count| {
+                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+                });
+                Err(HandlerError::QueueFull)
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.warner.record_drop();
+                self.warner.warn_if_due(|count| {
+                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+                });
+                Err(HandlerError::Closed)
+            }
         }
     }
 

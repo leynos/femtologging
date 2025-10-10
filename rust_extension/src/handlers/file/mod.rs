@@ -30,11 +30,11 @@ use std::{
     time::Duration,
 };
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TrySendError};
 use pyo3::prelude::*;
 use std::any::Any;
 
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -144,8 +144,9 @@ impl FemtoFileHandler {
     }
 
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) {
-        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message));
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     #[pyo3(name = "flush")]
@@ -351,36 +352,49 @@ impl FemtoFileHandler {
 }
 
 impl FemtoHandlerTrait for FemtoFileHandler {
-    fn handle(&self, record: FemtoLogRecord) {
-        if let Some(tx) = &self.tx {
-            match self.overflow_policy {
-                OverflowPolicy::Drop => {
-                    if tx.try_send(FileCommand::Record(Box::new(record))).is_err() {
-                        log::warn!(
-                            "FemtoFileHandler (Drop): queue full or shutting down, dropping record"
-                        );
-                    }
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let Some(tx) = &self.tx else {
+            log::warn!("FemtoFileHandler: handle called after close");
+            return Err(HandlerError::Closed);
+        };
+        match self.overflow_policy {
+            OverflowPolicy::Drop => match tx.try_send(FileCommand::Record(Box::new(record))) {
+                Ok(()) => Ok(()),
+                Err(TrySendError::Full(_)) => {
+                    log::warn!(
+                        "FemtoFileHandler (Drop): queue full or shutting down, dropping record"
+                    );
+                    Err(HandlerError::QueueFull)
                 }
-                OverflowPolicy::Block => {
-                    if tx.send(FileCommand::Record(Box::new(record))).is_err() {
-                        log::warn!(
-                            "FemtoFileHandler (Block): queue full or shutting down, dropping record"
-                        );
-                    }
+                Err(TrySendError::Disconnected(_)) => {
+                    log::warn!("FemtoFileHandler (Drop): queue closed, dropping record");
+                    Err(HandlerError::Closed)
                 }
-                OverflowPolicy::Timeout(dur) => {
-                    if tx
-                        .send_timeout(FileCommand::Record(Box::new(record)), dur)
-                        .is_err()
-                    {
+            },
+            OverflowPolicy::Block => match tx.send(FileCommand::Record(Box::new(record))) {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    log::warn!(
+                        "FemtoFileHandler (Block): queue full or shutting down, dropping record"
+                    );
+                    Err(HandlerError::Closed)
+                }
+            },
+            OverflowPolicy::Timeout(dur) => {
+                match tx.send_timeout(FileCommand::Record(Box::new(record)), dur) {
+                    Ok(()) => Ok(()),
+                    Err(SendTimeoutError::Timeout(_)) => {
                         log::warn!(
                             "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
                         );
+                        Err(HandlerError::Timeout(dur))
+                    }
+                    Err(SendTimeoutError::Disconnected(_)) => {
+                        log::warn!("FemtoFileHandler (Timeout): queue closed, dropping record");
+                        Err(HandlerError::Closed)
                     }
                 }
             }
-        } else {
-            log::warn!("FemtoFileHandler: handle called after close");
         }
     }
 

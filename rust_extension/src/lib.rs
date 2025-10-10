@@ -38,7 +38,7 @@ pub use filters::{
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
-pub use handler::{FemtoHandler, FemtoHandlerTrait};
+pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
 #[cfg(feature = "python")]
 pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.

@@ -49,7 +49,8 @@ def when_log_one(
 def when_log_after_close(
     handler: FemtoStreamHandler, capfd: pytest.CaptureFixture[str]
 ) -> list[str]:
-    handler.handle("test", "INFO", "drop me")
+    with pytest.raises(RuntimeError, match="Handler error: handler is closed"):
+        handler.handle("test", "INFO", "drop me")
     ok = handler.flush()
     out = capfd.readouterr().err.strip().splitlines()
     lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]

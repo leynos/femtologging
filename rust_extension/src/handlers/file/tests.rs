@@ -5,6 +5,7 @@
 
 use super::test_support::{install_test_logger, take_logged_messages};
 use super::*;
+use crate::handler::HandlerError;
 use log::Level;
 use serial_test::serial;
 use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
@@ -128,8 +129,12 @@ fn build_from_worker_invokes_rotation_strategy() {
         BuilderOptions::<SharedBuf, _>::new(rotation, None),
     );
 
-    handler.handle(FemtoLogRecord::new("core", "INFO", "one"));
-    handler.handle(FemtoLogRecord::new("core", "INFO", "two"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "one"))
+        .expect("record one queued");
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "two"))
+        .expect("record two queued");
 
     assert!(handler.flush());
     handler.close();
@@ -160,7 +165,7 @@ fn spawn_record_thread(
     let sb = Arc::clone(&send_barrier);
     let handle = thread::spawn(move || {
         sb.wait();
-        h.handle(record);
+        h.handle(record).expect("record send");
         done_tx.send(()).expect("send done");
     });
     (send_barrier, done_rx, handle)
@@ -244,11 +249,13 @@ fn worker_writes_record_when_rotation_fails() {
     let mut handler =
         FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
 
-    handler.handle(FemtoLogRecord::new(
-        "core",
-        "INFO",
-        "after rotation failure",
-    ));
+    handler
+        .handle(FemtoLogRecord::new(
+            "core",
+            "INFO",
+            "after rotation failure",
+        ))
+        .expect("record queued after rotation warning");
     assert!(
         handler.flush(),
         "flush should succeed even if rotation reported an error",
@@ -281,8 +288,13 @@ fn femto_file_handler_invalid_file_path() {
 fn femto_file_handler_queue_overflow_drop_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);
 
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .expect("first record queued");
+    let err = handler
+        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .expect_err("second record should overflow");
+    assert_eq!(err, HandlerError::QueueFull);
     start_barrier.wait();
     drop(handler);
 
@@ -292,7 +304,9 @@ fn femto_file_handler_queue_overflow_drop_policy() {
 #[test]
 fn femto_file_handler_queue_overflow_block_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Block);
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .expect("first record queued");
 
     let handler = Arc::new(handler);
     let (send_barrier, done_rx, t) = spawn_record_thread(
@@ -362,7 +376,9 @@ fn femto_file_handler_worker_thread_failure() {
     cfg.capacity = 1;
     cfg.flush_interval = 1;
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
-    handler.handle(FemtoLogRecord::new("core", "INFO", "slow"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "slow"))
+        .expect("record queued");
     let start = Instant::now();
     drop(handler);
     assert!(start.elapsed() < Duration::from_millis(1500));

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use parking_lot::Mutex;
 use std::any::Any;
 use std::sync::Arc;
@@ -24,8 +25,9 @@ impl CollectingHandler {
 }
 
 impl FemtoHandlerTrait for CollectingHandler {
-    fn handle(&self, record: FemtoLogRecord) {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         self.records.lock().push(record);
+        Ok(())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -181,10 +183,11 @@ fn drop_counter_increments_on_queue_overflow() {
     }
 
     impl FemtoHandlerTrait for BlockingHandler {
-        fn handle(&self, _record: FemtoLogRecord) {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
             if !self.waited.swap(true, Ordering::SeqCst) {
                 self.barrier.wait();
             }
+            Ok(())
         }
 
         fn as_any(&self) -> &dyn Any {
