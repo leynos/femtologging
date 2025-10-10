@@ -75,7 +75,7 @@ def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
 
 
 def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
-    """Omitting the policy should fall back to the default value."""
+    """Omitting the policy should use the default value and preserve rotation settings."""
 
     options = HandlerOptions(
         capacity=32,
