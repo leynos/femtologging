@@ -57,16 +57,48 @@ use manager::{get_logger as manager_get_logger, reset_manager};
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 
+/// Return a static greeting. Exposed to Python for sanity checks.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// assert_eq!(crate::hello(), "hello from Rust");
+/// ```
 #[pyfunction]
 fn hello() -> &'static str {
     "hello from Rust"
 }
 
+/// Get or create a [`FemtoLogger`] identified by `name`.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use pyo3::Python;
+/// Python::with_gil(|py| {
+///     let first = crate::get_logger(py, "example").unwrap();
+///     let second = crate::get_logger(py, "example").unwrap();
+///     assert!(first.as_ref(py).is(second.as_ref(py)));
+/// });
+/// ```
 #[pyfunction]
 fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     manager_get_logger(py, name)
 }
 
+/// Reset the global logging manager state. Intended for tests.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use pyo3::Python;
+/// Python::with_gil(|py| {
+///     let before = crate::get_logger(py, "example").unwrap();
+///     crate::reset_manager_py();
+///     let after = crate::get_logger(py, "example").unwrap();
+///     assert!(!before.as_ref(py).is(after.as_ref(py)));
+/// });
+/// ```
 #[pyfunction]
 fn reset_manager_py() {
     reset_manager();
@@ -103,6 +135,18 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+/// Initialise the `_femtologging_rs` Python extension module.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use pyo3::{types::PyModule, Python};
+/// Python::with_gil(|py| {
+///     let module = PyModule::new(py, "femtologging").unwrap();
+///     crate::_femtologging_rs(&module).unwrap();
+///     assert!(module.hasattr("FemtoLogger").unwrap());
+/// });
+/// ```
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
