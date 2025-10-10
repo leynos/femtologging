@@ -234,7 +234,8 @@ impl FemtoStreamHandler {
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
         self.tx.take();
-        if let Some(handle) = self.handle.lock().take() {
+        let handle = { self.handle.lock().take() };
+        if let Some(handle) = handle {
             let done_rx = self.done_rx.lock().clone();
             if done_rx.recv_timeout(self.flush_timeout).is_err() {
                 warn!(
