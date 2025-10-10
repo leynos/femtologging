@@ -66,14 +66,19 @@ pub trait FemtoHandlerTrait: Send + Sync {
 pub struct FemtoHandler;
 ```
 
-Implementations should forward the record to an internal queue with `try_send`
-so the caller never blocks. If the queue is full, `handle` returns
-`Err(HandlerError::QueueFull)` after logging a warning. When the worker has
-been closed, implementations return `Err(HandlerError::Closed)` to signal the
-caller that the handler is no longer available. This favours throughput over
-completeness: records may be lost to keep the application responsive. Advanced
-use cases can specify an overflow policy when constructing a handler. Python
-callers pass an overflow policy string literal ("drop", "block", or
+Implementations respect the configured overflow policy when forwarding a record
+to the worker queue. `Drop` uses `try_send`, immediately returning
+`Err(HandlerError::QueueFull)` when the queue is full and
+`Err(HandlerError::Closed)` if the worker has shut down. `Block` performs a
+blocking `send`, which either succeeds or yields `Err(HandlerError::Closed)` if
+the channel is disconnected. `Timeout` waits for the configured duration using
+`send_timeout`, returning `Err(HandlerError::Timeout(duration))` when the wait
+expires or `Err(HandlerError::Closed)` if the worker stops. All of these errors
+propagate across the FFI boundary as `PyRuntimeError`, allowing Python callers
+to decide whether to retry or fall back.
+
+Advanced use cases can specify an overflow policy when constructing a handler.
+Python callers pass an overflow policy string literal ("drop", "block", or
 "timeout:N") to the constructor, where N is the timeout in milliseconds (for
 example, "timeout:500"). The policy may also be extended to support options
 like back pressure, writing overflowed messages to a separate file, or emitting
