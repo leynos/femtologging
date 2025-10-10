@@ -40,7 +40,8 @@ Feature: Handler builders
 
   Scenario: dictConfig rotating builder zero thresholds
     Given a dictConfig RotatingFileHandlerBuilder for path "test.log"
-    Then setting zero rotation thresholds fails with "max_bytes must be greater than zero"
+    Then setting max bytes 0 fails with "max_bytes must be greater than zero"
+    And setting backup count 0 fails with "backup_count must be greater than zero"
 
   Scenario: invalid rotating file handler capacity
     Given a RotatingFileHandlerBuilder for path "test.log"
@@ -49,19 +50,17 @@ Feature: Handler builders
 
   Scenario: invalid rotating file handler zero max bytes
     Given a RotatingFileHandlerBuilder for path "test.log"
-    When I set max bytes 0
-    And I set backup count 1
-    Then building the rotating file handler fails with "max_bytes must be greater than zero"
+    Then setting max bytes 0 fails with "max_bytes must be greater than zero"
 
   Scenario: invalid rotating file handler zero backup count
     Given a RotatingFileHandlerBuilder for path "test.log"
     When I set max bytes 1024
-    And I set backup count 0
-    Then building the rotating file handler fails with "backup_count must be greater than zero"
+    Then setting backup count 0 fails with "backup_count must be greater than zero"
 
   Scenario: invalid rotating file handler zero thresholds
     Given a RotatingFileHandlerBuilder for path "test.log"
-    Then setting zero rotation thresholds fails with "max_bytes must be greater than zero"
+    Then setting max bytes 0 fails with "max_bytes must be greater than zero"
+    And setting backup count 0 fails with "backup_count must be greater than zero"
 
   Scenario: missing rotating backup count
     Given a RotatingFileHandlerBuilder for path "test.log"

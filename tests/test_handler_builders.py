@@ -199,11 +199,22 @@ def then_rotating_file_builder_fails(file_builder: FileBuilder, message: str) ->
         rotating.build()
 
 
-@then(parsers.parse('setting zero rotation thresholds fails with "{message}"'))
-def then_zero_rotation_thresholds_fail(file_builder: FileBuilder, message: str) -> None:
+@then(parsers.parse('setting max bytes {max_bytes:d} fails with "{message}"'))
+def then_setting_max_bytes_fails(
+    file_builder: FileBuilder, max_bytes: int, message: str
+) -> None:
     rotating = _require_rotating_builder(file_builder)
-    with pytest.raises(HandlerConfigError, match=re.escape(message)):
-        rotating.with_max_bytes(0).with_backup_count(0).build()
+    with pytest.raises(ValueError, match=re.escape(message)):
+        rotating.with_max_bytes(max_bytes)
+
+
+@then(parsers.parse('setting backup count {backup_count:d} fails with "{message}"'))
+def then_setting_backup_count_fails(
+    file_builder: FileBuilder, backup_count: int, message: str
+) -> None:
+    rotating = _require_rotating_builder(file_builder)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        rotating.with_backup_count(backup_count)
 
 
 @then("the stream handler builder matches snapshot")

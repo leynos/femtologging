@@ -386,15 +386,15 @@ provided with positive values. Passing zero or negative integers raises a
 inputs, keeping misconfigurations obvious. When thresholds are omitted the
 handler stores `(0, 0)`, disabling rotation entirely. Mismatched pairs continue
 to raise configuration errors so invalid rollover settings fail fast. The
-`StreamHandlerBuilder` configures the stream target and
-capacity. All builders expose `build()` methods returning ready‑to‑use
-handlers. Advanced options such as file encoding or custom writers are deferred
-until the corresponding handler features are ported from picologging. The Rust
-implementation stores the configured thresholds on `FemtoRotatingFileHandler`
-so later work can wire in the rotation algorithm without changing the builder
-API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
-logic in one place for both file-based builders, reducing duplication and
-ensuring validation stays consistent.
+`StreamHandlerBuilder` configures the stream target and capacity. All builders
+expose `build()` methods returning ready‑to‑use handlers. Advanced options such
+as file encoding or custom writers are deferred until the corresponding handler
+features are ported from picologging. The Rust implementation stores the
+configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
+the rotation algorithm without changing the builder API. Internally, a shared
+`FileLikeBuilderState` keeps the queue configuration logic in one place for
+both file-based builders, reducing duplication and ensuring validation stays
+consistent.
 
 #### Overflow policy options
 
