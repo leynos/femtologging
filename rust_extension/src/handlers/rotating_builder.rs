@@ -6,8 +6,10 @@
 use std::num::{NonZeroU64, NonZeroUsize};
 
 #[cfg(feature = "python")]
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
+#[cfg(feature = "python")]
+use super::file::policy::parse_policy_with_timeout;
 use super::{
     common::FileLikeBuilderState,
     file::OverflowPolicy,
@@ -170,7 +172,8 @@ builder_methods! {
                 policy: &str,
                 timeout_ms: Option<u64>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                let policy_value = super::file::policy::parse_policy_with_timeout(policy, timeout_ms)?;
+                let policy_value = parse_policy_with_timeout(policy, timeout_ms)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
                 slf.state.set_overflow_policy(policy_value);
                 Ok(slf)
             }

@@ -127,7 +127,8 @@ impl FemtoFileHandler {
         flush_interval: isize,
         policy: &str,
     ) -> PyResult<Self> {
-        let overflow_policy = policy::parse_policy_string(policy)?;
+        let overflow_policy = policy::parse_policy_string(policy)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let flush_interval = validate_params(capacity, flush_interval)?;
         let handler_cfg = HandlerConfig {
             capacity,
