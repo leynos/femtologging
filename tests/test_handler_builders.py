@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import cast
+from typing import NoReturn
 
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
@@ -28,7 +28,13 @@ type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
     if isinstance(builder, RotatingFileHandlerBuilder):
         return builder
-    pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+    _fail_rotating_builder_requirement()
+
+
+def _fail_rotating_builder_requirement() -> NoReturn:
+    """Raise a consistent failure for steps that assume a rotating builder."""
+
+    raise AssertionError("rotating builder step requires RotatingFileHandlerBuilder")
 
 
 scenarios("features/handler_builders.feature")
@@ -62,7 +68,7 @@ def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuild
         },
     )
     assert isinstance(builder, RotatingFileHandlerBuilder)
-    return cast(RotatingFileHandlerBuilder, builder)
+    return builder
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
