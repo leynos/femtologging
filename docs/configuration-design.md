@@ -373,7 +373,8 @@ class HandlerBuilder: # Abstract base class or conceptual union
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
     def with_formatter(
         self,
-        formatter: str | collections.abc.Callable[[dict[str, object]], str],
+        formatter: str
+        | collections.abc.Callable[[collections.abc.Mapping[str, object]], str],
     ) -> "HandlerBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
     def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
@@ -486,18 +487,24 @@ classDiagram
     }
     class FileHandlerBuilder {
         +__init__(path: str)
-        +with_formatter(fmt: str | Callable[[dict[str, object]], str])
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
     }
     class RotatingFileHandlerBuilder {
         +__init__(path: str)
-        +with_formatter(fmt: str | Callable[[dict[str, object]], str])
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
         +with_max_bytes(max_bytes: int)
         +with_backup_count(count: int)
     }
     class StreamHandlerBuilder {
         +stdout()
         +stderr()
-        +with_formatter(fmt: str | Callable[[dict[str, object]], str])
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
     }
     class FilterBuilder {
         +build()

@@ -18,7 +18,10 @@ use super::{
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::{dict_into_py, AsPyDict};
-use crate::{formatter::DefaultFormatter, stream_handler::FemtoStreamHandler};
+use crate::{
+    formatter::{DefaultFormatter, FemtoFormatter},
+    stream_handler::FemtoStreamHandler,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
@@ -79,6 +82,31 @@ impl StreamHandlerBuilder {
             "flush_timeout_ms",
             self.common.flush_timeout_ms.map(NonZeroU64::get),
         )
+    }
+
+    fn build_with_formatter<F>(
+        &self,
+        formatter: F,
+        capacity: usize,
+        timeout: Duration,
+    ) -> FemtoStreamHandler
+    where
+        F: FemtoFormatter + Send + 'static,
+    {
+        match self.target {
+            StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
+                std::io::stdout(),
+                formatter,
+                capacity,
+                timeout,
+            ),
+            StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
+                std::io::stderr(),
+                formatter,
+                capacity,
+                timeout,
+            ),
+        }
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -196,37 +224,15 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
             self.common
                 .flush_timeout_ms
                 .map(NonZeroU64::get)
-                .unwrap_or(1000),
+                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
         );
         let handler = match self.common.formatter.as_ref() {
-            Some(FormatterConfig::Instance(fmt)) => match self.target {
-                StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
-                    std::io::stdout(),
-                    Arc::clone(fmt),
-                    capacity,
-                    timeout,
-                ),
-                StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
-                    std::io::stderr(),
-                    Arc::clone(fmt),
-                    capacity,
-                    timeout,
-                ),
-            },
-            Some(FormatterConfig::Id(FormatterId::Default)) | None => match self.target {
-                StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
-                    std::io::stdout(),
-                    DefaultFormatter,
-                    capacity,
-                    timeout,
-                ),
-                StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
-                    std::io::stderr(),
-                    DefaultFormatter,
-                    capacity,
-                    timeout,
-                ),
-            },
+            Some(FormatterConfig::Instance(fmt)) => {
+                self.build_with_formatter(Arc::clone(fmt), capacity, timeout)
+            }
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => {
+                self.build_with_formatter(DefaultFormatter, capacity, timeout)
+            }
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
