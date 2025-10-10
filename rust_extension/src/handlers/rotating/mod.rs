@@ -22,8 +22,12 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
+mod fresh_failure;
 mod strategy;
 pub(crate) use strategy::FileRotationStrategy;
+
+#[cfg(test)]
+pub(crate) use fresh_failure::force_fresh_failure_once_for_test;
 
 #[cfg(feature = "python")]
 use crate::{
@@ -40,14 +44,14 @@ pub(crate) fn force_rotating_fresh_failure_for_test(
     let reason = reason
         .map(|value| value.to_string())
         .unwrap_or_else(|| "python requested failure".to_string());
-    strategy::set_forced_fresh_failure(count, reason);
+    fresh_failure::set_forced_fresh_failure(count, reason);
     Ok(())
 }
 
 #[cfg(feature = "python")]
 #[pyfunction]
 pub(crate) fn clear_rotating_fresh_failure_for_test() {
-    strategy::clear_forced_fresh_failure();
+    fresh_failure::clear_forced_fresh_failure();
 }
 
 /// Rotation thresholds controlling when a file rolls over.

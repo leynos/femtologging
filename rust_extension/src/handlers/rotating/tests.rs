@@ -5,7 +5,7 @@ use crate::formatter::DefaultFormatter;
 use crate::handlers::file::{
     BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy, TestConfig,
 };
-use crate::handlers::rotating::strategy::force_fresh_failure_once_for_test;
+use crate::handlers::rotating::force_fresh_failure_once_for_test;
 use crate::log_record::FemtoLogRecord;
 use rstest::rstest;
 use std::fs::{self, OpenOptions};

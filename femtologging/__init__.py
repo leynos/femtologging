@@ -39,8 +39,25 @@ NameFilterBuilder = rust.NameFilterBuilder
 FilterBuildError = rust.FilterBuildError
 HandlerConfigError = rust.HandlerConfigError
 HandlerIOError = rust.HandlerIOError
-_force_rotating_fresh_failure_for_test = rust.force_rotating_fresh_failure_for_test
-_clear_rotating_fresh_failure_for_test = rust.clear_rotating_fresh_failure_for_test
+try:
+    _force_rotating_fresh_failure_for_test = (  # type: ignore[attr-defined]
+        rust.force_rotating_fresh_failure_for_test
+    )
+    _clear_rotating_fresh_failure_for_test = (  # type: ignore[attr-defined]
+        rust.clear_rotating_fresh_failure_for_test
+    )
+except AttributeError:
+    # Feature disabled: expose no-ops that fail loudly when invoked.
+
+    def _force_rotating_fresh_failure_for_test(
+        count: int, reason: str | None = None
+    ) -> None:
+        raise RuntimeError(
+            "rotating fresh-failure hook requires the extension built with the 'python' feature"
+        )
+
+    def _clear_rotating_fresh_failure_for_test() -> None:
+        return None
 
 
 @dataclass

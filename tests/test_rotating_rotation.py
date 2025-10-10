@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 import pathlib
 
 import pytest
@@ -27,26 +28,47 @@ class RotatingContext:
     closed: bool = False
 
 
-def _build_rotating_context(
-    tmp_path: pathlib.Path,
+@pytest.fixture
+def rotating_context_factory(
+    tmp_path: pathlib.Path, request: pytest.FixtureRequest
+) -> Callable[[int, int], RotatingContext]:
+    contexts: list[RotatingContext] = []
+
+    def _finalise() -> None:
+        for ctx in contexts:
+            if not ctx.closed:
+                ctx.handler.close()
+                ctx.closed = True
+
+    request.addfinalizer(_finalise)
+
+    def _build(max_bytes: int, backup_count: int) -> RotatingContext:
+        path = tmp_path / "rotating.log"
+        handler = FemtoRotatingFileHandler(
+            str(path),
+            options=HandlerOptions(rotation=(max_bytes, backup_count)),
+        )
+        ctx = RotatingContext(handler=handler, path=path)
+        contexts.append(ctx)
+        return ctx
+
+    return _build
+
+
+@pytest.fixture
+def force_rotating_failure(
     request: pytest.FixtureRequest,
-    max_bytes: int,
-    backup_count: int,
-) -> RotatingContext:
-    path = tmp_path / "rotating.log"
-    handler = FemtoRotatingFileHandler(
-        str(path),
-        options=HandlerOptions(rotation=(max_bytes, backup_count)),
-    )
-    ctx = RotatingContext(handler=handler, path=path)
+) -> Callable[[int, str], None]:
+    registered = False
 
-    def _finaliser() -> None:
-        if not ctx.closed:
-            ctx.handler.close()
-            ctx.closed = True
+    def _activate(count: int, reason: str) -> None:
+        nonlocal registered
+        _force_rotating_fresh_failure_for_test(count, reason)
+        if not registered:
+            request.addfinalizer(_clear_rotating_fresh_failure_for_test)
+            registered = True
 
-    request.addfinalizer(_finaliser)
-    return ctx
+    return _activate
 
 
 @given(
@@ -56,12 +78,11 @@ def _build_rotating_context(
     target_fixture="rotating_ctx",
 )
 def given_rotating_handler(
-    tmp_path: pathlib.Path,
+    rotating_context_factory: Callable[[int, int], RotatingContext],
     max_bytes: int,
     backup_count: int,
-    request: pytest.FixtureRequest,
 ) -> RotatingContext:
-    return _build_rotating_context(tmp_path, request, max_bytes, backup_count)
+    return rotating_context_factory(max_bytes, backup_count)
 
 
 @given(
@@ -71,14 +92,13 @@ def given_rotating_handler(
     target_fixture="rotating_ctx",
 )
 def given_rotating_handler_forcing_reopen_failure(
-    tmp_path: pathlib.Path,
+    rotating_context_factory: Callable[[int, int], RotatingContext],
     max_bytes: int,
     backup_count: int,
-    request: pytest.FixtureRequest,
+    force_rotating_failure: Callable[[int, str], None],
 ) -> RotatingContext:
-    _force_rotating_fresh_failure_for_test(1, "python scenario")
-    request.addfinalizer(_clear_rotating_fresh_failure_for_test)
-    return _build_rotating_context(tmp_path, request, max_bytes, backup_count)
+    force_rotating_failure(1, "python scenario")
+    return rotating_context_factory(max_bytes, backup_count)
 
 
 @when(
