@@ -333,13 +333,16 @@ impl FemtoRotatingFileHandler {
     /// -------
     /// bool
     ///     ``True`` when the worker confirms the flush succeeded. ``False``
-    ///     when the handler is closed or the flush command cannot be
-    ///     delivered.
+    ///     when the handler has already been closed or the worker does not
+    ///     acknowledge the flush.
     ///
     /// Examples
     /// --------
     /// >>> handler.flush()
     /// True
+    /// >>> handler.close()
+    /// >>> handler.flush()
+    /// False
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.flush()

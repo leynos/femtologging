@@ -154,13 +154,16 @@ impl FemtoFileHandler {
     /// -------
     /// bool
     ///     ``True`` when pending records are written successfully. ``False``
-    ///     when the handler has already been closed or the flush command could
-    ///     not be delivered.
+    ///     when the handler has already been closed or the worker does not
+    ///     acknowledge the flush.
     ///
     /// Examples
     /// --------
     /// >>> handler.flush()
     /// True
+    /// >>> handler.close()
+    /// >>> handler.flush()
+    /// False
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.flush()

@@ -117,13 +117,16 @@ impl FemtoStreamHandler {
     /// -------
     /// bool
     ///     ``True`` when the worker confirms all buffered records were
-    ///     written. ``False`` if the handler has already been closed or the
-    ///     flush command could not be delivered.
+    ///     written. ``False`` when the handler has already been closed or the
+    ///     worker does not acknowledge the flush.
     ///
     /// Examples
     /// --------
     /// >>> handler.flush()
     /// True
+    /// >>> handler.close()
+    /// >>> handler.flush()
+    /// False
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.flush()
