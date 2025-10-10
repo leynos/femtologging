@@ -206,7 +206,6 @@ def test_overflow_policy_drop(tmp_path: Path) -> None:
         except RuntimeError as err:
             assert str(err) in (
                 "Handler error: queue full",
-                "Handler error: handler queue is full",
                 "Handler error: handler is closed",
             )
     # The consumer runs concurrently; on faster CI machines it may
@@ -235,7 +234,6 @@ def test_overflow_policy_drop_flush_interval_gt_one(tmp_path: Path) -> None:
             except RuntimeError as err:
                 assert str(err) in (
                     "Handler error: queue full",
-                    "Handler error: handler queue is full",
                     "Handler error: handler is closed",
                 )
     assert path.read_text().splitlines()[:2] == [
