@@ -11,6 +11,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from typing import (
+    Callable,
     Iterable,
     TextIO,
     cast,
@@ -39,14 +40,23 @@ NameFilterBuilder = rust.NameFilterBuilder
 FilterBuildError = rust.FilterBuildError
 HandlerConfigError = rust.HandlerConfigError
 HandlerIOError = rust.HandlerIOError
-try:
-    _force_rotating_fresh_failure_for_test = (  # type: ignore[attr-defined]
-        rust.force_rotating_fresh_failure_for_test
+_force_rotating_fresh_failure = getattr(
+    rust, "force_rotating_fresh_failure_for_test", None
+)
+_clear_rotating_fresh_failure = getattr(
+    rust, "clear_rotating_fresh_failure_for_test", None
+)
+
+if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
+    _force_rotating_fresh_failure_for_test = cast(
+        Callable[[int, str | None], None],
+        _force_rotating_fresh_failure,
     )
-    _clear_rotating_fresh_failure_for_test = (  # type: ignore[attr-defined]
-        rust.clear_rotating_fresh_failure_for_test
+    _clear_rotating_fresh_failure_for_test = cast(
+        Callable[[], None],
+        _clear_rotating_fresh_failure,
     )
-except AttributeError:
+else:
     # Feature disabled: expose no-ops that fail loudly when invoked.
 
     def _force_rotating_fresh_failure_for_test(
