@@ -91,7 +91,7 @@ impl StreamHandlerBuilder {
         timeout: Duration,
     ) -> FemtoStreamHandler
     where
-        F: FemtoFormatter + Send + Sync + 'static,
+        F: FemtoFormatter + Send + 'static,
     {
         match self.target {
             StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
@@ -124,7 +124,7 @@ impl StreamHandlerBuilder {
             }
             Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
                 Ok(instance) => {
-                    self.common.set_formatter(instance);
+                    self.common.formatter = Some(FormatterConfig::Instance(instance));
                     Ok(())
                 }
                 Err(instance_err) => {

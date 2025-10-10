@@ -75,7 +75,7 @@ impl FileHandlerBuilder {
             }
             Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
                 Ok(instance) => {
-                    self.state.set_formatter(instance);
+                    self.state.common.formatter = Some(FormatterConfig::Instance(instance));
                     Ok(())
                 }
                 Err(instance_err) => {

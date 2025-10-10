@@ -155,7 +155,7 @@ pub mod python {
         }
     }
 
-    /// Convert a Python formatter object into a boxed [`FemtoFormatter`].
+    /// Convert a Python formatter object into a shared [`FemtoFormatter`] (`Arc` trait object).
     pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<SharedFormatter> {
         PythonFormatter::try_new(obj)
             .map(|formatter| Arc::new(formatter) as SharedFormatter)
