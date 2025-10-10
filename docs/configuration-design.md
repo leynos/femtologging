@@ -397,8 +397,9 @@ ensuring validation stays consistent.
 
 Formatter support for `RotatingFileHandlerBuilder` is intentionally narrow.
 Only the default formatter can be selected today; providing a custom identifier
-causes `build()` to return `HandlerConfigError`. When the rotation pipeline can
-serialize custom formatters the builder will be extended to accept them.
+causes `build()` to return `HandlerConfigError`. Once the rotation pipeline can
+serialize custom formatters, support for custom formatters will be added to the
+builder.
 
 #### Overflow policy options
 
