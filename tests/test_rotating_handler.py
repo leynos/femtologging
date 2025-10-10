@@ -59,15 +59,18 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
 def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
     """Supplying an invalid policy value should raise an error."""
 
-    options = HandlerOptions(
-        capacity=32,
-        flush_interval=2,
-        policy="invalid_policy",
-        rotation=(1024, 3),
-    )
+    with pytest.raises(
+        ValueError,
+        match=r"invalid overflow policy '.*'\. Valid options are: drop, block, timeout",
+    ):
+        invalid_options = HandlerOptions(
+            capacity=32,
+            flush_interval=2,
+            policy="invalid_policy",  # pyright: ignore[reportArgumentType]
+            rotation=(1024, 3),
+        )
 
-    with pytest.raises(ValueError):
-        with rotating_handler(str(log_path), options=options):
+        with rotating_handler(str(log_path), options=invalid_options):
             pass
 
 
