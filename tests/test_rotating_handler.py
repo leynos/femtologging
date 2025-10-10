@@ -56,6 +56,35 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
         assert handler.backup_count == 0, "defaults must disable backups"
 
 
+def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
+    """Supplying an invalid policy value should raise an error."""
+
+    options = HandlerOptions(
+        capacity=32,
+        flush_interval=2,
+        policy="invalid_policy",
+        rotation=(1024, 3),
+    )
+
+    with pytest.raises(ValueError):
+        with rotating_handler(str(log_path), options=options):
+            pass
+
+
+def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
+    """Omitting the policy should fall back to the default value."""
+
+    options = HandlerOptions(
+        capacity=32,
+        flush_interval=2,
+        rotation=(1024, 3),
+    )
+
+    with rotating_handler(str(log_path), options=options) as handler:
+        assert handler.max_bytes == 1024, "rotation max_bytes should still apply"
+        assert handler.backup_count == 3, "rotation backup_count should still apply"
+
+
 def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
     """Supplying HandlerOptions should configure queue behaviour."""
 
