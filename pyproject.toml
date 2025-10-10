@@ -6,6 +6,18 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "ISC" }
 authors = [{ name = "Payton McIntosh", email = "pmcintosh@df12.net" }]
+keywords = [
+    "logging",
+    "pyo3",
+    "rust",
+    "async",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: ISC License (ISCL)",
+    "Operating System :: OS Independent",
+]
 dependencies = []
 
 [dependency-groups]
