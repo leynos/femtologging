@@ -55,8 +55,7 @@ impl FileRotationStrategy {
         let capacity = writer.capacity();
         let original_file = self.swap_writer_with_temp(writer, capacity)?;
         let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
-        drop(original_file);
-        self.finalise_rotation(writer, capacity)
+        self.finalise_rotation(writer, original_file, capacity)
     }
 
     fn swap_writer_with_temp(
@@ -97,21 +96,44 @@ impl FileRotationStrategy {
     fn finalise_rotation(
         &mut self,
         writer: &mut BufWriter<File>,
+        original_file: File,
         capacity: usize,
     ) -> io::Result<()> {
+        let mut original_file = Some(original_file);
         if let Err(err) = Self::rename_file_if_exists(&self.path, &self.backup_path(1)) {
-            *writer = BufWriter::with_capacity(capacity, Self::open_append_file(&self.path)?);
+            let file = original_file
+                .take()
+                .expect("original log file already consumed during rotation");
+            *writer = BufWriter::with_capacity(capacity, file);
             return Err(err);
         }
 
-        let fresh_writer = Self::open_fresh_writer(&self.path, capacity).or_else(|fresh_err| {
-            let fallback = BufWriter::with_capacity(capacity, Self::open_append_file(&self.path)?);
-            *writer = fallback;
-            Err(fresh_err)
-        })?;
-
-        *writer = fresh_writer;
-        Ok(())
+        match Self::open_fresh_writer(&self.path, capacity) {
+            Ok(fresh_writer) => {
+                let _ = original_file.take();
+                *writer = fresh_writer;
+                Ok(())
+            }
+            Err(fresh_err) => match Self::open_append_file(&self.path) {
+                Ok(fallback_file) => {
+                    let _ = original_file.take();
+                    *writer = BufWriter::with_capacity(capacity, fallback_file);
+                    Err(fresh_err)
+                }
+                Err(fallback_err) => {
+                    let file = original_file
+                        .take()
+                        .expect("original log file already consumed during rotation");
+                    *writer = BufWriter::with_capacity(capacity, file);
+                    Err(io::Error::new(
+                        fresh_err.kind(),
+                        format!(
+                            "failed to open fresh writer ({fresh_err}); fallback append failed ({fallback_err})"
+                        ),
+                    ))
+                }
+            },
+        }
     }
 
     fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {

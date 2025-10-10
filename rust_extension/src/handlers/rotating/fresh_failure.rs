@@ -88,7 +88,6 @@ pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
     FRESH_FAILURE_STATE.take()
 }
 
-#[cfg(feature = "python")]
 /// Configures forced fresh-file-open failures for testing.
 ///
 /// Sets the number of times [`take_forced_fresh_failure_reason`] will return a
@@ -99,19 +98,32 @@ pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
 ///
 /// * `count` - Number of failures to force.
 /// * `reason` - Failure message to surface.
+#[cfg(feature = "python")]
 pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) {
     FRESH_FAILURE_STATE.set_forced(count, reason.into());
 }
 
-#[cfg(feature = "python")]
 /// Clears forced fresh-file-open failures.
 ///
 /// Resets the failure count to zero and clears the stored reason. Intended for
 /// test cleanup.
+#[cfg(feature = "python")]
 pub(crate) fn clear_forced_fresh_failure() {
     FRESH_FAILURE_STATE.clear_forced();
 }
 
+/// Forces a single fresh-file-open failure for testing.
+///
+/// Creates a guard that configures the global state to return a failure reason
+/// once. When the guard is dropped, the previous state is restored.
+///
+/// # Arguments
+///
+/// * `reason` - Failure message to surface during the forced failure.
+///
+/// # Returns
+///
+/// A guard that restores the previous state on drop.
 #[cfg(test)]
 pub(crate) fn force_fresh_failure_once_for_test(
     reason: impl Into<String>,
@@ -119,6 +131,11 @@ pub(crate) fn force_fresh_failure_once_for_test(
     ForcedFreshFailureGuard::new(1, reason.into())
 }
 
+/// Guard that restores the forced fresh failure state when dropped.
+///
+/// Created by [`force_fresh_failure_once_for_test`] to provide scoped failure
+/// injection during tests. Captures the existing counter and reason so they can
+/// be reinstated after the forced failure completes.
 #[cfg(test)]
 pub(crate) struct ForcedFreshFailureGuard {
     previous_count: usize,
@@ -127,6 +144,16 @@ pub(crate) struct ForcedFreshFailureGuard {
 
 #[cfg(test)]
 impl ForcedFreshFailureGuard {
+    /// Creates a guard that configures the forced failure state for tests.
+    ///
+    /// Saves the current forced failure count and reason before installing the
+    /// supplied values. The previous state is restored when the guard is
+    /// dropped.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of failures to force.
+    /// * `reason` - Failure message to report.
     fn new(count: usize, reason: String) -> Self {
         let previous_count = FRESH_FAILURE_STATE.remaining.swap(count, Ordering::SeqCst);
         let mut guard = FRESH_FAILURE_STATE
@@ -143,6 +170,7 @@ impl ForcedFreshFailureGuard {
 
 #[cfg(test)]
 impl Drop for ForcedFreshFailureGuard {
+    /// Restores the forced failure state captured when the guard was created.
     fn drop(&mut self) {
         FRESH_FAILURE_STATE
             .remaining
