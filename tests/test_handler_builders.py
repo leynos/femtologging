@@ -349,3 +349,35 @@ def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
     builder = builder.with_overflow_policy("timeout:125", timeout_ms=None)
     handler = builder.build()
     handler.close()
+
+
+def test_stream_builder_accepts_callable_formatter() -> None:
+    builder = StreamHandlerBuilder.stderr().with_formatter(
+        lambda record: f"callable:{record['message']}"
+    )
+    handler = builder.build()
+    handler.close()
+
+
+def test_file_builder_accepts_callable_formatter(tmp_path: Path) -> None:
+    path = tmp_path / "callable_formatter.log"
+    builder = FileHandlerBuilder(str(path)).with_formatter(
+        lambda record: f"callable:{record['message']}"
+    )
+    handler = builder.build()
+    handler.handle("logger", "INFO", "hello")
+    handler.close()
+    contents = path.read_text()
+    assert "callable:hello" in contents
+
+
+def test_rotating_builder_accepts_callable_formatter(tmp_path: Path) -> None:
+    path = tmp_path / "callable_rotating.log"
+    builder = RotatingFileHandlerBuilder(str(path)).with_formatter(
+        lambda record: f"callable:{record['message']}"
+    )
+    handler = builder.build()
+    handler.handle("logger", "INFO", "hello")
+    handler.close()
+    contents = path.read_text()
+    assert "callable:hello" in contents

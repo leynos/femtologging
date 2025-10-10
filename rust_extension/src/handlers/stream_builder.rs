@@ -5,12 +5,15 @@
 //! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use super::{common::CommonBuilder, FormatterId, HandlerBuildError, HandlerBuilderTrait};
+use super::{
+    common::{CommonBuilder, FormatterConfig, IntoFormatterConfig},
+    FormatterId, HandlerBuildError, HandlerBuilderTrait,
+};
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
@@ -58,6 +61,15 @@ impl StreamHandlerBuilder {
         }
     }
 
+    /// Attach a formatter instance or identifier.
+    pub fn with_formatter<F>(mut self, formatter: F) -> Self
+    where
+        F: IntoFormatterConfig,
+    {
+        self.common.set_formatter(formatter);
+        self
+    }
+
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()
     }
@@ -72,6 +84,17 @@ impl StreamHandlerBuilder {
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
         self.is_flush_timeout_valid()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(fid) = formatter.extract::<String>() {
+            self.common.set_formatter(fid);
+            return Ok(());
+        }
+        let instance = crate::formatter::python::formatter_from_py(formatter)?;
+        self.common.set_formatter(instance);
         Ok(())
     }
 }
@@ -105,19 +128,6 @@ builder_methods! {
                     builder.common.flush_timeout_ms = Some(timeout_ms);
                 }
             }
-            method {
-                doc: "Set the formatter identifier.",
-                rust_name: with_formatter,
-                py_fn: py_with_formatter,
-                py_name: "with_formatter",
-                py_text_signature: "(self, formatter_id)",
-                rust_args: (formatter_id: impl Into<FormatterId>),
-                py_args: (formatter_id: String),
-                self_ident: builder,
-                body: {
-                    builder.common.formatter_id = Some(formatter_id.into());
-                }
-            }
         }
         extra_py_methods {
             /// Create a new `StreamHandlerBuilder` defaulting to `stderr`.
@@ -138,6 +148,17 @@ builder_methods! {
             #[pyo3(name = "stderr")]
             fn py_stderr() -> Self {
                 Self::stderr()
+            }
+
+            #[pyo3(name = "with_formatter")]
+            #[pyo3(signature = (formatter))]
+            #[pyo3(text_signature = "(self, formatter)")]
+            fn py_with_formatter<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                formatter: Bound<'py, PyAny>,
+            ) -> PyResult<PyRefMut<'py, Self>> {
+                slf.set_formatter_from_py(&formatter)?;
+                Ok(slf)
             }
 
             /// Return a dictionary describing the builder configuration.
@@ -177,27 +198,40 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
                 .map(NonZeroU64::get)
                 .unwrap_or(1000),
         );
-        let formatter = match self.common.formatter_id.as_ref() {
-            Some(FormatterId::Default) | None => DefaultFormatter,
-            Some(FormatterId::Custom(other)) => {
+        let handler = match self.common.formatter.as_ref() {
+            Some(FormatterConfig::Instance(fmt)) => match self.target {
+                StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
+                    std::io::stdout(),
+                    Arc::clone(fmt),
+                    capacity,
+                    timeout,
+                ),
+                StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
+                    std::io::stderr(),
+                    Arc::clone(fmt),
+                    capacity,
+                    timeout,
+                ),
+            },
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => match self.target {
+                StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
+                    std::io::stdout(),
+                    DefaultFormatter,
+                    capacity,
+                    timeout,
+                ),
+                StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
+                    std::io::stderr(),
+                    DefaultFormatter,
+                    capacity,
+                    timeout,
+                ),
+            },
+            Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
                 )))
             }
-        };
-        let handler = match self.target {
-            StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
-                std::io::stdout(),
-                formatter,
-                capacity,
-                timeout,
-            ),
-            StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
-                std::io::stderr(),
-                formatter,
-                capacity,
-                timeout,
-            ),
         };
         Ok(handler)
     }
@@ -211,6 +245,17 @@ mod tests {
     use pyo3::Python;
     use rstest::rstest;
 
+    use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
+
+    #[derive(Clone, Copy, Debug)]
+    struct UpperFormatter;
+
+    impl FemtoFormatter for UpperFormatter {
+        fn format(&self, record: &FemtoLogRecord) -> String {
+            record.message.to_uppercase()
+        }
+    }
+
     #[rstest]
     #[case(StreamHandlerBuilder::stdout())]
     #[case(StreamHandlerBuilder::stderr())]
@@ -219,6 +264,18 @@ mod tests {
         let mut handler = builder
             .build_inner()
             .expect("build_inner must succeed for a valid builder");
+        handler.flush();
+        handler.close();
+    }
+
+    #[rstest]
+    #[case(StreamHandlerBuilder::stdout())]
+    #[case(StreamHandlerBuilder::stderr())]
+    fn build_stream_handler_with_custom_formatter(#[case] builder: StreamHandlerBuilder) {
+        let builder = builder.with_formatter(UpperFormatter).with_capacity(4);
+        let mut handler = builder
+            .build_inner()
+            .expect("build_inner must accept formatter instances");
         handler.flush();
         handler.close();
     }

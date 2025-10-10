@@ -6,6 +6,8 @@
 //! evolves. Flushing is driven by a `flush_record_interval`
 //! measured in records.
 
+use std::sync::Arc;
+
 #[cfg(feature = "python")]
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -14,7 +16,7 @@ use std::path::PathBuf;
 #[cfg(feature = "python")]
 use super::file::policy::parse_policy_with_timeout;
 use super::{
-    common::FileLikeBuilderState,
+    common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{FemtoFileHandler, OverflowPolicy},
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
@@ -46,6 +48,15 @@ impl FileHandlerBuilder {
         self.state.set_overflow_policy(policy);
         self
     }
+
+    /// Attach a formatter instance or identifier.
+    pub fn with_formatter<F>(mut self, formatter: F) -> Self
+    where
+        F: IntoFormatterConfig,
+    {
+        self.state.set_formatter(formatter);
+        self
+    }
 }
 
 #[cfg(feature = "python")]
@@ -55,6 +66,16 @@ impl FileHandlerBuilder {
         let path = self.path.to_string_lossy();
         d.set_item("path", path.as_ref())?;
         self.state.extend_py_dict(d)?;
+        Ok(())
+    }
+
+    fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(fid) = formatter.extract::<String>() {
+            self.state.set_formatter(fid);
+            return Ok(());
+        }
+        let instance = crate::formatter::python::formatter_from_py(formatter)?;
+        self.state.set_formatter(instance);
         Ok(())
     }
 }
@@ -88,19 +109,6 @@ builder_methods! {
                     builder.state.set_flush_record_interval(interval);
                 }
             }
-            method {
-                doc: "Set the formatter identifier.",
-                rust_name: with_formatter,
-                py_fn: py_with_formatter,
-                py_name: "with_formatter",
-                py_text_signature: "(self, formatter_id)",
-                rust_args: (formatter_id: impl Into<FormatterId>),
-                py_args: (formatter_id: String),
-                self_ident: builder,
-                body: {
-                    builder.state.set_formatter(formatter_id);
-                }
-            }
         }
         extra_py_methods {
             /// Create a new `FileHandlerBuilder`.
@@ -122,6 +130,17 @@ builder_methods! {
                 let policy_value = parse_policy_with_timeout(policy, timeout_ms)
                     .map_err(|err| PyValueError::new_err(err.to_string()))?;
                 slf.state.set_overflow_policy(policy_value);
+                Ok(slf)
+            }
+
+            #[pyo3(name = "with_formatter")]
+            #[pyo3(signature = (formatter))]
+            #[pyo3(text_signature = "(self, formatter)")]
+            fn py_with_formatter<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                formatter: Bound<'py, PyAny>,
+            ) -> PyResult<PyRefMut<'py, Self>> {
+                slf.set_formatter_from_py(&formatter)?;
                 Ok(slf)
             }
 
@@ -157,11 +176,14 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.state.validate()?;
         let cfg = self.state.handler_config();
-        let handler = match self.state.formatter_id() {
-            Some(FormatterId::Default) | None => {
+        let handler = match self.state.formatter() {
+            Some(FormatterConfig::Instance(fmt)) => {
+                FemtoFileHandler::with_capacity_flush_policy(&self.path, Arc::clone(fmt), cfg)?
+            }
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => {
                 FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?
             }
-            Some(FormatterId::Custom(other)) => {
+            Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
                 )))
@@ -179,6 +201,19 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::tempdir;
 
+    use crate::{
+        formatter::FemtoFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord,
+    };
+
+    #[derive(Clone, Copy, Debug)]
+    struct PrefixFormatter;
+
+    impl FemtoFormatter for PrefixFormatter {
+        fn format(&self, record: &FemtoLogRecord) -> String {
+            format!("prefix:{}", record.message)
+        }
+    }
+
     #[rstest]
     fn build_file_handler() {
         let dir = tempdir().expect("tempdir must create a temporary directory");
@@ -190,6 +225,28 @@ mod tests {
             .build_inner()
             .expect("build_inner must succeed for a valid file builder");
         handler.flush();
+    }
+
+    #[rstest]
+    fn build_file_handler_with_custom_formatter() {
+        let dir = tempdir().expect("tempdir must create a temporary directory");
+        let path = dir.path().join("custom.log");
+        let builder = FileHandlerBuilder::new(path.to_string_lossy())
+            .with_formatter(PrefixFormatter)
+            .with_flush_record_interval(1);
+        let mut handler = builder
+            .build_inner()
+            .expect("build_inner must support custom formatter instances");
+        handler.handle(FemtoLogRecord::new("logger", "INFO", "hello"));
+        assert!(handler.flush(), "flush must succeed for custom formatter");
+        handler.close();
+
+        let contents =
+            std::fs::read_to_string(&path).expect("custom formatter must write formatted output");
+        assert!(
+            contents.contains("prefix:hello"),
+            "custom formatter output must include prefix"
+        );
     }
 
     #[rstest]

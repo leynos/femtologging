@@ -2,7 +2,11 @@
 //!
 //! Stores fields common to multiple handler builders.
 
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::{
+    fmt,
+    num::{NonZeroU64, NonZeroUsize},
+    sync::Arc,
+};
 
 #[cfg(feature = "python")]
 use pyo3::{prelude::*, types::PyDict, Bound};
@@ -11,13 +15,65 @@ use super::{
     file::{HandlerConfig, OverflowPolicy},
     FormatterId, HandlerBuildError,
 };
+use crate::formatter::FemtoFormatter;
+
+/// Formatter configuration stored by handler builders.
+#[derive(Clone)]
+pub enum FormatterConfig {
+    /// Formatter referenced by identifier.
+    Id(FormatterId),
+    /// Formatter provided as an instance.
+    Instance(Arc<dyn FemtoFormatter>),
+}
+
+impl fmt::Debug for FormatterConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Id(id) => f.debug_tuple("Id").field(id).finish(),
+            Self::Instance(_) => f.write_str("Instance(<formatter>)"),
+        }
+    }
+}
+
+/// Convert inputs into [`FormatterConfig`] values for builder consumption.
+pub trait IntoFormatterConfig {
+    /// Convert `self` into a [`FormatterConfig`].
+    fn into_formatter_config(self) -> FormatterConfig;
+}
+
+impl<F> IntoFormatterConfig for F
+where
+    F: FemtoFormatter + Send + Sync + 'static,
+{
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterConfig::Instance(Arc::new(self))
+    }
+}
+
+impl IntoFormatterConfig for FormatterId {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterConfig::Id(self)
+    }
+}
+
+impl IntoFormatterConfig for String {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterId::from(self).into_formatter_config()
+    }
+}
+
+impl IntoFormatterConfig for &str {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterId::from(self).into_formatter_config()
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
     pub(crate) flush_timeout_ms: Option<NonZeroU64>,
-    pub(crate) formatter_id: Option<FormatterId>,
+    pub(crate) formatter: Option<FormatterConfig>,
 }
 
 impl CommonBuilder {
@@ -38,6 +94,13 @@ impl CommonBuilder {
                 .expect("NonZeroUsize::new must succeed for non-zero capacity"),
         );
         self.capacity_set = true;
+    }
+
+    pub(crate) fn set_formatter<F>(&mut self, formatter: F)
+    where
+        F: IntoFormatterConfig,
+    {
+        self.formatter = Some(formatter.into_formatter_config());
     }
 
     /// Validate that an optional numeric field (if provided) is greater than zero.
@@ -80,8 +143,11 @@ impl CommonBuilder {
         if let Some(ms) = self.flush_timeout_ms {
             d.set_item("flush_timeout_ms", ms.get())?;
         }
-        if let Some(fid) = &self.formatter_id {
-            d.set_item("formatter_id", fid.as_str())?;
+        if let Some(fmt) = &self.formatter {
+            match fmt {
+                FormatterConfig::Id(fid) => d.set_item("formatter_id", fid.as_str())?,
+                FormatterConfig::Instance(_) => d.set_item("formatter", "instance")?,
+            }
         }
         Ok(())
     }
@@ -162,8 +228,11 @@ impl FileLikeBuilderState {
     }
 
     /// Update the formatter identifier in place.
-    pub(crate) fn set_formatter(&mut self, formatter_id: impl Into<FormatterId>) {
-        self.common.formatter_id = Some(formatter_id.into());
+    pub(crate) fn set_formatter<F>(&mut self, formatter: F)
+    where
+        F: IntoFormatterConfig,
+    {
+        self.common.set_formatter(formatter);
     }
 
     /// Update the overflow policy in place.
@@ -202,8 +271,8 @@ impl FileLikeBuilderState {
     }
 
     /// Expose the configured formatter identifier, if any.
-    pub(crate) fn formatter_id(&self) -> Option<&FormatterId> {
-        self.common.formatter_id.as_ref()
+    pub(crate) fn formatter(&self) -> Option<&FormatterConfig> {
+        self.common.formatter.as_ref()
     }
 
     /// Extend a Python dictionary with shared file builder fields.
