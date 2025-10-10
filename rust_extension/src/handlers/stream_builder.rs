@@ -5,7 +5,7 @@
 //! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -124,7 +124,7 @@ impl StreamHandlerBuilder {
             }
             Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
                 Ok(instance) => {
-                    self.common.formatter = Some(FormatterConfig::Instance(instance));
+                    self.common.set_shared_formatter(instance);
                     Ok(())
                 }
                 Err(instance_err) => {
@@ -237,7 +237,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
         );
         let handler = match self.common.formatter.as_ref() {
             Some(FormatterConfig::Instance(fmt)) => {
-                self.build_with_formatter(fmt.clone(), capacity, timeout)
+                self.build_with_formatter(Arc::clone(fmt), capacity, timeout)
             }
             Some(FormatterConfig::Id(FormatterId::Default)) | None => {
                 self.build_with_formatter(DefaultFormatter, capacity, timeout)

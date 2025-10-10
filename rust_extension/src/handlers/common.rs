@@ -105,6 +105,12 @@ impl CommonBuilder {
         self.formatter = Some(formatter.into_formatter_config());
     }
 
+    /// Store a formatter trait object shared by multiple handlers.
+    #[cfg(feature = "python")]
+    pub(crate) fn set_shared_formatter(&mut self, formatter: SharedFormatter) {
+        self.formatter = Some(FormatterConfig::Instance(formatter));
+    }
+
     /// Validate that an optional numeric field (if provided) is greater than zero.
     ///
     /// Returns `InvalidConfig("{field} must be greater than zero")` when `value`
@@ -241,6 +247,11 @@ impl FileLikeBuilderState {
         F: IntoFormatterConfig,
     {
         self.common.set_formatter(formatter);
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn set_shared_formatter(&mut self, formatter: SharedFormatter) {
+        self.common.set_shared_formatter(formatter);
     }
 
     /// Update the overflow policy in place.
