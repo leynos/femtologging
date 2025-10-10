@@ -114,7 +114,11 @@ fn queue_overflow_drops_excess_records() {
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
 
     for i in 0..10 {
-        let _ = handler.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")));
+        // Intentionally ignore errors; overflow testing expects some records
+        // to be dropped.
+        let _ = handler
+            .handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")))
+            .ok();
     }
     // Allow the worker thread to start processing after all records are queued.
     start.wait();
