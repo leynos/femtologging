@@ -104,7 +104,7 @@ impl FileRotationStrategy {
             return Err(err);
         }
 
-        let fresh_writer = Self::open_fresh_writer(&self.path).or_else(|fresh_err| {
+        let fresh_writer = Self::open_fresh_writer(&self.path, capacity).or_else(|fresh_err| {
             let fallback = BufWriter::with_capacity(capacity, Self::open_append_file(&self.path)?);
             *writer = fallback;
             Err(fresh_err)
@@ -114,7 +114,7 @@ impl FileRotationStrategy {
         Ok(())
     }
 
-    fn open_fresh_writer(path: &Path) -> io::Result<BufWriter<File>> {
+    fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
         if let Some(reason) = take_forced_fresh_failure_reason() {
             return Err(io::Error::other(format!(
                 "simulated fresh writer failure for testing ({reason})"
@@ -125,7 +125,7 @@ impl FileRotationStrategy {
             .write(true)
             .truncate(true)
             .open(path)?;
-        Ok(BufWriter::new(file))
+        Ok(BufWriter::with_capacity(capacity, file))
     }
 
     fn open_append_file(path: &Path) -> io::Result<File> {

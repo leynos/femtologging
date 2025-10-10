@@ -37,6 +37,19 @@ impl FreshFailureState {
             .expect("fresh failure reason mutex poisoned") = None;
     }
 
+    /// Attempts to consume one forced fresh-file-open failure.
+    ///
+    /// Atomically decrements the remaining failure count and returns the
+    /// associated failure reason. When the count reaches zero, the reason is
+    /// cleared.
+    ///
+    /// # Concurrency
+    ///
+    /// This method is safe to call concurrently with other `take()` calls.
+    /// Calling the setup or teardown helpers while a take is in flight may yield
+    /// inconsistent state (for example the counter being updated while the
+    /// stored reason is cleared). Test code must serialise setup and teardown
+    /// with respect to exercising the handler.
     fn take(&self) -> Option<String> {
         let previous = self
             .remaining
@@ -63,16 +76,38 @@ impl FreshFailureState {
 
 static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureState::new);
 
+/// Attempts to consume one forced fresh-file-open failure.
+///
+/// Atomically decrements the remaining failure count and returns the associated
+/// failure reason. When the count reaches zero, the reason is cleared.
+///
+/// # Returns
+///
+/// `Some(reason)` if failures remain, `None` otherwise.
 pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
     FRESH_FAILURE_STATE.take()
 }
 
 #[cfg(feature = "python")]
+/// Configures forced fresh-file-open failures for testing.
+///
+/// Sets the number of times [`take_forced_fresh_failure_reason`] will return a
+/// failure reason before clearing it. Intended for test setup; do not call
+/// concurrently with code that is exercising the handler.
+///
+/// # Arguments
+///
+/// * `count` - Number of failures to force.
+/// * `reason` - Failure message to surface.
 pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) {
     FRESH_FAILURE_STATE.set_forced(count, reason.into());
 }
 
 #[cfg(feature = "python")]
+/// Clears forced fresh-file-open failures.
+///
+/// Resets the failure count to zero and clears the stored reason. Intended for
+/// test cleanup.
 pub(crate) fn clear_forced_fresh_failure() {
     FRESH_FAILURE_STATE.clear_forced();
 }

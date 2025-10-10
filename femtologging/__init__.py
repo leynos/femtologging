@@ -67,7 +67,7 @@ else:
         )
 
     def _clear_rotating_fresh_failure_for_test() -> None:
-        return None
+        return
 
 
 @dataclass
