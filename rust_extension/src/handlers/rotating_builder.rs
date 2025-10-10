@@ -3,10 +3,7 @@
 //! Extends the file handler builder with rotation-specific parameters such as
 //! ``max_bytes`` and ``backup_count``.
 
-use std::{
-    num::{NonZeroU64, NonZeroUsize},
-    sync::Arc,
-};
+use std::num::{NonZeroU64, NonZeroUsize};
 
 #[cfg(feature = "python")]
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -282,7 +279,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
             Some(FormatterConfig::Instance(fmt)) => {
                 let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
                     &self.path,
-                    Arc::clone(fmt),
+                    fmt.clone(),
                     cfg,
                     rotation,
                 )?;

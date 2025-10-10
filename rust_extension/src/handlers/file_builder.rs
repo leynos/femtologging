@@ -6,8 +6,6 @@
 //! evolves. Flushing is driven by a `flush_record_interval`
 //! measured in records.
 
-use std::sync::Arc;
-
 #[cfg(feature = "python")]
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -187,7 +185,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
         let cfg = self.state.handler_config();
         let handler = match self.state.formatter() {
             Some(FormatterConfig::Instance(fmt)) => {
-                FemtoFileHandler::with_capacity_flush_policy(&self.path, Arc::clone(fmt), cfg)?
+                FemtoFileHandler::with_capacity_flush_policy(&self.path, fmt.clone(), cfg)?
             }
             Some(FormatterConfig::Id(FormatterId::Default)) | None => {
                 FemtoFileHandler::with_capacity_flush_policy(&self.path, DefaultFormatter, cfg)?
