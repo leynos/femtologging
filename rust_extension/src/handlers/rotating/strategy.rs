@@ -1,4 +1,8 @@
 //! Size-based rotation strategy for rotating file handlers.
+//!
+//! Handles rotating the active log file once capacity limits are exceeded.
+//! Rotation maintains a bounded set of backups and falls back to appending if
+//! opening a fresh writer fails.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -15,6 +19,19 @@ pub(crate) struct FileRotationStrategy {
     path: PathBuf,
     max_bytes: u64,
     backup_count: usize,
+    last_outcome: RotationOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RotationOutcome {
+    /// Rotation was not required for the previous record.
+    Skipped,
+    /// Rotation succeeded using the freshly re-opened file handle.
+    Rotated,
+    /// Rotation succeeded after falling back to append because the fresh open failed.
+    RotatedWithAppendFallback { error: String },
+    /// Rotation failed and propagated an I/O error.
+    Failed { error: String },
 }
 
 impl FileRotationStrategy {
@@ -23,7 +40,13 @@ impl FileRotationStrategy {
             path,
             max_bytes,
             backup_count,
+            last_outcome: RotationOutcome::Skipped,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_last_outcome(&mut self) -> RotationOutcome {
+        std::mem::replace(&mut self.last_outcome, RotationOutcome::Skipped)
     }
 
     pub(crate) fn next_record_bytes(message: &str) -> u64 {
@@ -43,18 +66,22 @@ impl FileRotationStrategy {
         Ok(current_file_len + buffered_bytes + next_record_bytes > self.max_bytes)
     }
 
-    pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<()> {
+    pub(crate) fn rotate(
+        &mut self,
+        writer: &mut BufWriter<File>,
+    ) -> io::Result<Option<String>> {
         writer.flush()?;
         if self.backup_count == 0 {
             let file = writer.get_mut();
             file.set_len(0)?;
             file.seek(SeekFrom::Start(0))?;
-            return Ok(());
+            return Ok(None);
         }
 
         let capacity = writer.capacity();
         let original_file = self.swap_writer_with_temp(writer, capacity)?;
-        let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
+        let original_file =
+            self.perform_rotation_with_rollback(writer, original_file, capacity)?;
         self.finalise_rotation(writer, original_file, capacity)
     }
 
@@ -98,7 +125,7 @@ impl FileRotationStrategy {
         writer: &mut BufWriter<File>,
         original_file: File,
         capacity: usize,
-    ) -> io::Result<()> {
+    ) -> io::Result<Option<String>> {
         let mut original_file = Some(original_file);
         if let Err(err) = Self::rename_file_if_exists(&self.path, &self.backup_path(1)) {
             let file = original_file
@@ -112,13 +139,13 @@ impl FileRotationStrategy {
             Ok(fresh_writer) => {
                 let _ = original_file.take();
                 *writer = fresh_writer;
-                Ok(())
+                Ok(None)
             }
             Err(fresh_err) => match Self::open_append_file(&self.path) {
                 Ok(fallback_file) => {
                     let _ = original_file.take();
                     *writer = BufWriter::with_capacity(capacity, fallback_file);
-                    Err(fresh_err)
+                    Ok(Some(fresh_err.to_string()))
                 }
                 Err(fallback_err) => {
                     let file = original_file
@@ -229,87 +256,34 @@ impl FileRotationStrategy {
 }
 
 impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
-    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<bool> {
+    fn before_write(
+        &mut self,
+        writer: &mut BufWriter<File>,
+        formatted: &str,
+    ) -> io::Result<bool> {
         let next_bytes = Self::next_record_bytes(formatted);
         if self.should_rotate(writer, next_bytes)? {
-            self.rotate(writer)?;
-            Ok(true)
+            match self.rotate(writer) {
+                Ok(None) => {
+                    self.last_outcome = RotationOutcome::Rotated;
+                    Ok(true)
+                }
+                Ok(Some(error)) => {
+                    self.last_outcome = RotationOutcome::RotatedWithAppendFallback { error };
+                    Ok(true)
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    self.last_outcome = RotationOutcome::Failed { error: message };
+                    Err(err)
+                }
+            }
         } else {
+            self.last_outcome = RotationOutcome::Skipped;
             Ok(false)
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    //! Tests covering rotation triggers and backup management.
-    use super::*;
-    use std::{fs, io::Write};
-    use tempfile::tempdir;
-
-    fn write_record(writer: &mut BufWriter<File>, message: &str) -> io::Result<()> {
-        writeln!(writer, "{message}")?;
-        writer.flush()
-    }
-
-    #[test]
-    fn rotates_and_limits_backups() -> io::Result<()> {
-        let dir = tempdir()?;
-        let path = dir.path().join("app.log");
-        let file = File::create(&path)?;
-        let mut writer = BufWriter::new(file);
-        let mut strategy = FileRotationStrategy::new(path.clone(), 25, 2);
-
-        for message in ["first record", "second record", "third record"] {
-            strategy.before_write(&mut writer, message)?;
-            write_record(&mut writer, message)?;
-        }
-
-        assert_eq!(fs::read_to_string(&path)?, "third record\n");
-        assert_eq!(
-            fs::read_to_string(strategy.backup_path(1))?,
-            "second record\n"
-        );
-        assert_eq!(
-            fs::read_to_string(strategy.backup_path(2))?,
-            "first record\n"
-        );
-        assert!(!strategy.backup_path(3).exists());
-        Ok(())
-    }
-
-    #[test]
-    fn rotates_without_backups_when_disabled() -> io::Result<()> {
-        let dir = tempdir()?;
-        let path = dir.path().join("app.log");
-        let file = File::create(&path)?;
-        let mut writer = BufWriter::new(file);
-        let mut strategy = FileRotationStrategy::new(path.clone(), 8, 0);
-
-        for message in ["alpha", "beta"] {
-            strategy.before_write(&mut writer, message)?;
-            write_record(&mut writer, message)?;
-        }
-
-        assert_eq!(fs::read_to_string(&path)?, "beta\n");
-        assert!(!strategy.backup_path(1).exists());
-        Ok(())
-    }
-
-    #[test]
-    fn disables_rotation_when_max_bytes_is_zero() -> io::Result<()> {
-        let dir = tempdir()?;
-        let path = dir.path().join("app.log");
-        let file = File::create(&path)?;
-        let mut writer = BufWriter::new(file);
-        let mut strategy = FileRotationStrategy::new(path.clone(), 0, 3);
-
-        for message in ["one", "two", "three"] {
-            strategy.before_write(&mut writer, message)?;
-            write_record(&mut writer, message)?;
-        }
-
-        assert_eq!(fs::read_to_string(&path)?, "one\ntwo\nthree\n");
-        Ok(())
-    }
-}
+mod tests;
