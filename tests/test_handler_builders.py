@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TypeGuard
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
 from syrupy import SnapshotAssertion
@@ -23,19 +24,29 @@ from femtologging import (
 type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 
-def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
-    """Return ``builder`` when it is rotating, otherwise fail the test.
+def _require_rotating_builder(
+    builder: FileBuilder,
+) -> TypeGuard[RotatingFileHandlerBuilder]:
+    """Confirm ``builder`` is rotating, otherwise fail the test immediately.
 
-    The helper keeps the scenario steps terse whilst still providing helpful
-    feedback when a rotating builder was expected but something else was
-    supplied. ``pytest.fail`` raises immediately, so the ``return`` below is
-    only reached in the success path where ``builder`` has the desired type.
+    Returning a :class:`typing.TypeGuard` means the type checker understands
+    that ``builder`` is a :class:`RotatingFileHandlerBuilder` after this helper
+    runs, keeping the scenario steps readable whilst still failing fast with a
+    clear message when the wrong builder is supplied.
     """
 
-    if not isinstance(builder, RotatingFileHandlerBuilder):
-        pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+    if isinstance(builder, RotatingFileHandlerBuilder):
+        return True
 
-    return builder
+    pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+
+
+def test_require_rotating_builder_rejects_file_builder(tmp_path) -> None:
+    """``_require_rotating_builder`` fails fast for non-rotating builders."""
+
+    builder = FileHandlerBuilder(str(tmp_path / "test.log"))
+    with pytest.raises(pytest.fail.Exception):
+        _require_rotating_builder(builder)
 
 
 scenarios("features/handler_builders.feature")
@@ -124,13 +135,15 @@ def when_set_file_formatter(
 
 @when(parsers.parse("I set max bytes {max_bytes:d}"))
 def when_set_max_bytes(file_builder: FileBuilder, max_bytes: int) -> FileBuilder:
-    rotating = _require_rotating_builder(file_builder)
+    _require_rotating_builder(file_builder)
+    rotating = file_builder
     return rotating.with_max_bytes(max_bytes)
 
 
 @when(parsers.parse("I set backup count {backup_count:d}"))
 def when_set_backup_count(file_builder: FileBuilder, backup_count: int) -> FileBuilder:
-    rotating = _require_rotating_builder(file_builder)
+    _require_rotating_builder(file_builder)
+    rotating = file_builder
     return rotating.with_backup_count(backup_count)
 
 
@@ -156,7 +169,8 @@ def then_file_builder_snapshot(
 def then_rotating_file_builder_snapshot(
     file_builder: FileBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    rotating = _require_rotating_builder(file_builder)
+    _require_rotating_builder(file_builder)
+    rotating = file_builder
     data = rotating.as_dict()
     data["path"] = Path(data["path"]).name
     assert data == snapshot, "rotating file builder dict must match snapshot"
@@ -185,14 +199,16 @@ def then_file_builder_fails(file_builder: FileHandlerBuilder) -> None:
 
 @then(parsers.parse('building the rotating file handler fails with "{message}"'))
 def then_rotating_file_builder_fails(file_builder: FileBuilder, message: str) -> None:
-    rotating = _require_rotating_builder(file_builder)
+    _require_rotating_builder(file_builder)
+    rotating = file_builder
     with pytest.raises(HandlerConfigError, match=re.escape(message)):
         rotating.build()
 
 
 @then(parsers.parse('setting zero rotation thresholds fails with "{message}"'))
 def then_zero_rotation_thresholds_fail(file_builder: FileBuilder, message: str) -> None:
-    rotating = _require_rotating_builder(file_builder)
+    _require_rotating_builder(file_builder)
+    rotating = file_builder
     with pytest.raises(HandlerConfigError, match=re.escape(message)):
         rotating.with_max_bytes(0).with_backup_count(0).build()
 
