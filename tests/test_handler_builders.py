@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import cast
-
 import pytest
 from pytest_bdd import given, scenarios, then, when, parsers
 from syrupy import SnapshotAssertion
@@ -26,9 +24,18 @@ type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 
 def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
-    if isinstance(builder, RotatingFileHandlerBuilder):
-        return builder
-    pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+    """Return ``builder`` when it is rotating, otherwise fail the test.
+
+    The helper keeps the scenario steps terse whilst still providing helpful
+    feedback when a rotating builder was expected but something else was
+    supplied. ``pytest.fail`` raises immediately, so the ``return`` below is
+    only reached in the success path where ``builder`` has the desired type.
+    """
+
+    if not isinstance(builder, RotatingFileHandlerBuilder):
+        pytest.fail("rotating builder step requires RotatingFileHandlerBuilder")
+
+    return builder
 
 
 scenarios("features/handler_builders.feature")
@@ -62,7 +69,7 @@ def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuild
         },
     )
     assert isinstance(builder, RotatingFileHandlerBuilder)
-    return cast(RotatingFileHandlerBuilder, builder)
+    return builder
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
