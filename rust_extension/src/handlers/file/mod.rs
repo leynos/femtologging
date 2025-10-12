@@ -153,9 +153,9 @@ impl FemtoFileHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when pending records are written successfully. ``False``
-    ///     when the handler has already been closed or the worker does not
-    ///     acknowledge the flush.
+    ///     ``True`` when the worker acknowledges the flush. ``False`` when the
+    ///     handler has already been closed or the worker does not acknowledge
+    ///     the flush.
     ///
     /// Examples
     /// --------

@@ -116,9 +116,9 @@ impl FemtoStreamHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker confirms all buffered records were
-    ///     written. ``False`` when the handler has already been closed or the
-    ///     worker does not acknowledge the flush.
+    ///     ``True`` when the worker acknowledges the flush. ``False`` when the
+    ///     handler has already been closed or the worker does not acknowledge
+    ///     the flush.
     ///
     /// Examples
     /// --------
