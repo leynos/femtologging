@@ -26,7 +26,7 @@ pub(crate) enum ParseOverflowPolicyError {
     #[error("timeout_ms required for timeout policy")]
     MissingExternalTimeout,
     /// Provided policy name is not recognised.
-    #[error("invalid overflow policy '{policy}'. Valid options are: {VALID_POLICIES}")]
+    #[error("invalid overflow policy: '{policy}'. Valid options are: {VALID_POLICIES}")]
     UnknownPolicy { policy: String },
 }
 
@@ -202,7 +202,7 @@ mod tests {
         );
         assert_eq!(
             err.to_string(),
-            "invalid overflow policy 'unknown'. Valid options are: drop, block, timeout:N"
+            "invalid overflow policy: 'unknown'. Valid options are: drop, block, timeout:N"
         );
     }
 

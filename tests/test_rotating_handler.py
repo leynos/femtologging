@@ -61,7 +61,9 @@ def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"invalid overflow policy '.*'\. Valid options are: drop, block, timeout",
+        match=(
+            r"invalid overflow policy: '.*'\. Valid options are: drop, block, timeout"
+        ),
     ):
         invalid_options = HandlerOptions(
             capacity=32,
