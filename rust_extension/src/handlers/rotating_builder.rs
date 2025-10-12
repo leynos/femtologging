@@ -142,7 +142,7 @@ builder_methods! {
                     let max_bytes = max_bytes.extract::<i128>()?;
                     if max_bytes < 0 {
                         return Err(PyValueError::new_err(
-                            "max_bytes must be non-negative",
+                            "max_bytes must be greater than zero",
                         ));
                     }
                     if max_bytes == 0 {
