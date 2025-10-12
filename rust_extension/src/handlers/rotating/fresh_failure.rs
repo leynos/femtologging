@@ -159,7 +159,6 @@ pub(crate) fn force_fresh_failure_once_for_test(
 pub(crate) struct ForcedFreshFailureGuard {
     previous_count: usize,
     previous_reason: Option<String>,
-    #[cfg(test)]
     previous_owner: Option<ThreadId>,
 }
 
@@ -182,7 +181,6 @@ impl ForcedFreshFailureGuard {
             .lock()
             .expect("fresh failure reason mutex poisoned");
         let previous_reason = guard.replace(reason);
-        #[cfg(test)]
         let previous_owner = {
             let mut owner_guard = FRESH_FAILURE_STATE
                 .owner
@@ -193,7 +191,6 @@ impl ForcedFreshFailureGuard {
         Self {
             previous_count,
             previous_reason,
-            #[cfg(test)]
             previous_owner,
         }
     }
@@ -211,7 +208,6 @@ impl Drop for ForcedFreshFailureGuard {
             .lock()
             .expect("fresh failure reason mutex poisoned");
         *guard = self.previous_reason.take();
-        #[cfg(test)]
         {
             let mut owner_guard = FRESH_FAILURE_STATE
                 .owner
