@@ -279,7 +279,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
             Some(FormatterConfig::Instance(fmt)) => {
                 let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
                     &self.path,
-                    fmt.clone(),
+                    fmt.clone_arc(),
                     cfg,
                     rotation,
                 )?;

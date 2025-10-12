@@ -5,7 +5,7 @@
 //! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use std::{num::NonZeroU64, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -237,7 +237,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
         );
         let handler = match self.common.formatter.as_ref() {
             Some(FormatterConfig::Instance(fmt)) => {
-                self.build_with_formatter(Arc::clone(fmt), capacity, timeout)
+                self.build_with_formatter(fmt.clone_arc(), capacity, timeout)
             }
             Some(FormatterConfig::Id(FormatterId::Default)) | None => {
                 self.build_with_formatter(DefaultFormatter, capacity, timeout)

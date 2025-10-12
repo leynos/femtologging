@@ -5,7 +5,7 @@
 //! expose adapters for Python callables so they can participate in Rust
 //! logging pipelines safely across threads.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use crate::log_record::FemtoLogRecord;
 
@@ -19,7 +19,43 @@ pub trait FemtoFormatter: Send + Sync {
 }
 
 /// Shared formatter trait object used across handlers.
-pub type SharedFormatter = Arc<dyn FemtoFormatter + Send + Sync>;
+#[derive(Clone)]
+pub struct SharedFormatter {
+    inner: Arc<dyn FemtoFormatter + Send + Sync>,
+}
+
+impl SharedFormatter {
+    /// Create a shared formatter from an owned formatter implementation.
+    pub fn new<F>(formatter: F) -> Self
+    where
+        F: FemtoFormatter + Send + Sync + 'static,
+    {
+        Self {
+            inner: Arc::new(formatter),
+        }
+    }
+
+    /// Wrap an existing shared formatter trait object.
+    pub fn from_arc(inner: Arc<dyn FemtoFormatter + Send + Sync>) -> Self {
+        Self { inner }
+    }
+
+    /// Clone the underlying trait object, incrementing the reference count.
+    pub fn clone_arc(&self) -> Arc<dyn FemtoFormatter + Send + Sync> {
+        Arc::clone(&self.inner)
+    }
+
+    /// Format a log record using the wrapped formatter instance.
+    pub fn format(&self, record: &FemtoLogRecord) -> String {
+        self.inner.format(record)
+    }
+}
+
+impl fmt::Debug for SharedFormatter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SharedFormatter(<dyn FemtoFormatter>)")
+    }
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct DefaultFormatter;
@@ -158,7 +194,7 @@ pub mod python {
     /// Convert a Python formatter object into a shared [`FemtoFormatter`] (`Arc` trait object).
     pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<SharedFormatter> {
         PythonFormatter::try_new(obj)
-            .map(|formatter| Arc::new(formatter) as SharedFormatter)
+            .map(|formatter| SharedFormatter::from_arc(Arc::new(formatter)))
             .map_err(|err| {
                 let py = obj.py();
                 let context = PyTypeError::new_err(

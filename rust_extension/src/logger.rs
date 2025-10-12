@@ -14,7 +14,7 @@ use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 
 use crate::{
-    formatter::{DefaultFormatter, FemtoFormatter, SharedFormatter},
+    formatter::{DefaultFormatter, SharedFormatter},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -338,7 +338,7 @@ impl FemtoLogger {
 
     /// Create a logger with an explicit parent name.
     pub fn with_parent(name: String, parent: Option<String>) -> Self {
-        let formatter: SharedFormatter = Arc::new(DefaultFormatter);
+        let formatter = SharedFormatter::new(DefaultFormatter);
         let handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>> =
             Arc::new(RwLock::new(Vec::new()));
         let filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>> = Arc::new(RwLock::new(Vec::new()));

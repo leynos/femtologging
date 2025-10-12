@@ -5,7 +5,6 @@
 use std::{
     fmt,
     num::{NonZeroU64, NonZeroUsize},
-    sync::Arc,
 };
 
 #[cfg(feature = "python")]
@@ -46,7 +45,7 @@ where
     F: FemtoFormatter + Send + Sync + 'static,
 {
     fn into_formatter_config(self) -> FormatterConfig {
-        FormatterConfig::Instance(Arc::new(self) as SharedFormatter)
+        FormatterConfig::Instance(SharedFormatter::new(self))
     }
 }
 
