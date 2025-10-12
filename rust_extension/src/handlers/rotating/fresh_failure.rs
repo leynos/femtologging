@@ -5,10 +5,14 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
+#[cfg(test)]
+use std::thread::{self, ThreadId};
 
 struct FreshFailureState {
     remaining: AtomicUsize,
     reason: Mutex<Option<String>>,
+    #[cfg(test)]
+    owner: Mutex<Option<ThreadId>>,
 }
 
 impl FreshFailureState {
@@ -16,6 +20,8 @@ impl FreshFailureState {
         Self {
             remaining: AtomicUsize::new(0),
             reason: Mutex::new(None),
+            #[cfg(test)]
+            owner: Mutex::new(None),
         }
     }
 
@@ -51,6 +57,19 @@ impl FreshFailureState {
     /// stored reason is cleared). Test code must serialise setup and teardown
     /// with respect to exercising the handler.
     fn take(&self) -> Option<String> {
+        #[cfg(test)]
+        {
+            let current_thread = thread::current().id();
+            let owner = *self
+                .owner
+                .lock()
+                .expect("fresh failure owner mutex poisoned");
+            if let Some(owner_thread) = owner {
+                if owner_thread != current_thread {
+                    return None;
+                }
+            }
+        }
         let previous = self
             .remaining
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
@@ -140,6 +159,7 @@ pub(crate) fn force_fresh_failure_once_for_test(
 pub(crate) struct ForcedFreshFailureGuard {
     previous_count: usize,
     previous_reason: Option<String>,
+    previous_owner: Option<ThreadId>,
 }
 
 #[cfg(test)]
@@ -161,9 +181,17 @@ impl ForcedFreshFailureGuard {
             .lock()
             .expect("fresh failure reason mutex poisoned");
         let previous_reason = guard.replace(reason);
+        let previous_owner = {
+            let mut owner_guard = FRESH_FAILURE_STATE
+                .owner
+                .lock()
+                .expect("fresh failure owner mutex poisoned");
+            owner_guard.replace(thread::current().id())
+        };
         Self {
             previous_count,
             previous_reason,
+            previous_owner,
         }
     }
 }
@@ -180,5 +208,12 @@ impl Drop for ForcedFreshFailureGuard {
             .lock()
             .expect("fresh failure reason mutex poisoned");
         *guard = self.previous_reason.take();
+        {
+            let mut owner_guard = FRESH_FAILURE_STATE
+                .owner
+                .lock()
+                .expect("fresh failure owner mutex poisoned");
+            *owner_guard = self.previous_owner;
+        }
     }
 }
