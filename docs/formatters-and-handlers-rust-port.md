@@ -80,15 +80,18 @@ across the FFI boundary as `PyRuntimeError`, allowing Python callers to decide
 whether to retry or fall back.
 
 ```python
-from femtologging import FemtoStreamHandler
+from contextlib import closing
 
-handler = FemtoStreamHandler.stderr()
-handler.close()  # Force the next handle call to fail
+from femtologging import FemtoFileHandler
 
-try:
-    handler.handle("core", "INFO", "dropped")
-except RuntimeError as exc:
-    assert "handler is closed" in str(exc)
+with closing(
+    FemtoFileHandler("app.log", capacity=1, flush_interval=1, policy="drop")
+) as handler:
+    handler.handle("core", "INFO", "first")
+    try:
+        handler.handle("core", "INFO", "second")
+    except RuntimeError as exc:
+        assert "queue full" in str(exc)
 ```
 
 Advanced use cases can specify an overflow policy when constructing a handler.

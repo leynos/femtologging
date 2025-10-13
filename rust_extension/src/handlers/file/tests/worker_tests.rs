@@ -124,3 +124,87 @@ fn femto_file_handler_worker_thread_failure() {
     assert!(start.elapsed() < Duration::from_millis(1500));
     barrier.wait();
 }
+
+#[test]
+#[serial]
+fn worker_logs_repeated_rotation_failures() {
+    struct FlakyRotation {
+        failures: usize,
+        call: usize,
+    }
+
+    impl RotationStrategy<SharedBuf> for FlakyRotation {
+        fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<bool> {
+            let call = self.call;
+            self.call += 1;
+            if call < self.failures {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("flaky rotation failure #{call}"),
+                ))
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    let buffer = SharedBuf::default();
+    let writer = buffer.clone();
+    let handler_cfg = HandlerConfig {
+        capacity: 1,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Block,
+    };
+    let options = BuilderOptions::<SharedBuf, FlakyRotation>::new(
+        FlakyRotation {
+            failures: 3,
+            call: 0,
+        },
+        None,
+    );
+
+    install_test_logger();
+    let mut handler =
+        FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
+
+    for i in 0..5 {
+        handler
+            .handle(FemtoLogRecord::new(
+                "core",
+                "INFO",
+                &format!("repeated-{i}"),
+            ))
+            .expect("record queued despite rotation failure");
+    }
+
+    assert!(
+        handler.flush(),
+        "flush should succeed after repeated failures"
+    );
+    handler.close();
+
+    let logs = take_logged_messages();
+    let errors: Vec<_> = logs
+        .iter()
+        .filter(|record| {
+            record.level == Level::Error
+                && record
+                    .message
+                    .contains("FemtoFileHandler rotation error; writing record without rotating")
+        })
+        .collect();
+    assert_eq!(errors.len(), 3, "each failed rotation should be logged");
+    for idx in 0..3 {
+        assert!(
+            errors.iter().any(|record| record
+                .message
+                .contains(&format!("flaky rotation failure #{idx}"))),
+            "log should include failure #{idx}",
+        );
+    }
+
+    let expected = (0..5)
+        .map(|i| format!("core [INFO] repeated-{i}\n"))
+        .collect::<String>();
+    assert_eq!(buffer.contents(), expected);
+}
