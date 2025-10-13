@@ -205,3 +205,17 @@ pub mod python {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Send/Sync guarantees for formatter trait objects.
+
+    use super::*;
+    use static_assertions::assert_impl_all;
+
+    #[test]
+    fn shared_formatter_is_send_sync() {
+        assert_impl_all!(SharedFormatter: Send, Sync);
+        assert_impl_all!(Arc<dyn FemtoFormatter + Send + Sync>: Send, Sync);
+    }
+}

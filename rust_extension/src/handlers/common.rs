@@ -119,6 +119,9 @@ impl CommonBuilder {
             }
             Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
                 Ok(instance) => {
+                    // The extracted formatter is already wrapped in a shared trait
+                    // object; storing it directly avoids double `Arc` wrapping via the
+                    // blanket `IntoFormatterConfig` implementation.
                     self.formatter = Some(FormatterConfig::Instance(instance));
                     Ok(())
                 }
