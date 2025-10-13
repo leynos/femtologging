@@ -57,16 +57,71 @@ use manager::{get_logger as manager_get_logger, reset_manager};
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 
+/// Return a static greeting. Exposed to Python for sanity checks.
+///
+/// # Returns
+///
+/// A static string slice containing the greeting.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// assert_eq!(crate::hello(), "hello from Rust");
+/// ```
 #[pyfunction]
 fn hello() -> &'static str {
     "hello from Rust"
 }
 
+/// Get or create a [`FemtoLogger`] identified by `name`.
+///
+/// # Parameters
+///
+/// - `py`: Python GIL token for creating Python objects.
+/// - `name`: Logger name; must not be empty, start or end with '.', or contain
+///   consecutive dots.
+///
+/// # Returns
+///
+/// A reference-counted Python object wrapping the logger. Returns the existing
+/// logger when one with the same name has already been created.
+///
+/// # Errors
+///
+/// Returns [`PyValueError`](pyo3::exceptions::PyValueError) when the logger
+/// name violates the validation rules described above.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use pyo3::Python;
+/// Python::with_gil(|py| {
+///     let first = crate::get_logger(py, "example").unwrap();
+///     let second = crate::get_logger(py, "example").unwrap();
+///     assert!(first.as_ref(py).is(second.as_ref(py)));
+/// });
+/// ```
 #[pyfunction]
 fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     manager_get_logger(py, name)
 }
 
+/// Reset the global logging manager state, clearing all registered loggers and
+/// handlers.
+///
+/// Intended for tests; not thread-safe.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use pyo3::Python;
+/// Python::with_gil(|py| {
+///     let before = crate::get_logger(py, "example").unwrap();
+///     crate::reset_manager_py();
+///     let after = crate::get_logger(py, "example").unwrap();
+///     assert!(!before.as_ref(py).is(after.as_ref(py)));
+/// });
+/// ```
 #[pyfunction]
 fn reset_manager_py() {
     reset_manager();
@@ -103,6 +158,27 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+/// Initialise the `_femtologging_rs` Python extension module.
+///
+/// # Parameters
+///
+/// - `m`: The Python module to populate with classes, functions, and
+///   constants.
+///
+/// # Errors
+///
+/// Returns an error if any class or function registration fails.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use pyo3::{types::PyModule, Python};
+/// Python::with_gil(|py| {
+///     let module = PyModule::new(py, "_femtologging_rs").unwrap();
+///     crate::_femtologging_rs(&module).unwrap();
+///     assert!(module.hasattr("FemtoLogger").unwrap());
+/// });
+/// ```
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;

@@ -26,15 +26,19 @@ type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 
 def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
+    """Validate that a file builder targets rotation-specific operations."""
     if isinstance(builder, RotatingFileHandlerBuilder):
         return builder
-    _fail_rotating_builder_requirement()
+    _fail_rotating_builder_requirement(builder)
 
 
-def _fail_rotating_builder_requirement() -> NoReturn:
+def _fail_rotating_builder_requirement(builder: FileBuilder) -> NoReturn:
     """Raise a consistent failure for steps that assume a rotating builder."""
 
-    raise AssertionError("rotating builder step requires RotatingFileHandlerBuilder")
+    raise AssertionError(
+        "rotating builder step requires RotatingFileHandlerBuilder, "
+        f"got {type(builder).__name__}"
+    )
 
 
 scenarios("features/handler_builders.feature")
@@ -67,8 +71,7 @@ def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuild
             "args": [str(path)],
         },
     )
-    assert isinstance(builder, RotatingFileHandlerBuilder)
-    return builder
+    return _require_rotating_builder(builder)
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
