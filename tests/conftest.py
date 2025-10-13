@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, ContextManager, Generator
@@ -8,6 +9,15 @@ from typing import Callable, ContextManager, Generator
 import femtologging
 from femtologging import FemtoFileHandler
 import pytest
+
+warnings.filterwarnings(
+    "ignore",
+    message="'maxsplit' is passed as positional argument",
+    category=DeprecationWarning,
+    module=r"gherkin\.gherkin_line",
+)
+# The warning originates in the vendored Gherkin parser, so filter it out until
+# the dependency releases a fix rather than letting our test suite go noisy.
 
 FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
 
