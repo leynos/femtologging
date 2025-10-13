@@ -30,9 +30,8 @@ impl SharedFormatter {
     where
         F: FemtoFormatter + Send + Sync + 'static,
     {
-        Self {
-            inner: Arc::new(formatter),
-        }
+        let inner: Arc<dyn FemtoFormatter + Send + Sync> = Arc::from(formatter);
+        Self { inner }
     }
 
     /// Wrap an existing shared formatter trait object.
