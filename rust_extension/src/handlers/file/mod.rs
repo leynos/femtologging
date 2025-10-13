@@ -153,10 +153,11 @@ impl FemtoFileHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker acknowledges the flush within 1 second.
-    ///     ``False`` when the handler has already been closed, the flush
-    ///     command cannot be delivered, or acknowledgement is not received
-    ///     within the 1-second timeout.
+    ///     ``True`` when the worker acknowledges the flush command within the
+    ///     1-second timeout.
+    ///     ``False`` when the handler has already been closed, the command
+    ///     cannot be delivered to the worker, or the worker fails to
+    ///     acknowledge before the timeout elapses.
     ///
     /// Examples
     /// --------
