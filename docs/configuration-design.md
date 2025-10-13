@@ -21,7 +21,10 @@ pub enum HandlerBuilder {
     File(FileHandlerBuilder),
 }
 
-struct FormatterId(String); // Newtype for formatter identifiers
+pub enum FormatterId {
+    Default,
+    Custom(String),
+}
 
 pub struct ConfigBuilder {
     // Internal state to hold configuration parts
@@ -193,9 +196,10 @@ impl FileHandlerBuilder {
 
     /// Sets the formatter for this handler.
     ///
-    /// Accepts either a registered formatter identifier or a concrete
-    /// [`FemtoFormatter`] instance. Supplying an instance allows bespoke
-    /// formatting without touching global registries.
+    /// Accepts either a registered formatter identifier (`FormatterId::Default`
+    /// or `FormatterId::Custom`) or a concrete [`FemtoFormatter`] instance.
+    /// Supplying an instance allows bespoke formatting without touching
+    /// global registries.
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,

@@ -5,7 +5,11 @@
 //! a millisecond-based flush timeout. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{
+    io::{self, Write},
+    num::NonZeroU64,
+    time::Duration,
+};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -94,19 +98,27 @@ impl StreamHandlerBuilder {
         F: FemtoFormatter + Send + 'static,
     {
         match self.target {
-            StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
-                std::io::stdout(),
-                formatter,
-                capacity,
-                timeout,
-            ),
-            StreamTarget::Stderr => FemtoStreamHandler::with_capacity_timeout(
-                std::io::stderr(),
-                formatter,
-                capacity,
-                timeout,
-            ),
+            StreamTarget::Stdout => {
+                self.build_with_writer(io::stdout(), formatter, capacity, timeout)
+            }
+            StreamTarget::Stderr => {
+                self.build_with_writer(io::stderr(), formatter, capacity, timeout)
+            }
         }
+    }
+
+    fn build_with_writer<W, F>(
+        &self,
+        writer: W,
+        formatter: F,
+        capacity: usize,
+        timeout: Duration,
+    ) -> FemtoStreamHandler
+    where
+        W: Write + Send + 'static,
+        F: FemtoFormatter + Send + 'static,
+    {
+        FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, timeout)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -239,8 +251,12 @@ mod tests {
     #[cfg(feature = "python")]
     use pyo3::Python;
     use rstest::rstest;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
 
-    use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
+    use crate::{
+        formatter::FemtoFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord,
+    };
 
     #[derive(Clone, Copy, Debug)]
     struct UpperFormatter;
@@ -248,6 +264,32 @@ mod tests {
     impl FemtoFormatter for UpperFormatter {
         fn format(&self, record: &FemtoLogRecord) -> String {
             record.message.to_uppercase()
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct TestWriter {
+        buffer: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl TestWriter {
+        fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+            Self { buffer }
+        }
+    }
+
+    impl Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let mut guard = self
+                .buffer
+                .lock()
+                .expect("buffer mutex must not be poisoned");
+            guard.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
 
@@ -268,11 +310,48 @@ mod tests {
     #[case(StreamHandlerBuilder::stderr())]
     fn build_stream_handler_with_custom_formatter(#[case] builder: StreamHandlerBuilder) {
         let builder = builder.with_formatter(UpperFormatter).with_capacity(4);
-        let mut handler = builder
-            .build_inner()
-            .expect("build_inner must accept formatter instances");
-        handler.flush();
+        let capacity = builder.common.capacity.map(|c| c.get()).unwrap_or(1024);
+        let timeout = Duration::from_millis(
+            builder
+                .common
+                .flush_timeout_ms
+                .map(NonZeroU64::get)
+                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
+        );
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = match builder.common.formatter.as_ref() {
+            Some(FormatterConfig::Instance(fmt)) => builder.build_with_writer(
+                TestWriter::new(Arc::clone(&sink)),
+                fmt.clone_arc(),
+                capacity,
+                timeout,
+            ),
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => builder.build_with_writer(
+                TestWriter::new(Arc::clone(&sink)),
+                DefaultFormatter,
+                capacity,
+                timeout,
+            ),
+            Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
+                panic!("unexpected custom formatter id: {other}")
+            }
+        };
+        FemtoHandlerTrait::handle(
+            &handler,
+            FemtoLogRecord::new("logger", "INFO", "stream hello"),
+        );
+        assert!(handler.flush(), "flush must succeed for stream handler");
         handler.close();
+        let output = String::from_utf8(
+            sink.lock()
+                .expect("buffer mutex must not be poisoned")
+                .clone(),
+        )
+        .expect("stream output must be valid UTF-8");
+        assert!(
+            output.contains("STREAM HELLO"),
+            "custom formatter must uppercase the stream payload: {output:?}",
+        );
     }
 
     #[rstest]
