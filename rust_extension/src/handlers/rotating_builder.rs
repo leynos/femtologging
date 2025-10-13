@@ -137,7 +137,26 @@ builder_methods! {
                 py_name: "with_max_bytes",
                 py_text_signature: "(self, max_bytes)",
                 rust_args: (max_bytes: u64),
-                py_args: (max_bytes: u64),
+                py_args: (max_bytes: pyo3::Bound<'py, pyo3::types::PyAny>),
+                py_prelude: {
+                    use pyo3::exceptions::{PyOverflowError, PyValueError};
+
+                    let max_bytes = max_bytes.extract::<i128>()?;
+                    if max_bytes < 0 {
+                        return Err(PyValueError::new_err(
+                            "max_bytes must be greater than zero",
+                        ));
+                    }
+                    if max_bytes == 0 {
+                        return Err(PyValueError::new_err(
+                            "max_bytes must be greater than zero",
+                        ));
+                    }
+                    let max_bytes = u64::try_from(max_bytes)
+                        .map_err(|_| PyOverflowError::new_err(
+                            "max_bytes exceeds the allowable range",
+                        ))?;
+                },
                 self_ident: builder,
                 body: {
                     builder.max_bytes = NonZeroU64::new(max_bytes);
@@ -151,7 +170,21 @@ builder_methods! {
                 py_name: "with_backup_count",
                 py_text_signature: "(self, backup_count)",
                 rust_args: (backup_count: usize),
-                py_args: (backup_count: usize),
+                py_args: (backup_count: pyo3::Bound<'py, pyo3::types::PyAny>),
+                py_prelude: {
+                    use pyo3::exceptions::{PyOverflowError, PyValueError};
+
+                    let backup_count = backup_count.extract::<i128>()?;
+                    if backup_count <= 0 {
+                        return Err(PyValueError::new_err(
+                            "backup_count must be greater than zero",
+                        ));
+                    }
+                    let backup_count = usize::try_from(backup_count)
+                        .map_err(|_| PyOverflowError::new_err(
+                            "backup_count exceeds the allowable range",
+                        ))?;
+                },
                 self_ident: builder,
                 body: {
                     builder.backup_count = NonZeroUsize::new(backup_count);

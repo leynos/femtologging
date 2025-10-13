@@ -41,6 +41,22 @@ def _fail_rotating_builder_requirement(builder: FileBuilder) -> NoReturn:
     )
 
 
+@pytest.mark.parametrize("max_bytes", [-1, -100, -999999])
+def test_with_max_bytes_negative_raises(tmp_path, max_bytes: int) -> None:
+    builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
+
+    with pytest.raises(ValueError):
+        builder.with_max_bytes(max_bytes)
+
+
+@pytest.mark.parametrize("backup_count", [-1, -5, -1000])
+def test_with_backup_count_negative_raises(tmp_path, backup_count: int) -> None:
+    builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
+
+    with pytest.raises(ValueError):
+        builder.with_backup_count(backup_count)
+
+
 scenarios("features/handler_builders.feature")
 
 
@@ -192,11 +208,22 @@ def then_rotating_file_builder_fails(file_builder: FileBuilder, message: str) ->
         rotating.build()
 
 
-@then(parsers.parse('setting zero rotation thresholds fails with "{message}"'))
-def then_zero_rotation_thresholds_fail(file_builder: FileBuilder, message: str) -> None:
+@then(parsers.parse('setting max bytes {max_bytes:d} fails with "{message}"'))
+def then_setting_max_bytes_fails(
+    file_builder: FileBuilder, max_bytes: int, message: str
+) -> None:
     rotating = _require_rotating_builder(file_builder)
-    with pytest.raises(HandlerConfigError, match=re.escape(message)):
-        rotating.with_max_bytes(0).with_backup_count(0).build()
+    with pytest.raises(ValueError, match=re.escape(message)):
+        rotating.with_max_bytes(max_bytes)
+
+
+@then(parsers.parse('setting backup count {backup_count:d} fails with "{message}"'))
+def then_setting_backup_count_fails(
+    file_builder: FileBuilder, backup_count: int, message: str
+) -> None:
+    rotating = _require_rotating_builder(file_builder)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        rotating.with_backup_count(backup_count)
 
 
 @then("the stream handler builder matches snapshot")
