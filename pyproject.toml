@@ -54,5 +54,6 @@ markers = [
     "send_sync: tests covering Send/Sync guarantees",
 ]
 filterwarnings = [
+    # Suppress vendored Gherkin parser deprecation until upstream releases a fix
     "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin.gherkin_line",
 ]

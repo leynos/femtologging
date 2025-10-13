@@ -9,54 +9,13 @@ use logtest;
 use rstest::*;
 use serial_test::serial;
 
+mod handle_expect;
 mod test_utils;
+use handle_expect::HandleExpect;
 use std::sync::{Arc, Mutex};
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
 use test_utils::shared_buffer::std::read_output;
 use test_utils::std::SharedBuf;
-
-trait HandleExpect {
-    fn expect_handle(&self, record: FemtoLogRecord);
-}
-
-impl HandleExpect for FemtoStreamHandler {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoStreamHandler to accept record");
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for &T {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
-
-impl HandleExpect for dyn FemtoHandlerTrait {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoHandlerTrait object to accept record");
-    }
-}
-
-impl HandleExpect for dyn FemtoHandlerTrait + Send + Sync {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoHandlerTrait object to accept record");
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for Box<T> {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
 
 #[derive(Clone)]
 struct BlockingBuf {

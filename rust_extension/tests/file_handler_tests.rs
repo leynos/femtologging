@@ -15,32 +15,11 @@ use _femtologging_rs::{
 };
 use tempfile::NamedTempFile;
 
+mod handle_expect;
 mod test_utils;
+use handle_expect::HandleExpect;
 use std::sync::{Arc, Mutex};
 use test_utils::std::SharedBuf;
-
-trait HandleExpect {
-    fn expect_handle(&self, record: FemtoLogRecord);
-}
-
-impl HandleExpect for FemtoFileHandler {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoFileHandler to accept record");
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for &T {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
