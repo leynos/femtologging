@@ -8,7 +8,7 @@ use std::{
 };
 
 #[cfg(feature = "python")]
-use pyo3::{prelude::*, types::PyDict, Bound};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict, Bound};
 
 use super::{
     file::{HandlerConfig, OverflowPolicy},
@@ -126,7 +126,17 @@ impl CommonBuilder {
                     Ok(())
                 }
                 Err(instance_err) => {
-                    instance_err.set_cause(formatter.py(), Some(string_err));
+                    let py = formatter.py();
+                    let string_err = string_err;
+
+                    if let Some(existing_cause) = instance_err.cause(py) {
+                        string_err.set_cause(py, Some(existing_cause));
+                    }
+
+                    let string_context =
+                        PyTypeError::new_err("formatter string identifier extraction failed");
+                    string_context.set_cause(py, Some(string_err));
+                    instance_err.set_cause(py, Some(string_context));
                     Err(instance_err)
                 }
             },
