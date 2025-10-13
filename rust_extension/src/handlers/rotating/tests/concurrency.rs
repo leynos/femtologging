@@ -2,6 +2,7 @@
 
 use super::super::*;
 use crate::formatter::DefaultFormatter;
+use crate::handler::HandlerError;
 use crate::handlers::file::{BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy};
 use crate::log_record::FemtoLogRecord;
 use std::fs::{File, OpenOptions};
@@ -93,8 +94,12 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
     let mut handler = FemtoRotatingFileHandler::new_with_rotation_limits(inner, 24, 1);
 
     let producer_id = thread::current().id();
-    handler.handle(FemtoLogRecord::new("core", "INFO", "alpha"));
-    handler.handle(FemtoLogRecord::new("core", "INFO", "beta"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "alpha"))
+        .expect("initial record should be written");
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "beta"))
+        .expect("second record should be written");
     assert!(handler.flush());
     handler.close();
 
@@ -138,8 +143,12 @@ fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
         1,
     );
 
-    handler.handle(FemtoLogRecord::new("core", "INFO", "seed"));
-    handler.handle(FemtoLogRecord::new("core", "INFO", "trigger"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "seed"))
+        .expect("seed record should be written");
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "trigger"))
+        .expect("trigger record should be written to trigger rotation");
 
     let wait_start = Instant::now();
     while !started.load(Ordering::SeqCst) {
@@ -151,7 +160,13 @@ fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
 
     let start = Instant::now();
     for idx in 0..8 {
-        handler.handle(FemtoLogRecord::new("core", "INFO", &format!("extra {idx}")));
+        match handler.handle(FemtoLogRecord::new("core", "INFO", &format!("extra {idx}"))) {
+            Ok(()) => {}
+            Err(HandlerError::QueueFull) => {
+                // Dropped records are acceptable here because the test exercises non-blocking queueing.
+            }
+            Err(other) => panic!("unexpected handler error during rotation: {other:?}"),
+        }
     }
     assert!(
         start.elapsed() < Duration::from_millis(200),

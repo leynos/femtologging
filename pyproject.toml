@@ -53,3 +53,6 @@ markers = [
     "concurrency: tests covering threaded behaviour",
     "send_sync: tests covering Send/Sync guarantees",
 ]
+filterwarnings = [
+    "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin.gherkin_line",
+]
