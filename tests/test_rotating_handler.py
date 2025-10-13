@@ -65,10 +65,14 @@ def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
             r"invalid overflow policy: '.*'\. Valid options are: drop, block, timeout"
         ),
     ):
+        invalid_policy_value = t.cast(
+            t.Any,
+            "invalid_policy",
+        )  # Exercise runtime validation with a value rejected at type-check time.
         invalid_options = HandlerOptions(
             capacity=32,
             flush_interval=2,
-            policy="invalid_policy",  # pyright: ignore[reportArgumentType]
+            policy=invalid_policy_value,
             rotation=(1024, 3),
         )
 
