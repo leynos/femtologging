@@ -332,9 +332,10 @@ impl FemtoRotatingFileHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker acknowledges the flush. ``False`` when the
-    ///     handler has already been closed or the worker does not acknowledge
-    ///     the flush.
+    ///     ``True`` when the worker acknowledges the flush within 1 second.
+    ///     ``False`` when the handler has already been closed, the flush
+    ///     command cannot be delivered, or acknowledgement is not received
+    ///     within the 1-second timeout.
     ///
     /// Examples
     /// --------

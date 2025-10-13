@@ -116,9 +116,10 @@ impl FemtoStreamHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker acknowledges the flush. ``False`` when the
-    ///     handler has already been closed or the worker does not acknowledge
-    ///     the flush.
+    ///     ``True`` when the worker acknowledges the flush within the timeout.
+    ///     ``False`` when the handler has already been closed, the flush
+    ///     command cannot be delivered, or acknowledgement is not received
+    ///     within the configured timeout (default: 1 second).
     ///
     /// Examples
     /// --------
