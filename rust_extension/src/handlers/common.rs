@@ -110,6 +110,26 @@ impl CommonBuilder {
         self.formatter = Some(formatter.into_formatter_config());
     }
 
+    #[cfg(feature = "python")]
+    pub(crate) fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
+        match formatter.extract::<String>() {
+            Ok(fid) => {
+                self.set_formatter(fid);
+                Ok(())
+            }
+            Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
+                Ok(instance) => {
+                    self.formatter = Some(FormatterConfig::Instance(instance));
+                    Ok(())
+                }
+                Err(instance_err) => {
+                    instance_err.set_cause(formatter.py(), Some(string_err));
+                    Err(instance_err)
+                }
+            },
+        }
+    }
+
     /// Validate that an optional numeric field (if provided) is greater than zero.
     ///
     /// Returns `InvalidConfig("{field} must be greater than zero")` when `value`
@@ -251,6 +271,11 @@ impl FileLikeBuilderState {
     /// Update the overflow policy in place.
     pub(crate) fn set_overflow_policy(&mut self, policy: OverflowPolicy) {
         self.overflow_policy = policy;
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.common.set_formatter_from_py(formatter)
     }
 
     /// Validate queue-related settings shared between file-based builders.

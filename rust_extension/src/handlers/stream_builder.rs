@@ -114,26 +114,6 @@ impl StreamHandlerBuilder {
         self.is_flush_timeout_valid()?;
         Ok(())
     }
-
-    #[cfg(feature = "python")]
-    fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
-        match formatter.extract::<String>() {
-            Ok(fid) => {
-                self.common.set_formatter(fid);
-                Ok(())
-            }
-            Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
-                Ok(instance) => {
-                    self.common.formatter = Some(FormatterConfig::Instance(instance));
-                    Ok(())
-                }
-                Err(instance_err) => {
-                    instance_err.set_cause(formatter.py(), Some(string_err));
-                    Err(instance_err)
-                }
-            },
-        }
-    }
 }
 
 builder_methods! {
@@ -194,7 +174,7 @@ builder_methods! {
                 mut slf: PyRefMut<'py, Self>,
                 formatter: Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.set_formatter_from_py(&formatter)?;
+                slf.common.set_formatter_from_py(&formatter)?;
                 Ok(slf)
             }
 
