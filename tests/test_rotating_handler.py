@@ -56,6 +56,44 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
         assert handler.backup_count == 0, "defaults must disable backups"
 
 
+def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
+    """Supplying an invalid policy value should raise an error."""
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"invalid overflow policy: '.*'\. Valid options are: drop, block, timeout:N"
+        ),
+    ):
+        invalid_policy_value = t.cast(
+            t.Any,
+            "invalid_policy",
+        )  # Exercise runtime validation with a value rejected at type-check time.
+        invalid_options = HandlerOptions(
+            capacity=32,
+            flush_interval=2,
+            policy=invalid_policy_value,
+            rotation=(1024, 3),
+        )
+
+        with rotating_handler(str(log_path), options=invalid_options):
+            pass
+
+
+def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
+    """Omitting the policy should use the default value and preserve rotation settings."""
+
+    options = HandlerOptions(
+        capacity=32,
+        flush_interval=2,
+        rotation=(1024, 3),
+    )
+
+    with rotating_handler(str(log_path), options=options) as handler:
+        assert handler.max_bytes == 1024, "rotation max_bytes should still apply"
+        assert handler.backup_count == 3, "rotation backup_count should still apply"
+
+
 def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
     """Supplying HandlerOptions should configure queue behaviour."""
 
