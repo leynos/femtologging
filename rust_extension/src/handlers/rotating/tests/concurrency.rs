@@ -2,12 +2,10 @@
 
 use super::super::*;
 use crate::formatter::DefaultFormatter;
-use crate::handlers::file::{
-    BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy,
-};
+use crate::handlers::file::{BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy};
 use crate::log_record::FemtoLogRecord;
-use std::fs::OpenOptions;
-use std::io::{self, BufWriter, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufWriter};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,

@@ -66,10 +66,7 @@ impl FileRotationStrategy {
         Ok(current_file_len + buffered_bytes + next_record_bytes > self.max_bytes)
     }
 
-    pub(crate) fn rotate(
-        &mut self,
-        writer: &mut BufWriter<File>,
-    ) -> io::Result<Option<String>> {
+    pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<Option<String>> {
         writer.flush()?;
         if self.backup_count == 0 {
             let file = writer.get_mut();
@@ -80,8 +77,7 @@ impl FileRotationStrategy {
 
         let capacity = writer.capacity();
         let original_file = self.swap_writer_with_temp(writer, capacity)?;
-        let original_file =
-            self.perform_rotation_with_rollback(writer, original_file, capacity)?;
+        let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
         self.finalise_rotation(writer, original_file, capacity)
     }
 
@@ -256,11 +252,7 @@ impl FileRotationStrategy {
 }
 
 impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
-    fn before_write(
-        &mut self,
-        writer: &mut BufWriter<File>,
-        formatted: &str,
-    ) -> io::Result<bool> {
+    fn before_write(&mut self, writer: &mut BufWriter<File>, formatted: &str) -> io::Result<bool> {
         let next_bytes = Self::next_record_bytes(formatted);
         if self.should_rotate(writer, next_bytes)? {
             match self.rotate(writer) {
@@ -284,6 +276,3 @@ impl RotationStrategy<BufWriter<File>> for FileRotationStrategy {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

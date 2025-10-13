@@ -2,7 +2,8 @@
 
 use super::super::*;
 use crate::formatter::DefaultFormatter;
-use crate::handlers::file::{FemtoFileHandler, HandlerConfig, TestConfig};
+use crate::handlers::file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig};
+use crate::handlers::rotating::strategy::RotationOutcome;
 use crate::handlers::rotating::{
     force_fresh_failure_once_for_test, FemtoRotatingFileHandler, RotationConfig,
 };
@@ -244,7 +245,10 @@ fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
 
     let _guard = force_fresh_failure_once_for_test("once");
     let rotated = strategy.before_write(&mut writer, "next")?;
-    assert!(rotated, "rotation must proceed even when fresh reopen fails");
+    assert!(
+        rotated,
+        "rotation must proceed even when fresh reopen fails"
+    );
     match strategy.take_last_outcome() {
         RotationOutcome::RotatedWithAppendFallback { error } => assert_eq!(
             error,
