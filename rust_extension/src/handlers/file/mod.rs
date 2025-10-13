@@ -153,9 +153,9 @@ impl FemtoFileHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker acknowledges the flush command. ``False``
-    ///     when the handler has already been closed or the worker does not
-    ///     acknowledge the flush command.
+    ///     ``True`` when the worker acknowledges the flush. ``False`` when the
+    ///     handler has already been closed or the worker does not acknowledge
+    ///     the flush.
     ///
     /// Examples
     /// --------
