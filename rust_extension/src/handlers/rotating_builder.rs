@@ -12,11 +12,11 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use super::file::policy::parse_policy_with_timeout;
 use super::{
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
-    file::OverflowPolicy,
+    file::{HandlerConfig, OverflowPolicy},
     rotating::{FemtoRotatingFileHandler, RotationConfig},
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
-use crate::formatter::DefaultFormatter;
+use crate::formatter::{DefaultFormatter, FemtoFormatter};
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
@@ -87,6 +87,30 @@ impl RotatingFileHandlerBuilder {
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.state.validate()?;
         self.ensure_rotation_limits_valid()
+    }
+
+    fn build_handler_with_formatter<F>(
+        &self,
+        formatter: F,
+        cfg: HandlerConfig,
+        rotation: RotationConfig,
+    ) -> Result<FemtoRotatingFileHandler, HandlerBuildError>
+    where
+        F: FemtoFormatter + Send + 'static,
+    {
+        let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
+            &self.path, formatter, cfg, rotation,
+        )?;
+        let limits = handler.rotation_limits();
+        debug_assert_eq!(
+            limits,
+            (
+                self.max_bytes.map_or(0, NonZeroU64::get),
+                self.backup_count.map_or(0, NonZeroUsize::get),
+            )
+        );
+        let _ = limits;
+        Ok(handler)
     }
 }
 
@@ -258,40 +282,10 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
         };
         match self.state.formatter() {
             Some(FormatterConfig::Instance(fmt)) => {
-                let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
-                    &self.path,
-                    fmt.clone_arc(),
-                    cfg,
-                    rotation,
-                )?;
-                let limits = handler.rotation_limits();
-                debug_assert_eq!(
-                    limits,
-                    (
-                        self.max_bytes.map_or(0, NonZeroU64::get),
-                        self.backup_count.map_or(0, NonZeroUsize::get),
-                    )
-                );
-                let _ = limits;
-                Ok(handler)
+                self.build_handler_with_formatter(fmt.clone_arc(), cfg, rotation)
             }
             Some(FormatterConfig::Id(FormatterId::Default)) | None => {
-                let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
-                    &self.path,
-                    DefaultFormatter,
-                    cfg,
-                    rotation,
-                )?;
-                let limits = handler.rotation_limits();
-                debug_assert_eq!(
-                    limits,
-                    (
-                        self.max_bytes.map_or(0, NonZeroU64::get),
-                        self.backup_count.map_or(0, NonZeroUsize::get),
-                    )
-                );
-                let _ = limits;
-                Ok(handler)
+                self.build_handler_with_formatter(DefaultFormatter, cfg, rotation)
             }
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => Err(
                 HandlerBuildError::InvalidConfig(format!("unknown formatter id: {other}",)),
