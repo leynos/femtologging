@@ -42,7 +42,7 @@ pub trait IntoFormatterConfig {
 
 impl<F> IntoFormatterConfig for F
 where
-    F: FemtoFormatter + Send + Sync + 'static,
+    F: FemtoFormatter + 'static,
 {
     fn into_formatter_config(self) -> FormatterConfig {
         FormatterConfig::Instance(SharedFormatter::new(self))

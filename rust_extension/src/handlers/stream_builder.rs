@@ -91,7 +91,7 @@ impl StreamHandlerBuilder {
         timeout: Duration,
     ) -> FemtoStreamHandler
     where
-        F: FemtoFormatter + 'static,
+        F: FemtoFormatter + Send + 'static,
     {
         match self.target {
             StreamTarget::Stdout => FemtoStreamHandler::with_capacity_timeout(
