@@ -4,6 +4,7 @@
     'capacity': 10,
     'flush_record_interval': 2,
     'formatter_id': 'default',
+    'formatter_kind': 'id',
     'overflow_policy': 'drop',
     'path': 'test.log',
   })
@@ -14,6 +15,7 @@
     'capacity': 10,
     'flush_record_interval': 2,
     'formatter_id': 'default',
+    'formatter_kind': 'id',
     'max_bytes': 1024,
     'overflow_policy': 'drop',
     'path': 'test.log',
@@ -25,6 +27,7 @@
     'capacity': 10,
     'flush_record_interval': 2,
     'formatter_id': 'default',
+    'formatter_kind': 'id',
     'max_bytes': 1024,
     'overflow_policy': 'drop',
     'path': 'test.log',
@@ -34,6 +37,7 @@
   dict({
     'capacity': 8,
     'formatter_id': 'default',
+    'formatter_kind': 'id',
     'target': 'stdout',
   })
 # ---
@@ -41,6 +45,7 @@
   dict({
     'flush_timeout_ms': 250,
     'formatter_id': 'default',
+    'formatter_kind': 'id',
     'target': 'stdout',
   })
 # ---

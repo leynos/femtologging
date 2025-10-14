@@ -21,7 +21,10 @@ pub enum HandlerBuilder {
     File(FileHandlerBuilder),
 }
 
-struct FormatterId(String); // Newtype for formatter identifiers
+pub enum FormatterId {
+    Default,
+    Custom(String),
+}
 
 pub struct ConfigBuilder {
     // Internal state to hold configuration parts
@@ -172,7 +175,7 @@ pub struct FileHandlerBuilder {
     mode: Option<String>,
     encoding: Option<String>,
     level: Option<FemtoLevel>,
-    formatter_id: Option<FormatterId>,
+    formatter: Option<FormatterConfig>,
     filters: Vec<String>,
     capacity: Option<usize>,
     flush_record_interval: Option<usize>, // records
@@ -191,8 +194,16 @@ impl FileHandlerBuilder {
     /// Sets the log level for this handler.
     pub fn with_level(mut self, level: FemtoLevel) -> Self { /* ... */ }
 
-    /// Sets the ID of the formatter to be used by this handler.
-    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
+    /// Sets the formatter for this handler.
+    ///
+    /// Accepts either a registered formatter identifier (`FormatterId::Default`
+    /// or `FormatterId::Custom`) or a concrete [`FemtoFormatter`] instance.
+    /// Supplying an instance allows bespoke formatting without touching
+    /// global registries.
+    pub fn with_formatter<F>(mut self, formatter: F) -> Self
+    where
+        F: IntoFormatterConfig,
+    { /* ... */ }
 
     /// Sets the filter identifiers, replacing any previously configured filters.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
@@ -219,7 +230,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
 pub struct StreamHandlerBuilder {
     stream_target: String, // "stdout", "stderr", or "ext://sys.stdout", "ext://sys.stderr"
     level: Option<FemtoLevel>,
-    formatter_id: Option<FormatterId>,
+    formatter: Option<FormatterConfig>,
     filters: Vec<String>,
     capacity: Option<usize>,
     flush_timeout_ms: Option<NonZeroU64>, // milliseconds
@@ -238,8 +249,15 @@ impl StreamHandlerBuilder {
     /// Sets the log level for this handler.
     pub fn with_level(mut self, level: FemtoLevel) -> Self { /* ... */ }
 
-    /// Sets the ID of the formatter to be used by this handler.
-    pub fn with_formatter(mut self, formatter_id: impl Into<FormatterId>) -> Self { /* ... */ }
+    /// Sets the formatter for this handler.
+    ///
+    /// Identifiers remain supported for backwards compatibility, but callers
+    /// can hand in formatter instances (or Python callables through the
+    /// bindings) to customise output dynamically.
+    pub fn with_formatter<F>(mut self, formatter: F) -> Self
+    where
+        F: IntoFormatterConfig,
+    { /* ... */ }
 
     /// Sets the filter identifiers, replacing any previously configured filters.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
@@ -357,7 +375,11 @@ class HandlerBuilder: # Abstract base class or conceptual union
     # Common methods
     def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder": ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
-    def with_formatter(self, formatter_id: str) -> "HandlerBuilder": ...
+    def with_formatter(
+        self,
+        formatter: str
+        | collections.abc.Callable[[collections.abc.Mapping[str, object]], str],
+    ) -> "HandlerBuilder": ...
     def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
     def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
 
@@ -469,18 +491,24 @@ classDiagram
     }
     class FileHandlerBuilder {
         +__init__(path: str)
-        +with_formatter(fmt: str)
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
     }
     class RotatingFileHandlerBuilder {
         +__init__(path: str)
-        +with_formatter(fmt: str)
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
         +with_max_bytes(max_bytes: int)
         +with_backup_count(count: int)
     }
     class StreamHandlerBuilder {
         +stdout()
         +stderr()
-        +with_formatter(fmt: str)
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
     }
     class FilterBuilder {
         +build()

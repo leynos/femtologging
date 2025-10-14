@@ -11,12 +11,12 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 #[cfg(feature = "python")]
 use super::file::policy::parse_policy_with_timeout;
 use super::{
-    common::FileLikeBuilderState,
-    file::OverflowPolicy,
+    common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
+    file::{HandlerConfig, OverflowPolicy},
     rotating::{FemtoRotatingFileHandler, RotationConfig},
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
-use crate::formatter::DefaultFormatter;
+use crate::formatter::{DefaultFormatter, FemtoFormatter};
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
@@ -53,6 +53,15 @@ impl RotatingFileHandlerBuilder {
         self
     }
 
+    /// Attach a formatter instance or identifier.
+    pub fn with_formatter<F>(mut self, formatter: F) -> Self
+    where
+        F: IntoFormatterConfig,
+    {
+        self.state.set_formatter(formatter);
+        self
+    }
+
     fn ensure_rotation_limits_valid(&self) -> Result<(), HandlerBuildError> {
         if self.max_bytes_set && self.max_bytes.is_none() {
             return Err(HandlerBuildError::InvalidConfig(
@@ -78,6 +87,30 @@ impl RotatingFileHandlerBuilder {
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.state.validate()?;
         self.ensure_rotation_limits_valid()
+    }
+
+    fn build_handler_with_formatter<F>(
+        &self,
+        formatter: F,
+        cfg: HandlerConfig,
+        rotation: RotationConfig,
+    ) -> Result<FemtoRotatingFileHandler, HandlerBuildError>
+    where
+        F: FemtoFormatter + Send + 'static,
+    {
+        let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
+            &self.path, formatter, cfg, rotation,
+        )?;
+        let limits = handler.rotation_limits();
+        debug_assert_eq!(
+            limits,
+            (
+                self.max_bytes.map_or(0, NonZeroU64::get),
+                self.backup_count.map_or(0, NonZeroUsize::get),
+            )
+        );
+        let _ = limits;
+        Ok(handler)
     }
 }
 
@@ -115,19 +148,6 @@ builder_methods! {
                 self_ident: builder,
                 body: {
                     builder.state.set_flush_record_interval(interval);
-                }
-            }
-            method {
-                doc: "Set the formatter identifier.\n\nOnly ``DefaultFormatter`` is supported for\n``FemtoRotatingFileHandler`` at present; specifying any other identifier\ncauses :meth:`build` to return ``HandlerConfigError``.",
-                rust_name: with_formatter,
-                py_fn: py_with_formatter,
-                py_name: "with_formatter",
-                py_text_signature: "(self, formatter_id)",
-                rust_args: (formatter_id: impl Into<FormatterId>),
-                py_args: (formatter_id: String),
-                self_ident: builder,
-                body: {
-                    builder.state.set_formatter(formatter_id);
                 }
             }
             method {
@@ -211,6 +231,17 @@ builder_methods! {
                 Ok(slf)
             }
 
+            #[pyo3(name = "with_formatter")]
+            #[pyo3(signature = (formatter))]
+            #[pyo3(text_signature = "(self, formatter)")]
+            fn py_with_formatter<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                formatter: Bound<'py, PyAny>,
+            ) -> PyResult<PyRefMut<'py, Self>> {
+                slf.state.set_formatter_from_py(&formatter)?;
+                Ok(slf)
+            }
+
             /// Return a dictionary describing the builder configuration.
             fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
                 self.as_pydict(py)
@@ -249,35 +280,16 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
             ),
             None => RotationConfig::disabled(),
         };
-        // TODO(#218): Support custom formatter identifiers once rotation-aware
-        // formatters can be registered.
-        match self.state.formatter_id() {
-            Some(FormatterId::Default) | None => {
-                let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
-                    &self.path,
-                    DefaultFormatter,
-                    cfg,
-                    rotation,
-                )?;
-                let limits = handler.rotation_limits();
-                debug_assert_eq!(
-                    limits,
-                    (
-                        self.max_bytes.map_or(0, NonZeroU64::get),
-                        self.backup_count.map_or(0, NonZeroUsize::get),
-                    )
-                );
-                let _ = limits;
-                Ok(handler)
+        match self.state.formatter() {
+            Some(FormatterConfig::Instance(fmt)) => {
+                self.build_handler_with_formatter(fmt.clone_arc(), cfg, rotation)
             }
-            Some(FormatterId::Custom(other)) => Err(HandlerBuildError::InvalidConfig(format!(
-                concat!(
-                    "FemtoRotatingFileHandler only supports ",
-                    "the default formatter; ",
-                    "`{other}` is not supported",
-                ),
-                other = other,
-            ))),
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => {
+                self.build_handler_with_formatter(DefaultFormatter, cfg, rotation)
+            }
+            Some(FormatterConfig::Id(FormatterId::Custom(other))) => Err(
+                HandlerBuildError::InvalidConfig(format!("unknown formatter id: {other}",)),
+            ),
         }
     }
 }
@@ -289,11 +301,22 @@ mod tests {
     use rstest::rstest;
     use tempfile::tempdir;
 
+    use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
+
+    #[derive(Clone, Copy, Debug)]
+    struct SuffixFormatter;
+
+    impl FemtoFormatter for SuffixFormatter {
+        fn format(&self, record: &FemtoLogRecord) -> String {
+            format!("suffix:{}", record.message)
+        }
+    }
+
     #[rstest]
     fn build_rotating_file_handler_defaults() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.log");
-        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy());
+        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned());
         let mut handler = builder
             .build_inner()
             .expect("build_inner must succeed for defaults");
@@ -305,7 +328,7 @@ mod tests {
     fn build_rotating_file_handler_with_limits() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.log");
-        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy())
+        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(32)
             .with_flush_record_interval(2)
             .with_max_bytes(1024)
@@ -314,6 +337,20 @@ mod tests {
             .build_inner()
             .expect("build_inner must succeed for valid rotation config");
         assert_eq!(handler.rotation_limits(), (1024, 3));
+        handler.close();
+    }
+
+    #[rstest]
+    fn build_rotating_file_handler_with_custom_formatter() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.log");
+        let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
+            .with_formatter(SuffixFormatter)
+            .with_capacity(8);
+        let mut handler = builder
+            .build_inner()
+            .expect("build_inner must accept formatter instances");
+        handler.flush();
         handler.close();
     }
 

@@ -226,6 +226,13 @@ def then_setting_backup_count_fails(
         rotating.with_backup_count(backup_count)
 
 
+@then(parsers.parse('setting zero rotation thresholds fails with "{message}"'))
+def then_zero_rotation_thresholds_fail(file_builder: FileBuilder, message: str) -> None:
+    rotating = _require_rotating_builder(file_builder)
+    with pytest.raises(HandlerConfigError, match=re.escape(message)):
+        rotating.with_max_bytes(0).with_backup_count(0).build()
+
+
 @then("the stream handler builder matches snapshot")
 def then_stream_builder_snapshot(
     stream_builder: StreamHandlerBuilder, snapshot: SnapshotAssertion
@@ -349,3 +356,63 @@ def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
     builder = builder.with_overflow_policy("timeout:125", timeout_ms=None)
     handler = builder.build()
     handler.close()
+
+
+def test_stream_builder_accepts_callable_formatter() -> None:
+    builder = StreamHandlerBuilder.stderr().with_formatter(
+        lambda record: f"callable:{record['message']}"
+    )
+    handler = builder.build()
+    handler.close()
+
+
+def test_file_builder_accepts_callable_formatter(tmp_path: Path) -> None:
+    path = tmp_path / "callable_formatter.log"
+    builder = FileHandlerBuilder(str(path)).with_formatter(
+        lambda record: f"callable:{record['message']}"
+    )
+    handler = builder.build()
+    handler.handle("logger", "INFO", "hello")
+    handler.close()
+    contents = path.read_text()
+    assert "callable:hello" in contents
+
+
+def test_rotating_builder_accepts_callable_formatter(tmp_path: Path) -> None:
+    path = tmp_path / "callable_rotating.log"
+    builder = RotatingFileHandlerBuilder(str(path)).with_formatter(
+        lambda record: f"callable:{record['message']}"
+    )
+    handler = builder.build()
+    handler.handle("logger", "INFO", "hello")
+    handler.close()
+    contents = path.read_text()
+    assert "callable:hello" in contents
+
+
+def test_builder_formatter_error_chain(tmp_path: Path) -> None:
+    """Errors when adapting Python formatters preserve both failure causes."""
+
+    class NotFormatter:
+        def __str__(self) -> str:  # pragma: no cover - invoked via PyO3
+            raise TypeError("no string representation available")
+
+    builder = FileHandlerBuilder(str(tmp_path / "formatter_error_chain.log"))
+    with pytest.raises(TypeError) as excinfo:
+        builder.with_formatter(NotFormatter())
+
+    chain_messages: list[str] = [str(excinfo.value)]
+    cause = excinfo.value.__cause__
+    while cause is not None:
+        chain_messages.append(str(cause))
+        cause = cause.__cause__
+
+    assert any(
+        "formatter string identifier extraction failed" in message
+        for message in chain_messages
+    ), "string formatter failure should remain in the cause chain"
+    assert any(
+        "formatter must be callable or expose a format(record: Mapping) -> str method"
+        in message
+        for message in chain_messages
+    ), "callable formatter failure should remain in the cause chain"

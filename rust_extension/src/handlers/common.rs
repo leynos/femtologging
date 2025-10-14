@@ -2,25 +2,88 @@
 //!
 //! Stores fields common to multiple handler builders.
 
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::{
+    fmt,
+    num::{NonZeroU64, NonZeroUsize},
+};
 
 #[cfg(feature = "python")]
-use pyo3::{prelude::*, types::PyDict, Bound};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict, Bound, IntoPyObjectExt};
 
 use super::{
     file::{HandlerConfig, OverflowPolicy},
     FormatterId, HandlerBuildError,
 };
+use crate::formatter::{FemtoFormatter, SharedFormatter};
+
+/// Formatter configuration stored by handler builders.
+#[derive(Clone)]
+pub enum FormatterConfig {
+    /// Formatter referenced by identifier.
+    Id(FormatterId),
+    /// Formatter provided as an instance.
+    Instance(SharedFormatter),
+}
+
+impl fmt::Debug for FormatterConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Id(id) => f.debug_tuple("Id").field(id).finish(),
+            Self::Instance(_) => f.write_str("Instance(<formatter>)"),
+        }
+    }
+}
+
+/// Convert inputs into [`FormatterConfig`] values for builder consumption.
+pub trait IntoFormatterConfig {
+    /// Convert `self` into a [`FormatterConfig`].
+    fn into_formatter_config(self) -> FormatterConfig;
+}
+
+impl<F> IntoFormatterConfig for F
+where
+    F: FemtoFormatter + 'static,
+{
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterConfig::Instance(SharedFormatter::new(self))
+    }
+}
+
+impl IntoFormatterConfig for SharedFormatter {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterConfig::Instance(self)
+    }
+}
+
+impl IntoFormatterConfig for FormatterId {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterConfig::Id(self)
+    }
+}
+
+impl IntoFormatterConfig for String {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterId::from(self).into_formatter_config()
+    }
+}
+
+impl IntoFormatterConfig for &str {
+    fn into_formatter_config(self) -> FormatterConfig {
+        FormatterId::from(self).into_formatter_config()
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct CommonBuilder {
     pub(crate) capacity: Option<NonZeroUsize>,
     pub(crate) capacity_set: bool,
     pub(crate) flush_timeout_ms: Option<NonZeroU64>,
-    pub(crate) formatter_id: Option<FormatterId>,
+    pub(crate) formatter: Option<FormatterConfig>,
 }
 
 impl CommonBuilder {
+    pub(crate) const DEFAULT_FLUSH_TIMEOUT_MS: u64 = 1_000;
+
     /// Update the bounded channel capacity in place.
     ///
     /// A zero capacity is recorded for validation but does not update the
@@ -38,6 +101,50 @@ impl CommonBuilder {
                 .expect("NonZeroUsize::new must succeed for non-zero capacity"),
         );
         self.capacity_set = true;
+    }
+
+    pub(crate) fn set_formatter<F>(&mut self, formatter: F)
+    where
+        F: IntoFormatterConfig,
+    {
+        self.formatter = Some(formatter.into_formatter_config());
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
+        match formatter.extract::<String>() {
+            Ok(fid) => {
+                self.set_formatter(fid);
+                Ok(())
+            }
+            Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
+                Ok(instance) => {
+                    // The extracted formatter is already wrapped in a shared trait
+                    // object; storing it directly avoids double `Arc` wrapping via the
+                    // blanket `IntoFormatterConfig` implementation.
+                    self.formatter = Some(FormatterConfig::Instance(instance));
+                    Ok(())
+                }
+                Err(instance_err) => {
+                    let py = formatter.py();
+
+                    let string_context =
+                        PyTypeError::new_err("formatter string identifier extraction failed");
+                    string_context.set_cause(py, Some(string_err));
+
+                    if let Some(existing_cause) = instance_err.cause(py) {
+                        let bound_cause = existing_cause.clone_ref(py).into_bound_py_any(py)?;
+                        let callable_err = PyErr::from_value(bound_cause);
+                        callable_err.set_cause(py, Some(string_context));
+                        instance_err.set_cause(py, Some(callable_err));
+                    } else {
+                        instance_err.set_cause(py, Some(string_context));
+                    }
+
+                    Err(instance_err)
+                }
+            },
+        }
     }
 
     /// Validate that an optional numeric field (if provided) is greater than zero.
@@ -80,8 +187,17 @@ impl CommonBuilder {
         if let Some(ms) = self.flush_timeout_ms {
             d.set_item("flush_timeout_ms", ms.get())?;
         }
-        if let Some(fid) = &self.formatter_id {
-            d.set_item("formatter_id", fid.as_str())?;
+        if let Some(fmt) = &self.formatter {
+            match fmt {
+                FormatterConfig::Id(fid) => {
+                    d.set_item("formatter_kind", "id")?;
+                    d.set_item("formatter_id", fid.as_str())?;
+                }
+                FormatterConfig::Instance(_) => {
+                    d.set_item("formatter_kind", "instance")?;
+                    d.set_item("formatter", "instance")?;
+                }
+            }
         }
         Ok(())
     }
@@ -162,13 +278,21 @@ impl FileLikeBuilderState {
     }
 
     /// Update the formatter identifier in place.
-    pub(crate) fn set_formatter(&mut self, formatter_id: impl Into<FormatterId>) {
-        self.common.formatter_id = Some(formatter_id.into());
+    pub(crate) fn set_formatter<F>(&mut self, formatter: F)
+    where
+        F: IntoFormatterConfig,
+    {
+        self.common.set_formatter(formatter);
     }
 
     /// Update the overflow policy in place.
     pub(crate) fn set_overflow_policy(&mut self, policy: OverflowPolicy) {
         self.overflow_policy = policy;
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.common.set_formatter_from_py(formatter)
     }
 
     /// Validate queue-related settings shared between file-based builders.
@@ -202,8 +326,8 @@ impl FileLikeBuilderState {
     }
 
     /// Expose the configured formatter identifier, if any.
-    pub(crate) fn formatter_id(&self) -> Option<&FormatterId> {
-        self.common.formatter_id.as_ref()
+    pub(crate) fn formatter(&self) -> Option<&FormatterConfig> {
+        self.common.formatter.as_ref()
     }
 
     /// Extend a Python dictionary with shared file builder fields.
