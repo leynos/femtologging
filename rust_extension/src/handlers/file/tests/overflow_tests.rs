@@ -3,9 +3,49 @@
 
 use super::super::*;
 use super::test_support::{setup_overflow_test, spawn_record_thread};
+use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use serial_test::serial;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
+
+/// Assert that a drop scenario records the expected warning message.
+///
+/// The helper installs the test logger, queues an initial record, runs the
+/// caller-provided setup hook, and then sends a second record that must fail.
+/// It verifies that the error matches the expectation and that a single warning
+/// was emitted with the required text.
+fn assert_drop_warning_logged<Setup>(
+    overflow_policy: OverflowPolicy,
+    expected_error: HandlerError,
+    expected_message: &str,
+    setup: Setup,
+) where
+    Setup: FnOnce(&mut FemtoFileHandler, &Arc<Barrier>) -> bool,
+{
+    install_test_logger();
+    let (_buffer, start_barrier, mut handler) = setup_overflow_test(overflow_policy);
+
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .expect("first record queued");
+
+    let barrier_released = setup(&mut handler, &start_barrier);
+
+    let err = handler
+        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .expect_err("second record should be dropped");
+    assert_eq!(err, expected_error);
+
+    let logs = take_logged_messages();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].message, expected_message);
+
+    if !barrier_released {
+        start_barrier.wait();
+    }
+
+    drop(handler);
+}
 
 #[test]
 #[serial]
@@ -138,4 +178,41 @@ fn femto_file_handler_queue_overflow_block_policy_large_batch() {
     let lines: Vec<String> = buffer.contents().lines().map(str::to_owned).collect();
     let expected: Vec<String> = (0..32).map(|i| format!("core [INFO] batch{i}")).collect();
     assert_eq!(lines, expected);
+}
+
+#[test]
+#[serial]
+fn femto_file_handler_logs_queue_full_warning() {
+    assert_drop_warning_logged(
+        OverflowPolicy::Drop,
+        HandlerError::QueueFull,
+        "FemtoFileHandler: 1 log records dropped because the queue was full",
+        |_, _| false,
+    );
+}
+
+#[test]
+#[serial]
+fn femto_file_handler_logs_closed_warning() {
+    assert_drop_warning_logged(
+        OverflowPolicy::Drop,
+        HandlerError::Closed,
+        "FemtoFileHandler: 1 log records dropped after the handler was closed",
+        |handler, barrier| {
+            barrier.wait();
+            handler.close();
+            true
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn femto_file_handler_logs_timeout_warning() {
+    assert_drop_warning_logged(
+        OverflowPolicy::Timeout(Duration::from_millis(10)),
+        HandlerError::Timeout(Duration::from_millis(10)),
+        "FemtoFileHandler: 1 log records dropped after timing out waiting for the worker thread (timeout: Some(10ms))",
+        |_, _| false,
+    );
 }

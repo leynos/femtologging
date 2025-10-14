@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use pyo3::prelude::*;
 use std::any::Any;
 
-use crate::handler::{handler_error_to_py, FemtoHandlerTrait, HandlerError};
+use crate::handler::{to_py_runtime_error, FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -109,7 +109,7 @@ impl FemtoStreamHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
-            .map_err(handler_error_to_py)
+            .map_err(|err| to_py_runtime_error(&err))
     }
 
     /// Flush pending log records without shutting down the worker thread.
@@ -227,12 +227,11 @@ impl FemtoStreamHandler {
         }
     }
 
-    fn warn_drop(&self, error: HandlerError) -> HandlerError {
+    fn warn_drop(&self) {
         self.warner.record_drop();
         self.warner.warn_if_due(|count| {
             warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
         });
-        error
     }
 
     /// Flush any pending log records.
@@ -263,12 +262,19 @@ impl FemtoStreamHandler {
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = &self.tx else {
-            return Err(self.warn_drop(HandlerError::Closed));
+            self.warn_drop();
+            return Err(HandlerError::Closed);
         };
         match tx.try_send(StreamCommand::Record(record)) {
             Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(self.warn_drop(HandlerError::QueueFull)),
-            Err(TrySendError::Disconnected(_)) => Err(self.warn_drop(HandlerError::Closed)),
+            Err(TrySendError::Full(_)) => {
+                self.warn_drop();
+                Err(HandlerError::QueueFull)
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.warn_drop();
+                Err(HandlerError::Closed)
+            }
         }
     }
 

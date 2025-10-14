@@ -13,19 +13,23 @@
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
 
+mod builder_options;
 mod config;
+mod drop_warner;
 pub(crate) mod policy;
 mod worker;
 pub(crate) use worker::{NoRotation, RotationStrategy};
 #[cfg(test)]
 pub(crate) mod test_support;
 
+pub(crate) use builder_options::BuilderOptions;
+
+use drop_warner::{DropReason, DropWarner};
+
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufWriter, Seek, Write},
-    marker::PhantomData,
     path::Path,
-    sync::{Arc, Barrier},
     thread::JoinHandle,
     time::Duration,
 };
@@ -34,7 +38,7 @@ use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TrySendError};
 use pyo3::prelude::*;
 use std::any::Any;
 
-use crate::handler::{handler_error_to_py, FemtoHandlerTrait, HandlerError};
+use crate::handler::{to_py_runtime_error, FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -71,6 +75,7 @@ pub struct FemtoFileHandler {
     done_rx: Receiver<()>,
     overflow_policy: OverflowPolicy,
     ack_rx: Receiver<()>,
+    drop_warner: DropWarner,
 }
 
 fn open_log_file(path: &str) -> PyResult<File> {
@@ -146,7 +151,7 @@ impl FemtoFileHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
-            .map_err(handler_error_to_py)
+            .map_err(|err| to_py_runtime_error(&err))
     }
 
     #[pyo3(name = "flush")]
@@ -157,43 +162,6 @@ impl FemtoFileHandler {
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.close();
-    }
-}
-
-pub(crate) struct BuilderOptions<W, R = NoRotation>
-where
-    W: Write + Seek,
-    R: RotationStrategy<W>,
-{
-    pub(crate) rotation: R,
-    pub(crate) start_barrier: Option<Arc<Barrier>>,
-    _phantom: PhantomData<W>,
-}
-
-impl<W> Default for BuilderOptions<W>
-where
-    W: Write + Seek,
-{
-    fn default() -> Self {
-        Self {
-            rotation: NoRotation,
-            start_barrier: None,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<W, R> BuilderOptions<W, R>
-where
-    W: Write + Seek,
-    R: RotationStrategy<W>,
-{
-    pub(crate) fn new(rotation: R, start_barrier: Option<Arc<Barrier>>) -> Self {
-        Self {
-            rotation,
-            start_barrier,
-            _phantom: PhantomData,
-        }
     }
 }
 
@@ -268,6 +236,7 @@ impl FemtoFileHandler {
     }
 
     pub fn flush(&self) -> bool {
+        self.drop_warner.flush();
         match &self.tx {
             Some(tx) => self.perform_flush(tx),
             None => false,
@@ -285,8 +254,14 @@ impl FemtoFileHandler {
         self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
     }
 
+    fn record_drop(&self, reason: DropReason, error: HandlerError) -> HandlerError {
+        self.drop_warner.record(reason);
+        error
+    }
+
     pub fn close(&mut self) {
         self.tx.take();
+        self.drop_warner.flush();
         if let Some(handle) = self.handle.take() {
             if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
                 log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
@@ -319,12 +294,14 @@ impl FemtoFileHandler {
         let overflow_policy = config.overflow_policy;
         let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
         let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, ack_tx, rotation);
+        let drop_warner = DropWarner::new(overflow_policy);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
             overflow_policy,
             ack_rx,
+            drop_warner,
         }
     }
 
@@ -354,44 +331,30 @@ impl FemtoFileHandler {
 impl FemtoHandlerTrait for FemtoFileHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = &self.tx else {
-            log::warn!("FemtoFileHandler: handle called after close");
-            return Err(HandlerError::Closed);
+            return Err(self.record_drop(DropReason::Closed, HandlerError::Closed));
         };
         match self.overflow_policy {
             OverflowPolicy::Drop => match tx.try_send(FileCommand::Record(Box::new(record))) {
                 Ok(()) => Ok(()),
                 Err(TrySendError::Full(_)) => {
-                    log::warn!(
-                        "FemtoFileHandler (Drop): queue full or shutting down, dropping record"
-                    );
-                    Err(HandlerError::QueueFull)
+                    Err(self.record_drop(DropReason::QueueFull, HandlerError::QueueFull))
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    log::warn!("FemtoFileHandler (Drop): queue closed, dropping record");
-                    Err(HandlerError::Closed)
+                    Err(self.record_drop(DropReason::Closed, HandlerError::Closed))
                 }
             },
             OverflowPolicy::Block => match tx.send(FileCommand::Record(Box::new(record))) {
                 Ok(()) => Ok(()),
-                Err(_) => {
-                    log::warn!(
-                        "FemtoFileHandler (Block): queue full or shutting down, dropping record"
-                    );
-                    Err(HandlerError::Closed)
-                }
+                Err(_) => Err(self.record_drop(DropReason::Closed, HandlerError::Closed)),
             },
             OverflowPolicy::Timeout(dur) => {
                 match tx.send_timeout(FileCommand::Record(Box::new(record)), dur) {
                     Ok(()) => Ok(()),
                     Err(SendTimeoutError::Timeout(_)) => {
-                        log::warn!(
-                            "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
-                        );
-                        Err(HandlerError::Timeout(dur))
+                        Err(self.record_drop(DropReason::Timeout, HandlerError::Timeout(dur)))
                     }
                     Err(SendTimeoutError::Disconnected(_)) => {
-                        log::warn!("FemtoFileHandler (Timeout): queue closed, dropping record");
-                        Err(HandlerError::Closed)
+                        Err(self.record_drop(DropReason::Closed, HandlerError::Closed))
                     }
                 }
             }
