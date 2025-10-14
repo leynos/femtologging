@@ -3,6 +3,7 @@
 
 use super::super::*;
 use super::test_support::{setup_overflow_test, spawn_record_thread};
+use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use serial_test::serial;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
@@ -138,4 +139,76 @@ fn femto_file_handler_queue_overflow_block_policy_large_batch() {
     let lines: Vec<String> = buffer.contents().lines().map(str::to_owned).collect();
     let expected: Vec<String> = (0..32).map(|i| format!("core [INFO] batch{i}")).collect();
     assert_eq!(lines, expected);
+}
+
+#[test]
+#[serial]
+fn femto_file_handler_logs_queue_full_warning() {
+    install_test_logger();
+    let (_buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);
+
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .expect("first record queued");
+    let err = handler
+        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .expect_err("second record should overflow");
+    assert_eq!(err, HandlerError::QueueFull);
+
+    let logs = take_logged_messages();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs[0].message,
+        "FemtoFileHandler: 1 log records dropped because the queue was full",
+    );
+
+    start_barrier.wait();
+    drop(handler);
+}
+
+#[test]
+#[serial]
+fn femto_file_handler_logs_closed_warning() {
+    install_test_logger();
+    let (_buffer, start_barrier, mut handler) = setup_overflow_test(OverflowPolicy::Drop);
+
+    start_barrier.wait();
+    handler.close();
+    let err = handler
+        .handle(FemtoLogRecord::new("core", "INFO", "after-close"))
+        .expect_err("handler should be closed");
+    assert_eq!(err, HandlerError::Closed);
+
+    let logs = take_logged_messages();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs[0].message,
+        "FemtoFileHandler: 1 log records dropped after the handler was closed",
+    );
+}
+
+#[test]
+#[serial]
+fn femto_file_handler_logs_timeout_warning() {
+    install_test_logger();
+    let (_buffer, start_barrier, handler) =
+        setup_overflow_test(OverflowPolicy::Timeout(Duration::from_millis(10)));
+
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .expect("first record queued");
+    let err = handler
+        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .expect_err("second record should time out");
+    assert_eq!(err, HandlerError::Timeout(Duration::from_millis(10)));
+
+    let logs = take_logged_messages();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs[0].message,
+        "FemtoFileHandler: 1 log records dropped after timing out waiting for the worker thread (timeout: Some(10ms))",
+    );
+
+    start_barrier.wait();
+    drop(handler);
 }
