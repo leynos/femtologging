@@ -1,11 +1,10 @@
-//! Handler traits and error conversion helpers shared by the logging
-//! backends.
+//! Handler traits and error types for dispatching log records.
 //!
 //! Each handler implements [`FemtoHandlerTrait`] to accept formatted records
 //! from the logger. Failures surface as [`HandlerError`] values, which can be
-//! mapped to Python `RuntimeError`s using [`handler_error_to_py`]. The helper
-//! keeps the Rust/Python boundary behaviour consistent by producing the same
-//! [`PyErr`] message for every handler failure.
+//! mapped to Python `RuntimeError`s using [`handler_error_to_py`].
+//! The helper keeps the Rust/Python boundary behaviour consistent by
+//! producing the same [`PyErr`] message for every handler failure.
 use crate::log_record::FemtoLogRecord;
 use pyo3::{exceptions::PyRuntimeError, prelude::*, PyErr};
 use std::{any::Any, time::Duration};
@@ -33,6 +32,11 @@ pub enum HandlerError {
 /// boundary.
 pub(crate) fn handler_error_to_py(err: HandlerError) -> PyErr {
     PyRuntimeError::new_err(format!("Handler error: {err}"))
+}
+
+/// Convert a [`HandlerError`] reference into the standard Python runtime error.
+pub(crate) fn to_py_runtime_error(err: &HandlerError) -> PyErr {
+    handler_error_to_py(err.clone())
 }
 
 /// Trait implemented by all log handlers.

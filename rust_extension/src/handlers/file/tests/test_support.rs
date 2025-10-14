@@ -97,13 +97,17 @@ pub(super) fn setup_overflow_test(
     (buffer, start_barrier, handler)
 }
 
-/// Spawn a thread that submits `record` once the returned barrier is released.
+/// Spawn a thread that sends a single record to the handler after barrier
+/// synchronisation.
 ///
-/// Returns `(barrier, receiver, join_handle)` where:
-/// - `barrier` synchronises the spawned thread with the caller so the caller
-///   can control when the record is sent.
-/// - `receiver` signals that the record has been enqueued by the handler.
-/// - `join_handle` lets the caller await thread completion during teardown.
+/// Returns a tuple of:
+/// - `Arc`: synchronisation barrier to release the spawned thread
+/// - `mpsc::Receiver<()>`: channel signalling record send completion
+/// - `JoinHandle<()>`: handle to the spawned thread
+///
+/// The spawned thread waits on the barrier, sends the record via
+/// `handler.handle()`, and signals completion using the receiver. Tests can
+/// use the join handle to ensure the thread exits cleanly.
 pub(super) fn spawn_record_thread(
     handler: Arc<FemtoFileHandler>,
     record: FemtoLogRecord,

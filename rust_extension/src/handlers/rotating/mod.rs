@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[cfg(feature = "python")]
-use crate::handler::handler_error_to_py;
+use crate::handler::to_py_runtime_error;
 
 mod fresh_failure;
 mod strategy;
@@ -351,7 +351,7 @@ impl FemtoRotatingFileHandler {
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         self.inner
             .handle(FemtoLogRecord::new(logger, level, message))
-            .map_err(handler_error_to_py)
+            .map_err(|err| to_py_runtime_error(&err))
     }
 
     #[pyo3(name = "flush")]
