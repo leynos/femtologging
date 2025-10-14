@@ -81,3 +81,159 @@ pub(crate) fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiv
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handler::{FemtoHandlerTrait, HandlerError};
+    use parking_lot::Mutex;
+    use std::any::Any;
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct CollectingHandler {
+        seen: Arc<Mutex<Vec<FemtoLogRecord>>>,
+    }
+
+    impl CollectingHandler {
+        fn new() -> Self {
+            Self {
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn records(&self) -> Vec<FemtoLogRecord> {
+            self.seen.lock().clone()
+        }
+    }
+
+    impl FemtoHandlerTrait for CollectingHandler {
+        fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+            self.seen.lock().push(record);
+            Ok(())
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    struct FailingHandler;
+
+    impl FemtoHandlerTrait for FailingHandler {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            Err(HandlerError::Message("boom".to_string()))
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn handle_log_record_invokes_all_handlers() {
+        let collector = Arc::new(CollectingHandler::new());
+        let record = FemtoLogRecord::new("core", "INFO", "msg");
+        let queued = QueuedRecord {
+            record,
+            handlers: vec![
+                Arc::new(FailingHandler) as Arc<dyn FemtoHandlerTrait>,
+                collector.clone() as Arc<dyn FemtoHandlerTrait>,
+            ],
+        };
+
+        handle_log_record(queued);
+
+        let collected = collector.records();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].message, "msg");
+    }
+
+    #[test]
+    fn drain_remaining_records_processes_all_jobs() {
+        let collector = Arc::new(CollectingHandler::new());
+        let (tx, rx) = bounded(4);
+
+        for idx in 0..3 {
+            let message = format!("{idx}");
+            tx.send(QueuedRecord {
+                record: FemtoLogRecord::new("core", "INFO", &message),
+                handlers: vec![collector.clone() as Arc<dyn FemtoHandlerTrait>],
+            })
+            .expect("queue should accept test record");
+        }
+
+        drain_remaining_records(&rx);
+
+        let messages: Vec<String> = collector
+            .records()
+            .into_iter()
+            .map(|rec| rec.message)
+            .collect();
+        assert_eq!(messages, vec!["0", "1", "2"]);
+    }
+
+    #[test]
+    fn spawn_worker_processes_and_shuts_down_cleanly() {
+        let collector = Arc::new(CollectingHandler::new());
+        let WorkerParts {
+            tx,
+            shutdown_tx,
+            handle,
+        } = spawn_worker();
+
+        tx.send(QueuedRecord {
+            record: FemtoLogRecord::new("core", "INFO", "alpha"),
+            handlers: vec![collector.clone() as Arc<dyn FemtoHandlerTrait>],
+        })
+        .expect("worker queue should accept record");
+
+        shutdown_tx
+            .send(())
+            .expect("shutdown channel should accept signal");
+        drop(tx);
+
+        handle.join().expect("worker thread should exit normally");
+
+        let messages: Vec<String> = collector
+            .records()
+            .into_iter()
+            .map(|rec| rec.message)
+            .collect();
+        assert_eq!(messages, vec!["alpha"]);
+    }
+
+    #[test]
+    fn worker_thread_loop_drains_before_exit() {
+        let collector = Arc::new(CollectingHandler::new());
+        let (tx, rx) = bounded(4);
+        let (shutdown_tx, shutdown_rx) = bounded(1);
+        let handler_arc = collector.clone() as Arc<dyn FemtoHandlerTrait>;
+
+        tx.send(QueuedRecord {
+            record: FemtoLogRecord::new("core", "INFO", "first"),
+            handlers: vec![handler_arc.clone()],
+        })
+        .expect("queue should accept first record");
+        tx.send(QueuedRecord {
+            record: FemtoLogRecord::new("core", "INFO", "second"),
+            handlers: vec![handler_arc],
+        })
+        .expect("queue should accept second record");
+
+        let worker = std::thread::spawn(move || worker_thread_loop(rx, shutdown_rx));
+
+        shutdown_tx
+            .send(())
+            .expect("shutdown channel should accept signal");
+        drop(tx);
+        worker.join().expect("worker loop should exit cleanly");
+
+        let messages: Vec<String> = collector
+            .records()
+            .into_iter()
+            .map(|rec| rec.message)
+            .collect();
+        assert_eq!(messages, vec!["first", "second"]);
+    }
+}
