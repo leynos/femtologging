@@ -1,9 +1,18 @@
+//! Handler traits and error conversion helpers shared by the logging
+//! backends.
+//!
+//! Each handler implements [`FemtoHandlerTrait`] to accept formatted records
+//! from the logger. Failures surface as [`HandlerError`] values, which can be
+//! mapped to Python `RuntimeError`s using [`handler_error_to_py`]. The helper
+//! keeps the Rust/Python boundary behaviour consistent by producing the same
+//! [`PyErr`] message for every handler failure.
 use crate::log_record::FemtoLogRecord;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyRuntimeError, prelude::*, PyErr};
 use std::{any::Any, time::Duration};
 use thiserror::Error;
 
 /// Errors reported by handler implementations when dispatching a log record.
+#[non_exhaustive]
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum HandlerError {
     /// The handler's queue rejected the record because it was already full.
@@ -18,6 +27,12 @@ pub enum HandlerError {
     /// Catch-all variant for handler specific failures.
     #[error("{0}")]
     Message(String),
+}
+
+/// Convert a [`HandlerError`] into the Python exception exposed at the FFI
+/// boundary.
+pub(crate) fn handler_error_to_py(err: HandlerError) -> PyErr {
+    PyRuntimeError::new_err(format!("Handler error: {err}"))
 }
 
 /// Trait implemented by all log handlers.

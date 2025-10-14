@@ -203,7 +203,7 @@ fn drop_counter_increments_on_queue_overflow() {
     let logger = FemtoLogger::new("drop".to_string());
     logger.add_handler(handler);
     logger.log(FemtoLevel::Info, "block");
-    for _ in 0..super::DEFAULT_CHANNEL_CAPACITY {
+    for _ in 0..super::worker::DEFAULT_CHANNEL_CAPACITY {
         logger.log(FemtoLevel::Info, "fill");
     }
     logger.log(FemtoLevel::Info, "overflow");

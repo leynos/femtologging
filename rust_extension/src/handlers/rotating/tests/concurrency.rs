@@ -113,6 +113,11 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
     Ok(())
 }
 
+/// Poll `started` until rotation begins or the `timeout` elapses.
+///
+/// # Panics
+///
+/// Panics if the rotation does not begin before the timeout expires.
 fn wait_for_rotation_start(started: &AtomicBool, timeout: Duration) {
     let wait_start = Instant::now();
     while !started.load(Ordering::SeqCst) {
@@ -123,6 +128,10 @@ fn wait_for_rotation_start(started: &AtomicBool, timeout: Duration) {
     }
 }
 
+/// Attempt `count` non-blocking writes to `handler`, returning the elapsed time.
+///
+/// Accepts `Ok(())` and `HandlerError::QueueFull` as expected outcomes because
+/// the test exercises drop-on-overflow behaviour. Panics on other errors.
 fn attempt_non_blocking_writes(handler: &mut FemtoRotatingFileHandler, count: usize) -> Duration {
     let start = Instant::now();
     for idx in 0..count {

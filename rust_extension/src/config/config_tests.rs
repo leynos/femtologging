@@ -107,12 +107,16 @@ fn build_rejects_missing_root() {
     assert!(matches!(err, ConfigError::MissingRootLogger));
 }
 
+#[rstest]
+#[serial]
 fn build_accepts_default_version(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
 }
 
+#[rstest]
+#[serial]
 fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let handler = StreamHandlerBuilder::stderr();
