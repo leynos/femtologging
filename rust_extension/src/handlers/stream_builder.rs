@@ -88,36 +88,36 @@ impl StreamHandlerBuilder {
         )
     }
 
-    fn build_with_formatter<F>(
-        &self,
-        formatter: F,
-        capacity: usize,
-        timeout: Duration,
-    ) -> FemtoStreamHandler
+    fn resolved_capacity(&self) -> usize {
+        self.common.capacity.map(|c| c.get()).unwrap_or(1024)
+    }
+
+    fn resolved_flush_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.common
+                .flush_timeout_ms
+                .map(NonZeroU64::get)
+                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
+        )
+    }
+
+    fn build_with_formatter<F>(&self, formatter: F) -> FemtoStreamHandler
     where
         F: FemtoFormatter + Send + 'static,
     {
         match self.target {
-            StreamTarget::Stdout => {
-                self.build_with_writer(io::stdout(), formatter, capacity, timeout)
-            }
-            StreamTarget::Stderr => {
-                self.build_with_writer(io::stderr(), formatter, capacity, timeout)
-            }
+            StreamTarget::Stdout => self.build_with_writer(io::stdout(), formatter),
+            StreamTarget::Stderr => self.build_with_writer(io::stderr(), formatter),
         }
     }
 
-    fn build_with_writer<W, F>(
-        &self,
-        writer: W,
-        formatter: F,
-        capacity: usize,
-        timeout: Duration,
-    ) -> FemtoStreamHandler
+    fn build_with_writer<W, F>(&self, writer: W, formatter: F) -> FemtoStreamHandler
     where
         W: Write + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
+        let capacity = self.resolved_capacity();
+        let timeout = self.resolved_flush_timeout();
         FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, timeout)
     }
 
@@ -220,19 +220,10 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
 
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
-        let capacity = self.common.capacity.map(|c| c.get()).unwrap_or(1024);
-        let timeout = Duration::from_millis(
-            self.common
-                .flush_timeout_ms
-                .map(NonZeroU64::get)
-                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
-        );
         let handler = match self.common.formatter.as_ref() {
-            Some(FormatterConfig::Instance(fmt)) => {
-                self.build_with_formatter(fmt.clone_arc(), capacity, timeout)
-            }
+            Some(FormatterConfig::Instance(fmt)) => self.build_with_formatter(fmt.clone_arc()),
             Some(FormatterConfig::Id(FormatterId::Default)) | None => {
-                self.build_with_formatter(DefaultFormatter, capacity, timeout)
+                self.build_with_formatter(DefaultFormatter)
             }
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
@@ -310,28 +301,14 @@ mod tests {
     #[case(StreamHandlerBuilder::stderr())]
     fn build_stream_handler_with_custom_formatter(#[case] builder: StreamHandlerBuilder) {
         let builder = builder.with_formatter(UpperFormatter).with_capacity(4);
-        let capacity = builder.common.capacity.map(|c| c.get()).unwrap_or(1024);
-        let timeout = Duration::from_millis(
-            builder
-                .common
-                .flush_timeout_ms
-                .map(NonZeroU64::get)
-                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
-        );
         let sink = Arc::new(Mutex::new(Vec::new()));
         let mut handler = match builder.common.formatter.as_ref() {
-            Some(FormatterConfig::Instance(fmt)) => builder.build_with_writer(
-                TestWriter::new(Arc::clone(&sink)),
-                fmt.clone_arc(),
-                capacity,
-                timeout,
-            ),
-            Some(FormatterConfig::Id(FormatterId::Default)) | None => builder.build_with_writer(
-                TestWriter::new(Arc::clone(&sink)),
-                DefaultFormatter,
-                capacity,
-                timeout,
-            ),
+            Some(FormatterConfig::Instance(fmt)) => {
+                builder.build_with_writer(TestWriter::new(Arc::clone(&sink)), fmt.clone_arc())
+            }
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => {
+                builder.build_with_writer(TestWriter::new(Arc::clone(&sink)), DefaultFormatter)
+            }
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 panic!("unexpected custom formatter id: {other}")
             }
