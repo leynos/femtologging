@@ -186,7 +186,6 @@ mod tests {
     use super::super::test_helpers::assert_build_err;
     use super::*;
     use rstest::rstest;
-    use std::path::PathBuf;
     use tempfile::tempdir;
 
     use crate::{
