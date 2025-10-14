@@ -1,7 +1,9 @@
 #![cfg(all(test, feature = "python"))]
 //! Tests focusing on the worker thread configuration and error handling paths.
 
-use super::super::test_support::{install_test_logger, take_logged_messages};
+use super::super::test_support::{
+    install_test_logger, take_logged_messages, CapturedLog as LogRecord,
+};
 use super::super::*;
 use super::test_support::SharedBuf;
 use log::Level;
@@ -125,6 +127,31 @@ fn femto_file_handler_worker_thread_failure() {
     barrier.wait();
 }
 
+fn assert_rotation_errors_logged(logs: &[LogRecord], expected_count: usize, failure_prefix: &str) {
+    let errors: Vec<_> = logs
+        .iter()
+        .filter(|record| {
+            record.level == Level::Error
+                && record
+                    .message
+                    .contains("FemtoFileHandler rotation error; writing record without rotating")
+        })
+        .collect();
+    assert_eq!(
+        errors.len(),
+        expected_count,
+        "each failed rotation should be logged"
+    );
+    for idx in 0..expected_count {
+        assert!(
+            errors
+                .iter()
+                .any(|record| record.message.contains(&format!("{failure_prefix}#{idx}"))),
+            "log should include failure #{idx}",
+        );
+    }
+}
+
 #[test]
 #[serial]
 fn worker_logs_repeated_rotation_failures() {
@@ -184,24 +211,7 @@ fn worker_logs_repeated_rotation_failures() {
     handler.close();
 
     let logs = take_logged_messages();
-    let errors: Vec<_> = logs
-        .iter()
-        .filter(|record| {
-            record.level == Level::Error
-                && record
-                    .message
-                    .contains("FemtoFileHandler rotation error; writing record without rotating")
-        })
-        .collect();
-    assert_eq!(errors.len(), 3, "each failed rotation should be logged");
-    for idx in 0..3 {
-        assert!(
-            errors.iter().any(|record| record
-                .message
-                .contains(&format!("flaky rotation failure #{idx}"))),
-            "log should include failure #{idx}",
-        );
-    }
+    assert_rotation_errors_logged(&logs, 3, "flaky rotation failure ");
 
     let expected = (0..5)
         .map(|i| format!("core [INFO] repeated-{i}\n"))
