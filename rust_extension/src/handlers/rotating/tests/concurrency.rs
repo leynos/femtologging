@@ -113,6 +113,30 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
     Ok(())
 }
 
+fn wait_for_rotation_start(started: &AtomicBool, timeout: Duration) {
+    let wait_start = Instant::now();
+    while !started.load(Ordering::SeqCst) {
+        if wait_start.elapsed() > timeout {
+            panic!("rotation did not begin within the expected time window");
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn attempt_non_blocking_writes(handler: &mut FemtoRotatingFileHandler, count: usize) -> Duration {
+    let start = Instant::now();
+    for idx in 0..count {
+        match handler.handle(FemtoLogRecord::new("core", "INFO", &format!("extra {idx}"))) {
+            Ok(()) => {}
+            Err(HandlerError::QueueFull) => {
+                // Dropped records are acceptable here because the test exercises non-blocking queueing.
+            }
+            Err(other) => panic!("unexpected handler error during rotation: {other:?}"),
+        }
+    }
+    start.elapsed()
+}
+
 #[test]
 fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
     let dir = tempdir()?;
@@ -150,26 +174,11 @@ fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
         .handle(FemtoLogRecord::new("core", "INFO", "trigger"))
         .expect("trigger record should be written to trigger rotation");
 
-    let wait_start = Instant::now();
-    while !started.load(Ordering::SeqCst) {
-        if wait_start.elapsed() > Duration::from_secs(2) {
-            panic!("rotation did not begin within the expected time window");
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
+    wait_for_rotation_start(&started, Duration::from_secs(2));
 
-    let start = Instant::now();
-    for idx in 0..8 {
-        match handler.handle(FemtoLogRecord::new("core", "INFO", &format!("extra {idx}"))) {
-            Ok(()) => {}
-            Err(HandlerError::QueueFull) => {
-                // Dropped records are acceptable here because the test exercises non-blocking queueing.
-            }
-            Err(other) => panic!("unexpected handler error during rotation: {other:?}"),
-        }
-    }
+    let elapsed = attempt_non_blocking_writes(&mut handler, 8);
     assert!(
-        start.elapsed() < Duration::from_millis(200),
+        elapsed < Duration::from_millis(200),
         "additional writes must not block while rotation is in progress"
     );
 
