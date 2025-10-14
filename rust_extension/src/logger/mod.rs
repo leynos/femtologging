@@ -3,13 +3,17 @@
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
 
-// FIXME: Track PyO3 issue for proper fix
+mod py_handler;
+mod worker;
+
+pub use worker::QueuedRecord;
+
+// FIXME(#PyO3/pyo3#3646): Track PyO3 issue for proper fix
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
-use std::any::Any;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 
@@ -18,7 +22,7 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam_channel::Sender;
 use log::warn;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
@@ -26,75 +30,12 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Arc,
 };
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 
-const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+use py_handler::{validate_handler, PyHandler};
 
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-}
-
-fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
-    let py = obj.py();
-    let handle = obj.getattr("handle").map_err(|err| {
-        if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) {
-            pyo3::exceptions::PyTypeError::new_err(
-                "handler must implement a callable 'handle' method",
-            )
-        } else {
-            err
-        }
-    })?;
-    if handle.is_callable() {
-        Ok(())
-    } else {
-        let attr_type = handle
-            .get_type()
-            .name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
-        let handler_repr = obj
-            .repr()
-            .map(|r| r.to_string())
-            .unwrap_or_else(|_| "<unrepresentable>".to_string());
-        Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "'handler.handle' is not callable (type: {attr_type}, handler: {handler_repr})",
-        )))
-    }
-}
-
-/// Wrapper allowing Python handler objects to be used by the logger.
-struct PyHandler {
-    obj: Py<PyAny>,
-}
-
-impl FemtoHandlerTrait for PyHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Python::with_gil(|py| {
-            match self.obj.call_method1(
-                py,
-                "handle",
-                (&record.logger, &record.level, &record.message),
-            ) {
-                Ok(_) => Ok(()),
-                Err(err) => {
-                    let message = err.to_string();
-                    err.print(py);
-                    warn!("PyHandler: error calling handle");
-                    Err(HandlerError::Message(format!(
-                        "python handler raised an exception: {message}"
-                    )))
-                }
-            }
-        })
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
+#[cfg(test)]
+use crossbeam_channel::Receiver;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -350,11 +291,11 @@ impl FemtoLogger {
             Arc::new(RwLock::new(Vec::new()));
         let filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>> = Arc::new(RwLock::new(Vec::new()));
 
-        let (tx, rx) = bounded::<QueuedRecord>(DEFAULT_CHANNEL_CAPACITY);
-        let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
-        let handle = thread::spawn(move || {
-            Self::worker_thread_loop(rx, shutdown_rx);
-        });
+        let worker::WorkerParts {
+            tx,
+            shutdown_tx,
+            handle,
+        } = worker::spawn_worker();
 
         Self {
             name,
@@ -373,12 +314,9 @@ impl FemtoLogger {
     }
 
     /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
+    #[cfg(test)]
     fn handle_log_record(job: QueuedRecord) {
-        for h in job.handlers.iter() {
-            if let Err(err) = h.handle(job.record.clone()) {
-                warn!("FemtoLogger: handler reported an error: {err}");
-            }
-        }
+        worker::handle_log_record(job);
     }
 
     /// Drain any remaining records once a shutdown signal is received.
@@ -391,10 +329,9 @@ impl FemtoLogger {
     ///
     /// * `rx` - Channel receiver holding pending log records.
     /// * `handlers` - Shared collection of handlers used to process records.
+    #[cfg(test)]
     fn drain_remaining_records(rx: &Receiver<QueuedRecord>) {
-        while let Ok(job) = rx.try_recv() {
-            Self::handle_log_record(job);
-        }
+        worker::drain_remaining_records(rx);
     }
 
     /// Main loop executed by the logger's worker thread.
@@ -409,19 +346,9 @@ impl FemtoLogger {
     /// * `rx` - Channel receiver for new log records.
     /// * `shutdown_rx` - Channel receiver signaling shutdown.
     /// * `handlers` - Shared collection of handlers for processing records.
+    #[cfg(test)]
     fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
-        loop {
-            select! {
-                recv(rx) -> rec => match rec {
-                    Ok(job) => Self::handle_log_record(job),
-                    Err(_) => break,
-                },
-                recv(shutdown_rx) -> _ => {
-                    Self::drain_remaining_records(&rx);
-                    break;
-                }
-            }
-        }
+        worker::worker_thread_loop(rx, shutdown_rx);
     }
 }
 
@@ -443,5 +370,5 @@ impl Drop for FemtoLogger {
     }
 }
 #[cfg(test)]
-#[path = "logger_tests.rs"]
+#[path = "../logger_tests.rs"]
 mod logger_tests;

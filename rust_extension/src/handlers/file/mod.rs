@@ -34,7 +34,7 @@ use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TrySendError};
 use pyo3::prelude::*;
 use std::any::Any;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{handler_error_to_py, FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -146,7 +146,7 @@ impl FemtoFileHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+            .map_err(handler_error_to_py)
     }
 
     #[pyo3(name = "flush")]
