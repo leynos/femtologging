@@ -75,9 +75,9 @@ down. `block` performs a blocking `send`, which either succeeds or yields
 `Err(HandlerError::Closed)` if the channel is disconnected. `timeout` waits for
 the configured duration using `send_timeout`, returning
 `Err(HandlerError::Timeout(duration))` when the wait expires or
-`Err(HandlerError::Closed)` if the worker stops. All of these errors surface to
-Python as `RuntimeError` (via PyO3's `PyRuntimeError`), allowing Python callers
-to decide whether to retry or fall back.
+`Err(HandlerError::Closed)` if the worker stops. All of these errors propagate
+across the FFI boundary as Python `RuntimeError` (via PyO3's `PyRuntimeError`),
+allowing Python callers to decide whether to retry or fall back.
 
 ```python
 from contextlib import closing
@@ -107,8 +107,10 @@ metrics for monitoring purposes:
   up and dropping the record.
 
 These lowercase names match the literals accepted by the configuration parser
-(`drop`, `block`, or `timeout:N`). The same parser powers `HandlerOptions` and
-the Python builders, so the documentation and implementation stay aligned.
+(`drop`, `block`, or `timeout:N`). They emphasise the policy strings used by
+Python callers and avoid confusing the drop policy with Rust's `Drop` trait.
+The same parser powers `HandlerOptions` and the Python builders, so the
+documentation and implementation stay aligned.
 
 Every handler provides a `flush()` method, so callers can force pending
 messages to be written before shutdown.
