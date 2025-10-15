@@ -83,6 +83,34 @@ from that design.
         non-blocking under load.
 - [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
   reconnection handling.
+  - [ ] Finalise the transport surface by supporting TCP and Unix domain socket
+    addresses through the builder API and Python bindings, matching the
+    configuration patterns described in
+    [`configuration-design.md`](./configuration-design.md). Capture socket
+    options such as host, port, path, timeouts, and optional TLS settings.
+  - [ ] Implement a consumer-thread event loop that acquires sockets and
+    serialises `FemtoLogRecord` values with `serde` (MessagePack or CBOR as
+    identified in Section 3.4 of the
+    [`socket handler design`](./rust-multithreaded-logging-framework-for-python-design.md).
+    - [ ] Ensure the loop writes framed payloads without blocking producers.
+  - [ ] Add reconnection logic that respects exponential backoff and honours
+    the multithreading and GIL-handling constraints captured in
+    [`multithreading-in-pyo3.md`](./multithreading-in-pyo3.md), ensuring we do
+    not hold the GIL across blocking network calls.
+  - [ ] Provide error mapping that translates socket and serialisation
+    failures into Rust error enums and exported Python exceptions, following
+    the guidance in
+    [`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md).
+  - [ ] Extend the builder and Python configuration interfaces with
+    `SocketHandlerBuilder`, including validation routines, documentation, and
+    doctests kept dry per
+    [`rust-doctest-dry-guide.md`](./rust-doctest-dry-guide.md).
+  - [ ] Write integration tests in Rust and Python using `rstest` fixtures (see
+    [`rust-testing-with-rstest-fixtures.md`](./rust-testing-with-rstest-fixtures.md))
+    to validate serialisation framing, reconnection behaviour, and
+    configuration round-tripping.
+  - [ ] When the above tasks are complete, mark `FemtoSocketHandler` as done in
+    this roadmap and propagate the status to the configuration roadmap.
 - [x] Define the `FemtoFilter` trait and implement common filter
   types.[^1]
 - [ ] Support dynamic log level updates at runtime using atomic variables.
