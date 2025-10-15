@@ -66,6 +66,7 @@ fn femto_file_handler_queue_overflow_drop_policy() {
 }
 
 #[test]
+#[serial]
 fn femto_file_handler_queue_overflow_block_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Block);
     handler

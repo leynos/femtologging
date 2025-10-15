@@ -75,9 +75,9 @@ down. `Block` performs a blocking `send`, which either succeeds or yields
 `Err(HandlerError::Closed)` if the channel is disconnected. `Timeout` waits for
 the configured duration using `send_timeout`, returning
 `Err(HandlerError::Timeout(duration))` when the wait expires or
-`Err(HandlerError::Closed)` if the worker stops. All of these errors propagate
-across the FFI boundary as `PyRuntimeError`, allowing Python callers to decide
-whether to retry or fall back.
+`Err(HandlerError::Closed)` if the worker stops. All of these errors surface to
+Python as `RuntimeError` (implemented via PyO3's `PyRuntimeError`), allowing
+Python callers to decide whether to retry or fall back.
 
 ```python
 from contextlib import closing
@@ -91,7 +91,7 @@ with closing(
     try:
         handler.handle("core", "INFO", "second")
     except RuntimeError as exc:
-        assert "queue full" in str(exc)
+        assert "queue is full" in str(exc)
 ```
 
 Advanced use cases can specify an overflow policy when constructing a handler.
@@ -101,10 +101,10 @@ example, "timeout:500"). The policy may also be extended to support options
 like back pressure, writing overflowed messages to a separate file, or emitting
 metrics for monitoring purposes:
 
-- **Drop** – current default; records are discarded when the queue is full.
-- **Block** – the call blocks until space becomes available.
-- **Timeout** – wait for a fixed duration before giving up and dropping the
-  record.
+- **`drop`** – current default; records are discarded when the queue is full.
+- **`block`** – the call blocks until space becomes available.
+- **`timeout`** – wait for a fixed duration (set via `timeout:N`) before giving
+  up and dropping the record.
 
 Every handler provides a `flush()` method, so callers can force pending
 messages to be written before shutdown.
