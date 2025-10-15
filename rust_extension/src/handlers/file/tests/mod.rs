@@ -126,5 +126,5 @@ fn femto_file_handler_invalid_file_path() {
 
 mod lifecycle_tests;
 mod overflow_tests;
-pub mod test_support;
+pub(super) mod test_support;
 mod worker_tests;

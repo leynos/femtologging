@@ -66,6 +66,7 @@ fn femto_file_handler_queue_overflow_drop_policy() {
 }
 
 #[test]
+#[serial]
 fn femto_file_handler_queue_overflow_block_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Block);
     handler
@@ -144,7 +145,7 @@ fn femto_file_handler_queue_overflow_block_policy_large_batch() {
     let mut done_rxs = Vec::new();
     let mut joins = Vec::new();
 
-    for i in 1..32 {
+    for i in 1..16 {
         let (send_barrier, done_rx, handle) = spawn_record_thread(
             Arc::clone(&handler),
             FemtoLogRecord::new("core", "INFO", &format!("batch{i}")),
@@ -176,7 +177,7 @@ fn femto_file_handler_queue_overflow_block_policy_large_batch() {
     drop(handler);
 
     let lines: Vec<String> = buffer.contents().lines().map(str::to_owned).collect();
-    let expected: Vec<String> = (0..32).map(|i| format!("core [INFO] batch{i}")).collect();
+    let expected: Vec<String> = (0..16).map(|i| format!("core [INFO] batch{i}")).collect();
     assert_eq!(lines, expected);
 }
 

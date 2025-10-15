@@ -55,6 +55,8 @@ fn unknown_id_rejected(
     }
 }
 
+#[rstest]
+#[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -80,6 +82,8 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
     });
 }
 
+#[rstest]
+#[serial]
 fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
@@ -148,6 +152,8 @@ fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
     ));
 }
 
+#[rstest]
+#[serial]
 fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
     let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
     let mut logger_cfg = LoggerConfigBuilder::new();

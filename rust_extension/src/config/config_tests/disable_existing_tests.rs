@@ -20,6 +20,8 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
     super::super::base_logger_builder()
 }
 
+#[rstest]
+#[serial]
 fn disable_existing_loggers_clears_unmentioned(
     _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
