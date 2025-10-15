@@ -121,7 +121,9 @@ impl RotationStrategy<std::io::Cursor<Vec<u8>>> for FlagRotation {
 /// - `FemtoFileHandler`: configured handler under test
 ///
 /// The handler is configured with capacity 1, immediate flush, and the supplied
-/// overflow policy to trigger overflow scenarios deterministically.
+/// overflow policy to trigger overflow scenarios deterministically. The
+/// `policy` argument selects which overflow behaviour the caller wishes to
+/// exercise, allowing tests to cover drop, block, or error semantics.
 pub(super) fn setup_overflow_test(
     policy: OverflowPolicy,
 ) -> (SharedBuf, Arc<Barrier>, FemtoFileHandler) {
@@ -138,6 +140,16 @@ pub(super) fn setup_overflow_test(
 
 /// Spawn a thread that sends a single record to the handler after barrier
 /// synchronisation.
+///
+/// # Parameters
+///
+/// - `handler`: shared handler instance under test that will receive the
+///   record from the spawned thread. Callers typically wrap their handler in
+///   an `Arc` already, so the fixture simply clones the pointer for the
+///   worker thread.
+/// - `record`: pre-built `FemtoLogRecord` the fixture will submit via
+///   `FemtoFileHandler::handle` once the barrier is released. Craft the record
+///   with the exact payload and metadata the test intends to assert on.
 ///
 /// Returns a tuple of:
 /// - `Arc<Barrier>`: barrier used to release the spawned thread

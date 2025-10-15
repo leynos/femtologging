@@ -91,7 +91,7 @@ with closing(
     try:
         handler.handle("core", "INFO", "second")
     except RuntimeError as exc:
-        assert "queue is full" in str(exc)
+        assert "queue full" in str(exc)
 ```
 
 Advanced use cases can specify an overflow policy when constructing a handler.
