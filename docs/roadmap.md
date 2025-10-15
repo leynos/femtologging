@@ -103,7 +103,12 @@ steps below summarize the actionable items from that design.
     GIL is not held across blocking network calls. Define parameters for
     `backoff_base`, `backoff_cap`, full jitter calculation, reset-after-success
     handling, and a maximum retry deadline, and require socket timeouts plus
-    cooperative cancellation on shutdown.
+    cooperative cancellation on shutdown. Ship concrete defaults of a
+    `backoff_base` of 100 ms, a `backoff_cap` of 10 s, full jitter spanning
+    `0..=current_interval`, reset-after-success triggered after 30 s of healthy
+    writes, and a maximum retry deadline of 2 minutes before surfacing a
+    handler error. Document where the builder methods and Python configuration
+    knobs override each value.
   - [ ] Provide error mapping that translates socket and serialization failures
     into Rust error enums and exported Python exceptions, following the
     guidance in the [`socket handler design document`][socket-doc].
