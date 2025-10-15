@@ -135,7 +135,7 @@ pub(super) fn setup_overflow_test(
 /// synchronisation.
 ///
 /// Returns a tuple of:
-/// - `Arc`: synchronisation barrier to release the spawned thread
+/// - `Arc<Barrier>`: synchronisation barrier to release the spawned thread
 /// - `mpsc::Receiver<()>`: channel signalling record send completion
 /// - `JoinHandle<()>`: handle to the spawned thread
 ///
