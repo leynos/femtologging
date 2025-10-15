@@ -1,6 +1,24 @@
 use crate::log_record::FemtoLogRecord;
 use pyo3::prelude::*;
-use std::any::Any;
+use std::{any::Any, time::Duration};
+use thiserror::Error;
+
+/// Errors reported by handler implementations when dispatching a log record.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum HandlerError {
+    /// The handler's queue rejected the record because it was already full.
+    #[error("queue full")]
+    QueueFull,
+    /// The handler is no longer accepting records because it has been closed.
+    #[error("handler is closed")]
+    Closed,
+    /// Sending the record timed out before the handler could accept it.
+    #[error("handler send timed out after {0:?}")]
+    Timeout(Duration),
+    /// Catch-all variant for handler specific failures.
+    #[error("{0}")]
+    Message(String),
+}
 
 /// Trait implemented by all log handlers.
 ///
@@ -9,7 +27,7 @@ use std::any::Any;
 /// consumer thread without blocking the caller.
 pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// Dispatch a log record for handling.
-    fn handle(&self, record: FemtoLogRecord);
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
 
     /// Flush any pending log records.
     ///
@@ -39,7 +57,9 @@ impl FemtoHandler {
 }
 
 impl FemtoHandlerTrait for FemtoHandler {
-    fn handle(&self, _record: FemtoLogRecord) {}
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
 
     fn flush(&self) -> bool {
         true

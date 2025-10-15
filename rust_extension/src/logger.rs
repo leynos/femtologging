@@ -9,7 +9,7 @@ use pyo3::{Py, PyAny};
 use std::any::Any;
 
 use crate::filters::FemtoFilter;
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 
@@ -71,17 +71,24 @@ struct PyHandler {
 }
 
 impl FemtoHandlerTrait for PyHandler {
-    fn handle(&self, record: FemtoLogRecord) {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         Python::with_gil(|py| {
-            if let Err(err) = self.obj.call_method1(
+            match self.obj.call_method1(
                 py,
                 "handle",
                 (&record.logger, &record.level, &record.message),
             ) {
-                err.print(py);
-                warn!("PyHandler: error calling handle");
+                Ok(_) => Ok(()),
+                Err(err) => {
+                    let message = err.to_string();
+                    err.print(py);
+                    warn!("PyHandler: error calling handle");
+                    Err(HandlerError::Message(format!(
+                        "python handler raised an exception: {message}"
+                    )))
+                }
             }
-        });
+        })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -368,7 +375,9 @@ impl FemtoLogger {
     /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
     fn handle_log_record(job: QueuedRecord) {
         for h in job.handlers.iter() {
-            h.handle(job.record.clone());
+            if let Err(err) = h.handle(job.record.clone()) {
+                warn!("FemtoLogger: handler reported an error: {err}");
+            }
         }
     }
 

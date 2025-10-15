@@ -17,7 +17,7 @@ use pyo3::prelude::*;
 
 use crate::{
     formatter::FemtoFormatter,
-    handler::FemtoHandlerTrait,
+    handler::{FemtoHandlerTrait, HandlerError},
     handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, NoRotation, TestConfig},
     log_record::FemtoLogRecord,
 };
@@ -345,9 +345,10 @@ impl FemtoRotatingFileHandler {
     }
 
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) {
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         self.inner
-            .handle(FemtoLogRecord::new(logger, level, message));
+            .handle(FemtoLogRecord::new(logger, level, message))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to disk without closing the handler or
@@ -383,7 +384,7 @@ impl FemtoRotatingFileHandler {
 impl FemtoHandlerTrait for FemtoRotatingFileHandler {
     delegate! {
         to self.inner {
-            fn handle(&self, record: FemtoLogRecord);
+            fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
             fn flush(&self) -> bool;
         }
     }

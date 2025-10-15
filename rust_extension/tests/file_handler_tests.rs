@@ -11,13 +11,36 @@ use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
     DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerConfig,
-    OverflowPolicy, TestConfig,
+    HandlerError, OverflowPolicy, TestConfig,
 };
 use tempfile::NamedTempFile;
 
 mod test_utils;
 use std::sync::{Arc, Mutex};
 use test_utils::std::SharedBuf;
+
+trait HandleExpect {
+    fn expect_handle(&self, record: FemtoLogRecord);
+}
+
+impl HandleExpect for FemtoFileHandler {
+    fn expect_handle(&self, record: FemtoLogRecord) {
+        self.handle(record)
+            .expect("expected FemtoFileHandler to accept record");
+    }
+}
+
+impl<T: HandleExpect + ?Sized> HandleExpect for &T {
+    fn expect_handle(&self, record: FemtoLogRecord) {
+        (**self).expect_handle(record);
+    }
+}
+
+impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
+    fn expect_handle(&self, record: FemtoLogRecord) {
+        (**self).expect_handle(record);
+    }
+}
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
@@ -59,7 +82,7 @@ where
 #[test]
 fn file_handler_writes_to_file() {
     let output = with_temp_file_handler(10, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "hello"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "hello"));
     });
 
     assert_eq!(output, "core [INFO] hello\n");
@@ -68,9 +91,9 @@ fn file_handler_writes_to_file() {
 #[test]
 fn multiple_records_are_serialised() {
     let output = with_temp_file_handler(10, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
-        h.handle(FemtoLogRecord::new("core", "WARN", "second"));
-        h.handle(FemtoLogRecord::new("core", "ERROR", "third"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "first"));
+        h.expect_handle(FemtoLogRecord::new("core", "WARN", "second"));
+        h.expect_handle(FemtoLogRecord::new("core", "ERROR", "third"));
     });
 
     assert_eq!(
@@ -91,7 +114,11 @@ fn queue_overflow_drops_excess_records() {
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
 
     for i in 0..10 {
-        handler.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")));
+        // Intentionally ignore errors; overflow testing expects some records
+        // to be dropped.
+        let _ = handler
+            .handle(FemtoLogRecord::new("core", "INFO", &format!("msg{i}")))
+            .ok();
     }
     // Allow the worker thread to start processing after all records are queued.
     start.wait();
@@ -117,7 +144,7 @@ fn file_handler_concurrent_usage() {
     for i in 0..10 {
         let h = Arc::clone(&handler);
         handles.push(thread::spawn(move || {
-            h.handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
+            h.expect_handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
         }));
     }
     for h in handles {
@@ -139,9 +166,9 @@ fn file_handler_open_failure() {
 #[test]
 fn file_handler_custom_flush_interval() {
     let output = with_temp_file_handler_flush(8, 2, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "first"));
-        h.handle(FemtoLogRecord::new("core", "INFO", "second"));
-        h.handle(FemtoLogRecord::new("core", "INFO", "third"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "first"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "second"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "third"));
     });
 
     assert_eq!(
@@ -170,7 +197,7 @@ fn file_handler_flush_interval_zero() {
 #[test]
 fn file_handler_flush_interval_one() {
     let output = with_temp_file_handler_flush(8, 1, |h| {
-        h.handle(FemtoLogRecord::new("core", "INFO", "message"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "message"));
     });
     assert_eq!(output, "core [INFO] message\n");
 }
@@ -186,10 +213,10 @@ fn blocking_policy_waits_for_space() {
     cfg.start_barrier = Some(Arc::clone(&start));
     let handler = Arc::new(FemtoFileHandler::with_writer_for_test(cfg));
 
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "first"));
     let h = Arc::clone(&handler);
     let t = thread::spawn(move || {
-        h.handle(FemtoLogRecord::new("core", "INFO", "second"));
+        h.expect_handle(FemtoLogRecord::new("core", "INFO", "second"));
     });
     thread::sleep(Duration::from_millis(50));
     assert!(!t.is_finished());
@@ -217,9 +244,12 @@ fn timeout_policy_gives_up() {
     cfg.start_barrier = Some(Arc::clone(&start));
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
 
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
+    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "first"));
     let start_time = Instant::now();
-    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    let err = handler
+        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .expect_err("second record should time out");
+    assert_eq!(err, HandlerError::Timeout(Duration::from_millis(50)));
     assert!(start_time.elapsed() >= Duration::from_millis(50));
     start.wait();
 }

@@ -155,8 +155,12 @@ fn rotating_handler_performs_size_based_rotation() -> io::Result<()> {
         HandlerConfig::default(),
         RotationConfig::new(20, 2),
     )?;
-    handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .expect("first record queued");
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .expect("second record queued");
     drop(handler);
 
     let primary = fs::read_to_string(&path)?;
@@ -196,7 +200,9 @@ fn rotating_handler_respects_test_builder_defaults() {
     cfg.flush_interval = 1;
 
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
-    handler.handle(FemtoLogRecord::new("core", "INFO", "message"));
+    handler
+        .handle(FemtoLogRecord::new("core", "INFO", "message"))
+        .expect("record queued");
     drop(handler);
 }
 
