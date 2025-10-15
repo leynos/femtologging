@@ -106,8 +106,9 @@ pub(super) fn setup_overflow_test(
 /// - `JoinHandle<()>`: handle to the spawned thread
 ///
 /// The spawned thread waits on the barrier, sends the record via
-/// `handler.handle()`, and signals completion using the receiver. Tests can
-/// use the join handle to ensure the thread exits cleanly.
+/// `handler.handle()`, and signals completion using the receiver. Use the
+/// receiver to confirm the send occurred.
+/// Await the join handle to ensure the thread exits cleanly.
 pub(super) fn spawn_record_thread(
     handler: Arc<FemtoFileHandler>,
     record: FemtoLogRecord,
