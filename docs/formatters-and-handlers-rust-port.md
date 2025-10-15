@@ -93,6 +93,7 @@ Every handler provides a `flush()` method, so callers can force pending
 messages to be written before shutdown.
 
 ```python
+import pytest
 from femtologging import FemtoFileHandler
 
 # Block until space is available
@@ -104,6 +105,15 @@ handler = FemtoFileHandler(
 timeout_handler = FemtoFileHandler(
     "app.log", capacity=4096, flush_interval=10, policy="timeout:250",
 )
+
+# Drop raises when the queue is full
+drop_handler = FemtoFileHandler(
+    "app.log", capacity=1, flush_interval=1, policy="drop",
+)
+drop_handler.handle("core", "INFO", "first")
+with pytest.raises(RuntimeError) as err:
+    drop_handler.handle("core", "INFO", "second")
+assert str(err.value) == "queue is full"
 ```
 
 Legacy constructors have been removed:
