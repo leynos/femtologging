@@ -224,7 +224,9 @@ mod tests {
         let mut handler = builder
             .build_inner()
             .expect("build_inner must support custom formatter instances");
-        handler.handle(FemtoLogRecord::new("logger", "INFO", "hello"));
+        handler
+            .handle(FemtoLogRecord::new("logger", "INFO", "hello"))
+            .expect("custom formatter write must succeed");
         assert!(handler.flush(), "flush must succeed for custom formatter");
         handler.close();
 

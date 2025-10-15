@@ -316,7 +316,8 @@ mod tests {
         FemtoHandlerTrait::handle(
             &handler,
             FemtoLogRecord::new("logger", "INFO", "stream hello"),
-        );
+        )
+        .expect("custom formatter stream write must succeed");
         assert!(handler.flush(), "flush must succeed for stream handler");
         handler.close();
         let output = String::from_utf8(
