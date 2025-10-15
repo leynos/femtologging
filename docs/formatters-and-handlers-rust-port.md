@@ -106,6 +106,10 @@ metrics for monitoring purposes:
 - **`timeout`** – wait for a fixed duration (set via `timeout:N`) before giving
   up and dropping the record.
 
+These lowercase names match the literals accepted by the configuration parser
+(`drop`, `block`, or `timeout:N`). The same parser powers `HandlerOptions` and
+the Python builders, so the documentation and implementation stay aligned.
+
 Every handler provides a `flush()` method, so callers can force pending
 messages to be written before shutdown.
 

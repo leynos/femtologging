@@ -12,7 +12,7 @@ FemtoFileHandler: _Any
 class HandlerOptions:
     capacity: int
     flush_interval: int
-    policy: Literal["drop", "block", "timeout"]
+    policy: str
     max_bytes: int
     backup_count: int
 
@@ -20,7 +20,7 @@ class HandlerOptions:
         self,
         capacity: int = ...,
         flush_interval: int = ...,
-        policy: Literal["drop", "block", "timeout"] = ...,
+        policy: str = ...,
         rotation: tuple[int, int] | None = ...,
     ) -> None: ...
 
@@ -49,15 +49,9 @@ class RotatingFileHandlerBuilder:
     def with_formatter(self, fmt: str) -> Self: ...
     def with_max_bytes(self, max_bytes: int) -> Self: ...
     def with_backup_count(self, count: int) -> Self: ...
-    @overload
-    def with_overflow_policy(
-        self, policy: Literal["timeout"], timeout_ms: int
-    ) -> Self: ...
-    @overload
-    def with_overflow_policy(self, policy: Literal["drop", "block"]) -> Self: ...
     def with_overflow_policy(
         self,
-        policy: Literal["drop", "block", "timeout"],
+        policy: str,
         timeout_ms: int | None = ...,
     ) -> Self: ...
     def as_dict(self) -> dict[str, object]: ...
