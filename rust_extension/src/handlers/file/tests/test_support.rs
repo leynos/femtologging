@@ -14,13 +14,17 @@ use super::super::{
     TestConfig,
 };
 
+/// Thread-safe in-memory buffer for capturing handler writes during tests.
+///
+/// Wraps a `Vec<u8>` behind an `Arc<Mutex<Vec<u8>>>` so multiple worker
+/// threads can write concurrently while assertions read the combined output.
 #[derive(Clone, Default)]
 pub(super) struct SharedBuf {
     buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 impl SharedBuf {
-    /// Return the UTF-8 contents of the buffer.
+    /// Return the UTF-8 contents of the buffer as a `String`.
     ///
     /// # Panics
     ///
@@ -64,13 +68,13 @@ impl Seek for SharedBuf {
 /// Rotation strategy that counts the number of `before_write` invocations.
 ///
 /// Used in tests to verify that rotation hooks are called the expected number
-/// of times without rotating the writer.
+/// of times without actually rotating the writer.
 pub(super) struct CountingRotation {
     calls: Arc<AtomicUsize>,
 }
 
 impl CountingRotation {
-    /// Construct a new counter-backed rotation strategy.
+    /// Construct a new `CountingRotation` that increments the given counter.
     pub(super) fn new(calls: Arc<AtomicUsize>) -> Self {
         Self { calls }
     }
@@ -83,15 +87,16 @@ impl RotationStrategy<SharedBuf> for CountingRotation {
     }
 }
 
-/// Rotation strategy that flips a shared flag when invoked.
+/// Rotation strategy that sets a flag when `before_write` is called.
 ///
-/// Tests use this to confirm rotation hooks run at specific lifecycle moments.
+/// Used in tests to confirm rotation hooks run at specific lifecycle moments
+/// without rotating the writer.
 pub(super) struct FlagRotation {
     flag: Arc<AtomicBool>,
 }
 
 impl FlagRotation {
-    /// Construct a new flag-backed rotation strategy.
+    /// Construct a new `FlagRotation` that sets the given flag.
     pub(super) fn new(flag: Arc<AtomicBool>) -> Self {
         Self { flag }
     }
@@ -135,14 +140,13 @@ pub(super) fn setup_overflow_test(
 /// synchronisation.
 ///
 /// Returns a tuple of:
-/// - `Arc<Barrier>`: synchronisation barrier to release the spawned thread
-/// - `mpsc::Receiver<()>`: channel signalling record send completion
-/// - `JoinHandle<()>`: handle to the spawned thread
+/// - `Arc<Barrier>`: barrier used to release the spawned thread
+/// - `mpsc::Receiver<()>`: channel signalling that the record send completed
+/// - `JoinHandle<()>`: join handle for the spawned thread
 ///
 /// The spawned thread waits on the barrier, sends the record via
-/// `handler.handle()`, and signals completion using the receiver. Use the
-/// receiver to confirm the send occurred and the join handle to await thread
-/// completion.
+/// `handler.handle()`, and signals completion. Use the receiver to confirm the
+/// send occurred and the join handle to await thread completion.
 pub(super) fn spawn_record_thread(
     handler: Arc<FemtoFileHandler>,
     record: FemtoLogRecord,

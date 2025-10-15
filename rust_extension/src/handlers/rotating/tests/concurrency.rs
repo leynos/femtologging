@@ -113,7 +113,8 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
     Ok(())
 }
 
-/// Poll `started` until it becomes true or `timeout` elapses.
+/// Poll `started` until it becomes true or `timeout` elapses, sleeping for one
+/// millisecond between checks to avoid busy-waiting in tight loops.
 ///
 /// # Panics
 ///
@@ -128,11 +129,13 @@ fn wait_for_rotation_start(started: &AtomicBool, timeout: Duration) {
     }
 }
 
-/// Attempt `count` non-blocking writes to `handler`, returning the elapsed time.
+/// Attempt `count` non-blocking writes to `handler`, returning the elapsed
+/// time.
 ///
 /// Accepts `Ok(())` and `HandlerError::QueueFull` as successful outcomes (the
 /// test exercises non-blocking queueing, so drops are expected). Panics on
-/// other errors.
+/// other errors because they indicate the worker failed while rotation was in
+/// progress.
 fn attempt_non_blocking_writes(handler: &mut FemtoRotatingFileHandler, count: usize) -> Duration {
     let start = Instant::now();
     for idx in 0..count {

@@ -1,4 +1,4 @@
-from typing import Any as _Any, Final, Literal, Self, Union, overload
+from typing import Any as _Any, Final, Literal, Self, Union
 
 FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
