@@ -69,12 +69,11 @@ pub struct FemtoHandler;
 Implementations respect the configured overflow policy when forwarding a record
 to the worker queue.
 
-The `drop` policy uses `try_send`, immediately returning
-`Err(HandlerError::QueueFull)` when the queue is full and
-`Err(HandlerError::Closed)` if the worker has shut down. The `block` policy
-performs a blocking `send`, which either succeeds or yields
-`Err(HandlerError::Closed)` if the channel is disconnected. The `timeout`
-policy waits for the configured duration using `send_timeout`, returning
+`drop` uses `try_send`, immediately returning `Err(HandlerError::QueueFull)`
+when the queue is full and `Err(HandlerError::Closed)` if the worker has shut
+down. `block` performs a blocking `send`, which either succeeds or yields
+`Err(HandlerError::Closed)` if the channel is disconnected. `timeout` waits for
+the configured duration using `send_timeout`, returning
 `Err(HandlerError::Timeout(duration))` when the wait expires or
 `Err(HandlerError::Closed)` if the worker stops. All of these errors surface to
 Python as `RuntimeError` (via PyO3's `PyRuntimeError`), allowing Python callers

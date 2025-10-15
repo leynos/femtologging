@@ -21,18 +21,34 @@ pub(super) struct SharedBuf {
 
 impl SharedBuf {
     /// Return the UTF-8 contents of the buffer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buffer contains invalid UTF-8 or the lock is poisoned.
     pub(super) fn contents(&self) -> String {
-        String::from_utf8(self.buffer.lock().expect("lock").clone()).expect("invalid UTF-8")
+        String::from_utf8(
+            self.buffer
+                .lock()
+                .expect("SharedBuf lock poisoned while reading")
+                .clone(),
+        )
+        .expect("SharedBuf contained invalid UTF-8")
     }
 }
 
 impl Write for SharedBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer.lock().expect("lock").write(buf)
+        self.buffer
+            .lock()
+            .expect("SharedBuf lock poisoned during write")
+            .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.buffer.lock().expect("lock").flush()
+        self.buffer
+            .lock()
+            .expect("SharedBuf lock poisoned during flush")
+            .flush()
     }
 }
 
@@ -45,11 +61,16 @@ impl Seek for SharedBuf {
     }
 }
 
+/// Rotation strategy that counts the number of `before_write` invocations.
+///
+/// Used in tests to verify that rotation hooks are called the expected number
+/// of times without rotating the writer.
 pub(super) struct CountingRotation {
     calls: Arc<AtomicUsize>,
 }
 
 impl CountingRotation {
+    /// Construct a new counter-backed rotation strategy.
     pub(super) fn new(calls: Arc<AtomicUsize>) -> Self {
         Self { calls }
     }
@@ -62,11 +83,15 @@ impl RotationStrategy<SharedBuf> for CountingRotation {
     }
 }
 
+/// Rotation strategy that flips a shared flag when invoked.
+///
+/// Tests use this to confirm rotation hooks run at specific lifecycle moments.
 pub(super) struct FlagRotation {
     flag: Arc<AtomicBool>,
 }
 
 impl FlagRotation {
+    /// Construct a new flag-backed rotation strategy.
     pub(super) fn new(flag: Arc<AtomicBool>) -> Self {
         Self { flag }
     }
@@ -83,6 +108,15 @@ impl RotationStrategy<std::io::Cursor<Vec<u8>>> for FlagRotation {
     }
 }
 
+/// Configure a handler for overflow testing with a minimal queue capacity.
+///
+/// Returns a tuple of:
+/// - `SharedBuf`: in-memory buffer receiving formatted records
+/// - `Arc<Barrier>`: synchronisation barrier for coordinating worker start
+/// - `FemtoFileHandler`: configured handler under test
+///
+/// The handler is configured with capacity 1, immediate flush, and the supplied
+/// overflow policy to trigger overflow scenarios deterministically.
 pub(super) fn setup_overflow_test(
     policy: OverflowPolicy,
 ) -> (SharedBuf, Arc<Barrier>, FemtoFileHandler) {
@@ -107,8 +141,8 @@ pub(super) fn setup_overflow_test(
 ///
 /// The spawned thread waits on the barrier, sends the record via
 /// `handler.handle()`, and signals completion using the receiver. Use the
-/// receiver to confirm the send occurred.
-/// Await the join handle to ensure the thread exits cleanly.
+/// receiver to confirm the send occurred and the join handle to await thread
+/// completion.
 pub(super) fn spawn_record_thread(
     handler: Arc<FemtoFileHandler>,
     record: FemtoLogRecord,
