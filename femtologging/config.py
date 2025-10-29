@@ -43,6 +43,7 @@ HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Except
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
 StreamHandlerBuilder = rust.StreamHandlerBuilder
+SocketHandlerBuilder = rust.SocketHandlerBuilder
 FileHandlerBuilder = rust.FileHandlerBuilder
 RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
@@ -55,6 +56,9 @@ NameFilterBuilder = rust.NameFilterBuilder
 _HANDLER_CLASS_MAP: Final[dict[str, object]] = {
     "logging.StreamHandler": StreamHandlerBuilder,
     "femtologging.StreamHandler": StreamHandlerBuilder,
+    "logging.handlers.SocketHandler": SocketHandlerBuilder,
+    "femtologging.SocketHandler": SocketHandlerBuilder,
+    "femtologging.FemtoSocketHandler": SocketHandlerBuilder,
     "logging.FileHandler": FileHandlerBuilder,
     "femtologging.FileHandler": FileHandlerBuilder,
     "logging.handlers.RotatingFileHandler": RotatingFileHandlerBuilder,

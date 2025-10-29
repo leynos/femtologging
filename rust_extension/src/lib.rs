@@ -24,6 +24,7 @@ mod python;
 pub mod rate_limited_warner;
 #[cfg(not(feature = "test-util"))]
 mod rate_limited_warner;
+mod socket_handler;
 mod stream_handler;
 
 /// Re-export configuration builders for external consumers.
@@ -45,7 +46,7 @@ pub use handlers::HandlerOptions;
 pub use handlers::{
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
     FemtoRotatingFileHandler, FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError,
-    HandlerIOError, RotatingFileHandlerBuilder, StreamHandlerBuilder,
+    HandlerIOError, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
@@ -54,6 +55,10 @@ pub use log_record::{FemtoLogRecord, RecordMetadata};
 /// Re-export the logger and queued record handle.
 pub use logger::{FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
+pub use socket_handler::{
+    BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
+    TlsOptions, UnixTransport,
+};
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 
@@ -141,6 +146,10 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "StreamHandlerBuilder",
             py.get_type::<StreamHandlerBuilder>(),
         ),
+        (
+            "SocketHandlerBuilder",
+            py.get_type::<SocketHandlerBuilder>(),
+        ),
         ("FileHandlerBuilder", py.get_type::<FileHandlerBuilder>()),
         (
             "RotatingFileHandlerBuilder",
@@ -185,6 +194,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<FemtoSocketHandler>()?;
     #[cfg(feature = "python")]
     m.add_class::<FemtoRotatingFileHandler>()?;
     #[cfg(feature = "python")]

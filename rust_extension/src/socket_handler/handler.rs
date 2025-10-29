@@ -1,0 +1,129 @@
+//! Public handler type exported by the crate.
+
+use std::{thread, time::Duration};
+
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+use parking_lot::Mutex;
+
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
+};
+
+use super::{
+    config::SocketHandlerConfig,
+    worker::{enqueue_record, flush_queue, spawn_worker, SocketCommand},
+    SocketTransport,
+};
+
+#[cfg_attr(feature = "python", pyclass)]
+/// Handler forwarding records to a socket using MessagePack framing.
+pub struct FemtoSocketHandler {
+    tx: Option<crossbeam_channel::Sender<SocketCommand>>,
+    handle: Mutex<Option<thread::JoinHandle<()>>>,
+    warner: RateLimitedWarner,
+    flush_timeout: Duration,
+}
+
+impl FemtoSocketHandler {
+    /// Construct a handler targeting the provided transport with default configuration.
+    pub fn new(transport: SocketTransport) -> Self {
+        Self::with_config(SocketHandlerConfig::default().with_transport(transport))
+    }
+
+    /// Construct the handler from a configuration object.
+    pub fn with_config(config: SocketHandlerConfig) -> Self {
+        let flush_timeout = config.write_timeout;
+        let warner = RateLimitedWarner::new(config.warn_interval);
+        let (tx, handle) = spawn_worker(config);
+        Self {
+            tx: Some(tx),
+            handle: Mutex::new(Some(handle)),
+            warner,
+            flush_timeout,
+        }
+    }
+
+    /// Flush any pending log records.
+    pub fn flush(&self) -> bool {
+        <Self as FemtoHandlerTrait>::flush(self)
+    }
+
+    /// Close the handler and wait for the worker to exit.
+    pub fn close(&mut self) {
+        self.tx.take();
+        if let Some(handle) = self.handle.lock().take() {
+            if handle.join().is_err() {
+                log::warn!("FemtoSocketHandler: worker thread panicked");
+            }
+        }
+    }
+
+    fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
+        self.tx.as_ref().cloned()
+    }
+}
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl FemtoSocketHandler {
+    #[pyo3(name = "handle")]
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        self.handle(FemtoLogRecord::new(logger, level, message))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+    }
+
+    #[pyo3(name = "flush")]
+    fn py_flush(&self) -> bool {
+        self.flush()
+    }
+
+    #[pyo3(name = "close")]
+    fn py_close(&mut self) {
+        self.close();
+    }
+}
+
+impl FemtoHandlerTrait for FemtoSocketHandler {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let Some(tx) = self.sender() else {
+            self.warner.record_drop();
+            self.warner.warn_if_due(|count| {
+                log::warn!("FemtoSocketHandler dropped {count} records after shutdown");
+            });
+            return Err(HandlerError::Closed);
+        };
+        enqueue_record(&tx, record, &self.warner)
+    }
+
+    fn flush(&self) -> bool {
+        let Some(tx) = self.sender() else {
+            return false;
+        };
+        self.warner.flush(|count| {
+            log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
+        });
+        flush_queue(&tx, self.flush_timeout)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl Drop for FemtoSocketHandler {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl std::fmt::Debug for FemtoSocketHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FemtoSocketHandler")
+            .field("flush_timeout", &self.flush_timeout)
+            .finish()
+    }
+}

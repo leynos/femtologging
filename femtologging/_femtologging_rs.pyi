@@ -8,6 +8,7 @@ FemtoLogger: _Any
 FemtoHandler: _Any
 FemtoStreamHandler: _Any
 FemtoFileHandler: _Any
+FemtoSocketHandler: _Any
 
 class HandlerOptions:
     capacity: int
@@ -26,6 +27,7 @@ class HandlerOptions:
 
 ROTATION_VALIDATION_MSG: Final[str]
 StreamHandlerBuilder: _Any
+SocketHandlerBuilder: _Any
 FileHandlerBuilder: _Any
 
 class FemtoRotatingFileHandler:
@@ -64,6 +66,31 @@ class RotatingFileHandlerBuilder:
     ) -> Self: ...
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> FemtoRotatingFileHandler: ...
+
+class SocketHandlerBuilder:
+    def __init__(
+        self,
+        host: str | None = ...,
+        port: int | None = ...,
+        *,
+        unix_path: str | None = ...,
+    ) -> None: ...
+    def with_tcp(self, host: str, port: int) -> Self: ...
+    def with_unix_path(self, path: str) -> Self: ...
+    def with_capacity(self, capacity: int) -> Self: ...
+    def with_connect_timeout_ms(self, timeout_ms: int) -> Self: ...
+    def with_write_timeout_ms(self, timeout_ms: int) -> Self: ...
+    def with_max_frame_size(self, size: int) -> Self: ...
+    def with_tls(self, domain: str | None = ..., *, insecure: bool = ...) -> Self: ...
+    def with_backoff(
+        self,
+        base_ms: int | None = ...,
+        cap_ms: int | None = ...,
+        reset_after_ms: int | None = ...,
+        deadline_ms: int | None = ...,
+    ) -> Self: ...
+    def as_dict(self) -> dict[str, object]: ...
+    def build(self) -> FemtoSocketHandler: ...
 
 ConfigBuilder: _Any
 LoggerConfigBuilder: _Any

@@ -18,6 +18,7 @@ import femtologging.config as config_module
 from femtologging import (
     FileHandlerBuilder,
     RotatingFileHandlerBuilder,
+    SocketHandlerBuilder,
     StreamHandlerBuilder,
     HandlerConfigError,
 )
@@ -100,6 +101,19 @@ def given_stream_stderr() -> StreamHandlerBuilder:
     return StreamHandlerBuilder.stderr()
 
 
+@given(
+    parsers.parse('a SocketHandlerBuilder for host "{host}" port {port:d}'),
+    target_fixture="socket_builder",
+)
+def given_socket_builder(host: str, port: int) -> SocketHandlerBuilder:
+    return SocketHandlerBuilder(host, port)
+
+
+@given("an empty SocketHandlerBuilder", target_fixture="socket_builder")
+def given_empty_socket_builder() -> SocketHandlerBuilder:
+    return SocketHandlerBuilder()
+
+
 @when(parsers.parse("I set file capacity {capacity:d}"))
 def when_set_file_capacity(file_builder: FileBuilder, capacity: int) -> FileBuilder:
     return file_builder.with_capacity(capacity)
@@ -112,11 +126,60 @@ def when_set_stream_capacity(
     return stream_builder.with_capacity(capacity)
 
 
+@when(
+    parsers.parse("I set socket capacity {capacity:d}"), target_fixture="socket_builder"
+)
+def when_set_socket_capacity(
+    socket_builder: SocketHandlerBuilder, capacity: int
+) -> SocketHandlerBuilder:
+    return socket_builder.with_capacity(capacity)
+
+
 @when(parsers.parse("I set stream flush timeout {timeout:d}"))
 def when_set_stream_flush_timeout(
     stream_builder: StreamHandlerBuilder, timeout: int
 ) -> StreamHandlerBuilder:
     return stream_builder.with_flush_timeout_ms(timeout)
+
+
+@when(
+    parsers.parse("I set socket connect timeout {timeout:d}"),
+    target_fixture="socket_builder",
+)
+def when_set_socket_connect_timeout(
+    socket_builder: SocketHandlerBuilder, timeout: int
+) -> SocketHandlerBuilder:
+    return socket_builder.with_connect_timeout_ms(timeout)
+
+
+@when(
+    parsers.parse("I set socket write timeout {timeout:d}"),
+    target_fixture="socket_builder",
+)
+def when_set_socket_write_timeout(
+    socket_builder: SocketHandlerBuilder, timeout: int
+) -> SocketHandlerBuilder:
+    return socket_builder.with_write_timeout_ms(timeout)
+
+
+@when(
+    parsers.parse("I set socket max frame size {size:d}"),
+    target_fixture="socket_builder",
+)
+def when_set_socket_max_frame(
+    socket_builder: SocketHandlerBuilder, size: int
+) -> SocketHandlerBuilder:
+    return socket_builder.with_max_frame_size(size)
+
+
+@when(
+    parsers.parse('I set socket tls domain "{domain}"'),
+    target_fixture="socket_builder",
+)
+def when_set_socket_tls_domain(
+    socket_builder: SocketHandlerBuilder, domain: str
+) -> SocketHandlerBuilder:
+    return socket_builder.with_tls(domain, insecure=False)
 
 
 @when(parsers.parse("I set flush record interval {interval:d}"))
@@ -245,10 +308,31 @@ def then_stream_builder_snapshot(
     handler.close()
 
 
+@then("the socket handler builder matches snapshot")
+def then_socket_builder_snapshot(
+    socket_builder: SocketHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
+    assert socket_builder.as_dict() == snapshot, (
+        "socket builder dict must match snapshot"
+    )
+    handler = socket_builder.build()
+    handler.flush()
+    handler.close()
+
+
 @then("building the stream handler fails")
 def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
     with pytest.raises(HandlerConfigError):
         stream_builder.build()
+
+
+@then(parsers.parse('building the socket handler fails with "{message}"'))
+def then_socket_builder_fails(
+    socket_builder: SocketHandlerBuilder, message: str
+) -> None:
+    with pytest.raises(HandlerConfigError) as exc:
+        socket_builder.build()
+    assert message in str(exc.value)
 
 
 @then(parsers.parse("setting stream flush timeout {timeout:d} fails"))

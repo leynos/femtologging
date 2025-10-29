@@ -223,6 +223,22 @@ fields can be added without altering the core API.
 This structure ensures all relevant information is captured once and passed
 efficiently to consumer threads.
 
+#### FemtoSocketHandler Implementation Update
+
+The production handler now serialises `FemtoLogRecord` values to MessagePack
+and frames them with a four-byte big-endian prefix before writing to the
+socket. The consumer thread manages connection establishment and reconnection
+with configurable exponential backoff (base, cap, reset-after, and deadline),
+and the builder exposes TCP, IPv4/IPv6, and Unix domain transports. TLS is
+optional via `native-tls`, with the builder controlling SNI and an opt-in
+insecure mode for tests. Python bindings mirror these options, splitting
+connect and write timeouts and allowing frame size overrides so `dictConfig`
+and fluent APIs use the same knobs. Runtime failures surface as handler errors
+while rate-limited warnings document dropped frames without spamming stderr.
+Additional parity-focused tests (e.g. TLS handshake failure scenarios) remain
+on the roadmap but the core transport, framing, and reconnection behaviour is
+now implemented end to end.
+
 ```mermaid
 classDiagram
     class FemtoLogRecord {

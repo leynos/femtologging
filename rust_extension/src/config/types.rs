@@ -20,7 +20,7 @@ use crate::{
     handler::FemtoHandlerTrait,
     handlers::{
         FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, RotatingFileHandlerBuilder,
-        StreamHandlerBuilder,
+        SocketHandlerBuilder, StreamHandlerBuilder,
     },
     level::FemtoLevel,
 };
@@ -34,6 +34,8 @@ pub enum HandlerBuilder {
     File(FileHandlerBuilder),
     /// Build a [`FemtoRotatingFileHandler`].
     Rotating(RotatingFileHandlerBuilder),
+    /// Build a [`FemtoSocketHandler`].
+    Socket(SocketHandlerBuilder),
 }
 
 impl HandlerBuilder {
@@ -51,6 +53,8 @@ impl HandlerBuilder {
                 <RotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
                     .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
             }
+            Self::Socket(b) => <SocketHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
+                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
         }
     }
 }
@@ -70,6 +74,12 @@ impl From<FileHandlerBuilder> for HandlerBuilder {
 impl From<RotatingFileHandlerBuilder> for HandlerBuilder {
     fn from(value: RotatingFileHandlerBuilder) -> Self {
         Self::Rotating(value)
+    }
+}
+
+impl From<SocketHandlerBuilder> for HandlerBuilder {
+    fn from(value: SocketHandlerBuilder) -> Self {
+        Self::Socket(value)
     }
 }
 
