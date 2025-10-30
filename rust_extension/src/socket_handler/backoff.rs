@@ -64,11 +64,13 @@ impl BackoffState {
             self.current = self.current.saturating_mul(2).min(self.policy.cap);
         }
 
+        const MIN_SLEEP_MS: u64 = 10;
+
         let max_ms = self.current.as_millis().min(u128::from(u64::MAX)) as u64;
-        let sleep_ms = if max_ms == 0 {
-            0
-        } else {
-            self.rng.gen_range(0..=max_ms)
+        let sleep_ms = match max_ms {
+            0 => MIN_SLEEP_MS,
+            1..=MIN_SLEEP_MS => max_ms,
+            _ => self.rng.gen_range(MIN_SLEEP_MS..=max_ms),
         };
         Some(Duration::from_millis(sleep_ms))
     }

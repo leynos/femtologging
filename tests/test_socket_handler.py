@@ -6,9 +6,11 @@ import queue
 import socketserver
 import struct
 import threading
+from pathlib import Path
 from typing import cast
 
 import femtologging
+import pytest
 
 
 class _CaptureHandler(socketserver.BaseRequestHandler):
@@ -52,3 +54,14 @@ def test_socket_handler_sends_records() -> None:
         handler.close()
         server.shutdown()
         thread.join(timeout=1)
+
+
+def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:
+    """TLS configuration must be rejected when no TCP transport is configured."""
+
+    socket_path = tmp_path / "socket.sock"
+    builder = femtologging.SocketHandlerBuilder(unix_path=str(socket_path))
+    builder = builder.with_tls("example.com", insecure=False)
+
+    with pytest.raises(femtologging.HandlerConfigError):
+        builder.build()

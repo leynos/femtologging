@@ -4,11 +4,7 @@
 //! exponential backoff parameters. The builder mirrors configuration concepts
 //! described in the design documents to keep the Python and Rust APIs aligned.
 
-use std::{
-    num::{NonZeroU64, NonZeroUsize},
-    path::PathBuf,
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::{prelude::*, types::PyDict, Bound};
@@ -25,17 +21,11 @@ use super::{HandlerBuildError, HandlerBuilderTrait};
 
 #[derive(Clone, Debug)]
 enum TransportConfig {
-    Tcp {
-        host: String,
-        port: u16,
-        tls: Option<TlsConfig>,
-    },
-    Unix {
-        path: PathBuf,
-    },
+    Tcp { host: String, port: u16 },
+    Unix { path: PathBuf },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct TlsConfig {
     domain: Option<String>,
     insecure: bool,
@@ -43,39 +33,82 @@ struct TlsConfig {
 
 #[derive(Clone, Debug, Default)]
 struct BackoffConfig {
-    base_ms: Option<NonZeroU64>,
-    cap_ms: Option<NonZeroU64>,
-    reset_after_ms: Option<NonZeroU64>,
-    deadline_ms: Option<NonZeroU64>,
+    base_ms: Option<u64>,
+    cap_ms: Option<u64>,
+    reset_after_ms: Option<u64>,
+    deadline_ms: Option<u64>,
 }
 
 impl BackoffConfig {
-    fn apply(&self, policy: &mut BackoffPolicy) {
+    fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
         if let Some(base) = self.base_ms {
-            policy.base = Duration::from_millis(base.get());
+            ensure_positive_u64(base, "backoff_base_ms")?;
+            policy.base = Duration::from_millis(base);
         }
         if let Some(cap) = self.cap_ms {
-            policy.cap = Duration::from_millis(cap.get());
+            ensure_positive_u64(cap, "backoff_cap_ms")?;
+            policy.cap = Duration::from_millis(cap);
         }
         if let Some(reset) = self.reset_after_ms {
-            policy.reset_after = Duration::from_millis(reset.get());
+            ensure_positive_u64(reset, "backoff_reset_after_ms")?;
+            policy.reset_after = Duration::from_millis(reset);
         }
         if let Some(deadline) = self.deadline_ms {
-            policy.deadline = Duration::from_millis(deadline.get());
+            ensure_positive_u64(deadline, "backoff_deadline_ms")?;
+            policy.deadline = Duration::from_millis(deadline);
         }
+        Ok(())
     }
+}
+
+fn ensure_positive_u64(value: u64, field: &str) -> Result<u64, HandlerBuildError> {
+    if value == 0 {
+        Err(HandlerBuildError::InvalidConfig(format!(
+            "{field} must be greater than zero"
+        )))
+    } else {
+        Ok(value)
+    }
+}
+
+fn ensure_positive_usize(value: usize, field: &str) -> Result<usize, HandlerBuildError> {
+    if value == 0 {
+        Err(HandlerBuildError::InvalidConfig(format!(
+            "{field} must be greater than zero"
+        )))
+    } else {
+        Ok(value)
+    }
+}
+
+macro_rules! option_setter {
+    ($fn_name:ident, $field:ident, $ty:ty) => {
+        pub fn $fn_name(mut self, value: $ty) -> Self {
+            self.$field = Some(value);
+            self
+        }
+    };
+}
+
+#[cfg(feature = "python")]
+macro_rules! dict_set {
+    ($dict:expr, $key:expr, $opt:expr) => {
+        if let Some(value) = $opt {
+            $dict.set_item($key, value)?;
+        }
+    };
 }
 
 /// Builder for constructing [`FemtoSocketHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone, Debug, Default)]
 pub struct SocketHandlerBuilder {
-    capacity: Option<NonZeroUsize>,
-    capacity_set: bool,
-    connect_timeout_ms: Option<NonZeroU64>,
-    write_timeout_ms: Option<NonZeroU64>,
-    max_frame_size: Option<NonZeroUsize>,
+    capacity: Option<usize>,
+    connect_timeout_ms: Option<u64>,
+    write_timeout_ms: Option<u64>,
+    max_frame_size: Option<usize>,
     transport: Option<TransportConfig>,
+    tls: Option<TlsConfig>,
     backoff: BackoffConfig,
 }
 
@@ -90,7 +123,6 @@ impl SocketHandlerBuilder {
         self.transport = Some(TransportConfig::Tcp {
             host: host.into(),
             port,
-            tls: None,
         });
         self
     }
@@ -101,86 +133,29 @@ impl SocketHandlerBuilder {
         self
     }
 
-    /// Enable TLS using the provided domain. Defaults to the TCP host when omitted.
-    pub fn with_tls_domain(mut self, domain: Option<String>) -> Self {
-        self.transport = match self.transport.take() {
-            Some(TransportConfig::Tcp { host, port, tls }) => {
-                let mut tls_config = tls.unwrap_or(TlsConfig {
-                    domain: None,
-                    insecure: false,
-                });
-                tls_config.domain = domain;
-                Some(TransportConfig::Tcp {
-                    host,
-                    port,
-                    tls: Some(tls_config),
-                })
-            }
-            other => other,
-        };
-        self
-    }
-
-    /// Toggle TLS certificate validation.
-    pub fn with_insecure_tls(mut self, insecure: bool) -> Self {
-        self.transport = match self.transport.take() {
-            Some(TransportConfig::Tcp { host, port, tls }) => {
-                let mut tls_config = tls.unwrap_or(TlsConfig {
-                    domain: None,
-                    insecure: false,
-                });
-                tls_config.insecure = insecure;
-                Some(TransportConfig::Tcp {
-                    host,
-                    port,
-                    tls: Some(tls_config),
-                })
-            }
-            other => other,
-        };
+    /// Configure TLS using the provided domain and validation policy.
+    pub fn with_tls(mut self, domain: Option<String>, insecure: bool) -> Self {
+        self.tls = Some(TlsConfig { domain, insecure });
         self
     }
 
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
-        if capacity == 0 {
-            self.capacity = None;
-            self.capacity_set = true;
-        } else {
-            self.capacity = Some(
-                NonZeroUsize::new(capacity)
-                    .expect("NonZeroUsize::new must succeed for non-zero capacity"),
-            );
-            self.capacity_set = true;
-        }
+        self.capacity = Some(capacity);
         self
     }
 
-    /// Set the socket connect timeout in milliseconds.
-    pub fn with_connect_timeout_ms(mut self, timeout: NonZeroU64) -> Self {
-        self.connect_timeout_ms = Some(timeout);
-        self
-    }
-
-    /// Set the socket write timeout in milliseconds.
-    pub fn with_write_timeout_ms(mut self, timeout: NonZeroU64) -> Self {
-        self.write_timeout_ms = Some(timeout);
-        self
-    }
-
-    /// Set the maximum allowed frame size in bytes.
-    pub fn with_max_frame_size(mut self, size: NonZeroUsize) -> Self {
-        self.max_frame_size = Some(size);
-        self
-    }
+    option_setter!(with_connect_timeout_ms, connect_timeout_ms, u64);
+    option_setter!(with_write_timeout_ms, write_timeout_ms, u64);
+    option_setter!(with_max_frame_size, max_frame_size, usize);
 
     /// Override backoff timings using milliseconds.
     pub fn with_backoff(
         mut self,
-        base_ms: Option<NonZeroU64>,
-        cap_ms: Option<NonZeroU64>,
-        reset_after_ms: Option<NonZeroU64>,
-        deadline_ms: Option<NonZeroU64>,
+        base_ms: Option<u64>,
+        cap_ms: Option<u64>,
+        reset_after_ms: Option<u64>,
+        deadline_ms: Option<u64>,
     ) -> Self {
         self.backoff = BackoffConfig {
             base_ms,
@@ -197,31 +172,22 @@ impl SocketHandlerBuilder {
                 "socket handler requires a transport".into(),
             ));
         }
-        if self.capacity.is_none() && self.capacity_set {
-            return Err(HandlerBuildError::InvalidConfig(
-                "capacity must be greater than zero".into(),
-            ));
+        if let Some(capacity) = self.capacity {
+            ensure_positive_usize(capacity, "capacity")?;
         }
         if let Some(timeout) = self.connect_timeout_ms {
-            if timeout.get() == 0 {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "connect_timeout_ms must be greater than zero".into(),
-                ));
-            }
+            ensure_positive_u64(timeout, "connect_timeout_ms")?;
         }
         if let Some(timeout) = self.write_timeout_ms {
-            if timeout.get() == 0 {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "write_timeout_ms must be greater than zero".into(),
-                ));
-            }
+            ensure_positive_u64(timeout, "write_timeout_ms")?;
         }
         if let Some(size) = self.max_frame_size {
-            if size.get() == 0 {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "max_frame_size must be greater than zero".into(),
-                ));
-            }
+            ensure_positive_usize(size, "max_frame_size")?;
+        }
+        if matches!(self.transport, Some(TransportConfig::Unix { .. })) && self.tls.is_some() {
+            return Err(HandlerBuildError::InvalidConfig(
+                "tls is only supported for tcp transports".into(),
+            ));
         }
         Ok(())
     }
@@ -230,30 +196,32 @@ impl SocketHandlerBuilder {
         self.validate()?;
         let mut config = SocketHandlerConfig::default();
         if let Some(capacity) = self.capacity {
-            config.capacity = capacity.get();
+            config.capacity = ensure_positive_usize(capacity, "capacity")?;
         }
         if let Some(timeout) = self.connect_timeout_ms {
-            config.connect_timeout = Duration::from_millis(timeout.get());
+            config.connect_timeout =
+                Duration::from_millis(ensure_positive_u64(timeout, "connect_timeout_ms")?);
         }
         if let Some(timeout) = self.write_timeout_ms {
-            config.write_timeout = Duration::from_millis(timeout.get());
+            config.write_timeout =
+                Duration::from_millis(ensure_positive_u64(timeout, "write_timeout_ms")?);
         }
         if let Some(size) = self.max_frame_size {
-            config.max_frame_size = size.get();
+            config.max_frame_size = ensure_positive_usize(size, "max_frame_size")?;
         }
         if let Some(ref transport) = self.transport {
             config.transport = match transport {
-                TransportConfig::Tcp { host, port, tls } => {
+                TransportConfig::Tcp { host, port } => {
                     if host.trim().is_empty() {
                         return Err(HandlerBuildError::InvalidConfig(
                             "tcp host must not be empty".into(),
                         ));
                     }
-                    let tls_options = tls.as_ref().map(|tls_cfg| {
+                    let tls_options = self.tls.as_ref().map(|tls_cfg| {
                         let domain = tls_cfg
                             .domain
                             .clone()
-                            .filter(|d| !d.trim().is_empty())
+                            .and_then(|d| if d.trim().is_empty() { None } else { Some(d) })
                             .unwrap_or_else(|| host.clone());
                         TlsOptions {
                             domain,
@@ -271,30 +239,22 @@ impl SocketHandlerBuilder {
                 }
             };
         }
-        self.backoff.apply(&mut config.backoff);
+        self.backoff.apply(&mut config.backoff)?;
         Ok(config)
     }
 
     #[cfg(feature = "python")]
     fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
-        if let Some(cap) = self.capacity {
-            d.set_item("capacity", cap.get())?;
-        }
-        if let Some(timeout) = self.connect_timeout_ms {
-            d.set_item("connect_timeout_ms", timeout.get())?;
-        }
-        if let Some(timeout) = self.write_timeout_ms {
-            d.set_item("write_timeout_ms", timeout.get())?;
-        }
-        if let Some(size) = self.max_frame_size {
-            d.set_item("max_frame_size", size.get())?;
-        }
+        dict_set!(d, "capacity", self.capacity);
+        dict_set!(d, "connect_timeout_ms", self.connect_timeout_ms);
+        dict_set!(d, "write_timeout_ms", self.write_timeout_ms);
+        dict_set!(d, "max_frame_size", self.max_frame_size);
         match &self.transport {
-            Some(TransportConfig::Tcp { host, port, tls }) => {
+            Some(TransportConfig::Tcp { host, port }) => {
                 d.set_item("transport", "tcp")?;
                 d.set_item("host", host)?;
                 d.set_item("port", *port)?;
-                if let Some(tls_cfg) = tls {
+                if let Some(tls_cfg) = &self.tls {
                     d.set_item("tls", true)?;
                     if let Some(domain) = &tls_cfg.domain {
                         d.set_item("tls_domain", domain)?;
@@ -310,18 +270,10 @@ impl SocketHandlerBuilder {
             }
             None => {}
         }
-        if let Some(base) = self.backoff.base_ms {
-            d.set_item("backoff_base_ms", base.get())?;
-        }
-        if let Some(cap) = self.backoff.cap_ms {
-            d.set_item("backoff_cap_ms", cap.get())?;
-        }
-        if let Some(reset) = self.backoff.reset_after_ms {
-            d.set_item("backoff_reset_after_ms", reset.get())?;
-        }
-        if let Some(deadline) = self.backoff.deadline_ms {
-            d.set_item("backoff_deadline_ms", deadline.get())?;
-        }
+        dict_set!(d, "backoff_base_ms", self.backoff.base_ms);
+        dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms);
+        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms);
+        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms);
         Ok(())
     }
 }
@@ -385,11 +337,6 @@ impl SocketHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         capacity: usize,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be greater than zero",
-            ));
-        }
         let updated = slf.clone().with_capacity(capacity);
         *slf = updated;
         Ok(slf)
@@ -401,10 +348,7 @@ impl SocketHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let timeout = NonZeroU64::new(timeout_ms).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("connect_timeout_ms must be greater than zero")
-        })?;
-        let updated = slf.clone().with_connect_timeout_ms(timeout);
+        let updated = slf.clone().with_connect_timeout_ms(timeout_ms);
         *slf = updated;
         Ok(slf)
     }
@@ -415,10 +359,7 @@ impl SocketHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let timeout = NonZeroU64::new(timeout_ms).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("write_timeout_ms must be greater than zero")
-        })?;
-        let updated = slf.clone().with_write_timeout_ms(timeout);
+        let updated = slf.clone().with_write_timeout_ms(timeout_ms);
         *slf = updated;
         Ok(slf)
     }
@@ -429,8 +370,10 @@ impl SocketHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         size: u64,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let size = NonZeroUsize::new(size as usize).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("max_frame_size must be greater than zero")
+        let size = usize::try_from(size).map_err(|_| {
+            pyo3::exceptions::PyOverflowError::new_err(
+                "max_frame_size does not fit in platform usize",
+            )
         })?;
         let updated = slf.clone().with_max_frame_size(size);
         *slf = updated;
@@ -444,10 +387,7 @@ impl SocketHandlerBuilder {
         domain: Option<String>,
         insecure: bool,
     ) -> PyRefMut<'py, Self> {
-        let updated = slf
-            .clone()
-            .with_tls_domain(domain)
-            .with_insecure_tls(insecure);
+        let updated = slf.clone().with_tls(domain, insecure);
         *slf = updated;
         slf
     }
@@ -461,31 +401,9 @@ impl SocketHandlerBuilder {
         reset_after_ms: Option<u64>,
         deadline_ms: Option<u64>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let base = match base_ms {
-            Some(value) => Some(NonZeroU64::new(value).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("base_ms must be greater than zero")
-            })?),
-            None => None,
-        };
-        let cap = match cap_ms {
-            Some(value) => Some(NonZeroU64::new(value).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("cap_ms must be greater than zero")
-            })?),
-            None => None,
-        };
-        let reset = match reset_after_ms {
-            Some(value) => Some(NonZeroU64::new(value).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("reset_after_ms must be greater than zero")
-            })?),
-            None => None,
-        };
-        let deadline = match deadline_ms {
-            Some(value) => Some(NonZeroU64::new(value).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("deadline_ms must be greater than zero")
-            })?),
-            None => None,
-        };
-        let updated = slf.clone().with_backoff(base, cap, reset, deadline);
+        let updated = slf
+            .clone()
+            .with_backoff(base_ms, cap_ms, reset_after_ms, deadline_ms);
         *slf = updated;
         Ok(slf)
     }
