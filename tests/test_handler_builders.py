@@ -106,7 +106,7 @@ def given_stream_stderr() -> StreamHandlerBuilder:
     target_fixture="socket_builder",
 )
 def given_socket_builder(host: str, port: int) -> SocketHandlerBuilder:
-    return SocketHandlerBuilder(host, port)
+    return SocketHandlerBuilder().with_tcp(host, port)
 
 
 @given("an empty SocketHandlerBuilder", target_fixture="socket_builder")

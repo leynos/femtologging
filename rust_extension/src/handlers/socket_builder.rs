@@ -309,24 +309,8 @@ impl HandlerBuilderTrait for SocketHandlerBuilder {
 #[pymethods]
 impl SocketHandlerBuilder {
     #[new]
-    #[pyo3(signature = (host=None, port=None, *, unix_path=None))]
-    fn py_new(
-        host: Option<String>,
-        port: Option<u16>,
-        unix_path: Option<String>,
-    ) -> PyResult<Self> {
-        let mut builder = Self::new();
-        match (host, port, unix_path) {
-            (Some(h), Some(p), None) => {
-                builder = builder.with_tcp(h, p);
-                Ok(builder)
-            }
-            (None, None, Some(path)) => Ok(builder.with_unix_path(path)),
-            (None, None, None) => Ok(builder),
-            _ => Err(pyo3::exceptions::PyValueError::new_err(
-                "provide either (host, port) or unix_path",
-            )),
-        }
+    fn py_new() -> PyResult<Self> {
+        Ok(Self::new())
     }
 
     #[pyo3(name = "with_tcp")]

@@ -44,7 +44,7 @@ def test_socket_handler_sends_records() -> None:
         thread.start()
         host, port = server.server_address
 
-        builder = femtologging.SocketHandlerBuilder(host, port)
+        builder = femtologging.SocketHandlerBuilder().with_tcp(host, port)
         handler = builder.build()
         handler.handle("test.logger", "INFO", "message")
 
@@ -60,7 +60,7 @@ def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:
     """TLS configuration must be rejected when no TCP transport is configured."""
 
     socket_path = tmp_path / "socket.sock"
-    builder = femtologging.SocketHandlerBuilder(unix_path=str(socket_path))
+    builder = femtologging.SocketHandlerBuilder().with_unix_path(str(socket_path))
     builder = builder.with_tls("example.com", insecure=False)
 
     with pytest.raises(femtologging.HandlerConfigError):
