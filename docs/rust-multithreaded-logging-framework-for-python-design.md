@@ -243,6 +243,68 @@ transport, framing, and reconnection behaviour is now implemented end to end.
 
 ```mermaid
 classDiagram
+    class SocketHandlerBuilder {
+        +with_tcp(host: str, port: int): SocketHandlerBuilder
+        +with_unix_path(path: str): SocketHandlerBuilder
+        +with_connect_timeout_ms(timeout: int): SocketHandlerBuilder
+        +with_write_timeout_ms(timeout: int): SocketHandlerBuilder
+        +with_max_frame_size(size: int): SocketHandlerBuilder
+        +with_tls(domain: str | None = None, insecure: bool = False): SocketHandlerBuilder
+        +with_backoff(
+            base_ms: int | None = None,
+            cap_ms: int | None = None,
+            reset_after_ms: int | None = None,
+            deadline_ms: int | None = None
+        ): SocketHandlerBuilder
+        +as_dict(): dict[str, object]
+        +build(): FemtoSocketHandler
+    }
+    class FemtoSocketHandler {
+        +handle(record: FemtoLogRecord): Result
+        +flush(): bool
+        +close(): void
+    }
+    class SocketHandlerConfig {
+        capacity: usize
+        connect_timeout: Duration
+        write_timeout: Duration
+        max_frame_size: usize
+        transport: SocketTransport
+        backoff: BackoffPolicy
+        warn_interval: Duration
+    }
+    class SocketTransport {
+    }
+    class TcpTransport {
+        host: String
+        port: u16
+        tls: Option~TlsOptions~
+    }
+    class UnixTransport {
+        path: PathBuf
+    }
+    class TlsOptions {
+        domain: String
+        insecure_skip_verify: bool
+    }
+    class BackoffPolicy {
+        base: Duration
+        cap: Duration
+        reset_after: Duration
+        deadline: Duration
+    }
+    SocketHandlerBuilder --> "1" FemtoSocketHandler : build()
+    SocketHandlerBuilder --> "1" SocketHandlerConfig
+    SocketHandlerConfig --> "1" SocketTransport
+    SocketTransport <|-- TcpTransport
+    SocketTransport <|-- UnixTransport
+    TcpTransport --> "0..1" TlsOptions
+    SocketHandlerConfig --> "1" BackoffPolicy
+    FemtoSocketHandler --> "1" SocketHandlerConfig
+```
+
+```mermaid
+classDiagram
     class FemtoLogRecord {
         +String logger
         +String level
