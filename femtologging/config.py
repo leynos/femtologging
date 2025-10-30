@@ -488,6 +488,7 @@ __all__ = [
     "LoggerConfigBuilder",
     "FormatterBuilder",
     "StreamHandlerBuilder",
+    "SocketHandlerBuilder",
     "FileHandlerBuilder",
     "RotatingFileHandlerBuilder",
     "LevelFilterBuilder",
