@@ -31,200 +31,193 @@ pub fn spawn_worker(
     config: SocketHandlerConfig,
 ) -> (Sender<SocketCommand>, thread::JoinHandle<()>) {
     let (tx, rx) = bounded(config.capacity);
-    let handle = thread::spawn(move || Worker::new(config).run(rx));
+    let handle = thread::spawn(move || worker_loop(rx, config));
     (tx, handle)
 }
 
-struct Worker {
-    config: SocketHandlerConfig,
-    connection: Option<ActiveConnection>,
-    backoff: BackoffState,
-    warner: RateLimitedWarner,
+fn worker_loop(rx: Receiver<SocketCommand>, config: SocketHandlerConfig) {
+    let mut connection: Option<ActiveConnection> = None;
+    let mut backoff = BackoffState::new(config.backoff.clone());
+    let warner = RateLimitedWarner::new(config.warn_interval);
+    loop {
+        match rx.recv() {
+            Ok(SocketCommand::Record(record)) => {
+                handle_record_command(record, &config, &mut connection, &mut backoff, &warner);
+            }
+            Ok(SocketCommand::Flush(ack)) => {
+                handle_flush_command(ack, &config, &mut connection);
+            }
+            Ok(SocketCommand::Shutdown(ack)) => {
+                drain_pending(&rx, &config, &mut connection, &mut backoff, &warner);
+                handle_flush_command(ack, &config, &mut connection);
+                break;
+            }
+            Err(_) => {
+                drain_pending(&rx, &config, &mut connection, &mut backoff, &warner);
+                break;
+            }
+        }
+    }
+    flush_silently(&mut connection, &config);
 }
 
-impl Worker {
-    fn new(config: SocketHandlerConfig) -> Self {
-        let warn_interval = config.warn_interval;
-        let backoff_policy = config.backoff.clone();
-        Self {
-            backoff: BackoffState::new(backoff_policy),
-            warner: RateLimitedWarner::new(warn_interval),
-            connection: None,
-            config,
-        }
-    }
-
-    fn run(mut self, rx: Receiver<SocketCommand>) {
-        loop {
-            match rx.recv() {
-                Ok(cmd) => {
-                    if self.handle_command(cmd, &rx) {
-                        break;
-                    }
-                }
-                Err(_) => {
-                    self.drain_pending(&rx);
-                    break;
-                }
-            }
-        }
-        self.flush_silently();
-    }
-
-    fn handle_command(&mut self, cmd: SocketCommand, rx: &Receiver<SocketCommand>) -> bool {
-        match cmd {
-            SocketCommand::Record(record) => {
-                self.process_record(record);
-                false
-            }
-            SocketCommand::Flush(ack) => {
-                let success = self.flush_connection();
-                let _ = ack.send(());
-                if !success {
-                    warn!("FemtoSocketHandler flush requested without active connection");
-                }
-                false
-            }
-            SocketCommand::Shutdown(ack) => {
-                self.drain_pending(rx);
-                let success = self.flush_connection();
-                let _ = ack.send(());
-                if !success {
-                    warn!("FemtoSocketHandler flush requested without active connection");
-                }
-                true
-            }
-        }
-    }
-
-    fn process_record(&mut self, record: FemtoLogRecord) {
-        let frame = match self.serialise_frame(&record) {
-            Ok(frame) => frame,
-            Err(err) => {
-                warn!("FemtoSocketHandler serialisation error: {err}");
-                self.warn_drops(|count| {
-                    warn!(
-                        "FemtoSocketHandler dropped {count} records due to serialisation failures"
-                    );
-                });
-                return;
-            }
-        };
-        let now = Instant::now();
-        self.send_frame(&frame, now);
-    }
-
-    fn serialise_frame(&self, record: &FemtoLogRecord) -> io::Result<Vec<u8>> {
-        serialise_record(record).and_then(|payload| {
-            frame_payload(&payload, self.config.max_frame_size)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame too large"))
-        })
-    }
-
-    fn send_frame(&mut self, frame: &[u8], now: Instant) {
-        if !self.ensure_connection(now) {
+fn handle_record_command(
+    record: FemtoLogRecord,
+    config: &SocketHandlerConfig,
+    connection: &mut Option<ActiveConnection>,
+    backoff: &mut BackoffState,
+    warner: &RateLimitedWarner,
+) {
+    let frame = match prepare_frame(&record, config) {
+        Ok(frame) => frame,
+        Err(err) => {
+            warn!("FemtoSocketHandler serialisation error: {err}");
+            warn_drops(warner, |count| {
+                warn!("FemtoSocketHandler dropped {count} records due to serialisation failures");
+            });
             return;
         }
-        if let Some(conn) = self.connection.as_mut() {
-            let write_result = conn
-                .set_write_timeout(self.config.write_timeout)
-                .and_then(|_| conn.write_all(frame))
-                .and_then(|_| conn.flush());
-            match write_result {
-                Ok(()) => {
-                    self.backoff.record_success(now);
-                    self.backoff.reset_after_idle(now);
-                }
-                Err(err) => self.handle_write_failure(err, now),
+    };
+    let now = Instant::now();
+    send_frame_to_connection(&frame, now, config, connection, backoff, warner);
+}
+
+fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::Result<Vec<u8>> {
+    serialise_record(record).and_then(|payload| {
+        frame_payload(&payload, config.max_frame_size)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame too large"))
+    })
+}
+
+fn ensure_connection(
+    now: Instant,
+    config: &SocketHandlerConfig,
+    connection: &mut Option<ActiveConnection>,
+    backoff: &mut BackoffState,
+    warner: &RateLimitedWarner,
+) -> bool {
+    if connection.is_some() {
+        return true;
+    }
+    match connect_transport(&config.transport, config.connect_timeout) {
+        Ok(mut conn) => {
+            if let Err(err) = conn.set_write_timeout(config.write_timeout) {
+                warn!("FemtoSocketHandler failed to set write timeout: {err}");
             }
+            backoff.record_success(now);
+            *connection = Some(conn);
+            true
+        }
+        Err(err) => {
+            warn_drops(warner, |count| {
+                warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
+            });
+            if let Some(delay) = backoff.next_sleep(now) {
+                thread::sleep(delay);
+            }
+            false
         }
     }
+}
 
-    fn ensure_connection(&mut self, now: Instant) -> bool {
-        if self.connection.is_some() {
-            return true;
-        }
-        match connect_transport(&self.config.transport, self.config.connect_timeout) {
-            Ok(mut conn) => {
-                if let Err(err) = conn.set_write_timeout(self.config.write_timeout) {
-                    warn!("FemtoSocketHandler failed to set write timeout: {err}");
-                }
-                self.backoff.record_success(now);
-                self.connection = Some(conn);
-                true
+fn send_frame_to_connection(
+    frame: &[u8],
+    now: Instant,
+    config: &SocketHandlerConfig,
+    connection: &mut Option<ActiveConnection>,
+    backoff: &mut BackoffState,
+    warner: &RateLimitedWarner,
+) {
+    if !ensure_connection(now, config, connection, backoff, warner) {
+        return;
+    }
+    if let Some(conn) = connection.as_mut() {
+        let write_result = conn
+            .set_write_timeout(config.write_timeout)
+            .and_then(|_| conn.write_all(frame))
+            .and_then(|_| conn.flush());
+        match write_result {
+            Ok(()) => {
+                backoff.record_success(now);
+                backoff.reset_after_idle(now);
             }
             Err(err) => {
-                self.handle_connect_failure(err, now);
-                false
+                warn!("FemtoSocketHandler write failed: {err}");
+                *connection = None;
+                warn_drops(warner, |count| {
+                    warn!("FemtoSocketHandler dropped {count} records due to write errors");
+                });
+                if let Some(delay) = backoff.next_sleep(now) {
+                    thread::sleep(delay);
+                }
             }
         }
     }
+}
 
-    fn handle_connect_failure(&mut self, err: io::Error, now: Instant) {
-        self.warn_drops(|count| {
-            warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
-        });
-        if let Some(delay) = self.backoff.next_sleep(now) {
-            thread::sleep(delay);
-        }
+fn handle_flush_command(
+    ack: Sender<()>,
+    config: &SocketHandlerConfig,
+    connection: &mut Option<ActiveConnection>,
+) {
+    let success = flush_connection(connection, config);
+    let _ = ack.send(());
+    if !success {
+        warn!("FemtoSocketHandler flush requested without active connection");
     }
+}
 
-    fn handle_write_failure(&mut self, err: io::Error, now: Instant) {
-        warn!("FemtoSocketHandler write failed: {err}");
-        self.connection = None;
-        self.warn_drops(|count| {
-            warn!("FemtoSocketHandler dropped {count} records due to write errors");
-        });
-        if let Some(delay) = self.backoff.next_sleep(now) {
-            thread::sleep(delay);
-        }
-    }
-
-    fn flush_connection(&mut self) -> bool {
-        match self.connection.as_mut() {
-            Some(conn) => {
-                let result = conn
-                    .set_write_timeout(self.config.write_timeout)
-                    .and_then(|_| conn.flush());
-                if result.is_err() {
-                    self.connection = None;
-                }
-                result.is_ok()
+fn flush_connection(
+    connection: &mut Option<ActiveConnection>,
+    config: &SocketHandlerConfig,
+) -> bool {
+    match connection.as_mut() {
+        Some(conn) => {
+            let result = conn
+                .set_write_timeout(config.write_timeout)
+                .and_then(|_| conn.flush());
+            if result.is_err() {
+                *connection = None;
             }
-            None => false,
+            result.is_ok()
         }
+        None => false,
     }
+}
 
-    fn flush_silently(&mut self) {
-        if let Some(conn) = self.connection.as_mut() {
-            let _ = conn.set_write_timeout(self.config.write_timeout);
-            let _ = conn.flush();
-        }
+fn flush_silently(connection: &mut Option<ActiveConnection>, config: &SocketHandlerConfig) {
+    if let Some(conn) = connection.as_mut() {
+        let _ = conn.set_write_timeout(config.write_timeout);
+        let _ = conn.flush();
     }
+}
 
-    fn drain_pending(&mut self, rx: &Receiver<SocketCommand>) {
-        loop {
-            match rx.try_recv() {
-                Ok(SocketCommand::Record(record)) => self.process_record(record),
-                Ok(SocketCommand::Flush(ack)) => {
-                    let success = self.flush_connection();
-                    let _ = ack.send(());
-                    if !success {
-                        warn!("FemtoSocketHandler flush requested without active connection");
-                    }
-                }
-                Ok(SocketCommand::Shutdown(ack)) => {
-                    let _ = ack.send(());
-                }
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+fn drain_pending(
+    rx: &Receiver<SocketCommand>,
+    config: &SocketHandlerConfig,
+    connection: &mut Option<ActiveConnection>,
+    backoff: &mut BackoffState,
+    warner: &RateLimitedWarner,
+) {
+    loop {
+        match rx.try_recv() {
+            Ok(SocketCommand::Record(record)) => {
+                handle_record_command(record, config, connection, backoff, warner)
             }
+            Ok(SocketCommand::Flush(ack)) => {
+                handle_flush_command(ack, config, connection);
+            }
+            Ok(SocketCommand::Shutdown(ack)) => {
+                let _ = ack.send(());
+            }
+            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
         }
     }
+}
 
-    fn warn_drops(&self, log: impl FnMut(u64)) {
-        self.warner.record_drop();
-        self.warner.warn_if_due(log);
-    }
+fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
+    warner.record_drop();
+    warner.warn_if_due(log);
 }
 
 pub fn enqueue_record(
