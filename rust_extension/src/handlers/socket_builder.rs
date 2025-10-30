@@ -213,6 +213,18 @@ impl SocketHandlerBuilder {
     fn build_config(&self) -> Result<SocketHandlerConfig, HandlerBuildError> {
         self.validate()?;
         let mut config = SocketHandlerConfig::default();
+        self.apply_optional_fields(&mut config)?;
+        if let Some(ref transport) = self.transport {
+            config.transport = self.build_transport_config(transport)?;
+        }
+        self.backoff.apply(&mut config.backoff)?;
+        Ok(config)
+    }
+
+    fn apply_optional_fields(
+        &self,
+        config: &mut SocketHandlerConfig,
+    ) -> Result<(), HandlerBuildError> {
         if let Some(capacity) = self.capacity {
             config.capacity = ensure_positive_usize(capacity, "capacity")?;
         }
@@ -227,38 +239,45 @@ impl SocketHandlerBuilder {
         if let Some(size) = self.max_frame_size {
             config.max_frame_size = ensure_positive_usize(size, "max_frame_size")?;
         }
-        if let Some(ref transport) = self.transport {
-            config.transport = match transport {
-                TransportConfig::Tcp { host, port } => {
-                    if host.trim().is_empty() {
-                        return Err(HandlerBuildError::InvalidConfig(
-                            "tcp host must not be empty".into(),
-                        ));
-                    }
-                    let tls_options = self.tls.as_ref().map(|tls_cfg| {
-                        let domain = tls_cfg
-                            .domain
-                            .clone()
-                            .and_then(|d| if d.trim().is_empty() { None } else { Some(d) })
-                            .unwrap_or_else(|| host.clone());
-                        TlsOptions {
-                            domain,
-                            insecure_skip_verify: tls_cfg.insecure,
-                        }
-                    });
-                    SocketTransport::Tcp(TcpTransport {
-                        host: host.clone(),
-                        port: *port,
-                        tls: tls_options,
-                    })
+        Ok(())
+    }
+
+    fn build_transport_config(
+        &self,
+        transport: &TransportConfig,
+    ) -> Result<SocketTransport, HandlerBuildError> {
+        match transport {
+            TransportConfig::Tcp { host, port } => {
+                if host.trim().is_empty() {
+                    return Err(HandlerBuildError::InvalidConfig(
+                        "tcp host must not be empty".into(),
+                    ));
                 }
-                TransportConfig::Unix { path } => {
-                    SocketTransport::Unix(UnixTransport { path: path.clone() })
-                }
-            };
+                let tls_options = self.build_tls_options(host);
+                Ok(SocketTransport::Tcp(TcpTransport {
+                    host: host.clone(),
+                    port: *port,
+                    tls: tls_options,
+                }))
+            }
+            TransportConfig::Unix { path } => {
+                Ok(SocketTransport::Unix(UnixTransport { path: path.clone() }))
+            }
         }
-        self.backoff.apply(&mut config.backoff)?;
-        Ok(config)
+    }
+
+    fn build_tls_options(&self, host: &str) -> Option<TlsOptions> {
+        self.tls.as_ref().map(|tls_cfg| {
+            let domain = tls_cfg
+                .domain
+                .clone()
+                .and_then(|d| if d.trim().is_empty() { None } else { Some(d) })
+                .unwrap_or_else(|| host.to_owned());
+            TlsOptions {
+                domain,
+                insecure_skip_verify: tls_cfg.insecure,
+            }
+        })
     }
 
     #[cfg(feature = "python")]
