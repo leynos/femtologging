@@ -167,27 +167,45 @@ impl SocketHandlerBuilder {
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
-        if self.transport.is_none() {
-            return Err(HandlerBuildError::InvalidConfig(
+        self.validate_transport()?;
+        self.validate_capacity()?;
+        self.validate_timeouts()?;
+        self.validate_frame_size()?;
+        Ok(())
+    }
+
+    fn validate_transport(&self) -> Result<(), HandlerBuildError> {
+        match &self.transport {
+            None => Err(HandlerBuildError::InvalidConfig(
                 "socket handler requires a transport".into(),
-            ));
+            )),
+            Some(TransportConfig::Unix { .. }) if self.tls.is_some() => Err(
+                HandlerBuildError::InvalidConfig("tls is only supported for tcp transports".into()),
+            ),
+            _ => Ok(()),
         }
+    }
+
+    fn validate_capacity(&self) -> Result<(), HandlerBuildError> {
         if let Some(capacity) = self.capacity {
             ensure_positive_usize(capacity, "capacity")?;
         }
+        Ok(())
+    }
+
+    fn validate_timeouts(&self) -> Result<(), HandlerBuildError> {
         if let Some(timeout) = self.connect_timeout_ms {
             ensure_positive_u64(timeout, "connect_timeout_ms")?;
         }
         if let Some(timeout) = self.write_timeout_ms {
             ensure_positive_u64(timeout, "write_timeout_ms")?;
         }
+        Ok(())
+    }
+
+    fn validate_frame_size(&self) -> Result<(), HandlerBuildError> {
         if let Some(size) = self.max_frame_size {
             ensure_positive_usize(size, "max_frame_size")?;
-        }
-        if matches!(self.transport, Some(TransportConfig::Unix { .. })) && self.tls.is_some() {
-            return Err(HandlerBuildError::InvalidConfig(
-                "tls is only supported for tcp transports".into(),
-            ));
         }
         Ok(())
     }
