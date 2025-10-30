@@ -138,9 +138,14 @@ pub fn connect_transport(
             let stream = connect_tcp(config, connect_timeout)?;
             if let Some(tls) = &config.tls {
                 let connector = tls.connector()?;
+                stream.set_read_timeout(Some(connect_timeout))?;
+                stream.set_write_timeout(Some(connect_timeout))?;
                 let stream = connector
                     .connect(&tls.domain, stream)
                     .map_err(io::Error::other)?;
+                let tcp_ref = stream.get_ref();
+                tcp_ref.set_read_timeout(None)?;
+                tcp_ref.set_write_timeout(None)?;
                 Ok(ActiveConnection::Tls(Box::new(stream)))
             } else {
                 Ok(ActiveConnection::PlainTcp(stream))

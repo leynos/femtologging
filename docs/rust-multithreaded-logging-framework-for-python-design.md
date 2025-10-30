@@ -231,13 +231,15 @@ socket. The consumer thread manages connection establishment and reconnection
 with configurable exponential backoff (base, cap, reset-after, and deadline),
 and the builder exposes TCP, IPv4/IPv6, and Unix domain transports. TLS is
 optional via `native-tls`, with the builder controlling SNI and an opt-in
-insecure mode for tests. Python bindings mirror these options, splitting
-connect and write timeouts and allowing frame size overrides so `dictConfig`
-and fluent APIs use the same knobs. Runtime failures surface as handler errors
-while rate-limited warnings document dropped frames without spamming stderr.
-Additional parity-focused tests (e.g. TLS handshake failure scenarios) remain
-on the roadmap but the core transport, framing, and reconnection behaviour is
-now implemented end to end.
+insecure mode for tests. The TCP stream now applies the connect timeout as a
+temporary read/write deadline during TLS handshakes so stalled peers cannot
+block shutdown, and clears the deadline once the handshake completes. Python
+bindings mirror these options, splitting connect and write timeouts and
+allowing frame size overrides so `dictConfig` and fluent APIs use the same
+knobs. Runtime failures surface as handler errors while rate-limited warnings
+document dropped frames without spamming stderr. Additional parity-focused
+tests (e.g. TLS handshake failure scenarios) remain on the roadmap but the core
+transport, framing, and reconnection behaviour is now implemented end to end.
 
 ```mermaid
 classDiagram

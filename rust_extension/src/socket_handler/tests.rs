@@ -21,6 +21,7 @@ use super::{
     backoff::BackoffState,
     config::BackoffPolicy,
     serialise::{frame_payload, serialise_record},
+    transport::{connect_transport, SocketTransport, TcpTransport, TlsOptions},
 };
 
 #[fixture]
@@ -133,6 +134,55 @@ fn handler_flushes_pending_records_on_close(tcp_listener: TcpListener) {
         .expect("payload received after close");
     let decoded: Payload = rmp_serde::from_slice(&payload).expect("decode payload");
     assert_eq!(decoded.message, "close");
+}
+
+#[rstest]
+fn tls_handshake_respects_timeout(tcp_listener: TcpListener) {
+    let addr = tcp_listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (stream, _) = tcp_listener.accept().expect("accept connection");
+        accepted_tx.send(()).expect("signal accepted");
+        // Keep the TCP connection open without speaking TLS.
+        // This simulates a peer that stalls during the handshake.
+        thread::sleep(Duration::from_secs(2));
+        drop(stream);
+    });
+
+    let (result_tx, result_rx) = mpsc::channel();
+    let host = addr.ip().to_string();
+    let port = addr.port();
+    thread::spawn(move || {
+        let transport = SocketTransport::Tcp(TcpTransport {
+            host,
+            port,
+            tls: Some(TlsOptions {
+                domain: "localhost".into(),
+                insecure_skip_verify: true,
+            }),
+        });
+        let start = Instant::now();
+        let result = connect_transport(&transport, Duration::from_millis(250));
+        let elapsed = start.elapsed();
+        let ok = result.is_ok();
+        drop(result);
+        result_tx
+            .send((ok, elapsed))
+            .expect("handshake duration should send");
+    });
+
+    accepted_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("connection must be accepted");
+    let (ok, elapsed) = result_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("handshake result should arrive");
+    assert!(!ok, "handshake should fail for stalled peer");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "handshake should respect timeout, elapsed {:?}",
+        elapsed
+    );
 }
 
 #[rstest]
