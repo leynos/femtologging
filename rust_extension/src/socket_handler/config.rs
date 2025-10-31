@@ -1,4 +1,7 @@
-//! Configuration structures for the socket handler.
+//! Configuration structures consumed by the socket handler lifecycle.
+//!
+//! `SocketHandlerBuilder` constructs these values before passing them to
+//! [`FemtoSocketHandler`](super::FemtoSocketHandler) for runtime use.
 
 use std::time::Duration;
 
@@ -35,6 +38,8 @@ pub struct SocketHandlerConfig {
     pub warn_interval: Duration,
 }
 
+/// Provide defaults that favour local development whilst encouraging
+/// production callers to override the transport via the builder APIs.
 impl Default for SocketHandlerConfig {
     fn default() -> Self {
         Self {

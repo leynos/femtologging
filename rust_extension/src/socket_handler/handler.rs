@@ -54,21 +54,32 @@ impl FemtoSocketHandler {
 
     /// Close the handler and wait for the worker to exit.
     pub fn close(&mut self) {
-        if let Some(tx) = self.tx.take() {
-            let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-            if tx.send(SocketCommand::Shutdown(ack_tx)).is_ok() {
-                let _ = ack_rx.recv_timeout(self.flush_timeout);
-            }
-        }
-        if let Some(handle) = self.handle.lock().take() {
-            if handle.join().is_err() {
-                log::warn!("FemtoSocketHandler: worker thread panicked");
-            }
-        }
+        self.request_shutdown();
+        self.join_worker();
     }
 
     fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
         self.tx.as_ref().cloned()
+    }
+
+    fn request_shutdown(&mut self) {
+        let Some(tx) = self.tx.take() else {
+            return;
+        };
+        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+        if tx.send(SocketCommand::Shutdown(ack_tx)).is_err() {
+            return;
+        }
+        let _ = ack_rx.recv_timeout(self.flush_timeout);
+    }
+
+    fn join_worker(&mut self) {
+        let Some(handle) = self.handle.lock().take() else {
+            return;
+        };
+        if handle.join().is_err() {
+            log::warn!("FemtoSocketHandler: worker thread panicked");
+        }
     }
 }
 

@@ -195,54 +195,58 @@ def _build_socket_handler_builder(
     args_t = tuple(args)
     kwargs_d = dict(kwargs)
 
-    if args_t:
-        if len(args_t) == 2:
-            host, port = args_t
-            if not isinstance(host, str) or not isinstance(port, int):
-                raise ValueError(
-                    f"handler {hid!r} socket args must be (host: str, port: int)"
-                )
-            builder = builder.with_tcp(host, port)
-            transport_configured = True
-        elif len(args_t) == 1:
-            (path,) = args_t
-            if not isinstance(path, str):
-                raise ValueError(f"handler {hid!r} unix socket path must be a string")
-            builder = builder.with_unix_path(path)
-            transport_configured = True
-        else:
-            raise ValueError(
-                f"handler {hid!r} socket args must be either (host, port)"
-                " or a single unix_path"
-            )
+    builder, transport_configured = _apply_socket_args(
+        hid, builder, args_t, transport_configured
+    )
+    builder, transport_configured = _apply_socket_kwargs(
+        hid, builder, kwargs_d, transport_configured
+    )
+    _ensure_no_extra_socket_kwargs(hid, kwargs_d)
+    return builder
 
-    host_kw = kwargs_d.pop("host", None)
-    port_kw = kwargs_d.pop("port", None)
-    unix_kw = kwargs_d.pop("unix_path", None)
 
-    if host_kw is not None or port_kw is not None:
-        if unix_kw is not None:
-            raise ValueError(
-                f"handler {hid!r} socket kwargs must not mix host/port with unix_path"
-            )
-        if host_kw is None or port_kw is None:
-            raise ValueError(
-                f"handler {hid!r} socket kwargs require both host and port"
-            )
-        if not isinstance(host_kw, str) or not isinstance(port_kw, int):
-            raise ValueError(
-                f"handler {hid!r} socket kwargs host must be str and port must be int"
-            )
-        if transport_configured:
-            raise ValueError(
-                f"handler {hid!r} socket transport already configured via args"
-            )
-        builder = builder.with_tcp(host_kw, port_kw)
-        transport_configured = True
+def _apply_socket_args(
+    hid: str,
+    builder: SocketHandlerBuilder,
+    args: tuple[object, ...],
+    transport_configured: bool,
+) -> tuple[SocketHandlerBuilder, bool]:
+    if not args:
+        return builder, transport_configured
+    if len(args) == 2:
+        host, port = args
+        _validate_host_port_args(hid, host, port)
+        return builder.with_tcp(host, port), True
+    if len(args) == 1:
+        (path,) = args
+        _validate_unix_path(hid, path)
+        return builder.with_unix_path(path), True
+    raise ValueError(
+        f"handler {hid!r} socket args must be either (host, port) or a single unix_path"
+    )
+
+
+def _apply_socket_kwargs(
+    hid: str,
+    builder: SocketHandlerBuilder,
+    kwargs: dict[str, object],
+    transport_configured: bool,
+) -> tuple[SocketHandlerBuilder, bool]:
+    host_kw = kwargs.pop("host", None)
+    port_kw = kwargs.pop("port", None)
+    unix_kw = kwargs.pop("unix_path", None)
+
+    builder, transport_configured = _apply_host_port_kwargs(
+        hid,
+        builder,
+        transport_configured,
+        host_kw,
+        port_kw,
+        unix_kw,
+    )
 
     if unix_kw is not None:
-        if not isinstance(unix_kw, str):
-            raise ValueError(f"handler {hid!r} socket unix_path must be a string")
+        _validate_unix_path(hid, unix_kw)
         if transport_configured:
             raise ValueError(
                 f"handler {hid!r} socket transport already configured via args"
@@ -250,12 +254,55 @@ def _build_socket_handler_builder(
         builder = builder.with_unix_path(unix_kw)
         transport_configured = True
 
-    if kwargs_d:
+    return builder, transport_configured
+
+
+def _apply_host_port_kwargs(
+    hid: str,
+    builder: SocketHandlerBuilder,
+    transport_configured: bool,
+    host_kw: object | None,
+    port_kw: object | None,
+    unix_kw: object | None,
+) -> tuple[SocketHandlerBuilder, bool]:
+    if host_kw is None and port_kw is None:
+        return builder, transport_configured
+    if unix_kw is not None:
         raise ValueError(
-            f"handler {hid!r} has unsupported socket kwargs: {sorted(kwargs_d)!r}"
+            f"handler {hid!r} socket kwargs must not mix host/port with unix_path"
+        )
+    if host_kw is None or port_kw is None:
+        raise ValueError(f"handler {hid!r} socket kwargs require both host and port")
+    _validate_host_port_kwargs(hid, host_kw, port_kw)
+    if transport_configured:
+        raise ValueError(
+            f"handler {hid!r} socket transport already configured via args"
+        )
+    return builder.with_tcp(host_kw, port_kw), True
+
+
+def _validate_host_port_args(hid: str, host: object, port: object) -> None:
+    if not isinstance(host, str) or not isinstance(port, int):
+        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+
+
+def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
+    if not isinstance(host, str) or not isinstance(port, int):
+        raise ValueError(
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
         )
 
-    return builder
+
+def _validate_unix_path(hid: str, path: object) -> None:
+    if not isinstance(path, str):
+        raise ValueError(f"handler {hid!r} unix socket path must be a string")
+
+
+def _ensure_no_extra_socket_kwargs(hid: str, kwargs: dict[str, object]) -> None:
+    if kwargs:
+        raise ValueError(
+            f"handler {hid!r} has unsupported socket kwargs: {sorted(kwargs)!r}"
+        )
 
 
 def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:

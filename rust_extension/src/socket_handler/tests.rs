@@ -2,7 +2,7 @@
 
 use std::{
     io::Read,
-    net::TcpListener,
+    net::{SocketAddr, TcpListener},
     sync::{mpsc, Arc, Barrier},
     thread,
     time::{Duration, Instant},
@@ -27,6 +27,27 @@ use super::{
 #[fixture]
 fn tcp_listener() -> TcpListener {
     TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral listener")
+}
+
+fn spawn_single_frame_server(
+    listener: TcpListener,
+    gate: Option<Arc<Barrier>>,
+) -> (SocketAddr, mpsc::Receiver<Vec<u8>>) {
+    let addr = listener.local_addr().expect("listener has address");
+    let (notify_tx, notify_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept connection");
+        if let Some(barrier) = gate {
+            barrier.wait();
+        }
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).expect("read frame len");
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        stream.read_exact(&mut payload).expect("read payload");
+        notify_tx.send(payload).expect("send payload");
+    });
+    (addr, notify_rx)
 }
 
 #[rstest]
@@ -67,18 +88,7 @@ struct Payload {
 
 #[rstest]
 fn sends_records_over_tcp(tcp_listener: TcpListener) {
-    let addr = tcp_listener.local_addr().unwrap();
-    let (notify_tx, notify_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let (mut stream, _) = tcp_listener.accept().expect("accept connection");
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).expect("read frame len");
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        stream.read_exact(&mut payload).expect("read payload");
-        notify_tx.send(payload).expect("send payload");
-    });
-
+    let (addr, notify_rx) = spawn_single_frame_server(tcp_listener, None);
     let handler = SocketHandlerBuilder::new()
         .with_tcp(addr.ip().to_string(), addr.port())
         .build_inner()
@@ -102,21 +112,8 @@ fn sends_records_over_tcp(tcp_listener: TcpListener) {
 
 #[rstest]
 fn handler_flushes_pending_records_on_close(tcp_listener: TcpListener) {
-    let addr = tcp_listener.local_addr().unwrap();
     let barrier = Arc::new(Barrier::new(2));
-    let (notify_tx, notify_rx) = mpsc::channel();
-    let server_barrier = barrier.clone();
-    thread::spawn(move || {
-        let (mut stream, _) = tcp_listener.accept().expect("accept connection");
-        server_barrier.wait();
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).expect("read frame len");
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        stream.read_exact(&mut payload).expect("read payload");
-        notify_tx.send(payload).expect("send payload");
-    });
-
+    let (addr, notify_rx) = spawn_single_frame_server(tcp_listener, Some(barrier.clone()));
     let mut handler = SocketHandlerBuilder::new()
         .with_tcp(addr.ip().to_string(), addr.port())
         .build_inner()

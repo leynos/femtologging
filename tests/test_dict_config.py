@@ -147,6 +147,8 @@ def test_dict_config_socket_handler() -> None:
 
         server.shutdown()
         thread.join(timeout=1)
+        if thread.is_alive():
+            pytest.fail("server thread did not terminate within timeout")
 
 
 @pytest.mark.parametrize(

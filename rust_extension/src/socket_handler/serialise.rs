@@ -60,8 +60,9 @@ pub fn frame_payload(payload: &[u8], max_size: usize) -> Option<Vec<u8>> {
     if payload.len() > max_size {
         return None;
     }
-    let mut framed = Vec::with_capacity(4 + payload.len());
-    let len = payload.len() as u32;
+    let len = u32::try_from(payload.len()).ok()?;
+    let capacity = payload.len().checked_add(4)?;
+    let mut framed = Vec::with_capacity(capacity);
     framed.extend(len.to_be_bytes());
     framed.extend_from_slice(payload);
     Some(framed)

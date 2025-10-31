@@ -28,53 +28,91 @@ struct TlsConfig {
     insecure: bool,
 }
 
+/// Overrides for the socket backoff timings applied by the handler.
 #[derive(Clone, Debug, Default)]
-struct BackoffConfig {
+pub struct BackoffOverrides {
     base_ms: Option<u64>,
     cap_ms: Option<u64>,
     reset_after_ms: Option<u64>,
     deadline_ms: Option<u64>,
 }
 
-impl BackoffConfig {
+macro_rules! ensure_positive {
+    ($value:expr, $field:expr) => {{
+        if $value == 0 {
+            Err(HandlerBuildError::InvalidConfig(format!(
+                "{} must be greater than zero",
+                $field
+            )))
+        } else {
+            Ok($value)
+        }
+    }};
+}
+
+impl BackoffOverrides {
+    /// Create overrides with no custom values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Override the base jitter duration in milliseconds.
+    pub fn with_base_ms(mut self, base_ms: u64) -> Self {
+        self.base_ms = Some(base_ms);
+        self
+    }
+
+    /// Override the cap duration in milliseconds.
+    pub fn with_cap_ms(mut self, cap_ms: u64) -> Self {
+        self.cap_ms = Some(cap_ms);
+        self
+    }
+
+    /// Override the reset-after duration in milliseconds.
+    pub fn with_reset_after_ms(mut self, reset_after_ms: u64) -> Self {
+        self.reset_after_ms = Some(reset_after_ms);
+        self
+    }
+
+    /// Override the deadline duration in milliseconds.
+    pub fn with_deadline_ms(mut self, deadline_ms: u64) -> Self {
+        self.deadline_ms = Some(deadline_ms);
+        self
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn from_options(
+        base_ms: Option<u64>,
+        cap_ms: Option<u64>,
+        reset_after_ms: Option<u64>,
+        deadline_ms: Option<u64>,
+    ) -> Self {
+        Self {
+            base_ms,
+            cap_ms,
+            reset_after_ms,
+            deadline_ms,
+        }
+    }
+
     fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
         if let Some(base) = self.base_ms {
-            ensure_positive_u64(base, "backoff_base_ms")?;
+            ensure_positive!(base, "backoff_base_ms")?;
             policy.base = Duration::from_millis(base);
         }
         if let Some(cap) = self.cap_ms {
-            ensure_positive_u64(cap, "backoff_cap_ms")?;
+            ensure_positive!(cap, "backoff_cap_ms")?;
             policy.cap = Duration::from_millis(cap);
         }
         if let Some(reset) = self.reset_after_ms {
-            ensure_positive_u64(reset, "backoff_reset_after_ms")?;
+            ensure_positive!(reset, "backoff_reset_after_ms")?;
             policy.reset_after = Duration::from_millis(reset);
         }
         if let Some(deadline) = self.deadline_ms {
-            ensure_positive_u64(deadline, "backoff_deadline_ms")?;
+            ensure_positive!(deadline, "backoff_deadline_ms")?;
             policy.deadline = Duration::from_millis(deadline);
         }
         Ok(())
-    }
-}
-
-fn ensure_positive_u64(value: u64, field: &str) -> Result<u64, HandlerBuildError> {
-    if value == 0 {
-        Err(HandlerBuildError::InvalidConfig(format!(
-            "{field} must be greater than zero"
-        )))
-    } else {
-        Ok(value)
-    }
-}
-
-fn ensure_positive_usize(value: usize, field: &str) -> Result<usize, HandlerBuildError> {
-    if value == 0 {
-        Err(HandlerBuildError::InvalidConfig(format!(
-            "{field} must be greater than zero"
-        )))
-    } else {
-        Ok(value)
     }
 }
 
@@ -106,7 +144,7 @@ pub struct SocketHandlerBuilder {
     max_frame_size: Option<usize>,
     transport: Option<TransportConfig>,
     tls: Option<TlsConfig>,
-    backoff: BackoffConfig,
+    backoff: BackoffOverrides,
 }
 
 impl SocketHandlerBuilder {
@@ -146,20 +184,12 @@ impl SocketHandlerBuilder {
     option_setter!(with_write_timeout_ms, write_timeout_ms, u64);
     option_setter!(with_max_frame_size, max_frame_size, usize);
 
-    /// Override backoff timings using milliseconds.
-    pub fn with_backoff(
-        mut self,
-        base_ms: Option<u64>,
-        cap_ms: Option<u64>,
-        reset_after_ms: Option<u64>,
-        deadline_ms: Option<u64>,
-    ) -> Self {
-        self.backoff = BackoffConfig {
-            base_ms,
-            cap_ms,
-            reset_after_ms,
-            deadline_ms,
-        };
+    /// Override backoff timings using the provided overrides.
+    ///
+    /// See [`BackoffOverrides`] for fluent helpers when constructing the
+    /// override set from Rust.
+    pub fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
+        self.backoff = overrides;
         self
     }
 
@@ -185,24 +215,24 @@ impl SocketHandlerBuilder {
 
     fn validate_capacity(&self) -> Result<(), HandlerBuildError> {
         if let Some(capacity) = self.capacity {
-            ensure_positive_usize(capacity, "capacity")?;
+            ensure_positive!(capacity, "capacity")?;
         }
         Ok(())
     }
 
     fn validate_timeouts(&self) -> Result<(), HandlerBuildError> {
         if let Some(timeout) = self.connect_timeout_ms {
-            ensure_positive_u64(timeout, "connect_timeout_ms")?;
+            ensure_positive!(timeout, "connect_timeout_ms")?;
         }
         if let Some(timeout) = self.write_timeout_ms {
-            ensure_positive_u64(timeout, "write_timeout_ms")?;
+            ensure_positive!(timeout, "write_timeout_ms")?;
         }
         Ok(())
     }
 
     fn validate_frame_size(&self) -> Result<(), HandlerBuildError> {
         if let Some(size) = self.max_frame_size {
-            ensure_positive_usize(size, "max_frame_size")?;
+            ensure_positive!(size, "max_frame_size")?;
         }
         Ok(())
     }
@@ -223,18 +253,18 @@ impl SocketHandlerBuilder {
         config: &mut SocketHandlerConfig,
     ) -> Result<(), HandlerBuildError> {
         if let Some(capacity) = self.capacity {
-            config.capacity = ensure_positive_usize(capacity, "capacity")?;
+            config.capacity = ensure_positive!(capacity, "capacity")?;
         }
         if let Some(timeout) = self.connect_timeout_ms {
             config.connect_timeout =
-                Duration::from_millis(ensure_positive_u64(timeout, "connect_timeout_ms")?);
+                Duration::from_millis(ensure_positive!(timeout, "connect_timeout_ms")?);
         }
         if let Some(timeout) = self.write_timeout_ms {
             config.write_timeout =
-                Duration::from_millis(ensure_positive_u64(timeout, "write_timeout_ms")?);
+                Duration::from_millis(ensure_positive!(timeout, "write_timeout_ms")?);
         }
         if let Some(size) = self.max_frame_size {
-            config.max_frame_size = ensure_positive_usize(size, "max_frame_size")?;
+            config.max_frame_size = ensure_positive!(size, "max_frame_size")?;
         }
         Ok(())
     }

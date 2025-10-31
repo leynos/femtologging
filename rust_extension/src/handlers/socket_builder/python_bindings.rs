@@ -5,7 +5,7 @@ use pyo3::{prelude::*, types::PyDict};
 use crate::macros::{dict_into_py, AsPyDict};
 use crate::socket_handler::FemtoSocketHandler;
 
-use super::{HandlerBuilderTrait, SocketHandlerBuilder};
+use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
 
 #[pymethods]
 impl SocketHandlerBuilder {
@@ -104,9 +104,9 @@ impl SocketHandlerBuilder {
         reset_after_ms: Option<u64>,
         deadline_ms: Option<u64>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let updated = slf
-            .clone()
-            .with_backoff(base_ms, cap_ms, reset_after_ms, deadline_ms);
+        let overrides =
+            BackoffOverrides::from_options(base_ms, cap_ms, reset_after_ms, deadline_ms);
+        let updated = slf.clone().with_backoff(overrides);
         *slf = updated;
         Ok(slf)
     }

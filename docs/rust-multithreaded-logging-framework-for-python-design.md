@@ -241,6 +241,11 @@ document dropped frames without spamming stderr. Additional parity-focused
 tests (e.g. TLS handshake failure scenarios) remain on the roadmap but the core
 transport, framing, and reconnection behaviour is now implemented end to end.
 
+Rust callers configure jitter timings through a `BackoffOverrides` helper
+passed to `SocketHandlerBuilder::with_backoff`. This groups the optional
+durations into a fluent struct so the builder keeps its argument count under
+control while mirroring the Python keyword parameters one-to-one.
+
 ```mermaid
 classDiagram
     class SocketHandlerBuilder {
