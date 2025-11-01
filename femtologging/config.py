@@ -228,7 +228,7 @@ def _apply_socket_args(
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class _TransportKwargs:
     """Transport-related keyword arguments for socket handler configuration."""
 
@@ -471,7 +471,7 @@ def _extract_backoff_mapping_values(
     }
     if unknown:
         raise ValueError(
-            "handler {hid!r} socket kwargs backoff has unsupported keys:"
+            f"handler {hid!r} socket kwargs backoff has unsupported keys:"
             f" {sorted(unknown)!r}"
         )
 

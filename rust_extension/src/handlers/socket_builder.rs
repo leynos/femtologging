@@ -241,7 +241,7 @@ impl SocketHandlerBuilder {
     fn build_config(&self) -> Result<SocketHandlerConfig, HandlerBuildError> {
         self.validate()?;
         let mut config = SocketHandlerConfig::default();
-        self.apply_optional_fields(&mut config)?;
+        self.apply_optional_fields(&mut config);
         if let Some(ref transport) = self.transport {
             config.transport = self.build_transport_config(transport)?;
         }
@@ -249,25 +249,19 @@ impl SocketHandlerBuilder {
         Ok(config)
     }
 
-    fn apply_optional_fields(
-        &self,
-        config: &mut SocketHandlerConfig,
-    ) -> Result<(), HandlerBuildError> {
+    fn apply_optional_fields(&self, config: &mut SocketHandlerConfig) {
         if let Some(capacity) = self.capacity {
-            config.capacity = ensure_positive!(capacity, "capacity")?;
+            config.capacity = capacity;
         }
         if let Some(timeout) = self.connect_timeout_ms {
-            config.connect_timeout =
-                Duration::from_millis(ensure_positive!(timeout, "connect_timeout_ms")?);
+            config.connect_timeout = Duration::from_millis(timeout);
         }
         if let Some(timeout) = self.write_timeout_ms {
-            config.write_timeout =
-                Duration::from_millis(ensure_positive!(timeout, "write_timeout_ms")?);
+            config.write_timeout = Duration::from_millis(timeout);
         }
         if let Some(size) = self.max_frame_size {
-            config.max_frame_size = ensure_positive!(size, "max_frame_size")?;
+            config.max_frame_size = size;
         }
-        Ok(())
     }
 
     fn build_transport_config(
@@ -299,7 +293,7 @@ impl SocketHandlerBuilder {
             let domain = tls_cfg
                 .domain
                 .clone()
-                .and_then(|d| if d.trim().is_empty() { None } else { Some(d) })
+                .filter(|d| !d.trim().is_empty())
                 .unwrap_or_else(|| host.to_owned());
             TlsOptions {
                 domain,

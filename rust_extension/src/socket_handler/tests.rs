@@ -15,6 +15,7 @@ use crate::{
     handler::FemtoHandlerTrait,
     handlers::{socket_builder::SocketHandlerBuilder, HandlerBuildError, HandlerBuilderTrait},
     log_record::FemtoLogRecord,
+    socket_handler::FemtoSocketHandler,
 };
 
 use super::{
@@ -86,27 +87,37 @@ struct Payload {
     message: String,
 }
 
+fn build_tcp_handler(addr: SocketAddr) -> FemtoSocketHandler {
+    SocketHandlerBuilder::new()
+        .with_tcp(addr.ip().to_string(), addr.port())
+        .build_inner()
+        .expect("build handler")
+}
+
+fn send_info_record(handler: &mut FemtoSocketHandler, message: &str) {
+    handler
+        .handle(FemtoLogRecord::new("test", "INFO", message))
+        .expect("send record");
+}
+
+fn recv_payload(notify_rx: &mpsc::Receiver<Vec<u8>>, expectation: &str) -> Payload {
+    let payload = notify_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect(expectation);
+    rmp_serde::from_slice(&payload).expect("decode payload")
+}
+
 #[rstest]
 fn sends_records_over_tcp(tcp_listener: TcpListener) {
     let (addr, notify_rx) = spawn_single_frame_server(tcp_listener, None);
-    let handler = SocketHandlerBuilder::new()
-        .with_tcp(addr.ip().to_string(), addr.port())
-        .build_inner()
-        .expect("build handler");
+    let mut handler = build_tcp_handler(addr);
+    send_info_record(&mut handler, "message");
 
-    handler
-        .handle(FemtoLogRecord::new("test", "INFO", "message"))
-        .expect("send record");
-
-    let payload = notify_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("payload received");
-    let decoded: Payload = rmp_serde::from_slice(&payload).expect("decode payload");
+    let decoded = recv_payload(&notify_rx, "payload received");
     assert_eq!(decoded.logger, "test");
     assert_eq!(decoded.level, "INFO");
     assert_eq!(decoded.message, "message");
 
-    let mut handler = handler;
     handler.close();
 }
 
@@ -114,22 +125,13 @@ fn sends_records_over_tcp(tcp_listener: TcpListener) {
 fn handler_flushes_pending_records_on_close(tcp_listener: TcpListener) {
     let barrier = Arc::new(Barrier::new(2));
     let (addr, notify_rx) = spawn_single_frame_server(tcp_listener, Some(barrier.clone()));
-    let mut handler = SocketHandlerBuilder::new()
-        .with_tcp(addr.ip().to_string(), addr.port())
-        .build_inner()
-        .expect("build handler");
-
-    handler
-        .handle(FemtoLogRecord::new("test", "INFO", "close"))
-        .expect("enqueue record");
+    let mut handler = build_tcp_handler(addr);
+    send_info_record(&mut handler, "close");
 
     handler.close();
     barrier.wait();
 
-    let payload = notify_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("payload received after close");
-    let decoded: Payload = rmp_serde::from_slice(&payload).expect("decode payload");
+    let decoded = recv_payload(&notify_rx, "payload received after close");
     assert_eq!(decoded.message, "close");
 }
 

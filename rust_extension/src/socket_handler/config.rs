@@ -39,7 +39,14 @@ pub struct SocketHandlerConfig {
 }
 
 /// Provide defaults that favour local development whilst encouraging
-/// production callers to override the transport via the builder APIs.
+/// production callers to override the transport via the builder APIs. The
+/// transport defaults to `localhost:9020` so examples and tests work out of
+/// the box; real deployments should override it via
+/// [`SocketHandlerConfig::with_transport`] or the builder's
+/// [`SocketHandlerBuilder::with_tcp`]
+/// (crate::handlers::socket_builder::SocketHandlerBuilder::with_tcp)
+/// and [`SocketHandlerBuilder::with_unix_path`]
+/// (crate::handlers::socket_builder::SocketHandlerBuilder::with_unix_path).
 impl Default for SocketHandlerConfig {
     fn default() -> Self {
         Self {
