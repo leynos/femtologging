@@ -589,12 +589,26 @@ def _validate_host_port_transport_kwargs(
 
 
 def _validate_host_port_args(hid: str, host: object, port: object) -> None:
-    if not isinstance(host, str) or not isinstance(port, int) or isinstance(port, bool):
+    """Validate host and port arguments for socket handler."""
+    if not isinstance(host, str):
+        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+    if isinstance(port, bool):
+        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+    if not isinstance(port, int):
         raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
 
 
 def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
-    if not isinstance(host, str) or not isinstance(port, int) or isinstance(port, bool):
+    """Validate host and port keyword arguments for socket handler."""
+    if not isinstance(host, str):
+        raise ValueError(
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
+        )
+    if isinstance(port, bool):
+        raise ValueError(
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
+        )
+    if not isinstance(port, int):
         raise ValueError(
             f"handler {hid!r} socket kwargs host must be str and port must be int"
         )
