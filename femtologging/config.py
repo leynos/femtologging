@@ -501,30 +501,34 @@ def _merge_backoff_alias_values(
         "backoff_deadline_ms": "deadline_ms",
     }
     for alias, target in alias_map.items():
-        _merge_single_backoff_alias(hid, kwargs, merged, alias, target)
+        value = _extract_backoff_alias(hid, kwargs, alias)
+        if value is not None:
+            existing = merged.get(target)
+            _check_backoff_conflict(hid, target, existing, value)
+            merged[target] = value
     return merged
 
 
-def _merge_single_backoff_alias(
+def _extract_backoff_alias(
     hid: str,
     kwargs: dict[str, object],
-    merged: dict[str, int | None],
     alias: str,
-    target: str,
-) -> None:
+) -> int | None:
+    """Extract and coerce a backoff alias kwarg, returning None if not present."""
     if alias not in kwargs:
-        return
-    value = _coerce_backoff_value(hid, alias, kwargs.pop(alias))
-    existing = merged.get(target)
-    _check_backoff_conflict(hid, target, existing, value)
-    merged[target] = value
+        return None
+    return _coerce_backoff_value(hid, alias, kwargs.pop(alias))
 
 
 def _check_backoff_conflict(
     hid: str, target: str, existing: int | None, new: int | None
 ) -> None:
-    if existing is not None and new is not None and existing != new:
-        raise ValueError(f"handler {hid!r} socket kwargs backoff {target} conflict")
+    """Raise ValueError if conflicting backoff values are detected."""
+    if existing is None or new is None:
+        return
+    if existing == new:
+        return
+    raise ValueError(f"handler {hid!r} socket kwargs backoff {target} conflict")
 
 
 def _coerce_backoff_value(hid: str, key: str, value: object) -> int | None:
