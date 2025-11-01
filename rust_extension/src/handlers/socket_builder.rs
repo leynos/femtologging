@@ -50,6 +50,15 @@ macro_rules! ensure_positive {
     }};
 }
 
+macro_rules! apply_backoff_field {
+    ($self:expr, $field:ident, $policy:expr, $policy_field:ident, $name:expr) => {{
+        if let Some(value) = $self.$field {
+            ensure_positive!(value, $name)?;
+            $policy.$policy_field = Duration::from_millis(value);
+        }
+    }};
+}
+
 impl BackoffOverrides {
     /// Create overrides with no custom values.
     pub fn new() -> Self {
@@ -96,22 +105,16 @@ impl BackoffOverrides {
     }
 
     fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
-        if let Some(base) = self.base_ms {
-            ensure_positive!(base, "backoff_base_ms")?;
-            policy.base = Duration::from_millis(base);
-        }
-        if let Some(cap) = self.cap_ms {
-            ensure_positive!(cap, "backoff_cap_ms")?;
-            policy.cap = Duration::from_millis(cap);
-        }
-        if let Some(reset) = self.reset_after_ms {
-            ensure_positive!(reset, "backoff_reset_after_ms")?;
-            policy.reset_after = Duration::from_millis(reset);
-        }
-        if let Some(deadline) = self.deadline_ms {
-            ensure_positive!(deadline, "backoff_deadline_ms")?;
-            policy.deadline = Duration::from_millis(deadline);
-        }
+        apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
+        apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");
+        apply_backoff_field!(
+            self,
+            reset_after_ms,
+            policy,
+            reset_after,
+            "backoff_reset_after_ms"
+        );
+        apply_backoff_field!(self, deadline_ms, policy, deadline, "backoff_deadline_ms");
         Ok(())
     }
 }

@@ -328,9 +328,12 @@ def _pop_socket_tls_kwargs(
 
     domain, insecure, enabled = _parse_tls_value(hid, tls_value)
     domain, enabled = _merge_tls_domain_kwarg(hid, domain, domain_kw, enabled)
-    insecure, enabled = _merge_tls_insecure_kwarg(
-        hid, insecure, insecure_kw, enabled, tls_value
+    mapping_has_insecure = isinstance(tls_value, Mapping) and "insecure" in tls_value
+    insecure = _merge_tls_insecure_kwarg(
+        hid, insecure, insecure_kw, mapping_has_insecure
     )
+    if insecure_kw is not None:
+        enabled = True
 
     if not enabled:
         return None
@@ -415,21 +418,17 @@ def _merge_tls_insecure_kwarg(
     hid: str,
     insecure: bool,
     insecure_kw: object | None,
-    enabled: bool,
-    tls_value: object,
-) -> tuple[bool, bool]:
+    mapping_has_insecure: bool,
+) -> bool:
     if insecure_kw is None:
-        return insecure, enabled
+        return insecure
     if not isinstance(insecure_kw, bool):
         raise ValueError(f"handler {hid!r} socket kwargs tls_insecure must be a bool")
-    mapping_has_insecure = False
-    if isinstance(tls_value, Mapping):
-        mapping_has_insecure = "insecure" in tls_value
     if mapping_has_insecure and insecure_kw != insecure:
         raise ValueError(
             f"handler {hid!r} socket kwargs tls has conflicting insecure values"
         )
-    return insecure_kw, True
+    return insecure_kw
 
 
 def _validate_tls_not_disabled(hid: str, tls_value: object) -> None:
