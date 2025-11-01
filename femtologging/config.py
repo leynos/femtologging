@@ -328,10 +328,7 @@ def _pop_socket_tls_kwargs(
 
     domain, insecure, enabled = _parse_tls_value(hid, tls_value)
     domain, enabled = _merge_tls_domain_kwarg(hid, domain, domain_kw, enabled)
-    mapping_has_insecure = isinstance(tls_value, Mapping) and "insecure" in tls_value
-    insecure = _merge_tls_insecure_kwarg(
-        hid, insecure, insecure_kw, mapping_has_insecure
-    )
+    insecure = _merge_tls_insecure_kwarg(hid, insecure, insecure_kw)
     if insecure_kw is not None:
         enabled = True
 
@@ -343,22 +340,24 @@ def _pop_socket_tls_kwargs(
     return domain, insecure
 
 
-def _parse_tls_value(hid: str, tls_value: object) -> tuple[str | None, bool, bool]:
+def _parse_tls_value(
+    hid: str, tls_value: object
+) -> tuple[str | None, bool | None, bool]:
     if isinstance(tls_value, Mapping):
         domain, insecure = _parse_tls_mapping(
             hid, cast(Mapping[object, object], tls_value)
         )
         return domain, insecure, True
     if isinstance(tls_value, bool):
-        return None, False, tls_value
+        return None, None, tls_value
     if tls_value is None:
-        return None, False, False
+        return None, None, False
     raise ValueError(f"handler {hid!r} socket kwargs tls must be a bool or mapping")
 
 
 def _parse_tls_mapping(
     hid: str, tls_value: Mapping[object, object]
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool | None]:
     mapping = _validate_mapping_type(tls_value, f"handler {hid!r} socket kwargs tls")
     mapping = _validate_string_keys(mapping, f"handler {hid!r} socket kwargs tls")
     unknown = set(mapping) - {"domain", "insecure"}
@@ -386,9 +385,9 @@ def _extract_tls_domain_from_mapping(
 
 def _extract_tls_insecure_from_mapping(
     hid: str, tls_mapping: Mapping[str, object]
-) -> bool:
+) -> bool | None:
     if "insecure" not in tls_mapping:
-        return False
+        return None
     insecure_value = tls_mapping["insecure"]
     if not isinstance(insecure_value, bool):
         raise ValueError(f"handler {hid!r} socket kwargs tls insecure must be a bool")
@@ -416,15 +415,15 @@ def _merge_tls_domain_kwarg(
 
 def _merge_tls_insecure_kwarg(
     hid: str,
-    insecure: bool,
+    insecure_from_mapping: bool | None,
     insecure_kw: object | None,
-    mapping_has_insecure: bool,
 ) -> bool:
+    """Merge the tls_insecure kwarg with existing insecure value from mapping."""
     if insecure_kw is None:
-        return insecure
+        return insecure_from_mapping if insecure_from_mapping is not None else False
     if not isinstance(insecure_kw, bool):
         raise ValueError(f"handler {hid!r} socket kwargs tls_insecure must be a bool")
-    if mapping_has_insecure and insecure_kw != insecure:
+    if insecure_from_mapping is not None and insecure_kw != insecure_from_mapping:
         raise ValueError(
             f"handler {hid!r} socket kwargs tls has conflicting insecure values"
         )
@@ -500,8 +499,9 @@ def _merge_backoff_alias_values(
         "backoff_deadline_ms": "deadline_ms",
     }
     for alias, target in alias_map.items():
+        present = alias in kwargs
         value = _extract_backoff_alias(hid, kwargs, alias)
-        if value is not None:
+        if present or value is not None:
             existing = merged.get(target)
             _check_backoff_conflict(hid, target, existing, value)
             merged[target] = value
@@ -589,12 +589,12 @@ def _validate_host_port_transport_kwargs(
 
 
 def _validate_host_port_args(hid: str, host: object, port: object) -> None:
-    if not isinstance(host, str) or not isinstance(port, int):
+    if not isinstance(host, str) or not isinstance(port, int) or isinstance(port, bool):
         raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
 
 
 def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
-    if not isinstance(host, str) or not isinstance(port, int):
+    if not isinstance(host, str) or not isinstance(port, int) or isinstance(port, bool):
         raise ValueError(
             f"handler {hid!r} socket kwargs host must be str and port must be int"
         )

@@ -28,7 +28,19 @@ struct TlsConfig {
     insecure: bool,
 }
 
-/// Overrides for the socket backoff timings applied by the handler.
+/// Holds optional overrides for exponential backoff timings expressed in
+/// milliseconds.
+///
+/// Any field left as `None` falls back to the corresponding default supplied by
+/// [`BackoffPolicy`]. The fields represent:
+///
+/// - `base_ms`: base jitter applied before retrying in milliseconds.
+/// - `cap_ms`: maximum backoff cap in milliseconds.
+/// - `reset_after_ms`: idle duration before the backoff resets in milliseconds.
+/// - `deadline_ms`: absolute retry deadline in milliseconds.
+///
+/// Refer to the module-level documentation and the design documents for the
+/// full semantics of each backoff phase.
 #[derive(Clone, Debug, Default)]
 pub struct BackoffOverrides {
     base_ms: Option<u64>,
