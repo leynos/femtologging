@@ -396,6 +396,28 @@ class StreamHandlerBuilder(HandlerBuilder):
     def stderr(cls) -> "StreamHandlerBuilder": ...
     def stream_target(self, target: str) -> "StreamHandlerBuilder": ... # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
 
+# New
+class SocketHandlerBuilder(HandlerBuilder):
+    def __init__(self) -> None: ...
+    def with_tcp(self, host: str, port: int) -> "SocketHandlerBuilder": ...
+    def with_unix_path(self, path: str) -> "SocketHandlerBuilder": ...
+    def with_connect_timeout_ms(self, timeout: int) -> "SocketHandlerBuilder": ...
+    def with_write_timeout_ms(self, timeout: int) -> "SocketHandlerBuilder": ...
+    def with_max_frame_size(self, size: int) -> "SocketHandlerBuilder": ...
+    def with_tls(
+        self,
+        domain: str | None = None,
+        *,
+        insecure: bool = False,
+    ) -> "SocketHandlerBuilder": ...
+    def with_backoff(
+        self,
+        base_ms: int | None = None,
+        cap_ms: int | None = None,
+        reset_after_ms: int | None = None,
+        deadline_ms: int | None = None,
+    ) -> "SocketHandlerBuilder": ...
+
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
 
@@ -420,6 +442,17 @@ the rotation algorithm without changing the builder API. Internally, a shared
 `FileLikeBuilderState` keeps the queue configuration logic in one place for
 both file-based builders, reducing duplication and ensuring validation stays
 consistent.
+
+`SocketHandlerBuilder` follows the same fluent approach but focuses on
+transport concerns rather than file metadata. Callers select either a TCP
+endpoint (IPv4 or IPv6) or a Unix domain socket path, with the builder
+enforcing mutual exclusion so `dictConfig` mistakes fail fast. Separate connect
+and write timeouts mirror the runtime split between establishing the connection
+and flushing frames. TLS configuration exposes the SNI domain and an `insecure`
+switch for test environments, while optional backoff parameters (base, cap,
+reset-after, deadline) tune the reconnection strategy. The `as_dict()` helper
+surfaced through PyO3 keeps snapshot tests deterministic and documents the
+resolved configuration.
 
 Formatter support for `RotatingFileHandlerBuilder` is intentionally narrow.
 Only the default formatter can be selected today; providing a custom identifier

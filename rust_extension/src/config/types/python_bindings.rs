@@ -12,6 +12,7 @@ impl AsPyDict for HandlerBuilder {
             Self::Stream(b) => b.as_pydict(py),
             Self::File(b) => b.as_pydict(py),
             Self::Rotating(b) => b.as_pydict(py),
+            Self::Socket(b) => b.as_pydict(py),
         }
     }
 }

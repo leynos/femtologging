@@ -8,7 +8,12 @@ use std::{
 };
 
 #[cfg(feature = "python")]
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict, Bound, IntoPyObjectExt};
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyDict, PyString},
+    Bound, IntoPyObjectExt,
+};
 
 use super::{
     file::{HandlerConfig, OverflowPolicy},
@@ -112,12 +117,12 @@ impl CommonBuilder {
 
     #[cfg(feature = "python")]
     pub(crate) fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
-        match formatter.extract::<String>() {
-            Ok(fid) => {
-                self.set_formatter(fid);
+        match formatter.downcast::<PyString>() {
+            Ok(py_str) => {
+                self.set_formatter(py_str.to_str()?.to_owned());
                 Ok(())
             }
-            Err(string_err) => match crate::formatter::python::formatter_from_py(formatter) {
+            Err(downcast_err) => match crate::formatter::python::formatter_from_py(formatter) {
                 Ok(instance) => {
                     // The extracted formatter is already wrapped in a shared trait
                     // object; storing it directly avoids double `Arc` wrapping via the
@@ -128,6 +133,7 @@ impl CommonBuilder {
                 Err(instance_err) => {
                     let py = formatter.py();
 
+                    let string_err: PyErr = downcast_err.into();
                     let string_context =
                         PyTypeError::new_err("formatter string identifier extraction failed");
                     string_context.set_cause(py, Some(string_err));

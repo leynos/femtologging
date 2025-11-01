@@ -19,6 +19,7 @@ pub mod file_builder;
 mod formatter_id;
 pub mod rotating;
 pub mod rotating_builder;
+pub mod socket_builder;
 pub mod stream_builder;
 #[cfg(test)]
 pub mod test_helpers;
@@ -29,6 +30,7 @@ pub use rotating::FemtoRotatingFileHandler;
 #[cfg(feature = "python")]
 pub use rotating::HandlerOptions;
 pub use rotating_builder::RotatingFileHandlerBuilder;
+pub use socket_builder::SocketHandlerBuilder;
 pub use stream_builder::StreamHandlerBuilder;
 
 // Define module-level Python exceptions for explicit handling on the Python side.

@@ -7,7 +7,9 @@ use pyo3::{
     Bound,
 };
 
-use crate::handlers::{FileHandlerBuilder, RotatingFileHandlerBuilder, StreamHandlerBuilder};
+use crate::handlers::{
+    FileHandlerBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+};
 use crate::python::fq_py_type;
 
 use super::types::HandlerBuilder;
@@ -37,10 +39,12 @@ impl<'py> FromPyObject<'py> for HandlerBuilder {
             Ok(b.into())
         } else if let Ok(b) = obj.extract::<RotatingFileHandlerBuilder>() {
             Ok(b.into())
+        } else if let Ok(b) = obj.extract::<SocketHandlerBuilder>() {
+            Ok(b.into())
         } else {
             let fq = fq_py_type(obj);
             Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "builder must be StreamHandlerBuilder, FileHandlerBuilder, or RotatingFileHandlerBuilder (got Python type: {fq})"
+                "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, or SocketHandlerBuilder (got Python type: {fq})"
             )))
         }
     }

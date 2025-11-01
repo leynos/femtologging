@@ -80,24 +80,24 @@ steps below summarize the actionable items from that design.
         files).
       - [x] Assert rotation happens on the worker thread and producers remain
         non-blocking under load.
-- [ ] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
+- [x] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
   reconnection handling.
-  - [ ] Finalize the transport surface by supporting TCP and Unix domain socket
+  - [x] Finalize the transport surface by supporting TCP and Unix domain socket
     addresses through the builder API and Python bindings, matching the
     configuration patterns described in
     [`configuration-design.md`](./configuration-design.md). Model the transport
     as an enum such as `Tcp { host, port, tls } | Unix { path }`, validate
     mutual exclusivity in the builder, split connect and write timeouts, and
     document IPv4 and IPv6 host support alongside TLS options.
-  - [ ] Implement a consumer-thread event loop that acquires sockets and
+  - [x] Implement a consumer-thread event loop that acquires sockets and
     serializes `FemtoLogRecord` values with `serde` (MessagePack or CBOR as
     identified in Section 3.4 of the [`socket handler design`][socket-doc].
-    - [ ] Frame each payload with a 4-byte big-endian length prefix, enforce a
+    - [x] Frame each payload with a 4-byte big-endian length prefix, enforce a
       configurable maximum frame size (default 1 MiB), and handle partial
       writes or `EAGAIN` by buffering or dropping with metrics without blocking
       producers. Assert parity with Python's `logging.handlers.SocketHandler`
       framing rules.
-  - [ ] Add reconnection logic that respects exponential backoff and honours
+  - [x] Add reconnection logic that respects exponential backoff and honours
     the multithreading and GIL-handling constraints captured in
     [`multithreading-in-pyo3.md`](./multithreading-in-pyo3.md), ensuring the
     GIL is not held across blocking network calls. Define parameters for
@@ -109,21 +109,21 @@ steps below summarize the actionable items from that design.
     writes, and a maximum retry deadline of 2 minutes before surfacing a
     handler error. Document where the builder methods and Python configuration
     knobs override each value.
-  - [ ] Provide error mapping that translates socket and serialization failures
+  - [x] Provide error mapping that translates socket and serialization failures
     into Rust error enums and exported Python exceptions, following the
     guidance in the [`socket handler design document`][socket-doc].
-  - [ ] Extend the builder and Python configuration interfaces with
+  - [x] Extend the builder and Python configuration interfaces with
     `SocketHandlerBuilder`, including validation routines, documentation, and
     doctests kept dry per
     [`rust-doctest-dry-guide.md`](./rust-doctest-dry-guide.md).
-  - [ ] Write integration tests in Rust and Python using `rstest` fixtures (see
+  - [x] Write integration tests in Rust and Python using `rstest` fixtures (see
     [`rust-testing-with-rstest-fixtures.md`][rstest-doc]) to validate
     serialization framing, reconnection behaviour, IPv6/TLS error handling, and
     configuration round-tripping. Include parity tests against Python's
     `SocketHandler` covering frame handling, TLS handshake/verification
     failures, backoff jitter distribution, and `dictConfig`/`basicConfig`
     round-trips.
-  - [ ] When the above tasks are complete, mark `FemtoSocketHandler` as done in
+  - [x] When the above tasks are complete, mark `FemtoSocketHandler` as done in
     this roadmap and propagate the status to the configuration roadmap.
 
 [socket-doc]: ./rust-multithreaded-logging-framework-for-python-design.md

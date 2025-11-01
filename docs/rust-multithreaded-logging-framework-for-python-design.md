@@ -223,6 +223,91 @@ fields can be added without altering the core API.
 This structure ensures all relevant information is captured once and passed
 efficiently to consumer threads.
 
+#### FemtoSocketHandler Implementation Update
+
+The production handler now serialises `FemtoLogRecord` values to MessagePack
+and frames them with a four-byte big-endian prefix before writing to the
+socket. The consumer thread manages connection establishment and reconnection
+with configurable exponential backoff (base, cap, reset-after, and deadline),
+and the builder exposes TCP, IPv4/IPv6, and Unix domain transports. TLS is
+optional via `native-tls`, with the builder controlling SNI and an opt-in
+insecure mode for tests. The TCP stream now applies the connect timeout as a
+temporary read/write deadline during TLS handshakes so stalled peers cannot
+block shutdown, and clears the deadline once the handshake completes. Python
+bindings mirror these options, splitting connect and write timeouts and
+allowing frame size overrides so `dictConfig` and fluent APIs use the same
+knobs. Runtime failures surface as handler errors while rate-limited warnings
+document dropped frames without spamming stderr. Additional parity-focused
+tests (e.g. TLS handshake failure scenarios) remain on the roadmap but the core
+transport, framing, and reconnection behaviour is now implemented end to end.
+
+Rust callers configure jitter timings through a `BackoffOverrides` helper
+passed to `SocketHandlerBuilder::with_backoff`. This groups the optional
+durations into a fluent struct so the builder keeps its argument count under
+control while mirroring the Python keyword parameters one-to-one.
+
+```mermaid
+classDiagram
+    class SocketHandlerBuilder {
+        +with_tcp(host: str, port: int): SocketHandlerBuilder
+        +with_unix_path(path: str): SocketHandlerBuilder
+        +with_connect_timeout_ms(timeout: int): SocketHandlerBuilder
+        +with_write_timeout_ms(timeout: int): SocketHandlerBuilder
+        +with_max_frame_size(size: int): SocketHandlerBuilder
+        +with_tls(domain: str | None = None, insecure: bool = False): SocketHandlerBuilder
+        +with_backoff(
+            base_ms: int | None = None,
+            cap_ms: int | None = None,
+            reset_after_ms: int | None = None,
+            deadline_ms: int | None = None
+        ): SocketHandlerBuilder
+        +as_dict(): dict[str, object]
+        +build(): FemtoSocketHandler
+    }
+    class FemtoSocketHandler {
+        +handle(record: FemtoLogRecord): Result
+        +flush(): bool
+        +close(): void
+    }
+    class SocketHandlerConfig {
+        capacity: usize
+        connect_timeout: Duration
+        write_timeout: Duration
+        max_frame_size: usize
+        transport: SocketTransport
+        backoff: BackoffPolicy
+        warn_interval: Duration
+    }
+    class SocketTransport {
+    }
+    class TcpTransport {
+        host: String
+        port: u16
+        tls: Option~TlsOptions~
+    }
+    class UnixTransport {
+        path: PathBuf
+    }
+    class TlsOptions {
+        domain: String
+        insecure_skip_verify: bool
+    }
+    class BackoffPolicy {
+        base: Duration
+        cap: Duration
+        reset_after: Duration
+        deadline: Duration
+    }
+    SocketHandlerBuilder --> "1" FemtoSocketHandler : build()
+    SocketHandlerBuilder --> "1" SocketHandlerConfig
+    SocketHandlerConfig --> "1" SocketTransport
+    SocketTransport <|-- TcpTransport
+    SocketTransport <|-- UnixTransport
+    TcpTransport --> "0..1" TlsOptions
+    SocketHandlerConfig --> "1" BackoffPolicy
+    FemtoSocketHandler --> "1" SocketHandlerConfig
+```
+
 ```mermaid
 classDiagram
     class FemtoLogRecord {

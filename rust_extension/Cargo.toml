@@ -17,6 +17,10 @@ once_cell = "1"
 parking_lot = "0.12"
 thiserror = "1"
 tempfile = "^3.20.0"
+serde = { version = "1.0", features = ["derive"] }
+rmp-serde = "1.3"
+native-tls = "0.2"
+rand = "0.8"
 
 [features]
 default = ["extension-module", "python"]

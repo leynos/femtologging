@@ -96,3 +96,16 @@ Feature: Handler builders
   Scenario: invalid stream handler negative flush timeout
     Given a StreamHandlerBuilder targeting stdout
     Then setting stream flush timeout -1 fails
+
+  Scenario: build socket handler builder for tcp
+    Given a SocketHandlerBuilder for host "127.0.0.1" port 9020
+    When I set socket capacity 8
+    And I set socket connect timeout 500
+    And I set socket write timeout 250
+    And I set socket max frame size 2048
+    And I set socket tls domain "example.com"
+    Then the socket handler builder matches snapshot
+
+  Scenario: socket handler builder requires transport
+    Given an empty SocketHandlerBuilder
+    Then building the socket handler fails with "socket handler requires a transport"
