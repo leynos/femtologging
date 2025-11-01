@@ -322,8 +322,10 @@ def _pop_socket_tls_kwargs(
     tls_value = kwargs.pop("tls", None)
     domain_kw = kwargs.pop("tls_domain", None)
     insecure_kw = kwargs.pop("tls_insecure", None)
-
-    if tls_value is None and domain_kw is None and insecure_kw is None:
+    no_tls_config_provided = (
+        tls_value is None and domain_kw is None and insecure_kw is None
+    )
+    if no_tls_config_provided:
         return None
 
     domain, insecure, enabled = _parse_tls_value(hid, tls_value)
