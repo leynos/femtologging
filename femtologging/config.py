@@ -475,11 +475,17 @@ def _extract_backoff_mapping_values(
             f" {sorted(unknown)!r}"
         )
 
-    overrides: dict[str, int | None] = {}
-    for key in ("base_ms", "cap_ms", "reset_after_ms", "deadline_ms"):
-        if key in mapping:
-            overrides[key] = _coerce_backoff_value(hid, key, mapping[key])
-    return overrides
+    return {
+        key: _extract_backoff_key(hid, key, mapping)
+        for key in ("base_ms", "cap_ms", "reset_after_ms", "deadline_ms")
+        if key in mapping
+    }
+
+
+def _extract_backoff_key(
+    hid: str, key: str, mapping: Mapping[str, object]
+) -> int | None:
+    return _coerce_backoff_value(hid, key, mapping[key])
 
 
 def _merge_backoff_alias_values(
@@ -495,13 +501,23 @@ def _merge_backoff_alias_values(
         "backoff_deadline_ms": "deadline_ms",
     }
     for alias, target in alias_map.items():
-        if alias not in kwargs:
-            continue
-        value = _coerce_backoff_value(hid, alias, kwargs.pop(alias))
-        existing = merged.get(target)
-        _check_backoff_conflict(hid, target, existing, value)
-        merged[target] = value
+        _merge_single_backoff_alias(hid, kwargs, merged, alias, target)
     return merged
+
+
+def _merge_single_backoff_alias(
+    hid: str,
+    kwargs: dict[str, object],
+    merged: dict[str, int | None],
+    alias: str,
+    target: str,
+) -> None:
+    if alias not in kwargs:
+        return
+    value = _coerce_backoff_value(hid, alias, kwargs.pop(alias))
+    existing = merged.get(target)
+    _check_backoff_conflict(hid, target, existing, value)
+    merged[target] = value
 
 
 def _check_backoff_conflict(
