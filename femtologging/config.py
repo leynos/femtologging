@@ -226,32 +226,41 @@ def _apply_socket_args(
     )
 
 
+@dataclass
+class _TransportKwargs:
+    """Transport-related keyword arguments for socket handler configuration."""
+
+    host: object | None
+    port: object | None
+    unix_path: object | None
+
+
 def _apply_socket_kwargs(
     hid: str,
     builder: SocketHandlerBuilder,
     kwargs: dict[str, object],
     transport_configured: bool,
 ) -> tuple[SocketHandlerBuilder, bool]:
-    host_kw = kwargs.pop("host", None)
-    port_kw = kwargs.pop("port", None)
-    unix_kw = kwargs.pop("unix_path", None)
+    transport_kw = _TransportKwargs(
+        host=kwargs.pop("host", None),
+        port=kwargs.pop("port", None),
+        unix_path=kwargs.pop("unix_path", None),
+    )
 
     builder, transport_configured = _apply_host_port_kwargs(
         hid,
         builder,
         transport_configured,
-        host_kw,
-        port_kw,
-        unix_kw,
+        transport_kw,
     )
 
-    if unix_kw is not None:
-        _validate_unix_path(hid, unix_kw)
+    if transport_kw.unix_path is not None:
+        _validate_unix_path(hid, transport_kw.unix_path)
         if transport_configured:
             raise ValueError(
                 f"handler {hid!r} socket transport already configured via args"
             )
-        builder = builder.with_unix_path(unix_kw)
+        builder = builder.with_unix_path(transport_kw.unix_path)
         transport_configured = True
 
     return builder, transport_configured
@@ -261,38 +270,32 @@ def _apply_host_port_kwargs(
     hid: str,
     builder: SocketHandlerBuilder,
     transport_configured: bool,
-    host_kw: object | None,
-    port_kw: object | None,
-    unix_kw: object | None,
+    transport_kw: _TransportKwargs,
 ) -> tuple[SocketHandlerBuilder, bool]:
-    if host_kw is None and port_kw is None:
+    if transport_kw.host is None and transport_kw.port is None:
         return builder, transport_configured
     _validate_host_port_transport_kwargs(
         hid,
-        host_kw,
-        port_kw,
-        unix_kw,
+        transport_kw,
         transport_configured,
     )
-    host = cast(str, host_kw)
-    port = cast(int, port_kw)
+    host = cast(str, transport_kw.host)
+    port = cast(int, transport_kw.port)
     return builder.with_tcp(host, port), True
 
 
 def _validate_host_port_transport_kwargs(
     hid: str,
-    host_kw: object | None,
-    port_kw: object | None,
-    unix_kw: object | None,
+    transport_kw: _TransportKwargs,
     transport_configured: bool,
 ) -> None:
-    if unix_kw is not None:
+    if transport_kw.unix_path is not None:
         raise ValueError(
             f"handler {hid!r} socket kwargs must not mix host/port with unix_path"
         )
-    if host_kw is None or port_kw is None:
+    if transport_kw.host is None or transport_kw.port is None:
         raise ValueError(f"handler {hid!r} socket kwargs require both host and port")
-    _validate_host_port_kwargs(hid, host_kw, port_kw)
+    _validate_host_port_kwargs(hid, transport_kw.host, transport_kw.port)
     if transport_configured:
         raise ValueError(
             f"handler {hid!r} socket transport already configured via args"
