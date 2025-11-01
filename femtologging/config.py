@@ -592,6 +592,7 @@ def _validate_host_port_args(hid: str, host: object, port: object) -> None:
     """Validate host and port arguments for socket handler."""
     if not isinstance(host, str):
         raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+    # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
     if isinstance(port, bool):
         raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
     if not isinstance(port, int):
@@ -604,6 +605,7 @@ def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
         raise ValueError(
             f"handler {hid!r} socket kwargs host must be str and port must be int"
         )
+    # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
     if isinstance(port, bool):
         raise ValueError(
             f"handler {hid!r} socket kwargs host must be str and port must be int"
