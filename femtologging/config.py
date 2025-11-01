@@ -201,6 +201,8 @@ def _build_socket_handler_builder(
     builder, transport_configured = _apply_socket_kwargs(
         hid, builder, kwargs_d, transport_configured
     )
+    builder = _apply_socket_tuning_kwargs(hid, builder, kwargs_d)
+    _consume_socket_transport_flag(hid, kwargs_d)
     _ensure_no_extra_socket_kwargs(hid, kwargs_d)
     return builder
 
@@ -241,10 +243,14 @@ def _apply_socket_kwargs(
     kwargs: dict[str, object],
     transport_configured: bool,
 ) -> tuple[SocketHandlerBuilder, bool]:
+    unix_kw = kwargs.pop("unix_path", None)
+    if unix_kw is None:
+        unix_kw = kwargs.pop("path", None)
+
     transport_kw = _TransportKwargs(
         host=kwargs.pop("host", None),
         port=kwargs.pop("port", None),
-        unix_path=kwargs.pop("unix_path", None),
+        unix_path=unix_kw,
     )
 
     builder, transport_configured = _apply_host_port_kwargs(
@@ -264,6 +270,207 @@ def _apply_socket_kwargs(
         transport_configured = True
 
     return builder, transport_configured
+
+
+def _apply_socket_tuning_kwargs(
+    hid: str,
+    builder: SocketHandlerBuilder,
+    kwargs: dict[str, object],
+) -> SocketHandlerBuilder:
+    capacity = _pop_socket_uint(hid, kwargs, "capacity")
+    if capacity is not None:
+        builder = builder.with_capacity(capacity)
+
+    connect_timeout = _pop_socket_uint(hid, kwargs, "connect_timeout_ms")
+    if connect_timeout is not None:
+        builder = builder.with_connect_timeout_ms(connect_timeout)
+
+    write_timeout = _pop_socket_uint(hid, kwargs, "write_timeout_ms")
+    if write_timeout is not None:
+        builder = builder.with_write_timeout_ms(write_timeout)
+
+    max_frame_size = _pop_socket_uint(hid, kwargs, "max_frame_size")
+    if max_frame_size is not None:
+        builder = builder.with_max_frame_size(max_frame_size)
+
+    tls_config = _pop_socket_tls_kwargs(hid, kwargs)
+    if tls_config is not None:
+        domain, insecure = tls_config
+        builder = builder.with_tls(domain, insecure=insecure)
+
+    backoff_overrides = _pop_socket_backoff_kwargs(hid, kwargs)
+    if backoff_overrides is not None:
+        builder = builder.with_backoff(**backoff_overrides)
+
+    return builder
+
+
+def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | None:
+    if key not in kwargs:
+        return None
+    value = kwargs.pop(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"handler {hid!r} socket kwargs {key} must be an int")
+    if value < 0:
+        raise ValueError(f"handler {hid!r} socket kwargs {key} must be non-negative")
+    return value
+
+
+def _pop_socket_tls_kwargs(
+    hid: str, kwargs: dict[str, object]
+) -> tuple[str | None, bool] | None:
+    tls_value = kwargs.pop("tls", None)
+    domain_kw = kwargs.pop("tls_domain", None)
+    insecure_kw = kwargs.pop("tls_insecure", None)
+
+    if tls_value is None and domain_kw is None and insecure_kw is None:
+        return None
+
+    domain: str | None = None
+    insecure = False
+    enabled = False
+    tls_mapping: Mapping[str, object] | None = None
+
+    if isinstance(tls_value, Mapping):
+        raw_mapping = _validate_mapping_type(
+            tls_value, f"handler {hid!r} socket kwargs tls"
+        )
+        tls_mapping = _validate_string_keys(
+            raw_mapping, f"handler {hid!r} socket kwargs tls"
+        )
+        unknown = set(tls_mapping) - {"domain", "insecure"}
+        if unknown:
+            raise ValueError(
+                f"handler {hid!r} socket kwargs tls has unsupported keys: {sorted(unknown)!r}"
+            )
+        if "domain" in tls_mapping:
+            domain = tls_mapping["domain"]  # type: ignore[index]
+            if domain is not None and not isinstance(domain, str):
+                raise ValueError(
+                    f"handler {hid!r} socket kwargs tls domain must be a string or None"
+                )
+        if "insecure" in tls_mapping:
+            insecure_value = tls_mapping["insecure"]  # type: ignore[index]
+            if not isinstance(insecure_value, bool):
+                raise ValueError(
+                    f"handler {hid!r} socket kwargs tls insecure must be a bool"
+                )
+            insecure = insecure_value
+        enabled = True
+    elif isinstance(tls_value, bool):
+        enabled = tls_value
+    elif tls_value is not None:
+        raise ValueError(f"handler {hid!r} socket kwargs tls must be a bool or mapping")
+
+    if domain_kw is not None:
+        if not isinstance(domain_kw, str):
+            raise ValueError(
+                f"handler {hid!r} socket kwargs tls_domain must be a string or None"
+            )
+        if domain is not None and domain_kw != domain:
+            raise ValueError(
+                f"handler {hid!r} socket kwargs tls has conflicting domain values"
+            )
+        domain = domain_kw
+        enabled = True
+
+    if insecure_kw is not None:
+        if not isinstance(insecure_kw, bool):
+            raise ValueError(
+                f"handler {hid!r} socket kwargs tls_insecure must be a bool"
+            )
+        if (
+            tls_mapping is not None
+            and "insecure" in tls_mapping
+            and insecure_kw != insecure
+        ):
+            raise ValueError(
+                f"handler {hid!r} socket kwargs tls has conflicting insecure values"
+            )
+        insecure = insecure_kw
+        enabled = True
+
+    if not enabled:
+        return None
+
+    if isinstance(tls_value, bool) and not tls_value:
+        raise ValueError(
+            f"handler {hid!r} socket kwargs tls is disabled but TLS options were supplied"
+        )
+
+    return domain, insecure
+
+
+def _pop_socket_backoff_kwargs(
+    hid: str, kwargs: dict[str, object]
+) -> dict[str, int | None] | None:
+    backoff_value = kwargs.pop("backoff", None)
+    overrides: dict[str, int | None] = {}
+
+    if backoff_value is not None:
+        mapping = _validate_mapping_type(
+            backoff_value, f"handler {hid!r} socket kwargs backoff"
+        )
+        mapping = _validate_string_keys(
+            mapping, f"handler {hid!r} socket kwargs backoff"
+        )
+        unknown = set(mapping) - {
+            "base_ms",
+            "cap_ms",
+            "reset_after_ms",
+            "deadline_ms",
+        }
+        if unknown:
+            raise ValueError(
+                "handler {hid!r} socket kwargs backoff has unsupported keys:"
+                f" {sorted(unknown)!r}"
+            )
+        for key in ("base_ms", "cap_ms", "reset_after_ms", "deadline_ms"):
+            if key in mapping:
+                overrides[key] = _coerce_backoff_value(hid, key, mapping[key])
+
+    alias_map = {
+        "backoff_base_ms": "base_ms",
+        "backoff_cap_ms": "cap_ms",
+        "backoff_reset_after_ms": "reset_after_ms",
+        "backoff_deadline_ms": "deadline_ms",
+    }
+    for alias, target in alias_map.items():
+        if alias in kwargs:
+            value = _coerce_backoff_value(hid, alias, kwargs.pop(alias))
+            if target in overrides and overrides[target] is not None:
+                if value is not None and overrides[target] != value:
+                    raise ValueError(
+                        f"handler {hid!r} socket kwargs backoff {target} conflict"
+                    )
+            overrides[target] = value
+
+    if not overrides:
+        return None
+
+    return overrides
+
+
+def _coerce_backoff_value(hid: str, key: str, value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"handler {hid!r} socket kwargs {key} must be an int or None")
+    if value < 0:
+        raise ValueError(f"handler {hid!r} socket kwargs {key} must be non-negative")
+    return value
+
+
+def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
+    transport_flag = kwargs.pop("transport", None)
+    if transport_flag is None:
+        return
+    if not isinstance(transport_flag, str):
+        raise ValueError(f"handler {hid!r} socket kwargs transport must be a string")
+    if transport_flag.lower() not in {"tcp", "unix"}:
+        raise ValueError(
+            f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
+        )
 
 
 def _apply_host_port_kwargs(

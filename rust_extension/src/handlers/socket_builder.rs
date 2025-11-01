@@ -117,7 +117,8 @@ impl BackoffOverrides {
 }
 
 macro_rules! option_setter {
-    ($fn_name:ident, $field:ident, $ty:ty) => {
+    ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
+        $(#[$meta])*
         pub fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
@@ -174,12 +175,12 @@ impl SocketHandlerBuilder {
         self
     }
 
-    /// Set the bounded channel capacity.
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.capacity = Some(capacity);
-        self
-    }
-
+    option_setter!(
+        #[doc = "Set the bounded channel capacity."]
+        with_capacity,
+        capacity,
+        usize
+    );
     option_setter!(with_connect_timeout_ms, connect_timeout_ms, u64);
     option_setter!(with_write_timeout_ms, write_timeout_ms, u64);
     option_setter!(with_max_frame_size, max_frame_size, usize);

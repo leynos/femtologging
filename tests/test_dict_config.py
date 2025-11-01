@@ -14,7 +14,8 @@ import socketserver
 import struct
 import threading
 
-from femtologging import dictConfig, get_logger, reset_manager
+import femtologging.config as config_module
+from femtologging import SocketHandlerBuilder, dictConfig, get_logger, reset_manager
 
 scenarios("features/dict_config.feature")
 
@@ -149,6 +150,100 @@ def test_dict_config_socket_handler() -> None:
         thread.join(timeout=1)
         if thread.is_alive():
             pytest.fail("server thread did not terminate within timeout")
+
+
+def test_dict_config_socket_handler_round_trip_kwargs() -> None:
+    """Support feeding ``SocketHandlerBuilder.as_dict()`` output back into dictConfig."""
+
+    builder = (
+        SocketHandlerBuilder()
+        .with_tcp("127.0.0.1", 9020)
+        .with_capacity(256)
+        .with_connect_timeout_ms(750)
+        .with_write_timeout_ms(1500)
+        .with_max_frame_size(4096)
+        .with_tls("example.com", insecure=True)
+        .with_backoff(
+            base_ms=50,
+            cap_ms=500,
+            reset_after_ms=2000,
+            deadline_ms=4000,
+        )
+    )
+    expected_kwargs = builder.as_dict()
+    round_trip = config_module._build_handler_from_dict(
+        "sock",
+        {
+            "class": "femtologging.SocketHandler",
+            "kwargs": dict(expected_kwargs),
+        },
+    )
+
+    assert isinstance(round_trip, SocketHandlerBuilder)
+    assert round_trip.as_dict() == expected_kwargs
+
+
+def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
+    """Accept structured TLS/backoff kwargs when constructing the socket builder."""
+
+    nested_builder = config_module._build_handler_from_dict(
+        "sock",
+        {
+            "class": "femtologging.SocketHandler",
+            "kwargs": {
+                "host": "localhost",
+                "port": 9021,
+                "capacity": 128,
+                "connect_timeout_ms": 250,
+                "write_timeout_ms": 500,
+                "max_frame_size": 2048,
+                "tls": {"domain": "tls.example", "insecure": True},
+                "backoff": {
+                    "base_ms": 10,
+                    "cap_ms": 100,
+                    "reset_after_ms": 200,
+                    "deadline_ms": 300,
+                },
+            },
+        },
+    )
+
+    assert isinstance(nested_builder, SocketHandlerBuilder)
+    settings = nested_builder.as_dict()
+    assert settings["transport"] == "tcp"
+    assert settings["host"] == "localhost"
+    assert settings["port"] == 9021
+    assert settings["capacity"] == 128
+    assert settings["connect_timeout_ms"] == 250
+    assert settings["write_timeout_ms"] == 500
+    assert settings["max_frame_size"] == 2048
+    assert settings["tls"] is True
+    assert settings["tls_domain"] == "tls.example"
+    assert settings["tls_insecure"] is True
+    assert settings["backoff_base_ms"] == 10
+    assert settings["backoff_cap_ms"] == 100
+    assert settings["backoff_reset_after_ms"] == 200
+    assert settings["backoff_deadline_ms"] == 300
+
+
+def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
+    """Reject configurations that disable TLS while providing TLS options."""
+
+    with pytest.raises(
+        ValueError, match="socket kwargs tls is disabled but TLS options were supplied"
+    ):
+        config_module._build_handler_from_dict(
+            "sock",
+            {
+                "class": "femtologging.SocketHandler",
+                "kwargs": {
+                    "host": "127.0.0.1",
+                    "port": 9022,
+                    "tls": False,
+                    "tls_domain": "example.com",
+                },
+            },
+        )
 
 
 @pytest.mark.parametrize(
