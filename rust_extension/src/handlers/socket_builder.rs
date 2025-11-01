@@ -196,9 +196,24 @@ impl SocketHandlerBuilder {
         capacity,
         usize
     );
-    option_setter!(with_connect_timeout_ms, connect_timeout_ms, u64);
-    option_setter!(with_write_timeout_ms, write_timeout_ms, u64);
-    option_setter!(with_max_frame_size, max_frame_size, usize);
+    option_setter!(
+        #[doc = "Set the connect timeout in milliseconds."]
+        with_connect_timeout_ms,
+        connect_timeout_ms,
+        u64
+    );
+    option_setter!(
+        #[doc = "Set the write timeout in milliseconds."]
+        with_write_timeout_ms,
+        write_timeout_ms,
+        u64
+    );
+    option_setter!(
+        #[doc = "Set the maximum frame size in bytes."]
+        with_max_frame_size,
+        max_frame_size,
+        usize
+    );
 
     /// Override backoff timings using the provided overrides.
     ///
