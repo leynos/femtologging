@@ -446,27 +446,48 @@ def _pop_socket_backoff_kwargs(
     overrides: dict[str, int | None] = {}
 
     if backoff_value is not None:
-        mapping = _validate_mapping_type(
-            backoff_value, f"handler {hid!r} socket kwargs backoff"
-        )
-        mapping = _validate_string_keys(
-            mapping, f"handler {hid!r} socket kwargs backoff"
-        )
-        unknown = set(mapping) - {
-            "base_ms",
-            "cap_ms",
-            "reset_after_ms",
-            "deadline_ms",
-        }
-        if unknown:
-            raise ValueError(
-                "handler {hid!r} socket kwargs backoff has unsupported keys:"
-                f" {sorted(unknown)!r}"
-            )
-        for key in ("base_ms", "cap_ms", "reset_after_ms", "deadline_ms"):
-            if key in mapping:
-                overrides[key] = _coerce_backoff_value(hid, key, mapping[key])
+        overrides = _extract_backoff_mapping_values(hid, backoff_value)
 
+    overrides = _merge_backoff_alias_values(hid, kwargs, overrides)
+
+    if not overrides:
+        return None
+
+    return overrides
+
+
+def _extract_backoff_mapping_values(
+    hid: str, backoff_value: object
+) -> dict[str, int | None]:
+    mapping = _validate_mapping_type(
+        backoff_value, f"handler {hid!r} socket kwargs backoff"
+    )
+    mapping = _validate_string_keys(mapping, f"handler {hid!r} socket kwargs backoff")
+    unknown = set(mapping) - {
+        "base_ms",
+        "cap_ms",
+        "reset_after_ms",
+        "deadline_ms",
+    }
+    if unknown:
+        raise ValueError(
+            "handler {hid!r} socket kwargs backoff has unsupported keys:"
+            f" {sorted(unknown)!r}"
+        )
+
+    overrides: dict[str, int | None] = {}
+    for key in ("base_ms", "cap_ms", "reset_after_ms", "deadline_ms"):
+        if key in mapping:
+            overrides[key] = _coerce_backoff_value(hid, key, mapping[key])
+    return overrides
+
+
+def _merge_backoff_alias_values(
+    hid: str,
+    kwargs: dict[str, object],
+    overrides: dict[str, int | None],
+) -> dict[str, int | None]:
+    merged = dict(overrides)
     alias_map = {
         "backoff_base_ms": "base_ms",
         "backoff_cap_ms": "cap_ms",
@@ -474,19 +495,20 @@ def _pop_socket_backoff_kwargs(
         "backoff_deadline_ms": "deadline_ms",
     }
     for alias, target in alias_map.items():
-        if alias in kwargs:
-            value = _coerce_backoff_value(hid, alias, kwargs.pop(alias))
-            if target in overrides and overrides[target] is not None:
-                if value is not None and overrides[target] != value:
-                    raise ValueError(
-                        f"handler {hid!r} socket kwargs backoff {target} conflict"
-                    )
-            overrides[target] = value
+        if alias not in kwargs:
+            continue
+        value = _coerce_backoff_value(hid, alias, kwargs.pop(alias))
+        existing = merged.get(target)
+        _check_backoff_conflict(hid, target, existing, value)
+        merged[target] = value
+    return merged
 
-    if not overrides:
-        return None
 
-    return overrides
+def _check_backoff_conflict(
+    hid: str, target: str, existing: int | None, new: int | None
+) -> None:
+    if existing is not None and new is not None and existing != new:
+        raise ValueError(f"handler {hid!r} socket kwargs backoff {target} conflict")
 
 
 def _coerce_backoff_value(hid: str, key: str, value: object) -> int | None:
