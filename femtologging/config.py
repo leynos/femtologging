@@ -590,24 +590,28 @@ def _validate_host_port_transport_kwargs(
 
 def _validate_host_port_args(hid: str, host: object, port: object) -> None:
     """Validate host and port arguments for socket handler."""
-    error_msg = f"handler {hid!r} socket args must be (host: str, port: int)"
     if not isinstance(host, str):
-        raise ValueError(error_msg)
+        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
     if isinstance(port, bool):
-        raise ValueError(error_msg)
+        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
     if not isinstance(port, int):
-        raise ValueError(error_msg)
+        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
 
 
 def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
     """Validate host and port keyword arguments for socket handler."""
-    error_msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
     if not isinstance(host, str):
-        raise ValueError(error_msg)
+        raise ValueError(
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
+        )
     if isinstance(port, bool):
-        raise ValueError(error_msg)
+        raise ValueError(
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
+        )
     if not isinstance(port, int):
-        raise ValueError(error_msg)
+        raise ValueError(
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
+        )
 
 
 def _validate_unix_path(hid: str, path: object) -> None:
