@@ -110,18 +110,6 @@ pub(crate) fn parse_policy_string(
     parse_overflow_policy(policy, None, false)
 }
 
-/// Parses a policy string with an optional external timeout.
-///
-/// Precedence: if `policy` contains `timeout:N`, that inline value is used and
-/// any provided `timeout_ms` is ignored.
-#[cfg(feature = "python")]
-pub(crate) fn parse_policy_with_timeout(
-    policy: &str,
-    timeout_ms: Option<u64>,
-) -> Result<OverflowPolicy, ParseOverflowPolicyError> {
-    parse_overflow_policy(policy, timeout_ms, true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,62 +191,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "invalid overflow policy: 'unknown'. Valid options are: drop, block, timeout:N"
-        );
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn parse_policy_with_timeout_supports_drop() {
-        assert_eq!(
-            parse_policy_with_timeout("drop", None).expect("parse drop with external"),
-            OverflowPolicy::Drop
-        );
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn parse_policy_with_timeout_requires_timeout_value() {
-        let err = parse_policy_with_timeout("timeout", None)
-            .expect_err("expect missing external timeout");
-        assert_eq!(err, ParseOverflowPolicyError::MissingExternalTimeout);
-        assert_eq!(err.to_string(), "timeout_ms required for timeout policy");
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn parse_policy_with_timeout_rejects_zero_timeout_value() {
-        let err = parse_policy_with_timeout("timeout", Some(0))
-            .expect_err("expect zero external timeout error");
-        assert_eq!(err, ParseOverflowPolicyError::TimeoutZero);
-        assert_eq!(err.to_string(), "timeout must be greater than zero");
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn parse_policy_with_timeout_accepts_timeout_value() {
-        assert_eq!(
-            parse_policy_with_timeout("timeout", Some(500)).expect("parse timeout with external"),
-            OverflowPolicy::Timeout(Duration::from_millis(500))
-        );
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn parse_policy_with_timeout_handles_inline_value() {
-        assert_eq!(
-            parse_policy_with_timeout("timeout:125", None)
-                .expect("parse inline timeout with external path"),
-            OverflowPolicy::Timeout(Duration::from_millis(125))
-        );
-    }
-
-    #[cfg(feature = "python")]
-    #[test]
-    fn parse_policy_with_timeout_prefers_inline_timeout() {
-        assert_eq!(
-            parse_policy_with_timeout("timeout:125", Some(500))
-                .expect("inline timeout should take precedence"),
-            OverflowPolicy::Timeout(Duration::from_millis(125))
         );
     }
 }

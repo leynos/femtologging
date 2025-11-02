@@ -9,7 +9,7 @@ use std::{
 
 #[cfg(feature = "python")]
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyString},
     Bound, IntoPyObjectExt,
@@ -75,6 +75,51 @@ impl IntoFormatterConfig for String {
 impl IntoFormatterConfig for &str {
     fn into_formatter_config(self) -> FormatterConfig {
         FormatterId::from(self).into_formatter_config()
+    }
+}
+
+#[cfg(feature = "python")]
+#[pyclass(name = "OverflowPolicy")]
+#[derive(Clone)]
+pub struct PyOverflowPolicy {
+    pub(crate) inner: OverflowPolicy,
+}
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl PyOverflowPolicy {
+    #[staticmethod]
+    fn drop() -> Self {
+        Self {
+            inner: OverflowPolicy::Drop,
+        }
+    }
+
+    #[staticmethod]
+    fn block() -> Self {
+        Self {
+            inner: OverflowPolicy::Block,
+        }
+    }
+
+    #[staticmethod]
+    fn timeout(timeout_ms: u64) -> PyResult<Self> {
+        if timeout_ms == 0 {
+            return Err(PyValueError::new_err("timeout must be greater than zero"));
+        }
+        Ok(Self {
+            inner: OverflowPolicy::Timeout(std::time::Duration::from_millis(timeout_ms)),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            OverflowPolicy::Drop => "OverflowPolicy.drop()".to_string(),
+            OverflowPolicy::Block => "OverflowPolicy.block()".to_string(),
+            OverflowPolicy::Timeout(duration) => {
+                format!("OverflowPolicy.timeout({})", duration.as_millis())
+            }
+        }
     }
 }
 

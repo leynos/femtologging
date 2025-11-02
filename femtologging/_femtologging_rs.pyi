@@ -1,4 +1,4 @@
-from typing import Any as _Any, Callable, Final, Literal, Mapping, Self, Union, overload
+from typing import Any as _Any, Callable, Final, Literal, Mapping, Self, Union
 
 FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
@@ -9,6 +9,14 @@ FemtoHandler: _Any
 FemtoStreamHandler: _Any
 FemtoFileHandler: _Any
 FemtoSocketHandler: _Any
+
+class OverflowPolicy:
+    @staticmethod
+    def drop() -> OverflowPolicy: ...
+    @staticmethod
+    def block() -> OverflowPolicy: ...
+    @staticmethod
+    def timeout(timeout_ms: int) -> OverflowPolicy: ...
 
 class HandlerOptions:
     capacity: int
@@ -53,17 +61,7 @@ class RotatingFileHandlerBuilder:
     ) -> Self: ...
     def with_max_bytes(self, max_bytes: int) -> Self: ...
     def with_backup_count(self, count: int) -> Self: ...
-    @overload
-    def with_overflow_policy(
-        self, policy: Literal["timeout"], timeout_ms: int
-    ) -> Self: ...
-    @overload
-    def with_overflow_policy(self, policy: Literal["drop", "block"]) -> Self: ...
-    def with_overflow_policy(
-        self,
-        policy: Literal["drop", "block", "timeout"],
-        timeout_ms: int | None = ...,
-    ) -> Self: ...
+    def with_overflow_policy(self, policy: OverflowPolicy) -> Self: ...
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> FemtoRotatingFileHandler: ...
 
