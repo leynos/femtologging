@@ -8,8 +8,15 @@ use std::{
 };
 
 #[cfg(feature = "python")]
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
+#[cfg(feature = "python")]
 use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
+    class::basic::CompareOp,
+    exceptions::{PyNotImplementedError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyString},
     Bound, IntoPyObjectExt,
@@ -112,6 +119,10 @@ impl PyOverflowPolicy {
         })
     }
 
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
     fn __repr__(&self) -> String {
         match &self.inner {
             OverflowPolicy::Drop => "OverflowPolicy.drop()".to_string(),
@@ -120,6 +131,38 @@ impl PyOverflowPolicy {
                 format!("OverflowPolicy.timeout({})", duration.as_millis())
             }
         }
+    }
+
+    fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
+        match op {
+            CompareOp::Eq => {
+                if let Ok(other_policy) = other.extract::<PyRef<'py, PyOverflowPolicy>>() {
+                    Ok(self.inner == other_policy.inner)
+                } else {
+                    Ok(false)
+                }
+            }
+            CompareOp::Ne => {
+                if let Ok(other_policy) = other.extract::<PyRef<'py, PyOverflowPolicy>>() {
+                    Ok(self.inner != other_policy.inner)
+                } else {
+                    Ok(true)
+                }
+            }
+            _ => Err(PyNotImplementedError::new_err("ordering not supported")),
+        }
+    }
+
+    fn __hash__(&self) -> PyResult<isize> {
+        let mut hasher = DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+
+        let mut value = hasher.finish();
+        while isize::try_from(value).is_err() {
+            value >>= 1;
+        }
+
+        Ok(isize::try_from(value).expect("hash reduction must fit in isize"))
     }
 }
 
