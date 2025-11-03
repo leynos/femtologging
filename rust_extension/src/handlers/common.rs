@@ -134,21 +134,15 @@ impl PyOverflowPolicy {
     }
 
     fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
+        let other_policy = other.extract::<PyRef<'py, PyOverflowPolicy>>().ok();
+
         match op {
-            CompareOp::Eq => {
-                if let Ok(other_policy) = other.extract::<PyRef<'py, PyOverflowPolicy>>() {
-                    Ok(self.inner == other_policy.inner)
-                } else {
-                    Ok(false)
-                }
-            }
-            CompareOp::Ne => {
-                if let Ok(other_policy) = other.extract::<PyRef<'py, PyOverflowPolicy>>() {
-                    Ok(self.inner != other_policy.inner)
-                } else {
-                    Ok(true)
-                }
-            }
+            CompareOp::Eq => Ok(other_policy
+                .map(|policy| self.inner == policy.inner)
+                .unwrap_or(false)),
+            CompareOp::Ne => Ok(other_policy
+                .map(|policy| self.inner != policy.inner)
+                .unwrap_or(true)),
             _ => Err(PyNotImplementedError::new_err("ordering not supported")),
         }
     }
