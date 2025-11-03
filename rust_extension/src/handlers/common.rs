@@ -16,7 +16,7 @@ use std::{
 #[cfg(feature = "python")]
 use pyo3::{
     class::basic::CompareOp,
-    exceptions::{PyNotImplementedError, PyTypeError, PyValueError},
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyString},
     Bound, IntoPyObjectExt,
@@ -143,7 +143,7 @@ impl PyOverflowPolicy {
             CompareOp::Ne => Ok(other_policy
                 .map(|policy| self.inner != policy.inner)
                 .unwrap_or(true)),
-            _ => Err(PyNotImplementedError::new_err("ordering not supported")),
+            _ => Err(PyTypeError::new_err("ordering not supported")),
         }
     }
 
