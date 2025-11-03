@@ -151,12 +151,7 @@ impl PyOverflowPolicy {
         let mut hasher = DefaultHasher::new();
         self.inner.hash(&mut hasher);
 
-        let mut value = hasher.finish();
-        while isize::try_from(value).is_err() {
-            value >>= 1;
-        }
-
-        Ok(isize::try_from(value).expect("hash reduction must fit in isize"))
+        Ok(hasher.finish() as isize)
     }
 }
 
