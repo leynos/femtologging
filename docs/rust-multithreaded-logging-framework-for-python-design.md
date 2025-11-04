@@ -839,16 +839,13 @@ potential future enhancement.
     formatter types, etc.) to actual Rust types. This often involves a
     registration pattern or extensive enum dispatch.
 
-  The complexity of a fully dynamic file-based configuration system, akin to
-  Python's `dictConfig`, can be substantial in a statically-typed language like
-  Rust. It can lead to a large API surface for configuration alone and
-  significant internal complexity in mapping string-based configurations to
-  concrete types and their builders. Therefore, for an initial release, a
-  comprehensive programmatic API is a more pragmatic goal. File-based
-  configuration can be introduced later, perhaps starting with a simpler schema
-  and evolving based on user needs. The `tracing-logger-config` crate offers an
-  example of a more focused, struct-based configuration approach that is
-  serializable.
+  The initial implementation opts for a pragmatic bridge: Python's
+  :func:`femtologging.fileConfig` now parses INI files via the Rust extension,
+  rewrites them into a `dictConfig` dictionary, and feeds the builder API. This
+  keeps the builder layer authoritative while enabling interoperable,
+  file-based configuration for existing picologging-style deployments. Richer
+  schemas (TOML, YAML, or serde-backed structures) remain future work once the
+  builder ergonomics stabilise further.
 
 ### 6.4. Interoperability with the Rust Logging Ecosystem
 

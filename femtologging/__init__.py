@@ -7,6 +7,7 @@ from __future__ import annotations
 from . import _femtologging_rs as rust
 from .overflow_policy import OverflowPolicy
 from .config import dictConfig
+from .file_config import fileConfig
 import logging
 import sys
 from dataclasses import dataclass
@@ -295,5 +296,6 @@ __all__ = [
     "BasicConfig",
     "basicConfig",
     "dictConfig",
+    "fileConfig",
     "hello",
 ]

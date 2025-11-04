@@ -726,25 +726,24 @@ features to aid debugging.
 
 ### 2.3. `fileConfig`
 
-`femtologging.fileConfig(fname: str, **kwargs)` will support INI-style
-configuration files, as per `logging.config.fileConfig`.
+`femtologging.fileConfig(fname: str, **kwargs)` supports INI-style configuration
+files, as per `logging.config.fileConfig`.
 
 - **Functionality:** This method reads configuration from a file in a format
   compatible with Python's `ConfigParser`.
 
 - **Internal Translation:**
 
-  - **Rust-backed INI Parsing:** The `fileConfig` function (in Python) will
-    delegate the actual INI file parsing to a new Rust function exposed via
-    PyO3. This Rust function will use an existing, robust Rust INI parsing
-    crate (e.g., `ini` or `configparser`) to read the INI file into a
-    structured representation (e.g., `HashMap<String, HashMap<String, String>>`
-    representing sections and key-value pairs).
+  - **Rust-backed INI Parsing:** The `fileConfig` function (in Python)
+    delegates INI parsing to `parse_ini_file` in the Rust extension. The helper
+    uses the `rust-ini` crate to read the file with optional encoding support
+    and returns an ordered list of `(section, entries)` pairs so Python can
+    preserve insertion order when translating the configuration.
 
   - **Python-side Conversion to** `dictConfig` **Schema:** The Rust-parsed data
-    will be returned to Python. The Python `fileConfig` function will then
-    convert this INI-style data into a dictionary structure that strictly
-    adheres to the `dictConfig` schema. This conversion involves:
+    is returned to Python. The Python `fileConfig` function converts this
+    INI-style data into a dictionary structure that strictly adheres to the
+    `dictConfig` schema. This conversion involves:
 
     - Identifying `[loggers]`, `[handlers]`, `[formatters]` sections and their
       `keys` attributes.
@@ -753,24 +752,30 @@ configuration files, as per `logging.config.fileConfig`.
       configuration from sections like `[logger_<name>]`, `[handler_<name>]`,
       `[formatter_<name>]`.
 
-    - **Parameter Evaluation:** Crucially, string values from INI (especially
-      for `args` and `kwargs` entries in handler sections) will be treated as
-      Python literal expressions. These strings will be safely evaluated using
-      `ast.literal_eval` (or a similar secure method) to convert them into
-      actual Python tuples, lists, numbers, or dictionaries, suitable for the
-      `dictConfig` structure. This ensures compatibility with complex handler
-      constructors that expect specific Python types.
+    - **Parameter Evaluation:** String values from INI (especially for `args`
+      and `kwargs` entries in handler sections) are left as strings but pass
+      through placeholder substitution using values from the `[DEFAULT]`
+      section and the `defaults` argument. They are later safely evaluated by
+      :func:`dictConfig` using `ast.literal_eval`, keeping evaluation consistent
+      across both configuration flows.
 
     - The `defaults` dictionary passed to `fileConfig()` will be used to
       substitute `%(key)s` placeholders in the INI file.
 
   - **Delegation to** `dictConfig`**:** Finally, the fully formed
-    `dictConfig`-compatible dictionary will be passed to
-    `femtologging.dictConfig()`. This makes `fileConfig` a two-stage process:
-    INI parsing (Rust) -> `dictConfig` dictionary conversion (Python) ->
-    `dictConfig` processing (Python, calling Rust builders). This simplifies
-    the overall implementation by centralizing the core configuration logic in
-    `dictConfig` and its builder translation.
+    `dictConfig`-compatible dictionary is passed to `femtologging.dictConfig()`.
+    This makes `fileConfig` a two-stage process: INI parsing (Rust) ->
+    `dictConfig` dictionary conversion (Python) -> builder realisation. The
+    approach keeps the builder API as the canonical configuration surface and
+    ensures `dictConfig` validation logic remains the single source of truth.
+
+The shipped implementation intentionally mirrors `dictConfig`'s restrictions:
+filters and formatters remain unsupported, handler-level overrides trigger
+`ValueError`, and formatter sections reject `class`, `defaults`, or `style`.
+Placeholder expansion is scoped to handler parameters so formatter strings such
+as ``%(message)s`` remain untouched. These constraints keep `fileConfig`
+predictable today while leaving space for future relaxations when the builder
+surfaces mature further.
 
 ## 3. Runtime Reconfiguration
 

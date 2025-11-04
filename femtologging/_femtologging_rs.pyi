@@ -96,3 +96,7 @@ HandlerIOError: type[Exception]
 hello: _Any
 get_logger: _Any
 reset_manager_py: _Any
+
+def parse_ini_file(
+    path: str, encoding: str | None = ...
+) -> list[tuple[str, list[tuple[str, str]]]]: ...
