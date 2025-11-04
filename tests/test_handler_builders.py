@@ -17,10 +17,11 @@ from syrupy import SnapshotAssertion
 import femtologging.config as config_module
 from femtologging import (
     FileHandlerBuilder,
+    HandlerConfigError,
+    OverflowPolicy,
     RotatingFileHandlerBuilder,
     SocketHandlerBuilder,
     StreamHandlerBuilder,
-    HandlerConfigError,
 )
 
 type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
@@ -193,7 +194,7 @@ def when_set_flush_record_interval(
 def when_set_overflow_policy_timeout(
     file_builder: FileBuilder,
 ) -> FileBuilder:
-    return file_builder.with_overflow_policy("timeout", timeout_ms=500)
+    return file_builder.with_overflow_policy(OverflowPolicy.timeout(500))
 
 
 @when(parsers.parse('I set file formatter "{formatter_id}"'))
@@ -418,11 +419,11 @@ def test_file_builder_zero_flush_record_interval(tmp_path: Path) -> None:
 
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
-    """Timeout policy without a timeout raises ``ValueError``."""
+    """Providing non-OverflowPolicy values raises ``TypeError``."""
 
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_missing.log"))
-    with pytest.raises(ValueError, match="timeout_ms required for timeout policy"):
-        builder.with_overflow_policy("timeout", timeout_ms=None)
+    with pytest.raises(TypeError):
+        builder.with_overflow_policy("timeout")  # type: ignore[arg-type]
 
 
 def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
@@ -430,14 +431,14 @@ def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
 
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_zero.log"))
     with pytest.raises(ValueError, match="timeout must be greater than zero"):
-        builder.with_overflow_policy("timeout", timeout_ms=0)
+        builder.with_overflow_policy(OverflowPolicy.timeout(0))
 
 
 def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
     """Inline timeout syntax is accepted for builder configuration."""
 
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_inline.log"))
-    builder = builder.with_overflow_policy("timeout:125", timeout_ms=None)
+    builder = builder.with_overflow_policy(OverflowPolicy.timeout(125))
     handler = builder.build()
     handler.close()
 

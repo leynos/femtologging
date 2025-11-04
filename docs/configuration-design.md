@@ -463,15 +463,16 @@ builder.
 #### Overflow policy options
 
 Both file-derived builders expose a `with_overflow_policy` fluent that applies
-back-pressure rules to the worker queue. Passing `"drop"` or `"block"` requires
-no additional arguments and configures the corresponding `OverflowPolicy`.
-Supplying `"timeout"` demands a `timeout_ms` keyword argument; the builder
-ensures the supplied integer is positive before enabling the bounded wait. The
-fluent stores the resolved `OverflowPolicy`, keeping subsequent calls and the
-Rust build pipeline aligned. Direct construction uses `HandlerOptions.policy`,
-which accepts the string forms parsed by `file::parse_overflow_policy`:
-`"drop"`, `"block"`, or `"timeout:N"` with a positive integer suffix. A bare
-`"timeout"` still raises the targeted guidance error emitted by the parser.
+back-pressure rules to the worker queue. Callers pass the helper class
+`OverflowPolicy`, using its factory methods to create strongly typed policies.
+`OverflowPolicy.drop()` and `OverflowPolicy.block()` need no parameters, while
+`OverflowPolicy.timeout(ms)` validates that ``ms`` is positive before returning
+the bounded-wait variant. The fluent stores the resolved `OverflowPolicy` to
+keep subsequent calls and the Rust build pipeline aligned. Direct construction
+uses `HandlerOptions.policy`, which accepts the string forms parsed by
+`file::parse_overflow_policy`: `"drop"`, `"block"`, or `"timeout:N"` with a
+positive integer suffix. A bare `"timeout"` still raises the targeted guidance
+error emitted by the parser.
 
 To keep the Python surface ergonomic, `FemtoRotatingFileHandler` accepts an
 optional `HandlerOptions` instance bundling queue capacity, flush interval,

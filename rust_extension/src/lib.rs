@@ -35,6 +35,8 @@ pub use filters::FilterBuildErrorPy;
 pub use filters::{
     FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
 };
+#[cfg(feature = "python")]
+use handlers::common::PyOverflowPolicy;
 
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
@@ -146,6 +148,7 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "StreamHandlerBuilder",
             py.get_type::<StreamHandlerBuilder>(),
         ),
+        ("OverflowPolicy", py.get_type::<PyOverflowPolicy>()),
         (
             "SocketHandlerBuilder",
             py.get_type::<SocketHandlerBuilder>(),
@@ -251,6 +254,7 @@ mod tests {
             add_python_bindings(&module).unwrap();
             for name in [
                 "StreamHandlerBuilder",
+                "OverflowPolicy",
                 "FileHandlerBuilder",
                 "RotatingFileHandlerBuilder",
                 "LevelFilterBuilder",

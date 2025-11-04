@@ -15,7 +15,7 @@ use std::{
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Determines how `FemtoFileHandler` reacts when its queue is full.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OverflowPolicy {
     /// Drop new records, preserving existing ones.
     Drop,

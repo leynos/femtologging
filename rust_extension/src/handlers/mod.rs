@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::handler::FemtoHandlerTrait;
 
 mod builder_macros;
-mod common;
+pub(crate) mod common;
 pub mod file;
 pub mod file_builder;
 mod formatter_id;
