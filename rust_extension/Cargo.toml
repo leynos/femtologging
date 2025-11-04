@@ -21,6 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 rmp-serde = "1.3"
 native-tls = "0.2"
 rand = "0.8"
+configparser = "1.0.0"
 
 [features]
 default = ["extension-module", "python"]
