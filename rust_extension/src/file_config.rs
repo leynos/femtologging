@@ -47,10 +47,20 @@ fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
 fn decode_contents<'a>(py: Python<'a>, bytes: &[u8], encoding: Option<&str>) -> PyResult<String> {
     match encoding {
         Some(label) => decode_with_encoding(py, bytes, label),
-        None => decode_utf8(py, bytes),
+        None => {
+            let label = preferred_encoding(py)?;
+            decode_with_encoding(py, bytes, &label)
+        }
     }
 }
 
+fn preferred_encoding(py: Python<'_>) -> PyResult<String> {
+    let locale = py.import("locale")?;
+    let func = locale.getattr("getpreferredencoding")?;
+    func.call1((false,))?.extract::<String>()
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Ok(text.to_owned()),
@@ -134,7 +144,7 @@ mod tests {
     use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
     use pyo3::exceptions::{PyLookupError, PyRuntimeError};
     use pyo3::types::PyUnicodeDecodeError;
-    use pyo3::Python;
+    use pyo3::{IntoPy, Python};
     use rstest::rstest;
     use tempfile::NamedTempFile;
 
@@ -187,6 +197,34 @@ level = INFO
         Python::with_gil(|py| {
             let err = parse_ini_file(py, &path, None).expect_err("empty files must fail");
             assert!(err.is_instance_of::<PyRuntimeError>(py));
+        });
+    }
+
+    #[rstest]
+    fn parse_ini_file_respects_locale_default() {
+        use std::io::Write;
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(
+            b"[loggers]\nkeys = root\n\n[logger_root]\nlevel = INF\xC9\nhandlers = console",
+        )
+        .unwrap();
+        let path = file.path().display().to_string();
+        Python::with_gil(|py| {
+            let locale = py.import("locale").unwrap();
+            let original = locale.getattr("getpreferredencoding").unwrap().into_py(py);
+            let shim = py.eval("lambda _=False: 'cp1252'", None, None).unwrap();
+            locale
+                .setattr("getpreferredencoding", shim)
+                .expect("patch locale encoding");
+
+            let result = parse_ini_file(py, &path, None);
+
+            locale
+                .setattr("getpreferredencoding", original)
+                .expect("restore locale encoding");
+
+            let sections = result.expect("cp1252 default should parse");
+            assert_eq!(sections.len(), 2);
         });
     }
 

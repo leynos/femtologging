@@ -756,8 +756,8 @@ files, as per `logging.config.fileConfig`.
       and `kwargs` entries in handler sections) are left as strings but pass
       through placeholder substitution using values from the `[DEFAULT]`
       section and the `defaults` argument. They are later safely evaluated by
-      :func:`dictConfig` using `ast.literal_eval`, keeping evaluation consistent
-      across both configuration flows.
+      `dictConfig` using `ast.literal_eval`, keeping evaluation consistent across
+      both configuration flows.
 
     - The `defaults` dictionary passed to `fileConfig()` will be used to
       substitute `%(key)s` placeholders in the INI file.

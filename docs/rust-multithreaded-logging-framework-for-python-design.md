@@ -225,7 +225,7 @@ efficiently to consumer threads.
 
 #### FemtoSocketHandler Implementation Update
 
-The production handler now serialises `FemtoLogRecord` values to MessagePack
+The production handler now serializes `FemtoLogRecord` values to MessagePack
 and frames them with a four-byte big-endian prefix before writing to the
 socket. The consumer thread manages connection establishment and reconnection
 with configurable exponential backoff (base, cap, reset-after, and deadline),
@@ -1083,7 +1083,7 @@ needing to rewrite their instrumentation calls. This path might be more
 impactful than perfecting a unique file-based configuration format in the early
 stages.
 
-It's also important to manage scope regarding feature parity with CPython's
+It is also important to manage scope regarding feature parity with CPython's
 `logging` module. CPython `logging` has a vast array of features, helper
 classes, and niche handlers accumulated over many years (e.g.,
 `BufferingFormatter`, `MemoryHandler`, `NTEventLogHandler`, specific filter
