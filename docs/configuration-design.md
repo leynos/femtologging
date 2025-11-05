@@ -737,7 +737,7 @@ files, as per `logging.config.fileConfig`.
   - **Rust-backed INI Parsing:** The `fileConfig` function (in Python)
     delegates INI parsing to `parse_ini_file` in the Rust extension. The helper
     uses the `rust-ini` crate to read the file with optional encoding support
-    and returns an ordered list of `(section, entries)` pairs so Python can
+    and returns an ordered list of `(section, entries)` pairs, so Python can
     preserve insertion order when translating the configuration.
 
   - **Python-side Conversion to** `dictConfig` **Schema:** The Rust-parsed data

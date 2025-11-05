@@ -142,6 +142,8 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
 #[cfg(test)]
 mod tests {
     use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
+    use std::sync::Mutex;
+    static LOCALE_MUTATION_GUARD: Mutex<()> = Mutex::new(());
     use pyo3::exceptions::{PyLookupError, PyRuntimeError};
     use pyo3::types::PyUnicodeDecodeError;
     use pyo3::{IntoPy, Python};
@@ -202,6 +204,9 @@ level = INFO
 
     #[rstest]
     fn parse_ini_file_respects_locale_default() {
+        let _guard = LOCALE_MUTATION_GUARD
+            .lock()
+            .expect("acquire locale mutation guard");
         use std::io::Write;
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(

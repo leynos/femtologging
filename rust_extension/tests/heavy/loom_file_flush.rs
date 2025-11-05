@@ -45,4 +45,3 @@ fn loom_file_handler_flush_concurrent() {
         assert_eq!(output.lines().count(), 5);
     });
 }
-

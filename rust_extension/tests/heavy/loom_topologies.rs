@@ -3,6 +3,7 @@
 //! These tests leverage `loom` to explore possible thread interleavings
 //! and ensure log records are routed correctly without duplication.
 
+#[path = "../test_utils/mod.rs"]
 mod test_utils;
 use test_utils::shared_buffer::loom::read_output;
 use test_utils::shared_buffer::loom::SharedBuf as LoomBuf;
@@ -188,4 +189,3 @@ fn loom_concurrent_handler_addition() {
         assert_eq!(read_output(&buf3), "core [INFO] hi\n");
     });
 }
-
