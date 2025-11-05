@@ -15,6 +15,7 @@ use _femtologging_rs::{
 };
 use tempfile::NamedTempFile;
 
+#[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex};
 use test_utils::std::SharedBuf;

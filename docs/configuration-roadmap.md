@@ -83,16 +83,16 @@ expanded with specifics for the configuration design.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration (Configuration-related tasks)
 
-- [ ] **Implement** `femtologging.fileConfig()` **in Python:**
+- [x] **Implement** `femtologging.fileConfig()` **in Python:**
 
-  - [ ] **Develop a Rust function (exposed via PyO3) to parse INI files using a
+  - [x] **Develop a Rust function (exposed via PyO3) to parse INI files using a
     suitable Rust INI parsing crate.**
 
-  - [ ] **Implement Python-side logic to convert the Rust-parsed INI data into
+  - [x] **Implement Python-side logic to convert the Rust-parsed INI data into
     a** `dictConfig`**-compatible dictionary, including safe evaluation of**
     `args` **and** `kwargs` **strings.**
 
-  - [ ] **Call** `femtologging.dictConfig()` **with the generated dictionary.**
+  - [x] **Call** `femtologging.dictConfig()` **with the generated dictionary.**
 
 - [ ] Improve structured logging in macros to make context propagation easier,
   considering how configuration might support this.

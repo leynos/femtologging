@@ -3,6 +3,7 @@
 //! These tests model concurrent logging via the `FemtoStreamHandler` to ensure
 //! there are no race conditions when multiple threads push records.
 
+#[path = "../test_utils/mod.rs"]
 mod test_utils;
 use test_utils::shared_buffer::loom::read_output;
 use test_utils::shared_buffer::loom::SharedBuf as LoomBuf;

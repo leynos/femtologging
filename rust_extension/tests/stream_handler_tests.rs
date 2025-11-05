@@ -9,6 +9,7 @@ use logtest;
 use rstest::*;
 use serial_test::serial;
 
+#[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex};
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};

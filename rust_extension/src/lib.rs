@@ -5,6 +5,8 @@
 use pyo3::prelude::*;
 
 mod config;
+#[cfg(feature = "python")]
+mod file_config;
 mod filters;
 mod formatter;
 mod handler;
@@ -37,6 +39,8 @@ pub use filters::{
 };
 #[cfg(feature = "python")]
 use handlers::common::PyOverflowPolicy;
+#[cfg(feature = "python")]
+use pyo3::wrap_pyfunction;
 
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
@@ -220,6 +224,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(file_config::parse_ini_file, m)?)?;
     #[cfg(feature = "python")]
     m.add_function(wrap_pyfunction!(
         handlers::rotating::force_rotating_fresh_failure_for_test,

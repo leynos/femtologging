@@ -225,7 +225,7 @@ efficiently to consumer threads.
 
 #### FemtoSocketHandler Implementation Update
 
-The production handler now serialises `FemtoLogRecord` values to MessagePack
+The production handler now serializes `FemtoLogRecord` values to MessagePack
 and frames them with a four-byte big-endian prefix before writing to the
 socket. The consumer thread manages connection establishment and reconnection
 with configurable exponential backoff (base, cap, reset-after, and deadline),
@@ -839,16 +839,13 @@ potential future enhancement.
     formatter types, etc.) to actual Rust types. This often involves a
     registration pattern or extensive enum dispatch.
 
-  The complexity of a fully dynamic file-based configuration system, akin to
-  Python's `dictConfig`, can be substantial in a statically-typed language like
-  Rust. It can lead to a large API surface for configuration alone and
-  significant internal complexity in mapping string-based configurations to
-  concrete types and their builders. Therefore, for an initial release, a
-  comprehensive programmatic API is a more pragmatic goal. File-based
-  configuration can be introduced later, perhaps starting with a simpler schema
-  and evolving based on user needs. The `tracing-logger-config` crate offers an
-  example of a more focused, struct-based configuration approach that is
-  serializable.
+  The initial implementation opts for a pragmatic bridge: Python's
+  `femtologging.fileConfig` now parses INI files via the Rust extension,
+  rewrites them into a `dictConfig` dictionary, and feeds the builder API. This
+  keeps the builder layer authoritative while enabling interoperable,
+  file-based configuration for existing picologging-style deployments. Richer
+  schemas (TOML, YAML, or serde-backed structures) remain future work once the
+  builder ergonomics stabilize further.
 
 ### 6.4. Interoperability with the Rust Logging Ecosystem
 
@@ -1086,7 +1083,7 @@ needing to rewrite their instrumentation calls. This path might be more
 impactful than perfecting a unique file-based configuration format in the early
 stages.
 
-It's also important to manage scope regarding feature parity with CPython's
+It is also important to manage scope regarding feature parity with CPython's
 `logging` module. CPython `logging` has a vast array of features, helper
 classes, and niche handlers accumulated over many years (e.g.,
 `BufferingFormatter`, `MemoryHandler`, `NTEventLogHandler`, specific filter

@@ -5,10 +5,11 @@
 
 use std::io::{self, Write};
 
-use _femtologging_rs::{DefaultFormatter, FemtoStreamHandler, FemtoLogRecord};
+use _femtologging_rs::{DefaultFormatter, FemtoLogRecord, FemtoStreamHandler};
 use itertools::iproduct;
 use proptest::prelude::*;
 
+#[path = "../test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex};
 use test_utils::shared_buffer::std::read_output;

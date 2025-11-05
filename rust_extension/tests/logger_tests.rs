@@ -5,6 +5,7 @@ use _femtologging_rs::{
 };
 use rstest::{fixture, rstest};
 
+#[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex};
 use test_utils::shared_buffer::std::read_output;
