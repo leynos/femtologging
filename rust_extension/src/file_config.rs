@@ -60,7 +60,13 @@ fn preferred_encoding(py: Python<'_>) -> PyResult<String> {
     func.call1((false,))?.extract::<String>()
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Used only in tests; production path calls decode_with_encoding"
+    )
+)]
 fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Ok(text.to_owned()),

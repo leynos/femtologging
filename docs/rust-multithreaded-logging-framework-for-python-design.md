@@ -840,7 +840,7 @@ potential future enhancement.
     registration pattern or extensive enum dispatch.
 
   The initial implementation opts for a pragmatic bridge: Python's
-  :func:`femtologging.fileConfig` now parses INI files via the Rust extension,
+  `femtologging.fileConfig` now parses INI files via the Rust extension,
   rewrites them into a `dictConfig` dictionary, and feeds the builder API. This
   keeps the builder layer authoritative while enabling interoperable,
   file-based configuration for existing picologging-style deployments. Richer
