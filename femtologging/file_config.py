@@ -124,6 +124,37 @@ def _parse_formatters(
     return formatters
 
 
+def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
+    allowed = {"class", "args", "kwargs", "formatter", "level"}
+    unknown = set(section) - allowed
+    if unknown:
+        raise ValueError(
+            f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
+        )
+    if "class" not in section:
+        raise ValueError(f"handler {hid!r} missing class")
+    if "formatter" in section:
+        raise ValueError("handler formatters are not supported")
+    if "level" in section:
+        raise ValueError("handler level is not supported; use logger levels instead")
+
+
+def _build_handler_config(
+    section: dict[str, str],
+    defaults: Mapping[str, str],
+) -> dict[str, Any]:
+    cfg: dict[str, Any] = {"class": section["class"]}
+    args_raw = section.get("args")
+    cfg["args"] = _expand_placeholders(args_raw or "()", defaults)
+    kwargs_raw = section.get("kwargs")
+    if kwargs_raw is not None:
+        cfg["kwargs"] = _expand_placeholders(kwargs_raw, defaults)
+    formatter = section.get("formatter")
+    if formatter:
+        cfg["formatter"] = formatter
+    return cfg
+
+
 def _parse_handlers(
     sections: dict[str, dict[str, str]],
     defaults: Mapping[str, str],
@@ -133,31 +164,27 @@ def _parse_handlers(
     handlers: dict[str, dict[str, Any]] = {}
     for hid in handler_ids:
         section = _require_section(sections, f"handler_{hid}")
-        allowed = {"class", "args", "kwargs", "formatter", "level"}
-        unknown = set(section) - allowed
-        if unknown:
-            raise ValueError(
-                f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
-            )
-        if "class" not in section:
-            raise ValueError(f"handler {hid!r} missing class")
-        if "formatter" in section:
-            raise ValueError("handler formatters are not supported")
-        if "level" in section:
-            raise ValueError(
-                "handler level is not supported; use logger levels instead"
-            )
-        cfg: dict[str, Any] = {"class": section["class"]}
-        args_raw = section.get("args")
-        cfg["args"] = _expand_placeholders(args_raw or "()", defaults)
-        kwargs_raw = section.get("kwargs")
-        if kwargs_raw is not None:
-            cfg["kwargs"] = _expand_placeholders(kwargs_raw, defaults)
-        formatter = section.get("formatter")
-        if formatter:
-            cfg["formatter"] = formatter
-        handlers[hid] = cfg
+        _validate_handler_options(hid, section)
+        handlers[hid] = _build_handler_config(section, defaults)
     return handlers
+
+
+def _validate_logger_options(lid: str, section: dict[str, str]) -> None:
+    allowed = {"level", "handlers", "qualname", "propagate"}
+    unknown = set(section) - allowed
+    if unknown:
+        raise ValueError(f"logger {lid!r} has unsupported options: {sorted(unknown)!r}")
+
+
+def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, Any]:
+    config: dict[str, Any] = {}
+    if section.get("level") is not None:
+        config["level"] = section["level"]
+    if section.get("handlers") is not None:
+        config["handlers"] = _split_csv(section.get("handlers"))
+    if section.get("propagate") is not None and qualname != "root":
+        config["propagate"] = _parse_bool(section["propagate"])
+    return config
 
 
 def _parse_loggers(
@@ -169,20 +196,9 @@ def _parse_loggers(
     root_cfg: dict[str, Any] | None = None
     for lid in logger_ids:
         section = _require_section(sections, f"logger_{lid}")
-        allowed = {"level", "handlers", "qualname", "propagate"}
-        unknown = set(section) - allowed
-        if unknown:
-            raise ValueError(
-                f"logger {lid!r} has unsupported options: {sorted(unknown)!r}"
-            )
+        _validate_logger_options(lid, section)
         qualname = section.get("qualname") or lid
-        config: dict[str, Any] = {}
-        if section.get("level") is not None:
-            config["level"] = section["level"]
-        if section.get("handlers") is not None:
-            config["handlers"] = _split_csv(section.get("handlers"))
-        if section.get("propagate") is not None and qualname != "root":
-            config["propagate"] = _parse_bool(section["propagate"])  # type: ignore[index]
+        config = _build_logger_config(section, qualname)
         if qualname == "root":
             root_cfg = config
         else:

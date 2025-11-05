@@ -59,11 +59,13 @@ fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
             let end = start + err.error_len().unwrap_or(1);
             Err(unicode_decode_err(
                 py,
-                "utf-8",
-                bytes,
-                start,
-                end,
-                "invalid utf-8 sequence",
+                UnicodeDecodeErrorInfo {
+                    encoding: "utf-8",
+                    bytes,
+                    start,
+                    end,
+                    reason: "invalid utf-8 sequence",
+                },
             ))
         }
     }
@@ -76,30 +78,33 @@ fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<S
     if had_errors {
         return Err(unicode_decode_err(
             py,
-            encoding.name(),
-            bytes,
-            0,
-            bytes.len(),
-            "decoding error",
+            UnicodeDecodeErrorInfo {
+                encoding: encoding.name(),
+                bytes,
+                start: 0,
+                end: bytes.len(),
+                reason: "decoding error",
+            },
         ));
     }
     Ok(decoded.into_owned())
 }
 
-fn unicode_decode_err(
-    _py: Python<'_>,
-    encoding: &str,
-    bytes: &[u8],
+struct UnicodeDecodeErrorInfo<'a> {
+    encoding: &'a str,
+    bytes: &'a [u8],
     start: usize,
     end: usize,
-    reason: &str,
-) -> PyErr {
+    reason: &'a str,
+}
+
+fn unicode_decode_err(_py: Python<'_>, info: UnicodeDecodeErrorInfo<'_>) -> PyErr {
     PyUnicodeDecodeError::new_err((
-        encoding.to_string(),
-        bytes.to_vec(),
-        start,
-        end.min(bytes.len()),
-        reason.to_string(),
+        info.encoding.to_string(),
+        info.bytes.to_vec(),
+        info.start,
+        info.end.min(info.bytes.len()),
+        info.reason.to_string(),
     ))
 }
 
