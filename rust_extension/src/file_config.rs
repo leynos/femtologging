@@ -72,7 +72,8 @@ fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
 }
 
 fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<String> {
-    let encoding = Encoding::for_label(label.as_bytes())
+    let normalized_label = label.trim().to_ascii_lowercase();
+    let encoding = Encoding::for_label(normalized_label.as_bytes())
         .ok_or_else(|| PyLookupError::new_err(format!("unknown encoding {label}")))?;
     let (decoded, _, had_errors) = encoding.decode(bytes);
     if had_errors {

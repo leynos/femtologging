@@ -40,7 +40,7 @@ def fileConfig(
     """
 
     sections = rust.parse_ini_file(str(Path(fname)), encoding)
-    config = _ini_to_dict_config(sections, defaults, bool(disable_existing_loggers))
+    config = _ini_to_dict_config(sections, defaults, disable_existing_loggers)
     dictConfig(config)
 
 
@@ -96,7 +96,7 @@ def _merge_defaults(
     if user_defaults:
         for key, value in user_defaults.items():
             merged[str(key)] = str(value)
-    merged.update(ini_defaults)
+    merged |= ini_defaults
     return merged
 
 
@@ -110,16 +110,15 @@ def _parse_formatters(
     formatters: dict[str, dict[str, str]] = {}
     for fid in formatter_ids:
         section = _require_section(sections, f"formatter_{fid}")
-        unknown = set(section) - {"format", "datefmt"}
-        if unknown:
+        if unknown := set(section) - {"format", "datefmt"}:
             raise ValueError(
                 f"formatter {fid!r} has unsupported options: {sorted(unknown)!r}"
             )
         config: dict[str, str] = {}
-        if section.get("format") is not None:
-            config["format"] = section["format"]  # type: ignore[index]
-        if section.get("datefmt") is not None:
-            config["datefmt"] = section["datefmt"]  # type: ignore[index]
+        if (fmt := section.get("format")) is not None:
+            config["format"] = fmt
+        if (datefmt := section.get("datefmt")) is not None:
+            config["datefmt"] = datefmt
         formatters[fid] = config
     return formatters
 
@@ -134,8 +133,7 @@ def _check_unsupported_handler_options(section: dict[str, str]) -> None:
 
 def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
     allowed = {"class", "args", "kwargs", "formatter", "level"}
-    unknown = set(section) - allowed
-    if unknown:
+    if unknown := set(section) - allowed:
         raise ValueError(
             f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
         )
@@ -148,14 +146,13 @@ def _build_handler_config(
     section: dict[str, str],
     defaults: Mapping[str, str],
 ) -> dict[str, Any]:
-    cfg: dict[str, Any] = {"class": section["class"]}
-    args_raw = section.get("args")
-    cfg["args"] = _expand_placeholders(args_raw or "()", defaults)
-    kwargs_raw = section.get("kwargs")
-    if kwargs_raw is not None:
+    cfg: dict[str, Any] = {
+        "class": section["class"],
+        "args": _expand_placeholders(section.get("args") or "()", defaults),
+    }
+    if (kwargs_raw := section.get("kwargs")) is not None:
         cfg["kwargs"] = _expand_placeholders(kwargs_raw, defaults)
-    formatter = section.get("formatter")
-    if formatter:
+    if formatter := section.get("formatter"):
         cfg["formatter"] = formatter
     return cfg
 
@@ -176,8 +173,7 @@ def _parse_handlers(
 
 def _validate_logger_options(lid: str, section: dict[str, str]) -> None:
     allowed = {"level", "handlers", "qualname", "propagate"}
-    unknown = set(section) - allowed
-    if unknown:
+    if unknown := set(section) - allowed:
         raise ValueError(f"logger {lid!r} has unsupported options: {sorted(unknown)!r}")
 
 
@@ -246,11 +242,16 @@ def _parse_bool(raw: str | None) -> bool:
     if raw is None:
         return False
     value = raw.strip().lower()
-    if value in {"1", "true", "yes", "on"}:
+    true_values = {"1", "true", "yes", "on", "t", "y"}
+    false_values = {"0", "false", "no", "off", "f", "n"}
+    if value in true_values:
         return True
-    if value in {"0", "false", "no", "off"}:
+    if value in false_values:
         return False
-    raise ValueError(f"invalid boolean value {raw!r}")
+    supported = "', '".join(sorted(true_values | false_values))
+    raise ValueError(
+        f"invalid boolean value {raw!r}; supported values are: '{supported}'"
+    )
 
 
 __all__ = ["fileConfig"]
