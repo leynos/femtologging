@@ -77,6 +77,8 @@ fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<S
         .ok_or_else(|| PyLookupError::new_err(format!("unknown encoding {label}")))?;
     let (decoded, _, had_errors) = encoding.decode(bytes);
     if had_errors {
+        // encoding_rs does not surface precise error offsets, so report the
+        // entire byte range to keep Python's UnicodeDecodeError consistent.
         return Err(unicode_decode_err(
             py,
             UnicodeDecodeErrorInfo {
@@ -129,8 +131,9 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_contents, parse_ini_file, parse_sections};
-    use pyo3::exceptions::PyLookupError;
+    use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
+    use pyo3::exceptions::{PyLookupError, PyRuntimeError};
+    use pyo3::types::PyUnicodeDecodeError;
     use pyo3::Python;
     use rstest::rstest;
     use tempfile::NamedTempFile;
@@ -174,6 +177,40 @@ level = INFO
         Python::with_gil(|py| {
             let sections = parse_ini_file(py, &path, None).expect("should parse");
             assert_eq!(sections.len(), 2);
+        });
+    }
+
+    #[rstest]
+    fn parse_ini_file_rejects_empty_file() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().display().to_string();
+        Python::with_gil(|py| {
+            let err = parse_ini_file(py, &path, None).expect_err("empty files must fail");
+            assert!(err.is_instance_of::<PyRuntimeError>(py));
+        });
+    }
+
+    #[rstest]
+    fn decode_contents_handles_latin1() {
+        Python::with_gil(|py| {
+            let bytes = b"caf\xE9";
+            let decoded = decode_contents(py, bytes, Some("latin1")).expect("latin1 decode");
+            assert_eq!(decoded, "caf\u{e9}");
+        });
+    }
+
+    #[rstest]
+    fn decode_utf8_reports_error_span() {
+        Python::with_gil(|py| {
+            let bytes = b"Hello\xFF\xFE";
+            let err = decode_utf8(py, bytes).expect_err("invalid utf-8 must fail");
+            let value = err
+                .value(py)
+                .downcast::<PyUnicodeDecodeError>()
+                .expect("unicode decode error");
+            let start: isize = value.getattr("start").unwrap().extract().unwrap();
+            let end: isize = value.getattr("end").unwrap().extract().unwrap();
+            assert_eq!((start, end), (5, 6));
         });
     }
 }

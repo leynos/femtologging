@@ -165,7 +165,7 @@ pub trait HandlerBuilderTrait: Send + Sync {
 // `build_handler(&ConfigContext)` design has been dropped; shared state is
 // injected through builder fields instead of a dedicated context object.
 //
-// Built handlers are wrapped in `Arc<dyn FemtoHandlerTrait>` during realisation.
+// Built handlers are wrapped in `Arc<dyn FemtoHandlerTrait>` during realization.
 // The same `Arc` is attached to multiple loggers, enabling safe cross-thread
 // sharing of a single handler instance.
 
@@ -765,7 +765,7 @@ files, as per `logging.config.fileConfig`.
   - **Delegation to** `dictConfig`**:** Finally, the fully formed
     `dictConfig`-compatible dictionary is passed to `femtologging.dictConfig()`.
     This makes `fileConfig` a two-stage process: INI parsing (Rust) ->
-    `dictConfig` dictionary conversion (Python) -> builder realisation. The
+    `dictConfig` dictionary conversion (Python) -> builder realization. The
     approach keeps the builder API as the canonical configuration surface and
     ensures `dictConfig` validation logic remains the single source of truth.
 

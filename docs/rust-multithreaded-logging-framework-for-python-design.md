@@ -845,7 +845,7 @@ potential future enhancement.
   keeps the builder layer authoritative while enabling interoperable,
   file-based configuration for existing picologging-style deployments. Richer
   schemas (TOML, YAML, or serde-backed structures) remain future work once the
-  builder ergonomics stabilise further.
+  builder ergonomics stabilize further.
 
 ### 6.4. Interoperability with the Rust Logging Ecosystem
 
