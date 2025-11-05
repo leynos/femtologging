@@ -124,6 +124,14 @@ def _parse_formatters(
     return formatters
 
 
+def _check_unsupported_handler_options(section: dict[str, str]) -> None:
+    """Check for handler options that are in allowed set but not supported."""
+    if "formatter" in section:
+        raise ValueError("handler formatters are not supported")
+    if "level" in section:
+        raise ValueError("handler level is not supported; use logger levels instead")
+
+
 def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
     allowed = {"class", "args", "kwargs", "formatter", "level"}
     unknown = set(section) - allowed
@@ -133,10 +141,7 @@ def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
         )
     if "class" not in section:
         raise ValueError(f"handler {hid!r} missing class")
-    if "formatter" in section:
-        raise ValueError("handler formatters are not supported")
-    if "level" in section:
-        raise ValueError("handler level is not supported; use logger levels instead")
+    _check_unsupported_handler_options(section)
 
 
 def _build_handler_config(
