@@ -1,5 +1,4 @@
 //! Macros and traits for converting Rust structs to Python dictionaries.
-#![cfg(feature = "python")]
 //!
 //! This module provides the `AsPyDict` trait and associated macros to generate
 //! consistent Python dictionary representations of configuration builder

@@ -133,8 +133,8 @@ builder_methods! {
     impl RotatingFileHandlerBuilder {
         capacity {
             self_ident = builder,
-            setter = |builder, capacity| {
-                builder.state.set_capacity(capacity);
+            setter = |builder_ref, capacity| {
+                builder_ref.state.set_capacity(capacity);
             }
         };
         methods {

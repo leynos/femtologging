@@ -299,7 +299,7 @@ impl FemtoRotatingFileHandler {
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
     fn py_new(path: String, options: Option<HandlerOptions>) -> PyResult<Self> {
-        let opts = options.unwrap_or_else(HandlerOptions::default);
+        let opts = options.unwrap_or_default();
         let HandlerOptions {
             capacity,
             flush_interval,

@@ -1,5 +1,4 @@
 //! Construction and realisation of configuration.
-#![cfg(feature = "python")]
 
 use std::{
     collections::{BTreeMap, HashSet},

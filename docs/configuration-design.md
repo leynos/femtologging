@@ -726,8 +726,8 @@ features to aid debugging.
 
 ### 2.3. `fileConfig`
 
-`femtologging.fileConfig(fname: str, **kwargs)` supports INI-style configuration
-files, as per `logging.config.fileConfig`.
+`femtologging.fileConfig(fname: str, **kwargs)` supports INI-style
+configuration files, as per `logging.config.fileConfig`.
 
 - **Functionality:** This method reads configuration from a file in a format
   compatible with Python's `ConfigParser`.
@@ -756,18 +756,19 @@ files, as per `logging.config.fileConfig`.
       and `kwargs` entries in handler sections) are left as strings but pass
       through placeholder substitution using values from the `[DEFAULT]`
       section and the `defaults` argument. They are later safely evaluated by
-      `dictConfig` using `ast.literal_eval`, keeping evaluation consistent across
-      both configuration flows.
+      `dictConfig` using `ast.literal_eval`, keeping evaluation consistent
+      across both configuration flows.
 
     - The `defaults` dictionary passed to `fileConfig()` will be used to
       substitute `%(key)s` placeholders in the INI file.
 
   - **Delegation to** `dictConfig`**:** Finally, the fully formed
-    `dictConfig`-compatible dictionary is passed to `femtologging.dictConfig()`.
-    This makes `fileConfig` a two-stage process: INI parsing (Rust) ->
-    `dictConfig` dictionary conversion (Python) -> builder realization. The
-    approach keeps the builder API as the canonical configuration surface and
-    ensures `dictConfig` validation logic remains the single source of truth.
+    `dictConfig`-compatible dictionary is passed to
+    `femtologging.dictConfig()`. This makes `fileConfig` a two-stage process:
+    INI parsing (Rust) -> `dictConfig` dictionary conversion (Python) ->
+    builder realization. The approach keeps the builder API as the canonical
+    configuration surface and ensures `dictConfig` validation logic remains the
+    single source of truth.
 
 The shipped implementation intentionally mirrors `dictConfig`'s restrictions:
 filters and formatters remain unsupported, handler-level overrides trigger

@@ -1,5 +1,3 @@
-#![cfg(feature = "python")]
-
 //! Shared helpers for Python interaction.
 //!
 //! Utilities to keep Python-only code deduplicated across modules.

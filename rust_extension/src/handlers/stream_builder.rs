@@ -132,8 +132,8 @@ builder_methods! {
     impl StreamHandlerBuilder {
         capacity {
             self_ident = builder,
-            setter = |builder, capacity| {
-                builder.common.set_capacity(capacity);
+            setter = |builder_ref, capacity| {
+                builder_ref.common.set_capacity(capacity);
             }
         };
         methods {
