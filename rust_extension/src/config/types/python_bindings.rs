@@ -1,5 +1,4 @@
 //! Python bindings for configuration builders.
-#![cfg(feature = "python")]
 
 use super::*;
 use crate::macros::{impl_as_pydict, py_setters, AsPyDict};

@@ -1,5 +1,3 @@
-#![cfg(feature = "python")]
-
 //! INI parsing helpers exposed to Python.
 //!
 //! The Python `fileConfig` implementation delegates INI parsing to Rust so we

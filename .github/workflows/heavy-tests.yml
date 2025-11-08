@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 17 * * *'
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or SHA to test'
+        required: false
+        default: ''
 
 jobs:
   heavy:
@@ -11,11 +16,16 @@ jobs:
     env:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '0'
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref != '' && github.event.inputs.ref || github.ref }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
       - name: Set up virtualenv
         run: |
           python -m venv .venv
@@ -26,10 +36,12 @@ jobs:
           pip install \
             --cache-dir "${{ runner.tool_cache }}" \
             "maturin>=1.9.1,<2.0.0" pytest==7.4.4
-      - run: |
+      - name: Build editable extension
+        run: |
           source .venv/bin/activate
           maturin develop --manifest-path rust_extension/Cargo.toml
-      - run: |
+      - name: Run formatters and tests
+        run: |
           source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
           cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
