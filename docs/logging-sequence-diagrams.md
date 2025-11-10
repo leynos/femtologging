@@ -141,7 +141,7 @@ sequenceDiagram
 
 `shutdown()` is automatically registered with `atexit`, so normal interpreter
 termination flushes and closes all live handlers
-([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
+([Lib/logging/\_\_init\_\_.py](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
 ______________________________________________________________________
 
