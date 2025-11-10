@@ -715,8 +715,7 @@ section 4.3, they will support:
 - Automatic capture of source code location (`file!`, `line!`, `module_path!`).
 
 - Ergonomic structured logging with key-value pairs (e.g.,
-  `info!("User {} logged in", user.name; user_id = user.id, ip_address = "127.0.0.1");`
-  ).
+  `info!("User {} logged in", user.name; user_id = user.id, ip_address = "127.0.0.1");` ).
 
 - Compile-time validation of format strings and arguments.
 

@@ -19,7 +19,7 @@ documents in [`docs/`](./docs), especially
 <!-- markdownlint-disable-next-line MD013 -->
 
 [`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust- multithreaded-logging-framework-for-python-design.md)
-and [`dependency- analysis.md`](docs/dependency-analysis.md).
+ and [`dependency- analysis.md`](docs/dependency-analysis.md).
 
 ## Installation
 
