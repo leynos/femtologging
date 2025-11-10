@@ -1,21 +1,35 @@
 # Documentation style guide
 
-This guide outlines conventions for authoring documentation for Lille. These
-rules help keep the documentation clear and consistent for developers.
+This guide outlines conventions for authoring documentation for Concordat.
+Apply these rules to keep the documentation clear and consistent for developers.
 
 ## Spelling
 
 - Use British English based on the
-  [Oxford English Dictionary](https://public.oed.com/) (en-oxendict).
+  [Oxford English Dictionary](https://public.oed.com/) locale `en-GB-oxendict`,
+  which   denotes English for the Great Britain market in the Oxford style:
+  - suffix -ize in words like _realize_ and _organization_ instead of
+     -ise endings,
+  - suffix ‑lyse in words not traced to the Greek ‑izo, ‑izein suffixes,
+     such as _analyse_, _paralyse_ and _catalyse_,
+  - suffix -our in words such as _colour_, _behaviour_ and _neighbour_,
+  - suffix -re in words such as _calibre_, _centre_ and _fibre_,
+  - double "l" in words such as _cancelled_, _counsellor_ and _cruellest_,
+  - maintain the "e" in words such as _likeable_, _liveable_ and _rateable_,
+  - suffix -ogue in words such as _analogue_ and _catalogue_,
+  - and so forth.
 - The word **"outwith"** is acceptable.
-- Keep US spelling when used in an API, for example, `color`.
-- The project licence file is spelled `LICENSE` for community consistency.
+- Keep United States (US) spelling when used in an API, for example, `color`.
+- The project uses the filename `LICENSE` for community consistency.
 
 ## Punctuation and grammar
 
-- Use the Oxford comma: "ships, planes, and hovercraft".
-- Company names are treated as collective nouns: "Lille Industries are
+- Use the Oxford comma: "ships, planes, and hovercraft" where it aids
+  comprehension.
+- Company names are treated as collective nouns: "Concordat Industries are
   expanding".
+- Avoid first and second person personal pronouns outside the `README.md`
+  file.
 
 ## Headings
 
@@ -28,22 +42,12 @@ rules help keep the documentation clear and consistent for developers.
 - Follow [markdownlint](https://github.com/DavidAnson/markdownlint)
   recommendations[^1].
 - Provide code blocks and lists using standard Markdown syntax.
-- Always provide a language identifier for fenced code blocks; use
-  `plaintext` for non-code text.
+- Always provide a language identifier for fenced code blocks; use `plaintext`
+  for non-code text.
 - Use `-` as the first level bullet and renumber lists when items change.
 - Prefer inline links using `[text](url)` or angle brackets around the URL.
 - Ensure blank lines before and after bulleted lists and fenced blocks.
 - Ensure tables have a delimiter line below the header row.
-- When linking to headings in other documents, use GitHub's kebab-case anchors.
-  For example:
-
-<!-- markdownlint-disable MD013 -->
-  ```plaintext
-  docs/rust-binary-router-library-design.md#31-binary-serialization-libraries-in-rust
-  ```
-<!-- markdownlint-enable MD013 -->
-
-  This links to "3.1. Binary Serialization Libraries in Rust".
 
 ## Expanding acronyms
 
@@ -55,13 +59,13 @@ rules help keep the documentation clear and consistent for developers.
 - Wrap paragraphs at 80 columns.
 - Wrap code at 120 columns.
 - Do not wrap tables.
-- Use GitHub-flavoured Markdown references and numbered footnotes (`[^1]`).
-  Avoid `【F:path†L1-L2】` citations or reference-style links (`[foo][bar]`).
-  Number footnotes sequentially in the document.
+- Use GitHub-flavoured numeric footnotes referenced as `[^1]`.
+- Footnotes must be numbered in order of appearance in the document.
+- Caption every table, and caption every diagram.
 
 ## Example snippet
 
-```rust
+```rust,no_run
 /// A simple function demonstrating documentation style.
 fn add(a: i32, b: i32) -> i32 {
     a + b
@@ -70,8 +74,8 @@ fn add(a: i32, b: i32) -> i32 {
 
 ## API doc comments (Rust)
 
-Doc comments document public APIs and must remain consistent with the contents
-of the manual.
+Use doc comments to document public APIs. Keep them consistent with the
+contents of the manual.
 
 - Begin each block with `///`.
 - Keep the summary line short, followed by further detail.
@@ -79,13 +83,11 @@ of the manual.
   argument.
 - Document the return value with `# Returns`.
 - Document any panics or errors with `# Panics` or `# Errors` as appropriate.
-- Place examples under `# Examples` and mark the code block with `no_run`
-  so they compile but do not execute during documentation tests. Use `ignore`
-  instead of `no_run` when the example does not compile or relies on external
-  tools.
+- Place examples under `# Examples` and mark the code block with `no_run`, so
+  they do not execute during documentation tests.
 - Put function attributes after the doc comment.
 
-```rust
+```rust,no_run
 /// Returns the sum of `a` and `b`.
 ///
 /// # Parameters
@@ -109,9 +111,11 @@ pub fn add(a: i32, b: i32) -> i32 {
 ## Diagrams and images
 
 Where it adds clarity, include [Mermaid](https://mermaid.js.org/) diagrams.
-When embedding figures, use `![alt text](path/to/image)` and provide concise
-alt text describing the content. Add a short description before each Mermaid
+When embedding figures, use `![alt text](path/to/image)` and provide brief alt
+text describing the content. Add a short description before each Mermaid
 diagram, so screen readers can understand it.
+
+For screen readers: The following flowchart outlines the documentation workflow.
 
 ```mermaid
 flowchart TD
@@ -120,37 +124,43 @@ flowchart TD
     C --> D[Merge]
 ```
 
-## Python docstrings
+_Figure 1: Documentation workflow from draft through merge review._
 
-Docstrings document public modules, classes, and functions. Use the NumPy style
-and keep descriptions short. See the NumPy docstring standard[^2] for the full
-specification.
+## Roadmap task writing guidelines
 
-- Begin with a one-line summary followed by a blank line and extended
-  description.
-- List parameters and return values under `Parameters` and `Returns` headings.
-- Document exceptions under `Raises` and include examples in fenced `python`
-  blocks.
-- Keep lines within 80 columns and prefer present tense.
+When documenting development roadmap items, write them to be achievable,
+measurable, and structured. This ensures the roadmap functions as a practical
+planning tool rather than a vague wishlist. Do not commit to timeframes in the
+roadmap. Development effort should be roughly consistent from task to task.
 
-```python
-def scale(values: list[float], factor: float) -> list[float]:
-    """Scale numeric values by a factor.
+### Principles for roadmap tasks
 
-    Parameters
-    ----------
-    values : list of float
-        The numeric values to scale.
-    factor : float
-        The multiplier applied to each value.
+- Define outcomes, not intentions: Phrase tasks in terms of the capability
+  delivered (e.g. “Implement role-based access control for API endpoints”), not
+  aspirations like “Improve security”.
+- Quantify completion criteria: Attach measurable finish lines (e.g. “90%
+  test coverage for new modules”, “response times under 200ms”, “all endpoints
+  migrated”).
+- Break into atomic increments: Ensure tasks can be completed in weeks, not
+  quarters. Large goals should be decomposed into clear, deliverable units.
+- Tie to dependencies and sequencing: Document prerequisites, so tasks can be
+  scheduled realistically (e.g. “Introduce central logging service” before “Add
+  error dashboards”).
+- Bound scope explicitly: Note both in-scope and out-of-scope elements (e.g.
+  “Build analytics dashboard (excluding churn prediction)”).
 
-    Returns
-    -------
-    list of float
-        The scaled values.
-    """
-    return [v * factor for v in values]
-```
+### Hierarchy of scope
+
+Roadmaps should be expressed in three layers of scope to maintain clarity and
+navigability:
+
+- Phases (strategic milestones) – Broad outcome-driven stages that represent
+  significant capability shifts. Why the work matters.
+- Steps (epics / workstreams) – Mid-sized clusters of related tasks grouped
+  under a phase. What will be built.
+- Tasks (execution units) – Small, measurable pieces of work with clear
+  acceptance criteria. How it gets done.
+
+______________________________________________________________________
 
 [^1]: A linter that enforces consistent Markdown formatting.
-[^2]: <https://numpydoc.readthedocs.io/en/stable/format.html>
