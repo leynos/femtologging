@@ -133,7 +133,7 @@ steps below summarize the actionable items from that design.
   types.[^1]
 - [ ] Support dynamic log level updates at runtime using atomic variables.
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
-- [ ] Expand test coverage and start benchmarking.
+- [x] Expand test coverage and start benchmarking.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
 

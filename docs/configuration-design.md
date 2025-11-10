@@ -782,7 +782,7 @@ surfaces mature further.
 
 - **Dynamic Log Level Updates:** As outlined in the design document \[cite:
   uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-  Dynamic log-level changes for loggers will be a core feature, utilizing
+   Dynamic log-level changes for loggers will be a core feature, utilizing
   atomic operations in Rust for thread-safe updates. This will be exposed via
   methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
@@ -818,6 +818,27 @@ This design makes each struct implement `Send` and `Sync`, so loggers and
 handlers can be shared safely across threads without resorting to `unsafe`
 code. Compile‑time assertions in `rust_extension/tests/send_sync.rs` enforce
 these guarantees.
+
+## 6. Testing and Benchmarking Coverage
+
+- **Rust unit tests:** `rust_extension/src/config/config_tests.rs` now includes
+  `rstest` cases guaranteeing that `ConfigBuilder.with_default_level` applies
+  consistently to both the root logger and descendant loggers that omit an
+  explicit level. These tests guard the canonical builder behaviour that
+  `basicConfig` and `dictConfig` rely upon.
+
+- **Python behavioural tests:** `tests/features/config_compat.feature` with
+  step definitions in `tests/test_config_compat.py` exercises
+  builder/dictConfig round‑trips and asserts that `basicConfig` emits the exact
+  snapshots produced by the equivalent builder configuration. The scenarios
+  cover both the happy path (schema round‑trip) and an unhappy path (tampering
+  with `root`), using `syrupy` snapshots for regression protection.
+
+- **Benchmarking:** `rust_extension/benches/config.rs` introduces the initial
+  `criterion` suite. It benchmarks `ConfigBuilder.build_and_init`, the Python
+  `basicConfig` helper (configured for `stdout`), and translating a builder
+  schema through `dictConfig`. This gives a baseline for configuration
+  throughput while keeping the builder as the canonical source of truth.
 
 ### `collect_items` helper flow
 

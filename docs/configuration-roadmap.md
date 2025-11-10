@@ -78,7 +78,7 @@ expanded with specifics for the configuration design.
   transports with configurable timeouts, frame limits, and backoff controls in
   both Rust and Python.
 
-- [ ] Expand test coverage and start benchmarking for the configuration system
+- [x] Expand test coverage and start benchmarking for the configuration system
   and `basicConfig`/`dictConfig` compatibility.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration (Configuration-related tasks)
