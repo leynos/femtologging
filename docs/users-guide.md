@@ -8,7 +8,7 @@ building production systems on top of femtologging.
 
 ## Quick start
 
-Install the package (a local editable install is shown here) and emit your
+Install the package (a local editable installation is shown here) and emit your
 first record:
 
 ```bash
@@ -36,7 +36,7 @@ your process exits.
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
   operations never block the calling code.
-- When any queue is full the record is dropped. Each component emits
+- When any queue is full, the record is dropped. Each component emits
   rate-limited warnings and maintains drop counters
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
   monitor pressure.
@@ -53,7 +53,7 @@ your process exits.
 - Logger parents are derived from dotted names. `get_logger("api.v1")` creates
   a parent `api` logger that ultimately propagates to `root`.
 - Call `logger.set_propagate(False)` to stop parent propagation. The default is
-  to bubble records to ancestors just like the stdlib.
+  to bubble records to ancestors, just like the stdlib.
 - `reset_manager()` clears all registered loggers. It is intended for tests and
   is not thread-safe.
 
@@ -67,7 +67,7 @@ your process exits.
   returns `None`.
 - Convenience methods (`logger.info`, `logger.warning`, and so on) are not
   implemented yet; call `log()` directly or wrap it in your own helper.
-- `FemtoLogger` currently sends only the text form of each record to handlers.
+- Currently, `FemtoLogger` sends only the text form of each record to handlers.
   There is no equivalent to `extra`, `exc_info`, `stack_info`, or lazy
   formatting. Build the final message string yourself before calling `log()`.
 
@@ -79,7 +79,8 @@ your process exits.
 - Python handlers run inside the logger’s worker thread. Ensure they are
   thread-safe and fast; slow handlers block the logger worker and can cause
   additional record drops.
-- `logger.add_handler(handler)` accepts either a Rust-backed handler instance or
+- `logger.add_handler(handler)` accepts either a Rust-backed handler instance,
+  or
   a Python handler as described above. Use `logger.remove_handler(handler)` or
   `logger.clear_handlers()` to detach them. Removals only affect records that
   are enqueued after the call because previously queued items already captured
@@ -107,21 +108,21 @@ your process exits.
   `FemtoFileHandler(path, capacity=1024, flush_interval=1, policy="drop")`. The
   flush interval counts _records_, not seconds.
 - `policy` controls queue overflow handling:
-  - `"drop"` (default) discards new records and raises `RuntimeError`.
+  - `"drop"` (default) discards records and raises `RuntimeError`.
   - `"block"` blocks the caller until the worker makes room.
   - `"timeout:N"` blocks for `N` milliseconds before giving up.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
   Always close the handler when the application shuts down.
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
-  `.with_formatter(...)`. Formatter identifiers other than `"default"` are not
+  `.with_formatter(…)`. Formatter identifiers other than `"default"` are not
   wired up yet; pass a callable (taking a mapping and returning a string) to
   attach custom formatting logic.
 
 ### FemtoRotatingFileHandler
 
 - Wraps `FemtoFileHandler` with size-based rotation. Instantiate via
-  `FemtoRotatingFileHandler(path, options=HandlerOptions(...))`.
+  `FemtoRotatingFileHandler(path, options=HandlerOptions(…))`.
 - `HandlerOptions` fields:
   - `capacity`, `flush_interval`, and `policy` mirror `FemtoFileHandler`.
   - `rotation=(max_bytes, backup_count)` enables rollover when _both_ values
@@ -155,7 +156,7 @@ socket_handler = (
 - Default transport is TCP to `localhost:9020`. Call `.with_unix_path()` to use
   Unix sockets on POSIX systems. TLS only works with TCP transports; attempting
   to combine TLS and Unix sockets raises `HandlerConfigError`.
-- Records are serialised to MessagePack maps:
+- Records are serialized to MessagePack maps:
   `{logger, level, message, timestamp_ns, filename, line_number, module_path,
     thread_id, thread_name, key_values}` and framed with a 4-byte big-endian
   length prefix.
@@ -195,7 +196,7 @@ avoid raising from `handle`.
 - Passing `force=True` clears existing handlers on the root logger before
   installing the new one.
 - Formatting parameters (`format`, `datefmt`, and friends) are intentionally
-  unsupported until formatter customisation lands.
+  unsupported until formatter customization lands.
 
 ### ConfigBuilder (imperative API)
 
@@ -241,7 +242,7 @@ builder.build_and_init()
   `NameFilterBuilder`. Filters are applied in the order they are declared in
   each `LoggerConfigBuilder`.
 - Formatter registration (`with_formatter(id, FormatterBuilder)`) is currently
-  a placeholder. Registered formatters are stored in the serialised config, but
+  a placeholder. Registered formatters are stored in the serialized config, but
   handlers still treat any string other than `"default"` as unknown and raise
   `HandlerConfigError`.
 
@@ -278,7 +279,7 @@ builder.build_and_init()
 
 ## Formatting and filtering
 
-- Logger-level formatting is fixed (`"{logger} [LEVEL] message"`). To customise
+- Logger-level formatting is fixed (`"{logger} [LEVEL] message"`). To customize
   output wrap handlers with formatter callables using the builder API:
 
 ```python
@@ -328,12 +329,13 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - Monitor `logger.get_dropped()` and the warnings emitted by each handler to
   detect back pressure early. Increase handler capacities or switch to
   blocking/timeout policies when drops are unacceptable.
-- File-based handlers count `flush_interval` in _records_. If you need time
-  based flushing add a periodic `handler.flush()` in your application.
+- File-based handlers count `flush_interval` in _records_. If you need
+  time-based
+  flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
   them only when you are comfortable with logging back pressure slowing the
-  producer.
-- Socket handlers serialise to MessagePack with a one-megabyte default frame
+  producer, because that is exactly what will happen.
+- Socket handlers serialize to MessagePack with a one-megabyte default frame
   limit. Large payloads are silently dropped; consider truncating or chunking
   messages before logging.
 - `reset_manager()` is a destructive operation intended for tests. Do not call
