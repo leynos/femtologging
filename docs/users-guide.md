@@ -79,9 +79,8 @@ your process exits.
 - Python handlers run inside the logger’s worker thread. Ensure they are
   thread-safe and fast; slow handlers block the logger worker and can cause
   additional record drops.
-- `logger.add_handler(handler)` accepts either a Rust-backed handler instance,
-  or
-  a Python handler as described above. Use `logger.remove_handler(handler)` or
+- `logger.add_handler(handler)` accepts either a Rust-backed handler or a Python
+  handler as described above. Use `logger.remove_handler(handler)` or
   `logger.clear_handlers()` to detach them. Removals only affect records that
   are enqueued after the call because previously queued items already captured
   their handler list.
@@ -318,7 +317,7 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
-  string yourself or supply a callable formatter per handler.
+  string yourself, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
 
@@ -330,11 +329,10 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   detect back pressure early. Increase handler capacities or switch to
   blocking/timeout policies when drops are unacceptable.
 - File-based handlers count `flush_interval` in _records_. If you need
-  time-based
-  flushing, add a periodic `handler.flush()` in your application.
+  time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
   them only when you are comfortable with logging back pressure slowing the
-  producer, because that is exactly what will happen.
+  producer because that is exactly what will happen.
 - Socket handlers serialize to MessagePack with a one-megabyte default frame
   limit. Large payloads are silently dropped; consider truncating or chunking
   messages before logging.
@@ -343,5 +341,5 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 
 Keep an eye on the roadmap in `docs/` for upcoming additions (formatter
 resolution, richer dictConfig support, timed rotation) and update your
-configuration once those features land. In the meantime, the patterns above
-reflect the current, tested surface area of femtologging.
+configuration once those features land. For now, the patterns above reflect the
+current, tested surface area of femtologging.
