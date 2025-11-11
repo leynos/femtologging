@@ -142,10 +142,8 @@ def log_and_capture(
     capsys: pytest.CaptureFixture[str],
     scenario_config_session: ScenarioConfigSession,
 ) -> None:
-    logger = get_logger("root")
-    formatted = logger.log(level, message)
-    output = _flush_and_capture(capsys, scenario_config_session, formatted)
-    captured_outputs[key] = output.rstrip("\n")
+    output = _log_message_and_get_output(message, level, capsys, scenario_config_session)
+    captured_outputs[key] = output
 
 
 @then("the captured outputs match snapshot")
@@ -164,16 +162,27 @@ def log_matches_snapshot(
     capsys: pytest.CaptureFixture[str],
     scenario_config_session: ScenarioConfigSession,
 ) -> None:
-    logger = get_logger("root")
-    formatted = logger.log(level, message)
-    output = _flush_and_capture(capsys, scenario_config_session, formatted)
-    assert output.rstrip("\n") == snapshot
+    output = _log_message_and_get_output(message, level, capsys, scenario_config_session)
+    assert output == snapshot
 
 
 @then(parsers.parse('applying the schema via dictConfig fails with "{msg}"'))
 def schema_application_fails(config_example: ConfigExample, msg: str) -> None:
     with pytest.raises(ValueError, match=msg):
         dictConfig(copy.deepcopy(config_example.dict_schema))
+
+
+def _log_message_and_get_output(
+    message: str,
+    level: str,
+    capsys: pytest.CaptureFixture[str],
+    scenario_config_session: ScenarioConfigSession,
+) -> str:
+    """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
+    logger = get_logger("root")
+    formatted = logger.log(level, message)
+    output = _flush_and_capture(capsys, scenario_config_session, formatted)
+    return output.rstrip("\n")
 
 
 def _flush_and_capture(
