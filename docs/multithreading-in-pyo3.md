@@ -102,7 +102,7 @@ fn call_python_from_rust() -> PyResult<()> {
 
 This pattern is the safe, idiomatic Rust equivalent of a
 `PyGILState_STATE gstate = PyGILState_Ensure();...; PyGILState_Release(gstate);`
-block in C. It leverages Rust's RAII (Resource Acquisition Is Initialization)
+ block in C. It leverages Rust's RAII (Resource Acquisition Is Initialization)
 pattern to guarantee the release of the GIL. Furthermore, if the
 `auto-initialize` feature is enabled in `Cargo.toml`, `Python::with_gil` will
 also handle the one-time initialization of the Python interpreter if it hasn't

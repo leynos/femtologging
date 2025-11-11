@@ -782,7 +782,7 @@ surfaces mature further.
 
 - **Dynamic Log Level Updates:** As outlined in the design document \[cite:
   uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-  Dynamic log-level changes for loggers will be a core feature, utilizing
+   Dynamic log-level changes for loggers will be a core feature, utilizing
   atomic operations in Rust for thread-safe updates. This will be exposed via
   methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 

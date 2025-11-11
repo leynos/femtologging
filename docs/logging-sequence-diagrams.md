@@ -5,11 +5,7 @@ control-flow inside CPython’s `logging` package (main branch, June 2025).\\
 
 All call-stacks have been pared down to the routines and objects that perform
 real work, using the current source code for reference
-([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
-[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
-[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
-[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py),
-[github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
+([Lib/logging/\_\_init\_\_.py](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
 ______________________________________________________________________
 
@@ -145,7 +141,7 @@ sequenceDiagram
 
 `shutdown()` is automatically registered with `atexit`, so normal interpreter
 termination flushes and closes all live handlers
-([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
+([Lib/logging/\_\_init\_\_.py](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py)).
 
 ______________________________________________________________________
 
