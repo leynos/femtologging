@@ -66,7 +66,7 @@ your process exits.
   is filtered out. This differs from `logging.Logger.log()`, which always
   returns `None`.
 - Convenience methods (`logger.info`, `logger.warning`, and so on) are not
-  implemented yet; call `log()` directly or wrap it in your own helper.
+  implemented yet; call `log()` directly or wrap it in a helper.
 - Currently, `FemtoLogger` sends only the text form of each record to handlers.
   There is no equivalent to `extra`, `exc_info`, `stack_info`, or lazy
   formatting. Build the final message string yourself before calling `log()`.
@@ -332,7 +332,7 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
   them only when you are comfortable with logging back pressure slowing the
-  producer because that is exactly what will happen.
+  producer because that is what will happen.
 - Socket handlers serialize to MessagePack with a one-megabyte default frame
   limit. Large payloads are silently dropped; consider truncating or chunking
   messages before logging.
