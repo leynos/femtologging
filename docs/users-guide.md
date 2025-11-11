@@ -188,8 +188,8 @@ avoid raising from `handle`.
 ### basicConfig
 
 - Accepts `level`, `filename`, `stream` (`sys.stdout` or `sys.stderr`), `force`,
-  and `handlers` (an iterable of pre-built handlers) either via keyword
-  arguments or the `BasicConfig` dataclass.
+  and `handlers` (an iterable of handler objects) either via keyword arguments
+  or the `BasicConfig` dataclass.
 - `filename` and `stream` are mutually exclusive and cannot be combined with
   the `handlers` argument.
 - Passing `force=True` clears existing handlers on the root logger before
