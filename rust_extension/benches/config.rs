@@ -1,53 +1,21 @@
 #![cfg(feature = "python")]
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use _femtologging_rs::{
     manager, ConfigBuilder, FemtoLevel, LoggerConfigBuilder, StreamHandlerBuilder,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use once_cell::sync::Lazy;
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyAny, PyDict, PyList},
 };
 
-struct PythonApis {
-    reset_manager: Py<PyAny>,
-    basic_config: Py<PyAny>,
-    dict_config: Py<PyAny>,
-    stdout: Py<PyAny>,
-    dict_schema: Py<PyAny>,
-}
-
-impl PythonApis {
-    fn new() -> Self {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
-            let sys = py.import("sys").expect("import sys");
-            let path: &PyList = sys
-                .getattr("path")
-                .and_then(|obj| obj.downcast::<PyList>())
-                .expect("sys.path should be a list");
-            let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .expect("workspace root")
-                .to_path_buf();
-            let repo_str = repo_root.to_string_lossy();
-            path.insert(0, repo_str.as_ref())
-                .expect("inject workspace root into sys.path");
-
-            let femto = py.import("femtologging").expect("import femtologging");
-            let config_mod = py
-                .import("femtologging.config")
-                .expect("import femtologging.config");
-            let reset_manager = femto.getattr("reset_manager").unwrap().into_py(py);
-            let basic_config = femto.getattr("basicConfig").unwrap().into_py(py);
-            let dict_config = config_mod.getattr("dictConfig").unwrap().into_py(py);
-            let stdout = sys.getattr("stdout").unwrap().into_py(py);
-
-            let locals = PyDict::new(py);
-            py.run(
-                r#"
+const DICT_SCHEMA_PY: &str = r#"
 from femtologging import ConfigBuilder, LoggerConfigBuilder, StreamHandlerBuilder
 
 _schema_builder = (
@@ -60,21 +28,32 @@ _schema_builder = (
     )
 )
 schema = _schema_builder.as_dict()
-"#,
-                None,
-                Some(locals),
-            )
-            .expect("build dictConfig schema");
-            let dict_schema = locals.get_item("schema").unwrap().to_object(py);
+"#;
 
-            Self {
-                reset_manager,
-                basic_config,
-                dict_config,
-                stdout,
-                dict_schema,
-            }
-        })
+static PY_APIS: Lazy<PythonApis> = Lazy::new(|| {
+    pyo3::prepare_freethreaded_python();
+    Python::with_gil(|py| PythonApis::new(py))
+});
+
+struct PythonApis {
+    reset_manager: Py<PyAny>,
+    basic_config: Py<PyAny>,
+    dict_config: Py<PyAny>,
+    stdout: Py<PyAny>,
+    dict_schema: Py<PyAny>,
+}
+
+impl PythonApis {
+    fn new(py: Python<'_>) -> Self {
+        let (reset_manager, basic_config, dict_config, stdout) = init_python_imports(py);
+        let dict_schema = build_dict_schema(py);
+        Self {
+            reset_manager,
+            basic_config,
+            dict_config,
+            stdout,
+            dict_schema,
+        }
     }
 
     fn reset(&self, py: Python<'_>) {
@@ -82,14 +61,13 @@ schema = _schema_builder.as_dict()
     }
 
     fn run_basic_config(&self, py: Python<'_>) {
-        let kwargs = PyDict::new(py);
+        let kwargs = PyDict::new_bound(py);
         kwargs.set_item("level", "INFO").unwrap();
-        kwargs
-            .set_item("stream", self.stdout.as_ref(py))
-            .expect("set stream");
+        let stdout = self.stdout.bind(py);
+        kwargs.set_item("stream", stdout).expect("set stream");
         kwargs.set_item("force", true).unwrap();
         self.basic_config
-            .call(py, (), Some(kwargs))
+            .call(py, (), Some(&kwargs))
             .expect("basicConfig()");
     }
 
@@ -102,6 +80,40 @@ schema = _schema_builder.as_dict()
             .call1(py, (schema_copy,))
             .expect("dictConfig()");
     }
+}
+
+fn init_python_imports(py: Python<'_>) -> (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>) {
+    let sys = py.import("sys").expect("import sys");
+    let sys_any = sys.as_any();
+    inject_repo_to_path(&sys_any);
+    let femto = py.import("femtologging").expect("import femtologging");
+    let config_mod = py
+        .import("femtologging.config")
+        .expect("import femtologging.config");
+    let reset_manager = femto.getattr("reset_manager").unwrap().unbind();
+    let basic_config = femto.getattr("basicConfig").unwrap().unbind();
+    let dict_config = config_mod.getattr("dictConfig").unwrap().unbind();
+    let stdout = sys.getattr("stdout").unwrap().unbind();
+    (reset_manager, basic_config, dict_config, stdout)
+}
+
+fn inject_repo_to_path(sys: &Bound<'_, PyAny>) {
+    let path = sys.getattr("path").expect("sys.path attribute");
+    let path: Bound<'_, PyList> = path.downcast().expect("sys.path should downcast to PyList");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+    let repo_str = repo_root.to_string_lossy().into_owned();
+    path.insert(0, repo_str.as_str())
+        .expect("insert workspace root into sys.path");
+}
+
+fn build_dict_schema(py: Python<'_>) -> Py<PyAny> {
+    let locals = PyDict::new(py);
+    py.run(DICT_SCHEMA_PY, None, Some(locals))
+        .expect("build dictConfig schema");
+    locals.get_item("schema").unwrap().to_object(py)
 }
 
 fn sample_builder() -> ConfigBuilder {
@@ -120,16 +132,23 @@ fn sample_builder() -> ConfigBuilder {
 }
 
 fn config_benchmarks(c: &mut Criterion) {
-    let apis = PythonApis::new();
+    manager::reset_manager();
+    let apis = &*PY_APIS;
     let mut group = c.benchmark_group("configuration");
 
     group.bench_function("builder_build_and_init", |b| {
-        b.iter(|| {
-            manager::reset_manager();
-            let builder = sample_builder();
-            black_box(&builder)
-                .build_and_init()
-                .expect("builder build_and_init()");
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                manager::reset_manager();
+                let start = Instant::now();
+                let builder = sample_builder();
+                black_box(&builder)
+                    .build_and_init()
+                    .expect("builder build_and_init()");
+                total += start.elapsed();
+            }
+            total
         });
     });
 
