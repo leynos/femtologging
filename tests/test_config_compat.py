@@ -56,6 +56,14 @@ class ScenarioConfigSession:
             self.reapply_cb()
 
 
+@dataclass
+class LogCaptureContext:
+    """Bundle capsys and scenario session for cleaner function signatures."""
+
+    capsys: pytest.CaptureFixture[str]
+    scenario_config_session: ScenarioConfigSession
+
+
 @pytest.fixture
 def captured_outputs() -> dict[str, str | None]:
     """Store captured log outputs for comparison."""
@@ -66,6 +74,17 @@ def captured_outputs() -> dict[str, str | None]:
 def scenario_config_session() -> ScenarioConfigSession:
     """Provide per-scenario configuration reapply tracking."""
     return ScenarioConfigSession()
+
+
+@pytest.fixture
+def log_capture_context(
+    capsys: pytest.CaptureFixture[str],
+    scenario_config_session: ScenarioConfigSession,
+) -> LogCaptureContext:
+    """Provide combined capture and session context."""
+    return LogCaptureContext(
+        capsys=capsys, scenario_config_session=scenario_config_session
+    )
 
 
 @given("the logging system is reset")
@@ -125,7 +144,9 @@ def reset_logging_when() -> None:
 
 
 @when(parsers.parse('I call basicConfig with level "{level}" and stream stdout'))
-def call_basic_config(level: str, scenario_config_session: ScenarioConfigSession) -> None:
+def call_basic_config(
+    level: str, scenario_config_session: ScenarioConfigSession
+) -> None:
     def _apply(level: str = level) -> None:
         basicConfig(level=level, stream=sys.stdout, force=True)
 
@@ -139,10 +160,9 @@ def log_and_capture(
     level: str,
     key: str,
     captured_outputs: dict[str, str | None],
-    capsys: pytest.CaptureFixture[str],
-    scenario_config_session: ScenarioConfigSession,
+    log_capture_context: LogCaptureContext,
 ) -> None:
-    output = _log_message_and_get_output(message, level, capsys, scenario_config_session)
+    output = _log_message_and_get_output(message, level, log_capture_context)
     captured_outputs[key] = output
 
 
@@ -159,10 +179,9 @@ def log_matches_snapshot(
     message: str,
     level: str,
     snapshot: SnapshotAssertion,
-    capsys: pytest.CaptureFixture[str],
-    scenario_config_session: ScenarioConfigSession,
+    log_capture_context: LogCaptureContext,
 ) -> None:
-    output = _log_message_and_get_output(message, level, capsys, scenario_config_session)
+    output = _log_message_and_get_output(message, level, log_capture_context)
     assert output == snapshot
 
 
@@ -175,13 +194,16 @@ def schema_application_fails(config_example: ConfigExample, msg: str) -> None:
 def _log_message_and_get_output(
     message: str,
     level: str,
-    capsys: pytest.CaptureFixture[str],
-    scenario_config_session: ScenarioConfigSession,
+    log_capture_context: LogCaptureContext,
 ) -> str:
     """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
     logger = get_logger("root")
     formatted = logger.log(level, message)
-    output = _flush_and_capture(capsys, scenario_config_session, formatted)
+    output = _flush_and_capture(
+        log_capture_context.capsys,
+        log_capture_context.scenario_config_session,
+        formatted,
+    )
     return output.rstrip("\n")
 
 
