@@ -36,13 +36,13 @@ from femtologging import (
 scenarios("features/config_compat.feature")
 
 
-@dataclass
+@dataclass(slots=True)
 class ConfigExample:
     builder: ConfigBuilder
     dict_schema: dict[str, Any]
 
 
-@dataclass
+@dataclass(slots=True)
 class ScenarioConfigSession:
     """Track how to reapply the most recent configuration step."""
 
@@ -56,7 +56,7 @@ class ScenarioConfigSession:
             self.reapply_cb()
 
 
-@dataclass
+@dataclass(slots=True)
 class LogCaptureContext:
     """Bundle capsys, scenario session, and output storage for cleaner function signatures."""
 
@@ -222,15 +222,14 @@ def _flush_and_capture(
     reset_manager()
     output = _capture_log_output(capsys)
     session.reapply()
-    if not output and fallback:
-        print(fallback, file=sys.stdout)
-        output = _capture_log_output(capsys)
     return output
 
 
 def _capture_log_output(capsys: pytest.CaptureFixture[str]) -> str:
     """Drain stdout/stderr after an asynchronous femtologging write."""
-    deadline = time.monotonic() + 2.0
+    # A 500 ms window mirrors the worst-case handler flush delays observed in CI
+    # (thread hops + file flush), while keeping test runtime impact minimal.
+    deadline = time.monotonic() + 0.5
     combined = ""
     while time.monotonic() < deadline:
         time.sleep(0.02)
