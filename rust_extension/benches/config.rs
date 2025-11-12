@@ -1,3 +1,4 @@
+//! Benchmarks for femtologging configuration flows under the `python` feature.
 #![cfg(feature = "python")]
 
 use std::{
@@ -62,10 +63,14 @@ impl PythonApis {
 
     fn run_basic_config(&self, py: Python<'_>) {
         let kwargs = PyDict::new_bound(py);
-        kwargs.set_item("level", "INFO").unwrap();
+        kwargs
+            .set_item("level", "INFO")
+            .expect("set level for basicConfig");
         let stdout = self.stdout.bind(py);
         kwargs.set_item("stream", stdout).expect("set stream");
-        kwargs.set_item("force", true).unwrap();
+        kwargs
+            .set_item("force", true)
+            .expect("set force for basicConfig");
         self.basic_config
             .call(py, (), Some(&kwargs))
             .expect("basicConfig()");
