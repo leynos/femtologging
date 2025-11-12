@@ -205,24 +205,16 @@ def _log_message_and_get_output(
     output = _flush_and_capture(
         log_capture_context.capsys,
         log_capture_context.scenario_config_session,
-        formatted,
     )
     return output.rstrip("\n")
 
 
 def _flush_and_capture(
     capsys: pytest.CaptureFixture[str],
-    session: ScenarioConfigSession,
-    fallback: str | None,
+    _session: ScenarioConfigSession,
 ) -> str:
-    """Capture output, resetting/reapplying configuration if needed."""
-    output = _capture_log_output(capsys)
-    if output:
-        return output
-    reset_manager()
-    output = _capture_log_output(capsys)
-    session.reapply()
-    return output
+    """Capture output emitted by handlers, without reconfiguring the backend."""
+    return _capture_log_output(capsys)
 
 
 def _capture_log_output(capsys: pytest.CaptureFixture[str]) -> str:
