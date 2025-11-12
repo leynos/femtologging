@@ -95,10 +95,19 @@ fn init_python_imports(py: Python<'_>) -> (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<P
     let config_mod = py
         .import("femtologging.config")
         .expect("import femtologging.config");
-    let reset_manager = femto.getattr("reset_manager").unwrap().unbind();
-    let basic_config = femto.getattr("basicConfig").unwrap().unbind();
-    let dict_config = config_mod.getattr("dictConfig").unwrap().unbind();
-    let stdout = sys.getattr("stdout").unwrap().unbind();
+    let reset_manager = femto
+        .getattr("reset_manager")
+        .expect("femtologging.reset_manager attr")
+        .unbind();
+    let basic_config = femto
+        .getattr("basicConfig")
+        .expect("femtologging.basicConfig attr")
+        .unbind();
+    let dict_config = config_mod
+        .getattr("dictConfig")
+        .expect("femtologging.config.dictConfig attr")
+        .unbind();
+    let stdout = sys.getattr("stdout").expect("sys.stdout attr").unbind();
     (reset_manager, basic_config, dict_config, stdout)
 }
 
