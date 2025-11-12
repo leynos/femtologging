@@ -201,7 +201,7 @@ def _log_message_and_get_output(
 ) -> str:
     """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
     logger = get_logger("root")
-    formatted = logger.log(level, message)
+    logger.log(level, message)
     output = _flush_and_capture(
         log_capture_context.capsys,
         log_capture_context.scenario_config_session,
