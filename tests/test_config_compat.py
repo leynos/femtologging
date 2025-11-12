@@ -219,9 +219,10 @@ def _flush_and_capture(
 
 def _capture_log_output(capsys: pytest.CaptureFixture[str]) -> str:
     """Drain stdout/stderr after an asynchronous femtologging write."""
-    # A 500 ms window mirrors the worst-case handler flush delays observed in CI
-    # (thread hops + file flush), while keeping test runtime impact minimal.
-    deadline = time.monotonic() + 0.5
+    # Empirically, async handler flushes can take up to ~1.5 s on CI when
+    # backpressure from other tests slows the worker threads. Use a 2 s window
+    # to keep the flake rate low while still failing quickly on real regressions.
+    deadline = time.monotonic() + 2.0
     combined = ""
     while time.monotonic() < deadline:
         time.sleep(0.02)
