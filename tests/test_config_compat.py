@@ -58,10 +58,11 @@ class ScenarioConfigSession:
 
 @dataclass
 class LogCaptureContext:
-    """Bundle capsys and scenario session for cleaner function signatures."""
+    """Bundle capsys, scenario session, and output storage for cleaner function signatures."""
 
     capsys: pytest.CaptureFixture[str]
     scenario_config_session: ScenarioConfigSession
+    captured_outputs: dict[str, str | None]
 
 
 @pytest.fixture
@@ -80,10 +81,13 @@ def scenario_config_session() -> ScenarioConfigSession:
 def log_capture_context(
     capsys: pytest.CaptureFixture[str],
     scenario_config_session: ScenarioConfigSession,
+    captured_outputs: dict[str, str | None],
 ) -> LogCaptureContext:
-    """Provide combined capture and session context."""
+    """Provide combined capture, session context, and output storage."""
     return LogCaptureContext(
-        capsys=capsys, scenario_config_session=scenario_config_session
+        capsys=capsys,
+        scenario_config_session=scenario_config_session,
+        captured_outputs=captured_outputs,
     )
 
 
@@ -159,19 +163,18 @@ def log_and_capture(
     message: str,
     level: str,
     key: str,
-    captured_outputs: dict[str, str | None],
     log_capture_context: LogCaptureContext,
 ) -> None:
     output = _log_message_and_get_output(message, level, log_capture_context)
-    captured_outputs[key] = output
+    log_capture_context.captured_outputs[key] = output
 
 
 @then("the captured outputs match snapshot")
 def outputs_match_snapshot(
-    captured_outputs: dict[str, str | None],
+    log_capture_context: LogCaptureContext,
     snapshot: SnapshotAssertion,
 ) -> None:
-    assert captured_outputs == snapshot
+    assert log_capture_context.captured_outputs == snapshot
 
 
 @then(parsers.parse('logging "{message}" at "{level}" from root matches snapshot'))
