@@ -50,10 +50,6 @@ class ScenarioConfigSession:
     def remember(self, cb: Callable[[], None]) -> None:
         self.reapply_cb = cb
 
-    def reapply(self) -> None:
-        if self.reapply_cb is not None:
-            self.reapply_cb()
-
 
 @dataclass(slots=True)
 class LogCaptureContext:
