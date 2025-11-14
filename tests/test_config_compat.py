@@ -200,5 +200,8 @@ def _log_message_and_get_output(
 ) -> str:
     """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
     logger = get_logger("root")
-    result = logger.log(level, message)
-    return (result or "").rstrip("\n")
+    # Drain any prior output so we only capture the new record.
+    log_capture_context.capsys.readouterr()
+    logger.log(level, message)
+    captured = log_capture_context.capsys.readouterr()
+    return f"{captured.out}{captured.err}".rstrip("\n")
