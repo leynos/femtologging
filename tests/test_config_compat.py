@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import copy
 import sys
-import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -201,36 +200,5 @@ def _log_message_and_get_output(
 ) -> str:
     """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
     logger = get_logger("root")
-    logger.log(level, message)
-    output = _flush_and_capture(
-        log_capture_context.capsys,
-        log_capture_context.scenario_config_session,
-    )
-    return output.rstrip("\n")
-
-
-def _flush_and_capture(
-    capsys: pytest.CaptureFixture[str],
-    _session: ScenarioConfigSession,
-) -> str:
-    """Capture output emitted by handlers, without reconfiguring the backend."""
-    return _capture_log_output(capsys)
-
-
-def _capture_log_output(capsys: pytest.CaptureFixture[str]) -> str:
-    """Drain stdout/stderr after an asynchronous femtologging write."""
-    # Empirically, async handler flushes can take up to ~1.5 s on CI when
-    # backpressure from other tests slows the worker threads. Use a 2 s window
-    # to keep the flake rate low while still failing quickly on real regressions.
-    deadline = time.monotonic() + 2.0
-    combined = ""
-    while time.monotonic() < deadline:
-        time.sleep(0.02)
-        captured = capsys.readouterr()
-        combined += f"{captured.out}{captured.err}"
-        if combined:
-            break
-    else:
-        captured = capsys.readouterr()
-        combined += f"{captured.out}{captured.err}"
-    return combined
+    result = logger.log(level, message)
+    return (result or "").rstrip("\n")
