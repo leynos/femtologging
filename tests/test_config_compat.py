@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import copy
 import sys
+import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -38,25 +39,14 @@ scenarios("features/config_compat.feature")
 @dataclass(slots=True)
 class ConfigExample:
     builder: ConfigBuilder
-    dict_schema: dict[str, Any]
-
-
-@dataclass(slots=True)
-class ScenarioConfigSession:
-    """Track how to reapply the most recent configuration step."""
-
-    reapply_cb: Callable[[], None] | None = None
-
-    def remember(self, cb: Callable[[], None]) -> None:
-        self.reapply_cb = cb
+    dict_schema: dict[str, Any]  # Values may be heterogeneous across config schemas, so Any is intentional.
 
 
 @dataclass(slots=True)
 class LogCaptureContext:
-    """Bundle capsys, scenario session, and output storage for cleaner function signatures."""
+    """Bundle capsys and output storage for cleaner function signatures."""
 
     capsys: pytest.CaptureFixture[str]
-    scenario_config_session: ScenarioConfigSession
     captured_outputs: dict[str, str | None]
 
 
@@ -67,21 +57,13 @@ def captured_outputs() -> dict[str, str | None]:
 
 
 @pytest.fixture
-def scenario_config_session() -> ScenarioConfigSession:
-    """Provide per-scenario configuration reapply tracking."""
-    return ScenarioConfigSession()
-
-
-@pytest.fixture
 def log_capture_context(
     capsys: pytest.CaptureFixture[str],
-    scenario_config_session: ScenarioConfigSession,
     captured_outputs: dict[str, str | None],
 ) -> LogCaptureContext:
-    """Provide combined capture, session context, and output storage."""
+    """Provide combined capture context and output storage."""
     return LogCaptureContext(
         capsys=capsys,
-        scenario_config_session=scenario_config_session,
         captured_outputs=captured_outputs,
     )
 
@@ -114,22 +96,16 @@ def config_example() -> ConfigExample:
 
 
 @when("I apply the builder configuration")
-def apply_builder_configuration(
-    config_example: ConfigExample, scenario_config_session: ScenarioConfigSession
-) -> None:
+def apply_builder_configuration(config_example: ConfigExample) -> None:
     config_example.builder.build_and_init()
-    scenario_config_session.remember(config_example.builder.build_and_init)
 
 
 @when("I apply the dictConfig schema")
-def apply_dictconfig_schema(
-    config_example: ConfigExample, scenario_config_session: ScenarioConfigSession
-) -> None:
+def apply_dictconfig_schema(config_example: ConfigExample) -> None:
     def _apply() -> None:
         dictConfig(copy.deepcopy(config_example.dict_schema))
 
     _apply()
-    scenario_config_session.remember(_apply)
 
 
 @when("I drop the root logger from the dictConfig schema")
@@ -143,14 +119,11 @@ def reset_logging_when() -> None:
 
 
 @when(parsers.parse('I call basicConfig with level "{level}" and stream stdout'))
-def call_basic_config(
-    level: str, scenario_config_session: ScenarioConfigSession
-) -> None:
+def call_basic_config(level: str) -> None:
     def _apply(level: str = level) -> None:
         basicConfig(level=level, stream=sys.stdout, force=True)
 
     _apply()
-    scenario_config_session.remember(_apply)
 
 
 @when(parsers.parse('I log "{message}" at "{level}" capturing as "{key}"'))
@@ -199,5 +172,20 @@ def _log_message_and_get_output(
     # Drain any prior output so we only capture the new record.
     log_capture_context.capsys.readouterr()
     logger.log(level, message)
-    captured = log_capture_context.capsys.readouterr()
-    return f"{captured.out}{captured.err}".rstrip("\n")
+    return _capture_handler_output(log_capture_context.capsys)
+
+
+def _capture_handler_output(capsys: pytest.CaptureFixture[str]) -> str:
+    """Poll for handler output, accommodating async flush delays."""
+    deadline = time.monotonic() + 2.0
+    combined = ""
+    while time.monotonic() < deadline:
+        captured = capsys.readouterr()
+        combined = f"{captured.out}{captured.err}"
+        if combined:
+            break
+        time.sleep(0.02)
+    else:
+        captured = capsys.readouterr()
+        combined = f"{captured.out}{captured.err}"
+    return combined.rstrip("\n")
