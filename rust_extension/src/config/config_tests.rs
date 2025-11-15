@@ -422,3 +422,62 @@ fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
         assert_eq!(records[0].message, "two");
     });
 }
+
+#[rstest]
+#[serial]
+fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let builder = ConfigBuilder::new()
+            .with_handler("stderr", StreamHandlerBuilder::stderr())
+            .with_default_level(FemtoLevel::Warn)
+            .with_root_logger(LoggerConfigBuilder::new().with_handlers(["stderr"]));
+        builder
+            .build_and_init()
+            .expect("build should apply default root level");
+
+        let root = manager::get_logger(py, "root").expect("root logger should exist");
+        assert!(
+            root.borrow(py)
+                .log(FemtoLevel::Info, "suppressed")
+                .is_none(),
+            "root should honour the configured default WARN level",
+        );
+        assert!(
+            root.borrow(py).log(FemtoLevel::Error, "emitted").is_some(),
+            "records at or above WARN should be emitted",
+        );
+    });
+}
+
+#[rstest]
+#[serial]
+fn default_level_applies_to_child_loggers(_gil_and_clean_manager: ()) {
+    Python::with_gil(|py| {
+        let child_cfg = LoggerConfigBuilder::new().with_handlers(["console"]);
+        let builder = ConfigBuilder::new()
+            .with_handler("console", StreamHandlerBuilder::stderr())
+            .with_default_level(FemtoLevel::Info)
+            .with_root_logger(
+                LoggerConfigBuilder::new()
+                    .with_level(FemtoLevel::Warn)
+                    .with_handlers(["console"]),
+            )
+            .with_logger("worker", child_cfg);
+        builder
+            .build_and_init()
+            .expect("build should succeed with default levels");
+
+        let worker = manager::get_logger(py, "worker").expect("worker logger should exist");
+        assert!(
+            worker
+                .borrow(py)
+                .log(FemtoLevel::Debug, "suppressed")
+                .is_none(),
+            "child logger should inherit the default INFO level",
+        );
+        assert!(
+            worker.borrow(py).log(FemtoLevel::Info, "visible").is_some(),
+            "records meeting the default level should be emitted",
+        );
+    });
+}

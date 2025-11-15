@@ -1,5 +1,7 @@
-import pytest
 import pathlib
+
+import femtologging
+import pytest
 
 from pytest_bdd import given, when, then, scenarios, parsers
 from syrupy import SnapshotAssertion
@@ -312,3 +314,16 @@ def test_root_logger_last_assignment_wins(
     assert config["root"]["level"] == expected, (
         f"Last root logger assignment wins: {first}→{second}"
     )
+
+
+def test_builder_symbols_exposed_publicly() -> None:
+    """Builder classes must be reachable from both package and module namespaces."""
+    import femtologging.config as config_module
+
+    assert femtologging.ConfigBuilder is ConfigBuilder
+    assert femtologging.LoggerConfigBuilder is LoggerConfigBuilder
+    assert femtologging.FormatterBuilder is FormatterBuilder
+    assert femtologging.StreamHandlerBuilder is StreamHandlerBuilder
+    assert femtologging.RotatingFileHandlerBuilder is RotatingFileHandlerBuilder
+    assert config_module.ConfigBuilder is ConfigBuilder
+    assert config_module.LoggerConfigBuilder is LoggerConfigBuilder
