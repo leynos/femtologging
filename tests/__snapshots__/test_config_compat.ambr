@@ -1,0 +1,10 @@
+# serializer version: 1
+# name: test_basicconfig_matches_configbuilder_output
+  dict({
+    'basic': 'root [INFO] builder',
+    'builder': 'root [INFO] builder',
+  })
+# ---
+# name: test_dictconfig_accepts_configbuilder_schema
+  'root [INFO] compat'
+# ---

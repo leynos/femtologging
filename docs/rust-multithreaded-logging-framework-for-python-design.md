@@ -1145,9 +1145,26 @@ performance goals and compare it against alternatives.
 
   - Utilize benchmark scenarios similar to those published for `picologging` to
     allow for more direct comparisons where the underlying operations are
-    analogous. Tools like
+    analogous. Tools like `criterion.rs` should be used for robust benchmarking
+    in Rust.
 
-    `criterion.rs` should be used for robust benchmarking in Rust.
+The first concrete step towards this plan now lives in
+`rust_extension/benches/config.rs`. The suite constructs an `Arc`-sharing
+configuration via `ConfigBuilder` and records three metrics: direct
+`build_and_init` calls, Python's `basicConfig`, and the `dictConfig` pipeline
+fed with a builder-generated schema. This keeps the builder as the canonical
+surface while providing measurable data points for both the Rust and Python
+entry points.
+
+Complementary compatibility tests ensure those code paths remain in lock-step.
+`rust_extension/src/config/config_tests.rs` gained `rstest` coverage proving
+that `with_default_level` applies identically to the root logger and its
+descendants, and `tests/features/config_compat.feature` (plus
+`tests/test_config_compat.py`) now drives snapshot-tested `pytest-bdd`
+scenarios covering both the builder↔`dictConfig` round-trip and parity between
+builder output and `basicConfig`. Together, these additions close the loop on
+the roadmap item to expand tests and introduce benchmarking for the
+configuration system.
 
 ### 8.3. Exploring Advanced Asynchronous Capabilities
 
