@@ -27,8 +27,32 @@ use std::sync::{
     Arc,
 };
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
+
+/// Handler used internally to acknowledge logger flush operations.
+struct FlushAckHandler {
+    ack: Sender<()>,
+}
+
+impl FlushAckHandler {
+    fn new(ack: Sender<()>) -> Self {
+        Self { ack }
+    }
+}
+
+impl FemtoHandlerTrait for FlushAckHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let _ = self.ack.send(());
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 /// Record queued for processing by the worker thread.
 pub struct QueuedRecord {
@@ -217,6 +241,12 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
+    /// Flush all handlers attached to this logger.
+    #[pyo3(text_signature = "(self)")]
+    pub fn flush_handlers(&self) -> bool {
+        self.flush_handlers_blocking()
+    }
+
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -268,6 +298,35 @@ impl FemtoLogger {
         self.drop_warner.warn_if_due(|count| {
             warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
         });
+    }
+
+    fn flush_handlers_blocking(&self) -> bool {
+        self.wait_for_worker_idle() && self.flush_configured_handlers()
+    }
+
+    fn wait_for_worker_idle(&self) -> bool {
+        let Some(tx) = &self.tx else {
+            return true;
+        };
+        let (ack_tx, ack_rx) = bounded(1);
+        let ack_handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FlushAckHandler::new(ack_tx));
+        let record = FemtoLogRecord::new("__femtologging__", "INFO", "__flush__");
+        if tx
+            .send(QueuedRecord {
+                record,
+                handlers: vec![ack_handler],
+            })
+            .is_err()
+        {
+            return false;
+        }
+        ack_rx
+            .recv_timeout(Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS))
+            .is_ok()
+    }
+
+    fn flush_configured_handlers(&self) -> bool {
+        self.handlers.read().iter().all(|handler| handler.flush())
     }
 
     /// Dispatch a record to the logger's handlers via the background queue.
