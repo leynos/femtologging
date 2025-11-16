@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import copy
 import sys
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -182,24 +181,23 @@ def _log_message_and_get_output(
     # Drain any prior output so we only capture the new record.
     _drain_fd_capture(log_capture_context.capfd)
     logger.log(level, message)
+    _flush_root_handlers(logger)
     return _capture_handler_output(log_capture_context.capfd)
 
 
 def _capture_handler_output(capfd: pytest.CaptureFixture[str]) -> str:
-    """Poll for handler output, accommodating async flush delays."""
-    deadline = time.monotonic() + 2.0
-    combined = ""
-    while time.monotonic() < deadline:
-        combined = _drain_fd_capture(capfd)
-        if combined:
-            break
-        time.sleep(0.02)
-    else:
-        combined = _drain_fd_capture(capfd)
-    return combined.rstrip("\n")
+    """Return the flushed handler output without trailing newlines."""
+    return _drain_fd_capture(capfd).rstrip("\n")
 
 
 def _drain_fd_capture(capfd: pytest.CaptureFixture[str]) -> str:
-    """Return and clear the captured stdout and stderr fragments."""
+    """Read and clear the captured stdout/stderr buffers (destroys their contents)."""
     captured = capfd.readouterr()
     return f"{captured.out}{captured.err}"
+
+
+def _flush_root_handlers(logger) -> None:
+    """Ensure femtologging's asynchronous handlers flush pending records."""
+    flushed = logger.flush_handlers()
+    if not flushed:
+        pytest.fail("Root handlers failed to flush pending femtologging records")
