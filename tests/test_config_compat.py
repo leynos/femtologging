@@ -39,15 +39,18 @@ scenarios("features/config_compat.feature")
 @dataclass(slots=True)
 class ConfigExample:
     """Pair a builder instance with the equivalent dictConfig schema."""
+
     builder: ConfigBuilder
-    dict_schema: dict[str, Any]  # Values may be heterogeneous across config schemas, so Any is intentional.
+    dict_schema: dict[
+        str, Any
+    ]  # Values may be heterogeneous across config schemas, so Any is intentional.
 
 
 @dataclass(slots=True)
 class LogCaptureContext:
-    """Bundle capsys and output storage for cleaner function signatures."""
+    """Bundle captured file descriptor output and recorded values."""
 
-    capsys: pytest.CaptureFixture[str]
+    capfd: pytest.CaptureFixture[str]
     captured_outputs: dict[str, str | None]
 
 
@@ -59,12 +62,12 @@ def captured_outputs() -> dict[str, str | None]:
 
 @pytest.fixture
 def log_capture_context(
-    capsys: pytest.CaptureFixture[str],
+    capfd: pytest.CaptureFixture[str],
     captured_outputs: dict[str, str | None],
 ) -> LogCaptureContext:
     """Provide combined capture context and output storage."""
     return LogCaptureContext(
-        capsys=capsys,
+        capfd=capfd,
         captured_outputs=captured_outputs,
     )
 
@@ -144,9 +147,9 @@ def outputs_match_snapshot(
     log_capture_context: LogCaptureContext,
     snapshot: SnapshotAssertion,
 ) -> None:
-    assert (
-        log_capture_context.captured_outputs == snapshot
-    ), "Captured outputs must match the expected snapshot"
+    assert log_capture_context.captured_outputs == snapshot, (
+        "Captured outputs must match the expected snapshot"
+    )
     return
 
 
@@ -177,22 +180,26 @@ def _log_message_and_get_output(
     """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
     logger = get_logger("root")
     # Drain any prior output so we only capture the new record.
-    log_capture_context.capsys.readouterr()
+    _drain_fd_capture(log_capture_context.capfd)
     logger.log(level, message)
-    return _capture_handler_output(log_capture_context.capsys)
+    return _capture_handler_output(log_capture_context.capfd)
 
 
-def _capture_handler_output(capsys: pytest.CaptureFixture[str]) -> str:
+def _capture_handler_output(capfd: pytest.CaptureFixture[str]) -> str:
     """Poll for handler output, accommodating async flush delays."""
     deadline = time.monotonic() + 2.0
     combined = ""
     while time.monotonic() < deadline:
-        captured = capsys.readouterr()
-        combined = f"{captured.out}{captured.err}"
+        combined = _drain_fd_capture(capfd)
         if combined:
             break
         time.sleep(0.02)
     else:
-        captured = capsys.readouterr()
-        combined = f"{captured.out}{captured.err}"
+        combined = _drain_fd_capture(capfd)
     return combined.rstrip("\n")
+
+
+def _drain_fd_capture(capfd: pytest.CaptureFixture[str]) -> str:
+    """Return and clear the captured stdout and stderr fragments."""
+    captured = capfd.readouterr()
+    return f"{captured.out}{captured.err}"
