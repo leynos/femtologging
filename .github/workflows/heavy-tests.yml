@@ -17,7 +17,7 @@ jobs:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '0'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref != '' && github.event.inputs.ref || github.ref }}
       - name: Set up Python 3.12
