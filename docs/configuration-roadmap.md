@@ -47,7 +47,7 @@ expanded with specifics for the configuration design.
 
 ## Phase 2 – Expanded Handlers & Core Features (Configuration-related tasks)
 
-- [ ] Support dynamic log level updates at runtime using atomic variables and
+- [x] Support dynamic log level updates at runtime using atomic variables and
   expose `set_level()` on `FemtoLogger` in Python.
 
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
