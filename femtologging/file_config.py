@@ -10,6 +10,7 @@ builder API remains the canonical configuration mechanism.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from os import fsdecode
 from pathlib import Path
 import re
 from typing import Any
@@ -39,7 +40,8 @@ def fileConfig(
     >>> fileConfig("tests/data/basic_file_config.ini")
     """
 
-    sections = rust.parse_ini_file(str(Path(fname)), encoding)
+    path_str = _normalise_path(fname)
+    sections = rust.parse_ini_file(path_str, encoding)
     config = _ini_to_dict_config(sections, defaults, disable_existing_loggers)
     dictConfig(config)
 
@@ -214,6 +216,13 @@ def _split_csv(raw: str | None) -> list[str]:
     if not raw:
         return []
     return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+def _normalise_path(fname: str | bytes | Path) -> str:
+    """Return a string path compatible with :mod:`pathlib` and the Rust parser."""
+    if isinstance(fname, bytes):
+        fname = fsdecode(fname)
+    return str(Path(fname))
 
 
 def _require_section(

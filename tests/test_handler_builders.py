@@ -228,7 +228,8 @@ def then_file_builder_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     data = file_builder.as_dict()
-    data["path"] = Path(data["path"]).name
+    path_value = str(data["path"])
+    data["path"] = Path(path_value).name
     assert data == snapshot, "file builder dict must match snapshot"
     handler = file_builder.build()
     handler.close()
@@ -240,7 +241,8 @@ def then_rotating_file_builder_snapshot(
 ) -> None:
     rotating = _require_rotating_builder(file_builder)
     data = rotating.as_dict()
-    data["path"] = Path(data["path"]).name
+    path_value = str(data["path"])
+    data["path"] = Path(path_value).name
     assert data == snapshot, "rotating file builder dict must match snapshot"
     handler = rotating.build()
     handler.close()
@@ -251,7 +253,8 @@ def then_file_builder_timeout_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     data = file_builder.as_dict()
-    data["path"] = Path(data["path"]).name
+    path_value = str(data["path"])
+    data["path"] = Path(path_value).name
     assert data["overflow_policy"] == "timeout", "must record timeout policy"
     assert data["timeout_ms"] == 500, "must record configured timeout"
     assert data == snapshot, "snapshot must include timeout fields"
