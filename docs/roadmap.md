@@ -135,10 +135,10 @@ steps below summarize the actionable items from that design.
   - [ ] Store each logger's threshold in an `AtomicU8` to enable lock‑free
     reads and writes across producer and consumer threads.
   - [ ] Provide `FemtoLogger::set_level()` and expose
-    `FemtoLogger.set_level()` in Python so configuration APIs can adjust
+    `FemtoLogger.set_level()` in Python, so configuration APIs can adjust
     levels dynamically.
   - [ ] Ensure log filtering consults the atomic level before formatting and
-    dispatch so dropped records never reach handlers.
+    dispatch, so dropped records never reach handlers.
   - [ ] Cover runtime updates with Rust unit tests and Python integration
     tests (using `rstest` fixtures where appropriate), including invalid level
     rejection.
