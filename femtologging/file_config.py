@@ -10,7 +10,7 @@ builder API remains the canonical configuration mechanism.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from os import fsdecode
+from os import PathLike, fspath, fsdecode
 from pathlib import Path
 import re
 from typing import Any
@@ -23,7 +23,7 @@ _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
 
 
 def fileConfig(
-    fname: str | bytes | Path,
+    fname: str | bytes | PathLike[str] | PathLike[bytes],
     defaults: Mapping[str, object] | None = None,
     *,
     disable_existing_loggers: bool = True,
@@ -218,11 +218,19 @@ def _split_csv(raw: str | None) -> list[str]:
     return [value.strip() for value in raw.split(",") if value.strip()]
 
 
-def _normalise_path(fname: str | bytes | Path) -> str:
-    """Return a string path compatible with :mod:`pathlib` and the Rust parser."""
-    if isinstance(fname, bytes):
-        fname = fsdecode(fname)
-    return str(Path(fname))
+def _normalise_path(
+    fname: str | bytes | PathLike[str] | PathLike[bytes],
+) -> str:
+    """Return a normalised string path for ``pathlib`` and the Rust parser.
+
+    Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance and always
+    returns a string suitable for downstream parsing.
+    """
+
+    path_like = fname if isinstance(fname, (str, bytes)) else fspath(fname)
+    if isinstance(path_like, bytes):
+        path_like = fsdecode(path_like)
+    return str(Path(path_like))
 
 
 def _require_section(
