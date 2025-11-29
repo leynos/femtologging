@@ -80,7 +80,7 @@ def configure_with_handler_class(cls: str) -> ValueError:
     }
     with pytest.raises(ValueError) as exc:
         dictConfig(cfg)
-    return cast(ValueError, exc.value)
+    return exc.value
 
 
 @then("dictConfig raises ValueError")

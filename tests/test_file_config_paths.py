@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
-from os import fsencode
+from os import PathLike, fsencode
 from pathlib import Path
 
 from femtologging.file_config import _normalise_path
 
 
-class _PathLike:
-    """Simple os.PathLike implementation for testing."""
+class _StrPathLike(PathLike[str]):
+    """Simple ``PathLike`` returning ``str`` for testing."""
 
-    def __init__(self, value: str | bytes):
+    def __init__(self, value: str):
         self._value = value
 
-    def __fspath__(self) -> str | bytes:  # pragma: no cover - invoked implicitly
+    def __fspath__(self) -> str:  # pragma: no cover - invoked implicitly
+        return self._value
+
+
+class _BytesPathLike(PathLike[bytes]):
+    """Simple ``PathLike`` returning ``bytes`` for testing."""
+
+    def __init__(self, value: bytes):
+        self._value = value
+
+    def __fspath__(self) -> bytes:  # pragma: no cover - invoked implicitly
         return self._value
 
 
@@ -39,14 +49,14 @@ def test_normalise_path_accepts_bytes(tmp_path: Path) -> None:
 
 def test_normalise_path_accepts_pathlike_str(tmp_path: Path) -> None:
     path = tmp_path / "config.ini"
-    path_like = _PathLike(str(path))
+    path_like = _StrPathLike(str(path))
 
     assert _normalise_path(path_like) == str(path)
 
 
 def test_normalise_path_accepts_pathlike_bytes(tmp_path: Path) -> None:
     path = tmp_path / "config.ini"
-    path_like = _PathLike(fsencode(str(path)))
+    path_like = _BytesPathLike(fsencode(str(path)))
 
     assert _normalise_path(path_like) == str(path)
 
