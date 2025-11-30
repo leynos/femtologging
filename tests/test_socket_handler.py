@@ -42,7 +42,9 @@ def test_socket_handler_sends_records() -> None:
     with _RecordingTCPServer(("127.0.0.1", 0)) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        host, port = server.server_address
+        address = server.server_address
+        host = str(address[0])
+        port = int(address[1])
 
         builder = femtologging.SocketHandlerBuilder().with_tcp(host, port)
         handler = builder.build()

@@ -80,7 +80,7 @@ def configure_with_handler_class(cls: str) -> ValueError:
     }
     with pytest.raises(ValueError) as exc:
         dictConfig(cfg)
-    return cast(ValueError, exc.value)
+    return exc.value
 
 
 @then("dictConfig raises ValueError")
@@ -126,7 +126,9 @@ def test_dict_config_socket_handler() -> None:
     with _SocketServer(("127.0.0.1", 0)) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        host, port = server.server_address
+        address = server.server_address
+        host = str(address[0])
+        port = int(address[1])
 
         cfg = {
             "version": 1,
