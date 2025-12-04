@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+import typing as typ
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -20,7 +20,7 @@ from femtologging import (
     StreamHandlerBuilder,
 )
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -36,7 +36,7 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
     return None  # pragma: no cover - _fail_rotating_builder_requirement always raises
 
 
-def _fail_rotating_builder_requirement(builder: FileBuilder) -> NoReturn:
+def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
     """Raise a consistent failure for steps that assume a rotating builder."""
     msg = (
         "rotating builder step requires RotatingFileHandlerBuilder, "

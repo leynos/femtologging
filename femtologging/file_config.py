@@ -12,13 +12,16 @@ from __future__ import annotations
 import re
 from os import PathLike, fsdecode, fspath
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+import typing as typ
 
 from . import _femtologging_rs as rust
 from .config import dictConfig
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+Any = typ.Any
+Mapping = cabc.Mapping
 
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")

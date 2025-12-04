@@ -6,13 +6,13 @@ import queue
 import socketserver
 import struct
 import threading
-from typing import TYPE_CHECKING, cast
+import typing as typ
 
 import pytest
 
 import femtologging
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     from pathlib import Path
 
 
@@ -25,7 +25,7 @@ class _CaptureHandler(socketserver.BaseRequestHandler):
             return
         length = struct.unpack(">I", length_data)[0]
         payload = self.request.recv(length)
-        server = cast("_RecordingTCPServer", self.server)
+        server = typ.cast("_RecordingTCPServer", self.server)
         server.queue.put(payload)
 
 

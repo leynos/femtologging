@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    TextIO,
-    cast,
-    overload,
-)
+import dataclasses
+import typing as typ
+import collections.abc as cabc
 
+cast = typ.cast
 # Import the Rust extension packaged under this module's namespace first
 # to keep imports at the top for linters.
 from . import _femtologging_rs as rust
@@ -19,8 +16,8 @@ from .config import dictConfig
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 hello = rust.hello
 FemtoLogger = rust.FemtoLogger
@@ -53,12 +50,12 @@ _clear_rotating_fresh_failure = getattr(
 )
 
 if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
-    _force_rotating_fresh_failure_for_test = cast(
-        "Callable[[int, str | None], None]",
+    _force_rotating_fresh_failure_for_test = typ.cast(
+        "cabc.Callable[[int, str | None], None]",
         _force_rotating_fresh_failure,
     )
-    _clear_rotating_fresh_failure_for_test = cast(
-        "Callable[[], None]",
+    _clear_rotating_fresh_failure_for_test = typ.cast(
+        "cabc.Callable[[], None]",
         _clear_rotating_fresh_failure,
     )
 else:
@@ -76,22 +73,22 @@ else:
         return
 
 
-@dataclass
+@dataclasses.dataclass
 class BasicConfig:
     """Configuration parameters for basicConfig()."""
 
     level: str | int | None = None
     filename: str | None = None
-    stream: TextIO | None = None
+    stream: typ.TextIO | None = None
     force: bool = False
-    handlers: Iterable[FemtoHandler] | None = None
+    handlers: "cabc.Iterable[FemtoHandler]" | None = None
 
 
-@overload
+@typ.overload
 def basicConfig(config: BasicConfig, /) -> None: ...
 
 
-@overload
+@typ.overload
 def basicConfig(**kwargs: object) -> None: ...
 
 
@@ -120,7 +117,7 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are equivalent.
         filename : str, optional
             File to write logs to.
-        stream : TextIO, optional
+        stream : typ.TextIO, optional
             ``sys.stdout`` or ``sys.stderr``.
         force : bool, default False
             Remove any existing handlers before configuring.
@@ -153,37 +150,37 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
     level: str | int | None
     filename: str | None
-    stream: TextIO | None
+    stream: typ.TextIO | None
     force: bool
-    handlers: Iterable[FemtoHandler] | None
+    handlers: "cabc.Iterable[FemtoHandler]" | None
     if config is not None:
         level = (
             config.level
             if config.level is not None
-            else cast("str | int | None", kwargs.get("level"))
+            else typ.cast("str | int | None", kwargs.get("level"))
         )
         filename = (
             config.filename
             if config.filename is not None
-            else cast("str | None", kwargs.get("filename"))
+            else typ.cast("str | None", kwargs.get("filename"))
         )
         stream = (
             config.stream
             if config.stream is not None
-            else cast("TextIO | None", kwargs.get("stream"))
+            else typ.cast("typ.TextIO | None", kwargs.get("stream"))
         )
         force = bool(config.force)
         handlers = (
             config.handlers
             if config.handlers is not None
-            else cast("Iterable[FemtoHandler] | None", kwargs.get("handlers"))
+            else typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers"))
         )
     else:
-        level = cast("str | int | None", kwargs.get("level"))
-        filename = cast("str | None", kwargs.get("filename"))
-        stream = cast("TextIO | None", kwargs.get("stream"))
+        level = typ.cast("str | int | None", kwargs.get("level"))
+        filename = typ.cast("str | None", kwargs.get("filename"))
+        stream = typ.cast("typ.TextIO | None", kwargs.get("stream"))
         force = bool(kwargs.get("force"))
-        handlers = cast("Iterable[FemtoHandler] | None", kwargs.get("handlers"))
+        handlers = typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers"))
 
     _validate_basic_config_params(filename, stream, handlers)
 
@@ -197,9 +194,9 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
 
 def _has_conflicting_handler_params(
-    handlers: Iterable[FemtoHandler] | None,
+    handlers: "cabc.Iterable[FemtoHandler]" | None,
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> bool:
     """Check if handlers conflict with filename or stream parameters."""
     return handlers is not None and (filename is not None or stream is not None)
@@ -207,8 +204,8 @@ def _has_conflicting_handler_params(
 
 def _validate_basic_config_params(
     filename: str | None,
-    stream: TextIO | None,
-    handlers: Iterable[FemtoHandler] | None,
+    stream: typ.TextIO | None,
+    handlers: "cabc.Iterable[FemtoHandler]" | None,
 ) -> None:
     """Validate ``basicConfig`` parameters."""
     if filename and stream:

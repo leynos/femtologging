@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+import typing as typ
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -19,7 +19,7 @@ from femtologging import (
     get_logger,
 )
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"

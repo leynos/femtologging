@@ -32,14 +32,21 @@ The ``dictConfig`` format does not support ``filters`` and will raise ``ValueErr
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Final, cast
+import collections.abc as cabc
+import dataclasses
+import typing as typ
+
+Callable = cabc.Callable
+Mapping = cabc.Mapping
+Sequence = cabc.Sequence
+Any = typ.Any
+Final = typ.Final
+cast = typ.cast
 
 from . import _femtologging_rs as rust
 from .overflow_policy import OverflowPolicy
 
-rust = cast("Any", rust)
+rust = typ.cast("Any", rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
@@ -54,7 +61,7 @@ LevelFilterBuilder = rust.LevelFilterBuilder
 NameFilterBuilder = rust.NameFilterBuilder
 
 
-_HANDLER_CLASS_MAP: Final[dict[str, object]] = {
+_HANDLER_CLASS_MAP: typ.Final[dict[str, object]] = {
     "logging.StreamHandler": StreamHandlerBuilder,
     "femtologging.StreamHandler": StreamHandlerBuilder,
     "logging.handlers.SocketHandler": SocketHandlerBuilder,
@@ -240,7 +247,7 @@ def _apply_socket_args(
     )
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class _TransportKwargs:
     """Transport-related keyword arguments for socket handler configuration."""
 
@@ -795,7 +802,7 @@ def _validate_section_mapping(section: object, name: str) -> Mapping[str, object
     return cast("Mapping[str, object]", _validate_mapping_type(section, name))
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class SectionProcessor:
     """Configuration for :func:`_process_config_section`."""
 

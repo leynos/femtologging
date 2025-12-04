@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import copy
 import sys
-from dataclasses import dataclass
+import dataclasses
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+import typing as typ
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -21,7 +21,7 @@ from femtologging import (
     reset_manager,
 )
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -29,15 +29,15 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "config_compat.feature"))
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class ConfigExample:
     """Pair a builder instance with the equivalent dictConfig schema."""
 
     builder: ConfigBuilder
-    dict_schema: dict[str, Any]
+    dict_schema: dict[str, typ.Any]
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class LogCaptureContext:
     """Bundle captured file descriptor output and recorded values."""
 

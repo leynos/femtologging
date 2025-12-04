@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import gc
 import warnings
-from collections.abc import Callable, Generator
+import collections.abc as cabc
 from contextlib import contextmanager
 from pathlib import Path
-from typing import ContextManager
+import typing as typ
 
 import pytest
 
@@ -23,7 +23,7 @@ warnings.filterwarnings(
 # The warning originates in the vendored Gherkin parser, so filter it out until
 # the dependency releases a fix rather than letting our test suite go noisy.
 
-FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
+FileHandlerFactory = cabc.Callable[[Path, int, int], typ.ContextManager[FemtoFileHandler]]
 
 
 @pytest.fixture

@@ -7,14 +7,14 @@ import socketserver
 import struct
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+import typing as typ
 
 import pytest
 
 import femtologging.config as config_module
 from femtologging import SocketHandlerBuilder, dictConfig, get_logger, reset_manager
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     from pathlib import Path
 
 
@@ -27,7 +27,7 @@ class _SocketCaptureHandler(socketserver.BaseRequestHandler):
             return
         length = struct.unpack(">I", length_bytes)[0]
         payload = self.request.recv(length)
-        server = cast("_SocketServer", self.server)
+        server = typ.cast("_SocketServer", self.server)
         server.queue.put(payload)
 
 

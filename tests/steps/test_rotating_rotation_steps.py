@@ -4,9 +4,9 @@ from __future__ import annotations
 
 """BDD steps validating rotating file handler rollover behaviour."""
 
-from dataclasses import dataclass
+import dataclasses
 from pathlib import Path
-from typing import TYPE_CHECKING
+import typing as typ
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -18,9 +18,10 @@ from femtologging import (
     _force_rotating_fresh_failure_for_test,
 )
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable
+    import collections.abc as cabc
+    Callable = cabc.Callable
 
     from syrupy.assertion import SnapshotAssertion
 
@@ -29,7 +30,7 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "rotating_handler_rotation.feature"))
 
 
-@dataclass
+@dataclasses.dataclass
 class RotatingContext:
     """Hold rotating handler state and log file path for a scenario."""
 

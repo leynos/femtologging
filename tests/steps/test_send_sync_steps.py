@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+import typing as typ
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoStreamHandler, StreamHandlerBuilder
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from syrupy.assertion import SnapshotAssertion
+    Iterator = cabc.Iterator
+    Sequence = cabc.Sequence
 
 INFO_PREFIX = "test [INFO] "
 

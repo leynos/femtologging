@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import typing as typ
 
 import pytest
 
@@ -17,7 +17,7 @@ from femtologging import (
     reset_manager,
 )
 
-if TYPE_CHECKING:
+if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 
