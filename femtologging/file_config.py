@@ -89,7 +89,8 @@ def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
     if not fmt_section:
         return
     if _split_csv(fmt_section.get("keys")):
-        raise ValueError("formatters are not supported")
+        msg = "formatters are not supported"
+        raise ValueError(msg)
 
 
 def _merge_defaults(
@@ -115,8 +116,9 @@ def _parse_formatters(
     for fid in formatter_ids:
         section = _require_section(sections, f"formatter_{fid}")
         if unknown := set(section) - {"format", "datefmt"}:
+            msg = f"formatter {fid!r} has unsupported options: {sorted(unknown)!r}"
             raise ValueError(
-                f"formatter {fid!r} has unsupported options: {sorted(unknown)!r}"
+                msg
             )
         config: dict[str, str] = {}
         if (fmt := section.get("format")) is not None:
@@ -130,19 +132,23 @@ def _parse_formatters(
 def _check_unsupported_handler_options(section: dict[str, str]) -> None:
     """Check for handler options that are in allowed set but not supported."""
     if "formatter" in section:
-        raise ValueError("handler formatters are not supported")
+        msg = "handler formatters are not supported"
+        raise ValueError(msg)
     if "level" in section:
-        raise ValueError("handler level is not supported; use logger levels instead")
+        msg = "handler level is not supported; use logger levels instead"
+        raise ValueError(msg)
 
 
 def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
     allowed = {"class", "args", "kwargs", "formatter", "level"}
     if unknown := set(section) - allowed:
+        msg = f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
         raise ValueError(
-            f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
+            msg
         )
     if "class" not in section:
-        raise ValueError(f"handler {hid!r} missing class")
+        msg = f"handler {hid!r} missing class"
+        raise ValueError(msg)
     _check_unsupported_handler_options(section)
 
 
@@ -178,7 +184,8 @@ def _parse_handlers(
 def _validate_logger_options(lid: str, section: dict[str, str]) -> None:
     allowed = {"level", "handlers", "qualname", "propagate"}
     if unknown := set(section) - allowed:
-        raise ValueError(f"logger {lid!r} has unsupported options: {sorted(unknown)!r}")
+        msg = f"logger {lid!r} has unsupported options: {sorted(unknown)!r}"
+        raise ValueError(msg)
 
 
 def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, Any]:
@@ -209,7 +216,8 @@ def _parse_loggers(
         else:
             loggers[qualname] = config
     if root_cfg is None:
-        raise ValueError("root logger configuration is required")
+        msg = "root logger configuration is required"
+        raise ValueError(msg)
     root_cfg.setdefault("handlers", [])
     return loggers, root_cfg
 
@@ -239,7 +247,8 @@ def _require_section(
     name: str,
 ) -> dict[str, str]:
     if name not in sections:
-        raise ValueError(f"section [{name}] is missing")
+        msg = f"section [{name}] is missing"
+        raise ValueError(msg)
     return sections[name]
 
 
@@ -250,7 +259,8 @@ def _expand_placeholders(value: str, defaults: Mapping[str, str]) -> str:
     def replacer(match: re.Match[str]) -> str:
         key = match.group(1)
         if key not in defaults:
-            raise ValueError(f"unknown placeholder {key!r} in {value!r}")
+            msg = f"unknown placeholder {key!r} in {value!r}"
+            raise ValueError(msg)
         return defaults[key]
 
     return _PERCENT_PLACEHOLDER.sub(replacer, value)
@@ -267,8 +277,9 @@ def _parse_bool(raw: str | None) -> bool:
     if value in false_values:
         return False
     supported = "', '".join(sorted(true_values | false_values))
+    msg = f"invalid boolean value {raw!r}; supported values are: '{supported}'"
     raise ValueError(
-        f"invalid boolean value {raw!r}; supported values are: '{supported}'"
+        msg
     )
 
 

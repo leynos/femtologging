@@ -67,8 +67,9 @@ else:
     def _force_rotating_fresh_failure_for_test(
         count: int, reason: str | None = None
     ) -> None:
+        msg = "rotating fresh-failure hook requires the extension built with the 'python' feature"
         raise RuntimeError(
-            "rotating fresh-failure hook requires the extension built with the 'python' feature"
+            msg
         )
 
     def _clear_rotating_fresh_failure_for_test() -> None:
@@ -147,7 +148,8 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     unknown = set(kwargs) - allowed
     if unknown:
         name = next(iter(unknown))
-        raise TypeError(f"basicConfig() got an unexpected keyword argument {name!r}")
+        msg = f"basicConfig() got an unexpected keyword argument {name!r}"
+        raise TypeError(msg)
 
     level: str | int | None
     filename: str | None
@@ -210,15 +212,17 @@ def _validate_basic_config_params(
 ) -> None:
     """Validate ``basicConfig`` parameters."""
     if filename and stream:
-        raise ValueError("Cannot specify both `filename` and `stream`")
+        msg = "Cannot specify both `filename` and `stream`"
+        raise ValueError(msg)
 
     if _has_conflicting_handler_params(handlers, filename, stream):
         msg = "Cannot specify `handlers` with `filename` or `stream`"
         raise ValueError(msg)
 
     if stream not in {None, sys.stdout, sys.stderr}:
+        msg = f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
         raise ValueError(
-            f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
+            msg
         )
 
 

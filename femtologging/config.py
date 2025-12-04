@@ -74,20 +74,23 @@ def _evaluate_string_safely(value: str, context: str) -> object:
     try:
         return ast.literal_eval(value)
     except (ValueError, SyntaxError) as exc:
-        raise ValueError(f"invalid {context}: {value}") from exc
+        msg = f"invalid {context}: {value}"
+        raise ValueError(msg) from exc
 
 
 def _validate_mapping_type(value: object, name: str) -> Mapping[object, object]:
     """Ensure ``value`` is a mapping and not bytes-like."""
     if isinstance(value, (bytes, bytearray)) or not isinstance(value, Mapping):
-        raise ValueError(f"{name} must be a mapping")
+        msg = f"{name} must be a mapping"
+        raise ValueError(msg)
     return cast("Mapping[object, object]", value)
 
 
 def _validate_no_bytes(value: object, name: str) -> None:
     """Reject ``bytes`` or ``bytearray`` for ``value``."""
     if isinstance(value, (bytes, bytearray)):
-        raise ValueError(f"{name} must not be bytes or bytearray")
+        msg = f"{name} must not be bytes or bytearray"
+        raise ValueError(msg)
 
 
 def _validate_string_keys(
@@ -96,7 +99,8 @@ def _validate_string_keys(
     """Ensure all keys in ``mapping`` are strings."""
     for key in mapping:
         if not isinstance(key, str):
-            raise ValueError(f"{name} keys must be strings")
+            msg = f"{name} keys must be strings"
+            raise ValueError(msg)
     return cast("Mapping[str, object]", mapping)
 
 
@@ -108,7 +112,8 @@ def _coerce_args(args: object, ctx: str) -> list[object]:
         return []
     _validate_no_bytes(args, f"{ctx} args")
     if not isinstance(args, Sequence):
-        raise ValueError(f"{ctx} args must be a sequence")
+        msg = f"{ctx} args must be a sequence"
+        raise ValueError(msg)
     return list(args)
 
 
@@ -131,7 +136,8 @@ def _resolve_handler_class(name: str) -> object:
     """Return the builder class for ``name`` or raise ``ValueError``."""
     cls = _HANDLER_CLASS_MAP.get(name)
     if cls is None:
-        raise ValueError(f"unsupported handler class {name!r}")
+        msg = f"unsupported handler class {name!r}"
+        raise ValueError(msg)
     return cls
 
 
@@ -140,22 +146,26 @@ def _validate_handler_keys(hid: str, data: Mapping[str, object]) -> None:
     allowed = {"class", "level", "filters", "args", "kwargs", "formatter"}
     unknown = set(data.keys()) - allowed
     if unknown:
-        raise ValueError(f"handler {hid!r} has unsupported keys: {sorted(unknown)!r}")
+        msg = f"handler {hid!r} has unsupported keys: {sorted(unknown)!r}"
+        raise ValueError(msg)
 
 
 def _validate_handler_class(hid: str, cls_name: object) -> str:
     """Ensure a string handler class name is provided."""
     if not isinstance(cls_name, str):
-        raise ValueError(f"handler {hid!r} missing class")
+        msg = f"handler {hid!r} missing class"
+        raise ValueError(msg)
     return cls_name
 
 
 def _validate_unsupported_features(data: Mapping[str, object]) -> None:
     """Reject handler features not yet implemented."""
     if "level" in data:
-        raise ValueError("handler level is not supported")
+        msg = "handler level is not supported"
+        raise ValueError(msg)
     if "filters" in data:
-        raise ValueError("handler filters are not supported")
+        msg = "handler filters are not supported"
+        raise ValueError(msg)
 
 
 def _validate_handler_config(
@@ -183,7 +193,8 @@ def _create_handler_instance(
         kwargs_d = dict(kwargs)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
-        raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
+        msg = f"failed to construct handler {hid!r}: {exc}"
+        raise ValueError(msg) from exc
 
 
 def _build_socket_handler_builder(
@@ -223,8 +234,9 @@ def _apply_socket_args(
         (path,) = args
         _validate_unix_path(hid, path)
         return builder.with_unix_path(path), True
+    msg = f"handler {hid!r} socket args must be either (host, port) or a single unix_path"
     raise ValueError(
-        f"handler {hid!r} socket args must be either (host, port) or a single unix_path"
+        msg
     )
 
 
@@ -263,8 +275,9 @@ def _apply_socket_kwargs(
     if transport_kw.unix_path is not None:
         _validate_unix_path(hid, transport_kw.unix_path)
         if transport_configured:
+            msg = f"handler {hid!r} socket transport already configured via args"
             raise ValueError(
-                f"handler {hid!r} socket transport already configured via args"
+                msg
             )
         builder = builder.with_unix_path(transport_kw.unix_path)
         transport_configured = True
@@ -310,9 +323,11 @@ def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | Non
         return None
     value = kwargs.pop(key)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"handler {hid!r} socket kwargs {key} must be an int")
+        msg = f"handler {hid!r} socket kwargs {key} must be an int"
+        raise ValueError(msg)
     if value < 0:
-        raise ValueError(f"handler {hid!r} socket kwargs {key} must be non-negative")
+        msg = f"handler {hid!r} socket kwargs {key} must be non-negative"
+        raise ValueError(msg)
     return value
 
 
@@ -354,7 +369,8 @@ def _parse_tls_value(
         return None, None, tls_value
     if tls_value is None:
         return None, None, False
-    raise ValueError(f"handler {hid!r} socket kwargs tls must be a bool or mapping")
+    msg = f"handler {hid!r} socket kwargs tls must be a bool or mapping"
+    raise ValueError(msg)
 
 
 def _parse_tls_mapping(
@@ -364,8 +380,9 @@ def _parse_tls_mapping(
     mapping = _validate_string_keys(mapping, f"handler {hid!r} socket kwargs tls")
     unknown = set(mapping) - {"domain", "insecure"}
     if unknown:
+        msg = f"handler {hid!r} socket kwargs tls has unsupported keys: {sorted(unknown)!r}"
         raise ValueError(
-            f"handler {hid!r} socket kwargs tls has unsupported keys: {sorted(unknown)!r}"
+            msg
         )
     domain = _extract_tls_domain_from_mapping(hid, mapping)
     insecure = _extract_tls_insecure_from_mapping(hid, mapping)
@@ -379,8 +396,9 @@ def _extract_tls_domain_from_mapping(
         return None
     domain = tls_mapping["domain"]
     if domain is not None and not isinstance(domain, str):
+        msg = f"handler {hid!r} socket kwargs tls domain must be a string or None"
         raise ValueError(
-            f"handler {hid!r} socket kwargs tls domain must be a string or None"
+            msg
         )
     return domain
 
@@ -392,7 +410,8 @@ def _extract_tls_insecure_from_mapping(
         return None
     insecure_value = tls_mapping["insecure"]
     if not isinstance(insecure_value, bool):
-        raise ValueError(f"handler {hid!r} socket kwargs tls insecure must be a bool")
+        msg = f"handler {hid!r} socket kwargs tls insecure must be a bool"
+        raise ValueError(msg)
     return insecure_value
 
 
@@ -405,12 +424,14 @@ def _merge_tls_domain_kwarg(
     if domain_kw is None:
         return domain, enabled
     if not isinstance(domain_kw, str):
+        msg = f"handler {hid!r} socket kwargs tls_domain must be a string or None"
         raise ValueError(
-            f"handler {hid!r} socket kwargs tls_domain must be a string or None"
+            msg
         )
     if domain is not None and domain_kw != domain:
+        msg = f"handler {hid!r} socket kwargs tls has conflicting domain values"
         raise ValueError(
-            f"handler {hid!r} socket kwargs tls has conflicting domain values"
+            msg
         )
     return domain_kw, True
 
@@ -424,18 +445,21 @@ def _merge_tls_insecure_kwarg(
     if insecure_kw is None:
         return insecure_from_mapping if insecure_from_mapping is not None else False
     if not isinstance(insecure_kw, bool):
-        raise ValueError(f"handler {hid!r} socket kwargs tls_insecure must be a bool")
+        msg = f"handler {hid!r} socket kwargs tls_insecure must be a bool"
+        raise ValueError(msg)
     if insecure_from_mapping is not None and insecure_kw != insecure_from_mapping:
+        msg = f"handler {hid!r} socket kwargs tls has conflicting insecure values"
         raise ValueError(
-            f"handler {hid!r} socket kwargs tls has conflicting insecure values"
+            msg
         )
     return insecure_kw
 
 
 def _validate_tls_not_disabled(hid: str, tls_value: object) -> None:
     if isinstance(tls_value, bool) and not tls_value:
+        msg = f"handler {hid!r} socket kwargs tls is disabled but TLS options were supplied"
         raise ValueError(
-            f"handler {hid!r} socket kwargs tls is disabled but TLS options were supplied"
+            msg
         )
 
 
@@ -470,9 +494,12 @@ def _extract_backoff_mapping_values(
         "deadline_ms",
     }
     if unknown:
-        raise ValueError(
+        msg = (
             f"handler {hid!r} socket kwargs backoff has unsupported keys:"
             f" {sorted(unknown)!r}"
+        )
+        raise ValueError(
+            msg
         )
 
     return {
@@ -529,16 +556,19 @@ def _check_backoff_conflict(
         return
     if existing == new:
         return
-    raise ValueError(f"handler {hid!r} socket kwargs backoff {target} conflict")
+    msg = f"handler {hid!r} socket kwargs backoff {target} conflict"
+    raise ValueError(msg)
 
 
 def _coerce_backoff_value(hid: str, key: str, value: object) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"handler {hid!r} socket kwargs {key} must be an int or None")
+        msg = f"handler {hid!r} socket kwargs {key} must be an int or None"
+        raise ValueError(msg)
     if value < 0:
-        raise ValueError(f"handler {hid!r} socket kwargs {key} must be non-negative")
+        msg = f"handler {hid!r} socket kwargs {key} must be non-negative"
+        raise ValueError(msg)
     return value
 
 
@@ -547,10 +577,12 @@ def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
     if transport_flag is None:
         return
     if not isinstance(transport_flag, str):
-        raise ValueError(f"handler {hid!r} socket kwargs transport must be a string")
+        msg = f"handler {hid!r} socket kwargs transport must be a string"
+        raise ValueError(msg)
     if transport_flag.lower() not in {"tcp", "unix"}:
+        msg = f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
         raise ValueError(
-            f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
+            msg
         )
 
 
@@ -578,55 +610,66 @@ def _validate_host_port_transport_kwargs(
     transport_configured: bool,
 ) -> None:
     if transport_kw.unix_path is not None:
+        msg = f"handler {hid!r} socket kwargs must not mix host/port with unix_path"
         raise ValueError(
-            f"handler {hid!r} socket kwargs must not mix host/port with unix_path"
+            msg
         )
     if transport_kw.host is None or transport_kw.port is None:
-        raise ValueError(f"handler {hid!r} socket kwargs require both host and port")
+        msg = f"handler {hid!r} socket kwargs require both host and port"
+        raise ValueError(msg)
     _validate_host_port_kwargs(hid, transport_kw.host, transport_kw.port)
     if transport_configured:
+        msg = f"handler {hid!r} socket transport already configured via args"
         raise ValueError(
-            f"handler {hid!r} socket transport already configured via args"
+            msg
         )
 
 
 def _validate_host_port_args(hid: str, host: object, port: object) -> None:
     """Validate host and port arguments for socket handler."""
     if not isinstance(host, str):
-        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+        msg = f"handler {hid!r} socket args must be (host: str, port: int)"
+        raise ValueError(msg)
     # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
     if isinstance(port, bool):
-        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+        msg = f"handler {hid!r} socket args must be (host: str, port: int)"
+        raise ValueError(msg)
     if not isinstance(port, int):
-        raise ValueError(f"handler {hid!r} socket args must be (host: str, port: int)")
+        msg = f"handler {hid!r} socket args must be (host: str, port: int)"
+        raise ValueError(msg)
 
 
 def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
     """Validate host and port keyword arguments for socket handler."""
     if not isinstance(host, str):
+        msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
         raise ValueError(
-            f"handler {hid!r} socket kwargs host must be str and port must be int"
+            msg
         )
     # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
     if isinstance(port, bool):
+        msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
         raise ValueError(
-            f"handler {hid!r} socket kwargs host must be str and port must be int"
+            msg
         )
     if not isinstance(port, int):
+        msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
         raise ValueError(
-            f"handler {hid!r} socket kwargs host must be str and port must be int"
+            msg
         )
 
 
 def _validate_unix_path(hid: str, path: object) -> None:
     if not isinstance(path, str):
-        raise ValueError(f"handler {hid!r} unix socket path must be a string")
+        msg = f"handler {hid!r} unix socket path must be a string"
+        raise ValueError(msg)
 
 
 def _ensure_no_extra_socket_kwargs(hid: str, kwargs: dict[str, object]) -> None:
     if kwargs:
+        msg = f"handler {hid!r} has unsupported socket kwargs: {sorted(kwargs)!r}"
         raise ValueError(
-            f"handler {hid!r} has unsupported socket kwargs: {sorted(kwargs)!r}"
+            msg
         )
 
 
@@ -636,7 +679,8 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
     builder = cast("Any", _create_handler_instance(hid, cls_name, args, kwargs))
     if fmt is not None:
         if not isinstance(fmt, str):
-            raise ValueError("formatter must be a string")
+            msg = "formatter must be a string"
+            raise ValueError(msg)
         builder = builder.with_formatter(fmt)
     return builder
 
@@ -644,10 +688,12 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
 def _validate_logger_handlers(handlers_obj: object) -> list[str]:
     """Validate logger ``handlers`` list and return it."""
     if not isinstance(handlers_obj, (list, tuple)):
-        raise ValueError("logger handlers must be a list or tuple of strings")
+        msg = "logger handlers must be a list or tuple of strings"
+        raise ValueError(msg)
     handlers_seq = cast("Sequence[object]", handlers_obj)
     if not all(isinstance(h, str) for h in handlers_seq):
-        raise ValueError("logger handlers must be a list or tuple of strings")
+        msg = "logger handlers must be a list or tuple of strings"
+        raise ValueError(msg)
     return list(cast("Sequence[str]", handlers_seq))
 
 
@@ -656,15 +702,18 @@ def _validate_logger_config_keys(name: str, data: Mapping[str, object]) -> None:
     allowed = {"level", "handlers", "propagate", "filters"}
     unknown = set(data.keys()) - allowed
     if unknown:
-        raise ValueError(f"logger {name!r} has unsupported keys: {sorted(unknown)!r}")
+        msg = f"logger {name!r} has unsupported keys: {sorted(unknown)!r}"
+        raise ValueError(msg)
     if "filters" in data:
-        raise ValueError("filters are not supported")
+        msg = "filters are not supported"
+        raise ValueError(msg)
 
 
 def _validate_propagate_value(value: object) -> bool:
     """Validate the ``propagate`` value for a logger."""
     if not isinstance(value, bool):
-        raise ValueError("logger propagate must be a bool")
+        msg = "logger propagate must be a bool"
+        raise ValueError(msg)
     return value
 
 
@@ -686,12 +735,15 @@ def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
 def _validate_dict_config(config: Mapping[str, object]) -> int:
     """Validate top-level configuration and return the version."""
     if "incremental" in config:
-        raise ValueError("incremental configuration is not supported")
+        msg = "incremental configuration is not supported"
+        raise ValueError(msg)
     version = int(cast("int", config.get("version", 1)))
     if version != 1:
-        raise ValueError(f"unsupported configuration version {version}")
+        msg = f"unsupported configuration version {version}"
+        raise ValueError(msg)
     if "filters" in config:
-        raise ValueError("filters are not supported")
+        msg = "filters are not supported"
+        raise ValueError(msg)
     return version
 
 
@@ -702,7 +754,8 @@ def _create_config_builder(version: int, config: Mapping[str, object]) -> object
     if "disable_existing_loggers" in config:
         value = config["disable_existing_loggers"]
         if not isinstance(value, bool):
-            raise ValueError("disable_existing_loggers must be a bool")
+            msg = "disable_existing_loggers must be a bool"
+            raise ValueError(msg)
         builder = builder.with_disable_existing_loggers(value)
     return builder
 
@@ -715,7 +768,8 @@ def _validate_formatter_field(
         return None
     value = fcfg[field]
     if not isinstance(value, str):
-        raise ValueError(f"formatter '{field_type}' must be a string")
+        msg = f"formatter '{field_type}' must be a string"
+        raise ValueError(msg)
     return value
 
 
@@ -724,7 +778,8 @@ def _build_formatter(fcfg: Mapping[str, object]) -> object:
     allowed = {"format", "datefmt"}
     unknown = set(fcfg.keys()) - allowed
     if unknown:
-        raise ValueError(f"formatter has unsupported keys: {sorted(unknown)!r}")
+        msg = f"formatter has unsupported keys: {sorted(unknown)!r}"
+        raise ValueError(msg)
     fb = FormatterBuilder()
     fmt = _validate_formatter_field(fcfg, "format", "format")
     if fmt is not None:
@@ -762,7 +817,8 @@ def _process_config_section(
     for key, cfg in mapping.items():
         if not isinstance(key, str):
             if processor.err_tmpl is None:
-                raise ValueError(f"{processor.section[:-1]} ids must be strings")
+                msg = f"{processor.section[:-1]} ids must be strings"
+                raise ValueError(msg)
             raise ValueError(processor.err_tmpl.format(name=repr(key)))
         method(
             key,
@@ -810,10 +866,12 @@ def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
 def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
     """Configure the root logger."""
     if "root" not in config:
-        raise ValueError("root logger configuration is required")
+        msg = "root logger configuration is required"
+        raise ValueError(msg)
     root = config["root"]
     if not isinstance(root, Mapping):
-        raise ValueError("root logger configuration must be a mapping")
+        msg = "root logger configuration must be a mapping"
+        raise ValueError(msg)
     builder.with_root_logger(
         _build_logger_from_dict("root", cast("Mapping[str, object]", root))
     )

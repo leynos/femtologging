@@ -39,9 +39,12 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
 
 def _fail_rotating_builder_requirement(builder: FileBuilder) -> NoReturn:
     """Raise a consistent failure for steps that assume a rotating builder."""
-    raise AssertionError(
+    msg = (
         "rotating builder step requires RotatingFileHandlerBuilder, "
         f"got {type(builder).__name__}"
+    )
+    raise AssertionError(
+        msg
     )
 
 
@@ -482,7 +485,8 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
 
     class NotFormatter:
         def __str__(self) -> str:  # pragma: no cover - invoked via PyO3
-            raise TypeError("no string representation available")
+            msg = "no string representation available"
+            raise TypeError(msg)
 
     builder = FileHandlerBuilder(str(tmp_path / "formatter_error_chain.log"))
     with pytest.raises(TypeError) as excinfo:

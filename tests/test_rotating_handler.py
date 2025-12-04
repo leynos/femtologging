@@ -37,8 +37,9 @@ def rotating_handler(
     if derived_options is None:
         derived_options = HandlerOptions(rotation=(max_bytes, backup_count))
     elif max_bytes or backup_count:
+        msg = "rotating_handler options already provided; do not pass rotation"
         raise ValueError(
-            "rotating_handler options already provided; do not pass rotation"
+            msg
         )
 
     handler = FemtoRotatingFileHandler(path, options=derived_options)

@@ -126,4 +126,5 @@ def _make_handler(name: str, tmp_path: Path):
         return FemtoStreamHandler.stderr()
     if name == "file_handler":
         return FemtoFileHandler(str(tmp_path / "dummy.log"))
-    raise ValueError(f"unknown handler {name}")
+    msg = f"unknown handler {name}"
+    raise ValueError(msg)
