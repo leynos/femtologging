@@ -31,7 +31,8 @@ def _wait_for_log_line(path: Path, expected: str, timeout: float = 1.5) -> str:
             if expected in contents:
                 return contents
         time.sleep(0.01)
-    raise TimeoutError(f"log file {path} not written in time")
+    msg = f"log file {path} not written in time"
+    raise TimeoutError(msg)
 
 
 def test_file_config_expands_defaults(tmp_path: Path) -> None:

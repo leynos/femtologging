@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import dataclasses
 import typing as typ
 from pathlib import Path
@@ -39,7 +38,7 @@ class RotatingContext:
 @pytest.fixture
 def rotating_context_factory(
     tmp_path: Path,
-) -> cabc.Iterator[typ.Callable[[int, int], RotatingContext]]:
+) -> typ.Iterator[typ.Callable[[int, int], RotatingContext]]:
     contexts: list[RotatingContext] = []
 
     def _build(max_bytes: int, backup_count: int) -> RotatingContext:

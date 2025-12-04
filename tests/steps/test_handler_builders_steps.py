@@ -34,7 +34,8 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
     if isinstance(builder, RotatingFileHandlerBuilder):
         return builder
     _fail_rotating_builder_requirement(builder)
-    raise AssertionError("unreachable")  # appease type checkers
+    msg = "rotating builder requirement should have raised"
+    raise AssertionError(msg)
 
 
 def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
