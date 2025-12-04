@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -35,7 +36,9 @@ from femtologging import (
 if TYPE_CHECKING:
     from syrupy import SnapshotAssertion
 
-scenarios("features/config_compat.feature")
+FEATURES = Path(__file__).resolve().parents[1] / "features"
+
+scenarios(str(FEATURES / "config_compat.feature"))
 
 
 @dataclass(slots=True)
@@ -43,9 +46,7 @@ class ConfigExample:
     """Pair a builder instance with the equivalent dictConfig schema."""
 
     builder: ConfigBuilder
-    dict_schema: dict[
-        str, Any
-    ]  # Values may be heterogeneous across config schemas, so Any is intentional.
+    dict_schema: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -171,7 +172,6 @@ def _log_message_and_get_output(
 ) -> str:
     """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
     logger = get_logger("root")
-    # Drain any prior output so we only capture the new record.
     _drain_fd_capture(log_capture_context.capfd)
     logger.log(level, message)
     _flush_root_handlers(logger)

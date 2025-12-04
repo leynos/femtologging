@@ -10,15 +10,12 @@ import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
 
 import femtologging.config as config_module
 from femtologging import SocketHandlerBuilder, dictConfig, get_logger, reset_manager
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-scenarios("features/dict_config.feature")
 
 
 class _SocketCaptureHandler(socketserver.BaseRequestHandler):
@@ -40,53 +37,6 @@ class _SocketServer(socketserver.ThreadingTCPServer):
     def __init__(self, address) -> None:
         super().__init__(address, _SocketCaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
-
-
-@given("the logging system is reset")
-def reset_logging() -> None:
-    reset_manager()
-
-
-@when("I configure dictConfig with a stream handler")
-def configure_dict_config() -> None:
-    cfg = {
-        "version": 1,
-        "handlers": {"h": {"class": "femtologging.StreamHandler"}},
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    dictConfig(cfg)
-
-
-@then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
-def log_matches_snapshot(msg: str, level: str, snapshot) -> None:
-    logger = get_logger("root")
-    assert logger.log(level, msg) == snapshot
-
-
-@then("calling dictConfig with incremental true raises ValueError")
-def dict_config_incremental_fails() -> None:
-    with pytest.raises(ValueError, match="incremental configuration is not supported"):
-        dictConfig({"version": 1, "incremental": True, "root": {}})
-
-
-@when(
-    parsers.parse('I configure dictConfig with handler class "{cls}"'),
-    target_fixture="config_error",
-)
-def configure_with_handler_class(cls: str) -> ValueError:
-    cfg = {
-        "version": 1,
-        "handlers": {"h": {"class": cls}},
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    with pytest.raises(ValueError) as exc:
-        dictConfig(cfg)
-    return exc.value
-
-
-@then("dictConfig raises ValueError")
-def dict_config_raises_value_error(config_error: ValueError) -> None:
-    assert isinstance(config_error, ValueError)
 
 
 def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
@@ -299,10 +249,10 @@ def test_dict_config_logger_filters_presence() -> None:
         (
             {
                 "version": 1,
-                "handlers": {"h": {"class": "unknown"}},
-                "root": {"handlers": ["h"]},
+                "handlers": {"h": {"class": "femtologging.StreamHandler", "formatter": "f"}},
+                "root": {"level": "INFO", "handlers": ["h"]},
             },
-            r"(unknown|unsupported).+handler class",
+            r"unknown formatter id",
         ),
         ({"version": 1, "filters": {"f": {}}, "root": {}}, r"filters.+not supported"),
         (
@@ -355,15 +305,15 @@ def test_dict_config_logger_filters_presence() -> None:
             r"unknown formatter id",
         ),
     ],
-    ids=[
-        "root-missing",
-        "version-unsupported",
-        "handler-class-unknown",
-        "filters-unsupported",
-        "disable-existing-loggers-type",
-        "logger-id-type",
-        "logger-handlers-type",
-        "logger-propagate-type",
+        ids=[
+            "root-missing",
+            "version-unsupported",
+            "formatter-id-missing",
+            "filters-unsupported",
+            "disable-existing-loggers-type",
+            "logger-id-type",
+            "logger-handlers-type",
+            "logger-propagate-type",
         "formatter-value-type",
         "formatter-id-unknown",
     ],

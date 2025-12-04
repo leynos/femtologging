@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +22,9 @@ if TYPE_CHECKING:
 
     from syrupy.assertion import SnapshotAssertion
 
-scenarios("features/rotating_handler_rotation.feature")
+FEATURES = Path(__file__).resolve().parents[1] / "features"
+
+scenarios(str(FEATURES / "rotating_handler_rotation.feature"))
 
 
 @dataclass

@@ -1,4 +1,4 @@
-"""Behaviour-driven tests for femtologging.fileConfig."""
+"""Tests for femtologging.fileConfig."""
 
 from __future__ import annotations
 
@@ -7,11 +7,8 @@ from os import fsencode
 from pathlib import Path
 
 import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import fileConfig, get_logger, reset_manager
-
-scenarios("features/file_config.feature")
 
 
 def _write_file_handler_ini(config_path: Path, log_path: Path) -> None:
@@ -34,37 +31,6 @@ def _wait_for_log_line(path: Path, expected: str, timeout: float = 1.5) -> str:
                 return contents
         time.sleep(0.01)
     pytest.fail(f"log file {path} not written in time")
-
-
-@given("the logging system is reset")
-def given_logging_reset() -> None:
-    reset_manager()
-
-
-@when(parsers.parse('I configure fileConfig from "{config_path}"'))
-def when_file_config(config_path: str) -> None:
-    fileConfig(Path(config_path))
-
-
-@when(
-    parsers.parse('I attempt to configure fileConfig from "{config_path}"'),
-    target_fixture="config_error",
-)
-def when_file_config_fails(config_path: str) -> BaseException:
-    with pytest.raises(ValueError) as err:
-        fileConfig(Path(config_path))
-    return err.value
-
-
-@then(parsers.parse('logging "{message}" at "{level}" from root matches snapshot'))
-def then_log_matches_snapshot(message: str, level: str, snapshot) -> None:
-    logger = get_logger("root")
-    assert logger.log(level, message) == snapshot
-
-
-@then("fileConfig raises ValueError")
-def then_file_config_raises(config_error: ValueError) -> None:
-    assert isinstance(config_error, ValueError)
 
 
 def test_file_config_expands_defaults(tmp_path: Path) -> None:
