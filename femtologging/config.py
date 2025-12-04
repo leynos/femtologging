@@ -688,7 +688,7 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
     if fmt is not None:
         if not isinstance(fmt, str):
             msg = "formatter must be a string"
-            raise ValueError(msg)
+            raise TypeError(msg)
         builder = builder.with_formatter(fmt)
     return builder
 
@@ -763,7 +763,7 @@ def _create_config_builder(version: int, config: Mapping[str, object]) -> object
         value = config["disable_existing_loggers"]
         if not isinstance(value, bool):
             msg = "disable_existing_loggers must be a bool"
-            raise ValueError(msg)
+            raise TypeError(msg)
         builder = builder.with_disable_existing_loggers(value)
     return builder
 
