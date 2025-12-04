@@ -75,6 +75,28 @@ impl Worker {
         self.send_frame_to_connection(&frame, now);
     }
 
+    fn sleep_if_backing_off(&mut self, now: Instant) {
+        if let Some(delay) = self.backoff.next_sleep(now) {
+            thread::sleep(delay);
+        }
+    }
+
+    fn handle_connect_error(&mut self, err: io::Error, now: Instant) {
+        warn_drops(&self.warner, |count| {
+            warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
+        });
+        self.sleep_if_backing_off(now);
+    }
+
+    fn handle_write_error(&mut self, err: io::Error, now: Instant) {
+        warn!("FemtoSocketHandler write failed: {err}");
+        self.connection = None;
+        warn_drops(&self.warner, |count| {
+            warn!("FemtoSocketHandler dropped {count} records due to write errors");
+        });
+        self.sleep_if_backing_off(now);
+    }
+
     fn ensure_connection(&mut self, now: Instant) -> bool {
         if self.connection.is_some() {
             return true;
@@ -89,12 +111,7 @@ impl Worker {
                 true
             }
             Err(err) => {
-                warn_drops(&self.warner, |count| {
-                    warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
-                });
-                if let Some(delay) = self.backoff.next_sleep(now) {
-                    thread::sleep(delay);
-                }
+                self.handle_connect_error(err, now);
                 false
             }
         }
@@ -114,16 +131,7 @@ impl Worker {
                     self.backoff.record_success(now);
                     self.backoff.reset_after_idle(now);
                 }
-                Err(err) => {
-                    warn!("FemtoSocketHandler write failed: {err}");
-                    self.connection = None;
-                    warn_drops(&self.warner, |count| {
-                        warn!("FemtoSocketHandler dropped {count} records due to write errors");
-                    });
-                    if let Some(delay) = self.backoff.next_sleep(now) {
-                        thread::sleep(delay);
-                    }
-                }
+                Err(err) => self.handle_write_error(err, now),
             }
         }
     }

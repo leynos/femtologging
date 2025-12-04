@@ -121,13 +121,66 @@ impl FlushTracker {
     }
 }
 
+struct WorkerState<W, R> {
+    writer: W,
+    rotation: R,
+    tracker: FlushTracker,
+}
+
+impl<W, R> WorkerState<W, R>
+where
+    W: Write + Seek,
+    R: RotationStrategy<W>,
+{
+    fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
+        Self {
+            writer,
+            rotation,
+            tracker: FlushTracker::new(flush_interval),
+        }
+    }
+
+    fn handle_record<F>(&mut self, formatter: &F, record: FemtoLogRecord)
+    where
+        F: FemtoFormatter,
+    {
+        let message = formatter.format(&record);
+        if let Err(err) = self.rotation.before_write(&mut self.writer, &message) {
+            error!("FemtoFileHandler rotation error; writing record without rotating: {err}");
+        }
+        if let Err(err) =
+            super::mod_impl::write_record(&mut self.writer, &message, &mut self.tracker)
+        {
+            warn!("FemtoFileHandler write error: {err}");
+        }
+    }
+
+    fn handle_flush(&mut self, ack_tx: &Sender<()>) {
+        if self.writer.flush().is_err() {
+            warn!("FemtoFileHandler flush error");
+        }
+        self.tracker.reset();
+        let _ = ack_tx.send(());
+    }
+
+    fn final_flush(&mut self) {
+        if self.writer.flush().is_err() {
+            warn!("FemtoFileHandler flush error");
+        }
+    }
+}
+
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
-    ack_tx: Sender<()>,
-    mut rotation: R,
-) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
+    rotation: R,
+) -> (
+    Sender<FileCommand>,
+    Receiver<()>,
+    Receiver<()>,
+    JoinHandle<()>,
+)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
@@ -140,44 +193,23 @@ where
     } = config;
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
+    let (ack_tx, ack_rx) = bounded(1);
     let handle = thread::spawn(move || {
         if let Some(b) = start_barrier {
             b.wait();
         }
-        let mut writer = writer;
+        let mut state = WorkerState::new(writer, rotation, flush_interval);
         let formatter = formatter;
-        let mut tracker = FlushTracker::new(flush_interval);
         for cmd in rx {
             match cmd {
-                FileCommand::Record(record) => {
-                    let record = *record;
-                    let message = formatter.format(&record);
-                    if let Err(err) = rotation.before_write(&mut writer, &message) {
-                        error!(
-                            "FemtoFileHandler rotation error; writing record without rotating: {err}"
-                        );
-                    }
-                    if let Err(e) =
-                        super::mod_impl::write_record(&mut writer, &message, &mut tracker)
-                    {
-                        warn!("FemtoFileHandler write error: {e}");
-                    }
-                }
-                FileCommand::Flush => {
-                    if writer.flush().is_err() {
-                        warn!("FemtoFileHandler flush error");
-                    }
-                    tracker.reset();
-                    let _ = ack_tx.send(());
-                }
+                FileCommand::Record(record) => state.handle_record(&formatter, *record),
+                FileCommand::Flush => state.handle_flush(&ack_tx),
             }
         }
-        if writer.flush().is_err() {
-            warn!("FemtoFileHandler flush error");
-        }
+        state.final_flush();
         let _ = done_tx.send(());
     });
-    (tx, done_rx, handle)
+    (tx, done_rx, ack_rx, handle)
 }
 
 #[cfg(test)]

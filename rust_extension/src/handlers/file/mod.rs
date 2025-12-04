@@ -12,6 +12,9 @@
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
+// PyO3 adds implicit `py` arguments to generated wrappers; permit the argument
+// count to keep the Python API stable.
+#![allow(clippy::too_many_arguments)]
 
 mod config;
 pub(crate) mod policy;
@@ -100,6 +103,9 @@ pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResul
     Ok(flush_interval as usize)
 }
 
+// Python constructor keeps four user-facing parameters; PyO3 injects an
+// implicit `py` argument so the generated wrapper trips the clippy threshold.
+#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl FemtoFileHandler {
     /// Create a file handler writing to `path`.
@@ -111,6 +117,7 @@ impl FemtoFileHandler {
     /// - `capacity` must be greater than zero.
     /// - `flush_interval` must be greater than zero.
     /// - `policy` is one of: `"drop"`, `"block"`, or `"timeout:N"` (N > 0).
+    #[allow(clippy::too_many_arguments)]
     #[new]
     #[pyo3(
         text_signature = "(path, capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')"
@@ -143,6 +150,7 @@ impl FemtoFileHandler {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
@@ -336,8 +344,7 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
-        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, ack_tx, rotation);
+        let (tx, done_rx, ack_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
             tx: Some(tx),
             handle: Some(handle),

@@ -2,6 +2,9 @@
 //!
 //! This module wires up PyO3 classes and functions exposed to Python and
 //! re-exports Rust types used by the Python layer.
+// PyO3-generated wrappers add implicit `py` parameters; allow the resulting
+// argument counts for the Python-facing bindings.
+#![allow(clippy::too_many_arguments)]
 use pyo3::prelude::*;
 
 mod config;
@@ -112,6 +115,9 @@ fn hello() -> &'static str {
 ///     assert!(first.as_ref(py).is(second.as_ref(py)));
 /// });
 /// ```
+// PyO3 generates a wrapper that includes an implicit `py` argument, pushing
+// this function over the clippy argument limit despite the stable Python API.
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     manager_get_logger(py, name)

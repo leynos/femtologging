@@ -3,6 +3,10 @@
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
 
+// PyO3 wrappers inject an implicit `py` argument; allow higher argument counts
+// for the generated binding functions until upstream provides finer control.
+#![allow(clippy::too_many_arguments)]
+
 // FIXME: Track PyO3 issue for proper fix
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
@@ -140,6 +144,9 @@ pub struct FemtoLogger {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
+// PyO3-generated wrappers include an extra `py` argument; keeping the Python
+// API intact requires suppressing the argument-count lint for this block.
+#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl FemtoLogger {
     /// Create a new logger with the given name.
@@ -153,6 +160,7 @@ impl FemtoLogger {
     ///
     /// This method currently builds a simple string combining the logger's
     /// name with the level and message.
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
@@ -206,13 +214,12 @@ impl FemtoLogger {
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::with_gil(|py| {
             let mut handlers = self.handlers.write();
-            if let Some(pos) = handlers.iter().position(|h| {
-                if let Some(py_h) = h.as_any().downcast_ref::<PyHandler>() {
-                    py_h.obj.bind(py).is(handler.bind(py))
-                } else {
-                    false
-                }
-            }) {
+            let matches_handler = |h: &Arc<dyn FemtoHandlerTrait>| {
+                h.as_any()
+                    .downcast_ref::<PyHandler>()
+                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+            };
+            if let Some(pos) = handlers.iter().position(matches_handler) {
                 handlers.remove(pos);
                 true
             } else {
@@ -491,14 +498,14 @@ impl Drop for FemtoLogger {
         }
         self.tx.take();
         if let Some(handle) = self.handle.lock().take() {
-            Python::with_gil(|py| {
-                py.allow_threads(move || {
-                    if handle.join().is_err() {
-                        warn!("FemtoLogger: worker thread panicked");
-                    }
-                })
-            });
+            Python::with_gil(|py| py.allow_threads(move || log_join_result(handle)));
         }
+    }
+}
+
+fn log_join_result(handle: JoinHandle<()>) {
+    if handle.join().is_err() {
+        warn!("FemtoLogger: worker thread panicked");
     }
 }
 #[cfg(test)]
