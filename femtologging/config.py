@@ -253,7 +253,8 @@ def _apply_socket_args(
         _validate_unix_path(hid, path)
         return builder.with_unix_path(path), True
     msg = (
-        f"handler {hid!r} socket args must be either (host, port) or a single unix_path"
+        f"handler {hid!r} socket args must be either a {TCP_ARG_COUNT}-tuple "
+        "of (host, port) or a single unix_path"
     )
     raise ValueError(msg)
 
