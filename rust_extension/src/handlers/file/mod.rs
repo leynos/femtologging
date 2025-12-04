@@ -43,8 +43,8 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
-pub use config::{HandlerConfig, OverflowPolicy, TestConfig, DEFAULT_CHANNEL_CAPACITY};
-use worker::{spawn_worker, FileCommand, WorkerConfig};
+pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
+use worker::{FileCommand, WorkerConfig, spawn_worker};
 
 /// Internal items needed by the worker implementation.
 mod mod_impl {

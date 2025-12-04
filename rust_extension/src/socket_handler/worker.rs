@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 
 use crate::{
@@ -16,7 +16,7 @@ use super::{
     backoff::BackoffState,
     config::SocketHandlerConfig,
     serialise::{frame_payload, serialise_record},
-    transport::{connect_transport, ActiveConnection},
+    transport::{ActiveConnection, connect_transport},
 };
 
 /// Commands processed by the worker thread.

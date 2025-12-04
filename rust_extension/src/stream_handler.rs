@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use log::warn;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
@@ -25,7 +25,7 @@ use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
-    rate_limited_warner::{RateLimitedWarner, DEFAULT_WARN_INTERVAL},
+    rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;

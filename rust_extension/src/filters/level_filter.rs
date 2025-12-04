@@ -4,7 +4,7 @@
 use pyo3::prelude::*;
 
 #[cfg(feature = "python")]
-use crate::macros::{impl_as_pydict, py_setters, AsPyDict};
+use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
 use crate::{filters::FemtoFilter, level::FemtoLevel, log_record::FemtoLogRecord};
 
 #[derive(Debug)]

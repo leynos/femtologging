@@ -22,13 +22,13 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use crossbeam_channel::{bounded, select, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded, select};
 use log::warn;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;

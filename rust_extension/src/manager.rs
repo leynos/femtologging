@@ -6,7 +6,7 @@
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 
 use crate::logger::FemtoLogger;
 

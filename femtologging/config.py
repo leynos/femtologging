@@ -789,9 +789,7 @@ def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
     _process_config_section(
         builder,
         config,
-        SectionProcessor(
-            "handlers", "with_handler", _build_handler_from_dict
-        ),
+        SectionProcessor("handlers", "with_handler", _build_handler_from_dict),
     )
 
 

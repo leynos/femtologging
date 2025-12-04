@@ -53,9 +53,9 @@ pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
 pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.
 pub use handlers::{
-    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
     FemtoRotatingFileHandler, FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError,
     HandlerIOError, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
@@ -253,8 +253,8 @@ mod tests {
     use super::*;
     use crate::handlers::rotating::ROTATION_VALIDATION_MSG;
     use pyo3::{
-        types::{PyModule, PyType},
         Python,
+        types::{PyModule, PyType},
     };
 
     #[test]

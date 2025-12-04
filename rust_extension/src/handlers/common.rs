@@ -15,16 +15,16 @@ use std::{
 
 #[cfg(feature = "python")]
 use pyo3::{
+    Bound, IntoPyObjectExt,
     class::basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyString},
-    Bound, IntoPyObjectExt,
 };
 
 use super::{
-    file::{HandlerConfig, OverflowPolicy},
     FormatterId, HandlerBuildError,
+    file::{HandlerConfig, OverflowPolicy},
 };
 use crate::formatter::{FemtoFormatter, SharedFormatter};
 
@@ -385,12 +385,12 @@ impl FileLikeBuilderState {
             "flush_record_interval",
             self.flush_record_interval.map(|value| value as u64),
         )?;
-        if let OverflowPolicy::Timeout(duration) = self.overflow_policy {
-            if duration.is_zero() {
-                return Err(HandlerBuildError::InvalidConfig(
-                    "timeout_ms must be greater than zero".into(),
-                ));
-            }
+        if let OverflowPolicy::Timeout(duration) = self.overflow_policy
+            && duration.is_zero()
+        {
+            return Err(HandlerBuildError::InvalidConfig(
+                "timeout_ms must be greater than zero".into(),
+            ));
         }
         Ok(())
     }

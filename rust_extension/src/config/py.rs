@@ -1,9 +1,9 @@
 //! Python bindings for configuration builders.
 
 use pyo3::{
+    Bound,
     exceptions::{PyKeyError, PyRuntimeError, PyValueError},
     prelude::*,
-    Bound,
 };
 
 use crate::handlers::{

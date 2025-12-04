@@ -12,7 +12,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use log::{error, warn};
 
 use super::config::HandlerConfig;
