@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import time
-from typing import cast
-
-import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
-
 import queue
 import socketserver
 import struct
 import threading
+import time
+from typing import TYPE_CHECKING, cast
+
+import pytest
+from pytest_bdd import given, parsers, scenarios, then, when
 
 import femtologging.config as config_module
 from femtologging import SocketHandlerBuilder, dictConfig, get_logger, reset_manager
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 scenarios("features/dict_config.feature")
 
@@ -23,20 +24,20 @@ scenarios("features/dict_config.feature")
 class _SocketCaptureHandler(socketserver.BaseRequestHandler):
     """Collect framed payloads emitted by FemtoSocketHandler."""
 
-    def handle(self) -> None:  # noqa: D401 - behaviour inherited from base class
+    def handle(self) -> None:
         length_bytes = self.request.recv(4)
         if not length_bytes:
             return
         length = struct.unpack(">I", length_bytes)[0]
         payload = self.request.recv(length)
-        server = cast(_SocketServer, self.server)
+        server = cast("_SocketServer", self.server)
         server.queue.put(payload)
 
 
 class _SocketServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
-    def __init__(self, address):
+    def __init__(self, address) -> None:
         super().__init__(address, _SocketCaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
 
@@ -121,7 +122,6 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
 
 def test_dict_config_socket_handler() -> None:
     """Ensure dictConfig wires a socket handler builder correctly."""
-
     reset_manager()
     with _SocketServer(("127.0.0.1", 0)) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -156,7 +156,6 @@ def test_dict_config_socket_handler() -> None:
 
 def test_dict_config_socket_handler_round_trip_kwargs() -> None:
     """Support feeding ``SocketHandlerBuilder.as_dict()`` output back into dictConfig."""
-
     builder = (
         SocketHandlerBuilder()
         .with_tcp("127.0.0.1", 9020)
@@ -187,7 +186,6 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
 
 def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
     """Accept structured TLS/backoff kwargs when constructing the socket builder."""
-
     nested_builder = config_module._build_handler_from_dict(
         "sock",
         {
@@ -230,7 +228,6 @@ def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
 
 def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
     """Reject configurations that disable TLS while providing TLS options."""
-
     with pytest.raises(
         ValueError, match="socket kwargs tls is disabled but TLS options were supplied"
     ):

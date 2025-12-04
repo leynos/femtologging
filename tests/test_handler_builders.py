@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
-from pytest_bdd import given, scenarios, then, when, parsers
-from syrupy import SnapshotAssertion
+from pytest_bdd import given, parsers, scenarios, then, when
 
 import femtologging.config as config_module
 from femtologging import (
@@ -24,6 +23,9 @@ from femtologging import (
     StreamHandlerBuilder,
 )
 
+if TYPE_CHECKING:
+    from syrupy import SnapshotAssertion
+
 type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 
@@ -32,11 +34,11 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
     if isinstance(builder, RotatingFileHandlerBuilder):
         return builder
     _fail_rotating_builder_requirement(builder)
+    return None
 
 
 def _fail_rotating_builder_requirement(builder: FileBuilder) -> NoReturn:
     """Raise a consistent failure for steps that assume a rotating builder."""
-
     raise AssertionError(
         "rotating builder step requires RotatingFileHandlerBuilder, "
         f"got {type(builder).__name__}"
@@ -423,7 +425,6 @@ def test_file_builder_zero_flush_record_interval(tmp_path: Path) -> None:
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
     """Providing non-OverflowPolicy values raises ``TypeError``."""
-
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_missing.log"))
     with pytest.raises(TypeError):
         builder.with_overflow_policy("timeout")  # type: ignore[arg-type]
@@ -431,7 +432,6 @@ def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
 
 def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
     """Zero timeout values are rejected for timeout overflow policy."""
-
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_zero.log"))
     with pytest.raises(ValueError, match="timeout must be greater than zero"):
         builder.with_overflow_policy(OverflowPolicy.timeout(0))
@@ -439,7 +439,6 @@ def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
 
 def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
     """Inline timeout syntax is accepted for builder configuration."""
-
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_inline.log"))
     builder = builder.with_overflow_policy(OverflowPolicy.timeout(125))
     handler = builder.build()

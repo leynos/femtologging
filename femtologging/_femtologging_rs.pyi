@@ -1,4 +1,6 @@
-from typing import Any as _Any, Callable, Final, Literal, Mapping, Self, Union
+from collections.abc import Callable, Mapping
+from typing import Any as _Any
+from typing import Final, Literal, Self, Union
 
 FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]

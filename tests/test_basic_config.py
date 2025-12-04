@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import closing
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -14,6 +14,9 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 scenarios("features/basic_config.feature")
 
@@ -70,9 +73,8 @@ def basic_config_invalid(filename: str, tmp_path: Path) -> None:
     )
 )
 def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
-    with closing(_make_handler(handler, tmp_path)) as h:
-        with pytest.raises(ValueError):
-            basicConfig(handlers=[h], stream=sys.stdout)
+    with closing(_make_handler(handler, tmp_path)) as h, pytest.raises(ValueError):
+        basicConfig(handlers=[h], stream=sys.stdout)
 
 
 @then(
@@ -83,14 +85,13 @@ def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
 def basic_config_handler_filename_invalid(
     handler: str, filename: str, tmp_path: Path
 ) -> None:
-    with closing(_make_handler(handler, tmp_path)) as h:
-        with pytest.raises(ValueError):
-            basicConfig(handlers=[h], filename=str(tmp_path / filename))
+    with closing(_make_handler(handler, tmp_path)) as h, pytest.raises(ValueError):
+        basicConfig(handlers=[h], filename=str(tmp_path / filename))
 
 
 @pytest.mark.parametrize("force", [True, False])
 @pytest.mark.parametrize(
-    "level, expected_msgs, suppressed_msgs",
+    ("level", "expected_msgs", "suppressed_msgs"),
     [
         ("DEBUG", {"debug", "info", "warning", "error"}, set()),
         ("INFO", {"info", "warning", "error"}, {"debug"}),

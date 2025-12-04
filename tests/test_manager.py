@@ -41,6 +41,6 @@ def test_get_logger_invalid_names() -> None:
     for name in ["", ".bad", "bad.", "a..b"]:
         try:
             get_logger(name)
-            assert False, "expected ValueError"
+            raise AssertionError("expected ValueError")
         except ValueError:
             pass

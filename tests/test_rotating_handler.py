@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-import pathlib
 import re
-import typing as t
+import typing as typ
 from contextlib import contextmanager
 
 import pytest
 
 from femtologging import (
+    ROTATION_VALIDATION_MSG,
     FemtoRotatingFileHandler,
     HandlerOptions,
-    ROTATION_VALIDATION_MSG,
 )
+
+if typ.TYPE_CHECKING:
+    import pathlib
 
 
 @pytest.fixture(name="log_path")
 def fixture_log_path(tmp_path: pathlib.Path) -> pathlib.Path:
     """Provide a unique log file path for rotating handler tests."""
-
     return tmp_path / "rotating.log"
 
 
@@ -30,9 +31,8 @@ def rotating_handler(
     max_bytes: int = 0,
     backup_count: int = 0,
     options: HandlerOptions | None = None,
-) -> t.Iterator[FemtoRotatingFileHandler]:
+) -> typ.Iterator[FemtoRotatingFileHandler]:
     """Context manager for rotating handler lifecycle."""
-
     derived_options = options
     if derived_options is None:
         derived_options = HandlerOptions(rotation=(max_bytes, backup_count))
@@ -50,7 +50,6 @@ def rotating_handler(
 
 def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
     """Constructing with defaults should disable rotation thresholds."""
-
     with rotating_handler(str(log_path)) as handler:
         assert handler.max_bytes == 0, "defaults must disable rollover"
         assert handler.backup_count == 0, "defaults must disable backups"
@@ -58,15 +57,14 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
 
 def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
     """Supplying an invalid policy value should raise an error."""
-
     with pytest.raises(
         ValueError,
         match=(
             r"invalid overflow policy: '.*'\. Valid options are: drop, block, timeout:N"
         ),
     ):
-        invalid_policy_value = t.cast(
-            t.Any,
+        invalid_policy_value = typ.cast(
+            "typ.Any",
             "invalid_policy",
         )  # Exercise runtime validation with a value rejected at type-check time.
         invalid_options = HandlerOptions(
@@ -82,7 +80,6 @@ def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
 
 def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
     """Omitting the policy should use the default value and preserve rotation settings."""
-
     options = HandlerOptions(
         capacity=32,
         flush_interval=2,
@@ -96,7 +93,6 @@ def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
 
 def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
     """Supplying HandlerOptions should configure queue behaviour."""
-
     options = HandlerOptions(
         capacity=32,
         flush_interval=2,
@@ -124,7 +120,6 @@ def test_rotating_handler_threshold_validation(
     log_path: pathlib.Path, max_bytes: int, backup_count: int, should_error: bool
 ) -> None:
     """Rotation thresholds must be paired or omitted entirely."""
-
     if should_error:
         with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
             FemtoRotatingFileHandler(

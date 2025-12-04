@@ -6,23 +6,26 @@ import queue
 import socketserver
 import struct
 import threading
-from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+import pytest
 
 import femtologging
-import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _CaptureHandler(socketserver.BaseRequestHandler):
     """Capture framed payloads from the handler under test."""
 
-    def handle(self) -> None:  # noqa: D401 - behaviour obvious from base class
+    def handle(self) -> None:
         length_data = self.request.recv(4)
         if not length_data:
             return
         length = struct.unpack(">I", length_data)[0]
         payload = self.request.recv(length)
-        server = cast(_RecordingTCPServer, self.server)
+        server = cast("_RecordingTCPServer", self.server)
         server.queue.put(payload)
 
 
@@ -31,14 +34,13 @@ class _RecordingTCPServer(socketserver.ThreadingTCPServer):
 
     allow_reuse_address = True
 
-    def __init__(self, server_address):
+    def __init__(self, server_address) -> None:
         super().__init__(server_address, _CaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
 
 
 def test_socket_handler_sends_records() -> None:
     """Verify the handler frames MessagePack payloads over TCP."""
-
     with _RecordingTCPServer(("127.0.0.1", 0)) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -60,7 +62,6 @@ def test_socket_handler_sends_records() -> None:
 
 def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:
     """TLS configuration must be rejected when no TCP transport is configured."""
-
     socket_path = tmp_path / "socket.sock"
     builder = femtologging.SocketHandlerBuilder().with_unix_path(str(socket_path))
     builder = builder.with_tls("example.com", insecure=False)

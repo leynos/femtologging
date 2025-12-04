@@ -27,31 +27,110 @@ dev = [
     "pytest-bdd",
     "syrupy",
     "maturin>=1.9.3",
+    "pytest-xdist",
 ]
 
 [tool.ruff]
 line-length = 88
+preview = true
 
 [tool.ruff.lint]
-extend-select = [
+select = [
+    "F",        # Pyflakes rules
+    "W",        # PyCodeStyle warnings
+    "E",        # PyCodeStyle errors
+    "I",        # Sort imports properly
+    "UP",       # Warn if certain things can changed due to newer Python versions
+    "C4",       # Catch incorrect use of comprehensions, dict, list, etc
+    "FA",       # Enforce from __future__ import annotations
+    "ISC",      # Good use of string concatenation
+    "ICN",      # Use common import conventions
+    "RET",      # Good return practices
+    "SIM",      # Common simplification rules
+    "TID",      # Some good import practices
+    "TC",       # Enforce importing certain types in a TYPE_CHECKING block
+    "PTH",      # Use pathlib instead of os.path
+    "TD",       # Be diligent with TODO comments
+    "A",        # detect shadowed builtins
+    "BLE",      # disallow catch-all exceptions
+    "S",        # disallow things like "exec"; also restricts "assert" but I just NOQA it when I really need it
+    "DTZ",      # require strict timezone manipulation with datetime
+    "FBT",      # detect boolean traps
+    "N",        # enforce naming conventions, e.g. ClassName vs function_name
+    "FURB",
+    "B",
+    "RUF",
+    "LOG",
+    "Q",
+    "PT",
+    "RSE",
+    "PERF",
+    "TRY",
+    "D",
+    "ANN",
     "C90",
-    "PLR0913",
+    "PLR",
+    "PLE4703",
+    "PLR0202",
+    "PLR0203",
+    "PLR0914",
+    "PLR0916",
+    "PLR1702",
+    "PLR6104",
+    "PLR6201",
+    "PLR6301",
+    "PLW0108",
+    "RUF036",
+    "RUF053",
+    "RUF055",
+    "RUF064",
+    "RUF066",
+]
+extend-ignore = [
+    "D203",  # Conflicts with D211; prefer enforcing no blank line before class docstring.
+    "D213",  # Conflicts with D212; keep summary on the first line.
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["S101", "PLR0913", "PLR2004"]
+"tests/steps/*.py" = ["S101", "PLR0913", "PLR2004"]
+
+[tool.ruff.lint.flake8-import-conventions]
+# Declare the banned `from` imports.
+banned-from = [
+    "typing",
+    "datetime",
+    "collections.abc",
+    "dataclasses",
+    "enum",
+    "unittest.mock",
+    "msgspec",
+]
+
+[tool.ruff.lint.flake8-import-conventions.aliases]
+# Declare the default aliases.
+altair = "alt"
+"matplotlib.pyplot" = "plt"
+numpy = "np"
+pandas = "pd"
+seaborn = "sns"
+scipy = "sp"
+"collections.abc" = "cabc"
+datetime = "dt"
+"unittest.mock" = "mock"
+"msgspec.json" = "msjson"
+typing = "typ"
+
 [tool.ruff.lint.mccabe]
-max-complexity = 9
+max-complexity = 8
 
 [tool.ruff.lint.pylint]
 max-args = 4
-
-[tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = [
-    "PLR0913",
-]
+max-bool-expr = 2
+max-locals = 10
 
 [tool.uv]
 package = true
-
 
 [build-system]
 requires = ["maturin>=1.9.1,<2.0.0"]

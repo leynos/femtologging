@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
-import pathlib
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
-from syrupy.assertion import SnapshotAssertion
 
 from femtologging import (
     FemtoRotatingFileHandler,
@@ -17,6 +15,11 @@ from femtologging import (
     _force_rotating_fresh_failure_for_test,
 )
 
+if TYPE_CHECKING:
+    import pathlib
+    from collections.abc import Callable
+
+    from syrupy.assertion import SnapshotAssertion
 
 scenarios("features/rotating_handler_rotation.feature")
 

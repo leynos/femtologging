@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from os import fsencode
 from pathlib import Path
-import time
 
-from femtologging import fileConfig, get_logger, reset_manager
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
+
+from femtologging import fileConfig, get_logger, reset_manager
 
 scenarios("features/file_config.feature")
 
@@ -68,7 +69,6 @@ def then_file_config_raises(config_error: ValueError) -> None:
 
 def test_file_config_expands_defaults(tmp_path: Path) -> None:
     """INIs honour defaults passed to fileConfig for placeholder substitution."""
-
     reset_manager()
     ini_path = Path("tests/data/fileconfig_defaults.ini")
     defaults = {"logdir": str(tmp_path)}
@@ -96,7 +96,7 @@ def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "path_builder",
     [
-        pytest.param(lambda path: str(path), id="str"),
+        pytest.param(str, id="str"),
         pytest.param(lambda path: path, id="path"),
         pytest.param(lambda path: fsencode(str(path)), id="bytes"),
     ],

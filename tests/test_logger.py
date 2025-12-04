@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import pytest
 import collections.abc as cabc
+import typing as typ
 from pathlib import Path
-import typing
+
+import pytest
 
 from femtologging import FemtoFileHandler, FemtoLogger
 
 FileHandlerFactory = cabc.Callable[
-    [Path, int, int], typing.ContextManager[FemtoFileHandler]
+    [Path, int, int], typ.ContextManager[FemtoFileHandler]
 ]
 
 
 @pytest.mark.parametrize(
-    "name, level, message, expected",
+    ("name", "level", "message", "expected"),
     [
         ("core", "INFO", "hello", "core [INFO] hello"),
         ("sys", "ERROR", "fail", "sys [ERROR] fail"),

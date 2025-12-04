@@ -9,7 +9,7 @@ String level parameters accept case-insensitive names: "TRACE", "DEBUG",
 "INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING"
 are equivalent.
 
-Example
+Example:
 -------
 >>> dictConfig({
 ...     "version": 1,
@@ -26,19 +26,20 @@ The ``dictConfig`` format does not support ``filters`` and will raise ``ValueErr
         .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
     )
     cb.build_and_init()
+
 """
 
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Final, Mapping, Sequence, cast
-
+from typing import Any, Final, cast
 
 from . import _femtologging_rs as rust
 from .overflow_policy import OverflowPolicy
 
-rust = cast(Any, rust)
+rust = cast("Any", rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
@@ -80,7 +81,7 @@ def _validate_mapping_type(value: object, name: str) -> Mapping[object, object]:
     """Ensure ``value`` is a mapping and not bytes-like."""
     if isinstance(value, (bytes, bytearray)) or not isinstance(value, Mapping):
         raise ValueError(f"{name} must be a mapping")
-    return cast(Mapping[object, object], value)
+    return cast("Mapping[object, object]", value)
 
 
 def _validate_no_bytes(value: object, name: str) -> None:
@@ -96,7 +97,7 @@ def _validate_string_keys(
     for key in mapping:
         if not isinstance(key, str):
             raise ValueError(f"{name} keys must be strings")
-    return cast(Mapping[str, object], mapping)
+    return cast("Mapping[str, object]", mapping)
 
 
 def _coerce_args(args: object, ctx: str) -> list[object]:
@@ -180,7 +181,7 @@ def _create_handler_instance(
     try:
         args_t = tuple(args)
         kwargs_d = dict(kwargs)
-        return cast(Any, builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
+        return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         raise ValueError(f"failed to construct handler {hid!r}: {exc}") from exc
 
@@ -189,7 +190,6 @@ def _build_socket_handler_builder(
     hid: str, args: list[object], kwargs: dict[str, object]
 ) -> SocketHandlerBuilder:
     """Construct a ``SocketHandlerBuilder`` using fluent transport methods."""
-
     builder = SocketHandlerBuilder()
     transport_configured = False
     args_t = tuple(args)
@@ -347,7 +347,7 @@ def _parse_tls_value(
 ) -> tuple[str | None, bool | None, bool]:
     if isinstance(tls_value, Mapping):
         domain, insecure = _parse_tls_mapping(
-            hid, cast(Mapping[object, object], tls_value)
+            hid, cast("Mapping[object, object]", tls_value)
         )
         return domain, insecure, True
     if isinstance(tls_value, bool):
@@ -567,8 +567,8 @@ def _apply_host_port_kwargs(
         transport_kw,
         transport_configured,
     )
-    host = cast(str, transport_kw.host)
-    port = cast(int, transport_kw.port)
+    host = cast("str", transport_kw.host)
+    port = cast("int", transport_kw.port)
     return builder.with_tcp(host, port), True
 
 
@@ -633,7 +633,7 @@ def _ensure_no_extra_socket_kwargs(hid: str, kwargs: dict[str, object]) -> None:
 def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
     """Create a handler builder from ``dictConfig`` handler data."""
     cls_name, args, kwargs, fmt = _validate_handler_config(hid, data)
-    builder = cast(Any, _create_handler_instance(hid, cls_name, args, kwargs))
+    builder = cast("Any", _create_handler_instance(hid, cls_name, args, kwargs))
     if fmt is not None:
         if not isinstance(fmt, str):
             raise ValueError("formatter must be a string")
@@ -645,10 +645,10 @@ def _validate_logger_handlers(handlers_obj: object) -> list[str]:
     """Validate logger ``handlers`` list and return it."""
     if not isinstance(handlers_obj, (list, tuple)):
         raise ValueError("logger handlers must be a list or tuple of strings")
-    handlers_seq = cast(Sequence[object], handlers_obj)
+    handlers_seq = cast("Sequence[object]", handlers_obj)
     if not all(isinstance(h, str) for h in handlers_seq):
         raise ValueError("logger handlers must be a list or tuple of strings")
-    return list(cast(Sequence[str], handlers_seq))
+    return list(cast("Sequence[str]", handlers_seq))
 
 
 def _validate_logger_config_keys(name: str, data: Mapping[str, object]) -> None:
@@ -687,7 +687,7 @@ def _validate_dict_config(config: Mapping[str, object]) -> int:
     """Validate top-level configuration and return the version."""
     if "incremental" in config:
         raise ValueError("incremental configuration is not supported")
-    version = int(cast(int, config.get("version", 1)))
+    version = int(cast("int", config.get("version", 1)))
     if version != 1:
         raise ValueError(f"unsupported configuration version {version}")
     if "filters" in config:
@@ -737,7 +737,7 @@ def _build_formatter(fcfg: Mapping[str, object]) -> object:
 
 def _validate_section_mapping(section: object, name: str) -> Mapping[str, object]:
     """Ensure a configuration ``section`` is a mapping."""
-    return cast(Mapping[str, object], _validate_mapping_type(section, name))
+    return cast("Mapping[str, object]", _validate_mapping_type(section, name))
 
 
 @dataclass(frozen=True)
@@ -755,7 +755,7 @@ def _process_config_section(
 ) -> None:
     """Generic processor for formatter, handler, and logger sections."""
     mapping = cast(
-        Mapping[object, object],
+        "Mapping[object, object]",
         _validate_section_mapping(config.get(processor.section, {}), processor.section),
     )
     method = getattr(builder, processor.builder_method)
@@ -790,7 +790,7 @@ def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
         builder,
         config,
         SectionProcessor(
-            "handlers", "with_handler", lambda hid, m: _build_handler_from_dict(hid, m)
+            "handlers", "with_handler", _build_handler_from_dict
         ),
     )
 
@@ -803,7 +803,7 @@ def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
         SectionProcessor(
             "loggers",
             "with_logger",
-            lambda name, m: _build_logger_from_dict(name, m),
+            _build_logger_from_dict,
             err_tmpl="loggers section key {name} must be a string",
         ),
     )
@@ -817,7 +817,7 @@ def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
     if not isinstance(root, Mapping):
         raise ValueError("root logger configuration must be a mapping")
     builder.with_root_logger(
-        _build_logger_from_dict("root", cast(Mapping[str, object], root))
+        _build_logger_from_dict("root", cast("Mapping[str, object]", root))
     )
 
 
@@ -844,10 +844,10 @@ def dictConfig(config: Mapping[str, object]) -> None:
     ...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
     ...     "root": {"level": "INFO", "handlers": ["h"]},
     ... })
-    """
 
+    """
     version = _validate_dict_config(config)
-    builder = cast(Any, _create_config_builder(version, config))
+    builder = cast("Any", _create_config_builder(version, config))
     _process_formatters(builder, config)
     _process_handlers(builder, config)
     _process_loggers(builder, config)
@@ -857,14 +857,14 @@ def dictConfig(config: Mapping[str, object]) -> None:
 
 __all__ = [
     "ConfigBuilder",
-    "LoggerConfigBuilder",
-    "FormatterBuilder",
-    "StreamHandlerBuilder",
-    "SocketHandlerBuilder",
     "FileHandlerBuilder",
-    "RotatingFileHandlerBuilder",
+    "FormatterBuilder",
     "LevelFilterBuilder",
+    "LoggerConfigBuilder",
     "NameFilterBuilder",
-    "dictConfig",
     "OverflowPolicy",
+    "RotatingFileHandlerBuilder",
+    "SocketHandlerBuilder",
+    "StreamHandlerBuilder",
+    "dictConfig",
 ]

@@ -11,7 +11,7 @@ from femtologging.file_config import _normalise_path
 class _StrPathLike(PathLike[str]):
     """Simple ``PathLike`` returning ``str`` for testing."""
 
-    def __init__(self, value: str):
+    def __init__(self, value: str) -> None:
         self._value = value
 
     def __fspath__(self) -> str:  # pragma: no cover - invoked implicitly
@@ -21,7 +21,7 @@ class _StrPathLike(PathLike[str]):
 class _BytesPathLike(PathLike[bytes]):
     """Simple ``PathLike`` returning ``bytes`` for testing."""
 
-    def __init__(self, value: bytes):
+    def __init__(self, value: bytes) -> None:
         self._value = value
 
     def __fspath__(self) -> bytes:  # pragma: no cover - invoked implicitly

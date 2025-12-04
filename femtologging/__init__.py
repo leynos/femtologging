@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
-# Import the Rust extension packaged under this module's namespace first
-# to keep imports at the top for linters.
-from . import _femtologging_rs as rust
-from .overflow_policy import OverflowPolicy
-from .config import dictConfig
-from .file_config import fileConfig
 import logging
 import sys
 from dataclasses import dataclass
 from typing import (
-    Callable,
-    Iterable,
+    TYPE_CHECKING,
     TextIO,
     cast,
     overload,
 )
 
+# Import the Rust extension packaged under this module's namespace first
+# to keep imports at the top for linters.
+from . import _femtologging_rs as rust
+from .config import dictConfig
+from .file_config import fileConfig
+from .overflow_policy import OverflowPolicy
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 hello = rust.hello
 FemtoLogger = rust.FemtoLogger
@@ -52,11 +54,11 @@ _clear_rotating_fresh_failure = getattr(
 
 if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
     _force_rotating_fresh_failure_for_test = cast(
-        Callable[[int, str | None], None],
+        "Callable[[int, str | None], None]",
         _force_rotating_fresh_failure,
     )
     _clear_rotating_fresh_failure_for_test = cast(
-        Callable[[], None],
+        "Callable[[], None]",
         _clear_rotating_fresh_failure,
     )
 else:
@@ -105,13 +107,13 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
         handlers from the root logger before applying the new configuration.
         ``handlers`` allows attaching pre‑constructed handlers directly.
 
-        Parameters
-        ----------
+    Parameters
+    ----------
         config : BasicConfig, optional
             Configuration dataclass providing parameters for ``basicConfig``.
 
-        Other Parameters
-        ----------------
+    Other Parameters
+    ----------------
         level : str or int, optional
             Logging level. Accepts case-insensitive "TRACE", "DEBUG", "INFO", "WARN",
     "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are equivalent.
@@ -124,8 +126,8 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
         handlers : Iterable[FemtoHandler], optional
             Pre‑constructed handlers to attach.
 
-        Examples
-        --------
+    Examples
+    --------
         Using a dataclass::
 
             cfg = BasicConfig(level="INFO")
@@ -135,10 +137,11 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
             basicConfig(level="INFO")
 
-        Notes
-        -----
+    Notes
+    -----
         ``format`` and ``datefmt`` are intentionally unsupported until formatter
         customisation is implemented.
+
     """
     allowed = {"level", "filename", "stream", "force", "handlers"}
     unknown = set(kwargs) - allowed
@@ -155,30 +158,30 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
         level = (
             config.level
             if config.level is not None
-            else cast(str | int | None, kwargs.get("level"))
+            else cast("str | int | None", kwargs.get("level"))
         )
         filename = (
             config.filename
             if config.filename is not None
-            else cast(str | None, kwargs.get("filename"))
+            else cast("str | None", kwargs.get("filename"))
         )
         stream = (
             config.stream
             if config.stream is not None
-            else cast(TextIO | None, kwargs.get("stream"))
+            else cast("TextIO | None", kwargs.get("stream"))
         )
         force = bool(config.force)
         handlers = (
             config.handlers
             if config.handlers is not None
-            else cast(Iterable[FemtoHandler] | None, kwargs.get("handlers"))
+            else cast("Iterable[FemtoHandler] | None", kwargs.get("handlers"))
         )
     else:
-        level = cast(str | int | None, kwargs.get("level"))
-        filename = cast(str | None, kwargs.get("filename"))
-        stream = cast(TextIO | None, kwargs.get("stream"))
-        force = bool(kwargs.get("force", False))
-        handlers = cast(Iterable[FemtoHandler] | None, kwargs.get("handlers"))
+        level = cast("str | int | None", kwargs.get("level"))
+        filename = cast("str | None", kwargs.get("filename"))
+        stream = cast("TextIO | None", kwargs.get("stream"))
+        force = bool(kwargs.get("force"))
+        handlers = cast("Iterable[FemtoHandler] | None", kwargs.get("handlers"))
 
     _validate_basic_config_params(filename, stream, handlers)
 
@@ -213,7 +216,7 @@ def _validate_basic_config_params(
         msg = "Cannot specify `handlers` with `filename` or `stream`"
         raise ValueError(msg)
 
-    if stream not in (None, sys.stdout, sys.stderr):
+    if stream not in {None, sys.stdout, sys.stderr}:
         raise ValueError(
             f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
         )
@@ -270,32 +273,32 @@ def _set_logger_level(root: FemtoLogger, level: str | int | None) -> None:
 
 
 __all__ = [
+    "ROTATION_VALIDATION_MSG",
+    "BasicConfig",
+    "ConfigBuilder",
+    "FemtoFileHandler",
     "FemtoHandler",
     "FemtoLogger",
-    "get_logger",
-    "reset_manager",
-    "FemtoStreamHandler",
-    "FemtoFileHandler",
     "FemtoRotatingFileHandler",
     "FemtoSocketHandler",
-    "HandlerOptions",
-    "ROTATION_VALIDATION_MSG",
-    "StreamHandlerBuilder",
-    "SocketHandlerBuilder",
+    "FemtoStreamHandler",
     "FileHandlerBuilder",
-    "RotatingFileHandlerBuilder",
-    "LevelFilterBuilder",
-    "NameFilterBuilder",
     "FilterBuildError",
-    "ConfigBuilder",
-    "LoggerConfigBuilder",
     "FormatterBuilder",
     "HandlerConfigError",
     "HandlerIOError",
+    "HandlerOptions",
+    "LevelFilterBuilder",
+    "LoggerConfigBuilder",
+    "NameFilterBuilder",
     "OverflowPolicy",
-    "BasicConfig",
+    "RotatingFileHandlerBuilder",
+    "SocketHandlerBuilder",
+    "StreamHandlerBuilder",
     "basicConfig",
     "dictConfig",
     "fileConfig",
+    "get_logger",
     "hello",
+    "reset_manager",
 ]

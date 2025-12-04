@@ -35,8 +35,8 @@ def configure(logging_path: Path) -> None:
     Use the builder pattern to keep configuration explicit and easy to follow.
     The handler writes to ``logging_path`` and the root logger forwards all
     records to it.
-    """
 
+    """
     simple_formatter = FormatterBuilder().with_format(
         "{asctime} {threadName} {levelname} {name} {message}"
     )

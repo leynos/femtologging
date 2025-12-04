@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Iterator
 import threading
+from typing import TYPE_CHECKING
 
 import pytest
-from pytest_bdd import given, scenarios, then, when, parsers
-from syrupy.assertion import SnapshotAssertion
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoStreamHandler, StreamHandlerBuilder
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
+    from syrupy.assertion import SnapshotAssertion
 
 INFO_PREFIX = "test [INFO] "
 

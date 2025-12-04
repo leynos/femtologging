@@ -1,11 +1,10 @@
 import pathlib
 
-import femtologging
 import pytest
-
-from pytest_bdd import given, when, then, scenarios, parsers
+from pytest_bdd import given, parsers, scenarios, then, when
 from syrupy import SnapshotAssertion
 
+import femtologging
 from femtologging import (
     ConfigBuilder,
     FormatterBuilder,

@@ -9,14 +9,16 @@ builder API remains the canonical configuration mechanism.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from os import PathLike, fspath, fsdecode
-from pathlib import Path
 import re
-from typing import Any
+from os import PathLike, fsdecode, fspath
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from . import _femtologging_rs as rust
 from .config import dictConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
@@ -38,8 +40,8 @@ def fileConfig(
     Examples
     --------
     >>> fileConfig("tests/data/basic_file_config.ini")
-    """
 
+    """
     path_str = _normalise_path(fname)
     sections = rust.parse_ini_file(path_str, encoding)
     config = _ini_to_dict_config(sections, defaults, disable_existing_loggers)
@@ -226,7 +228,6 @@ def _normalise_path(
     Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance and always
     returns a string suitable for downstream parsing.
     """
-
     path_like = fname if isinstance(fname, (str, bytes)) else fspath(fname)
     if isinstance(path_like, bytes):
         path_like = fsdecode(path_like)

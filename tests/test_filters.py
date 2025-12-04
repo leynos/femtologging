@@ -1,20 +1,25 @@
 from __future__ import annotations
 
-import collections.abc as cabc
+from typing import TYPE_CHECKING
+
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
-from syrupy import SnapshotAssertion
 
 from femtologging import (
     ConfigBuilder,
-    LoggerConfigBuilder,
-    StreamHandlerBuilder,
+    FilterBuildError,
     LevelFilterBuilder,
+    LoggerConfigBuilder,
     NameFilterBuilder,
+    StreamHandlerBuilder,
     get_logger,
     reset_manager,
-    FilterBuildError,
 )
+
+if TYPE_CHECKING:
+    import collections.abc as cabc
+
+    from syrupy import SnapshotAssertion
 
 
 @pytest.fixture(autouse=True)

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import gc
 import warnings
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, ContextManager, Generator
+from typing import ContextManager
+
+import pytest
 
 import femtologging
 from femtologging import FemtoFileHandler
-import pytest
 
 warnings.filterwarnings(
     "ignore",
@@ -22,7 +24,7 @@ warnings.filterwarnings(
 FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
 
 
-@pytest.fixture()
+@pytest.fixture
 def file_handler_factory() -> FileHandlerFactory:
     """Return a context manager creating a ``FemtoFileHandler``.
 

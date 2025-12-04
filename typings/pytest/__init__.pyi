@@ -1,12 +1,11 @@
+from collections.abc import Callable
+from re import Pattern
 from typing import (
     Any,
-    Callable,
     ContextManager,
-    Pattern,
-    Type,
+    ParamSpec,
     TypeVar,
     overload,
-    ParamSpec,
 )
 
 P = ParamSpec("P")
@@ -17,7 +16,7 @@ R = TypeVar("R", bound=BaseException)
 # exceeds the usual argument count threshold.
 
 @overload
-def fixture(func: Callable[P, R]) -> Callable[P, R]: ...
+def fixture[**P, R: BaseException](func: Callable[P, R]) -> Callable[P, R]: ...
 @overload
 def fixture(
     *,
@@ -27,8 +26,8 @@ def fixture(
     ids: list[str] | Callable[[Any], str] | None = ...,
     name: str | None = ...,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
-def raises(
-    exc: Type[R],
+def raises[R: BaseException](
+    exc: type[R],
     match: str | Pattern[str] | None = ...,
     *,
     msg: str | None = ...,
