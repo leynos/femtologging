@@ -196,16 +196,21 @@ def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
 
 
 @pytest.mark.parametrize(
-    ("handler_config", "expected_error"),
+    ("handler_config", "expected_error", "expected_exc"),
     [
-        ({"args": b"bytes"}, "handler 'h' args must not be bytes or bytearray"),
+        (
+            {"args": b"bytes"},
+            "handler 'h' args must not be bytes or bytearray",
+            TypeError,
+        ),
         (
             {"kwargs": {"path": b"oops"}},
             "handler 'h' kwargs values must not be bytes or bytearray",
+            TypeError,
         ),
-        ({"args": 1}, "handler 'h' args must be a sequence"),
-        ({"kwargs": []}, "handler 'h' kwargs must be a mapping"),
-        ({"filters": []}, "handler filters are not supported"),
+        ({"args": 1}, "handler 'h' args must be a sequence", TypeError),
+        ({"kwargs": []}, "handler 'h' kwargs must be a mapping", TypeError),
+        ({"filters": []}, "handler filters are not supported", ValueError),
     ],
     ids=[
         "args-bytes",
@@ -218,6 +223,7 @@ def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
 def test_dict_config_handler_validation_errors(
     handler_config: dict[str, object],
     expected_error: str,
+    expected_exc: type[Exception],
 ) -> None:
     """Test various handler validation errors in dictConfig."""
     reset_manager()
@@ -226,7 +232,7 @@ def test_dict_config_handler_validation_errors(
         "handlers": {"h": {"class": "femtologging.StreamHandler", **handler_config}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    with pytest.raises((ValueError, TypeError), match=expected_error):
+    with pytest.raises(expected_exc, match=expected_error):
         dictConfig(cfg)
 
 
@@ -243,10 +249,10 @@ def test_dict_config_logger_filters_presence() -> None:
 
 
 @pytest.mark.parametrize(
-    ("config", "msg"),
+    ("config", "msg", "expected_exc"),
     [
-        ({"version": 1}, r"root logger configuration is required"),
-        ({"version": 2, "root": {}}, r"(unsupported|invalid).+version"),
+        ({"version": 1}, r"root logger configuration is required", ValueError),
+        ({"version": 2, "root": {}}, r"(unsupported|invalid).+version", ValueError),
         (
             {
                 "version": 1,
@@ -256,8 +262,13 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"level": "INFO", "handlers": ["h"]},
             },
             r"unknown formatter id",
+            ValueError,
         ),
-        ({"version": 1, "filters": {"f": {}}, "root": {}}, r"filters.+not supported"),
+        (
+            {"version": 1, "filters": {"f": {}}, "root": {}},
+            r"filters.+not supported",
+            ValueError,
+        ),
         (
             {
                 "version": 1,
@@ -265,10 +276,12 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": []},
             },
             r"disable_existing_loggers must be a bool",
+            TypeError,
         ),
         (
             {"version": 1, "loggers": {1: {}}, "root": {"handlers": []}},
             r"loggers section key.+must be a string",
+            TypeError,
         ),
         (
             {
@@ -277,6 +290,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": []},
             },
             r"logger handlers must be a list or tuple of strings",
+            TypeError,
         ),
         (
             {
@@ -285,6 +299,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": []},
             },
             r"logger propagate must be a bool",
+            TypeError,
         ),
         (
             {
@@ -296,6 +311,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": ["h"]},
             },
             r"formatter 'format' must be a string",
+            TypeError,
         ),
         (
             {
@@ -306,6 +322,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": ["h"]},
             },
             r"unknown formatter id",
+            ValueError,
         ),
     ],
     ids=[
@@ -321,8 +338,10 @@ def test_dict_config_logger_filters_presence() -> None:
         "formatter-id-unknown",
     ],
 )
-def test_dict_config_invalid_configs(config: dict[str, object], msg: str) -> None:
-    """Invalid configurations raise ``ValueError`` or ``TypeError``."""
+def test_dict_config_invalid_configs(
+    config: dict[str, object], msg: str, expected_exc: type[Exception]
+) -> None:
+    """Invalid configurations raise the expected exception type."""
     reset_manager()
-    with pytest.raises((ValueError, TypeError), match=msg):
+    with pytest.raises(expected_exc, match=msg):
         dictConfig(config)
