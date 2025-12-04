@@ -1,4 +1,4 @@
-"""Tests for FileHandlerBuilder, StreamHandlerBuilder, and SocketHandlerBuilder."""
+"""Unit tests for handler builders (file, rotating, stream, socket)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from femtologging import (
 
 @pytest.mark.parametrize("max_bytes", [-1, -100, -999999])
 def test_with_max_bytes_negative_raises(tmp_path, max_bytes: int) -> None:
+    """Negative max_bytes values must be rejected."""
     builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
 
     with pytest.raises(ValueError):
@@ -26,6 +27,7 @@ def test_with_max_bytes_negative_raises(tmp_path, max_bytes: int) -> None:
 
 @pytest.mark.parametrize("backup_count", [-1, -5, -1000])
 def test_with_backup_count_negative_raises(tmp_path, backup_count: int) -> None:
+    """Negative backup_count values must be rejected."""
     builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
 
     with pytest.raises(ValueError):
@@ -36,6 +38,7 @@ def test_with_backup_count_negative_raises(tmp_path, backup_count: int) -> None:
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
 def test_stream_builder_negative_capacity(ctor) -> None:
+    """Stream handler capacity must be non-negative."""
     builder = ctor()
     with pytest.raises(OverflowError):
         builder.with_capacity(-1)
@@ -45,6 +48,7 @@ def test_stream_builder_negative_capacity(ctor) -> None:
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
 def test_stream_builder_negative_flush_timeout(ctor) -> None:
+    """Negative flush timeouts must raise."""
     builder = ctor()
     with pytest.raises(OverflowError):
         builder.with_flush_timeout_ms(-1)
@@ -54,6 +58,7 @@ def test_stream_builder_negative_flush_timeout(ctor) -> None:
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
 def test_stream_builder_zero_flush_timeout(ctor) -> None:
+    """Zero flush timeout is invalid."""
     builder = ctor()
     with pytest.raises(ValueError):
         builder.with_flush_timeout_ms(0)
@@ -63,6 +68,7 @@ def test_stream_builder_zero_flush_timeout(ctor) -> None:
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
 def test_stream_builder_large_flush_timeout(ctor) -> None:
+    """Very large flush timeouts should round-trip in as_dict."""
     builder = ctor().with_flush_timeout_ms(1_000_000_000)
     data = builder.as_dict()
     assert data["flush_timeout_ms"] == 1_000_000_000, (
@@ -74,12 +80,14 @@ def test_stream_builder_large_flush_timeout(ctor) -> None:
 
 
 def test_file_builder_negative_flush_record_interval(tmp_path: Path) -> None:
+    """Negative flush record intervals must be rejected."""
     builder = FileHandlerBuilder(str(tmp_path / "negative_flush_interval.log"))
     with pytest.raises(OverflowError):
         builder.with_flush_record_interval(-1)
 
 
 def test_file_builder_large_flush_record_interval(tmp_path: Path) -> None:
+    """Large flush intervals should be preserved in configuration."""
     builder = FileHandlerBuilder(str(tmp_path / "large_flush_interval.log"))
     builder = builder.with_flush_record_interval(1_000_000_000)
     data = builder.as_dict()
@@ -91,6 +99,7 @@ def test_file_builder_large_flush_record_interval(tmp_path: Path) -> None:
 
 
 def test_file_builder_zero_flush_record_interval(tmp_path: Path) -> None:
+    """Zero flush record intervals are invalid."""
     builder = FileHandlerBuilder(str(tmp_path / "zero_flush_interval.log"))
     with pytest.raises(ValueError):
         builder.with_flush_record_interval(0)
@@ -119,6 +128,7 @@ def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
 
 
 def test_stream_builder_accepts_callable_formatter() -> None:
+    """Callable formatters should be accepted by stream builder."""
     builder = StreamHandlerBuilder.stderr().with_formatter(
         lambda record: f"callable:{record['message']}"
     )
@@ -127,6 +137,7 @@ def test_stream_builder_accepts_callable_formatter() -> None:
 
 
 def test_file_builder_accepts_callable_formatter(tmp_path: Path) -> None:
+    """Callable formatter support should extend to file builder."""
     path = tmp_path / "callable_formatter.log"
     builder = FileHandlerBuilder(str(path)).with_formatter(
         lambda record: f"callable:{record['message']}"
@@ -139,6 +150,7 @@ def test_file_builder_accepts_callable_formatter(tmp_path: Path) -> None:
 
 
 def test_rotating_builder_accepts_callable_formatter(tmp_path: Path) -> None:
+    """Callable formatter support should extend to rotating builder."""
     path = tmp_path / "callable_rotating.log"
     builder = RotatingFileHandlerBuilder(str(path)).with_formatter(
         lambda record: f"callable:{record['message']}"

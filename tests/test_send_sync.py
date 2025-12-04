@@ -16,6 +16,7 @@ pytestmark = [pytest.mark.send_sync, pytest.mark.concurrency]
 
 @pytest.mark.parametrize("thread_count", [1, 10, 100])
 def test_threaded_logging(thread_count: int, capfd: pytest.CaptureFixture[str]) -> None:
+    """Stream handler should safely handle concurrent logging."""
     handler: FemtoStreamHandler = StreamHandlerBuilder.stderr().build()
     try:
         threads = [

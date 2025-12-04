@@ -1,3 +1,5 @@
+"""Unit tests covering ConfigBuilder and related builder utilities."""
+
 import pathlib
 
 import pytest

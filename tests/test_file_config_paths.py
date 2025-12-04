@@ -29,18 +29,21 @@ class _BytesPathLike(PathLike[bytes]):
 
 
 def test_normalise_path_accepts_str(tmp_path: Path) -> None:
+    """Str input should round-trip via _normalise_path."""
     path = tmp_path / "config.ini"
 
     assert _normalise_path(str(path)) == str(path)
 
 
 def test_normalise_path_accepts_path(tmp_path: Path) -> None:
+    """Path input should round-trip via _normalise_path."""
     path = tmp_path / "config.ini"
 
     assert _normalise_path(path) == str(path)
 
 
 def test_normalise_path_accepts_bytes(tmp_path: Path) -> None:
+    """Bytes input should decode using UTF-8."""
     path = tmp_path / "config.ini"
     as_bytes = fsencode(str(path))
 
@@ -48,6 +51,7 @@ def test_normalise_path_accepts_bytes(tmp_path: Path) -> None:
 
 
 def test_normalise_path_accepts_pathlike_str(tmp_path: Path) -> None:
+    """PathLike[str] input should be accepted."""
     path = tmp_path / "config.ini"
     path_like = _StrPathLike(str(path))
 
@@ -55,6 +59,7 @@ def test_normalise_path_accepts_pathlike_str(tmp_path: Path) -> None:
 
 
 def test_normalise_path_accepts_pathlike_bytes(tmp_path: Path) -> None:
+    """PathLike[bytes] input should be accepted."""
     path = tmp_path / "config.ini"
     path_like = _BytesPathLike(fsencode(str(path)))
 
@@ -62,12 +67,14 @@ def test_normalise_path_accepts_pathlike_bytes(tmp_path: Path) -> None:
 
 
 def test_normalise_path_handles_relative_input() -> None:
+    """Relative paths should be returned unchanged as strings."""
     path = Path("relative/config.ini")
 
     assert _normalise_path(path) == str(path)
 
 
 def test_normalise_path_decodes_utf8_bytes(tmp_path: Path) -> None:
+    """UTF-8 bytes should decode and preserve non-ASCII characters."""
     path = tmp_path / "umlaut-\u00fc.ini"
     as_bytes = str(path).encode("utf-8")
 

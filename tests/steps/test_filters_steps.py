@@ -1,3 +1,5 @@
+"""BDD steps for filter configuration and evaluation scenarios."""
+
 from __future__ import annotations
 
 from pathlib import Path

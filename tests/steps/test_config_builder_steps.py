@@ -1,3 +1,5 @@
+"""BDD steps for the ConfigBuilder Gherkin scenarios."""
+
 import pytest
 from pathlib import Path
 from pytest_bdd import given, parsers, scenarios, then, when

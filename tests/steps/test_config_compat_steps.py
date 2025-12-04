@@ -1,16 +1,4 @@
-"""Config compatibility step definitions.
-
-This module provides pytest-bdd step implementations that exercise the builder,
-dictConfig, and basicConfig flows for femtologging to ensure their outputs stay
-in sync. Import these steps in Gherkin-based suites to verify compatibility
-contracts end-to-end.
-
-Examples
---------
-The scenarios in ``tests/features/config_compat.feature`` use these steps to
-compare builder output snapshots with dictConfig and basicConfig.
-
-"""
+"""BDD step definitions covering builder/dictConfig/basicConfig compatibility."""
 
 from __future__ import annotations
 

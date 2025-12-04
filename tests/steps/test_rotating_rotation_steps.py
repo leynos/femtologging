@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+"""BDD steps validating rotating file handler rollover behaviour."""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +31,8 @@ scenarios(str(FEATURES / "rotating_handler_rotation.feature"))
 
 @dataclass
 class RotatingContext:
+    """Hold rotating handler state and log file path for a scenario."""
+
     handler: FemtoRotatingFileHandler
     path: pathlib.Path
     closed: bool = False

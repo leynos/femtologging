@@ -231,6 +231,7 @@ def test_dict_config_handler_validation_errors(
 
 
 def test_dict_config_logger_filters_presence() -> None:
+    """Logger filter entries must be rejected."""
     reset_manager()
     cfg = {
         "version": 1,

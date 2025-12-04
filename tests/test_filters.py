@@ -1,3 +1,5 @@
+"""Unit tests for filter builders and logger filtering behaviour."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -21,12 +23,14 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> cabc.Iterator[None]:
+    """Reset the global logging manager around each test."""
     reset_manager()
     yield
     reset_manager()
 
 
 def test_logger_with_multiple_filters() -> None:
+    """Combined filters should gate log records accordingly."""
     cb = (
         ConfigBuilder()
         .with_filter("lvl", LevelFilterBuilder().with_max_level("INFO"))
@@ -63,6 +67,7 @@ def test_reconfig_replaces_filters(
     first_filter: tuple[str, LevelFilterBuilder],
     second_filter: tuple[str, NameFilterBuilder] | None,
 ) -> None:
+    """Reconfiguring should replace or drop filters as requested."""
     cb = (
         ConfigBuilder()
         .with_filter(first_filter[0], first_filter[1])
@@ -89,6 +94,7 @@ def test_reconfig_replaces_filters(
 
 
 def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
+    """Unknown filters should leave previous filters intact."""
     cb = (
         ConfigBuilder()
         .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
@@ -112,6 +118,7 @@ def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
 
 
 def test_filter_clearing() -> None:
+    """Clearing filters should re-enable previously suppressed records."""
     cb = (
         ConfigBuilder()
         .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
@@ -126,6 +133,7 @@ def test_filter_clearing() -> None:
 
 
 def test_multiple_filters_clearing() -> None:
+    """Clearing multiple filters should restore emissions across checks."""
     cb = (
         ConfigBuilder()
         .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))

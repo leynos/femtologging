@@ -1,3 +1,5 @@
+"""Shared pytest fixtures for femtologging tests."""
+
 from __future__ import annotations
 
 import gc

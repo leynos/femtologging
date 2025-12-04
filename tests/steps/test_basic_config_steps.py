@@ -1,3 +1,5 @@
+"""BDD steps exercising basicConfig wiring and behaviour."""
+
 from __future__ import annotations
 
 import sys

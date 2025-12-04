@@ -34,6 +34,7 @@ FileHandlerFactory = cabc.Callable[
 def test_log_formats_message(
     name: str, level: str, message: str, expected: str
 ) -> None:
+    """Logger.log should format messages using configured formatter."""
     logger = FemtoLogger(name)
     assert logger.log(level, message) == expected
 
@@ -82,13 +83,16 @@ class CollectingHandler:
     """Simple handler used to verify Python handler support."""
 
     def __init__(self) -> None:
+        """Initialise an empty record buffer."""
         self.records: list[tuple[str, str, str]] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
+        """Collect handled records for later assertions."""
         self.records.append((logger, level, message))
 
 
 def test_add_handler_requires_handle() -> None:
+    """Adding a handler requires a callable handle attribute."""
     logger = FemtoLogger("core")
 
     class MissingHandle:

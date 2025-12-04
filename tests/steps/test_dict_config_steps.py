@@ -1,3 +1,5 @@
+"""BDD steps for dictConfig feature scenarios."""
+
 from __future__ import annotations
 
 from pathlib import Path

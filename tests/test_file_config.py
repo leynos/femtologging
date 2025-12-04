@@ -47,6 +47,7 @@ def test_file_config_expands_defaults(tmp_path: Path) -> None:
 
 
 def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
+    """Handler level specification should be rejected by fileConfig."""
     reset_manager()
     ini = tmp_path / "bad.ini"
     ini.write_text(
@@ -68,6 +69,7 @@ def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
     ],
 )
 def test_file_config_accepts_common_path_types(tmp_path: Path, path_builder) -> None:
+    """FileConfig accepts str, Path, and bytes path inputs."""
     reset_manager()
     ini_path = tmp_path / "path_types.ini"
     log_path = tmp_path / "path_types.log"

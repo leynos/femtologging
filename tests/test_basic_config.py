@@ -1,3 +1,5 @@
+"""Unit tests validating basicConfig behaviour outside BDD scenarios."""
+
 from __future__ import annotations
 
 import pytest
