@@ -56,7 +56,7 @@ def test_level_parsing_and_filtering() -> None:
 
     logger.set_level("ERROR")
     assert logger.log("WARN", "drop") is None
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="level"):
         logger.log("bogus", "drop")
 
 

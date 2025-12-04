@@ -9,16 +9,14 @@ builder API remains the canonical configuration mechanism.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import re
+import typing as typ
 from os import PathLike, fsdecode, fspath
 from pathlib import Path
-import typing as typ
 
 from . import _femtologging_rs as rust
 from .config import dictConfig
-
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
 
 Any = typ.Any
 Mapping = cabc.Mapping
@@ -27,7 +25,7 @@ _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
 
 
-def fileConfig(
+def fileConfig(  # noqa: N802
     fname: str | bytes | PathLike[str] | PathLike[bytes],
     defaults: Mapping[str, object] | None = None,
     *,
@@ -47,13 +45,16 @@ def fileConfig(
     """
     path_str = _normalise_path(fname)
     sections = rust.parse_ini_file(path_str, encoding)
-    config = _ini_to_dict_config(sections, defaults, disable_existing_loggers)
+    config = _ini_to_dict_config(
+        sections, defaults, disable_existing=disable_existing_loggers
+    )
     dictConfig(config)
 
 
 def _ini_to_dict_config(
     sections: list[tuple[str, list[tuple[str, str]]]],
     defaults: Mapping[str, object] | None,
+    *,
     disable_existing: bool,
 ) -> dict[str, Any]:
     section_map = _materialise_sections(sections)
@@ -120,9 +121,7 @@ def _parse_formatters(
         section = _require_section(sections, f"formatter_{fid}")
         if unknown := set(section) - {"format", "datefmt"}:
             msg = f"formatter {fid!r} has unsupported options: {sorted(unknown)!r}"
-            raise ValueError(
-                msg
-            )
+            raise ValueError(msg)
         config: dict[str, str] = {}
         if (fmt := section.get("format")) is not None:
             config["format"] = fmt
@@ -146,9 +145,7 @@ def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
     allowed = {"class", "args", "kwargs", "formatter", "level"}
     if unknown := set(section) - allowed:
         msg = f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
-        raise ValueError(
-            msg
-        )
+        raise ValueError(msg)
     if "class" not in section:
         msg = f"handler {hid!r} missing class"
         raise ValueError(msg)
@@ -281,9 +278,7 @@ def _parse_bool(raw: str | None) -> bool:
         return False
     supported = "', '".join(sorted(true_values | false_values))
     msg = f"invalid boolean value {raw!r}; supported values are: '{supported}'"
-    raise ValueError(
-        msg
-    )
+    raise ValueError(msg)
 
 
 __all__ = ["fileConfig"]

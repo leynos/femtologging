@@ -101,7 +101,7 @@ def test_file_handler_open_failure(tmp_path: Path) -> None:
     """Creating a handler in a missing directory raises ``OSError``."""
     bad_dir = tmp_path / "does_not_exist"
     path = bad_dir / "out.log"
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="No such file"):
         FemtoFileHandler(str(path))
 
 
@@ -200,10 +200,13 @@ def test_overflow_policy_drop(tmp_path: Path) -> None:
     ) as handler:
         handler.handle("core", "INFO", "first")
         handler.handle("core", "INFO", "second")
+        error_msg: str | None = None
         try:
             handler.handle("core", "INFO", "third")
         except RuntimeError as err:
-            assert str(err) in {
+            error_msg = str(err)
+        if error_msg is not None:
+            assert error_msg in {
                 "Handler error: queue full",
                 "Handler error: handler is closed",
             }
@@ -228,10 +231,13 @@ def test_overflow_policy_drop_flush_interval_gt_one(tmp_path: Path) -> None:
         )
     ) as handler:
         for i in range(10):
+            error_msg: str | None = None
             try:
                 handler.handle("core", "INFO", f"msg{i}")
             except RuntimeError as err:
-                assert str(err) in {
+                error_msg = str(err)
+            if error_msg is not None:
+                assert error_msg in {
                     "Handler error: queue full",
                     "Handler error: handler is closed",
                 }

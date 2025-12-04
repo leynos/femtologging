@@ -17,7 +17,7 @@ from femtologging import basicConfig, get_logger, reset_manager
     ],
 )
 def test_basic_config_emits_expected_records(
-    force: bool,
+    force: bool,  # noqa: FBT001
     level: str,
     expected_msgs: set[str],
     suppressed_msgs: set[str],

@@ -46,7 +46,8 @@ def test_duplicate_handler_overwrites() -> None:
 
 def test_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
     """ConfigBuilder should accept rotating file handler builders."""
-    builder = ConfigBuilder().with_disable_existing_loggers(True)
+    disable_existing = True
+    builder = ConfigBuilder().with_disable_existing_loggers(disable_existing)
     log_path = tmp_path / "rotating.log"
     rotating = (
         RotatingFileHandlerBuilder(str(log_path))
@@ -80,10 +81,11 @@ def test_duplicate_logger_overwrites() -> None:
 
 def test_logger_config_builder_optional_fields_set() -> None:
     """Test that optional fields are included when explicitly set."""
+    propagate_flag = False
     logger = (
         LoggerConfigBuilder()
         .with_level("DEBUG")
-        .with_propagate(False)
+        .with_propagate(propagate_flag)
         .with_filters(["myfilter"])
         .with_handlers(["console", "file"])
     )
@@ -109,7 +111,7 @@ def test_logger_config_builder_optional_fields_omitted() -> None:
 def test_no_root_logger_behavior() -> None:
     """Test that building without a root logger raises ValueError."""
     builder = ConfigBuilder()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="root logger configuration"):
         builder.build_and_init()
 
 
@@ -147,10 +149,11 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
     stale = get_logger("stale")
     assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
 
+    disable_existing = True
     rebuild = (
         ConfigBuilder()
         .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_disable_existing_loggers(True)
+        .with_disable_existing_loggers(disable_existing)
     )
     rebuild.build_and_init()
 
@@ -178,10 +181,11 @@ def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
     }
 
     child_name = f"{ancestors[-1]}.child"
+    disable_existing = True
     rebuild = (
         make_info_stderr_builder()
         .with_logger(child_name, LoggerConfigBuilder().with_handlers(["h"]))
-        .with_disable_existing_loggers(True)
+        .with_disable_existing_loggers(disable_existing)
     )
     rebuild.build_and_init()
 
@@ -206,7 +210,7 @@ def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
 def test_root_logger_last_assignment_wins(
     first: str, second: str, expected: str
 ) -> None:
-    """Verify last-write-wins semantics when assigning the root logger multiple times."""
+    """Verify last-write-wins semantics when assigning the root logger."""
     builder = ConfigBuilder()
     builder.with_root_logger(LoggerConfigBuilder().with_level(first))
     builder.with_root_logger(LoggerConfigBuilder().with_level(second))

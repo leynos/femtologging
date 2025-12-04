@@ -34,7 +34,7 @@ class _RecordingTCPServer(socketserver.ThreadingTCPServer):
 
     allow_reuse_address = True
 
-    def __init__(self, server_address) -> None:
+    def __init__(self, server_address: tuple[str, int]) -> None:
         super().__init__(server_address, _CaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
 

@@ -9,8 +9,8 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
-from random import randint
 from threading import Thread
 
 from femtologging import (
@@ -57,8 +57,8 @@ def configure(logging_path: Path) -> None:
 def worker(thread_id: int) -> None:
     """Generate and log a random range of integers."""
     logger = get_logger("example")
-    start = randint(0, 1000)
-    stop = start + randint(10, 100)
+    start = secrets.randbelow(1001)
+    stop = start + secrets.randbelow(91) + 10
     for value in range(start, stop):
         logger.info(f"thread {thread_id} produced {value}")
 

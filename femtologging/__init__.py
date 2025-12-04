@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
+import dataclasses
 import logging
 import sys
-import dataclasses
 import typing as typ
-import collections.abc as cabc
 
-cast = typ.cast
-# Import the Rust extension packaged under this module's namespace first
-# to keep imports at the top for linters.
 from . import _femtologging_rs as rust
 from .config import dictConfig
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
+
+cast = typ.cast
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -64,10 +63,11 @@ else:
     def _force_rotating_fresh_failure_for_test(
         count: int, reason: str | None = None
     ) -> None:
-        msg = "rotating fresh-failure hook requires the extension built with the 'python' feature"
-        raise RuntimeError(
-            msg
+        msg = (
+            "rotating fresh-failure hook requires the extension built with the "
+            "'python' feature"
         )
+        raise RuntimeError(msg)
 
     def _clear_rotating_fresh_failure_for_test() -> None:
         return
@@ -81,7 +81,7 @@ class BasicConfig:
     filename: str | None = None
     stream: typ.TextIO | None = None
     force: bool = False
-    handlers: "cabc.Iterable[FemtoHandler]" | None = None
+    handlers: cabc.Iterable[FemtoHandler] | None = None
 
 
 @typ.overload
@@ -92,37 +92,41 @@ def basicConfig(config: BasicConfig, /) -> None: ...
 def basicConfig(**kwargs: object) -> None: ...
 
 
-def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
+def basicConfig(  # noqa: N802
+    config: BasicConfig | None = None, /, **kwargs: object
+) -> None:
     """Configure the root logger using the builder API.
 
-        Parameters mirror ``logging.basicConfig`` but currently only a subset is
-        supported. ``config`` may be a :class:`BasicConfig` instance; if provided,
-        its values take precedence over individual parameters. ``level`` may be a
-        string or numeric value understood by the standard :mod:`logging` module.
-        ``filename`` configures a :class:`FemtoFileHandler`; otherwise a
-        :class:`FemtoStreamHandler` targeting ``stderr`` is installed. ``stream``
-        may be ``sys.stdout`` to redirect output. ``force`` removes any existing
-        handlers from the root logger before applying the new configuration.
-        ``handlers`` allows attaching pre‑constructed handlers directly.
+    Parameters mirror ``logging.basicConfig`` but currently only a subset is
+    supported. ``config`` may be a :class:`BasicConfig` instance; if provided,
+    its values take precedence over individual parameters. ``level`` may be a
+    string or numeric value understood by the standard :mod:`logging` module.
+    ``filename`` configures a :class:`FemtoFileHandler`; otherwise a
+    :class:`FemtoStreamHandler` targeting ``stderr`` is installed. ``stream``
+    may be ``sys.stdout`` to redirect output. ``force`` removes any existing
+    handlers from the root logger before applying the new configuration.
+    ``handlers`` allows attaching pre-constructed handlers directly.
 
     Parameters
     ----------
-        config : BasicConfig, optional
-            Configuration dataclass providing parameters for ``basicConfig``.
-
-    Other Parameters
-    ----------------
-        level : str or int, optional
-            Logging level. Accepts case-insensitive "TRACE", "DEBUG", "INFO", "WARN",
-    "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are equivalent.
-        filename : str, optional
-            File to write logs to.
-        stream : typ.TextIO, optional
-            ``sys.stdout`` or ``sys.stderr``.
-        force : bool, default False
-            Remove any existing handlers before configuring.
-        handlers : Iterable[FemtoHandler], optional
-            Pre‑constructed handlers to attach.
+    config : BasicConfig, optional
+        Aggregated configuration for ``basicConfig``. When provided, its
+        attributes override keyword arguments.
+    **kwargs : object
+        Supported keys mirror the dataclass fields: ``level``, ``filename``,
+        ``stream``, ``force``, and ``handlers``.
+    level : str or int, optional
+        Logging level. Accepts case-insensitive "TRACE", "DEBUG", "INFO",
+        "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are
+        equivalent.
+    filename : str, optional
+        File to write logs to.
+    stream : typ.TextIO, optional
+        ``sys.stdout`` or ``sys.stderr``.
+    force : bool, default False
+        Remove any existing handlers before configuring.
+    handlers : cabc.Iterable[FemtoHandler], optional
+        Pre-constructed handlers to attach.
 
     Examples
     --------
@@ -152,7 +156,7 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     filename: str | None
     stream: typ.TextIO | None
     force: bool
-    handlers: "cabc.Iterable[FemtoHandler]" | None
+    handlers: cabc.Iterable[FemtoHandler] | None
     if config is not None:
         level = (
             config.level
@@ -180,7 +184,9 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
         filename = typ.cast("str | None", kwargs.get("filename"))
         stream = typ.cast("typ.TextIO | None", kwargs.get("stream"))
         force = bool(kwargs.get("force"))
-        handlers = typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers"))
+        handlers = typ.cast(
+            "cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers")
+        )
 
     _validate_basic_config_params(filename, stream, handlers)
 
@@ -194,7 +200,7 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
 
 def _has_conflicting_handler_params(
-    handlers: "cabc.Iterable[FemtoHandler]" | None,
+    handlers: cabc.Iterable[FemtoHandler] | None,
     filename: str | None,
     stream: typ.TextIO | None,
 ) -> bool:
@@ -205,7 +211,7 @@ def _has_conflicting_handler_params(
 def _validate_basic_config_params(
     filename: str | None,
     stream: typ.TextIO | None,
-    handlers: "cabc.Iterable[FemtoHandler]" | None,
+    handlers: cabc.Iterable[FemtoHandler] | None,
 ) -> None:
     """Validate ``basicConfig`` parameters."""
     if filename and stream:
@@ -217,17 +223,17 @@ def _validate_basic_config_params(
         raise ValueError(msg)
 
     if stream not in {None, sys.stdout, sys.stderr}:
-        msg = f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
-        raise ValueError(
-            msg
+        msg = (
+            f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
         )
+        raise ValueError(msg)
 
 
 def _configure_handlers(
     root: FemtoLogger,
-    handlers: Iterable[FemtoHandler] | None,
+    handlers: cabc.Iterable[FemtoHandler] | None,
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> None:
     """Attach or build handlers for the root logger."""
     if handlers is not None:
@@ -239,7 +245,7 @@ def _configure_handlers(
 
 def _build_and_configure_handler(
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> None:
     """Build a handler via the builder API and install it."""
     builder = ConfigBuilder()
@@ -256,7 +262,7 @@ def _build_and_configure_handler(
 
 def _create_handler_builder(
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> FileHandlerBuilder | StreamHandlerBuilder:
     """Create a handler builder for ``basicConfig``."""
     if filename:

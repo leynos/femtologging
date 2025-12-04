@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-"""BDD steps validating rotating file handler rollover behaviour."""
-
+import collections.abc as cabc
 import dataclasses
-from pathlib import Path
 import typing as typ
+from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -20,8 +19,6 @@ from femtologging import (
 
 if typ.TYPE_CHECKING:
     import pathlib
-    import collections.abc as cabc
-    Callable = cabc.Callable
 
     from syrupy.assertion import SnapshotAssertion
 
@@ -41,17 +38,9 @@ class RotatingContext:
 
 @pytest.fixture
 def rotating_context_factory(
-    tmp_path: pathlib.Path, request: pytest.FixtureRequest
-) -> Callable[[int, int], RotatingContext]:
+    tmp_path: Path,
+) -> cabc.Iterator[typ.Callable[[int, int], RotatingContext]]:
     contexts: list[RotatingContext] = []
-
-    def _finalise() -> None:
-        for ctx in contexts:
-            if not ctx.closed:
-                ctx.handler.close()
-                ctx.closed = True
-
-    request.addfinalizer(_finalise)
 
     def _build(max_bytes: int, backup_count: int) -> RotatingContext:
         path = tmp_path / "rotating.log"
@@ -63,13 +52,18 @@ def rotating_context_factory(
         contexts.append(ctx)
         return ctx
 
-    return _build
+    yield _build
+
+    for ctx in contexts:
+        if not ctx.closed:
+            ctx.handler.close()
+            ctx.closed = True
 
 
 @pytest.fixture
 def force_rotating_failure(
     request: pytest.FixtureRequest,
-) -> Callable[[int, str], None]:
+) -> typ.Callable[[int, str], None]:
     registered = False
 
     def _activate(count: int, reason: str) -> None:
@@ -84,12 +78,13 @@ def force_rotating_failure(
 
 @given(
     parsers.parse(
-        "a rotating handler with max bytes {max_bytes:d} and backup count {backup_count:d}"
+        "a rotating handler with max bytes {max_bytes:d} and backup count "
+        "{backup_count:d}"
     ),
     target_fixture="rotating_ctx",
 )
 def given_rotating_handler(
-    rotating_context_factory: Callable[[int, int], RotatingContext],
+    rotating_context_factory: typ.Callable[[int, int], RotatingContext],
     max_bytes: int,
     backup_count: int,
 ) -> RotatingContext:
@@ -98,15 +93,16 @@ def given_rotating_handler(
 
 @given(
     parsers.parse(
-        "a rotating handler forcing reopen failure with max bytes {max_bytes:d} and backup count {backup_count:d}"
+        "a rotating handler forcing reopen failure with max bytes {max_bytes:d} and "
+        "backup count {backup_count:d}"
     ),
     target_fixture="rotating_ctx",
 )
 def given_rotating_handler_forcing_reopen_failure(
-    rotating_context_factory: Callable[[int, int], RotatingContext],
+    rotating_context_factory: typ.Callable[[int, int], RotatingContext],
     max_bytes: int,
     backup_count: int,
-    force_rotating_failure: Callable[[int, str], None],
+    force_rotating_failure: typ.Callable[[int, str], None],
 ) -> RotatingContext:
     force_rotating_failure(1, "python scenario")
     return rotating_context_factory(max_bytes, backup_count)

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 import typing as typ
+from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
-from syrupy import SnapshotAssertion
 
 import femtologging.config as config_module
 from femtologging import (
@@ -21,7 +20,9 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
-    type FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
+    from syrupy import SnapshotAssertion
+
+FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -33,7 +34,7 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
     if isinstance(builder, RotatingFileHandlerBuilder):
         return builder
     _fail_rotating_builder_requirement(builder)
-    return None  # pragma: no cover - _fail_rotating_builder_requirement always raises
+    raise AssertionError("unreachable")  # appease type checkers
 
 
 def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
@@ -46,7 +47,7 @@ def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
 
 
 @given('a FileHandlerBuilder for path "test.log"', target_fixture="file_builder")
-def given_file_builder(tmp_path) -> FileHandlerBuilder:
+def given_file_builder(tmp_path: Path) -> FileHandlerBuilder:
     path = tmp_path / "test.log"
     return FileHandlerBuilder(str(path))
 
@@ -54,7 +55,7 @@ def given_file_builder(tmp_path) -> FileHandlerBuilder:
 @given(
     'a RotatingFileHandlerBuilder for path "test.log"', target_fixture="file_builder"
 )
-def given_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
+def given_rotating_file_builder(tmp_path: Path) -> RotatingFileHandlerBuilder:
     path = tmp_path / "test.log"
     return RotatingFileHandlerBuilder(str(path))
 
@@ -63,7 +64,9 @@ def given_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
     'a dictConfig RotatingFileHandlerBuilder for path "test.log"',
     target_fixture="file_builder",
 )
-def given_dictconfig_rotating_file_builder(tmp_path) -> RotatingFileHandlerBuilder:
+def given_dictconfig_rotating_file_builder(
+    tmp_path: Path,
+) -> RotatingFileHandlerBuilder:
     path = tmp_path / "test.log"
     builder = config_module._build_handler_from_dict(
         "h",
@@ -179,7 +182,9 @@ def when_set_overflow_policy_timeout(file_builder: FileBuilder) -> FileBuilder:
 
 
 @when(parsers.parse('I set file formatter "{formatter_id}"'))
-def when_set_file_formatter(file_builder: FileBuilder, formatter_id: str) -> FileBuilder:
+def when_set_file_formatter(
+    file_builder: FileBuilder, formatter_id: str
+) -> FileBuilder:
     return file_builder.with_formatter(formatter_id)
 
 

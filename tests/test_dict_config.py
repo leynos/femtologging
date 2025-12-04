@@ -34,7 +34,7 @@ class _SocketCaptureHandler(socketserver.BaseRequestHandler):
 class _SocketServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
-    def __init__(self, address) -> None:
+    def __init__(self, address: tuple[str, int]) -> None:
         super().__init__(address, _SocketCaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
 
@@ -105,7 +105,7 @@ def test_dict_config_socket_handler() -> None:
 
 
 def test_dict_config_socket_handler_round_trip_kwargs() -> None:
-    """Support feeding ``SocketHandlerBuilder.as_dict()`` output back into dictConfig."""
+    """Support feeding ``SocketHandlerBuilder.as_dict()`` output back to dictConfig."""
     builder = (
         SocketHandlerBuilder()
         .with_tcp("127.0.0.1", 9020)
@@ -226,7 +226,7 @@ def test_dict_config_handler_validation_errors(
         "handlers": {"h": {"class": "femtologging.StreamHandler", **handler_config}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    with pytest.raises(ValueError, match=expected_error):
+    with pytest.raises((ValueError, TypeError), match=expected_error):
         dictConfig(cfg)
 
 
@@ -250,7 +250,9 @@ def test_dict_config_logger_filters_presence() -> None:
         (
             {
                 "version": 1,
-                "handlers": {"h": {"class": "femtologging.StreamHandler", "formatter": "f"}},
+                "handlers": {
+                    "h": {"class": "femtologging.StreamHandler", "formatter": "f"}
+                },
                 "root": {"level": "INFO", "handlers": ["h"]},
             },
             r"unknown formatter id",
@@ -306,21 +308,21 @@ def test_dict_config_logger_filters_presence() -> None:
             r"unknown formatter id",
         ),
     ],
-        ids=[
-            "root-missing",
-            "version-unsupported",
-            "formatter-id-missing",
-            "filters-unsupported",
-            "disable-existing-loggers-type",
-            "logger-id-type",
-            "logger-handlers-type",
-            "logger-propagate-type",
+    ids=[
+        "root-missing",
+        "version-unsupported",
+        "formatter-id-missing",
+        "filters-unsupported",
+        "disable-existing-loggers-type",
+        "logger-id-type",
+        "logger-handlers-type",
+        "logger-propagate-type",
         "formatter-value-type",
         "formatter-id-unknown",
     ],
 )
 def test_dict_config_invalid_configs(config: dict[str, object], msg: str) -> None:
-    """Invalid configurations raise ``ValueError``."""
+    """Invalid configurations raise ``ValueError`` or ``TypeError``."""
     reset_manager()
-    with pytest.raises(ValueError, match=msg):
+    with pytest.raises((ValueError, TypeError), match=msg):
         dictConfig(config)

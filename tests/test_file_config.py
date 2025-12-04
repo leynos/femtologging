@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import typing as typ
 from os import fsencode
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def _wait_for_log_line(path: Path, expected: str, timeout: float = 1.5) -> str:
             if expected in contents:
                 return contents
         time.sleep(0.01)
-    pytest.fail(f"log file {path} not written in time")
+    raise TimeoutError(f"log file {path} not written in time")
 
 
 def test_file_config_expands_defaults(tmp_path: Path) -> None:
@@ -68,7 +69,9 @@ def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
         pytest.param(lambda path: fsencode(str(path)), id="bytes"),
     ],
 )
-def test_file_config_accepts_common_path_types(tmp_path: Path, path_builder) -> None:
+def test_file_config_accepts_common_path_types(
+    tmp_path: Path, path_builder: typ.Callable[[Path], str | Path | bytes]
+) -> None:
     """FileConfig accepts str, Path, and bytes path inputs."""
     reset_manager()
     ini_path = tmp_path / "path_types.ini"

@@ -38,9 +38,7 @@ def rotating_handler(
         derived_options = HandlerOptions(rotation=(max_bytes, backup_count))
     elif max_bytes or backup_count:
         msg = "rotating_handler options already provided; do not pass rotation"
-        raise ValueError(
-            msg
-        )
+        raise ValueError(msg)
 
     handler = FemtoRotatingFileHandler(path, options=derived_options)
     try:
@@ -58,29 +56,31 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
 
 def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
     """Supplying an invalid policy value should raise an error."""
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"invalid overflow policy: '.*'\. Valid options are: drop, block, timeout:N"
+    invalid_policy_value = typ.cast(
+        "typ.Any",
+        "invalid_policy",
+    )  # Exercise runtime validation with a value rejected at type-check time.
+    invalid_options = HandlerOptions(
+        capacity=32,
+        flush_interval=2,
+        policy=invalid_policy_value,
+        rotation=(1024, 3),
+    )
+    with (
+        pytest.raises(
+            ValueError,
+            match=(
+                r"invalid overflow policy: '.*'\. Valid options are: "
+                r"drop, block, timeout:N"
+            ),
         ),
+        rotating_handler(str(log_path), options=invalid_options),
     ):
-        invalid_policy_value = typ.cast(
-            "typ.Any",
-            "invalid_policy",
-        )  # Exercise runtime validation with a value rejected at type-check time.
-        invalid_options = HandlerOptions(
-            capacity=32,
-            flush_interval=2,
-            policy=invalid_policy_value,
-            rotation=(1024, 3),
-        )
-
-        with rotating_handler(str(log_path), options=invalid_options):
-            pass
+        pass
 
 
 def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
-    """Omitting the policy should use the default value and preserve rotation settings."""
+    """Omitting policy should use defaults and preserve rotation settings."""
     options = HandlerOptions(
         capacity=32,
         flush_interval=2,
@@ -118,7 +118,10 @@ def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
     ],
 )
 def test_rotating_handler_threshold_validation(
-    log_path: pathlib.Path, max_bytes: int, backup_count: int, should_error: bool
+    log_path: pathlib.Path,
+    max_bytes: int,
+    backup_count: int,
+    should_error: bool,  # noqa: FBT001
 ) -> None:
     """Rotation thresholds must be paired or omitted entirely."""
     if should_error:

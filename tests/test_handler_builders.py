@@ -2,42 +2,45 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import typing as typ
 
 import pytest
 
 from femtologging import (
     FileHandlerBuilder,
-    HandlerConfigError,
     OverflowPolicy,
     RotatingFileHandlerBuilder,
-    SocketHandlerBuilder,
     StreamHandlerBuilder,
 )
 
+if typ.TYPE_CHECKING:
+    from pathlib import Path
+
 
 @pytest.mark.parametrize("max_bytes", [-1, -100, -999999])
-def test_with_max_bytes_negative_raises(tmp_path, max_bytes: int) -> None:
+def test_with_max_bytes_negative_raises(tmp_path: Path, max_bytes: int) -> None:
     """Negative max_bytes values must be rejected."""
     builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="max_bytes"):
         builder.with_max_bytes(max_bytes)
 
 
 @pytest.mark.parametrize("backup_count", [-1, -5, -1000])
-def test_with_backup_count_negative_raises(tmp_path, backup_count: int) -> None:
+def test_with_backup_count_negative_raises(tmp_path: Path, backup_count: int) -> None:
     """Negative backup_count values must be rejected."""
     builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="backup"):
         builder.with_backup_count(backup_count)
 
 
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_negative_capacity(ctor) -> None:
+def test_stream_builder_negative_capacity(
+    ctor: typ.Callable[[], StreamHandlerBuilder],
+) -> None:
     """Stream handler capacity must be non-negative."""
     builder = ctor()
     with pytest.raises(OverflowError):
@@ -47,7 +50,9 @@ def test_stream_builder_negative_capacity(ctor) -> None:
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_negative_flush_timeout(ctor) -> None:
+def test_stream_builder_negative_flush_timeout(
+    ctor: typ.Callable[[], StreamHandlerBuilder],
+) -> None:
     """Negative flush timeouts must raise."""
     builder = ctor()
     with pytest.raises(OverflowError):
@@ -57,23 +62,28 @@ def test_stream_builder_negative_flush_timeout(ctor) -> None:
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_zero_flush_timeout(ctor) -> None:
+def test_stream_builder_zero_flush_timeout(
+    ctor: typ.Callable[[], StreamHandlerBuilder],
+) -> None:
     """Zero flush timeout is invalid."""
     builder = ctor()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="flush_timeout_ms must be greater than zero"):
         builder.with_flush_timeout_ms(0)
 
 
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_large_flush_timeout(ctor) -> None:
+def test_stream_builder_large_flush_timeout(
+    ctor: typ.Callable[[], StreamHandlerBuilder],
+) -> None:
     """Very large flush timeouts should round-trip in as_dict."""
     builder = ctor().with_flush_timeout_ms(1_000_000_000)
     data = builder.as_dict()
+    ctor_name = getattr(ctor, "__name__", repr(ctor))
     assert data["flush_timeout_ms"] == 1_000_000_000, (
         "Stream handler builder flush timeout mismatch: "
-        f"ctor={ctor.__name__} builder={builder!r} "
+        f"ctor={ctor_name} builder={builder!r} "
         f"expected=1_000_000_000 actual={data['flush_timeout_ms']} "
         f"data={data}"
     )
@@ -101,7 +111,9 @@ def test_file_builder_large_flush_record_interval(tmp_path: Path) -> None:
 def test_file_builder_zero_flush_record_interval(tmp_path: Path) -> None:
     """Zero flush record intervals are invalid."""
     builder = FileHandlerBuilder(str(tmp_path / "zero_flush_interval.log"))
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match="flush_record_interval must be greater than zero"
+    ):
         builder.with_flush_record_interval(0)
 
 

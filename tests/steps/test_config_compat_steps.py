@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import copy
-import sys
 import dataclasses
-from pathlib import Path
+import sys
 import typing as typ
+from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -23,6 +23,8 @@ from femtologging import (
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
+
+    from femtologging import FemtoLogger
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -70,12 +72,15 @@ def reset_logging() -> None:
 
 @given("a canonical configuration example", target_fixture="config_example")
 def config_example() -> ConfigExample:
+    propagate_flag = False
     builder = (
         ConfigBuilder()
         .with_handler("console", StreamHandlerBuilder.stderr())
         .with_logger(
             "worker",
-            LoggerConfigBuilder().with_handlers(["console"]).with_propagate(False),
+            LoggerConfigBuilder()
+            .with_handlers(["console"])
+            .with_propagate(propagate_flag),
         )
         .with_root_logger(
             LoggerConfigBuilder().with_level("INFO").with_handlers(["console"])
@@ -158,7 +163,7 @@ def _log_message_and_get_output(
     level: str,
     log_capture_context: LogCaptureContext,
 ) -> str:
-    """Log ``message`` at ``level`` and return the captured output without trailing newlines."""
+    """Log ``message`` at ``level`` and return captured output without newlines."""
     logger = get_logger("root")
     _drain_fd_capture(log_capture_context.capfd)
     logger.log(level, message)
@@ -177,7 +182,7 @@ def _drain_fd_capture(capfd: pytest.CaptureFixture[str]) -> str:
     return f"{captured.out}{captured.err}"
 
 
-def _flush_root_handlers(logger) -> None:
+def _flush_root_handlers(logger: FemtoLogger) -> None:
     """Ensure femtologging's asynchronous handlers flush pending records."""
     flushed = logger.flush_handlers()
     if not flushed:

@@ -1,7 +1,8 @@
 """BDD steps for the ConfigBuilder Gherkin scenarios."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 from syrupy import SnapshotAssertion
 
@@ -84,13 +85,13 @@ def set_version(config_builder: ConfigBuilder) -> None:
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".*"):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
 def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ValueError, match=msg) as excinfo:
         config_builder.build_and_init()
     assert msg in str(excinfo.value)
 

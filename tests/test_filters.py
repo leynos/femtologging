@@ -8,11 +8,9 @@ import pytest
 
 from femtologging import (
     ConfigBuilder,
-    FilterBuildError,
     LevelFilterBuilder,
     LoggerConfigBuilder,
     NameFilterBuilder,
-    StreamHandlerBuilder,
     get_logger,
     reset_manager,
 )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import typing as typ
 from contextlib import closing
 from pathlib import Path
 
@@ -16,6 +17,9 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
+
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -35,7 +39,8 @@ def root_has_handler() -> None:
 
 @when(
     parsers.re(
-        r'I call basicConfig with level "(?P<level>[^"]+)"(?: and force (?P<force>true))?'
+        r'I call basicConfig with level "(?P<level>[^"]+)"'
+        r"(?: and force (?P<force>true))?"
     )
 )
 def call_basic_config(level: str, force: str | None) -> None:
@@ -43,7 +48,7 @@ def call_basic_config(level: str, force: str | None) -> None:
 
 
 @then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
-def log_matches_snapshot(msg: str, level: str, snapshot) -> None:
+def log_matches_snapshot(msg: str, level: str, snapshot: SnapshotAssertion) -> None:
     logger = get_logger("root")
     if level.upper() == "DEBUG":
         assert logger.log(level, msg) is None
@@ -63,7 +68,7 @@ def root_handler_count(count: int) -> None:
     )
 )
 def basic_config_invalid(filename: str, tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Cannot specify both `filename` and `stream`"):
         basicConfig(filename=str(tmp_path / filename), stream=sys.stdout)
 
 
@@ -73,7 +78,12 @@ def basic_config_invalid(filename: str, tmp_path: Path) -> None:
     )
 )
 def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
-    with closing(_make_handler(handler, tmp_path)) as h, pytest.raises(ValueError):
+    with (
+        closing(_make_handler(handler, tmp_path)) as h,
+        pytest.raises(
+            ValueError, match="Cannot specify `handlers` with `filename` or `stream`"
+        ),
+    ):
         basicConfig(handlers=[h], stream=sys.stdout)
 
 
@@ -85,11 +95,16 @@ def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
 def basic_config_handler_filename_invalid(
     handler: str, filename: str, tmp_path: Path
 ) -> None:
-    with closing(_make_handler(handler, tmp_path)) as h, pytest.raises(ValueError):
+    with (
+        closing(_make_handler(handler, tmp_path)) as h,
+        pytest.raises(
+            ValueError, match="Cannot specify `handlers` with `filename` or `stream`"
+        ),
+    ):
         basicConfig(handlers=[h], filename=str(tmp_path / filename))
 
 
-def _make_handler(name: str, tmp_path: Path):
+def _make_handler(name: str, tmp_path: Path) -> FemtoStreamHandler | FemtoFileHandler:
     if name == "stream_handler":
         return FemtoStreamHandler.stderr()
     if name == "file_handler":

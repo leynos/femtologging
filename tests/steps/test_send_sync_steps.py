@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 import typing as typ
+from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -13,7 +13,9 @@ from femtologging import FemtoStreamHandler, StreamHandlerBuilder
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
     from syrupy.assertion import SnapshotAssertion
+
     Iterator = cabc.Iterator
     Sequence = cabc.Sequence
 

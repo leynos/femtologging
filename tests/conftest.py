@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import gc
-import warnings
 import collections.abc as cabc
+import gc
+import typing as typ
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
-import typing as typ
 
 import pytest
 
@@ -23,7 +23,9 @@ warnings.filterwarnings(
 # The warning originates in the vendored Gherkin parser, so filter it out until
 # the dependency releases a fix rather than letting our test suite go noisy.
 
-FileHandlerFactory = cabc.Callable[[Path, int, int], typ.ContextManager[FemtoFileHandler]]
+FileHandlerFactory = cabc.Callable[
+    [Path, int, int], typ.ContextManager[FemtoFileHandler]
+]
 
 
 @pytest.fixture
@@ -38,7 +40,7 @@ def file_handler_factory() -> FileHandlerFactory:
     @contextmanager
     def factory(
         path: Path, capacity: int, flush_interval: int
-    ) -> Generator[FemtoFileHandler, None, None]:
+    ) -> cabc.Generator[FemtoFileHandler, None, None]:
         handler = FemtoFileHandler(
             str(path),
             capacity=capacity,
@@ -59,7 +61,7 @@ def file_handler_factory() -> FileHandlerFactory:
 
 
 @pytest.fixture(autouse=True)
-def _clean_logging_manager() -> Generator[None, None, None]:
+def _clean_logging_manager() -> cabc.Generator[None, None, None]:
     """Reset global logger manager before and after each test."""
     femtologging.reset_manager()
     try:

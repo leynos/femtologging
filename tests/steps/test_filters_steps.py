@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import typing as typ
+from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
-from syrupy import SnapshotAssertion
 
 from femtologging import (
     ConfigBuilder,
@@ -21,6 +20,8 @@ from femtologging import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+    from syrupy import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 

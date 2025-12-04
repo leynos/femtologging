@@ -1,12 +1,14 @@
-from collections.abc import Callable
+import collections.abc as cabc
+import contextlib as ctxlib
+import typing as typ
 from re import Pattern
-from typing import (
-    Any,
-    ContextManager,
-    ParamSpec,
-    TypeVar,
-    overload,
-)
+
+Any = typ.Any
+ParamSpec = typ.ParamSpec
+TypeVar = typ.TypeVar
+overload = typ.overload
+Callable = cabc.Callable
+AbstractContextManager = ctxlib.AbstractContextManager
 
 P = ParamSpec("P")
 R = TypeVar("R", bound=BaseException)
@@ -16,7 +18,8 @@ R = TypeVar("R", bound=BaseException)
 # exceeds the usual argument count threshold.
 
 @overload
-def fixture[**P, R: BaseException](func: Callable[P, R]) -> Callable[P, R]: ...
+def fixture(func: Callable[P, R]) -> Callable[P, R]: ...
+
 @overload
 def fixture(
     *,
@@ -31,9 +34,9 @@ def raises[R: BaseException](
     match: str | Pattern[str] | None = ...,
     *,
     msg: str | None = ...,
-) -> ContextManager[R]: ...
+) -> AbstractContextManager[R]: ...
 
-class mark:
+class mark:  # noqa: N801
     @staticmethod
     def parametrize(
         argnames: str | list[str],
