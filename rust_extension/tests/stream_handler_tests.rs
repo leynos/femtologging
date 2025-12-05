@@ -1,3 +1,5 @@
+//! Behavioural tests for the stream handler and its worker thread lifecycle.
+
 use std::io::{self, Write};
 use std::sync::Barrier;
 use std::thread;

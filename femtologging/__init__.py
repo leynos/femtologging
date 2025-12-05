@@ -241,6 +241,9 @@ def _configure_handlers(
         for h in handlers:
             root.add_handler(h)
     else:
+        # The builder recreates the root logger via the manager, so the
+        # configuration it applies also affects the `root` instance passed in
+        # here even though we do not thread it explicitly.
         _build_and_configure_handler(filename, stream)
 
 

@@ -72,26 +72,26 @@ def reset_logging() -> None:
 
 @given("a canonical configuration example", target_fixture="config_example")
 def config_example() -> ConfigExample:
-    propagate_flag = False
-    builder = (
-        ConfigBuilder()
-        .with_handler("console", StreamHandlerBuilder.stderr())
-        .with_logger(
-            "worker",
-            LoggerConfigBuilder()
-            .with_handlers(["console"])
-            .with_propagate(propagate_flag),
-        )
-        .with_root_logger(
-            LoggerConfigBuilder().with_level("INFO").with_handlers(["console"])
-        )
-    )
-    dict_schema = {
+    dict_schema: dict[str, object] = {
         "version": 1,
         "handlers": {"console": {"class": "femtologging.StreamHandler"}},
         "loggers": {"worker": {"handlers": ["console"], "propagate": False}},
         "root": {"handlers": ["console"], "level": "INFO"},
     }
+    loggers_cfg = typ.cast("dict[str, object]", dict_schema["loggers"])
+    worker_cfg = typ.cast("dict[str, object]", loggers_cfg["worker"])
+    propagate = typ.cast("bool", worker_cfg["propagate"])
+    builder = (
+        ConfigBuilder()
+        .with_handler("console", StreamHandlerBuilder.stderr())
+        .with_logger(
+            "worker",
+            LoggerConfigBuilder().with_handlers(["console"]).with_propagate(propagate),
+        )
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["console"])
+        )
+    )
     return ConfigExample(builder=builder, dict_schema=dict_schema)
 
 
