@@ -148,23 +148,33 @@ def test_stream_builder_accepts_callable_formatter() -> None:
     handler.close()
 
 
-def test_file_builder_accepts_callable_formatter(tmp_path: Path) -> None:
-    """Callable formatter support should extend to file builder."""
-    path = tmp_path / "callable_formatter.log"
-    builder = FileHandlerBuilder(str(path)).with_formatter(
-        lambda record: f"callable:{record['message']}"
-    )
-    handler = builder.build()
-    handler.handle("logger", "INFO", "hello")
-    handler.close()
-    contents = path.read_text()
-    assert "callable:hello" in contents
-
-
-def test_rotating_builder_accepts_callable_formatter(tmp_path: Path) -> None:
-    """Callable formatter support should extend to rotating builder."""
-    path = tmp_path / "callable_rotating.log"
-    builder = RotatingFileHandlerBuilder(str(path)).with_formatter(
+@pytest.mark.parametrize(
+    ("builder_factory", "log_filename"),
+    [
+        pytest.param(
+            lambda base: FileHandlerBuilder(str(base / "callable_formatter.log")),
+            "callable_formatter.log",
+            id="file",
+        ),
+        pytest.param(
+            lambda base: RotatingFileHandlerBuilder(
+                str(base / "callable_rotating.log")
+            ),
+            "callable_rotating.log",
+            id="rotating",
+        ),
+    ],
+)
+def test_file_builders_accept_callable_formatter(
+    tmp_path: Path,
+    builder_factory: typ.Callable[
+        [Path], FileHandlerBuilder | RotatingFileHandlerBuilder
+    ],
+    log_filename: str,
+) -> None:
+    """Callable formatter support should extend to file-based builders."""
+    path = tmp_path / log_filename
+    builder = builder_factory(tmp_path).with_formatter(
         lambda record: f"callable:{record['message']}"
     )
     handler = builder.build()

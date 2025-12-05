@@ -62,6 +62,19 @@ def root_handler_count(count: int) -> None:
     assert len(logger.handler_ptrs_for_test()) == count
 
 
+def _assert_basic_config_handler_conflict(
+    handler: str, tmp_path: Path, **config_kwargs: object
+) -> None:
+    """Assert that basicConfig raises when handlers conflict with filename/stream."""
+    with (
+        closing(_make_handler(handler, tmp_path)) as h,
+        pytest.raises(
+            ValueError, match="Cannot specify `handlers` with `filename` or `stream`"
+        ),
+    ):
+        basicConfig(handlers=[h], **config_kwargs)
+
+
 @then(
     parsers.parse(
         'calling basicConfig with filename "{filename}" and stream stdout fails'
@@ -78,13 +91,7 @@ def basic_config_invalid(filename: str, tmp_path: Path) -> None:
     )
 )
 def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
-    with (
-        closing(_make_handler(handler, tmp_path)) as h,
-        pytest.raises(
-            ValueError, match="Cannot specify `handlers` with `filename` or `stream`"
-        ),
-    ):
-        basicConfig(handlers=[h], stream=sys.stdout)
+    _assert_basic_config_handler_conflict(handler, tmp_path, stream=sys.stdout)
 
 
 @then(
@@ -95,13 +102,9 @@ def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
 def basic_config_handler_filename_invalid(
     handler: str, filename: str, tmp_path: Path
 ) -> None:
-    with (
-        closing(_make_handler(handler, tmp_path)) as h,
-        pytest.raises(
-            ValueError, match="Cannot specify `handlers` with `filename` or `stream`"
-        ),
-    ):
-        basicConfig(handlers=[h], filename=str(tmp_path / filename))
+    _assert_basic_config_handler_conflict(
+        handler, tmp_path, filename=str(tmp_path / filename)
+    )
 
 
 def _make_handler(name: str, tmp_path: Path) -> FemtoStreamHandler | FemtoFileHandler:
