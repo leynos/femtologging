@@ -90,6 +90,10 @@ def basicConfig(config: BasicConfig, /) -> None: ...
 
 
 @typ.overload
+def basicConfig(config: BasicConfig, /, **kwargs: object) -> None: ...
+
+
+@typ.overload
 def basicConfig(**kwargs: object) -> None: ...
 
 
@@ -215,7 +219,7 @@ def _validate_basic_config_params(
     handlers: cabc.Iterable[FemtoHandler] | None,
 ) -> None:
     """Validate ``basicConfig`` parameters."""
-    if filename and stream:
+    if filename is not None and stream is not None:
         msg = "Cannot specify both `filename` and `stream`"
         raise ValueError(msg)
 
@@ -269,7 +273,7 @@ def _create_handler_builder(
     stream: typ.TextIO | None,
 ) -> FileHandlerBuilder | StreamHandlerBuilder:
     """Create a handler builder for ``basicConfig``."""
-    if filename:
+    if filename is not None:
         return FileHandlerBuilder(filename)
     if stream is sys.stdout:
         return StreamHandlerBuilder.stdout()

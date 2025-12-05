@@ -108,9 +108,11 @@ def basic_config_handler_filename_invalid(
 
 
 def _make_handler(name: str, tmp_path: Path) -> FemtoStreamHandler | FemtoFileHandler:
-    if name == "stream_handler":
-        return FemtoStreamHandler.stderr()
-    if name == "file_handler":
-        return FemtoFileHandler(str(tmp_path / "dummy.log"))
-    msg = f"unknown handler {name}"
-    raise ValueError(msg)
+    match name:
+        case "stream_handler":
+            return FemtoStreamHandler.stderr()
+        case "file_handler":
+            return FemtoFileHandler(str(tmp_path / "dummy.log"))
+        case _:
+            msg = f"unknown handler {name}"
+            raise ValueError(msg)
