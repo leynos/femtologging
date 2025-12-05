@@ -16,9 +16,6 @@ from .overflow_policy import OverflowPolicy
 cast = typ.cast
 TextIO = typ.TextIO
 
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
 hello = rust.hello
 FemtoLogger = rust.FemtoLogger
 get_logger = rust.get_logger
@@ -219,6 +216,10 @@ def _validate_basic_config_params(
     handlers: cabc.Iterable[FemtoHandler] | None,
 ) -> None:
     """Validate ``basicConfig`` parameters."""
+    if handlers is not None and not isinstance(handlers, cabc.Iterable):
+        msg = "`handlers` must be an iterable of FemtoHandler"
+        raise TypeError(msg)
+
     if filename is not None and stream is not None:
         msg = "Cannot specify both `filename` and `stream`"
         raise ValueError(msg)
