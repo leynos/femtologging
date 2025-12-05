@@ -6,9 +6,9 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
+from pytest_bdd import parsers, scenarios, then, when
 
-from femtologging import dictConfig, get_logger, reset_manager
+from femtologging import dictConfig, get_logger
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -16,11 +16,6 @@ if typ.TYPE_CHECKING:
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "dict_config.feature"))
-
-
-@given("the logging system is reset")
-def reset_logging() -> None:
-    reset_manager()
 
 
 @when("I configure dictConfig with a stream handler")
@@ -36,7 +31,9 @@ def configure_dict_config() -> None:
 @then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
 def log_matches_snapshot(msg: str, level: str, snapshot: SnapshotAssertion) -> None:
     logger = get_logger("root")
-    assert logger.log(level, msg) == snapshot
+    formatted = logger.log(level, msg)
+    assert formatted is not None
+    assert formatted == snapshot
 
 
 @then("calling dictConfig with incremental true raises ValueError")

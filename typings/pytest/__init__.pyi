@@ -11,7 +11,8 @@ AbstractContextManager = ctxlib.AbstractContextManager
 Callable = cabc.Callable
 
 P = ParamSpec("P")
-R = TypeVar("R", bound=BaseException)
+R = TypeVar("R")
+E = TypeVar("E", bound=BaseException)
 
 # Pytest exposes a decorator with many optional parameters. We mirror
 # the real signature here for accurate type checking even though it
@@ -25,14 +26,14 @@ def fixture(
     ids: list[str] | Callable[[Any], str] | None = ...,
     name: str | None = ...,
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]: ...
-def raises[R: BaseException](
-    exc: type[R],
+def raises[E: BaseException](
+    exc: type[E],
     match: str | Pattern[str] | None = ...,
     *,
     msg: str | None = ...,
-) -> AbstractContextManager[R]: ...
+) -> AbstractContextManager[E]: ...
 
-class mark:  # noqa: N801
+class mark:  # noqa: N801 - pytest exports lowercase marker namespace
     @staticmethod
     def parametrize(
         argnames: str | list[str],

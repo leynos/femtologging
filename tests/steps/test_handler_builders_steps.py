@@ -33,9 +33,7 @@ def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilde
     """Validate that a file builder targets rotation-specific operations."""
     if isinstance(builder, RotatingFileHandlerBuilder):
         return builder
-    _fail_rotating_builder_requirement(builder)
-    msg = "rotating builder requirement should have raised"
-    raise AssertionError(msg)
+    return _fail_rotating_builder_requirement(builder)
 
 
 def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:

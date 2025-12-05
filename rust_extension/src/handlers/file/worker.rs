@@ -160,7 +160,9 @@ where
             warn!("FemtoFileHandler flush error");
         }
         self.tracker.reset();
-        let _ = ack_tx.send(());
+        if ack_tx.send(()).is_err() {
+            warn!("FemtoFileHandler flush ack channel disconnected");
+        }
     }
 
     fn final_flush(&mut self) {

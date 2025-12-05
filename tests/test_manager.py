@@ -1,5 +1,7 @@
 """Unit tests for the logger manager helpers."""
 
+import pytest
+
 from femtologging import get_logger, reset_manager
 
 
@@ -46,9 +48,11 @@ def test_get_logger_invalid_names() -> None:
     """Invalid names should raise ValueError."""
     reset_manager()
     for name in ["", ".bad", "bad.", "a..b"]:
-        try:
+        with pytest.raises(
+            ValueError,
+            match=(
+                "logger name cannot be empty, start or end with '\\.', or "
+                "contain consecutive dots"
+            ),
+        ):
             get_logger(name)
-            msg = "expected ValueError"
-            raise AssertionError(msg)
-        except ValueError:
-            pass

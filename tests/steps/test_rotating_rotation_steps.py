@@ -17,8 +17,6 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
-    import pathlib
-
     from syrupy.assertion import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -26,12 +24,12 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "rotating_handler_rotation.feature"))
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class RotatingContext:
     """Hold rotating handler state and log file path for a scenario."""
 
     handler: FemtoRotatingFileHandler
-    path: pathlib.Path
+    path: Path
     closed: bool = False
 
 

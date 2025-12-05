@@ -58,6 +58,8 @@ def worker(thread_id: int) -> None:
     """Generate and log a random range of integers."""
     logger = get_logger("example")
     start = secrets.randbelow(1001)
+    # Use secrets for thread-safe randomness.
+    # Keep ranges 10-100 items to bound log volume.
     stop = start + secrets.randbelow(91) + 10
     for value in range(start, stop):
         logger.info(f"thread {thread_id} produced {value}")

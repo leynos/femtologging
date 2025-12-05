@@ -2,10 +2,6 @@
 //!
 //! This module wires up PyO3 classes and functions exposed to Python and
 //! re-exports Rust types used by the Python layer.
-#![expect(
-    clippy::too_many_arguments,
-    reason = "PyO3-generated wrappers add an implicit `py` argument to exposed functions"
-)]
 use pyo3::prelude::*;
 
 mod config;
@@ -88,37 +84,39 @@ fn hello() -> &'static str {
     "hello from Rust"
 }
 
-/// Get or create a [`FemtoLogger`] identified by `name`.
-///
-/// # Parameters
-///
-/// - `py`: Python GIL token for creating Python objects.
-/// - `name`: Logger name; must not be empty, start or end with '.', or contain
-///   consecutive dots.
-///
-/// # Returns
-///
-/// A reference-counted Python object wrapping the logger. Returns the existing
-/// logger when one with the same name has already been created.
-///
-/// # Errors
-///
-/// Returns [`PyValueError`](pyo3::exceptions::PyValueError) when the logger
-/// name violates the validation rules described above.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// # use pyo3::Python;
-/// Python::with_gil(|py| {
-///     let first = crate::get_logger(py, "example").unwrap();
-///     let second = crate::get_logger(py, "example").unwrap();
-///     assert!(first.as_ref(py).is(second.as_ref(py)));
-/// });
-/// ```
 mod py_api {
+    //! Python-facing helper functions that bridge to the Rust manager.
+
     use super::*;
 
+    /// Get or create a [`FemtoLogger`] identified by `name`.
+    ///
+    /// # Parameters
+    ///
+    /// - `py`: Python GIL token for creating Python objects.
+    /// - `name`: Logger name; must not be empty, start or end with '.', or
+    ///   contain consecutive dots.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted Python object wrapping the logger. Returns the
+    /// existing logger when one with the same name has already been created.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyValueError`](pyo3::exceptions::PyValueError) when the logger
+    /// name violates the validation rules described above.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use pyo3::Python;
+    /// Python::with_gil(|py| {
+    ///     let first = crate::get_logger(py, "example").unwrap();
+    ///     let second = crate::get_logger(py, "example").unwrap();
+    ///     assert!(first.as_ref(py).is(second.as_ref(py)));
+    /// });
+    /// ```
     #[pyfunction]
     pub(crate) fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
         manager_get_logger(py, name)

@@ -12,11 +12,6 @@
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
-#![expect(
-    clippy::too_many_arguments,
-    reason = "PyO3-generated wrappers add an implicit `py` argument to constructors and methods"
-)]
-
 mod config;
 pub(crate) mod policy;
 mod worker;

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import typing as typ
 
 import pytest
@@ -168,13 +167,12 @@ def test_stream_builder_accepts_callable_formatter() -> None:
 )
 def test_file_builders_accept_callable_formatter(
     tmp_path: Path,
-    builder_factory: cabc.Callable[
+    builder_factory: typ.Callable[
         [Path], FileHandlerBuilder | RotatingFileHandlerBuilder
     ],
     log_filename: str,
 ) -> None:
     """Callable formatter support should extend to file-based builders."""
-    assert isinstance(builder_factory, cabc.Callable)
     path = tmp_path / log_filename
     builder = builder_factory(tmp_path).with_formatter(
         lambda record: f"callable:{record['message']}"

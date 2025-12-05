@@ -65,11 +65,6 @@ def log_capture_context(
     )
 
 
-@given("the logging system is reset")
-def reset_logging() -> None:
-    reset_manager()
-
-
 @given("a canonical configuration example", target_fixture="config_example")
 def config_example() -> ConfigExample:
     dict_schema: dict[str, object] = {

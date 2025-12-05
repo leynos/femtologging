@@ -75,6 +75,10 @@ def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
     assert config_builder.as_dict() == snapshot
+
+
+@then("the configuration is built and initialised")
+def configuration_is_built(config_builder: ConfigBuilder) -> None:
     config_builder.build_and_init()
 
 
@@ -85,29 +89,26 @@ def set_version(config_builder: ConfigBuilder) -> None:
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
-    with pytest.raises(ValueError, match=r".*"):
+    with pytest.raises(ValueError, match="unsupported configuration version"):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
 def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(ValueError, match=msg) as excinfo:
+    with pytest.raises(ValueError, match=msg):
         config_builder.build_and_init()
-    assert msg in str(excinfo.value)
 
 
 @then(
     parsers.parse('building the configuration fails with key error containing "{msg}"')
 )
 def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(KeyError) as excinfo:
+    with pytest.raises(KeyError, match=msg):
         config_builder.build_and_init()
-    assert msg in str(excinfo.value)
 
 
 @then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
-def loggers_share_handler(first: str, second: str, hid: str) -> None:
-    del hid  # parameter required by step signature
+def loggers_share_handler(first: str, second: str, _hid: str) -> None:
     first_logger = get_logger(first)
     second_logger = get_logger(second)
     h1 = first_logger.handler_ptrs_for_test()

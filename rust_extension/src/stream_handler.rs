@@ -5,11 +5,6 @@
 //! records and flush commands over a bounded channel so the producer never
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
-#![expect(
-    clippy::too_many_arguments,
-    reason = "PyO3-generated wrappers add an implicit `py` argument to Python-facing methods"
-)]
-
 use std::{
     io::{self, Write},
     thread::{self, JoinHandle},

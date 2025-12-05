@@ -9,7 +9,6 @@ builder API remains the canonical configuration mechanism.
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import re
 import typing as typ
 from os import PathLike, fsdecode, fspath
@@ -18,16 +17,13 @@ from pathlib import Path
 from . import _femtologging_rs as rust
 from .config import dictConfig
 
-Any = typ.Any
-Mapping = cabc.Mapping
-
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
 
 
 def fileConfig(  # noqa: N802
     fname: str | bytes | PathLike[str] | PathLike[bytes],
-    defaults: Mapping[str, object] | None = None,
+    defaults: typ.Mapping[str, object] | None = None,
     *,
     disable_existing_loggers: bool = True,
     encoding: str | None = None,
@@ -53,10 +49,10 @@ def fileConfig(  # noqa: N802
 
 def _ini_to_dict_config(
     sections: list[tuple[str, list[tuple[str, str]]]],
-    defaults: Mapping[str, object] | None,
+    defaults: typ.Mapping[str, object] | None,
     *,
     disable_existing: bool,
-) -> dict[str, Any]:
+) -> dict[str, typ.Any]:
     section_map = _materialise_sections(sections)
     _reject_formatters(section_map)
     default_pool = _merge_defaults(section_map.pop(_DEFAULT_SECTION, {}), defaults)
@@ -64,7 +60,7 @@ def _ini_to_dict_config(
     handlers = _parse_handlers(section_map, default_pool)
     loggers, root = _parse_loggers(section_map)
 
-    cfg: dict[str, Any] = {
+    cfg: dict[str, typ.Any] = {
         "version": 1,
         "disable_existing_loggers": disable_existing,
         "handlers": handlers,
@@ -98,8 +94,8 @@ def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
 
 
 def _merge_defaults(
-    ini_defaults: Mapping[str, str],
-    user_defaults: Mapping[str, object] | None,
+    ini_defaults: typ.Mapping[str, str],
+    user_defaults: typ.Mapping[str, object] | None,
 ) -> dict[str, str]:
     merged: dict[str, str] = {}
     if user_defaults:
@@ -154,9 +150,9 @@ def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
 
 def _build_handler_config(
     section: dict[str, str],
-    defaults: Mapping[str, str],
-) -> dict[str, Any]:
-    cfg: dict[str, Any] = {
+    defaults: typ.Mapping[str, str],
+) -> dict[str, typ.Any]:
+    cfg: dict[str, typ.Any] = {
         "class": section["class"],
         "args": _expand_placeholders(section.get("args") or "()", defaults),
     }
@@ -169,11 +165,11 @@ def _build_handler_config(
 
 def _parse_handlers(
     sections: dict[str, dict[str, str]],
-    defaults: Mapping[str, str],
-) -> dict[str, dict[str, Any]]:
+    defaults: typ.Mapping[str, str],
+) -> dict[str, dict[str, typ.Any]]:
     handler_section = sections.get("handlers")
     handler_ids = _split_csv(handler_section.get("keys")) if handler_section else []
-    handlers: dict[str, dict[str, Any]] = {}
+    handlers: dict[str, dict[str, typ.Any]] = {}
     for hid in handler_ids:
         section = _require_section(sections, f"handler_{hid}")
         _validate_handler_options(hid, section)
@@ -188,8 +184,8 @@ def _validate_logger_options(lid: str, section: dict[str, str]) -> None:
         raise ValueError(msg)
 
 
-def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, Any]:
-    config: dict[str, Any] = {}
+def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, typ.Any]:
+    config: dict[str, typ.Any] = {}
     if section.get("level") is not None:
         config["level"] = section["level"]
     if section.get("handlers") is not None:
@@ -201,11 +197,11 @@ def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, An
 
 def _parse_loggers(
     sections: dict[str, dict[str, str]],
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+) -> tuple[dict[str, dict[str, typ.Any]], dict[str, typ.Any]]:
     logger_section = sections.get("loggers")
     logger_ids = _split_csv(logger_section.get("keys")) if logger_section else []
-    loggers: dict[str, dict[str, Any]] = {}
-    root_cfg: dict[str, Any] | None = None
+    loggers: dict[str, dict[str, typ.Any]] = {}
+    root_cfg: dict[str, typ.Any] | None = None
     for lid in logger_ids:
         section = _require_section(sections, f"logger_{lid}")
         _validate_logger_options(lid, section)
@@ -252,7 +248,7 @@ def _require_section(
     return sections[name]
 
 
-def _expand_placeholders(value: str, defaults: Mapping[str, str]) -> str:
+def _expand_placeholders(value: str, defaults: typ.Mapping[str, str]) -> str:
     if not defaults or "%(" not in value:
         return value
 

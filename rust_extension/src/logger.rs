@@ -2,10 +2,6 @@
 //!
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
-#![expect(
-    clippy::too_many_arguments,
-    reason = "PyO3-generated wrappers add an implicit `py` argument to Python-facing methods"
-)]
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;

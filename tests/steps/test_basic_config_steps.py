@@ -15,7 +15,6 @@ from femtologging import (
     FemtoStreamHandler,
     basicConfig,
     get_logger,
-    reset_manager,
 )
 
 if typ.TYPE_CHECKING:
@@ -24,11 +23,6 @@ if typ.TYPE_CHECKING:
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "basic_config.feature"))
-
-
-@given("the logging system is reset")
-def reset_logging() -> None:
-    reset_manager()
 
 
 @given("root logger has a handler")
