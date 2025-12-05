@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import errno
+import re
 import threading
 import typing as typ
 from contextlib import closing
@@ -101,8 +103,9 @@ def test_file_handler_open_failure(tmp_path: Path) -> None:
     """Creating a handler in a missing directory raises ``OSError``."""
     bad_dir = tmp_path / "does_not_exist"
     path = bad_dir / "out.log"
-    with pytest.raises(OSError, match="No such file"):
+    with pytest.raises(OSError, match=re.escape(str(path))) as excinfo:
         FemtoFileHandler(str(path))
+    assert excinfo.value.errno in {None, errno.ENOENT}
 
 
 def test_file_handler_custom_flush_interval(

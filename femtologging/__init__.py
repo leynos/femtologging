@@ -14,6 +14,7 @@ from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
 
 cast = typ.cast
+TextIO = typ.TextIO
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -171,7 +172,7 @@ def basicConfig(  # noqa: N802
         stream = (
             config.stream
             if config.stream is not None
-            else typ.cast("typ.TextIO | None", kwargs.get("stream"))
+            else typ.cast("TextIO | None", kwargs.get("stream"))
         )
         force = bool(config.force)
         handlers = (
@@ -182,7 +183,7 @@ def basicConfig(  # noqa: N802
     else:
         level = typ.cast("str | int | None", kwargs.get("level"))
         filename = typ.cast("str | None", kwargs.get("filename"))
-        stream = typ.cast("typ.TextIO | None", kwargs.get("stream"))
+        stream = typ.cast("TextIO | None", kwargs.get("stream"))
         force = bool(kwargs.get("force"))
         handlers = typ.cast(
             "cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers")

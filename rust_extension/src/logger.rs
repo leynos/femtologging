@@ -2,12 +2,11 @@
 //!
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates wrapper functions with an implicit `py` arg; Python-facing methods keep their parameters"
+)]
 
-// PyO3 wrappers inject an implicit `py` argument; allow higher argument counts
-// for the generated binding functions until upstream provides finer control.
-#![allow(clippy::too_many_arguments)]
-
-// FIXME: Track PyO3 issue for proper fix
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
@@ -144,9 +143,6 @@ pub struct FemtoLogger {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
-// PyO3-generated wrappers include an extra `py` argument; keeping the Python
-// API intact requires suppressing the argument-count lint for this block.
-#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl FemtoLogger {
     /// Create a new logger with the given name.
@@ -160,7 +156,6 @@ impl FemtoLogger {
     ///
     /// This method currently builds a simple string combining the logger's
     /// name with the level and message.
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(text_signature = "(self, level, message)")]
     pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);

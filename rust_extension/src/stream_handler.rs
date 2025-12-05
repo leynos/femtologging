@@ -5,9 +5,10 @@
 //! records and flush commands over a bounded channel so the producer never
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
-// PyO3 adds an implicit `py` argument to generated wrappers; allow higher
-// parameter counts for Python-facing methods.
-#![allow(clippy::too_many_arguments)]
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates wrapper functions with an implicit `py` arg; Python API keeps logger, level, and message parameters"
+)]
 
 use std::{
     io::{self, Write},
@@ -133,9 +134,6 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
-// PyO3 adds an implicit `py` argument to generated wrappers; keep the Python
-// API stable and silence the argument-count lint locally.
-#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl FemtoStreamHandler {
     #[new]
@@ -156,7 +154,6 @@ impl FemtoStreamHandler {
     }
 
     /// Dispatch a log record to the handler's worker thread.
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
