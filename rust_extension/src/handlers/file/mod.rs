@@ -14,7 +14,7 @@
 //! record.
 #![expect(
     clippy::too_many_arguments,
-    reason = "PyO3 generates wrapper functions with an implicit `py` arg; Python constructor requires four parameters"
+    reason = "PyO3-generated wrappers add an implicit `py` argument to constructors and methods"
 )]
 
 mod config;

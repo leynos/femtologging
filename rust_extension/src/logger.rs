@@ -4,9 +4,8 @@
 //! filtering, formatting, and asynchronous output via a background thread.
 #![expect(
     clippy::too_many_arguments,
-    reason = "PyO3 generates wrapper functions with an implicit `py` arg; Python-facing methods keep their parameters"
+    reason = "PyO3-generated wrappers add an implicit `py` argument to Python-facing methods"
 )]
-
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;

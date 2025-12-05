@@ -7,7 +7,7 @@
 //! records are written.
 #![expect(
     clippy::too_many_arguments,
-    reason = "PyO3 generates wrapper functions with an implicit `py` arg; Python API keeps logger, level, and message parameters"
+    reason = "PyO3-generated wrappers add an implicit `py` argument to Python-facing methods"
 )]
 
 use std::{

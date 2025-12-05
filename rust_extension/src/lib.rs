@@ -2,6 +2,10 @@
 //!
 //! This module wires up PyO3 classes and functions exposed to Python and
 //! re-exports Rust types used by the Python layer.
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3-generated wrappers add an implicit `py` argument to exposed functions"
+)]
 use pyo3::prelude::*;
 
 mod config;
@@ -112,10 +116,6 @@ fn hello() -> &'static str {
 ///     assert!(first.as_ref(py).is(second.as_ref(py)));
 /// });
 /// ```
-#[expect(
-    clippy::too_many_arguments,
-    reason = "PyO3-generated wrappers for these pyfunctions include an implicit `py` argument"
-)]
 mod py_api {
     use super::*;
 
