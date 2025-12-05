@@ -5,12 +5,12 @@
 //! structs. The macros reduce boilerplate in PyO3 bindings whilst ensuring
 //! uniform serialization behaviour across all builder types.
 
-use pyo3::conversion::IntoPyObject;
 use pyo3::IntoPyObjectExt;
+use pyo3::conversion::IntoPyObject;
 use pyo3::{
+    Bound, PyResult,
     prelude::*,
     types::{PyDict, PyList},
-    Bound, PyResult,
 };
 use std::collections::BTreeMap;
 

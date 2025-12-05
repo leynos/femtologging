@@ -1,11 +1,10 @@
+"""Unit tests covering ConfigBuilder and related builder utilities."""
+
 import pathlib
 
-import femtologging
 import pytest
 
-from pytest_bdd import given, when, then, scenarios, parsers
-from syrupy import SnapshotAssertion
-
+import femtologging
 from femtologging import (
     ConfigBuilder,
     FormatterBuilder,
@@ -14,105 +13,6 @@ from femtologging import (
     StreamHandlerBuilder,
     get_logger,
 )
-
-
-@given("a ConfigBuilder", target_fixture="config_builder")
-def given_config_builder() -> ConfigBuilder:
-    return ConfigBuilder()
-
-
-@when('I add formatter "fmt" with format "{level} {message}"')
-def add_formatter(config_builder: ConfigBuilder) -> None:
-    fmt = FormatterBuilder().with_format("{level} {message}")
-    config_builder.with_formatter("fmt", fmt)
-
-
-@when('I add logger "core" with level "INFO"')
-def add_logger(config_builder: ConfigBuilder) -> None:
-    logger = LoggerConfigBuilder().with_level("INFO")
-    config_builder.with_logger("core", logger)
-
-
-@when(parsers.parse('I add stream handler "{hid}" targeting "{target}"'))
-def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> None:
-    handler = (
-        StreamHandlerBuilder.stderr()
-        if target.lower() == "stderr"
-        else StreamHandlerBuilder.stdout()
-    )
-    config_builder.with_handler(hid, handler)
-
-
-@when(parsers.parse('I add logger "{name}" with handler "{handler}"'))
-def add_logger_with_handler(
-    config_builder: ConfigBuilder, name: str, handler: str
-) -> None:
-    logger = LoggerConfigBuilder().with_handlers([handler])
-    config_builder.with_logger(name, logger)
-
-
-@when(
-    parsers.parse('I add logger "{name}" with level "{level}" and handler "{handler}"')
-)
-def add_logger_with_level_and_handler(
-    config_builder: ConfigBuilder, name: str, level: str, handler: str
-) -> None:
-    logger = LoggerConfigBuilder().with_level(level).with_handlers([handler])
-    config_builder.with_logger(name, logger)
-
-
-@when(parsers.parse('I set root logger with level "{level}"'))
-def set_root(config_builder: ConfigBuilder, level: str) -> None:
-    root = LoggerConfigBuilder().with_level(level)
-    config_builder.with_root_logger(root)
-
-
-@then("the configuration matches snapshot")
-def configuration_matches_snapshot(
-    config_builder: ConfigBuilder, snapshot: SnapshotAssertion
-) -> None:
-    assert config_builder.as_dict() == snapshot
-    config_builder.build_and_init()
-
-
-@when("I set version 2")
-def set_version(config_builder: ConfigBuilder) -> None:
-    config_builder.with_version(2)
-
-
-@then("building the configuration fails")
-def build_fails(config_builder: ConfigBuilder) -> None:
-    with pytest.raises(ValueError):
-        config_builder.build_and_init()
-
-
-@then(parsers.parse('building the configuration fails with error containing "{msg}"'))
-def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(ValueError) as excinfo:
-        config_builder.build_and_init()
-    assert msg in str(excinfo.value)
-
-
-@then(
-    parsers.parse('building the configuration fails with key error containing "{msg}"')
-)
-def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
-    with pytest.raises(KeyError) as excinfo:
-        config_builder.build_and_init()
-    assert msg in str(excinfo.value)
-
-
-@then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
-def loggers_share_handler(first: str, second: str, hid: str) -> None:
-    del hid  # parameter required by step signature
-    first_logger = get_logger(first)
-    second_logger = get_logger(second)
-    h1 = first_logger.handler_ptrs_for_test()
-    h2 = second_logger.handler_ptrs_for_test()
-    assert h1[0] == h2[0], "handlers should be shared"
-
-
-scenarios("features/config_builder.feature")
 
 
 def test_duplicate_formatter_overwrites() -> None:
@@ -146,7 +46,8 @@ def test_duplicate_handler_overwrites() -> None:
 
 def test_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
     """ConfigBuilder should accept rotating file handler builders."""
-    builder = ConfigBuilder().with_disable_existing_loggers(True)
+    disable_existing = True
+    builder = ConfigBuilder().with_disable_existing_loggers(disable_existing)
     log_path = tmp_path / "rotating.log"
     rotating = (
         RotatingFileHandlerBuilder(str(log_path))
@@ -180,10 +81,11 @@ def test_duplicate_logger_overwrites() -> None:
 
 def test_logger_config_builder_optional_fields_set() -> None:
     """Test that optional fields are included when explicitly set."""
+    propagate_flag = False
     logger = (
         LoggerConfigBuilder()
         .with_level("DEBUG")
-        .with_propagate(False)
+        .with_propagate(propagate_flag)
         .with_filters(["myfilter"])
         .with_handlers(["console", "file"])
     )
@@ -209,7 +111,7 @@ def test_logger_config_builder_optional_fields_omitted() -> None:
 def test_no_root_logger_behavior() -> None:
     """Test that building without a root logger raises ValueError."""
     builder = ConfigBuilder()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="root logger configuration"):
         builder.build_and_init()
 
 
@@ -247,10 +149,11 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
     stale = get_logger("stale")
     assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
 
+    disable_existing = True
     rebuild = (
         ConfigBuilder()
         .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_disable_existing_loggers(True)
+        .with_disable_existing_loggers(disable_existing)
     )
     rebuild.build_and_init()
 
@@ -278,10 +181,11 @@ def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
     }
 
     child_name = f"{ancestors[-1]}.child"
+    disable_existing = True
     rebuild = (
         make_info_stderr_builder()
         .with_logger(child_name, LoggerConfigBuilder().with_handlers(["h"]))
-        .with_disable_existing_loggers(True)
+        .with_disable_existing_loggers(disable_existing)
     )
     rebuild.build_and_init()
 
@@ -306,7 +210,7 @@ def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
 def test_root_logger_last_assignment_wins(
     first: str, second: str, expected: str
 ) -> None:
-    """Verify last-write-wins semantics when assigning the root logger multiple times."""
+    """Verify last-write-wins semantics when assigning the root logger."""
     builder = ConfigBuilder()
     builder.with_root_logger(LoggerConfigBuilder().with_level(first))
     builder.with_root_logger(LoggerConfigBuilder().with_level(second))

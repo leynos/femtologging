@@ -11,16 +11,16 @@ use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use super::common::PyOverflowPolicy;
 use super::{
+    FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{HandlerConfig, OverflowPolicy},
     rotating::{FemtoRotatingFileHandler, RotationConfig},
-    FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
 use crate::formatter::{DefaultFormatter, FemtoFormatter};
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
-use crate::macros::{dict_into_py, AsPyDict};
+use crate::macros::{AsPyDict, dict_into_py};
 
 /// Builder for constructing [`FemtoRotatingFileHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]

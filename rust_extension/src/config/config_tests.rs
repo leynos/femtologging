@@ -231,10 +231,12 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
             .with_root_logger(root)
             .with_logger("core", LoggerConfigBuilder::new().with_filters(["missing"]));
         assert!(bad.build_and_init().is_err());
-        assert!(logger
-            .borrow(py)
-            .log(FemtoLevel::Error, "still drop")
-            .is_none());
+        assert!(
+            logger
+                .borrow(py)
+                .log(FemtoLevel::Error, "still drop")
+                .is_none()
+        );
     });
 }
 

@@ -8,8 +8,8 @@ use crate::log_record::FemtoLogRecord;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};

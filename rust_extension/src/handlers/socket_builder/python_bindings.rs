@@ -2,7 +2,7 @@
 
 use pyo3::{prelude::*, types::PyDict};
 
-use crate::macros::{dict_into_py, AsPyDict};
+use crate::macros::{AsPyDict, dict_into_py};
 use crate::socket_handler::FemtoSocketHandler;
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};

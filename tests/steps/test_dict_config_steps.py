@@ -1,0 +1,62 @@
+"""BDD steps for dictConfig feature scenarios."""
+
+from __future__ import annotations
+
+import typing as typ
+from pathlib import Path
+
+import pytest
+from pytest_bdd import parsers, scenarios, then, when
+
+from femtologging import dictConfig, get_logger
+
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
+
+FEATURES = Path(__file__).resolve().parents[1] / "features"
+
+scenarios(str(FEATURES / "dict_config.feature"))
+
+
+@when("I configure dictConfig with a stream handler")
+def configure_dict_config() -> None:
+    cfg = {
+        "version": 1,
+        "handlers": {"h": {"class": "femtologging.StreamHandler"}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    dictConfig(cfg)
+
+
+@then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
+def log_matches_snapshot(msg: str, level: str, snapshot: SnapshotAssertion) -> None:
+    logger = get_logger("root")
+    formatted = logger.log(level, msg)
+    assert formatted is not None
+    assert formatted == snapshot
+
+
+@then("calling dictConfig with incremental true raises ValueError")
+def dict_config_incremental_fails() -> None:
+    with pytest.raises(ValueError, match="incremental configuration is not supported"):
+        dictConfig({"version": 1, "incremental": True, "root": {}})
+
+
+@when(
+    parsers.parse('I configure dictConfig with handler class "{cls}"'),
+    target_fixture="config_error",
+)
+def configure_with_handler_class(cls: str) -> ValueError:
+    cfg = {
+        "version": 1,
+        "handlers": {"h": {"class": cls}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    with pytest.raises(ValueError, match="handler") as exc:
+        dictConfig(cfg)
+    return exc.value
+
+
+@then("dictConfig raises ValueError")
+def dict_config_raises_value_error(config_error: ValueError) -> None:
+    assert isinstance(config_error, ValueError)

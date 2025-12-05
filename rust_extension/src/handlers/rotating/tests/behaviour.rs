@@ -5,7 +5,7 @@ use crate::formatter::DefaultFormatter;
 use crate::handlers::file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig};
 use crate::handlers::rotating::strategy::RotationOutcome;
 use crate::handlers::rotating::{
-    force_fresh_failure_once_for_test, FemtoRotatingFileHandler, RotationConfig,
+    FemtoRotatingFileHandler, RotationConfig, force_fresh_failure_once_for_test,
 };
 use crate::log_record::FemtoLogRecord;
 use rstest::rstest;

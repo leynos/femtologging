@@ -50,9 +50,9 @@ pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
 pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.
 pub use handlers::{
-    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
     FemtoRotatingFileHandler, FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError,
     HandlerIOError, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
@@ -84,59 +84,67 @@ fn hello() -> &'static str {
     "hello from Rust"
 }
 
-/// Get or create a [`FemtoLogger`] identified by `name`.
-///
-/// # Parameters
-///
-/// - `py`: Python GIL token for creating Python objects.
-/// - `name`: Logger name; must not be empty, start or end with '.', or contain
-///   consecutive dots.
-///
-/// # Returns
-///
-/// A reference-counted Python object wrapping the logger. Returns the existing
-/// logger when one with the same name has already been created.
-///
-/// # Errors
-///
-/// Returns [`PyValueError`](pyo3::exceptions::PyValueError) when the logger
-/// name violates the validation rules described above.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// # use pyo3::Python;
-/// Python::with_gil(|py| {
-///     let first = crate::get_logger(py, "example").unwrap();
-///     let second = crate::get_logger(py, "example").unwrap();
-///     assert!(first.as_ref(py).is(second.as_ref(py)));
-/// });
-/// ```
-#[pyfunction]
-fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
-    manager_get_logger(py, name)
+mod py_api {
+    //! Python-facing helper functions that bridge to the Rust manager.
+
+    use super::*;
+
+    /// Get or create a [`FemtoLogger`] identified by `name`.
+    ///
+    /// # Parameters
+    ///
+    /// - `py`: Python GIL token for creating Python objects.
+    /// - `name`: Logger name; must not be empty, start or end with '.', or
+    ///   contain consecutive dots.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted Python object wrapping the logger. Returns the
+    /// existing logger when one with the same name has already been created.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyValueError`](pyo3::exceptions::PyValueError) when the logger
+    /// name violates the validation rules described above.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use pyo3::Python;
+    /// Python::with_gil(|py| {
+    ///     let first = crate::get_logger(py, "example").unwrap();
+    ///     let second = crate::get_logger(py, "example").unwrap();
+    ///     assert!(first.as_ref(py).is(second.as_ref(py)));
+    /// });
+    /// ```
+    #[pyfunction]
+    pub(crate) fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+        manager_get_logger(py, name)
+    }
+
+    /// Reset the global logging manager state, clearing all registered loggers and
+    /// handlers.
+    ///
+    /// Intended for tests; not thread-safe.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use pyo3::Python;
+    /// Python::with_gil(|py| {
+    ///     let before = crate::get_logger(py, "example").unwrap();
+    ///     crate::reset_manager_py();
+    ///     let after = crate::get_logger(py, "example").unwrap();
+    ///     assert!(!before.as_ref(py).is(after.as_ref(py)));
+    /// });
+    /// ```
+    #[pyfunction]
+    pub(crate) fn reset_manager_py() {
+        reset_manager();
+    }
 }
 
-/// Reset the global logging manager state, clearing all registered loggers and
-/// handlers.
-///
-/// Intended for tests; not thread-safe.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// # use pyo3::Python;
-/// Python::with_gil(|py| {
-///     let before = crate::get_logger(py, "example").unwrap();
-///     crate::reset_manager_py();
-///     let after = crate::get_logger(py, "example").unwrap();
-///     assert!(!before.as_ref(py).is(after.as_ref(py)));
-/// });
-/// ```
-#[pyfunction]
-fn reset_manager_py() {
-    reset_manager();
-}
+use py_api::{get_logger, reset_manager_py};
 
 /// Register Python-only builders and errors with the module.
 ///
@@ -247,8 +255,8 @@ mod tests {
     use super::*;
     use crate::handlers::rotating::ROTATION_VALIDATION_MSG;
     use pyo3::{
-        types::{PyModule, PyType},
         Python,
+        types::{PyModule, PyType},
     };
 
     #[test]

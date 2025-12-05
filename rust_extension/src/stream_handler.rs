@@ -5,14 +5,13 @@
 //! records and flush commands over a bounded channel so the producer never
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
-
 use std::{
     io::{self, Write},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use log::warn;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
@@ -22,7 +21,7 @@ use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
-    rate_limited_warner::{RateLimitedWarner, DEFAULT_WARN_INTERVAL},
+    rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -73,6 +72,50 @@ impl HandlerConfig {
 enum StreamCommand {
     Record(FemtoLogRecord),
     Flush(Sender<()>),
+}
+
+fn flush_with_warning<W: Write>(writer: &mut W) {
+    if writer.flush().is_err() {
+        warn!("FemtoStreamHandler flush error");
+    }
+}
+
+fn handle_record_command<W, F>(writer: &mut W, formatter: &F, record: FemtoLogRecord)
+where
+    W: Write,
+    F: FemtoFormatter,
+{
+    let msg = formatter.format(&record);
+    if writeln!(writer, "{msg}")
+        .and_then(|_| writer.flush())
+        .is_err()
+    {
+        warn!("FemtoStreamHandler write error");
+    }
+}
+
+fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<()>) {
+    flush_with_warning(writer);
+    let _ = ack.send(());
+}
+
+fn run_stream_worker<W, F>(
+    rx: Receiver<StreamCommand>,
+    mut writer: W,
+    formatter: F,
+    done_tx: Sender<()>,
+) where
+    W: Write,
+    F: FemtoFormatter,
+{
+    for cmd in rx {
+        match cmd {
+            StreamCommand::Record(record) => handle_record_command(&mut writer, &formatter, record),
+            StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
+        }
+    }
+    flush_with_warning(&mut writer);
+    let _ = done_tx.send(());
 }
 
 #[pyclass]
@@ -207,33 +250,7 @@ impl FemtoStreamHandler {
     {
         let (tx, rx) = bounded(config.capacity);
         let (done_tx, done_rx) = bounded(1);
-        let handle = thread::spawn(move || {
-            let mut writer = writer;
-            let formatter = formatter;
-            for cmd in rx {
-                match cmd {
-                    StreamCommand::Record(record) => {
-                        let msg = formatter.format(&record);
-                        if writeln!(writer, "{msg}")
-                            .and_then(|_| writer.flush())
-                            .is_err()
-                        {
-                            warn!("FemtoStreamHandler write error");
-                        }
-                    }
-                    StreamCommand::Flush(ack) => {
-                        if writer.flush().is_err() {
-                            warn!("FemtoStreamHandler flush error");
-                        }
-                        let _ = ack.send(());
-                    }
-                }
-            }
-            if writer.flush().is_err() {
-                warn!("FemtoStreamHandler flush error");
-            }
-            let _ = done_tx.send(());
-        });
+        let handle = thread::spawn(move || run_stream_worker(rx, writer, formatter, done_tx));
 
         Self {
             tx: Some(tx),

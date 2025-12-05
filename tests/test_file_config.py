@@ -1,16 +1,15 @@
-"""Behaviour-driven tests for femtologging.fileConfig."""
+"""Tests for femtologging.fileConfig."""
 
 from __future__ import annotations
 
+import time
+import typing as typ
 from os import fsencode
 from pathlib import Path
-import time
+
+import pytest
 
 from femtologging import fileConfig, get_logger, reset_manager
-import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
-
-scenarios("features/file_config.feature")
 
 
 def _write_file_handler_ini(config_path: Path, log_path: Path) -> None:
@@ -32,43 +31,12 @@ def _wait_for_log_line(path: Path, expected: str, timeout: float = 1.5) -> str:
             if expected in contents:
                 return contents
         time.sleep(0.01)
-    pytest.fail(f"log file {path} not written in time")
-
-
-@given("the logging system is reset")
-def given_logging_reset() -> None:
-    reset_manager()
-
-
-@when(parsers.parse('I configure fileConfig from "{config_path}"'))
-def when_file_config(config_path: str) -> None:
-    fileConfig(Path(config_path))
-
-
-@when(
-    parsers.parse('I attempt to configure fileConfig from "{config_path}"'),
-    target_fixture="config_error",
-)
-def when_file_config_fails(config_path: str) -> BaseException:
-    with pytest.raises(ValueError) as err:
-        fileConfig(Path(config_path))
-    return err.value
-
-
-@then(parsers.parse('logging "{message}" at "{level}" from root matches snapshot'))
-def then_log_matches_snapshot(message: str, level: str, snapshot) -> None:
-    logger = get_logger("root")
-    assert logger.log(level, message) == snapshot
-
-
-@then("fileConfig raises ValueError")
-def then_file_config_raises(config_error: ValueError) -> None:
-    assert isinstance(config_error, ValueError)
+    msg = f"log file {path} not written in time"
+    raise TimeoutError(msg)
 
 
 def test_file_config_expands_defaults(tmp_path: Path) -> None:
     """INIs honour defaults passed to fileConfig for placeholder substitution."""
-
     reset_manager()
     ini_path = Path("tests/data/fileconfig_defaults.ini")
     defaults = {"logdir": str(tmp_path)}
@@ -81,6 +49,7 @@ def test_file_config_expands_defaults(tmp_path: Path) -> None:
 
 
 def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
+    """Handler level specification should be rejected by fileConfig."""
     reset_manager()
     ini = tmp_path / "bad.ini"
     ini.write_text(
@@ -96,12 +65,15 @@ def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "path_builder",
     [
-        pytest.param(lambda path: str(path), id="str"),
+        pytest.param(str, id="str"),
         pytest.param(lambda path: path, id="path"),
         pytest.param(lambda path: fsencode(str(path)), id="bytes"),
     ],
 )
-def test_file_config_accepts_common_path_types(tmp_path: Path, path_builder) -> None:
+def test_file_config_accepts_common_path_types(
+    tmp_path: Path, path_builder: typ.Callable[[Path], str | Path | bytes]
+) -> None:
+    """FileConfig accepts str, Path, and bytes path inputs."""
     reset_manager()
     ini_path = tmp_path / "path_types.ini"
     log_path = tmp_path / "path_types.log"

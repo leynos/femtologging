@@ -10,7 +10,7 @@ use log::Level;
 use serial_test::serial;
 use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Barrier, Mutex};
+use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -215,9 +215,11 @@ fn build_from_worker_wires_handler_components() {
     .expect("send");
     drop(tx);
 
-    assert!(done_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .is_ok());
+    assert!(
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok()
+    );
     handle.join().expect("worker thread");
 
     assert_eq!(buffer.contents(), "core [INFO] test\n");

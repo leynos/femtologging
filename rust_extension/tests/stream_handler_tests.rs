@@ -1,3 +1,5 @@
+//! Behavioural tests for the stream handler and its worker thread lifecycle.
+
 use std::io::{self, Write};
 use std::sync::Barrier;
 use std::thread;
@@ -238,9 +240,11 @@ fn stream_handler_reports_dropped_records() {
         .into_iter()
         .filter(|r| r.level() == log::Level::Warn)
         .collect();
-    assert!(warnings
-        .iter()
-        .any(|r| r.args().to_string().contains("1 log records dropped")));
+    assert!(
+        warnings
+            .iter()
+            .any(|r| r.args().to_string().contains("1 log records dropped"))
+    );
 }
 
 #[rstest]

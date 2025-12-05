@@ -2,7 +2,7 @@
 //! Integration test for name-based filter application via ConfigBuilder.
 
 use _femtologging_rs::{
-    manager, ConfigBuilder, FemtoLevel, LoggerConfigBuilder, NameFilterBuilder,
+    ConfigBuilder, FemtoLevel, LoggerConfigBuilder, NameFilterBuilder, manager,
 };
 use pyo3::Python;
 use rstest::rstest;

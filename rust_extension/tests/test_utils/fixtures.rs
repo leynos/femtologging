@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use _femtologging_rs::{
-    rate_limited_warner::RateLimitedWarner, DefaultFormatter, FemtoStreamHandler,
-    StreamHandlerConfig,
+    DefaultFormatter, FemtoStreamHandler, StreamHandlerConfig,
+    rate_limited_warner::RateLimitedWarner,
 };
 use rstest::fixture;
 

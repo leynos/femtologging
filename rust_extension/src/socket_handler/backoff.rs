@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use super::config::BackoffPolicy;
 
@@ -30,22 +30,22 @@ impl BackoffState {
     /// Record a successful write event.
     pub fn record_success(&mut self, now: Instant) {
         self.last_success = Some(now);
-        if let Some(start) = self.failure_since {
-            if now.duration_since(start) >= self.policy.reset_after {
-                self.current = self.policy.base;
-                self.failure_since = None;
-            }
+        if let Some(start) = self.failure_since
+            && now.duration_since(start) >= self.policy.reset_after
+        {
+            self.current = self.policy.base;
+            self.failure_since = None;
         }
     }
 
     /// Reset the backoff window after a sustained period without failures.
     pub fn reset_after_idle(&mut self, now: Instant) {
-        if let Some(success) = self.last_success {
-            if now.duration_since(success) >= self.policy.reset_after {
-                self.current = self.policy.base;
-                self.failure_since = None;
-                self.last_success = None;
-            }
+        if let Some(success) = self.last_success
+            && now.duration_since(success) >= self.policy.reset_after
+        {
+            self.current = self.policy.base;
+            self.failure_since = None;
+            self.last_success = None;
         }
     }
 

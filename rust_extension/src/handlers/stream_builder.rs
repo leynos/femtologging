@@ -15,13 +15,13 @@ use std::{
 use pyo3::prelude::*;
 
 use super::{
-    common::{CommonBuilder, FormatterConfig, IntoFormatterConfig},
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    common::{CommonBuilder, FormatterConfig, IntoFormatterConfig},
 };
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
-use crate::macros::{dict_into_py, AsPyDict};
+use crate::macros::{AsPyDict, dict_into_py};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     stream_handler::FemtoStreamHandler,
@@ -228,7 +228,7 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
-                )))
+                )));
             }
         };
         Ok(handler)

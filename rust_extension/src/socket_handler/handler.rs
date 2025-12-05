@@ -14,9 +14,9 @@ use crate::{
 };
 
 use super::{
-    config::SocketHandlerConfig,
-    worker::{enqueue_record, flush_queue, spawn_worker, SocketCommand},
     SocketTransport,
+    config::SocketHandlerConfig,
+    worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
 };
 
 #[cfg_attr(feature = "python", pyclass)]

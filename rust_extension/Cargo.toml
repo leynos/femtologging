@@ -1,7 +1,7 @@
 [package]
 name = "femtologging_rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Payton McIntosh <pmcintosh@df12.net>"]
 
 [lib]

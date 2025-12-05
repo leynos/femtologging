@@ -173,8 +173,8 @@ fn removing_unknown_filter_returns_false() {
 #[test]
 fn drop_counter_increments_on_queue_overflow() {
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
     };
 
     struct BlockingHandler {
