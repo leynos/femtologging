@@ -2,10 +2,6 @@
 //!
 //! This module wires up PyO3 classes and functions exposed to Python and
 //! re-exports Rust types used by the Python layer.
-#![expect(
-    clippy::too_many_arguments,
-    reason = "PyO3-generated wrappers include an implicit `py` argument; Python APIs keep their required parameters"
-)]
 use pyo3::prelude::*;
 
 mod config;
@@ -116,31 +112,41 @@ fn hello() -> &'static str {
 ///     assert!(first.as_ref(py).is(second.as_ref(py)));
 /// });
 /// ```
-#[pyfunction]
-fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
-    manager_get_logger(py, name)
+#[expect(
+    clippy::too_many_arguments,
+    reason = "PyO3-generated wrappers for these pyfunctions include an implicit `py` argument"
+)]
+mod py_api {
+    use super::*;
+
+    #[pyfunction]
+    pub(crate) fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+        manager_get_logger(py, name)
+    }
+
+    /// Reset the global logging manager state, clearing all registered loggers and
+    /// handlers.
+    ///
+    /// Intended for tests; not thread-safe.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use pyo3::Python;
+    /// Python::with_gil(|py| {
+    ///     let before = crate::get_logger(py, "example").unwrap();
+    ///     crate::reset_manager_py();
+    ///     let after = crate::get_logger(py, "example").unwrap();
+    ///     assert!(!before.as_ref(py).is(after.as_ref(py)));
+    /// });
+    /// ```
+    #[pyfunction]
+    pub(crate) fn reset_manager_py() {
+        reset_manager();
+    }
 }
 
-/// Reset the global logging manager state, clearing all registered loggers and
-/// handlers.
-///
-/// Intended for tests; not thread-safe.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// # use pyo3::Python;
-/// Python::with_gil(|py| {
-///     let before = crate::get_logger(py, "example").unwrap();
-///     crate::reset_manager_py();
-///     let after = crate::get_logger(py, "example").unwrap();
-///     assert!(!before.as_ref(py).is(after.as_ref(py)));
-/// });
-/// ```
-#[pyfunction]
-fn reset_manager_py() {
-    reset_manager();
-}
+use py_api::{get_logger, reset_manager_py};
 
 /// Register Python-only builders and errors with the module.
 ///
