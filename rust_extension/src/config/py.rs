@@ -20,7 +20,7 @@ impl From<ConfigError> for PyErr {
             ConfigError::UnknownIds(ids) => {
                 use pyo3::types::PyTuple;
                 Python::with_gil(|py| match PyTuple::new(py, ids) {
-                    Ok(tup) => PyErr::new::<PyKeyError, _>(tup),
+                    Ok(tup) => PyErr::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
                     Err(cause) => {
                         let key_err = PyErr::new::<PyKeyError, _>("unknown handler identifiers");
                         key_err.set_cause(py, Some(cause));

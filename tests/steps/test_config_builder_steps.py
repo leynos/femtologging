@@ -108,7 +108,8 @@ def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
 
 
 @then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
-def loggers_share_handler(first: str, second: str, _hid: str) -> None:
+def loggers_share_handler(first: str, second: str, hid: str) -> None:
+    _ = hid  # step parameter required by signature
     first_logger = get_logger(first)
     second_logger = get_logger(second)
     h1 = first_logger.handler_ptrs_for_test()
