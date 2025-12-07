@@ -25,12 +25,9 @@ def configure_dict_config() -> None:
 
 
 @then("calling dictConfig with incremental true raises ValueError")
-def dict_config_incremental_fails() -> ValueError:
-    with pytest.raises(
-        ValueError, match="incremental configuration is not supported"
-    ) as exc:
+def dict_config_incremental_fails() -> None:
+    with pytest.raises(ValueError, match="incremental configuration is not supported"):
         dictConfig({"version": 1, "incremental": True, "root": {}})
-    return exc.value
 
 
 @when(

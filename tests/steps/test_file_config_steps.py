@@ -31,4 +31,6 @@ def when_file_config_fails(config_path: str) -> ValueError:
 
 @then("fileConfig raises ValueError")
 def then_file_config_raises(config_error: ValueError) -> None:
-    assert "missing class" in str(config_error)
+    # The @when step already validated the error message via pytest.raises(match=...).
+    # This step confirms the fixture captured an exception for BDD completeness.
+    assert config_error is not None
