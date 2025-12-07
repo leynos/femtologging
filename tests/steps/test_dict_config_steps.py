@@ -40,7 +40,10 @@ def configure_with_handler_class(cls: str) -> ValueError:
         "handlers": {"h": {"class": cls}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    with pytest.raises(ValueError, match="handler") as exc:
+    with pytest.raises(
+        ValueError,
+        match=r"(handler.*class)|(unsupported .*handler)|(failed to construct handler)",
+    ) as exc:
         dictConfig(cfg)
     return exc.value
 

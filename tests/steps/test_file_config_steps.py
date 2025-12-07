@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import typing as typ
 from pathlib import Path
 
 import pytest
 from pytest_bdd import parsers, scenarios, then, when
 
-from femtologging import fileConfig, get_logger
-
-if typ.TYPE_CHECKING:
-    from syrupy.assertion import SnapshotAssertion
+from femtologging import fileConfig
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -31,19 +27,6 @@ def when_file_config_fails(config_path: str) -> ValueError:
     with pytest.raises(ValueError, match="missing class") as err:
         fileConfig(Path(config_path))
     return err.value
-
-
-@then(parsers.parse('logging "{message}" at "{level}" from root matches snapshot'))
-def then_log_matches_snapshot(
-    message: str, level: str, snapshot: SnapshotAssertion
-) -> None:
-    logger = get_logger("root")
-    formatted = logger.log(level, message)
-    if level.upper() == "DEBUG":
-        assert formatted is None
-    else:
-        assert formatted is not None
-        assert formatted == snapshot
 
 
 @then("fileConfig raises ValueError")
