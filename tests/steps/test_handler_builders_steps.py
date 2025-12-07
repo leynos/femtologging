@@ -67,6 +67,9 @@ def given_dictconfig_rotating_file_builder(
     tmp_path: Path,
 ) -> RotatingFileHandlerBuilder:
     path = tmp_path / "test.log"
+    # This uses the dictConfig conversion path to mirror Python's logging schema;
+    # the helper is internal but is the only hook that returns a builder without
+    # applying global configuration.
     builder = config_module._build_handler_from_dict(
         "h",
         {

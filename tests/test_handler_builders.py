@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing as typ
+from pathlib import Path
 
 import pytest
 
@@ -13,14 +14,12 @@ from femtologging import (
     StreamHandlerBuilder,
 )
 
-if typ.TYPE_CHECKING:
-    from pathlib import Path
-
 
 @pytest.mark.parametrize("max_bytes", [-1, -100, -999999])
 def test_with_max_bytes_negative_raises(tmp_path: Path, max_bytes: int) -> None:
     """Negative max_bytes values must be rejected."""
-    builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
+    path = Path(tmp_path)
+    builder = RotatingFileHandlerBuilder(str(path / "test.log"))
 
     with pytest.raises(ValueError, match="max_bytes"):
         builder.with_max_bytes(max_bytes)

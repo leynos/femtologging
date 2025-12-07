@@ -17,6 +17,8 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from syrupy.assertion import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -36,7 +38,7 @@ class RotatingContext:
 @pytest.fixture
 def rotating_context_factory(
     tmp_path: Path,
-) -> typ.Iterator[typ.Callable[[int, int], RotatingContext]]:
+) -> cabc.Iterator[cabc.Callable[[int, int], RotatingContext]]:
     contexts: list[RotatingContext] = []
 
     def _build(max_bytes: int, backup_count: int) -> RotatingContext:
@@ -81,7 +83,7 @@ def force_rotating_failure(
     target_fixture="rotating_ctx",
 )
 def given_rotating_handler(
-    rotating_context_factory: typ.Callable[[int, int], RotatingContext],
+    rotating_context_factory: cabc.Callable[[int, int], RotatingContext],
     max_bytes: int,
     backup_count: int,
 ) -> RotatingContext:
@@ -96,10 +98,10 @@ def given_rotating_handler(
     target_fixture="rotating_ctx",
 )
 def given_rotating_handler_forcing_reopen_failure(
-    rotating_context_factory: typ.Callable[[int, int], RotatingContext],
+    rotating_context_factory: cabc.Callable[[int, int], RotatingContext],
     max_bytes: int,
     backup_count: int,
-    force_rotating_failure: typ.Callable[[int, str], None],
+    force_rotating_failure: cabc.Callable[[int, str], None],
 ) -> RotatingContext:
     force_rotating_failure(1, "python scenario")
     return rotating_context_factory(max_bytes, backup_count)

@@ -59,4 +59,4 @@ def configure_with_handler_class(cls: str) -> ValueError:
 
 @then("dictConfig raises ValueError")
 def dict_config_raises_value_error(config_error: ValueError) -> None:
-    assert isinstance(config_error, ValueError)
+    assert config_error  # fixture supplies the ValueError instance

@@ -12,7 +12,6 @@ Callable = cabc.Callable
 
 P = ParamSpec("P")
 R = TypeVar("R")
-E = TypeVar("E", bound=BaseException)
 
 # Pytest exposes a decorator with many optional parameters. We mirror
 # the real signature here for accurate type checking even though it

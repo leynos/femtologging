@@ -1,10 +1,15 @@
 """BDD steps for the ConfigBuilder Gherkin scenarios."""
 
+from __future__ import annotations
+
+import typing as typ
 from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
-from syrupy import SnapshotAssertion
+
+if typ.TYPE_CHECKING:
+    from syrupy import SnapshotAssertion
 
 from femtologging import (
     ConfigBuilder,

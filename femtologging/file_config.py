@@ -89,6 +89,7 @@ def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
     if not fmt_section:
         return
     if _split_csv(fmt_section.get("keys")):
+        # TRY003/EM101: keep message in a variable for lint compliance.
         msg = "formatters are not supported"
         raise ValueError(msg)
 

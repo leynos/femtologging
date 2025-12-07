@@ -156,8 +156,8 @@ where
     }
 
     fn handle_flush(&mut self, ack_tx: &Sender<()>) {
-        if self.writer.flush().is_err() {
-            warn!("FemtoFileHandler flush error");
+        if let Err(err) = self.writer.flush() {
+            warn!("FemtoFileHandler flush error: {err}");
         }
         self.tracker.reset();
         if ack_tx.send(()).is_err() {
@@ -166,8 +166,8 @@ where
     }
 
     fn final_flush(&mut self) {
-        if self.writer.flush().is_err() {
-            warn!("FemtoFileHandler flush error");
+        if let Err(err) = self.writer.flush() {
+            warn!("FemtoFileHandler final flush error: {err}");
         }
     }
 }
