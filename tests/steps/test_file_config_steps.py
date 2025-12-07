@@ -31,4 +31,4 @@ def when_file_config_fails(config_path: str) -> ValueError:
 
 @then("fileConfig raises ValueError")
 def then_file_config_raises(config_error: ValueError) -> None:
-    assert isinstance(config_error, ValueError)
+    assert "missing class" in str(config_error)

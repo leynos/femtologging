@@ -21,7 +21,7 @@ def configure_dict_config() -> None:
         "handlers": {"h": {"class": "femtologging.StreamHandler"}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    return dictConfig(cfg)
+    dictConfig(cfg)
 
 
 @then("calling dictConfig with incremental true raises ValueError")
