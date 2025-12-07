@@ -21,13 +21,16 @@ def configure_dict_config() -> None:
         "handlers": {"h": {"class": "femtologging.StreamHandler"}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    dictConfig(cfg)
+    return dictConfig(cfg)
 
 
 @then("calling dictConfig with incremental true raises ValueError")
-def dict_config_incremental_fails() -> None:
-    with pytest.raises(ValueError, match="incremental configuration is not supported"):
+def dict_config_incremental_fails() -> ValueError:
+    with pytest.raises(
+        ValueError, match="incremental configuration is not supported"
+    ) as exc:
         dictConfig({"version": 1, "incremental": True, "root": {}})
+    return exc.value
 
 
 @when(
@@ -42,7 +45,7 @@ def configure_with_handler_class(cls: str) -> ValueError:
     }
     with pytest.raises(
         ValueError,
-        match=r"(handler.*class)|(unsupported .*handler)|(failed to construct handler)",
+        match=r"handler.*class|unsupported .*handler|failed to construct handler",
     ) as exc:
         dictConfig(cfg)
     return exc.value
@@ -50,4 +53,6 @@ def configure_with_handler_class(cls: str) -> ValueError:
 
 @then("dictConfig raises ValueError")
 def dict_config_raises_value_error(config_error: ValueError) -> None:
-    assert config_error  # fixture supplies the ValueError instance
+    assert config_error, (
+        "config_error fixture did not capture ValueError from dictConfig"
+    )
