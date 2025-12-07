@@ -1,4 +1,4 @@
-"""Behaviour-driven tests for FileHandlerBuilder and StreamHandlerBuilder."""
+"""Behaviour-driven tests for handler builders (file, rotating, stream, socket)."""
 
 from __future__ import annotations
 
@@ -29,11 +29,18 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "handler_builders.feature"))
 
 
+def _normalise_builder_path(data: dict[str, object]) -> dict[str, object]:
+    """Return builder dict with path normalised to basename for snapshots."""
+    path_value = str(data["path"])
+    data["path"] = Path(path_value).name
+    return data
+
+
 def _require_rotating_builder(builder: FileBuilder) -> RotatingFileHandlerBuilder:
     """Validate that a file builder targets rotation-specific operations."""
-    if isinstance(builder, RotatingFileHandlerBuilder):
-        return builder
-    return _fail_rotating_builder_requirement(builder)
+    if not isinstance(builder, RotatingFileHandlerBuilder):
+        _fail_rotating_builder_requirement(builder)
+    return builder
 
 
 def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
@@ -213,9 +220,7 @@ def when_set_stream_formatter(
 def then_file_builder_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    data = file_builder.as_dict()
-    path_value = str(data["path"])
-    data["path"] = Path(path_value).name
+    data = _normalise_builder_path(file_builder.as_dict())
     assert data == snapshot, "file builder dict must match snapshot"
     handler = file_builder.build()
     handler.close()
@@ -226,9 +231,7 @@ def then_rotating_file_builder_snapshot(
     file_builder: FileBuilder, snapshot: SnapshotAssertion
 ) -> None:
     rotating = _require_rotating_builder(file_builder)
-    data = rotating.as_dict()
-    path_value = str(data["path"])
-    data["path"] = Path(path_value).name
+    data = _normalise_builder_path(rotating.as_dict())
     assert data == snapshot, "rotating file builder dict must match snapshot"
     handler = rotating.build()
     handler.close()
@@ -238,9 +241,7 @@ def then_rotating_file_builder_snapshot(
 def then_file_builder_timeout_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    data = file_builder.as_dict()
-    path_value = str(data["path"])
-    data["path"] = Path(path_value).name
+    data = _normalise_builder_path(file_builder.as_dict())
     assert data["overflow_policy"] == "timeout", "must record timeout policy"
     assert data["timeout_ms"] == 500, "must record configured timeout"
     assert data == snapshot, "snapshot must include timeout fields"
@@ -320,9 +321,8 @@ def then_stream_builder_fails(stream_builder: StreamHandlerBuilder) -> None:
 def then_socket_builder_fails(
     socket_builder: SocketHandlerBuilder, message: str
 ) -> None:
-    with pytest.raises(HandlerConfigError) as exc:
+    with pytest.raises(HandlerConfigError, match=re.escape(message)):
         socket_builder.build()
-    assert message in str(exc.value)
 
 
 @then(parsers.parse("setting stream flush timeout {timeout:d} fails"))

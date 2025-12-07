@@ -3,22 +3,13 @@
 from __future__ import annotations
 
 import sys
-import typing as typ
 from contextlib import closing
 from pathlib import Path
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from femtologging import (
-    FemtoFileHandler,
-    FemtoStreamHandler,
-    basicConfig,
-    get_logger,
-)
-
-if typ.TYPE_CHECKING:
-    from syrupy.assertion import SnapshotAssertion
+from femtologging import FemtoFileHandler, FemtoStreamHandler, basicConfig, get_logger
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -39,15 +30,6 @@ def root_has_handler() -> None:
 )
 def call_basic_config(level: str, force: str | None) -> None:
     basicConfig(level=level, force=force is not None)
-
-
-@then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
-def log_matches_snapshot(msg: str, level: str, snapshot: SnapshotAssertion) -> None:
-    logger = get_logger("root")
-    if level.upper() == "DEBUG":
-        assert logger.log(level, msg) is None
-    else:
-        assert logger.log(level, msg) == snapshot
 
 
 @then(parsers.parse("root logger has {count:d} handler"))

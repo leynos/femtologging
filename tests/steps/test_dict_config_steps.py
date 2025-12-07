@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import typing as typ
 from pathlib import Path
 
 import pytest
 from pytest_bdd import parsers, scenarios, then, when
 
-from femtologging import dictConfig, get_logger
-
-if typ.TYPE_CHECKING:
-    from syrupy.assertion import SnapshotAssertion
+from femtologging import dictConfig
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -26,14 +22,6 @@ def configure_dict_config() -> None:
         "root": {"level": "INFO", "handlers": ["h"]},
     }
     dictConfig(cfg)
-
-
-@then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
-def log_matches_snapshot(msg: str, level: str, snapshot: SnapshotAssertion) -> None:
-    logger = get_logger("root")
-    formatted = logger.log(level, msg)
-    assert formatted is not None
-    assert formatted == snapshot
 
 
 @then("calling dictConfig with incremental true raises ValueError")

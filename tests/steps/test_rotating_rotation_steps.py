@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import typing as typ
 from pathlib import Path
@@ -17,8 +18,6 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from syrupy.assertion import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -51,6 +50,7 @@ def rotating_context_factory(
         contexts.append(ctx)
         return ctx
 
+    assert isinstance(_build, cabc.Callable)
     yield _build
 
     for ctx in contexts:
@@ -62,7 +62,7 @@ def rotating_context_factory(
 @pytest.fixture
 def force_rotating_failure(
     request: pytest.FixtureRequest,
-) -> typ.Callable[[int, str], None]:
+) -> cabc.Callable[[int, str], None]:
     registered = False
 
     def _activate(count: int, reason: str) -> None:

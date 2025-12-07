@@ -481,6 +481,12 @@ impl FemtoLogger {
     }
 }
 
+fn log_join_result(handle: JoinHandle<()>) {
+    if handle.join().is_err() {
+        warn!("FemtoLogger: worker thread panicked");
+    }
+}
+
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
@@ -490,12 +496,6 @@ impl Drop for FemtoLogger {
         if let Some(handle) = self.handle.lock().take() {
             Python::with_gil(|py| py.allow_threads(move || log_join_result(handle)));
         }
-    }
-}
-
-fn log_join_result(handle: JoinHandle<()>) {
-    if handle.join().is_err() {
-        warn!("FemtoLogger: worker thread panicked");
     }
 }
 #[cfg(test)]

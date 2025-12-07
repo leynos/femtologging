@@ -19,15 +19,29 @@ use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
 /// Commands sent to the worker thread.
+///
+/// The worker processes these commands in sequence, writing records or
+/// performing explicit flushes as directed.
 pub enum FileCommand {
+    /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
+    /// Flush the writer and acknowledge completion.
     Flush,
 }
 
+/// Strategy for rotating the log file before writes.
+///
+/// Implementations can inspect the formatted message and writer state to decide
+/// whether rotation is needed. The worker calls `before_write` before each record
+/// is written.
 pub trait RotationStrategy<W>: Send
 where
     W: Write + Seek,
 {
+    /// Inspect the writer and message; rotate if needed.
+    ///
+    /// Returns `Ok(true)` if rotation occurred, `Ok(false)` if no rotation was needed,
+    /// or `Err` if rotation failed.
     fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<bool>;
 }
 
@@ -47,9 +61,15 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
 }
 
 /// Configuration for the background worker thread.
+///
+/// Specifies the channel capacity, flush interval, and optional synchronisation
+/// barrier for testing.
 pub struct WorkerConfig {
+    /// Capacity of the command channel.
     pub capacity: usize,
+    /// Number of writes between automatic flushes (0 disables periodic flushing).
     pub flush_interval: usize,
+    /// Optional barrier for synchronising worker startup in tests.
     pub start_barrier: Option<Arc<Barrier>>,
 }
 
@@ -172,6 +192,26 @@ where
     }
 }
 
+/// Spawn a background worker thread for file handling.
+///
+/// The worker receives [`FileCommand`] values over a channel, writes formatted
+/// records to `writer`, applies the `rotation` strategy before each write, and
+/// flushes periodically according to `config.flush_interval`.
+///
+/// # Parameters
+///
+/// - `writer`: The underlying writer (typically a file).
+/// - `formatter`: Formats log records into strings.
+/// - `config`: Worker configuration (capacity, flush interval, optional start barrier).
+/// - `rotation`: Strategy for rotating the log file before writes.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// - Command sender for enqueueing records and flush requests.
+/// - Completion receiver that signals when the worker thread exits.
+/// - Acknowledgement receiver that signals when a flush completes.
+/// - Join handle for the worker thread.
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
@@ -209,7 +249,9 @@ where
             }
         }
         state.final_flush();
-        let _ = done_tx.send(());
+        if done_tx.send(()).is_err() {
+            warn!("FemtoFileHandler done channel disconnected");
+        }
     });
     (tx, done_rx, ack_rx, handle)
 }

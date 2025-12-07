@@ -19,6 +19,8 @@ from .config import dictConfig
 
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
+# Note: Error messages are assigned to variables before raising to satisfy
+# TRY003/EM101 lint rules throughout this module.
 
 
 def fileConfig(  # noqa: N802
@@ -89,7 +91,6 @@ def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
     if not fmt_section:
         return
     if _split_csv(fmt_section.get("keys")):
-        # TRY003/EM101: keep message in a variable for lint compliance.
         msg = "formatters are not supported"
         raise ValueError(msg)
 

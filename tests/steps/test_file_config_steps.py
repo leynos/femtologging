@@ -39,8 +39,11 @@ def then_log_matches_snapshot(
 ) -> None:
     logger = get_logger("root")
     formatted = logger.log(level, message)
-    assert formatted is not None
-    assert formatted == snapshot
+    if level.upper() == "DEBUG":
+        assert formatted is None
+    else:
+        assert formatted is not None
+        assert formatted == snapshot
 
 
 @then("fileConfig raises ValueError")
