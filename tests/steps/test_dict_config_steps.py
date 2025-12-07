@@ -22,6 +22,7 @@ def configure_dict_config() -> None:
         "root": {"level": "INFO", "handlers": ["h"]},
     }
     dictConfig(cfg)
+    return  # noqa: PLR1711
 
 
 @then("calling dictConfig with incremental true raises ValueError")
