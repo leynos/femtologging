@@ -1,4 +1,4 @@
-# CPython `logging` vs Microsoft `picologging`: Architecture and Implementation Comparison
+# CPython `logging` vs Microsoft `picologging`: Architecture Comparison
 
 Python’s built-in `logging` module and Microsoft’s **picologging** (a high-
 performance drop-in replacement) share the same goal and API, but diverge

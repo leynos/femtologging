@@ -3,7 +3,7 @@
 The following tasks are derived from the overall `femtologging` roadmap and
 expanded with specifics for the configuration design.
 
-## Phase 1 – Core Functionality & Minimum Viable Product (Configuration-related tasks)
+## Phase 1 – Core Functionality & MVP (Configuration-related tasks)
 
 - [x] **Implement** `femtologging::config::ConfigBuilder` **in Rust.**
 
