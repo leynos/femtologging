@@ -130,7 +130,7 @@ logger's minimum level using a `FemtoLevel` value. Likewise, `log()` accepts a
 `FemtoLevel` and message, returning the formatted string or `None` when a
 record is filtered out.
 
-## Runtime Level Updates
+## Runtime level updates
 
 `FemtoLogger` supports dynamic log level changes at runtime via `set_level()`
 and a `level` property getter. These operations are thread-safe:
@@ -138,8 +138,8 @@ and a `level` property getter. These operations are thread-safe:
 - **Storage:** The level is stored in an `AtomicU8`, enabling lock-free reads
   and writes across producer and consumer threads.
 - **Memory ordering:** Both getter and setter use `Ordering::Relaxed`. This
-  provides atomicity without synchronisation overhead, appropriate because
-  level changes do not need to synchronise with other memory operations.
+  provides atomicity without synchronization overhead, appropriate because
+  level changes do not need to synchronize with other memory operations.
 - **Behaviour:** Level changes take effect immediately for subsequent `log()`
   calls. Records already in the handler queue are not affected.
 

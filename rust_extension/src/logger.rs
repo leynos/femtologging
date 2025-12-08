@@ -182,9 +182,7 @@ impl FemtoLogger {
     /// read with `Ordering::Relaxed`.
     #[getter]
     pub fn level(&self) -> String {
-        FemtoLevel::try_from(self.level.load(Ordering::Relaxed))
-            .expect("level always holds a valid FemtoLevel discriminant")
-            .to_string()
+        self.load_level().to_string()
     }
 
     /// Return whether this logger propagates records to its parent (affecting parent-propagation behaviour).
@@ -270,8 +268,26 @@ impl FemtoLogger {
     /// This method is thread-safe; the level is stored in an `AtomicU8` and
     /// read with `Ordering::Relaxed`.
     pub fn get_level(&self) -> FemtoLevel {
-        FemtoLevel::try_from(self.level.load(Ordering::Relaxed))
-            .expect("level always holds a valid FemtoLevel discriminant")
+        self.load_level()
+    }
+
+    /// Load the current level from the atomic storage.
+    ///
+    /// The level is guaranteed to be a valid `FemtoLevel` discriminant because
+    /// the only way to set it is through `set_level`, which accepts a typed
+    /// `FemtoLevel` value.
+    fn load_level(&self) -> FemtoLevel {
+        match self.level.load(Ordering::Relaxed) {
+            0 => FemtoLevel::Trace,
+            1 => FemtoLevel::Debug,
+            2 => FemtoLevel::Info,
+            3 => FemtoLevel::Warn,
+            4 => FemtoLevel::Error,
+            // Default case covers Critical (5) and any unexpected value.
+            // In practice, only 0–5 are stored because `set_level` takes a
+            // typed `FemtoLevel`.
+            _ => FemtoLevel::Critical,
+        }
     }
 
     /// Return `true` if every configured filter approves the record.
