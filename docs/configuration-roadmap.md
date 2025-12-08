@@ -3,7 +3,7 @@
 The following tasks are derived from the overall `femtologging` roadmap and
 expanded with specifics for the configuration design.
 
-## Phase 1 – Core Functionality & MVP (Configuration-related tasks)
+## Phase 1 – Core functionality & MVP (configuration-related tasks)
 
 - [x] **Implement** `femtologging::config::ConfigBuilder` **in Rust.**
 
@@ -45,7 +45,7 @@ expanded with specifics for the configuration design.
   builder configuration system in both Rust and Python, including syrupy
   snapshot assertions.
 
-## Phase 2 – Expanded Handlers & Core Features (Configuration-related tasks)
+## Phase 2 – Expanded handlers & core features (configuration-related tasks)
 
 - [ ] Support dynamic log level updates at runtime using atomic variables and
   expose `set_level()` on `FemtoLogger` in Python.
@@ -81,7 +81,7 @@ expanded with specifics for the configuration design.
 - [x] Expand test coverage and start benchmarking for the configuration system
   and `basicConfig`/`dictConfig` compatibility.
 
-## Phase 3 – Advanced Features & Ecosystem Integration (Configuration-related tasks)
+## Phase 3 – Advanced features & ecosystem integration (configuration-related tasks)
 
 - [x] **Implement** `femtologging.fileConfig()` **in Python:**
 
