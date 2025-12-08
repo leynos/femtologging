@@ -176,6 +176,17 @@ impl FemtoLogger {
         self.level.store(level as u8, Ordering::Relaxed);
     }
 
+    /// Return the logger's current minimum level as a string.
+    ///
+    /// This method is thread-safe; the level is stored in an `AtomicU8` and
+    /// read with `Ordering::Relaxed`.
+    #[getter]
+    pub fn level(&self) -> String {
+        FemtoLevel::try_from(self.level.load(Ordering::Relaxed))
+            .expect("level always holds a valid FemtoLevel discriminant")
+            .to_string()
+    }
+
     /// Return whether this logger propagates records to its parent (affecting parent-propagation behaviour).
     #[getter]
     pub fn propagate(&self) -> bool {
@@ -254,6 +265,15 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Return the logger's current minimum level.
+    ///
+    /// This method is thread-safe; the level is stored in an `AtomicU8` and
+    /// read with `Ordering::Relaxed`.
+    pub fn get_level(&self) -> FemtoLevel {
+        FemtoLevel::try_from(self.level.load(Ordering::Relaxed))
+            .expect("level always holds a valid FemtoLevel discriminant")
+    }
+
     /// Return `true` if every configured filter approves the record.
     ///
     /// Iterates over each filter and returns `false` on the first rejection.

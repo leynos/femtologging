@@ -130,3 +130,24 @@ def test_python_handler_invocation_multiple_messages() -> None:
         ("core", "INFO", "first"),
         ("core", "ERROR", "second"),
     ]
+
+
+def test_level_getter_returns_current_level() -> None:
+    """Level property should reflect changes from set_level."""
+    logger = FemtoLogger("core")
+    for lvl in ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"]:
+        logger.set_level(lvl)
+        assert logger.level == lvl
+
+
+def test_level_default_is_info() -> None:
+    """New loggers should default to INFO level."""
+    logger = FemtoLogger("core")
+    assert logger.level == "INFO"
+
+
+def test_set_level_invalid_raises_value_error() -> None:
+    """Setting an invalid level should raise ValueError."""
+    logger = FemtoLogger("core")
+    with pytest.raises(ValueError, match="level"):
+        logger.set_level("INVALID")

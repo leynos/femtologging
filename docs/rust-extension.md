@@ -130,6 +130,40 @@ logger's minimum level using a `FemtoLevel` value. Likewise, `log()` accepts a
 `FemtoLevel` and message, returning the formatted string or `None` when a
 record is filtered out.
 
+## Runtime Level Updates
+
+`FemtoLogger` supports dynamic log level changes at runtime via `set_level()`
+and a `level` property getter. These operations are thread-safe:
+
+- **Storage:** The level is stored in an `AtomicU8`, enabling lock-free reads
+  and writes across producer and consumer threads.
+- **Memory ordering:** Both getter and setter use `Ordering::Relaxed`. This
+  provides atomicity without synchronisation overhead, appropriate because
+  level changes do not need to synchronise with other memory operations.
+- **Behaviour:** Level changes take effect immediately for subsequent `log()`
+  calls. Records already in the handler queue are not affected.
+
+### Python API
+
+```python
+from femtologging import FemtoLogger
+
+logger = FemtoLogger("app")
+logger.set_level("ERROR")    # Only ERROR and above will be logged
+print(logger.level)          # "ERROR"
+logger.set_level("DEBUG")    # Now DEBUG and above
+```
+
+### Rust API
+
+```rust
+use femtologging_rs::{FemtoLogger, FemtoLevel};
+
+let logger = FemtoLogger::new("app".into());
+logger.set_level(FemtoLevel::Error);
+assert_eq!(logger.get_level(), FemtoLevel::Error);
+```
+
 `FemtoLogger` can now dispatch a record to multiple handlers. Handlers
 implement `FemtoHandlerTrait` and run their I/O on worker threads. The logger
 keeps its handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`,

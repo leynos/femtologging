@@ -284,3 +284,99 @@ fn add_handler_is_thread_safe() {
     let output = read_output(&buffer);
     assert_eq!(output.lines().count(), 4);
 }
+
+#[test]
+fn get_level_returns_current_level() {
+    let logger = FemtoLogger::new("core".to_string());
+    for lvl in [
+        FemtoLevel::Trace,
+        FemtoLevel::Debug,
+        FemtoLevel::Info,
+        FemtoLevel::Warn,
+        FemtoLevel::Error,
+        FemtoLevel::Critical,
+    ] {
+        logger.set_level(lvl);
+        assert_eq!(logger.get_level(), lvl);
+    }
+}
+
+#[test]
+fn set_level_is_thread_safe() {
+    use std::sync::Barrier;
+    use std::thread;
+
+    let logger = Arc::new(FemtoLogger::new("concurrent".to_string()));
+    let levels = [
+        FemtoLevel::Trace,
+        FemtoLevel::Debug,
+        FemtoLevel::Info,
+        FemtoLevel::Warn,
+        FemtoLevel::Error,
+    ];
+    let barrier = Arc::new(Barrier::new(levels.len()));
+
+    let threads: Vec<_> = levels
+        .into_iter()
+        .map(|lvl| {
+            let lg = Arc::clone(&logger);
+            let b = Arc::clone(&barrier);
+            thread::spawn(move || {
+                b.wait();
+                for _ in 0..1000 {
+                    lg.set_level(lvl);
+                }
+            })
+        })
+        .collect();
+
+    for t in threads {
+        t.join().expect("thread panicked");
+    }
+
+    let final_level = logger.get_level();
+    assert!(
+        [
+            FemtoLevel::Trace,
+            FemtoLevel::Debug,
+            FemtoLevel::Info,
+            FemtoLevel::Warn,
+            FemtoLevel::Error,
+            FemtoLevel::Critical,
+        ]
+        .contains(&final_level),
+        "Final level should be a valid FemtoLevel variant"
+    );
+}
+
+#[test]
+fn logging_during_level_change() {
+    use std::sync::Barrier;
+    use std::thread;
+
+    let logger = Arc::new(FemtoLogger::new("race".to_string()));
+    let barrier = Arc::new(Barrier::new(2));
+
+    let lg = Arc::clone(&logger);
+    let b = Arc::clone(&barrier);
+    let producer = thread::spawn(move || {
+        b.wait();
+        for _ in 0..1000 {
+            let _ = lg.log(FemtoLevel::Info, "msg");
+        }
+    });
+
+    barrier.wait();
+    let levels = [
+        FemtoLevel::Error,
+        FemtoLevel::Trace,
+        FemtoLevel::Info,
+        FemtoLevel::Warn,
+    ];
+    for lvl in levels.iter().cycle().take(1000) {
+        logger.set_level(*lvl);
+    }
+
+    producer.join().expect("producer thread panicked");
+    // No panic means atomicity is preserved; records are either filtered or passed
+}
