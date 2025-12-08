@@ -95,6 +95,10 @@ def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
     assert config_builder.as_dict() == snapshot
+
+
+@then("the configuration is built and initialised")
+def configuration_is_built(config_builder: ConfigBuilder) -> None:
     config_builder.build_and_init()
 
 
