@@ -1,9 +1,9 @@
 //! Python bindings for configuration builders.
 
 use pyo3::{
+    Bound,
     exceptions::{PyKeyError, PyRuntimeError, PyValueError},
     prelude::*,
-    Bound,
 };
 
 use crate::handlers::{
@@ -19,9 +19,13 @@ impl From<ConfigError> for PyErr {
         match err {
             ConfigError::UnknownIds(ids) => {
                 use pyo3::types::PyTuple;
-                Python::with_gil(|py| {
-                    let tup: Py<PyTuple> = PyTuple::new(py, ids).unwrap().into();
-                    PyErr::new::<PyKeyError, _>(tup)
+                Python::with_gil(|py| match PyTuple::new(py, ids) {
+                    Ok(tup) => PyErr::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
+                    Err(cause) => {
+                        let key_err = PyErr::new::<PyKeyError, _>("unknown handler identifiers");
+                        key_err.set_cause(py, Some(cause));
+                        key_err
+                    }
                 })
             }
             ConfigError::LoggerInit(msg) => PyRuntimeError::new_err(msg),

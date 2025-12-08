@@ -4,8 +4,8 @@
 //! and emits warnings at configurable intervals to avoid spamming logs while
 //! still alerting users to potential issues.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Source of time for [`RateLimitedWarner`].

@@ -1,40 +1,38 @@
-from typing import (
-    Any,
-    Callable,
-    ContextManager,
-    Pattern,
-    Type,
-    TypeVar,
-    overload,
-    ParamSpec,
-)
+import collections.abc as cabc
+import contextlib as ctxlib
+import typing as typ
+from re import Pattern
+
+Any = typ.Any
+ParamSpec = typ.ParamSpec
+TypeVar = typ.TypeVar
+overload = typ.overload
+AbstractContextManager = ctxlib.AbstractContextManager
+Callable = cabc.Callable
 
 P = ParamSpec("P")
-R = TypeVar("R", bound=BaseException)
+R = TypeVar("R")
 
 # Pytest exposes a decorator with many optional parameters. We mirror
 # the real signature here for accurate type checking even though it
 # exceeds the usual argument count threshold.
-
-@overload
-def fixture(func: Callable[P, R]) -> Callable[P, R]: ...
-@overload
 def fixture(
+    func: Callable[P, R] | None = ...,
     *,
     scope: str | None = ...,
     autouse: bool | None = ...,
     params: list[Any] | None = ...,
     ids: list[str] | Callable[[Any], str] | None = ...,
     name: str | None = ...,
-) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
-def raises(
-    exc: Type[R],
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]: ...
+def raises[E: BaseException](
+    exc: type[E],
     match: str | Pattern[str] | None = ...,
     *,
     msg: str | None = ...,
-) -> ContextManager[R]: ...
+) -> AbstractContextManager[E]: ...
 
-class mark:
+class mark:  # noqa: N801 - pytest exports lowercase marker namespace
     @staticmethod
     def parametrize(
         argnames: str | list[str],

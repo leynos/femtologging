@@ -1,14 +1,18 @@
+"""Shared pytest fixtures for femtologging tests."""
+
 from __future__ import annotations
 
+import collections.abc as cabc
 import gc
+import typing as typ
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, ContextManager, Generator
+
+import pytest
 
 import femtologging
 from femtologging import FemtoFileHandler
-import pytest
 
 warnings.filterwarnings(
     "ignore",
@@ -19,10 +23,12 @@ warnings.filterwarnings(
 # The warning originates in the vendored Gherkin parser, so filter it out until
 # the dependency releases a fix rather than letting our test suite go noisy.
 
-FileHandlerFactory = Callable[[Path, int, int], ContextManager[FemtoFileHandler]]
+FileHandlerFactory = cabc.Callable[
+    [Path, int, int], typ.ContextManager[FemtoFileHandler]
+]
 
 
-@pytest.fixture()
+@pytest.fixture
 def file_handler_factory() -> FileHandlerFactory:
     """Return a context manager creating a ``FemtoFileHandler``.
 
@@ -34,7 +40,7 @@ def file_handler_factory() -> FileHandlerFactory:
     @contextmanager
     def factory(
         path: Path, capacity: int, flush_interval: int
-    ) -> Generator[FemtoFileHandler, None, None]:
+    ) -> cabc.Generator[FemtoFileHandler, None, None]:
         handler = FemtoFileHandler(
             str(path),
             capacity=capacity,
@@ -55,7 +61,7 @@ def file_handler_factory() -> FileHandlerFactory:
 
 
 @pytest.fixture(autouse=True)
-def _clean_logging_manager() -> Generator[None, None, None]:
+def _clean_logging_manager() -> cabc.Generator[None, None, None]:
     """Reset global logger manager before and after each test."""
     femtologging.reset_manager()
     try:

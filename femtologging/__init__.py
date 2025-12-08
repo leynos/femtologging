@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-# Import the Rust extension packaged under this module's namespace first
-# to keep imports at the top for linters.
-from . import _femtologging_rs as rust
-from .overflow_policy import OverflowPolicy
-from .config import dictConfig
-from .file_config import fileConfig
+import collections.abc as cabc
+import dataclasses
 import logging
 import sys
-from dataclasses import dataclass
-from typing import (
-    Callable,
-    Iterable,
-    TextIO,
-    cast,
-    overload,
-)
+import typing as typ
 
+from . import _femtologging_rs as rust
+from .config import dictConfig
+from .file_config import fileConfig
+from .overflow_policy import OverflowPolicy
+
+cast = typ.cast
+TextIO = typ.TextIO
 
 hello = rust.hello
 FemtoLogger = rust.FemtoLogger
@@ -51,12 +47,12 @@ _clear_rotating_fresh_failure = getattr(
 )
 
 if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
-    _force_rotating_fresh_failure_for_test = cast(
-        Callable[[int, str | None], None],
+    _force_rotating_fresh_failure_for_test = typ.cast(
+        "cabc.Callable[[int, str | None], None]",
         _force_rotating_fresh_failure,
     )
-    _clear_rotating_fresh_failure_for_test = cast(
-        Callable[[], None],
+    _clear_rotating_fresh_failure_for_test = typ.cast(
+        "cabc.Callable[[], None]",
         _clear_rotating_fresh_failure,
     )
 else:
@@ -65,67 +61,77 @@ else:
     def _force_rotating_fresh_failure_for_test(
         count: int, reason: str | None = None
     ) -> None:
-        raise RuntimeError(
-            "rotating fresh-failure hook requires the extension built with the 'python' feature"
+        msg = (
+            "rotating fresh-failure hook requires the extension built with the "
+            "'python' feature"
         )
+        raise RuntimeError(msg)
 
     def _clear_rotating_fresh_failure_for_test() -> None:
         return
 
 
-@dataclass
+@dataclasses.dataclass
 class BasicConfig:
     """Configuration parameters for basicConfig()."""
 
     level: str | int | None = None
     filename: str | None = None
-    stream: TextIO | None = None
+    stream: typ.TextIO | None = None
     force: bool = False
-    handlers: Iterable[FemtoHandler] | None = None
+    handlers: cabc.Iterable[FemtoHandler] | None = None
 
 
-@overload
+@typ.overload
 def basicConfig(config: BasicConfig, /) -> None: ...
 
 
-@overload
+@typ.overload
+def basicConfig(config: BasicConfig, /, **kwargs: object) -> None: ...
+
+
+@typ.overload
 def basicConfig(**kwargs: object) -> None: ...
 
 
-def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
+def basicConfig(  # noqa: N802
+    config: BasicConfig | None = None, /, **kwargs: object
+) -> None:
     """Configure the root logger using the builder API.
 
-        Parameters mirror ``logging.basicConfig`` but currently only a subset is
-        supported. ``config`` may be a :class:`BasicConfig` instance; if provided,
-        its values take precedence over individual parameters. ``level`` may be a
-        string or numeric value understood by the standard :mod:`logging` module.
-        ``filename`` configures a :class:`FemtoFileHandler`; otherwise a
-        :class:`FemtoStreamHandler` targeting ``stderr`` is installed. ``stream``
-        may be ``sys.stdout`` to redirect output. ``force`` removes any existing
-        handlers from the root logger before applying the new configuration.
-        ``handlers`` allows attaching pre‑constructed handlers directly.
+    Parameters mirror ``logging.basicConfig`` but currently only a subset is
+    supported. ``config`` may be a :class:`BasicConfig` instance; if provided,
+    its values take precedence over individual parameters. ``level`` may be a
+    string or numeric value understood by the standard :mod:`logging` module.
+    ``filename`` configures a :class:`FemtoFileHandler`; otherwise a
+    :class:`FemtoStreamHandler` targeting ``stderr`` is installed. ``stream``
+    may be ``sys.stdout`` to redirect output. ``force`` removes any existing
+    handlers from the root logger before applying the new configuration.
+    ``handlers`` allows attaching pre-constructed handlers directly.
 
-        Parameters
-        ----------
-        config : BasicConfig, optional
-            Configuration dataclass providing parameters for ``basicConfig``.
+    Parameters
+    ----------
+    config : BasicConfig, optional
+        Aggregated configuration for ``basicConfig``. When provided, its
+        attributes override keyword arguments.
+    **kwargs : object
+        Supported keys mirror the dataclass fields: ``level``, ``filename``,
+        ``stream``, ``force``, and ``handlers``.
+    level : str or int, optional
+        Logging level. Accepts case-insensitive "TRACE", "DEBUG", "INFO",
+        "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are
+        equivalent.
+    filename : str, optional
+        File to write logs to.
+    stream : typ.TextIO, optional
+        ``sys.stdout`` or ``sys.stderr``.
+    force : bool, default False
+        Remove any existing handlers before configuring.
+    handlers : cabc.Iterable[FemtoHandler], optional
+        Pre-constructed handlers to attach.
 
-        Other Parameters
-        ----------------
-        level : str or int, optional
-            Logging level. Accepts case-insensitive "TRACE", "DEBUG", "INFO", "WARN",
-    "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING" are equivalent.
-        filename : str, optional
-            File to write logs to.
-        stream : TextIO, optional
-            ``sys.stdout`` or ``sys.stderr``.
-        force : bool, default False
-            Remove any existing handlers before configuring.
-        handlers : Iterable[FemtoHandler], optional
-            Pre‑constructed handlers to attach.
-
-        Examples
-        --------
+    Examples
+    --------
         Using a dataclass::
 
             cfg = BasicConfig(level="INFO")
@@ -135,50 +141,54 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
             basicConfig(level="INFO")
 
-        Notes
-        -----
+    Notes
+    -----
         ``format`` and ``datefmt`` are intentionally unsupported until formatter
         customisation is implemented.
+
     """
     allowed = {"level", "filename", "stream", "force", "handlers"}
     unknown = set(kwargs) - allowed
     if unknown:
         name = next(iter(unknown))
-        raise TypeError(f"basicConfig() got an unexpected keyword argument {name!r}")
+        msg = f"basicConfig() got an unexpected keyword argument {name!r}"
+        raise TypeError(msg)
 
     level: str | int | None
     filename: str | None
-    stream: TextIO | None
+    stream: typ.TextIO | None
     force: bool
-    handlers: Iterable[FemtoHandler] | None
+    handlers: cabc.Iterable[FemtoHandler] | None
     if config is not None:
         level = (
             config.level
             if config.level is not None
-            else cast(str | int | None, kwargs.get("level"))
+            else typ.cast("str | int | None", kwargs.get("level"))
         )
         filename = (
             config.filename
             if config.filename is not None
-            else cast(str | None, kwargs.get("filename"))
+            else typ.cast("str | None", kwargs.get("filename"))
         )
         stream = (
             config.stream
             if config.stream is not None
-            else cast(TextIO | None, kwargs.get("stream"))
+            else typ.cast("TextIO | None", kwargs.get("stream"))
         )
         force = bool(config.force)
         handlers = (
             config.handlers
             if config.handlers is not None
-            else cast(Iterable[FemtoHandler] | None, kwargs.get("handlers"))
+            else typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers"))
         )
     else:
-        level = cast(str | int | None, kwargs.get("level"))
-        filename = cast(str | None, kwargs.get("filename"))
-        stream = cast(TextIO | None, kwargs.get("stream"))
-        force = bool(kwargs.get("force", False))
-        handlers = cast(Iterable[FemtoHandler] | None, kwargs.get("handlers"))
+        level = typ.cast("str | int | None", kwargs.get("level"))
+        filename = typ.cast("str | None", kwargs.get("filename"))
+        stream = typ.cast("TextIO | None", kwargs.get("stream"))
+        force = bool(kwargs.get("force"))
+        handlers = typ.cast(
+            "cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers")
+        )
 
     _validate_basic_config_params(filename, stream, handlers)
 
@@ -192,9 +202,9 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
 
 
 def _has_conflicting_handler_params(
-    handlers: Iterable[FemtoHandler] | None,
+    handlers: cabc.Iterable[FemtoHandler] | None,
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> bool:
     """Check if handlers conflict with filename or stream parameters."""
     return handlers is not None and (filename is not None or stream is not None)
@@ -202,40 +212,49 @@ def _has_conflicting_handler_params(
 
 def _validate_basic_config_params(
     filename: str | None,
-    stream: TextIO | None,
-    handlers: Iterable[FemtoHandler] | None,
+    stream: typ.TextIO | None,
+    handlers: cabc.Iterable[FemtoHandler] | None,
 ) -> None:
     """Validate ``basicConfig`` parameters."""
-    if filename and stream:
-        raise ValueError("Cannot specify both `filename` and `stream`")
+    if handlers is not None and not isinstance(handlers, cabc.Iterable):
+        msg = "`handlers` must be an iterable of FemtoHandler"
+        raise TypeError(msg)
+
+    if filename is not None and stream is not None:
+        msg = "Cannot specify both `filename` and `stream`"
+        raise ValueError(msg)
 
     if _has_conflicting_handler_params(handlers, filename, stream):
         msg = "Cannot specify `handlers` with `filename` or `stream`"
         raise ValueError(msg)
 
-    if stream not in (None, sys.stdout, sys.stderr):
-        raise ValueError(
+    if stream not in {None, sys.stdout, sys.stderr}:
+        msg = (
             f"stream must be sys.stdout or sys.stderr, got {type(stream)!r}: {stream!r}"
         )
+        raise ValueError(msg)
 
 
 def _configure_handlers(
     root: FemtoLogger,
-    handlers: Iterable[FemtoHandler] | None,
+    handlers: cabc.Iterable[FemtoHandler] | None,
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> None:
     """Attach or build handlers for the root logger."""
     if handlers is not None:
         for h in handlers:
             root.add_handler(h)
     else:
+        # The builder recreates the root logger via the manager, so the
+        # configuration it applies also affects the `root` instance passed in
+        # here even though we do not thread it explicitly.
         _build_and_configure_handler(filename, stream)
 
 
 def _build_and_configure_handler(
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> None:
     """Build a handler via the builder API and install it."""
     builder = ConfigBuilder()
@@ -252,10 +271,10 @@ def _build_and_configure_handler(
 
 def _create_handler_builder(
     filename: str | None,
-    stream: TextIO | None,
+    stream: typ.TextIO | None,
 ) -> FileHandlerBuilder | StreamHandlerBuilder:
     """Create a handler builder for ``basicConfig``."""
-    if filename:
+    if filename is not None:
         return FileHandlerBuilder(filename)
     if stream is sys.stdout:
         return StreamHandlerBuilder.stdout()
@@ -270,32 +289,32 @@ def _set_logger_level(root: FemtoLogger, level: str | int | None) -> None:
 
 
 __all__ = [
+    "ROTATION_VALIDATION_MSG",
+    "BasicConfig",
+    "ConfigBuilder",
+    "FemtoFileHandler",
     "FemtoHandler",
     "FemtoLogger",
-    "get_logger",
-    "reset_manager",
-    "FemtoStreamHandler",
-    "FemtoFileHandler",
     "FemtoRotatingFileHandler",
     "FemtoSocketHandler",
-    "HandlerOptions",
-    "ROTATION_VALIDATION_MSG",
-    "StreamHandlerBuilder",
-    "SocketHandlerBuilder",
+    "FemtoStreamHandler",
     "FileHandlerBuilder",
-    "RotatingFileHandlerBuilder",
-    "LevelFilterBuilder",
-    "NameFilterBuilder",
     "FilterBuildError",
-    "ConfigBuilder",
-    "LoggerConfigBuilder",
     "FormatterBuilder",
     "HandlerConfigError",
     "HandlerIOError",
+    "HandlerOptions",
+    "LevelFilterBuilder",
+    "LoggerConfigBuilder",
+    "NameFilterBuilder",
     "OverflowPolicy",
-    "BasicConfig",
+    "RotatingFileHandlerBuilder",
+    "SocketHandlerBuilder",
+    "StreamHandlerBuilder",
     "basicConfig",
     "dictConfig",
     "fileConfig",
+    "get_logger",
     "hello",
+    "reset_manager",
 ]

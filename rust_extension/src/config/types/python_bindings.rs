@@ -1,8 +1,8 @@
 //! Python bindings for configuration builders.
 
 use super::*;
-use crate::macros::{impl_as_pydict, py_setters, AsPyDict};
-use pyo3::{prelude::*, Bound};
+use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
+use pyo3::{Bound, prelude::*};
 use std::convert::identity;
 
 impl AsPyDict for HandlerBuilder {

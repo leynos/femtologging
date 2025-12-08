@@ -14,15 +14,15 @@ use std::path::PathBuf;
 #[cfg(feature = "python")]
 use super::common::PyOverflowPolicy;
 use super::{
+    FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{FemtoFileHandler, OverflowPolicy},
-    FormatterId, HandlerBuildError, HandlerBuilderTrait,
 };
 use crate::formatter::DefaultFormatter;
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
-use crate::macros::{dict_into_py, AsPyDict};
+use crate::macros::{AsPyDict, dict_into_py};
 
 /// Builder for constructing [`FemtoFileHandler`] instances.
 #[cfg_attr(feature = "python", pyclass)]
@@ -171,7 +171,7 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 return Err(HandlerBuildError::InvalidConfig(format!(
                     "unknown formatter id: {other}",
-                )))
+                )));
             }
         };
         Ok(handler)

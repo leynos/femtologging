@@ -7,7 +7,7 @@
 use std::{path::PathBuf, time::Duration};
 
 #[cfg(feature = "python")]
-use pyo3::{prelude::*, types::PyDict, Bound};
+use pyo3::{Bound, prelude::*, types::PyDict};
 
 use crate::socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,

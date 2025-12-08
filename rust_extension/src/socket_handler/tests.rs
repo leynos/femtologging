@@ -3,7 +3,7 @@
 use std::{
     io::Read,
     net::{SocketAddr, TcpListener},
-    sync::{mpsc, Arc, Barrier},
+    sync::{Arc, Barrier, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{
     handler::FemtoHandlerTrait,
-    handlers::{socket_builder::SocketHandlerBuilder, HandlerBuildError, HandlerBuilderTrait},
+    handlers::{HandlerBuildError, HandlerBuilderTrait, socket_builder::SocketHandlerBuilder},
     log_record::FemtoLogRecord,
     socket_handler::FemtoSocketHandler,
 };
@@ -22,7 +22,7 @@ use super::{
     backoff::BackoffState,
     config::BackoffPolicy,
     serialise::{frame_payload, serialise_record},
-    transport::{connect_transport, SocketTransport, TcpTransport, TlsOptions},
+    transport::{SocketTransport, TcpTransport, TlsOptions, connect_transport},
 };
 
 #[fixture]

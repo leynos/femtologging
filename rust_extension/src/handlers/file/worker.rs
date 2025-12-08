@@ -12,22 +12,36 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use log::{error, warn};
 
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
 /// Commands sent to the worker thread.
+///
+/// The worker processes these commands in sequence, writing records or
+/// performing explicit flushes as directed.
 pub enum FileCommand {
+    /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
+    /// Flush the writer and acknowledge completion.
     Flush,
 }
 
+/// Strategy for rotating the log file before writes.
+///
+/// Implementations can inspect the formatted message and writer state to decide
+/// whether rotation is needed. The worker calls `before_write` before each record
+/// is written.
 pub trait RotationStrategy<W>: Send
 where
     W: Write + Seek,
 {
+    /// Inspect the writer and message; rotate if needed.
+    ///
+    /// Returns `Ok(true)` if rotation occurred, `Ok(false)` if no rotation was needed,
+    /// or `Err` if rotation failed.
     fn before_write(&mut self, writer: &mut W, formatted: &str) -> io::Result<bool>;
 }
 
@@ -47,9 +61,15 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
 }
 
 /// Configuration for the background worker thread.
+///
+/// Specifies the channel capacity, flush interval, and optional synchronisation
+/// barrier for testing.
 pub struct WorkerConfig {
+    /// Capacity of the command channel.
     pub capacity: usize,
+    /// Number of writes between automatic flushes (0 disables periodic flushing).
     pub flush_interval: usize,
+    /// Optional barrier for synchronising worker startup in tests.
     pub start_barrier: Option<Arc<Barrier>>,
 }
 
@@ -121,13 +141,88 @@ impl FlushTracker {
     }
 }
 
+struct WorkerState<W, R> {
+    writer: W,
+    rotation: R,
+    tracker: FlushTracker,
+}
+
+impl<W, R> WorkerState<W, R>
+where
+    W: Write + Seek,
+    R: RotationStrategy<W>,
+{
+    fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
+        Self {
+            writer,
+            rotation,
+            tracker: FlushTracker::new(flush_interval),
+        }
+    }
+
+    fn handle_record<F>(&mut self, formatter: &F, record: FemtoLogRecord)
+    where
+        F: FemtoFormatter,
+    {
+        let message = formatter.format(&record);
+        if let Err(err) = self.rotation.before_write(&mut self.writer, &message) {
+            error!("FemtoFileHandler rotation error; writing record without rotating: {err}");
+        }
+        if let Err(err) =
+            super::mod_impl::write_record(&mut self.writer, &message, &mut self.tracker)
+        {
+            warn!("FemtoFileHandler write error: {err}");
+        }
+    }
+
+    fn handle_flush(&mut self, ack_tx: &Sender<()>) {
+        if let Err(err) = self.writer.flush() {
+            warn!("FemtoFileHandler flush error: {err}");
+        }
+        self.tracker.reset();
+        if ack_tx.send(()).is_err() {
+            warn!("FemtoFileHandler flush ack channel disconnected");
+        }
+    }
+
+    fn final_flush(&mut self) {
+        if let Err(err) = self.writer.flush() {
+            warn!("FemtoFileHandler final flush error: {err}");
+        }
+    }
+}
+
+/// Spawn a background worker thread for file handling.
+///
+/// The worker receives [`FileCommand`] values over a channel, writes formatted
+/// records to `writer`, applies the `rotation` strategy before each write, and
+/// flushes periodically according to `config.flush_interval`.
+///
+/// # Parameters
+///
+/// - `writer`: The underlying writer (typically a file).
+/// - `formatter`: Formats log records into strings.
+/// - `config`: Worker configuration (capacity, flush interval, optional start barrier).
+/// - `rotation`: Strategy for rotating the log file before writes.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// - Command sender for enqueueing records and flush requests.
+/// - Completion receiver that signals when the worker thread exits.
+/// - Acknowledgement receiver that signals when a flush completes.
+/// - Join handle for the worker thread.
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
-    ack_tx: Sender<()>,
-    mut rotation: R,
-) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
+    rotation: R,
+) -> (
+    Sender<FileCommand>,
+    Receiver<()>,
+    Receiver<()>,
+    JoinHandle<()>,
+)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
@@ -140,44 +235,25 @@ where
     } = config;
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
+    let (ack_tx, ack_rx) = bounded(1);
     let handle = thread::spawn(move || {
         if let Some(b) = start_barrier {
             b.wait();
         }
-        let mut writer = writer;
+        let mut state = WorkerState::new(writer, rotation, flush_interval);
         let formatter = formatter;
-        let mut tracker = FlushTracker::new(flush_interval);
         for cmd in rx {
             match cmd {
-                FileCommand::Record(record) => {
-                    let record = *record;
-                    let message = formatter.format(&record);
-                    if let Err(err) = rotation.before_write(&mut writer, &message) {
-                        error!(
-                            "FemtoFileHandler rotation error; writing record without rotating: {err}"
-                        );
-                    }
-                    if let Err(e) =
-                        super::mod_impl::write_record(&mut writer, &message, &mut tracker)
-                    {
-                        warn!("FemtoFileHandler write error: {e}");
-                    }
-                }
-                FileCommand::Flush => {
-                    if writer.flush().is_err() {
-                        warn!("FemtoFileHandler flush error");
-                    }
-                    tracker.reset();
-                    let _ = ack_tx.send(());
-                }
+                FileCommand::Record(record) => state.handle_record(&formatter, *record),
+                FileCommand::Flush => state.handle_flush(&ack_tx),
             }
         }
-        if writer.flush().is_err() {
-            warn!("FemtoFileHandler flush error");
+        state.final_flush();
+        if done_tx.send(()).is_err() {
+            warn!("FemtoFileHandler done channel disconnected");
         }
-        let _ = done_tx.send(());
     });
-    (tx, done_rx, handle)
+    (tx, done_rx, ack_rx, handle)
 }
 
 #[cfg(test)]

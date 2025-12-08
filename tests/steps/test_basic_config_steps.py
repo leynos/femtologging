@@ -1,0 +1,94 @@
+"""BDD steps exercising basicConfig wiring and behaviour."""
+
+from __future__ import annotations
+
+import sys
+from contextlib import closing
+from pathlib import Path
+
+import pytest
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from femtologging import FemtoFileHandler, FemtoStreamHandler, basicConfig, get_logger
+
+FEATURES = Path(__file__).resolve().parents[1] / "features"
+
+scenarios(str(FEATURES / "basic_config.feature"))
+
+
+@given("root logger has a handler")
+def root_has_handler() -> None:
+    handler = FemtoStreamHandler.stderr()
+    get_logger("root").add_handler(handler)
+
+
+@when(
+    parsers.re(
+        r'I call basicConfig with level "(?P<level>[^"]+)"'
+        r"(?: and force (?P<force>true))?"
+    )
+)
+def call_basic_config(level: str, force: str | None) -> None:
+    basicConfig(level=level, force=force is not None)
+
+
+@then(parsers.parse("root logger has {count:d} handler"))
+def root_handler_count(count: int) -> None:
+    logger = get_logger("root")
+    assert len(logger.handler_ptrs_for_test()) == count
+
+
+def _assert_basic_config_handler_conflict(
+    handler: str, tmp_path: Path, **config_kwargs: object
+) -> None:
+    """Assert that basicConfig raises when handlers conflict with filename/stream."""
+    with (
+        closing(_make_handler(handler, tmp_path)) as h,
+        pytest.raises(
+            ValueError, match="Cannot specify `handlers` with `filename` or `stream`"
+        ),
+    ):
+        basicConfig(handlers=[h], **config_kwargs)
+
+
+@then(
+    parsers.parse(
+        'calling basicConfig with filename "{filename}" and stream stdout fails'
+    )
+)
+def basic_config_invalid(filename: str, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Cannot specify both `filename` and `stream`"):
+        basicConfig(filename=str(tmp_path / filename), stream=sys.stdout)
+
+
+@then(
+    parsers.parse(
+        'calling basicConfig with handler "{handler}" and stream stdout fails'
+    )
+)
+def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
+    _assert_basic_config_handler_conflict(handler, tmp_path, stream=sys.stdout)
+
+
+@then(
+    parsers.parse(
+        'calling basicConfig with handler "{handler}" and filename "{filename}" fails'
+    )
+)
+def basic_config_handler_filename_invalid(
+    handler: str, filename: str, tmp_path: Path
+) -> None:
+    _assert_basic_config_handler_conflict(
+        handler, tmp_path, filename=str(tmp_path / filename)
+    )
+
+
+def _make_handler(name: str, tmp_path: Path) -> FemtoStreamHandler | FemtoFileHandler:
+    match name:
+        case "stream_handler":
+            return FemtoStreamHandler.stderr()
+        case "file_handler":
+            return FemtoFileHandler(str(tmp_path / "dummy.log"))
+        case _:
+            msg = f"unknown handler {name}"
+            raise ValueError(msg)

@@ -2,7 +2,7 @@
 //! Integration test for logger filter application via ConfigBuilder.
 
 use _femtologging_rs::{
-    manager, ConfigBuilder, FemtoLevel, LevelFilterBuilder, LoggerConfigBuilder,
+    ConfigBuilder, FemtoLevel, LevelFilterBuilder, LoggerConfigBuilder, manager,
 };
 use pyo3::Python;
 use rstest::rstest;

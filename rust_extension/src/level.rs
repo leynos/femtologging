@@ -9,21 +9,16 @@ use pyo3::prelude::*;
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
 pub enum FemtoLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
     Critical,
-}
-
-impl Default for FemtoLevel {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 impl fmt::Display for FemtoLevel {

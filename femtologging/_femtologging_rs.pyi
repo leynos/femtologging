@@ -1,4 +1,14 @@
-from typing import Any as _Any, Callable, Final, Literal, Mapping, Self, Union
+import collections.abc as cabc
+import typing as typ
+
+Callable = cabc.Callable
+Mapping = cabc.Mapping
+_Any = typ.Any
+Final = typ.Final
+Literal = typ.Literal
+Self = typ.Self
+Union = typ.Union
+PolicyName = typ.Literal["drop", "block", "timeout"]
 
 FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
@@ -21,7 +31,7 @@ class OverflowPolicy:
 class HandlerOptions:
     capacity: int
     flush_interval: int
-    policy: Literal["drop", "block", "timeout"]
+    policy: PolicyName
     max_bytes: int
     backup_count: int
 
@@ -29,7 +39,7 @@ class HandlerOptions:
         self,
         capacity: int = ...,
         flush_interval: int = ...,
-        policy: Literal["drop", "block", "timeout"] = ...,
+        policy: PolicyName = ...,
         rotation: tuple[int, int] | None = ...,
     ) -> None: ...
 

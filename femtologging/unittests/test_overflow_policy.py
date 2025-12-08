@@ -1,10 +1,10 @@
+"""Unit tests for :class:`OverflowPolicy` helpers and equality semantics."""
+
 from __future__ import annotations
 
 import pytest
 
 from femtologging import OverflowPolicy
-
-"""Unit tests for :class:`OverflowPolicy`."""
 
 
 def test_drop_factory_repr() -> None:

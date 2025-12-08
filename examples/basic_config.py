@@ -13,7 +13,7 @@ from femtologging import basicConfig, get_logger
 
 
 def main() -> None:
-    """Configure logging and emit records at common levels.
+    r"""Configure logging and emit records at common levels.
 
     With ``basicConfig(level=\"INFO\")``, messages below ``INFO`` are
     suppressed. ``INFO``/``WARNING`` are written to standard output and

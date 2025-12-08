@@ -12,7 +12,6 @@
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
-
 mod config;
 pub(crate) mod policy;
 mod worker;
@@ -40,8 +39,8 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
-pub use config::{HandlerConfig, OverflowPolicy, TestConfig, DEFAULT_CHANNEL_CAPACITY};
-use worker::{spawn_worker, FileCommand, WorkerConfig};
+pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
+use worker::{FileCommand, WorkerConfig, spawn_worker};
 
 /// Internal items needed by the worker implementation.
 mod mod_impl {
@@ -336,8 +335,7 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (ack_tx, ack_rx) = crossbeam_channel::unbounded();
-        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, ack_tx, rotation);
+        let (tx, done_rx, ack_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
             tx: Some(tx),
             handle: Some(handle),

@@ -2,8 +2,8 @@
 
 use once_cell::sync::Lazy;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 #[cfg(test)]
 use std::thread::{self, ThreadId};

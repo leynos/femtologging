@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-from pathlib import Path
+import errno
+import re
 import threading
-import typing
+import typing as typ
 from contextlib import closing
+from pathlib import Path
 
-from femtologging import FemtoFileHandler
 import pytest
 
+from femtologging import FemtoFileHandler
+
 FileHandlerFactory = cabc.Callable[
-    [Path, int, int], typing.ContextManager[FemtoFileHandler]
+    [Path, int, int], typ.ContextManager[FemtoFileHandler]
 ]
 
 
@@ -63,7 +66,6 @@ def test_file_handler_concurrent_usage(
 
 def test_file_handler_flush(tmp_path: Path) -> None:
     """Test that ``flush()`` writes pending records immediately."""
-
     path = tmp_path / "flush.log"
     with closing(FemtoFileHandler(str(path))) as handler:
 
@@ -81,7 +83,6 @@ def test_file_handler_flush_concurrent(
     tmp_path: Path, file_handler_factory: FileHandlerFactory
 ) -> None:
     """Concurrent ``flush()`` calls should each succeed."""
-
     path = tmp_path / "flush_concurrent.log"
     with file_handler_factory(path, 8, 1) as handler:
 
@@ -102,8 +103,9 @@ def test_file_handler_open_failure(tmp_path: Path) -> None:
     """Creating a handler in a missing directory raises ``OSError``."""
     bad_dir = tmp_path / "does_not_exist"
     path = bad_dir / "out.log"
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=re.escape(str(path))) as excinfo:
         FemtoFileHandler(str(path))
+    assert excinfo.value.errno in {None, errno.ENOENT}
 
 
 def test_file_handler_custom_flush_interval(
@@ -201,13 +203,16 @@ def test_overflow_policy_drop(tmp_path: Path) -> None:
     ) as handler:
         handler.handle("core", "INFO", "first")
         handler.handle("core", "INFO", "second")
+        error_msg: str | None = None
         try:
             handler.handle("core", "INFO", "third")
         except RuntimeError as err:
-            assert str(err) in (
+            error_msg = str(err)
+        if error_msg is not None:
+            assert error_msg in {
                 "Handler error: queue full",
                 "Handler error: handler is closed",
-            )
+            }
     # The consumer runs concurrently; on faster CI machines it may
     # dequeue between sends. Assert the first two messages are present
     # in order, without requiring the third to be dropped deterministically.
@@ -229,13 +234,16 @@ def test_overflow_policy_drop_flush_interval_gt_one(tmp_path: Path) -> None:
         )
     ) as handler:
         for i in range(10):
+            error_msg: str | None = None
             try:
                 handler.handle("core", "INFO", f"msg{i}")
             except RuntimeError as err:
-                assert str(err) in (
+                error_msg = str(err)
+            if error_msg is not None:
+                assert error_msg in {
                     "Handler error: queue full",
                     "Handler error: handler is closed",
-                )
+                }
     assert path.read_text().splitlines()[:2] == [
         "core [INFO] msg0",
         "core [INFO] msg1",
@@ -261,7 +269,6 @@ def test_overflow_policy_timeout_missing_ms(tmp_path: Path) -> None:
 
 def test_file_handler_handle_after_close_raises(tmp_path: Path) -> None:
     """Calling ``handle`` on a closed handler raises ``RuntimeError``."""
-
     path = tmp_path / "closed.log"
     handler = FemtoFileHandler(str(path))
     handler.close()

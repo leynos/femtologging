@@ -1,4 +1,4 @@
-# CPython `logging` vs Microsoft `picologging`: Architecture and Implementation Comparison
+# CPython `logging` vs Microsoft `picologging`: Architecture Comparison
 
 Python’s built-in `logging` module and Microsoft’s **picologging** (a high-
 performance drop-in replacement) share the same goal and API, but diverge
@@ -32,7 +32,7 @@ Python types) for speed. It has analogous classes: `Logger`, `Handler`,
 `Formatter`, and `LogRecord`, but implemented natively. Picologging’s `Manager`
 and `_Placeholder` (for tree structure) exist in Python, but key operations
 occur in C. For example, `Logger` is a C-struct type (see
-[logger.hxx](https:// github.com/microsoft/picologging/blob/%E2%80%A6/logger.hxx))
+[logger.hxx](https://github.com/microsoft/picologging/blob/%E2%80%A6/logger.hxx))
  with fixed fields (e.g.
 `PyObject *name, unsigned short level, PyObject *handlers, bool propagate`,
 plus several boolean flags for fast level checks). A C++ `Handler` struct
@@ -211,7 +211,7 @@ may differ. On the other hand, picologging incorporates optimized techniques:
 it hardcodes level checks, implements critical paths in C++, and avoids Python
 exception overhead in common cases. The result is much higher throughput for
 logging calls, as discussed below. Thus, the design reflects a classic
-extensibility-vs-performance trade-off: CPython logging favors ease of
+extensibility-vs-performance trade-off: CPython logging favours ease of
 modification, while picologging sacrifices some features for raw speed.
 
 ## Performance Benchmarks

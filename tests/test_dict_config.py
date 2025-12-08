@@ -2,90 +2,41 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import time
-from typing import cast
-
-import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
-
 import queue
 import socketserver
 import struct
 import threading
+import time
+import typing as typ
+
+import pytest
 
 import femtologging.config as config_module
 from femtologging import SocketHandlerBuilder, dictConfig, get_logger, reset_manager
 
-scenarios("features/dict_config.feature")
+if typ.TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _SocketCaptureHandler(socketserver.BaseRequestHandler):
     """Collect framed payloads emitted by FemtoSocketHandler."""
 
-    def handle(self) -> None:  # noqa: D401 - behaviour inherited from base class
+    def handle(self) -> None:
         length_bytes = self.request.recv(4)
         if not length_bytes:
             return
         length = struct.unpack(">I", length_bytes)[0]
         payload = self.request.recv(length)
-        server = cast(_SocketServer, self.server)
+        server = typ.cast("_SocketServer", self.server)
         server.queue.put(payload)
 
 
 class _SocketServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
-    def __init__(self, address):
+    def __init__(self, address: tuple[str, int]) -> None:
         super().__init__(address, _SocketCaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
-
-
-@given("the logging system is reset")
-def reset_logging() -> None:
-    reset_manager()
-
-
-@when("I configure dictConfig with a stream handler")
-def configure_dict_config() -> None:
-    cfg = {
-        "version": 1,
-        "handlers": {"h": {"class": "femtologging.StreamHandler"}},
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    dictConfig(cfg)
-
-
-@then(parsers.parse('logging "{msg}" at "{level}" from root matches snapshot'))
-def log_matches_snapshot(msg: str, level: str, snapshot) -> None:
-    logger = get_logger("root")
-    assert logger.log(level, msg) == snapshot
-
-
-@then("calling dictConfig with incremental true raises ValueError")
-def dict_config_incremental_fails() -> None:
-    with pytest.raises(ValueError, match="incremental configuration is not supported"):
-        dictConfig({"version": 1, "incremental": True, "root": {}})
-
-
-@when(
-    parsers.parse('I configure dictConfig with handler class "{cls}"'),
-    target_fixture="config_error",
-)
-def configure_with_handler_class(cls: str) -> ValueError:
-    cfg = {
-        "version": 1,
-        "handlers": {"h": {"class": cls}},
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
-    with pytest.raises(ValueError) as exc:
-        dictConfig(cfg)
-    return exc.value
-
-
-@then("dictConfig raises ValueError")
-def dict_config_raises_value_error(config_error: ValueError) -> None:
-    assert isinstance(config_error, ValueError)
 
 
 def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
@@ -121,7 +72,6 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
 
 def test_dict_config_socket_handler() -> None:
     """Ensure dictConfig wires a socket handler builder correctly."""
-
     reset_manager()
     with _SocketServer(("127.0.0.1", 0)) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -155,8 +105,7 @@ def test_dict_config_socket_handler() -> None:
 
 
 def test_dict_config_socket_handler_round_trip_kwargs() -> None:
-    """Support feeding ``SocketHandlerBuilder.as_dict()`` output back into dictConfig."""
-
+    """Support feeding ``SocketHandlerBuilder.as_dict()`` output back to dictConfig."""
     builder = (
         SocketHandlerBuilder()
         .with_tcp("127.0.0.1", 9020)
@@ -187,7 +136,6 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
 
 def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
     """Accept structured TLS/backoff kwargs when constructing the socket builder."""
-
     nested_builder = config_module._build_handler_from_dict(
         "sock",
         {
@@ -230,7 +178,6 @@ def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
 
 def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
     """Reject configurations that disable TLS while providing TLS options."""
-
     with pytest.raises(
         ValueError, match="socket kwargs tls is disabled but TLS options were supplied"
     ):
@@ -249,16 +196,21 @@ def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
 
 
 @pytest.mark.parametrize(
-    ("handler_config", "expected_error"),
+    ("handler_config", "expected_error", "expected_exc"),
     [
-        ({"args": b"bytes"}, "handler 'h' args must not be bytes or bytearray"),
+        (
+            {"args": b"bytes"},
+            "handler 'h' args must not be bytes or bytearray",
+            TypeError,
+        ),
         (
             {"kwargs": {"path": b"oops"}},
             "handler 'h' kwargs values must not be bytes or bytearray",
+            TypeError,
         ),
-        ({"args": 1}, "handler 'h' args must be a sequence"),
-        ({"kwargs": []}, "handler 'h' kwargs must be a mapping"),
-        ({"filters": []}, "handler filters are not supported"),
+        ({"args": 1}, "handler 'h' args must be a sequence", TypeError),
+        ({"kwargs": []}, "handler 'h' kwargs must be a mapping", TypeError),
+        ({"filters": []}, "handler filters are not supported", ValueError),
     ],
     ids=[
         "args-bytes",
@@ -271,6 +223,7 @@ def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:
 def test_dict_config_handler_validation_errors(
     handler_config: dict[str, object],
     expected_error: str,
+    expected_exc: type[Exception],
 ) -> None:
     """Test various handler validation errors in dictConfig."""
     reset_manager()
@@ -279,11 +232,12 @@ def test_dict_config_handler_validation_errors(
         "handlers": {"h": {"class": "femtologging.StreamHandler", **handler_config}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
-    with pytest.raises(ValueError, match=expected_error):
+    with pytest.raises(expected_exc, match=expected_error):
         dictConfig(cfg)
 
 
 def test_dict_config_logger_filters_presence() -> None:
+    """Logger filter entries must be rejected."""
     reset_manager()
     cfg = {
         "version": 1,
@@ -295,19 +249,26 @@ def test_dict_config_logger_filters_presence() -> None:
 
 
 @pytest.mark.parametrize(
-    ("config", "msg"),
+    ("config", "msg", "expected_exc"),
     [
-        ({"version": 1}, r"root logger configuration is required"),
-        ({"version": 2, "root": {}}, r"(unsupported|invalid).+version"),
+        ({"version": 1}, r"root logger configuration is required", ValueError),
+        ({"version": 2, "root": {}}, r"(unsupported|invalid).+version", ValueError),
         (
             {
                 "version": 1,
-                "handlers": {"h": {"class": "unknown"}},
-                "root": {"handlers": ["h"]},
+                "handlers": {
+                    "h": {"class": "femtologging.StreamHandler", "formatter": "f"}
+                },
+                "root": {"level": "INFO", "handlers": ["h"]},
             },
-            r"(unknown|unsupported).+handler class",
+            r"unknown formatter id",
+            ValueError,
         ),
-        ({"version": 1, "filters": {"f": {}}, "root": {}}, r"filters.+not supported"),
+        (
+            {"version": 1, "filters": {"f": {}}, "root": {}},
+            r"filters.+not supported",
+            ValueError,
+        ),
         (
             {
                 "version": 1,
@@ -315,10 +276,12 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": []},
             },
             r"disable_existing_loggers must be a bool",
+            TypeError,
         ),
         (
             {"version": 1, "loggers": {1: {}}, "root": {"handlers": []}},
             r"loggers section key.+must be a string",
+            TypeError,
         ),
         (
             {
@@ -327,6 +290,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": []},
             },
             r"logger handlers must be a list or tuple of strings",
+            TypeError,
         ),
         (
             {
@@ -335,6 +299,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": []},
             },
             r"logger propagate must be a bool",
+            TypeError,
         ),
         (
             {
@@ -346,6 +311,7 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": ["h"]},
             },
             r"formatter 'format' must be a string",
+            TypeError,
         ),
         (
             {
@@ -356,12 +322,13 @@ def test_dict_config_logger_filters_presence() -> None:
                 "root": {"handlers": ["h"]},
             },
             r"unknown formatter id",
+            ValueError,
         ),
     ],
     ids=[
         "root-missing",
         "version-unsupported",
-        "handler-class-unknown",
+        "formatter-id-missing",
         "filters-unsupported",
         "disable-existing-loggers-type",
         "logger-id-type",
@@ -371,8 +338,10 @@ def test_dict_config_logger_filters_presence() -> None:
         "formatter-id-unknown",
     ],
 )
-def test_dict_config_invalid_configs(config: dict[str, object], msg: str) -> None:
-    """Invalid configurations raise ``ValueError``."""
+def test_dict_config_invalid_configs(
+    config: dict[str, object], msg: str, expected_exc: type[Exception]
+) -> None:
+    """Invalid configurations raise the expected exception type."""
     reset_manager()
-    with pytest.raises(ValueError, match=msg):
+    with pytest.raises(expected_exc, match=msg):
         dictConfig(config)

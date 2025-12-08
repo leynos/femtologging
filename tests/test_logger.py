@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import pytest
 import collections.abc as cabc
+import typing as typ
 from pathlib import Path
-import typing
+
+import pytest
 
 from femtologging import FemtoFileHandler, FemtoLogger
 
 FileHandlerFactory = cabc.Callable[
-    [Path, int, int], typing.ContextManager[FemtoFileHandler]
+    [Path, int, int], typ.ContextManager[FemtoFileHandler]
 ]
 
 
 @pytest.mark.parametrize(
-    "name, level, message, expected",
+    ("name", "level", "message", "expected"),
     [
         ("core", "INFO", "hello", "core [INFO] hello"),
         ("sys", "ERROR", "fail", "sys [ERROR] fail"),
@@ -33,6 +34,7 @@ FileHandlerFactory = cabc.Callable[
 def test_log_formats_message(
     name: str, level: str, message: str, expected: str
 ) -> None:
+    """Logger.log should format messages using configured formatter."""
     logger = FemtoLogger(name)
     assert logger.log(level, message) == expected
 
@@ -54,7 +56,7 @@ def test_level_parsing_and_filtering() -> None:
 
     logger.set_level("ERROR")
     assert logger.log("WARN", "drop") is None
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="level"):
         logger.log("bogus", "drop")
 
 
@@ -81,13 +83,16 @@ class CollectingHandler:
     """Simple handler used to verify Python handler support."""
 
     def __init__(self) -> None:
+        """Initialise an empty record buffer."""
         self.records: list[tuple[str, str, str]] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
+        """Collect handled records for later assertions."""
         self.records.append((logger, level, message))
 
 
 def test_add_handler_requires_handle() -> None:
+    """Adding a handler requires a callable handle attribute."""
     logger = FemtoLogger("core")
 
     class MissingHandle:
