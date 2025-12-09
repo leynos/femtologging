@@ -49,7 +49,7 @@ def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> 
         if target.lower() == "stderr"
         else StreamHandlerBuilder.stdout()
     )
-    config_builder.with_handler(hid, handler)
+    _ = config_builder.with_handler(hid, handler)
 
 
 @given(parsers.parse('I set root logger with level "{level}"'))
@@ -57,7 +57,7 @@ def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> 
 def set_root(config_builder: ConfigBuilder, level: str) -> None:
     """Configure the root logger with the specified minimum level."""
     root = LoggerConfigBuilder().with_level(level)
-    config_builder.with_root_logger(root)
+    _ = config_builder.with_root_logger(root)
 
 
 @given("the configuration is built and initialised")
