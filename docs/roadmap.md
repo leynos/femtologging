@@ -131,18 +131,18 @@ steps below summarize the actionable items from that design.
 
 - [x] Define the `FemtoFilter` trait and implement common filter
   types.[^1]
-- [ ] Support dynamic log level updates at runtime using atomic variables.
-  - [ ] Store each logger's threshold in an `AtomicU8` to enable lock‑free
+- [x] Support dynamic log level updates at runtime using atomic variables.
+  - [x] Store each logger's threshold in an `AtomicU8` to enable lock‑free
     reads and writes across producer and consumer threads.
-  - [ ] Provide `FemtoLogger::set_level()` and expose
+  - [x] Provide `FemtoLogger::set_level()` and expose
     `FemtoLogger.set_level()` in Python, so configuration APIs can adjust
     levels dynamically.
-  - [ ] Ensure log filtering consults the atomic level before formatting and
+  - [x] Ensure log filtering consults the atomic level before formatting and
     dispatch, so dropped records never reach handlers.
-  - [ ] Cover runtime updates with Rust unit tests and Python integration
+  - [x] Cover runtime updates with Rust unit tests and Python integration
     tests (using `rstest` fixtures where appropriate), including invalid level
     rejection.
-  - [ ] Document runtime level semantics and the Python surface area in
+  - [x] Document runtime level semantics and the Python surface area in
     `rust-extension.md` and the configuration design notes.
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
 - [x] Expand test coverage and start benchmarking.

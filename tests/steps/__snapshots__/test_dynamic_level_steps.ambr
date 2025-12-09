@@ -1,0 +1,7 @@
+# serializer version: 1
+# name: test_level_state_after_set_level_matches_snapshot
+  dict({
+    'level': 'ERROR',
+    'name': 'root',
+  })
+# ---
