@@ -308,6 +308,126 @@ classDiagram
     FemtoSocketHandler --> "1" SocketHandlerConfig
 ```
 
+#### FemtoHTTPHandler Design
+
+`FemtoHTTPHandler` sends log records to an HTTP server, following the
+producer-consumer architecture established by `FemtoSocketHandler`. The design
+must balance three drivers:
+
+1. **FemtoSocketHandler implementation pattern** – reuse the worker-thread
+   model, `BackoffPolicy`, rate-limited warnings, and builder conventions.
+2. **CPython `logging.HTTPHandler` behaviour** – maintain parity where sensible
+   to ease migration from the standard library.
+3. **Standard HTTP client best practices** – connection pooling, proper status
+   code handling, and idiomatic request construction.
+
+##### CPython Parity Reference
+
+CPython's `logging.handlers.HTTPHandler` provides the following interface:
+
+| Constructor Parameter | Description                                              |
+| --------------------- | -------------------------------------------------------- |
+| `host`                | Server address, optionally including port (`host:port`)  |
+| `url`                 | Target endpoint path for log messages                    |
+| `method`              | HTTP verb; defaults to `'GET'`                           |
+| `secure`              | Boolean enabling HTTPS                                   |
+| `credentials`         | Tuple `(userid, password)` for HTTP Basic authentication |
+| `context`             | `ssl.SSLContext` for custom TLS configuration            |
+
+Key methods:
+
+- **`mapLogRecord(record)`** – Converts a `LogRecord` to a dictionary. The
+  default returns `record.__dict__`; subclasses override to customise payload.
+- **`emit(record)`** – Calls `mapLogRecord`, URL-encodes the result via
+  `urllib.parse.urlencode`, and transmits via GET or POST.
+
+Notable behaviour: the handler ignores any `Formatter` set via
+`setFormatter()`; formatting is controlled entirely through `mapLogRecord`.
+
+##### Open Design Questions
+
+The following questions remain open. Resolution should follow from the three
+drivers listed above, with explicit justification documented before
+implementation begins.
+
+<!-- markdownlint-disable MD056 -->
+
+| Question                           | Options                                                                            | Decision Drivers                                                                                                |
+| ---------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Serialization format**           | URL-encoded form data (CPython default), JSON, MessagePack                         | CPython parity favours URL-encoded; JSON aligns with modern HTTP APIs; MessagePack matches `FemtoSocketHandler` |
+| **HTTP client library**            | `ureq` (blocking, minimal), `reqwest` (async with blocking facade), raw `hyper`    | `FemtoSocketHandler` uses blocking I/O in worker thread; `ureq` is lightweight and blocking-native              |
+| **Connection management**          | Per-request, keep-alive pool, configurable                                         | HTTP best practices favour keep-alive; must consider worker-thread lifecycle                                    |
+| **Retry semantics by status code** | 2xx success, 5xx retryable, 4xx permanent failure; or CPython behaviour (no retry) | HTTP standards suggest retry on 5xx/network errors; CPython does not retry                                      |
+| **`mapLogRecord` equivalent**      | Trait with default impl, closure, configuration-driven field list                  | Rust idioms favour traits; closures offer flexibility; config-driven is simpler                                 |
+| **Authentication methods**         | Basic only (CPython parity), Bearer token, custom `Authorization` header           | CPython supports Basic; modern APIs often use Bearer; custom headers cover both                                 |
+| **Request timeout granularity**    | Single timeout, split connect/read/write (like `FemtoSocketHandler`)               | `FemtoSocketHandler` precedent suggests split timeouts                                                          |
+
+<!-- markdownlint-enable MD056 -->
+
+##### Preliminary Architecture
+
+Subject to resolution of open questions, the handler will follow this structure:
+
+- **Producer-consumer model**: Application threads enqueue `HttpCommand` values
+  (variants: `Record`, `Flush`, `Shutdown`) via a bounded MPSC channel; a
+  dedicated worker thread processes commands and performs HTTP I/O.
+- **Backoff and retry**: Reuse `BackoffPolicy` from `FemtoSocketHandler` for
+  transient failures (network errors, 5xx responses). Permanent failures (4xx)
+  do not trigger retry.
+- **TLS/HTTPS**: Support secure connections with optional certificate
+  verification bypass for testing, mirroring `FemtoSocketHandler`'s TLS options.
+- **Builder pattern**: `HTTPHandlerBuilder` implementing `HandlerBuilderTrait`,
+  exposing URL, method, credentials, headers, timeouts, and backoff
+  configuration.
+- **Python bindings**: Mirror builder methods in Python; integrate with
+  `dictConfig` and `basicConfig`.
+
+```mermaid
+classDiagram
+    class HTTPHandlerBuilder {
+        +with_url(url: str): HTTPHandlerBuilder
+        +with_method(method: str): HTTPHandlerBuilder
+        +with_secure(secure: bool): HTTPHandlerBuilder
+        +with_credentials(user: str, password: str): HTTPHandlerBuilder
+        +with_headers(headers: dict): HTTPHandlerBuilder
+        +with_connect_timeout_ms(timeout: int): HTTPHandlerBuilder
+        +with_request_timeout_ms(timeout: int): HTTPHandlerBuilder
+        +with_backoff(...): HTTPHandlerBuilder
+        +build(): FemtoHTTPHandler
+    }
+    class FemtoHTTPHandler {
+        +handle(record: FemtoLogRecord): Result
+        +flush(): bool
+        +close(): void
+    }
+    class HttpHandlerConfig {
+        capacity: usize
+        url: String
+        method: HttpMethod
+        secure: bool
+        credentials: Option~Credentials~
+        headers: HashMap~String, String~
+        connect_timeout: Duration
+        request_timeout: Duration
+        backoff: BackoffPolicy
+    }
+    class HttpMethod {
+        <<enumeration>>
+        GET
+        POST
+    }
+    class Credentials {
+        username: String
+        password: String
+    }
+    HTTPHandlerBuilder --> "1" FemtoHTTPHandler : build()
+    HTTPHandlerBuilder --> "1" HttpHandlerConfig
+    FemtoHTTPHandler --> "1" HttpHandlerConfig
+    HttpHandlerConfig --> "1" HttpMethod
+    HttpHandlerConfig --> "0..1" Credentials
+    HttpHandlerConfig --> "1" BackoffPolicy
+```
+
 ```mermaid
 classDiagram
     class FemtoLogRecord {
