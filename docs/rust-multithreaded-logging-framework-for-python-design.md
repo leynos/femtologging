@@ -864,7 +864,9 @@ popular logging facades and frameworks in Rust.
 Femtologging already uses the `log` crate internally for diagnostics (e.g.,
 `log::warn!` in `logger.rs`, `socket_handler/worker.rs`, and
 `handlers/file/mod.rs`). A working test implementation exists at
-`handlers/file/test_support.rs:22-39`, demonstrating the pattern.
+`handlers/file/test_support.rs:22-39`, demonstrating the pattern. This pattern
+will be generalised to create a reusable adapter that routes all `log` crate
+records through femtologging's handler pipeline.
 
 **Value Proposition:**
 
@@ -878,6 +880,11 @@ logging:
 | Rust dependencies (e.g., `native-tls`, `hyper`) | ✗ Silent             | ✓ Captured           |
 
 **Level Mapping:**
+
+The `log` crate defines five levels; femtologging adds a `Critical` level for
+parity with Python's `logging.CRITICAL`. Since the `log` crate has no
+equivalent, `log::Level::Error` maps to `FemtoLevel::Error`. Direct mapping
+follows for all other levels:
 
 | `log::Level` | `FemtoLevel` | Notes                                   |
 | ------------ | ------------ | --------------------------------------- |
@@ -1004,7 +1011,7 @@ include:
 
 1. **Automatic** – Set during Python module initialisation (`#[pymodule]`)
 2. **Explicit** – Expose `setup_rust_logging()` callable from Python
-3. **Feature-gated** – Control via Cargo feature (e.g., `log-compat`)
+3. **Feature-gated** – Control via an optional Cargo feature
 
 The recommended approach is explicit initialisation via a Python-callable
 function, giving applications control over when the bridge is activated.

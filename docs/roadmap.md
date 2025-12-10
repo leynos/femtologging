@@ -165,15 +165,23 @@ steps below summarize the actionable items from that design.
   - [ ] Implement `Log::flush()` to flush all registered handlers.
   - [ ] Provide a `setup_rust_logging()` function callable from Python that
     calls `log::set_logger()` and `log::set_max_level()`.
+    - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section on
+      releasing the GIL).
   - [ ] Consider exposing this via a Cargo feature flag (e.g.,
     `features = ["log-compat"]`) to make the integration optional.
   - [ ] Add Rust unit tests validating:
     - `log::info!()` macros route to femtologging handlers.
     - Level filtering works correctly across the bridge.
     - Target-based logger resolution follows hierarchical rules.
+    - GIL is not held across blocking calls in `setup_rust_logging()`.
+    - Concurrent access from Rust and Python logging paths is safe.
   - [ ] Add Python integration tests demonstrating unified logging from both
     Python and Rust code paths.
   - [ ] Document the feature in `docs/rust-extension.md` and API docstrings.
+  - [ ] Create migration notes explaining how to enable the `log-compat` feature
+    and invoke `setup_rust_logging()` early during application initialisation.
+  - [ ] Document that enabling the `log::Log` bridge installs a global Rust
+    logger (exclusive) and the implications for existing logging configurations.
 - [x] Expand test coverage and start benchmarking.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
