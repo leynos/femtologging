@@ -932,6 +932,71 @@ impl log::Log for FemtoLogAdapter {
 }
 ```
 
+```mermaid
+classDiagram
+    class Log {
+        <<trait>>
+        +enabled(metadata)
+        +log(record)
+        +flush()
+    }
+
+    class FemtoLogAdapter {
+        +enabled(metadata)
+        +log(record)
+        +flush()
+    }
+
+    class FemtoLevel {
+        <<enum>>
+        Trace
+        Debug
+        Info
+        Warn
+        Error
+    }
+
+    class FemtoLogRecord {
+        +logger_name: String
+        +level: FemtoLevel
+        +message: String
+        +module_path: String
+        +filename: String
+        +line_number: u32
+        +with_metadata(logger_name, level, message, metadata)
+    }
+
+    class RecordMetadata {
+        +module_path: String
+        +filename: String
+        +line_number: u32
+        +Default()
+    }
+
+    class Manager {
+        +get_logger(py, name)
+        +flush_all_handlers(py)
+    }
+
+    class PythonLogger {
+        +is_enabled_for(level)
+        +dispatch_record(record)
+    }
+
+    class SetupModule {
+        +setup_rust_logging()
+    }
+
+    Log <|.. FemtoLogAdapter
+    FemtoLogAdapter --> Manager
+    Manager --> PythonLogger
+    FemtoLogAdapter --> FemtoLogRecord
+    FemtoLogRecord --> FemtoLevel
+    FemtoLogRecord --> RecordMetadata
+    SetupModule ..> FemtoLogAdapter
+    SetupModule ..> Manager
+```
+
 **Initialisation Options:**
 
 The logger must be set after femtologging's `Manager` is initialised. Options
