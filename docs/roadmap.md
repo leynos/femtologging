@@ -162,13 +162,24 @@ steps below summarize the actionable items from that design.
       lookup.
     - Populate `FemtoLogRecord` metadata from `record.module_path()`,
       `record.file()`, `record.line()`, and `record.args()`.
-  - [ ] Implement `Log::flush()` to flush all registered handlers.
+  - [ ] Implement `Log::flush()` to flush all registered handlers via
+        `Manager::flush_all_handlers()`. This is a best-effort operation: each
+        handler's buffer is flushed with a configurable timeout, individual
+        failures are logged internally, and records still in MPSC transit are
+        not awaited.
   - [ ] Provide a `setup_rust_logging()` function callable from Python that
     calls `log::set_logger()` and `log::set_max_level()`.
     - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section on
       releasing the GIL).
-  - [ ] Consider exposing this via a Cargo feature flag (e.g.,
-    `features = ["log-compat"]`) to make the integration optional.
+    - GIL acquisition failures block until the GIL is available (standard PyO3
+      behaviour). Python exceptions during `log()` or `flush()` are swallowed
+      so that logging does not disrupt application flow; failures are tracked
+      via handler metrics.
+  - [ ] Expose this via a Cargo feature flag (`features = ["log-compat"]`) to
+    make the integration optional. This is a **Rust-side feature only**; it is
+    not surfaced through Python packaging extras. The default distribution
+    enables `log-compat`. Users building from source can disable it via
+    `--no-default-features` for a smaller binary.
   - [ ] Add Rust unit tests validating:
     - `log::info!()` macros route to femtologging handlers.
     - Level filtering works correctly across the bridge.

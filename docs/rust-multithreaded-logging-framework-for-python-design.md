@@ -934,10 +934,60 @@ impl log::Log for FemtoLogAdapter {
     }
 
     fn flush(&self) {
-        // Flush all handlers via Manager
+        Python::with_gil(|py| {
+            Manager::flush_all_handlers(py);
+        })
     }
 }
 ```
+
+**GIL Acquisition and Error Handling:**
+
+The `log::Log` trait methods (`enabled`, `log`, `flush`) require GIL
+acquisition to interact with femtologging's Python-integrated components. The
+expected failure behaviour is:
+
+| Scenario                          | Behaviour                                     |
+| --------------------------------- | --------------------------------------------- |
+| GIL acquisition succeeds          | Normal operation                              |
+| GIL acquisition blocked           | Blocks until GIL is available (standard PyO3) |
+| Python exception during `log()`   | Swallowed; log message silently dropped       |
+| Python exception during `flush()` | Swallowed; flush is best-effort               |
+| Rust panic in Python callback     | Caught by PyO3; converted to Python exception |
+
+**Rationale for swallowing errors:** The `log::Log` trait methods return `()`
+and cannot propagate errors. Logging infrastructure must not panic or disrupt
+application flow. If a Python-side error occurs (e.g., handler I/O failure),
+femtologging's internal error tracking (via handler metrics) records the
+failure while the Rust caller continues uninterrupted.
+
+**Thread Safety:** The GIL ensures serialised access to Python objects.
+Consumer threads (which perform actual I/O) release the GIL during blocking
+operations per the patterns in `docs/multithreading-in-pyo3.md`, so
+`log::log()` calls from Rust do not contend with handler I/O.
+
+**flush() Behaviour:**
+
+The `flush()` method iterates over all handlers registered with the Manager and
+invokes each handler's flush mechanism. The semantics are:
+
+- **Best-effort guarantee:** `flush()` attempts to flush all handlers but does
+  not block indefinitely. Each handler has a configurable flush timeout
+  (defaulting to the handler's write timeout).
+- **Buffered handlers:** Handlers using `BufWriter` (e.g., `FemtoFileHandler`,
+  `FemtoRotatingFileHandler`) flush their internal buffers to the underlying
+  file descriptor.
+- **Network handlers:** `FemtoSocketHandler` flushes its write buffer to the
+  socket. If the socket is disconnected, flush returns without error (the
+  disconnection is already tracked via handler metrics).
+- **Stream handlers:** `FemtoStreamHandler` flushes stdout/stderr via the
+  standard library's `Write::flush()`.
+- **Error handling:** Individual handler flush failures are logged internally
+  and do not prevent other handlers from being flushed. The method returns `()`
+  per the `log::Log` trait contract.
+- **Interaction with producer-consumer:** Flush does not drain the MPSC queue;
+  it only flushes data already received by the consumer thread. Records in
+  transit may not be written until the next consumer loop iteration.
 
 ```mermaid
 classDiagram
@@ -1015,6 +1065,35 @@ include:
 
 The recommended approach is explicit initialisation via a Python-callable
 function, giving applications control over when the bridge is activated.
+
+**Cargo Feature Scope (`log-compat`):**
+
+The `log-compat` feature is a **Rust-side Cargo feature only**. It controls
+whether the `FemtoLogAdapter` and `setup_rust_logging()` function are compiled
+into the extension module. The feature is not surfaced through Python packaging
+or `pip install` extras because:
+
+- The integration is transparent to Python consumers; they simply call
+  `femtologging.setup_rust_logging()` if the feature was enabled at build time.
+- Python wheels are pre-built with features baked in. The default distribution
+  will include `log-compat` enabled. Users building from source can disable it
+  via `--no-default-features` if they want a smaller binary.
+- There is no runtime Python feature flag; attempting to call
+  `setup_rust_logging()` when `log-compat` is disabled raises `AttributeError`.
+
+To enable/disable during development:
+
+```bash
+# Enable (default):
+cargo build --features log-compat
+
+# Disable:
+cargo build --no-default-features
+```
+
+The feature name `log-compat` was chosen over alternatives like `log-bridge` or
+`rust-log` for consistency with similar ecosystem conventions (e.g.,
+`tracing-log`).
 
 **Mutual Exclusivity:**
 
