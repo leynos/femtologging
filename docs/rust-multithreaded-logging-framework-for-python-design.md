@@ -859,6 +859,112 @@ popular logging facades and frameworks in Rust.
   applications and libraries already using the log crate to seamlessly use
   femtologging as their logging backend simply by initializing femtologging.
 
+#### 6.4.1 Implementation Strategy for log::Log
+
+Femtologging already uses the `log` crate internally for diagnostics (e.g.,
+`log::warn!` in `logger.rs`, `socket_handler/worker.rs`, and
+`handlers/file/mod.rs`). A working test implementation exists at
+`handlers/file/test_support.rs:22-39`, demonstrating the pattern.
+
+**Value Proposition:**
+
+For hybrid Python/Rust applications, implementing `log::Log` provides unified
+logging:
+
+| Component                                       | Without `log::Log`   | With `log::Log`      |
+| ----------------------------------------------- | -------------------- | -------------------- |
+| Python code using `femtologging.get_logger()`   | ✓ Logs to handlers   | ✓ Logs to handlers   |
+| Rust code using `log::info!()`                  | ✗ Logs go nowhere    | ✓ Same handlers      |
+| Rust dependencies (e.g., `native-tls`, `hyper`) | ✗ Silent             | ✓ Captured           |
+
+**Level Mapping:**
+
+| `log::Level` | `FemtoLevel` | Notes                                   |
+| ------------ | ------------ | --------------------------------------- |
+| Trace        | Trace        | Direct mapping                          |
+| Debug        | Debug        | Direct mapping                          |
+| Info         | Info         | Direct mapping                          |
+| Warn         | Warn         | Direct mapping                          |
+| Error        | Error        | `log` has no `Critical`; map to `Error` |
+
+**Logger Resolution:**
+
+The `log::Record::target()` field typically contains the Rust module path
+(e.g., `my_app::network::client`). This maps naturally to femtologging's
+hierarchical logger system via `Manager::get_logger()`, which creates parent
+loggers automatically based on dotted names.
+
+**Conceptual Implementation:**
+
+```rust
+pub struct FemtoLogAdapter;
+
+impl log::Log for FemtoLogAdapter {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        let level = FemtoLevel::from(metadata.level());
+        Python::with_gil(|py| {
+            let logger = Manager::get_logger(py, metadata.target());
+            logger.borrow(py).is_enabled_for(level)
+        })
+    }
+
+    fn log(&self, record: &log::Record) {
+        Python::with_gil(|py| {
+            let logger = Manager::get_logger(py, record.target());
+            let femto_record = FemtoLogRecord::with_metadata(
+                record.target(),
+                &record.level().to_string(),
+                &record.args().to_string(),
+                RecordMetadata {
+                    module_path: record.module_path().unwrap_or_default().to_string(),
+                    filename: record.file().unwrap_or_default().to_string(),
+                    line_number: record.line().unwrap_or(0),
+                    ..Default::default()
+                },
+            );
+            logger.borrow(py).dispatch_record(femto_record);
+        })
+    }
+
+    fn flush(&self) {
+        // Flush all handlers via Manager
+    }
+}
+```
+
+**Initialisation Options:**
+
+The logger must be set after femtologging's `Manager` is initialised. Options
+include:
+
+1. **Automatic** – Set during Python module initialisation (`#[pymodule]`)
+2. **Explicit** – Expose `setup_rust_logging()` callable from Python
+3. **Feature-gated** – Control via Cargo feature (e.g., `log-compat`)
+
+The recommended approach is explicit initialisation via a Python-callable
+function, giving applications control over when the bridge is activated.
+
+**Mutual Exclusivity:**
+
+The `log` crate permits only one global logger. Setting femtologging as the
+logger prevents simultaneous use of other Rust logging backends (e.g.,
+`env_logger`). This is acceptable since:
+
+- The Python application controls initialisation
+- Femtologging is the intentional backend for unified logging
+
+**Comparison with tracing::Layer (Phase 3):**
+
+| Aspect                | `log::Log` (Phase 2)       | `tracing::Layer` (Phase 3)        |
+| --------------------- | -------------------------- | --------------------------------- |
+| Adoption              | Older, near-universal      | Growing, especially in async code |
+| Features              | Simple message logging     | Spans, structured data, context   |
+| Implementation effort | Low                        | Medium-high                       |
+| Immediate value       | High (broad compatibility) | Medium (fewer libraries)          |
+
+Implement `log::Log` first for immediate ecosystem compatibility; a
+`tracing::Layer` can follow, and `tracing-log` demonstrates they can coexist.
+
 - tracing Layer/Subscriber:
 
   tracing is a powerful framework for instrumenting applications and libraries

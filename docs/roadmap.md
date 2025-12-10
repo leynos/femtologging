@@ -145,6 +145,35 @@ steps below summarize the actionable items from that design.
   - [x] Document runtime level semantics and the Python surface area in
     `rust-extension.md` and the configuration design notes.
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
+  - [ ] Create a `FemtoLogAdapter` struct implementing `log::Log` in a new
+        module
+    (e.g., `rust_extension/src/log_compat.rs`).
+  - [ ] Implement level mapping between `log::Level` and `FemtoLevel`:
+    - `Trace` → `Trace`
+    - `Debug` → `Debug`
+    - `Info` → `Info`
+    - `Warn` → `Warn`
+    - `Error` → `Error` (Note: `log` crate has no `Critical` level)
+  - [ ] Implement `Log::enabled()` to check the effective level for the target
+    logger via `Manager::get_logger()`.
+  - [ ] Implement `Log::log()` to convert `log::Record` to `FemtoLogRecord` and
+    dispatch through the target logger:
+    - Map `record.target()` (module path) to logger name via hierarchical
+      lookup.
+    - Populate `FemtoLogRecord` metadata from `record.module_path()`,
+      `record.file()`, `record.line()`, and `record.args()`.
+  - [ ] Implement `Log::flush()` to flush all registered handlers.
+  - [ ] Provide a `setup_rust_logging()` function callable from Python that
+    calls `log::set_logger()` and `log::set_max_level()`.
+  - [ ] Consider exposing this via a Cargo feature flag (e.g.,
+    `features = ["log-compat"]`) to make the integration optional.
+  - [ ] Add Rust unit tests validating:
+    - `log::info!()` macros route to femtologging handlers.
+    - Level filtering works correctly across the bridge.
+    - Target-based logger resolution follows hierarchical rules.
+  - [ ] Add Python integration tests demonstrating unified logging from both
+    Python and Rust code paths.
+  - [ ] Document the feature in `docs/rust-extension.md` and API docstrings.
 - [x] Expand test coverage and start benchmarking.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
