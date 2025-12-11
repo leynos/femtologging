@@ -859,6 +859,263 @@ popular logging facades and frameworks in Rust.
   applications and libraries already using the log crate to seamlessly use
   femtologging as their logging backend simply by initializing femtologging.
 
+#### 6.4.1 Implementation Strategy for log::Log
+
+Femtologging already uses the `log` crate internally for diagnostics (e.g.,
+`log::warn!` in `logger.rs`, `socket_handler/worker.rs`, and
+`handlers/file/mod.rs`). A working test implementation exists at
+`handlers/file/test_support.rs:22-39`, demonstrating the pattern. This pattern
+will be generalised to create a reusable adapter that routes all `log` crate
+records through femtologging's handler pipeline.
+
+**Value Proposition:**
+
+For hybrid Python/Rust applications, implementing `log::Log` provides unified
+logging:
+
+| Component                                       | Without `log::Log`   | With `log::Log`      |
+| ----------------------------------------------- | -------------------- | -------------------- |
+| Python code using `femtologging.get_logger()`   | ✓ Logs to handlers   | ✓ Logs to handlers   |
+| Rust code using `log::info!()`                  | ✗ Logs go nowhere    | ✓ Same handlers      |
+| Rust dependencies (e.g., `native-tls`, `hyper`) | ✗ Silent             | ✓ Captured           |
+
+**Level Mapping:**
+
+The `log` crate defines five levels; femtologging adds a `Critical` level for
+parity with Python's `logging.CRITICAL`. Since the `log` crate has no
+equivalent, `log::Level::Error` maps to `FemtoLevel::Error`. Direct mapping
+follows for all other levels:
+
+| `log::Level` | `FemtoLevel` | Notes                                   |
+| ------------ | ------------ | --------------------------------------- |
+| Trace        | Trace        | Direct mapping                          |
+| Debug        | Debug        | Direct mapping                          |
+| Info         | Info         | Direct mapping                          |
+| Warn         | Warn         | Direct mapping                          |
+| Error        | Error        | `log` has no `Critical`; map to `Error` |
+
+**Logger Resolution:**
+
+The `log::Record::target()` field typically contains the Rust module path
+(e.g., `my_app::network::client`). This maps naturally to femtologging's
+hierarchical logger system via `Manager::get_logger()`, which creates parent
+loggers automatically based on dotted names.
+
+**Conceptual Implementation:**
+
+```rust
+pub struct FemtoLogAdapter;
+
+impl log::Log for FemtoLogAdapter {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        let level = FemtoLevel::from(metadata.level());
+        Python::with_gil(|py| {
+            let logger = Manager::get_logger(py, metadata.target());
+            logger.borrow(py).is_enabled_for(level)
+        })
+    }
+
+    fn log(&self, record: &log::Record) {
+        Python::with_gil(|py| {
+            let logger = Manager::get_logger(py, record.target());
+            let femto_record = FemtoLogRecord::with_metadata(
+                record.target(),
+                &record.level().to_string(),
+                &record.args().to_string(),
+                RecordMetadata {
+                    module_path: record.module_path().unwrap_or_default().to_string(),
+                    filename: record.file().unwrap_or_default().to_string(),
+                    line_number: record.line().unwrap_or(0),
+                    ..Default::default()
+                },
+            );
+            logger.borrow(py).dispatch_record(femto_record);
+        })
+    }
+
+    fn flush(&self) {
+        Python::with_gil(|py| {
+            Manager::flush_all_handlers(py);
+        })
+    }
+}
+```
+
+**GIL Acquisition and Error Handling:**
+
+The `log::Log` trait methods (`enabled`, `log`, `flush`) require GIL
+acquisition to interact with femtologging's Python-integrated components. The
+expected failure behaviour is:
+
+| Scenario                          | Behaviour                                     |
+| --------------------------------- | --------------------------------------------- |
+| GIL acquisition succeeds          | Normal operation                              |
+| GIL acquisition blocked           | Blocks until GIL is available (standard PyO3) |
+| Python exception during `log()`   | Swallowed; log message silently dropped       |
+| Python exception during `flush()` | Swallowed; flush is best-effort               |
+| Rust panic in Python callback     | Caught by PyO3; converted to Python exception |
+
+**Rationale for swallowing errors:** The `log::Log` trait methods return `()`
+and cannot propagate errors. Logging infrastructure must not panic or disrupt
+application flow. If a Python-side error occurs (e.g., handler I/O failure),
+femtologging's internal error tracking (via handler metrics) records the
+failure while the Rust caller continues uninterrupted.
+
+**Thread Safety:** The GIL ensures serialised access to Python objects.
+Consumer threads (which perform actual I/O) release the GIL during blocking
+operations per the patterns in `docs/multithreading-in-pyo3.md`, so
+`log::log()` calls from Rust do not contend with handler I/O.
+
+**flush() Behaviour:**
+
+The `flush()` method iterates over all handlers registered with the Manager and
+invokes each handler's flush mechanism. The semantics are:
+
+- **Best-effort guarantee:** `flush()` attempts to flush all handlers but does
+  not block indefinitely. Each handler has a configurable flush timeout
+  (defaulting to the handler's write timeout).
+- **Buffered handlers:** Handlers using `BufWriter` (e.g., `FemtoFileHandler`,
+  `FemtoRotatingFileHandler`) flush their internal buffers to the underlying
+  file descriptor.
+- **Network handlers:** `FemtoSocketHandler` flushes its write buffer to the
+  socket. If the socket is disconnected, flush returns without error (the
+  disconnection is already tracked via handler metrics).
+- **Stream handlers:** `FemtoStreamHandler` flushes stdout/stderr via the
+  standard library's `Write::flush()`.
+- **Error handling:** Individual handler flush failures are logged internally
+  and do not prevent other handlers from being flushed. The method returns `()`
+  per the `log::Log` trait contract.
+- **Interaction with producer-consumer:** Flush does not drain the MPSC queue;
+  it only flushes data already received by the consumer thread. Records in
+  transit may not be written until the next consumer loop iteration.
+
+```mermaid
+classDiagram
+    class Log {
+        <<trait>>
+        +enabled(metadata)
+        +log(record)
+        +flush()
+    }
+
+    class FemtoLogAdapter {
+        +enabled(metadata)
+        +log(record)
+        +flush()
+    }
+
+    class FemtoLevel {
+        <<enum>>
+        Trace
+        Debug
+        Info
+        Warn
+        Error
+    }
+
+    class FemtoLogRecord {
+        +logger_name: String
+        +level: FemtoLevel
+        +message: String
+        +module_path: String
+        +filename: String
+        +line_number: u32
+        +with_metadata(logger_name, level, message, metadata)
+    }
+
+    class RecordMetadata {
+        +module_path: String
+        +filename: String
+        +line_number: u32
+        +Default()
+    }
+
+    class Manager {
+        +get_logger(py, name)
+        +flush_all_handlers(py)
+    }
+
+    class PythonLogger {
+        +is_enabled_for(level)
+        +dispatch_record(record)
+    }
+
+    class SetupModule {
+        +setup_rust_logging()
+    }
+
+    Log <|.. FemtoLogAdapter
+    FemtoLogAdapter --> Manager
+    Manager --> PythonLogger
+    FemtoLogAdapter --> FemtoLogRecord
+    FemtoLogRecord --> FemtoLevel
+    FemtoLogRecord --> RecordMetadata
+    SetupModule ..> FemtoLogAdapter
+    SetupModule ..> Manager
+```
+
+**Initialisation Options:**
+
+The logger must be set after femtologging's `Manager` is initialised. Options
+include:
+
+1. **Automatic** – Set during Python module initialisation (`#[pymodule]`)
+2. **Explicit** – Expose `setup_rust_logging()` callable from Python
+3. **Feature-gated** – Control via an optional Cargo feature
+
+The recommended approach is explicit initialisation via a Python-callable
+function, giving applications control over when the bridge is activated.
+
+**Cargo Feature Scope (`log-compat`):**
+
+The `log-compat` feature is a **Rust-side Cargo feature only**. It controls
+whether the `FemtoLogAdapter` and `setup_rust_logging()` function are compiled
+into the extension module. The feature is not surfaced through Python packaging
+or `pip install` extras because:
+
+- The integration is transparent to Python consumers; they simply call
+  `femtologging.setup_rust_logging()` if the feature was enabled at build time.
+- Python wheels are pre-built with features baked in. The default distribution
+  will include `log-compat` enabled. Users building from source can disable it
+  via `--no-default-features` if they want a smaller binary.
+- There is no runtime Python feature flag; attempting to call
+  `setup_rust_logging()` when `log-compat` is disabled raises `AttributeError`.
+
+To enable/disable during development:
+
+```bash
+# Enable (default):
+cargo build --features log-compat
+
+# Disable:
+cargo build --no-default-features
+```
+
+The feature name `log-compat` was chosen over alternatives like `log-bridge` or
+`rust-log` for consistency with similar ecosystem conventions (e.g.,
+`tracing-log`).
+
+**Mutual Exclusivity:**
+
+The `log` crate permits only one global logger. Setting femtologging as the
+logger prevents simultaneous use of other Rust logging backends (e.g.,
+`env_logger`). This is acceptable since:
+
+- The Python application controls initialisation
+- Femtologging is the intentional backend for unified logging
+
+**Comparison with tracing::Layer (Phase 3):**
+
+| Aspect                | `log::Log` (Phase 2)       | `tracing::Layer` (Phase 3)        |
+| --------------------- | -------------------------- | --------------------------------- |
+| Adoption              | Older, near-universal      | Growing, especially in async code |
+| Features              | Simple message logging     | Spans, structured data, context   |
+| Implementation effort | Low                        | Medium-high                       |
+| Immediate value       | High (broad compatibility) | Medium (fewer libraries)          |
+
+Implement `log::Log` first for immediate ecosystem compatibility; a
+`tracing::Layer` can follow, and `tracing-log` demonstrates they can coexist.
+
 - tracing Layer/Subscriber:
 
   tracing is a powerful framework for instrumenting applications and libraries
