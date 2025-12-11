@@ -360,7 +360,7 @@ implementation begins.
 | **Retry semantics by status code** | 2xx success, 5xx retryable, 4xx permanent failure; or CPython behaviour (no retry) | HTTP standards suggest retry on 5xx/network errors; CPython does not retry                                      |
 | **`mapLogRecord` equivalent**      | Trait with default impl, closure, configuration-driven field list                  | Rust idioms favour traits; closures offer flexibility; config-driven is simpler                                 |
 | **Authentication methods**         | Basic only (CPython parity), Bearer token, custom `Authorization` header           | CPython supports Basic; modern APIs often use Bearer; custom headers cover both                                 |
-| **Request timeout granularity**    | Single timeout, split connect/read/write (like `FemtoSocketHandler`)               | `FemtoSocketHandler` precedent suggests split timeouts                                                          |
+| **Timeout granularity**            | Single timeout, split connect/write (like `FemtoSocketHandler`)                    | `FemtoSocketHandler` uses `connect_timeout` and `write_timeout`; HTTP handler should mirror this                |
 
 <!-- markdownlint-enable MD056 -->
 
@@ -377,8 +377,8 @@ Subject to resolution of open questions, the handler will follow this structure:
 - **TLS/HTTPS**: Support secure connections with optional certificate
   verification bypass for testing, mirroring `FemtoSocketHandler`'s TLS options.
 - **Builder pattern**: `HTTPHandlerBuilder` implementing `HandlerBuilderTrait`,
-  exposing URL, method, credentials, headers, timeouts, and backoff
-  configuration.
+  exposing URL, method, authentication (Basic, Bearer, or custom headers),
+  timeouts (`connect_timeout`, `write_timeout`), and backoff configuration.
 - **Python bindings**: Mirror builder methods in Python; integrate with
   `dictConfig` and `basicConfig`.
 
@@ -391,7 +391,7 @@ classDiagram
         +with_credentials(user: str, password: str): HTTPHandlerBuilder
         +with_headers(headers: dict): HTTPHandlerBuilder
         +with_connect_timeout_ms(timeout: int): HTTPHandlerBuilder
-        +with_request_timeout_ms(timeout: int): HTTPHandlerBuilder
+        +with_write_timeout_ms(timeout: int): HTTPHandlerBuilder
         +with_backoff(...): HTTPHandlerBuilder
         +build(): FemtoHTTPHandler
     }
@@ -400,18 +400,18 @@ classDiagram
         +flush(): bool
         +close(): void
     }
-    class HttpHandlerConfig {
+    class HTTPHandlerConfig {
         capacity: usize
         url: String
-        method: HttpMethod
+        method: HTTPMethod
         secure: bool
         credentials: Option~Credentials~
         headers: HashMap~String, String~
         connect_timeout: Duration
-        request_timeout: Duration
+        write_timeout: Duration
         backoff: BackoffPolicy
     }
-    class HttpMethod {
+    class HTTPMethod {
         <<enumeration>>
         GET
         POST
@@ -421,11 +421,11 @@ classDiagram
         password: String
     }
     HTTPHandlerBuilder --> "1" FemtoHTTPHandler : build()
-    HTTPHandlerBuilder --> "1" HttpHandlerConfig
-    FemtoHTTPHandler --> "1" HttpHandlerConfig
-    HttpHandlerConfig --> "1" HttpMethod
-    HttpHandlerConfig --> "0..1" Credentials
-    HttpHandlerConfig --> "1" BackoffPolicy
+    HTTPHandlerBuilder --> "1" HTTPHandlerConfig
+    FemtoHTTPHandler --> "1" HTTPHandlerConfig
+    HTTPHandlerConfig --> "1" HTTPMethod
+    HTTPHandlerConfig --> "0..1" Credentials
+    HTTPHandlerConfig --> "1" BackoffPolicy
 ```
 
 ```mermaid

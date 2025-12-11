@@ -155,7 +155,8 @@ steps below summarize the actionable items from that design.
     (serialization format, HTTP client library, retry semantics,
     `mapLogRecord` equivalent).
   - [ ] Implement HTTP transport configuration supporting URL, method
-    (GET/POST), HTTPS, credentials, and custom headers through the builder
+    (GET/POST), HTTPS, authentication (Basic, Bearer, or custom headers),
+    and timeouts (`connect_timeout`, `write_timeout`) through the builder
     API and Python bindings, following the preliminary architecture in
     [http-design].
   - [ ] Implement a consumer-thread event loop following the
