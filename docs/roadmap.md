@@ -145,8 +145,7 @@ steps below summarize the actionable items from that design.
   - [x] Document runtime level semantics and the Python surface area in
     `rust-extension.md` and the configuration design notes.
 - [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
-  - [ ] Create a `FemtoLogAdapter` struct implementing `log::Log` in a new
-        module
+  - [ ] Create `FemtoLogAdapter` implementing `log::Log` in a dedicated module
     (e.g., `rust_extension/src/log_compat.rs`).
   - [ ] Implement level mapping between `log::Level` and `FemtoLevel`:
     - `Trace` → `Trace`
