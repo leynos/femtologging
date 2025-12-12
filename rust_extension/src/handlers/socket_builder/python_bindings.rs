@@ -8,6 +8,20 @@ use crate::socket_handler::FemtoSocketHandler;
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
 
 #[pymethods]
+impl BackoffOverrides {
+    #[new]
+    #[pyo3(signature = (base_ms=None, cap_ms=None, reset_after_ms=None, deadline_ms=None))]
+    fn py_new(
+        base_ms: Option<u64>,
+        cap_ms: Option<u64>,
+        reset_after_ms: Option<u64>,
+        deadline_ms: Option<u64>,
+    ) -> Self {
+        Self::from_options(base_ms, cap_ms, reset_after_ms, deadline_ms)
+    }
+}
+
+#[pymethods]
 impl SocketHandlerBuilder {
     #[new]
     fn py_new() -> PyResult<Self> {
@@ -96,17 +110,11 @@ impl SocketHandlerBuilder {
     }
 
     #[pyo3(name = "with_backoff")]
-    #[pyo3(signature = (base_ms=None, cap_ms=None, reset_after_ms=None, deadline_ms=None))]
     fn py_with_backoff<'py>(
         mut slf: PyRefMut<'py, Self>,
-        base_ms: Option<u64>,
-        cap_ms: Option<u64>,
-        reset_after_ms: Option<u64>,
-        deadline_ms: Option<u64>,
+        config: BackoffOverrides,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let overrides =
-            BackoffOverrides::from_options(base_ms, cap_ms, reset_after_ms, deadline_ms);
-        let updated = slf.clone().with_backoff(overrides);
+        let updated = slf.clone().with_backoff(config);
         *slf = updated;
         Ok(slf)
     }

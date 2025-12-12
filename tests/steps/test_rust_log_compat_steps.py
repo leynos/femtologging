@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing as typ
+from dataclasses import dataclass  # noqa: ICN003 - required by the refactor task.
 from pathlib import Path
 
 import pytest
@@ -60,11 +61,36 @@ def when_set_logger_level(name: str, level: str) -> None:
     logger.set_level(level)
 
 
+@dataclass
+class RustLogParams:
+    """Parameters for emitting a Rust log record."""
+
+    message: str
+    level: str
+    target: str
+
+
+def when_emit_rust_log(
+    handler_ctx: tuple[FemtoStreamHandler, str],
+    capfd: pytest.CaptureFixture[str],
+    log_params: RustLogParams,
+) -> list[str]:
+    """Emit a Rust-side log record and capture stderr output."""
+    _handler, logger_name = handler_ctx
+    rust._emit_rust_log(log_params.level, log_params.message, log_params.target)
+    logger = get_logger(logger_name)
+    logger.flush_handlers()
+
+    err_lines = capfd.readouterr().err.strip().splitlines()
+    prefix = f"{logger_name} [{log_params.level.upper()}] "
+    return [ln for ln in err_lines if ln.startswith(prefix)]
+
+
 @when(
     parsers.parse('I emit a Rust log "{message}" at "{level}" with target "{target}"'),
     target_fixture="output",
 )
-def when_emit_rust_log(
+def when_emit_rust_log_step(
     handler_ctx: tuple[FemtoStreamHandler, str],
     capfd: pytest.CaptureFixture[str],
     *,
@@ -73,14 +99,11 @@ def when_emit_rust_log(
     target: str,
 ) -> list[str]:
     """Emit a Rust-side log record and capture stderr output."""
-    _handler, logger_name = handler_ctx
-    rust._emit_rust_log(level, message, target)
-    logger = get_logger(logger_name)
-    logger.flush_handlers()
-
-    err_lines = capfd.readouterr().err.strip().splitlines()
-    prefix = f"{logger_name} [{level.upper()}] "
-    return [ln for ln in err_lines if ln.startswith(prefix)]
+    return when_emit_rust_log(
+        handler_ctx,
+        capfd,
+        RustLogParams(message=message, level=level, target=target),
+    )
 
 
 @then("the captured stderr output matches snapshot")

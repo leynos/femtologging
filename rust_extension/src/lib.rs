@@ -42,6 +42,8 @@ pub use filters::{
 #[cfg(feature = "python")]
 use handlers::common::PyOverflowPolicy;
 #[cfg(feature = "python")]
+use handlers::socket_builder::BackoffOverrides;
+#[cfg(feature = "python")]
 use pyo3::wrap_pyfunction;
 
 /// Re-export formatter types.
@@ -217,6 +219,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoRotatingFileHandler>()?;
     #[cfg(feature = "python")]
     m.add_class::<HandlerOptions>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<BackoffOverrides>()?;
     #[cfg(feature = "python")]
     m.add(
         "ROTATION_VALIDATION_MSG",

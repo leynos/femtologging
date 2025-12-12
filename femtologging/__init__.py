@@ -26,6 +26,7 @@ FemtoFileHandler = rust.FemtoFileHandler
 FemtoRotatingFileHandler = rust.FemtoRotatingFileHandler
 FemtoSocketHandler = rust.FemtoSocketHandler
 HandlerOptions = rust.HandlerOptions
+BackoffConfig = rust.BackoffConfig
 ROTATION_VALIDATION_MSG = rust.ROTATION_VALIDATION_MSG
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 SocketHandlerBuilder = rust.SocketHandlerBuilder
