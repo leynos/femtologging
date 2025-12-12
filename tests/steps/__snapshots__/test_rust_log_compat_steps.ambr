@@ -1,0 +1,10 @@
+# serializer version: 1
+# name: test_rust_records_are_routed_to_handlers
+  list([
+    'rust.test [INFO] hello from rust',
+  ])
+# ---
+# name: test_rust_records_respect_femtologger_levels
+  list([
+  ])
+# ---

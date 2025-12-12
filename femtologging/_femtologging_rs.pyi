@@ -106,7 +106,9 @@ HandlerIOError: type[Exception]
 hello: _Any
 get_logger: _Any
 reset_manager_py: _Any
+setup_rust_logging: _Any
 
+def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> None: ...
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...

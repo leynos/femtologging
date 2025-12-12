@@ -84,6 +84,17 @@ pub fn disable_existing_loggers(
     Ok(())
 }
 
+/// Flush handlers attached to every registered logger.
+///
+/// Intended for use by the Rust `log` crate bridge; failures are ignored.
+#[cfg(feature = "log-compat")]
+pub(crate) fn flush_all_handlers(py: Python<'_>) {
+    let mgr = MANAGER.read();
+    for logger in mgr.loggers.values() {
+        let _ = logger.borrow(py).flush_handlers();
+    }
+}
+
 #[pyfunction]
 pub fn reset_manager() {
     let mut mgr = MANAGER.write();
