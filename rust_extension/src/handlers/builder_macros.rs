@@ -564,7 +564,6 @@ pub(crate) use builder_methods;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::num::NonZeroUsize;
 
     #[cfg(feature = "python")]

@@ -121,12 +121,12 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
         .with_max_frame_size(4096)
         .with_tls("example.com", insecure=True)
         .with_backoff(
-            BackoffConfig(
-                base_ms=50,
-                cap_ms=500,
-                reset_after_ms=2000,
-                deadline_ms=4000,
-            )
+            BackoffConfig({
+                "base_ms": 50,
+                "cap_ms": 500,
+                "reset_after_ms": 2000,
+                "deadline_ms": 4000,
+            })
         )
     )
     expected_kwargs = builder.as_dict()

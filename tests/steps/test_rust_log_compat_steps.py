@@ -86,19 +86,30 @@ def when_emit_rust_log(
     return [ln for ln in err_lines if ln.startswith(prefix)]
 
 
+@pytest.fixture
+def rust_log_test_ctx(
+    handler_ctx: tuple[FemtoStreamHandler, str],
+    capfd: pytest.CaptureFixture[str],
+) -> tuple[tuple[FemtoStreamHandler, str], pytest.CaptureFixture[str]]:
+    """Provide combined test context for Rust log compatibility tests."""
+    return handler_ctx, capfd
+
+
 @when(
     parsers.parse('I emit a Rust log "{message}" at "{level}" with target "{target}"'),
     target_fixture="output",
 )
 def when_emit_rust_log_step(
-    handler_ctx: tuple[FemtoStreamHandler, str],
-    capfd: pytest.CaptureFixture[str],
+    rust_log_test_ctx: tuple[
+        tuple[FemtoStreamHandler, str], pytest.CaptureFixture[str]
+    ],
     *,
     message: str,
     level: str,
     target: str,
 ) -> list[str]:
     """Emit a Rust-side log record and capture stderr output."""
+    handler_ctx, capfd = rust_log_test_ctx
     return when_emit_rust_log(
         handler_ctx,
         capfd,

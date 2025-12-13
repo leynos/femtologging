@@ -1,5 +1,6 @@
 import collections.abc as cabc
 import typing as typ
+from typing import TypedDict  # noqa: ICN003 - explicit import required for stub typing.
 
 Callable = cabc.Callable
 Mapping = cabc.Mapping
@@ -75,14 +76,16 @@ class RotatingFileHandlerBuilder:
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> FemtoRotatingFileHandler: ...
 
+class BackoffConfigDict(TypedDict, total=False):
+    """Configuration options for exponential backoff retry behaviour."""
+
+    base_ms: int
+    cap_ms: int
+    reset_after_ms: int
+    deadline_ms: int
+
 class BackoffConfig:
-    def __init__(
-        self,
-        base_ms: int | None = ...,
-        cap_ms: int | None = ...,
-        reset_after_ms: int | None = ...,
-        deadline_ms: int | None = ...,
-    ) -> None: ...
+    def __init__(self, config: BackoffConfigDict | None = None) -> None: ...
 
 class SocketHandlerBuilder:
     def __init__(self) -> None: ...

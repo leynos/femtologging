@@ -149,10 +149,12 @@ socket_handler = (
     .with_tls("logs.example.com", insecure=False)
     .with_backoff(
         BackoffConfig(
-            base_ms=100,
-            cap_ms=5000,
-            reset_after_ms=30000,
-            deadline_ms=120000,
+            {
+                "base_ms": 100,
+                "cap_ms": 5000,
+                "reset_after_ms": 30000,
+                "deadline_ms": 120000,
+            }
         )
     )
     .build()

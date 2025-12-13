@@ -398,13 +398,7 @@ class StreamHandlerBuilder(HandlerBuilder):
 
 # New
 class BackoffConfig:
-    def __init__(
-        self,
-        base_ms: int | None = None,
-        cap_ms: int | None = None,
-        reset_after_ms: int | None = None,
-        deadline_ms: int | None = None,
-    ) -> None: ...
+    def __init__(self, config: dict[str, int] | None = None) -> None: ...
 
 class SocketHandlerBuilder(HandlerBuilder):
     def __init__(self) -> None: ...

@@ -1,6 +1,7 @@
 //! Python bindings for [`SocketHandlerBuilder`].
 
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::macros::{AsPyDict, dict_into_py};
 use crate::socket_handler::FemtoSocketHandler;
@@ -10,14 +11,32 @@ use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
 #[pymethods]
 impl BackoffOverrides {
     #[new]
-    #[pyo3(signature = (base_ms=None, cap_ms=None, reset_after_ms=None, deadline_ms=None))]
-    fn py_new(
-        base_ms: Option<u64>,
-        cap_ms: Option<u64>,
-        reset_after_ms: Option<u64>,
-        deadline_ms: Option<u64>,
-    ) -> Self {
-        Self::from_options(base_ms, cap_ms, reset_after_ms, deadline_ms)
+    #[pyo3(signature = (config=None))]
+    fn py_new<'py>(config: Option<Bound<'py, PyDict>>) -> PyResult<Self> {
+        let config = match config {
+            Some(dict) => dict,
+            None => return Ok(Self::default()),
+        };
+
+        let base_ms = config
+            .get_item("base_ms")?
+            .and_then(|v| v.extract::<u64>().ok());
+        let cap_ms = config
+            .get_item("cap_ms")?
+            .and_then(|v| v.extract::<u64>().ok());
+        let reset_after_ms = config
+            .get_item("reset_after_ms")?
+            .and_then(|v| v.extract::<u64>().ok());
+        let deadline_ms = config
+            .get_item("deadline_ms")?
+            .and_then(|v| v.extract::<u64>().ok());
+
+        Ok(Self::from_options(
+            base_ms,
+            cap_ms,
+            reset_after_ms,
+            deadline_ms,
+        ))
     }
 }
 
