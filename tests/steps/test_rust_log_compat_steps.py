@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import typing as typ
 from dataclasses import dataclass  # noqa: ICN003 - required by the refactor task.
 from pathlib import Path
@@ -76,14 +77,24 @@ def when_emit_rust_log(
     log_params: RustLogParams,
 ) -> list[str]:
     """Emit a Rust-side log record and capture stderr output."""
+    capfd.readouterr()
     _handler, logger_name = handler_ctx
     rust._emit_rust_log(log_params.level, log_params.message, log_params.target)
     logger = get_logger(logger_name)
     logger.flush_handlers()
 
-    err_lines = capfd.readouterr().err.strip().splitlines()
     prefix = f"{logger_name} [{log_params.level.upper()}] "
-    return [ln for ln in err_lines if ln.startswith(prefix)]
+    deadline = time.monotonic() + 0.5
+    captured: list[str] = []
+    while time.monotonic() < deadline:
+        err = capfd.readouterr().err
+        if err:
+            captured.extend(err.strip().splitlines())
+        matching = [ln for ln in captured if ln.startswith(prefix)]
+        if matching:
+            return matching
+        time.sleep(0.01)
+    return [ln for ln in captured if ln.startswith(prefix)]
 
 
 @pytest.fixture
