@@ -34,11 +34,13 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 pytestmark = [pytest.mark.log_compat]
 
-if not (
-    hasattr(rust, "setup_rust_logging")
-    and hasattr(rust, "_emit_rust_log")
-    and hasattr(rust, "_install_test_global_rust_logger")
-):
+REQUIRED_RUST_ATTRS = (
+    "setup_rust_logging",
+    "_emit_rust_log",
+    "_install_test_global_rust_logger",
+)
+
+if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
     pytest.skip(
         "log-compat feature not built; rust bridge helpers unavailable",
         allow_module_level=True,
