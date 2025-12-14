@@ -164,6 +164,21 @@ logger.set_level(FemtoLevel::Error);
 assert_eq!(logger.get_level(), FemtoLevel::Error);
 ```
 
+## Rust log crate bridge
+
+When built with the default `log-compat` feature, femtologging can act as the
+backend for Rust's `log` facade. Call `femtologging.setup_rust_logging()` early
+during application start-up to install a global Rust logger that forwards
+`log::info!()` and similar calls into femtologging handlers.
+
+This installs a global logger for the entire Rust process. If another global
+logger is already installed, `setup_rust_logging()` raises `RuntimeError` and
+does not replace it. The call is idempotent after a successful install.
+
+Users building the extension from source may disable the bridge with
+`cargo build --no-default-features`, or re-enable it explicitly with
+`--features log-compat`.
+
 `FemtoLogger` can now dispatch a record to multiple handlers. Handlers
 implement `FemtoHandlerTrait` and run their I/O on worker threads. The logger
 keeps its handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`,

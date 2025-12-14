@@ -12,7 +12,13 @@ import typing as typ
 import pytest
 
 import femtologging.config as config_module
-from femtologging import SocketHandlerBuilder, dictConfig, get_logger, reset_manager
+from femtologging import (
+    BackoffConfig,
+    SocketHandlerBuilder,
+    dictConfig,
+    get_logger,
+    reset_manager,
+)
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -115,10 +121,12 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
         .with_max_frame_size(4096)
         .with_tls("example.com", insecure=True)
         .with_backoff(
-            base_ms=50,
-            cap_ms=500,
-            reset_after_ms=2000,
-            deadline_ms=4000,
+            BackoffConfig({
+                "base_ms": 50,
+                "cap_ms": 500,
+                "reset_after_ms": 2000,
+                "deadline_ms": 4000,
+            })
         )
     )
     expected_kwargs = builder.as_dict()
@@ -132,6 +140,38 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
 
     assert isinstance(round_trip, SocketHandlerBuilder)
     assert round_trip.as_dict() == expected_kwargs
+
+
+def test_dict_config_socket_handler_backoff_legacy_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply backoff overrides through the legacy kwargs path."""
+
+    class LegacyBuilder:
+        def __init__(self) -> None:
+            self.overrides: dict[str, int | None] | None = None
+
+        def with_backoff(self, **overrides: int | None) -> LegacyBuilder:
+            self.overrides = dict(overrides)
+            return self
+
+    monkeypatch.setattr(config_module, "BackoffConfig", None)
+    builder = LegacyBuilder()
+    kwargs: dict[str, object] = {
+        "backoff": {
+            "base_ms": 10,
+            "cap_ms": 100,
+            "reset_after_ms": None,
+        }
+    }
+
+    updated = config_module._apply_socket_tuning_kwargs("sock", builder, kwargs)
+    assert updated is builder
+    assert builder.overrides == {
+        "base_ms": 10,
+        "cap_ms": 100,
+        "reset_after_ms": None,
+    }
 
 
 def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:

@@ -26,6 +26,7 @@ FemtoFileHandler = rust.FemtoFileHandler
 FemtoRotatingFileHandler = rust.FemtoRotatingFileHandler
 FemtoSocketHandler = rust.FemtoSocketHandler
 HandlerOptions = rust.HandlerOptions
+BackoffConfig = rust.BackoffConfig
 ROTATION_VALIDATION_MSG = rust.ROTATION_VALIDATION_MSG
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 SocketHandlerBuilder = rust.SocketHandlerBuilder
@@ -45,6 +46,7 @@ _force_rotating_fresh_failure = getattr(
 _clear_rotating_fresh_failure = getattr(
     rust, "clear_rotating_fresh_failure_for_test", None
 )
+_setup_rust_logging = getattr(rust, "setup_rust_logging", None)
 
 if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
     _force_rotating_fresh_failure_for_test = typ.cast(
@@ -69,6 +71,21 @@ else:
 
     def _clear_rotating_fresh_failure_for_test() -> None:
         return
+
+
+if callable(_setup_rust_logging):
+    setup_rust_logging = typ.cast(
+        "cabc.Callable[[], None]",
+        _setup_rust_logging,
+    )
+else:
+
+    def setup_rust_logging() -> None:
+        msg = (
+            "setup_rust_logging requires the extension built with the "
+            "'log-compat' Cargo feature"
+        )
+        raise RuntimeError(msg)
 
 
 @dataclasses.dataclass

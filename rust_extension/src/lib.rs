@@ -12,6 +12,8 @@ mod formatter;
 mod handler;
 mod handlers;
 mod level;
+#[cfg(all(feature = "python", feature = "log-compat"))]
+mod log_compat;
 mod log_record;
 mod logger;
 #[cfg(feature = "python")]
@@ -39,6 +41,8 @@ pub use filters::{
 };
 #[cfg(feature = "python")]
 use handlers::common::PyOverflowPolicy;
+#[cfg(feature = "python")]
+use handlers::socket_builder::BackoffOverrides;
 #[cfg(feature = "python")]
 use pyo3::wrap_pyfunction;
 
@@ -216,6 +220,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "python")]
     m.add_class::<HandlerOptions>()?;
     #[cfg(feature = "python")]
+    m.add_class::<BackoffOverrides>()?;
+    #[cfg(feature = "python")]
     m.add(
         "ROTATION_VALIDATION_MSG",
         handlers::rotating::ROTATION_VALIDATION_MSG,
@@ -232,6 +238,15 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+    #[cfg(all(feature = "python", feature = "log-compat"))]
+    m.add_function(wrap_pyfunction!(log_compat::setup_rust_logging, m)?)?;
+    #[cfg(all(feature = "python", feature = "log-compat"))]
+    m.add_function(wrap_pyfunction!(log_compat::emit_rust_log, m)?)?;
+    #[cfg(all(feature = "python", feature = "log-compat"))]
+    m.add_function(wrap_pyfunction!(
+        log_compat::install_test_global_rust_logger,
+        m
+    )?)?;
     #[cfg(feature = "python")]
     m.add_function(wrap_pyfunction!(file_config::parse_ini_file, m)?)?;
     #[cfg(feature = "python")]

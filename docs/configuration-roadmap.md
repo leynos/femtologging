@@ -50,7 +50,7 @@ expanded with specifics for the configuration design.
 - [x] Support dynamic log level updates at runtime using atomic variables and
   expose `set_level()` on `FemtoLogger` in Python.
 
-- [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
+- [x] Implement the `log::Log` trait for compatibility with the `log` crate.
 
 - [x] Implement `femtologging.basicConfig()` translating to the builder API
    (see [configuration design](./configuration-design.md#basicconfig) and

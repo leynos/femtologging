@@ -263,6 +263,30 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Return whether `level` is enabled for this logger.
+    #[cfg(feature = "log-compat")]
+    pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
+        level as u8 >= self.level.load(Ordering::Relaxed)
+    }
+
+    /// Dispatch an already-constructed record through this logger.
+    ///
+    /// The record is filtered against the logger's level and filters before
+    /// being enqueued for handler processing.
+    #[cfg(feature = "log-compat")]
+    pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
+        let Some(level) = record.parsed_level else {
+            return;
+        };
+        if !self.is_enabled_for(level) {
+            return;
+        }
+        if !self.passes_all_filters(&record) {
+            return;
+        }
+        self.dispatch_to_handlers(record);
+    }
+
     /// Return the logger's current minimum level.
     ///
     /// This method is thread-safe; the level is stored in an `AtomicU8` and

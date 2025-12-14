@@ -397,6 +397,9 @@ class StreamHandlerBuilder(HandlerBuilder):
     def stream_target(self, target: str) -> "StreamHandlerBuilder": ... # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
 
 # New
+class BackoffConfig:
+    def __init__(self, config: dict[str, int] | None = None) -> None: ...
+
 class SocketHandlerBuilder(HandlerBuilder):
     def __init__(self) -> None: ...
     def with_tcp(self, host: str, port: int) -> "SocketHandlerBuilder": ...
@@ -410,13 +413,7 @@ class SocketHandlerBuilder(HandlerBuilder):
         *,
         insecure: bool = False,
     ) -> "SocketHandlerBuilder": ...
-    def with_backoff(
-        self,
-        base_ms: int | None = None,
-        cap_ms: int | None = None,
-        reset_after_ms: int | None = None,
-        deadline_ms: int | None = None,
-    ) -> "SocketHandlerBuilder": ...
+    def with_backoff(self, config: BackoffConfig) -> "SocketHandlerBuilder": ...
 
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```

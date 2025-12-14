@@ -1,11 +1,44 @@
 //! Python bindings for [`SocketHandlerBuilder`].
 
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::macros::{AsPyDict, dict_into_py};
 use crate::socket_handler::FemtoSocketHandler;
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
+
+fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<u64>> {
+    match config.get_item(key)? {
+        None => Ok(None),
+        Some(value) if value.is_none() => Ok(None),
+        Some(value) => value.extract::<u64>().map(Some),
+    }
+}
+
+#[pymethods]
+impl BackoffOverrides {
+    #[new]
+    #[pyo3(signature = (config=None))]
+    fn py_new<'py>(config: Option<Bound<'py, PyDict>>) -> PyResult<Self> {
+        let config = match config {
+            Some(dict) => dict,
+            None => return Ok(Self::default()),
+        };
+
+        let base_ms = extract_optional_u64(&config, "base_ms")?;
+        let cap_ms = extract_optional_u64(&config, "cap_ms")?;
+        let reset_after_ms = extract_optional_u64(&config, "reset_after_ms")?;
+        let deadline_ms = extract_optional_u64(&config, "deadline_ms")?;
+
+        Ok(Self::from_options(
+            base_ms,
+            cap_ms,
+            reset_after_ms,
+            deadline_ms,
+        ))
+    }
+}
 
 #[pymethods]
 impl SocketHandlerBuilder {
@@ -96,17 +129,11 @@ impl SocketHandlerBuilder {
     }
 
     #[pyo3(name = "with_backoff")]
-    #[pyo3(signature = (base_ms=None, cap_ms=None, reset_after_ms=None, deadline_ms=None))]
     fn py_with_backoff<'py>(
         mut slf: PyRefMut<'py, Self>,
-        base_ms: Option<u64>,
-        cap_ms: Option<u64>,
-        reset_after_ms: Option<u64>,
-        deadline_ms: Option<u64>,
+        config: BackoffOverrides,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let overrides =
-            BackoffOverrides::from_options(base_ms, cap_ms, reset_after_ms, deadline_ms);
-        let updated = slf.clone().with_backoff(overrides);
+        let updated = slf.clone().with_backoff(config);
         *slf = updated;
         Ok(slf)
     }

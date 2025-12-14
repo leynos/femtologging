@@ -25,10 +25,11 @@ encoding_rs = "0.8"
 ini = { package = "rust-ini", version = "0.21.3" }
 
 [features]
-default = ["extension-module", "python"]
+default = ["extension-module", "python", "log-compat"]
 extension-module = ["python", "pyo3/extension-module"]
 python = []
 test-util = []
+log-compat = ["python"]
 
 [dev-dependencies]
 criterion = "0.5"
