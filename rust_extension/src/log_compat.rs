@@ -23,15 +23,29 @@ use crate::manager;
 /// logger's handler queue.
 pub struct FemtoLogAdapter;
 
+fn map_log_level(level: log::Level) -> FemtoLevel {
+    match level {
+        log::Level::Trace => FemtoLevel::Trace,
+        log::Level::Debug => FemtoLevel::Debug,
+        log::Level::Info => FemtoLevel::Info,
+        log::Level::Warn => FemtoLevel::Warn,
+        log::Level::Error => FemtoLevel::Error,
+    }
+}
+
+fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
+    match level {
+        FemtoLevel::Trace => log::Level::Trace,
+        FemtoLevel::Debug => log::Level::Debug,
+        FemtoLevel::Info => log::Level::Info,
+        FemtoLevel::Warn => log::Level::Warn,
+        FemtoLevel::Error | FemtoLevel::Critical => log::Level::Error,
+    }
+}
+
 impl From<log::Level> for FemtoLevel {
     fn from(level: log::Level) -> Self {
-        match level {
-            log::Level::Trace => FemtoLevel::Trace,
-            log::Level::Debug => FemtoLevel::Debug,
-            log::Level::Info => FemtoLevel::Info,
-            log::Level::Warn => FemtoLevel::Warn,
-            log::Level::Error => FemtoLevel::Error,
-        }
+        map_log_level(level)
     }
 }
 
@@ -45,24 +59,32 @@ fn normalise_target(target: &str) -> Cow<'_, str> {
 
 fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalised = normalise_target(target);
-    if let Ok(logger) = manager::get_logger(py, normalised.as_ref()) {
-        return Some((normalised.into_owned(), logger));
+    match manager::get_logger(py, normalised.as_ref()) {
+        Ok(logger) => Some((normalised.into_owned(), logger)),
+        Err(err) => {
+            if !err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
+                eprintln!(
+                    "femtologging: failed to resolve logger for target {:?}: {}",
+                    target, err
+                );
+            }
+            let logger = manager::get_logger(py, "root").ok()?;
+            Some(("root".to_string(), logger))
+        }
     }
-    let logger = manager::get_logger(py, "root").ok()?;
-    Some(("root".to_string(), logger))
+}
+
+fn is_enabled_by_global_max(level: log::Level) -> bool {
+    log::max_level() >= level.to_level_filter()
 }
 
 impl log::Log for FemtoLogAdapter {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        let level = FemtoLevel::from(metadata.level());
-        Python::with_gil(|py| {
-            resolve_logger(py, metadata.target())
-                .is_some_and(|(_, logger)| logger.borrow(py).is_enabled_for(level))
-        })
+        is_enabled_by_global_max(metadata.level())
     }
 
     fn log(&self, record: &Record<'_>) {
-        if !self.enabled(record.metadata()) {
+        if !is_enabled_by_global_max(record.level()) {
             return;
         }
 
@@ -70,6 +92,11 @@ impl log::Log for FemtoLogAdapter {
             let Some((logger_name, logger)) = resolve_logger(py, record.target()) else {
                 return;
             };
+
+            let level = FemtoLevel::from(record.level());
+            if !logger.borrow(py).is_enabled_for(level) {
+                return;
+            }
 
             let metadata = RecordMetadata {
                 module_path: record.module_path().unwrap_or_default().to_string(),
@@ -80,7 +107,7 @@ impl log::Log for FemtoLogAdapter {
 
             let femto_record = FemtoLogRecord::with_metadata(
                 logger_name.as_str(),
-                &FemtoLevel::from(record.level()).to_string(),
+                &level.to_string(),
                 &record.args().to_string(),
                 metadata,
             );
@@ -139,19 +166,42 @@ pub(crate) fn setup_rust_logging() -> PyResult<()> {
 #[pyfunction]
 #[pyo3(name = "_emit_rust_log")]
 pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
-    let mapped = match level {
-        FemtoLevel::Trace => log::Level::Trace,
-        FemtoLevel::Debug => log::Level::Debug,
-        FemtoLevel::Info => log::Level::Info,
-        FemtoLevel::Warn => log::Level::Warn,
-        FemtoLevel::Error | FemtoLevel::Critical => log::Level::Error,
-    };
+    let mapped = map_femto_to_log_level(level);
 
     if let Some(target) = target {
         log::log!(target: target, mapped, "{}", message);
     } else {
         log::log!(mapped, "{}", message);
     }
+}
+
+/// Install a dummy global Rust logger for behavioural tests.
+///
+/// This helper is intended for subprocess-based test scenarios that need to
+/// verify `setup_rust_logging()` fails when a different global logger has
+/// already been configured.
+#[cfg(feature = "python")]
+#[pyfunction]
+#[pyo3(name = "_install_test_global_rust_logger")]
+pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
+    struct TestLogger;
+
+    impl log::Log for TestLogger {
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, _record: &Record<'_>) {}
+
+        fn flush(&self) {}
+    }
+
+    static TEST_LOGGER: TestLogger = TestLogger;
+    log::set_logger(&TEST_LOGGER).map_err(|_| {
+        pyo3::exceptions::PyRuntimeError::new_err("global Rust logger is already set")
+    })?;
+    log::set_max_level(log::LevelFilter::Trace);
+    Ok(())
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ mod formatter;
 mod handler;
 mod handlers;
 mod level;
-#[cfg(feature = "log-compat")]
+#[cfg(all(feature = "python", feature = "log-compat"))]
 mod log_compat;
 mod log_record;
 mod logger;
@@ -242,6 +242,11 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(log_compat::setup_rust_logging, m)?)?;
     #[cfg(all(feature = "python", feature = "log-compat"))]
     m.add_function(wrap_pyfunction!(log_compat::emit_rust_log, m)?)?;
+    #[cfg(all(feature = "python", feature = "log-compat"))]
+    m.add_function(wrap_pyfunction!(
+        log_compat::install_test_global_rust_logger,
+        m
+    )?)?;
     #[cfg(feature = "python")]
     m.add_function(wrap_pyfunction!(file_config::parse_ini_file, m)?)?;
     #[cfg(feature = "python")]

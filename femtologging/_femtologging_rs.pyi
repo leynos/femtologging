@@ -79,10 +79,10 @@ class RotatingFileHandlerBuilder:
 class BackoffConfigDict(TypedDict, total=False):
     """Configuration options for exponential backoff retry behaviour."""
 
-    base_ms: int
-    cap_ms: int
-    reset_after_ms: int
-    deadline_ms: int
+    base_ms: int | None
+    cap_ms: int | None
+    reset_after_ms: int | None
+    deadline_ms: int | None
 
 class BackoffConfig:
     def __init__(self, config: BackoffConfigDict | None = None) -> None: ...

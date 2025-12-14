@@ -8,3 +8,13 @@
   list([
   ])
 # ---
+# name: test_rust_logging_bridge_is_idempotent
+  list([
+    'rust.idempotent [INFO] second install',
+  ])
+# ---
+# name: test_rust_logging_bridge_rejects_preinstalled_global_logger
+  list([
+    'global Rust logger is already set; femtologging cannot install the log bridge',
+  ])
+# ---

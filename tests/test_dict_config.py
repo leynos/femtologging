@@ -142,6 +142,38 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
     assert round_trip.as_dict() == expected_kwargs
 
 
+def test_dict_config_socket_handler_backoff_legacy_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply backoff overrides through the legacy kwargs path."""
+
+    class LegacyBuilder:
+        def __init__(self) -> None:
+            self.overrides: dict[str, int | None] | None = None
+
+        def with_backoff(self, **overrides: int | None) -> LegacyBuilder:
+            self.overrides = dict(overrides)
+            return self
+
+    monkeypatch.setattr(config_module, "BackoffConfig", None)
+    builder = LegacyBuilder()
+    kwargs: dict[str, object] = {
+        "backoff": {
+            "base_ms": 10,
+            "cap_ms": 100,
+            "reset_after_ms": None,
+        }
+    }
+
+    updated = config_module._apply_socket_tuning_kwargs("sock", builder, kwargs)
+    assert updated is builder
+    assert builder.overrides == {
+        "base_ms": 10,
+        "cap_ms": 100,
+        "reset_after_ms": None,
+    }
+
+
 def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
     """Accept structured TLS/backoff kwargs when constructing the socket builder."""
     nested_builder = config_module._build_handler_from_dict(

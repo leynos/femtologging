@@ -29,7 +29,7 @@ default = ["extension-module", "python", "log-compat"]
 extension-module = ["python", "pyo3/extension-module"]
 python = []
 test-util = []
-log-compat = []
+log-compat = ["python"]
 
 [dev-dependencies]
 criterion = "0.5"

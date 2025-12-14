@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess  # noqa: S404 - subprocess is required to test fresh-process logger semantics.
+import sys
 import time
 import typing as typ
 from dataclasses import dataclass  # noqa: ICN003 - required by the refactor task.
@@ -126,6 +128,51 @@ def when_emit_rust_log_step(
         capfd,
         RustLogParams(message=message, level=level, target=target),
     )
+
+
+@when(
+    "I attempt to set up rust logging bridge in a fresh process and it fails",
+    target_fixture="rust_bridge_error",
+)
+def when_setup_bridge_fails_in_subprocess() -> list[str]:
+    """Run setup in a fresh process and assert it fails as expected."""
+    script = """
+import sys
+
+import femtologging
+from femtologging import rust
+
+rust._install_test_global_rust_logger()
+
+try:
+    femtologging.setup_rust_logging()
+except RuntimeError as exc:
+    print(str(exc))
+    raise SystemExit(0)
+
+print("setup_rust_logging unexpectedly succeeded")
+raise SystemExit(1)
+""".strip()
+    result = subprocess.run(  # noqa: S603 - command is constant and does not execute untrusted input.
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        "expected setup_rust_logging to fail in the subprocess; "
+        f"rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+    )
+    return result.stdout.strip().splitlines()
+
+
+@then("the rust logging bridge error matches snapshot")
+def then_bridge_error_snapshot(
+    rust_bridge_error: Sequence[str],
+    snapshot: SnapshotAssertion,
+) -> None:
+    """Assert bridge failure output equals the stored snapshot."""
+    assert rust_bridge_error == snapshot, "error output must match snapshot"
 
 
 @then("the captured stderr output matches snapshot")

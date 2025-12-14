@@ -8,6 +8,14 @@ use crate::socket_handler::FemtoSocketHandler;
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
 
+fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<u64>> {
+    match config.get_item(key)? {
+        None => Ok(None),
+        Some(value) if value.is_none() => Ok(None),
+        Some(value) => value.extract::<u64>().map(Some),
+    }
+}
+
 #[pymethods]
 impl BackoffOverrides {
     #[new]
@@ -18,18 +26,10 @@ impl BackoffOverrides {
             None => return Ok(Self::default()),
         };
 
-        let base_ms = config
-            .get_item("base_ms")?
-            .and_then(|v| v.extract::<u64>().ok());
-        let cap_ms = config
-            .get_item("cap_ms")?
-            .and_then(|v| v.extract::<u64>().ok());
-        let reset_after_ms = config
-            .get_item("reset_after_ms")?
-            .and_then(|v| v.extract::<u64>().ok());
-        let deadline_ms = config
-            .get_item("deadline_ms")?
-            .and_then(|v| v.extract::<u64>().ok());
+        let base_ms = extract_optional_u64(&config, "base_ms")?;
+        let cap_ms = extract_optional_u64(&config, "cap_ms")?;
+        let reset_after_ms = extract_optional_u64(&config, "reset_after_ms")?;
+        let deadline_ms = extract_optional_u64(&config, "deadline_ms")?;
 
         Ok(Self::from_options(
             base_ms,
