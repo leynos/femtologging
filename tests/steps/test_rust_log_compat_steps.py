@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import subprocess  # noqa: S404 - subprocess is required to test fresh-process logger semantics.
+import subprocess  # noqa: S404 - FIXME: required to test fresh-process global logger semantics.
 import sys
 import time
 import typing as typ
-from dataclasses import dataclass  # noqa: ICN003 - required by the refactor task.
+from dataclasses import (  # noqa: ICN003 - FIXME: required by the refactor task.
+    dataclass,
+)
 from pathlib import Path
 
 import pytest
@@ -31,6 +33,16 @@ if typ.TYPE_CHECKING:
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 pytestmark = [pytest.mark.log_compat]
+
+if not (
+    hasattr(rust, "setup_rust_logging")
+    and hasattr(rust, "_emit_rust_log")
+    and hasattr(rust, "_install_test_global_rust_logger")
+):
+    pytest.skip(
+        "log-compat feature not built; rust bridge helpers unavailable",
+        allow_module_level=True,
+    )
 
 scenarios(str(FEATURES / "rust_log_compat.feature"))
 
@@ -64,7 +76,7 @@ def when_set_logger_level(name: str, level: str) -> None:
     logger.set_level(level)
 
 
-@dataclass
+@dataclass(slots=True, frozen=True)
 class RustLogParams:
     """Parameters for emitting a Rust log record."""
 
@@ -153,7 +165,7 @@ except RuntimeError as exc:
 print("setup_rust_logging unexpectedly succeeded")
 raise SystemExit(1)
 """.strip()
-    result = subprocess.run(  # noqa: S603 - command is constant and does not execute untrusted input.
+    result = subprocess.run(  # noqa: S603 - FIXME: required to validate subprocess failure semantics.
         [sys.executable, "-c", script],
         check=False,
         capture_output=True,

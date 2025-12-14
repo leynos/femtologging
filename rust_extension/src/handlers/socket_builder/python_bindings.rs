@@ -26,6 +26,17 @@ impl BackoffOverrides {
             None => return Ok(Self::default()),
         };
 
+        // Fail fast on typos / unsupported keys.
+        const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
+        for (key, _) in config.iter() {
+            let key: &str = key.extract()?;
+            if !ALLOWED_KEYS.contains(&key) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown BackoffConfig key {key:?}",
+                )));
+            }
+        }
+
         let base_ms = extract_optional_u64(&config, "base_ms")?;
         let cap_ms = extract_optional_u64(&config, "cap_ms")?;
         let reset_after_ms = extract_optional_u64(&config, "reset_after_ms")?;

@@ -323,25 +323,42 @@ mod tests {
 
     #[rstest]
     #[serial]
-    fn enabled_respects_logger_threshold() {
+    fn log_respects_logger_threshold() {
         let adapter = FemtoLogAdapter;
 
         Python::with_gil(|py| {
             manager::reset_manager();
             let logger = manager::get_logger(py, "bridge.level").expect("logger created");
+            let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
+            logger.borrow(py).add_handler(handler.clone());
             logger.borrow(py).set_level(FemtoLevel::Warn);
 
-            let meta = log::Metadata::builder()
+            let info_record = log::Record::builder()
+                .args(format_args!("info"))
                 .level(log::Level::Info)
                 .target("bridge.level")
                 .build();
-            assert!(!adapter.enabled(&meta));
+            adapter.log(&info_record);
 
-            let meta_warn = log::Metadata::builder()
+            let warn_record = log::Record::builder()
+                .args(format_args!("warn"))
                 .level(log::Level::Warn)
                 .target("bridge.level")
                 .build();
-            assert!(adapter.enabled(&meta_warn));
+            adapter.log(&warn_record);
+
+            assert!(
+                logger.borrow(py).flush_handlers(),
+                "flush should drain the queue"
+            );
+
+            let records = handler
+                .as_any()
+                .downcast_ref::<CollectingHandler>()
+                .expect("handler downcast")
+                .collected();
+            assert_eq!(records.len(), 1, "only WARN should pass threshold");
+            assert_eq!(records[0].level, "WARN");
         });
     }
 }

@@ -1,6 +1,8 @@
 import collections.abc as cabc
 import typing as typ
-from typing import TypedDict  # noqa: ICN003 - explicit import required for stub typing.
+from typing import (  # noqa: ICN003 - FIXME: explicit import required for TypedDict stubs.
+    TypedDict,
+)
 
 Callable = cabc.Callable
 Mapping = cabc.Mapping
@@ -112,7 +114,7 @@ HandlerIOError: type[Exception]
 hello: _Any
 get_logger: _Any
 reset_manager_py: _Any
-setup_rust_logging: _Any
+setup_rust_logging: Callable[[], None]
 
 def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> None: ...
 def parse_ini_file(

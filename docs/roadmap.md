@@ -155,21 +155,21 @@ steps below summarize the actionable items from that design.
     - `Error` → `Error` (Note: `log` crate has no `Critical` level)
   - [x] Implement `Log::enabled()` to check the effective level for the target
     logger via `Manager::get_logger()`.
-  - [x] Implement `Log::log()` to convert `log::Record` to `FemtoLogRecord` and
-    dispatch through the target logger:
+  - [x] Implement `Log::log()` to convert `log::Record` to a `FemtoLogRecord`
+    and dispatch through the target logger:
     - Map `record.target()` (module path) to logger name via hierarchical
       lookup.
     - Populate `FemtoLogRecord` metadata from `record.module_path()`,
       `record.file()`, `record.line()`, and `record.args()`.
   - [x] Implement `Log::flush()` to flush all registered handlers via
-        `Manager::flush_all_handlers()`. This is a best-effort operation: each
-        handler's buffer is flushed with a configurable timeout, individual
-        failures are logged internally, and records still in MPSC transit are
-        not awaited.
+    `Manager::flush_all_handlers()`. This is a best-effort operation: each
+    handler's buffer is flushed with a configurable timeout, individual
+    failures are logged internally, and records still in MPSC transit are not
+    awaited.
   - [x] Provide a `setup_rust_logging()` function callable from Python that
     calls `log::set_logger()` and `log::set_max_level()`.
-    - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section on
-      releasing the GIL).
+    - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section
+      on releasing the GIL).
     - GIL acquisition failures block until the GIL is available (standard PyO3
       behaviour). Python exceptions during `log()` or `flush()` are swallowed
       so that logging does not disrupt application flow; failures are tracked
@@ -188,10 +188,12 @@ steps below summarize the actionable items from that design.
   - [x] Add Python integration tests demonstrating unified logging from both
     Python and Rust code paths.
   - [x] Document the feature in `docs/rust-extension.md` and API docstrings.
-  - [ ] Create migration notes explaining how to enable the `log-compat` feature
-    and invoke `setup_rust_logging()` early during application initialisation.
+  - [ ] Create migration notes explaining how to enable the `log-compat`
+    feature and invoke `setup_rust_logging()` early during application
+    initialization.
   - [x] Document that enabling the `log::Log` bridge installs a global Rust
-    logger (exclusive) and the implications for existing logging configurations.
+    logger (exclusive) and the implications for existing logging
+    configurations.
 - [x] Expand test coverage and start benchmarking.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
