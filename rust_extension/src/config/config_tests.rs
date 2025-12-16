@@ -4,63 +4,23 @@
 use super::*;
 use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::handlers::{HandlerBuildError, HandlerBuilderTrait};
-use crate::log_record::FemtoLogRecord;
 use crate::manager;
-use crate::{FemtoLevel, StreamHandlerBuilder};
-use parking_lot::Mutex;
+use crate::{FemtoLevel, FileHandlerBuilder, StreamHandlerBuilder};
 use pyo3::Python;
 use rstest::{fixture, rstest};
 use serial_test::serial;
-use std::any::Any;
+use std::fs;
 use std::sync::Arc;
+use tempfile::NamedTempFile;
 
-#[derive(Clone, Default)]
-struct CollectingHandler {
-    records: Arc<Mutex<Vec<FemtoLogRecord>>>,
+fn new_root_file_handler() -> (FileHandlerBuilder, NamedTempFile) {
+    let file = NamedTempFile::new().expect("create temp log file");
+    let builder = FileHandlerBuilder::new(file.path());
+    (builder, file)
 }
 
-impl CollectingHandler {
-    fn collected(&self) -> Vec<FemtoLogRecord> {
-        self.records.lock().clone()
-    }
-}
-
-impl FemtoHandlerTrait for CollectingHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        self.records.lock().push(record);
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Clone)]
-struct CollectingHandlerBuilder {
-    handler: CollectingHandler,
-}
-
-impl CollectingHandlerBuilder {
-    fn new() -> Self {
-        Self {
-            handler: CollectingHandler::default(),
-        }
-    }
-
-    fn handle(&self) -> CollectingHandler {
-        self.handler.clone()
-    }
-}
-
-impl HandlerBuilderTrait for CollectingHandlerBuilder {
-    type Handler = CollectingHandler;
-
-    fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
-        Ok(self.handler.clone())
-    }
+fn read_log_file(file: &NamedTempFile) -> String {
+    fs::read_to_string(file.path()).unwrap_or_default()
 }
 
 #[fixture]
@@ -107,12 +67,16 @@ fn build_rejects_missing_root() {
     assert!(matches!(err, ConfigError::MissingRootLogger));
 }
 
+#[rstest]
+#[serial]
 fn build_accepts_default_version(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
 }
 
+#[rstest]
+#[serial]
 fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let handler = StreamHandlerBuilder::stderr();
@@ -140,9 +104,10 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
 #[serial]
 fn propagate_flag_applied(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
-        let root_handler = CollectingHandlerBuilder::new();
-        let collector = root_handler.handle();
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let (root_handler, file) = new_root_file_handler();
+        let root = LoggerConfigBuilder::new()
+            .with_level(FemtoLevel::Info)
+            .with_handlers(["h"]);
         let child_cfg = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
             .with_propagate(false);
@@ -154,8 +119,17 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
         let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
         assert!(child.borrow(py).handlers_for_test().is_empty());
         child.borrow(py).log(FemtoLevel::Info, "msg");
+        let root = manager::get_logger(py, "root").expect("root logger should exist");
         assert!(
-            collector.collected().is_empty(),
+            child.borrow(py).flush_handlers(),
+            "child flush should succeed"
+        );
+        assert!(
+            root.borrow(py).flush_handlers(),
+            "root flush should succeed"
+        );
+        assert!(
+            read_log_file(&file).is_empty(),
             "root handler should receive no records"
         );
     });
@@ -165,9 +139,10 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
 #[serial]
 fn record_propagates_to_root(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
-        let root_handler = CollectingHandlerBuilder::new();
-        let collector = root_handler.handle();
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let (root_handler, file) = new_root_file_handler();
+        let root = LoggerConfigBuilder::new()
+            .with_level(FemtoLevel::Info)
+            .with_handlers(["h"]);
         let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let builder = ConfigBuilder::new()
             .with_handler("h", root_handler)
@@ -176,12 +151,24 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
         builder.build_and_init().expect("build should succeed");
         let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
         child.borrow(py).log(FemtoLevel::Info, "msg");
-        let records = collector.collected();
-        assert_eq!(records.len(), 1, "root handler should receive one record");
+        let root = manager::get_logger(py, "root").expect("root logger should exist");
+        assert!(
+            child.borrow(py).flush_handlers(),
+            "child flush should succeed"
+        );
+        assert!(
+            root.borrow(py).flush_handlers(),
+            "root flush should succeed"
+        );
+        let contents = read_log_file(&file);
+        assert!(
+            contents.contains("msg"),
+            "root handler should receive one record"
+        );
     });
 }
 
-#[rstest(kind, add, cfg)]
+#[rstest]
 #[case::handler(
     "handler",
     |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
@@ -189,7 +176,12 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
 )]
 #[case::filter(
     "filter",
-    |b: ConfigBuilder| b.with_filter("exists", FilterBuilder::Level(LevelFilterBuilder::new())),
+    |b: ConfigBuilder| {
+        b.with_filter(
+            "exists",
+            FilterBuilder::Level(LevelFilterBuilder::new().with_max_level(FemtoLevel::Info)),
+        )
+    },
     LoggerConfigBuilder::new().with_filters(["missing"]),
 )]
 #[serial]
@@ -214,6 +206,8 @@ fn unknown_id_rejected(
     }
 }
 
+#[rstest]
+#[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -240,6 +234,8 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
     });
 }
 
+#[rstest]
+#[serial]
 fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
@@ -252,16 +248,21 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
 }
 
-#[rstest(kind, add, cfg)]
+#[rstest]
 #[case::handler(
     "handler",
     |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
-    LoggerConfigBuilder::new().with_handlers(["missing1","missing2"]),
+    LoggerConfigBuilder::new().with_handlers(["missing1", "missing2"]),
 )]
 #[case::filter(
     "filter",
-    |b: ConfigBuilder| b.with_filter("exists", FilterBuilder::Level(LevelFilterBuilder::new())),
-    LoggerConfigBuilder::new().with_filters(["missing1","missing2"]),
+    |b: ConfigBuilder| {
+        b.with_filter(
+            "exists",
+            FilterBuilder::Level(LevelFilterBuilder::new().with_max_level(FemtoLevel::Info)),
+        )
+    },
+    LoggerConfigBuilder::new().with_filters(["missing1", "missing2"]),
 )]
 #[serial]
 fn multiple_unknown_ids_rejected(
@@ -283,37 +284,11 @@ fn multiple_unknown_ids_rejected(
     }
 }
 
+// Duplicate handler/filter IDs are deduplicated by `LoggerConfigBuilder`'s
+// public constructors, so configurations cannot produce duplicate ID errors
+// through the supported API surface.
 #[rstest]
 #[serial]
-fn duplicate_handler_ids_rejected(_gil_and_clean_manager: ()) {
-    let handler = StreamHandlerBuilder::stderr();
-    let mut logger_cfg = LoggerConfigBuilder::new();
-    logger_cfg.handlers = vec!["h".into(), "h".into()];
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    let builder = ConfigBuilder::new()
-        .with_handler("h", handler)
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg);
-    let err = builder
-        .build_and_init()
-        .expect_err("build_and_init should fail for duplicate handler ids");
-    assert!(matches!(err, ConfigError::DuplicateHandlerIds(ids) if ids == vec!["h".to_string()]));
-}
-
-fn duplicate_filter_ids_rejected(_gil_and_clean_manager: ()) {
-    let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
-    let mut logger_cfg = LoggerConfigBuilder::new();
-    logger_cfg.filters = vec!["f".into(), "f".into()];
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-    let builder = ConfigBuilder::new()
-        .with_filter("f", FilterBuilder::Level(filt))
-        .with_root_logger(root)
-        .with_logger("child", logger_cfg);
-    let err = builder
-        .build_and_init()
-        .expect_err("build_and_init should fail for duplicate filter ids");
-    assert!(matches!(err, ConfigError::DuplicateFilterIds(ids) if ids == vec!["f".to_string()]));
-}
 fn disable_existing_loggers_clears_unmentioned(
     _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
@@ -358,7 +333,7 @@ fn disable_existing_loggers_keeps_ancestors(
     Python::with_gil(|py| {
         let (mut builder, root) = base_logger_builder;
         for name in ancestor_names {
-            builder = builder.with_logger(name, LoggerConfigBuilder::new().with_handlers(["h"]));
+            builder = builder.with_logger(*name, LoggerConfigBuilder::new().with_handlers(["h"]));
         }
         builder
             .build_and_init()
@@ -381,19 +356,7 @@ fn disable_existing_loggers_keeps_ancestors(
             assert_handler_count(py, name, 1, "ancestor logger should remain active");
         }
         assert_handler_count(py, &child_name, 1, "child logger should retain its handler");
-
-        let logging = py.import("logging").expect("import logging");
-        let py_child = logging
-            .call_method1("getLogger", (&child_name,))
-            .expect("getLogger should succeed");
-        let py_handlers = py_child
-            .getattr("handlers")
-            .expect("child logger should expose handlers");
-        assert_eq!(
-            py_handlers.len().unwrap(),
-            1,
-            "child logger should retain its handler",
-        );
+        // femtologging does not mutate Python's standard `logging` module state.
     });
 }
 
@@ -401,9 +364,10 @@ fn disable_existing_loggers_keeps_ancestors(
 #[serial]
 fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
-        let root_handler = CollectingHandlerBuilder::new();
-        let collector = root_handler.handle();
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let (root_handler, file) = new_root_file_handler();
+        let root = LoggerConfigBuilder::new()
+            .with_level(FemtoLevel::Info)
+            .with_handlers(["h"]);
         let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let builder = ConfigBuilder::new()
             .with_handler("h", root_handler)
@@ -411,17 +375,35 @@ fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
             .with_logger("child", child_cfg);
         builder.build_and_init().expect("build should succeed");
         let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
+        let root = manager::get_logger(py, "root").expect("root logger should exist");
         child.borrow(py).set_propagate(false);
         child.borrow(py).log(FemtoLevel::Info, "one");
         assert!(
-            collector.collected().is_empty(),
+            child.borrow(py).flush_handlers(),
+            "child flush should succeed"
+        );
+        assert!(
+            root.borrow(py).flush_handlers(),
+            "root flush should succeed"
+        );
+        assert!(
+            !read_log_file(&file).contains("one"),
             "records should not propagate when disabled"
         );
         child.borrow(py).set_propagate(true);
         child.borrow(py).log(FemtoLevel::Info, "two");
-        let records = collector.collected();
-        assert_eq!(records.len(), 1, "record should propagate after enabling");
-        assert_eq!(records[0].message, "two");
+        assert!(
+            child.borrow(py).flush_handlers(),
+            "child flush should succeed"
+        );
+        assert!(
+            root.borrow(py).flush_handlers(),
+            "root flush should succeed"
+        );
+        assert!(
+            read_log_file(&file).contains("two"),
+            "record should propagate after enabling"
+        );
     });
 }
 

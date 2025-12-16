@@ -149,25 +149,55 @@ def test_dict_config_socket_handler_backoff_legacy_kwargs(
 
     class LegacyBuilder:
         def __init__(self) -> None:
+            self.host: str | None = None
+            self.port: int | None = None
             self.overrides: dict[str, int | None] | None = None
+
+        def with_tcp(self, host: str, port: int) -> LegacyBuilder:
+            self.host = host
+            self.port = port
+            return self
 
         def with_backoff(self, **overrides: int | None) -> LegacyBuilder:
             self.overrides = dict(overrides)
             return self
 
     monkeypatch.setattr(config_module, "BackoffConfig", None)
-    builder = LegacyBuilder()
-    kwargs: dict[str, object] = {
-        "backoff": {
-            "base_ms": 10,
-            "cap_ms": 100,
-            "reset_after_ms": None,
-        }
-    }
+    monkeypatch.setattr(config_module, "SocketHandlerBuilder", LegacyBuilder)
+    monkeypatch.setitem(
+        config_module._HANDLER_CLASS_MAP,
+        "logging.handlers.SocketHandler",
+        LegacyBuilder,
+    )
+    monkeypatch.setitem(
+        config_module._HANDLER_CLASS_MAP, "femtologging.SocketHandler", LegacyBuilder
+    )
+    monkeypatch.setitem(
+        config_module._HANDLER_CLASS_MAP,
+        "femtologging.FemtoSocketHandler",
+        LegacyBuilder,
+    )
 
-    updated = config_module._apply_socket_tuning_kwargs("sock", builder, kwargs)
-    assert updated is builder
-    assert builder.overrides == {
+    nested_builder = config_module._build_handler_from_dict(
+        "sock",
+        {
+            "class": "femtologging.SocketHandler",
+            "kwargs": {
+                "host": "127.0.0.1",
+                "port": 9023,
+                "backoff": {
+                    "base_ms": 10,
+                    "cap_ms": 100,
+                    "reset_after_ms": None,
+                },
+            },
+        },
+    )
+
+    assert isinstance(nested_builder, LegacyBuilder)
+    assert nested_builder.host == "127.0.0.1"
+    assert nested_builder.port == 9023
+    assert nested_builder.overrides == {
         "base_ms": 10,
         "cap_ms": 100,
         "reset_after_ms": None,

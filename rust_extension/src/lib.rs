@@ -279,7 +279,7 @@ mod tests {
         // The module should expose builder types and the build error when the
         // `python` feature is enabled.
         Python::with_gil(|py| {
-            let module = PyModule::new(py, "test").unwrap().bind(py);
+            let module = PyModule::new(py, "test").unwrap();
             add_python_bindings(&module).unwrap();
             for name in [
                 "StreamHandlerBuilder",
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn module_registers_rotating_classes() {
         Python::with_gil(|py| {
-            let module = PyModule::new(py, "_femtologging_rs").unwrap().bind(py);
+            let module = PyModule::new(py, "_femtologging_rs").unwrap();
             super::_femtologging_rs(&module).unwrap();
             for name in ["FemtoRotatingFileHandler", "HandlerOptions"] {
                 let attr = module.getattr(name).unwrap();

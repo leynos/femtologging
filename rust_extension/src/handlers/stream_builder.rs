@@ -343,11 +343,13 @@ mod tests {
     #[cfg(feature = "python")]
     #[test]
     fn python_rejects_zero_flush_timeout() {
+        use pyo3::types::PyAnyMethods;
+
         Python::with_gil(|py| {
             let builder = pyo3::Py::new(py, StreamHandlerBuilder::stderr())
                 .expect("Py::new must create a stream builder");
             let err = builder
-                .as_ref(py)
+                .bind(py)
                 .call_method1("with_flush_timeout_ms", (0,))
                 .expect_err("with_flush_timeout_ms must reject zero");
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));

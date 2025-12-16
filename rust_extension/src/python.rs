@@ -43,11 +43,14 @@ mod tests {
     #[test]
     fn returns_user_defined_fq_name() {
         Python::with_gil(|py| {
+            let code = CString::new("class Foo: pass\n").unwrap();
+            let filename = CString::new("mymod.py").unwrap();
+            let module_name = CString::new("mymod").unwrap();
             let module = PyModule::from_code(
                 py,
-                "class Foo: pass\n",
-                CString::new("mymod.py").unwrap(),
-                CString::new("mymod").unwrap(),
+                code.as_c_str(),
+                filename.as_c_str(),
+                module_name.as_c_str(),
             )
             .unwrap();
             let obj = module.getattr("Foo").unwrap().call0().unwrap();
@@ -59,17 +62,27 @@ mod tests {
     #[test]
     fn falls_back_when_attrs_missing() {
         Python::with_gil(|py| {
+            let code = CString::new(concat!(
+                "class Meta(type):\n",
+                "    def __getattribute__(cls, name):\n",
+                "        if name in ('__module__', '__qualname__'):\n",
+                "            raise AttributeError(name)\n",
+                "        return super().__getattribute__(name)\n",
+                "\n",
+                "class Bar(metaclass=Meta):\n",
+                "    pass\n",
+            ))
+            .unwrap();
+            let filename = CString::new("mymod.py").unwrap();
+            let module_name = CString::new("mymod").unwrap();
             let module = PyModule::from_code(
                 py,
-                "class Bar: pass\n",
-                CString::new("mymod.py").unwrap(),
-                CString::new("mymod").unwrap(),
+                code.as_c_str(),
+                filename.as_c_str(),
+                module_name.as_c_str(),
             )
             .unwrap();
-            let class = module.getattr("Bar").unwrap();
-            class.delattr("__module__").unwrap();
-            class.delattr("__qualname__").unwrap();
-            let obj = class.call0().unwrap();
+            let obj = module.getattr("Bar").unwrap().call0().unwrap();
             let name = fq_py_type(&obj);
             assert_eq!(name, "<unknown>.<unknown>");
         });

@@ -59,6 +59,7 @@ test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
+	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat
 	uv run pytest -v
 
 typecheck: build ## Static type analysis

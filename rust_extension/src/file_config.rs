@@ -130,15 +130,18 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
         .map_err(|err| PyRuntimeError::new_err(format!("{path} is invalid: {err}")))?;
     Ok(ini
         .iter()
-        .map(|(section, props)| {
-            let name = section
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "DEFAULT".to_string());
-            let entries = props
+        .filter_map(|(section, props)| {
+            let entries: Vec<(String, String)> = props
                 .iter()
                 .map(|(key, value)| (key.to_string(), value.to_owned()))
                 .collect();
-            (name, entries)
+            if section.is_none() && entries.is_empty() {
+                return None;
+            }
+            let name = section
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "DEFAULT".to_string());
+            Some((name, entries))
         })
         .collect())
 }
@@ -148,10 +151,12 @@ mod tests {
     use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
     use std::sync::Mutex;
     static LOCALE_MUTATION_GUARD: Mutex<()> = Mutex::new(());
+    use pyo3::Python;
+    use pyo3::exceptions::PyUnicodeDecodeError;
     use pyo3::exceptions::{PyLookupError, PyRuntimeError};
-    use pyo3::types::PyUnicodeDecodeError;
-    use pyo3::{IntoPy, Python};
+    use pyo3::types::PyAnyMethods;
     use rstest::rstest;
+    use std::ffi::CString;
     use tempfile::NamedTempFile;
 
     #[rstest]
@@ -220,8 +225,9 @@ level = INFO
         let path = file.path().display().to_string();
         Python::with_gil(|py| {
             let locale = py.import("locale").unwrap();
-            let original = locale.getattr("getpreferredencoding").unwrap().into_py(py);
-            let shim = py.eval("lambda _=False: 'cp1252'", None, None).unwrap();
+            let original = locale.getattr("getpreferredencoding").unwrap().unbind();
+            let expr = CString::new("lambda _=False: 'cp1252'").unwrap();
+            let shim = py.eval(expr.as_c_str(), None, None).unwrap();
             locale
                 .setattr("getpreferredencoding", shim)
                 .expect("patch locale encoding");

@@ -100,3 +100,61 @@ pub fn reset_manager() {
     let mut mgr = MANAGER.write();
     mgr.loggers.clear();
 }
+
+#[cfg(all(test, feature = "log-compat"))]
+mod tests {
+    use std::any::Any;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use pyo3::Python;
+
+    use super::{flush_all_handlers, get_logger, reset_manager};
+    use crate::handler::{FemtoHandlerTrait, HandlerError};
+    use crate::log_record::FemtoLogRecord;
+
+    #[derive(Clone)]
+    struct FlushCountingHandler {
+        flushes: Arc<AtomicUsize>,
+    }
+
+    impl FemtoHandlerTrait for FlushCountingHandler {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            Ok(())
+        }
+
+        fn flush(&self) -> bool {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+            true
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn flush_all_handlers_flushes_every_registered_logger() {
+        Python::with_gil(|py| {
+            reset_manager();
+
+            let flushes = Arc::new(AtomicUsize::new(0));
+            let handler = Arc::new(FlushCountingHandler {
+                flushes: flushes.clone(),
+            }) as Arc<dyn FemtoHandlerTrait>;
+
+            let logger_a = get_logger(py, "bridge.flush.a").expect("logger created");
+            let logger_b = get_logger(py, "bridge.flush.b").expect("logger created");
+            logger_a.borrow(py).add_handler(handler.clone());
+            logger_b.borrow(py).add_handler(handler.clone());
+
+            flush_all_handlers(py);
+
+            assert_eq!(
+                flushes.load(Ordering::SeqCst),
+                2,
+                "flush should be invoked once per logger"
+            );
+        });
+    }
+}

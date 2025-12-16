@@ -1,8 +1,6 @@
 import collections.abc as cabc
 import typing as typ
-from typing import (  # noqa: ICN003 - FIXME: explicit import required for TypedDict stubs.
-    TypedDict,
-)
+from typing import TypedDict  # noqa: ICN003 - explicit import required for stubs.
 
 Callable = cabc.Callable
 Mapping = cabc.Mapping

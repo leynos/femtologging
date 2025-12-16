@@ -62,12 +62,17 @@ fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crat
     match manager::get_logger(py, normalised.as_ref()) {
         Ok(logger) => Some((normalised.into_owned(), logger)),
         Err(err) => {
-            if !err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
-                eprintln!(
-                    "femtologging: failed to resolve logger for target {:?}: {}",
-                    target, err
-                );
-            }
+            let reason = if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
+                "invalid logger target"
+            } else {
+                "failed to resolve logger"
+            };
+            eprintln!(
+                "femtologging: {reason} {:?} (normalised {:?}): {}",
+                target,
+                normalised.as_ref(),
+                err
+            );
             let logger = manager::get_logger(py, "root").ok()?;
             Some(("root".to_string(), logger))
         }
@@ -207,6 +212,8 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     //! Unit tests for the `log` crate bridge.
+
+    use log::Log;
 
     use super::*;
     use crate::handler::{FemtoHandlerTrait, HandlerError};

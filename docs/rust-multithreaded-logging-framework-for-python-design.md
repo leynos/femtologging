@@ -1180,6 +1180,56 @@ classDiagram
     SetupModule ..> Manager
 ```
 
+```mermaid
+sequenceDiagram
+    actor PythonApp
+    participant PythonFemtoLogging as Python_femtologging
+    participant PyO3Bridge as Rust_PyO3_module
+    participant FemtoLogCompat as FemtoLogAdapter
+    participant RustLog as log_crate
+    participant Manager as Manager
+    participant FemtoLogger
+    participant Handler
+
+    PythonApp->>PythonFemtoLogging: import femtologging
+    PythonApp->>PythonFemtoLogging: setup_rust_logging()
+    PythonFemtoLogging->>PyO3Bridge: call setup_rust_logging
+    PyO3Bridge->>FemtoLogCompat: setup_rust_logging()
+    FemtoLogCompat->>FemtoLogCompat: install_global_logger()
+    FemtoLogCompat->>RustLog: set_logger(FemtoLogAdapter)
+    RustLog-->>FemtoLogCompat: Result
+    FemtoLogCompat->>RustLog: set_max_level(Trace)
+    FemtoLogCompat-->>PyO3Bridge: Ok or RuntimeError
+    PyO3Bridge-->>PythonFemtoLogging: return
+    PythonFemtoLogging-->>PythonApp: return
+
+    rect rgb(230,230,250)
+        participant RustComponent
+        RustComponent->>RustLog: log::info!("hello")
+        RustLog->>FemtoLogCompat: log(record)
+        FemtoLogCompat->>Manager: get_logger(normalised_target)
+        Manager-->>FemtoLogCompat: FemtoLogger or root
+        FemtoLogCompat->>FemtoLogger: is_enabled_for(level)
+        FemtoLogger-->>FemtoLogCompat: bool
+        alt enabled
+            FemtoLogCompat->>FemtoLogRecord: construct with metadata
+            FemtoLogCompat->>FemtoLogger: dispatch_record(record)
+            FemtoLogger->>FemtoLogger: passes_all_filters(record)
+            FemtoLogger->>Handler: dispatch_to_handlers(record)
+        else not_enabled
+            FemtoLogCompat-->>RustLog: return
+        end
+    end
+
+    PythonApp->>PythonFemtoLogging: shutdown or test flush
+    PythonFemtoLogging->>PyO3Bridge: call flush (via FemtoLogAdapter.flush)
+    PyO3Bridge->>FemtoLogCompat: flush()
+    FemtoLogCompat->>Manager: flush_all_handlers(py)
+    Manager->>Handler: flush()
+    Handler-->>Manager: result
+    Manager-->>FemtoLogCompat: return
+```
+
 **Initialisation Options:**
 
 The logger must be set after femtologging's `Manager` is initialised. Options

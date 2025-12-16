@@ -108,7 +108,7 @@ macro_rules! builder_methods {
         }
 
         #[cfg(feature = "python")]
-        #[pyo3::pymethods]
+        #[pymethods]
         impl $builder {
             $($py_methods)*
             $( $($extra_py_methods)* )?
@@ -433,7 +433,6 @@ macro_rules! builder_methods {
                 $($py_methods)*
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $rarg ),* ))]
-                #[pyo3(text_signature = concat!("(", "self" $(, ", ", stringify!($rarg))* , ")"))]
                 fn $py_fn<'py>(
                     mut slf: pyo3::PyRefMut<'py, Self>
                     $(, $rarg : $rty )*
@@ -594,6 +593,7 @@ mod tests {
                     rust_name: with_value,
                     py_fn: py_with_value,
                     py_name: "with_value",
+                    py_text_signature: "(self, value)",
                     rust_args: (value: usize),
                     self_ident: builder,
                     body: {
@@ -605,6 +605,7 @@ mod tests {
                     rust_name: with_label,
                     py_fn: py_with_label,
                     py_name: "with_label",
+                    py_text_signature: "(self, label)",
                     rust_args: (label: impl Into<String>),
                     py_args: (label: String),
                     self_ident: builder,
@@ -617,6 +618,7 @@ mod tests {
                     rust_name: reset,
                     py_fn: py_reset,
                     py_name: "reset",
+                    py_text_signature: "(self)",
                     rust_args: (),
                     self_ident: builder,
                     body: {
@@ -647,10 +649,12 @@ mod tests {
     #[cfg(feature = "python")]
     #[test]
     fn python_methods_are_callable() {
+        use pyo3::types::PyAnyMethods;
+
         Python::with_gil(|py| {
             let obj = pyo3::Py::new(py, DummyBuilder::default())
                 .expect("Py::new must create DummyBuilder");
-            let any = obj.as_ref(py);
+            let any = obj.bind(py).as_any();
             any.call_method1("with_value", (11,))
                 .expect("with_value must succeed");
             any.call_method1("with_label", ("gamma",))
@@ -667,7 +671,7 @@ mod tests {
     fn python_text_signatures_match_arguments() {
         Python::with_gil(|py| {
             let builder_type = py.get_type::<DummyBuilder>();
-            let value_sig: &str = builder_type
+            let value_sig: String = builder_type
                 .getattr("with_value")
                 .expect("type must expose with_value")
                 .getattr("__text_signature__")
@@ -676,7 +680,7 @@ mod tests {
                 .expect("text signature must be a string");
             assert_eq!(value_sig, "(self, value)");
 
-            let label_sig: &str = builder_type
+            let label_sig: String = builder_type
                 .getattr("with_label")
                 .expect("type must expose with_label")
                 .getattr("__text_signature__")
@@ -685,7 +689,7 @@ mod tests {
                 .expect("text signature must be a string");
             assert_eq!(label_sig, "(self, label)");
 
-            let reset_sig: &str = builder_type
+            let reset_sig: String = builder_type
                 .getattr("reset")
                 .expect("type must expose reset")
                 .getattr("__text_signature__")
@@ -696,6 +700,7 @@ mod tests {
         });
     }
 
+    #[cfg_attr(feature = "python", pyo3::pyclass)]
     #[derive(Clone, Debug, Default)]
     struct CapacityDummy {
         capacity: Option<usize>,
@@ -741,10 +746,12 @@ mod tests {
     #[cfg(feature = "python")]
     #[test]
     fn capacity_clause_generates_python_method() {
+        use pyo3::types::PyAnyMethods;
+
         Python::with_gil(|py| {
             let obj = pyo3::Py::new(py, CapacityDummy::default())
                 .expect("Py::new must create CapacityDummy");
-            let any = obj.as_ref(py);
+            let any = obj.bind(py).as_any();
             any.call_method1("with_capacity", (7,))
                 .expect("with_capacity must succeed for positive capacity");
             let guard = obj.borrow(py);

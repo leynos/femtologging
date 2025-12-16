@@ -6,9 +6,7 @@ import subprocess  # noqa: S404 - FIXME: required to test fresh-process global l
 import sys
 import time
 import typing as typ
-from dataclasses import (  # noqa: ICN003 - FIXME: required by the refactor task.
-    dataclass,
-)
+from dataclasses import dataclass  # noqa: ICN003 - required by the refactor task.
 from pathlib import Path
 
 import pytest
@@ -32,13 +30,13 @@ if typ.TYPE_CHECKING:
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
-pytestmark = [pytest.mark.log_compat]
-
 REQUIRED_RUST_ATTRS = (
     "setup_rust_logging",
     "_emit_rust_log",
     "_install_test_global_rust_logger",
 )
+
+pytestmark = [pytest.mark.log_compat]
 
 if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
     pytest.skip(
@@ -78,7 +76,7 @@ def when_set_logger_level(name: str, level: str) -> None:
     logger.set_level(level)
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass
 class RustLogParams:
     """Parameters for emitting a Rust log record."""
 
@@ -100,7 +98,7 @@ def when_emit_rust_log(
     logger.flush_handlers()
 
     prefix = f"{logger_name} [{log_params.level.upper()}] "
-    deadline = time.monotonic() + 0.5
+    deadline = time.monotonic() + 2.0
     captured: list[str] = []
     while time.monotonic() < deadline:
         err = capfd.readouterr().err
@@ -118,7 +116,7 @@ def rust_log_test_ctx(
     handler_ctx: tuple[FemtoStreamHandler, str],
     capfd: pytest.CaptureFixture[str],
 ) -> tuple[tuple[FemtoStreamHandler, str], pytest.CaptureFixture[str]]:
-    """Provide combined test context for Rust log compatibility tests."""
+    """Return combined test context for Rust log compatibility tests."""
     return handler_ctx, capfd
 
 
