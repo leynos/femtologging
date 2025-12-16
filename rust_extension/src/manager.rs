@@ -101,60 +101,99 @@ pub fn reset_manager() {
     mgr.loggers.clear();
 }
 
-#[cfg(all(test, feature = "log-compat"))]
+#[cfg(test)]
 mod tests {
-    use std::any::Any;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[cfg(feature = "log-compat")]
+    mod log_compat {
+        use std::any::Any;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use pyo3::Python;
+        use pyo3::Python;
 
-    use super::{flush_all_handlers, get_logger, reset_manager};
-    use crate::handler::{FemtoHandlerTrait, HandlerError};
-    use crate::log_record::FemtoLogRecord;
+        use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
+        use crate::handler::{FemtoHandlerTrait, HandlerError};
+        use crate::log_record::FemtoLogRecord;
 
-    #[derive(Clone)]
-    struct FlushCountingHandler {
-        flushes: Arc<AtomicUsize>,
-    }
-
-    impl FemtoHandlerTrait for FlushCountingHandler {
-        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-            Ok(())
+        #[derive(Clone)]
+        struct FlushCountingHandler {
+            flushes: Arc<AtomicUsize>,
         }
 
-        fn flush(&self) -> bool {
-            self.flushes.fetch_add(1, Ordering::SeqCst);
-            true
+        impl FemtoHandlerTrait for FlushCountingHandler {
+            fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+                Ok(())
+            }
+
+            fn flush(&self) -> bool {
+                self.flushes.fetch_add(1, Ordering::SeqCst);
+                true
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
         }
 
-        fn as_any(&self) -> &dyn Any {
-            self
+        #[test]
+        fn flush_all_handlers_flushes_loggers_with_handlers() {
+            Python::with_gil(|py| {
+                reset_manager();
+
+                let flushes = Arc::new(AtomicUsize::new(0));
+                let handler = Arc::new(FlushCountingHandler {
+                    flushes: flushes.clone(),
+                }) as Arc<dyn FemtoHandlerTrait>;
+
+                let logger_a = get_logger(py, "bridge.flush.a").expect("logger created");
+                let logger_b = get_logger(py, "bridge.flush.b").expect("logger created");
+                logger_a.borrow(py).add_handler(handler.clone());
+                logger_b.borrow(py).add_handler(handler.clone());
+
+                flush_all_handlers(py);
+
+                assert_eq!(
+                    flushes.load(Ordering::SeqCst),
+                    2,
+                    "flush should be invoked once per logger with handlers",
+                );
+            });
         }
-    }
 
-    #[test]
-    fn flush_all_handlers_flushes_every_registered_logger() {
-        Python::with_gil(|py| {
-            reset_manager();
+        #[test]
+        fn flush_all_handlers_invokes_flush_once_per_registered_logger() {
+            Python::with_gil(|py| {
+                reset_manager();
 
-            let flushes = Arc::new(AtomicUsize::new(0));
-            let handler = Arc::new(FlushCountingHandler {
-                flushes: flushes.clone(),
-            }) as Arc<dyn FemtoHandlerTrait>;
+                // Populate the manager with multiple loggers (including parents).
+                let _ = get_logger(py, "bridge.flush.a").expect("logger created");
+                let _ = get_logger(py, "bridge.flush.b").expect("logger created");
 
-            let logger_a = get_logger(py, "bridge.flush.a").expect("logger created");
-            let logger_b = get_logger(py, "bridge.flush.b").expect("logger created");
-            logger_a.borrow(py).add_handler(handler.clone());
-            logger_b.borrow(py).add_handler(handler.clone());
+                let flushes = Arc::new(AtomicUsize::new(0));
+                let handler = Arc::new(FlushCountingHandler {
+                    flushes: flushes.clone(),
+                }) as Arc<dyn FemtoHandlerTrait>;
 
-            flush_all_handlers(py);
+                let loggers = {
+                    let mgr = MANAGER.read();
+                    mgr.loggers
+                        .values()
+                        .map(|logger| logger.clone_ref(py))
+                        .collect::<Vec<_>>()
+                };
 
-            assert_eq!(
-                flushes.load(Ordering::SeqCst),
-                2,
-                "flush should be invoked once per logger"
-            );
-        });
+                for logger in &loggers {
+                    logger.borrow(py).add_handler(handler.clone());
+                }
+
+                flush_all_handlers(py);
+
+                assert_eq!(
+                    flushes.load(Ordering::SeqCst),
+                    loggers.len(),
+                    "flush should be invoked once per registered logger",
+                );
+            });
+        }
     }
 }

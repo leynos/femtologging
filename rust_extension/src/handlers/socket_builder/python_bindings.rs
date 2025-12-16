@@ -172,6 +172,7 @@ impl AsPyDict for SocketHandlerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use pyo3::PyErr;
     use pyo3::Python;
     use pyo3::types::PyAnyMethods;
     use pyo3::types::PyDict;
@@ -179,14 +180,57 @@ mod tests {
 
     use super::{BackoffOverrides, SocketHandlerBuilder};
 
+    /// Assert all backoff fields on BackoffOverrides match expected values.
+    fn assert_backoff_overrides(
+        overrides: &BackoffOverrides,
+        base_ms: Option<u64>,
+        cap_ms: Option<u64>,
+        reset_after_ms: Option<u64>,
+        deadline_ms: Option<u64>,
+    ) {
+        assert_eq!(overrides.base_ms, base_ms);
+        assert_eq!(overrides.cap_ms, cap_ms);
+        assert_eq!(overrides.reset_after_ms, reset_after_ms);
+        assert_eq!(overrides.deadline_ms, deadline_ms);
+    }
+
+    /// Assert all backoff fields in a PyDict match expected values.
+    fn assert_backoff_dict_fields(
+        dict: &pyo3::Bound<'_, PyDict>,
+        base_ms: Option<u64>,
+        cap_ms: Option<u64>,
+        reset_after_ms: Option<u64>,
+        deadline_ms: Option<u64>,
+    ) {
+        let get_field = |key: &str| -> Option<u64> {
+            dict.get_item(key).unwrap().and_then(|v| v.extract().ok())
+        };
+
+        assert_eq!(get_field("backoff_base_ms"), base_ms);
+        assert_eq!(get_field("backoff_cap_ms"), cap_ms);
+        assert_eq!(get_field("backoff_reset_after_ms"), reset_after_ms);
+        assert_eq!(get_field("backoff_deadline_ms"), deadline_ms);
+    }
+
+    /// Helper to test BackoffOverrides::py_new error cases.
+    /// Takes a closure that populates a PyDict and returns the expected error.
+    fn assert_backoff_config_new_error<F>(setup: F, check_error: fn(Python, PyErr))
+    where
+        F: FnOnce(Python, &pyo3::Bound<'_, PyDict>),
+    {
+        Python::with_gil(|py| {
+            let d = PyDict::new(py);
+            setup(py, &d);
+            let err = BackoffOverrides::py_new(Some(d)).unwrap_err();
+            check_error(py, err);
+        });
+    }
+
     #[test]
     fn backoff_config_new_defaults_when_config_is_none() {
         Python::with_gil(|py| {
             let overrides = BackoffOverrides::py_new(None).expect("construct default overrides");
-            assert!(overrides.base_ms.is_none());
-            assert!(overrides.cap_ms.is_none());
-            assert!(overrides.reset_after_ms.is_none());
-            assert!(overrides.deadline_ms.is_none());
+            assert_backoff_overrides(&overrides, None, None, None, None);
 
             let builder = SocketHandlerBuilder::new().with_backoff(overrides);
             let d = PyDict::new(py);
@@ -194,10 +238,7 @@ mod tests {
                 .extend_dict(&d)
                 .expect("dict serialisation succeeds");
 
-            assert!(d.get_item("backoff_base_ms").unwrap().is_none());
-            assert!(d.get_item("backoff_cap_ms").unwrap().is_none());
-            assert!(d.get_item("backoff_reset_after_ms").unwrap().is_none());
-            assert!(d.get_item("backoff_deadline_ms").unwrap().is_none());
+            assert_backoff_dict_fields(&d, None, None, None, None);
         });
     }
 
@@ -209,40 +250,39 @@ mod tests {
 
             let overrides =
                 BackoffOverrides::py_new(Some(d)).expect("construct overrides with missing keys");
-            assert_eq!(overrides.base_ms, Some(50));
-            assert!(overrides.cap_ms.is_none());
-            assert!(overrides.reset_after_ms.is_none());
-            assert!(overrides.deadline_ms.is_none());
+            assert_backoff_overrides(&overrides, Some(50), None, None, None);
         });
     }
 
     #[test]
     fn backoff_config_new_rejects_unknown_keys() {
-        Python::with_gil(|py| {
-            let d = PyDict::new(py);
-            d.set_item("base_ms", 50_u64).unwrap();
-            d.set_item("typo_ms", 1_u64).unwrap();
-
-            let err = BackoffOverrides::py_new(Some(d)).unwrap_err();
-            assert!(
-                err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
-                "unknown keys should raise ValueError"
-            );
-        });
+        assert_backoff_config_new_error(
+            |py, d| {
+                d.set_item("base_ms", 50_u64).unwrap();
+                d.set_item("typo_ms", 1_u64).unwrap();
+            },
+            |py, err| {
+                assert!(
+                    err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
+                    "unknown keys should raise ValueError"
+                );
+            },
+        );
     }
 
     #[test]
     fn backoff_config_new_rejects_invalid_types() {
-        Python::with_gil(|py| {
-            let d = PyDict::new(py);
-            d.set_item("base_ms", "not-an-int").unwrap();
-
-            let err = BackoffOverrides::py_new(Some(d)).unwrap_err();
-            assert!(
-                err.is_instance_of::<pyo3::exceptions::PyTypeError>(py),
-                "invalid value types should raise TypeError"
-            );
-        });
+        assert_backoff_config_new_error(
+            |_py, d| {
+                d.set_item("base_ms", "not-an-int").unwrap();
+            },
+            |py, err| {
+                assert!(
+                    err.is_instance_of::<pyo3::exceptions::PyTypeError>(py),
+                    "invalid value types should raise TypeError"
+                );
+            },
+        );
     }
 
     #[test]
@@ -271,10 +311,13 @@ mod tests {
             drop(builder_ref);
 
             let builder_ref = builder.borrow(py);
-            assert_eq!(builder_ref.backoff.base_ms, Some(10));
-            assert_eq!(builder_ref.backoff.cap_ms, Some(100));
-            assert_eq!(builder_ref.backoff.reset_after_ms, Some(200));
-            assert_eq!(builder_ref.backoff.deadline_ms, Some(300));
+            assert_backoff_overrides(
+                &builder_ref.backoff,
+                Some(10),
+                Some(100),
+                Some(200),
+                Some(300),
+            );
 
             let d = PyDict::new(py);
             builder_ref
@@ -306,24 +349,7 @@ mod tests {
                 .extend_dict(&out)
                 .expect("dict serialisation succeeds");
 
-            assert_eq!(
-                out.get_item("backoff_base_ms")
-                    .unwrap()
-                    .unwrap()
-                    .extract::<u64>()
-                    .unwrap(),
-                5
-            );
-            assert_eq!(
-                out.get_item("backoff_cap_ms")
-                    .unwrap()
-                    .unwrap()
-                    .extract::<u64>()
-                    .unwrap(),
-                25
-            );
-            assert!(out.get_item("backoff_reset_after_ms").unwrap().is_none());
-            assert!(out.get_item("backoff_deadline_ms").unwrap().is_none());
+            assert_backoff_dict_fields(&out, Some(5), Some(25), None, None);
         });
     }
 }

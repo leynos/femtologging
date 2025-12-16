@@ -62,13 +62,15 @@ fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crat
     match manager::get_logger(py, normalised.as_ref()) {
         Ok(logger) => Some((normalised.into_owned(), logger)),
         Err(err) => {
-            let reason = if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
+            let reason = if err.is_instance_of::<pyo3::exceptions::PyKeyError>(py) {
+                "unknown logger target"
+            } else if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
                 "invalid logger target"
             } else {
-                "failed to resolve logger"
+                "unexpected error resolving logger"
             };
             eprintln!(
-                "femtologging: {reason} {:?} (normalised {:?}): {}",
+                "femtologging: {reason} {:?} (normalised {:?}); falling back to root: {}",
                 target,
                 normalised.as_ref(),
                 err
