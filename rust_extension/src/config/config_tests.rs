@@ -20,7 +20,7 @@ fn new_root_file_handler() -> (FileHandlerBuilder, NamedTempFile) {
 }
 
 fn read_log_file(file: &NamedTempFile) -> String {
-    fs::read_to_string(file.path()).unwrap_or_default()
+    fs::read_to_string(file.path()).expect("test log file must be readable")
 }
 
 #[fixture]

@@ -180,14 +180,11 @@ mod tests {
 
     use super::{BackoffOverrides, SocketHandlerBuilder};
 
+    type BackoffFields = (Option<u64>, Option<u64>, Option<u64>, Option<u64>);
+
     /// Assert all backoff fields on BackoffOverrides match expected values.
-    fn assert_backoff_overrides(
-        overrides: &BackoffOverrides,
-        base_ms: Option<u64>,
-        cap_ms: Option<u64>,
-        reset_after_ms: Option<u64>,
-        deadline_ms: Option<u64>,
-    ) {
+    fn assert_backoff_overrides(overrides: &BackoffOverrides, expected: BackoffFields) {
+        let (base_ms, cap_ms, reset_after_ms, deadline_ms) = expected;
         assert_eq!(overrides.base_ms, base_ms);
         assert_eq!(overrides.cap_ms, cap_ms);
         assert_eq!(overrides.reset_after_ms, reset_after_ms);
@@ -195,13 +192,8 @@ mod tests {
     }
 
     /// Assert all backoff fields in a PyDict match expected values.
-    fn assert_backoff_dict_fields(
-        dict: &pyo3::Bound<'_, PyDict>,
-        base_ms: Option<u64>,
-        cap_ms: Option<u64>,
-        reset_after_ms: Option<u64>,
-        deadline_ms: Option<u64>,
-    ) {
+    fn assert_backoff_dict_fields(dict: &pyo3::Bound<'_, PyDict>, expected: BackoffFields) {
+        let (base_ms, cap_ms, reset_after_ms, deadline_ms) = expected;
         let get_field = |key: &str| -> Option<u64> {
             dict.get_item(key).unwrap().and_then(|v| v.extract().ok())
         };
@@ -230,7 +222,7 @@ mod tests {
     fn backoff_config_new_defaults_when_config_is_none() {
         Python::with_gil(|py| {
             let overrides = BackoffOverrides::py_new(None).expect("construct default overrides");
-            assert_backoff_overrides(&overrides, None, None, None, None);
+            assert_backoff_overrides(&overrides, (None, None, None, None));
 
             let builder = SocketHandlerBuilder::new().with_backoff(overrides);
             let d = PyDict::new(py);
@@ -238,7 +230,7 @@ mod tests {
                 .extend_dict(&d)
                 .expect("dict serialisation succeeds");
 
-            assert_backoff_dict_fields(&d, None, None, None, None);
+            assert_backoff_dict_fields(&d, (None, None, None, None));
         });
     }
 
@@ -250,7 +242,7 @@ mod tests {
 
             let overrides =
                 BackoffOverrides::py_new(Some(d)).expect("construct overrides with missing keys");
-            assert_backoff_overrides(&overrides, Some(50), None, None, None);
+            assert_backoff_overrides(&overrides, (Some(50), None, None, None));
         });
     }
 
@@ -313,10 +305,7 @@ mod tests {
             let builder_ref = builder.borrow(py);
             assert_backoff_overrides(
                 &builder_ref.backoff,
-                Some(10),
-                Some(100),
-                Some(200),
-                Some(300),
+                (Some(10), Some(100), Some(200), Some(300)),
             );
 
             let d = PyDict::new(py);
@@ -349,7 +338,7 @@ mod tests {
                 .extend_dict(&out)
                 .expect("dict serialisation succeeds");
 
-            assert_backoff_dict_fields(&out, Some(5), Some(25), None, None);
+            assert_backoff_dict_fields(&out, (Some(5), Some(25), None, None));
         });
     }
 }

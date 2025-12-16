@@ -12,6 +12,7 @@ from femtologging import (
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
 )
+from tests.helpers import _poll_file_for_text
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -180,7 +181,7 @@ def test_file_builders_accept_callable_formatter(
     handler = builder.build()
     handler.handle("logger", "INFO", "hello")
     handler.close()
-    contents = path.read_text()
+    contents = _poll_file_for_text(path, "callable:hello", timeout=1.0)
     assert "callable:hello" in contents
 
 

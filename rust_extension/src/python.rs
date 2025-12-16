@@ -43,17 +43,21 @@ mod tests {
     #[test]
     fn returns_user_defined_fq_name() {
         Python::with_gil(|py| {
-            let code = CString::new("class Foo: pass\n").unwrap();
-            let filename = CString::new("mymod.py").unwrap();
-            let module_name = CString::new("mymod").unwrap();
+            let code = CString::new("class Foo: pass\n").expect("valid Python code");
+            let filename = CString::new("mymod.py").expect("valid filename");
+            let module_name = CString::new("mymod").expect("valid module name");
             let module = PyModule::from_code(
                 py,
                 code.as_c_str(),
                 filename.as_c_str(),
                 module_name.as_c_str(),
             )
-            .unwrap();
-            let obj = module.getattr("Foo").unwrap().call0().unwrap();
+            .expect("module creation succeeds");
+            let obj = module
+                .getattr("Foo")
+                .expect("Foo class exists")
+                .call0()
+                .expect("Foo() call succeeds");
             let name = fq_py_type(&obj);
             assert_eq!(name, "mymod.Foo");
         });
@@ -72,17 +76,21 @@ mod tests {
                 "class Bar(metaclass=Meta):\n",
                 "    pass\n",
             ))
-            .unwrap();
-            let filename = CString::new("mymod.py").unwrap();
-            let module_name = CString::new("mymod").unwrap();
+            .expect("valid Python code");
+            let filename = CString::new("mymod.py").expect("valid filename");
+            let module_name = CString::new("mymod").expect("valid module name");
             let module = PyModule::from_code(
                 py,
                 code.as_c_str(),
                 filename.as_c_str(),
                 module_name.as_c_str(),
             )
-            .unwrap();
-            let obj = module.getattr("Bar").unwrap().call0().unwrap();
+            .expect("module creation succeeds");
+            let obj = module
+                .getattr("Bar")
+                .expect("Bar class exists")
+                .call0()
+                .expect("Bar() call succeeds");
             let name = fq_py_type(&obj);
             assert_eq!(name, "<unknown>.<unknown>");
         });

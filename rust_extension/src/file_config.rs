@@ -170,7 +170,7 @@ keys = root
 [logger_root]
 level = INFO
 "#;
-        let parsed = parse_sections("config.ini", contents).unwrap();
+        let parsed = parse_sections("config.ini", contents).expect("parse_sections succeeds");
         let names: Vec<_> = parsed.iter().map(|(name, _)| name).collect();
         assert_eq!(names, &["DEFAULT", "loggers", "logger_root"]);
         assert_eq!(parsed[0].1[0], ("key".to_string(), "value".to_string()));
@@ -187,13 +187,13 @@ level = INFO
 
     #[rstest]
     fn parse_ini_file_reads_from_disk() {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("create temp ini file");
         use std::io::Write;
         writeln!(
             file,
             "[loggers]\nkeys = root\n\n[logger_root]\nlevel = INFO\nhandlers = console"
         )
-        .unwrap();
+        .expect("write ini contents");
         let path = file.path().display().to_string();
         Python::with_gil(|py| {
             let sections = parse_ini_file(py, &path, None).expect("should parse");
@@ -203,7 +203,7 @@ level = INFO
 
     #[rstest]
     fn parse_ini_file_rejects_empty_file() {
-        let file = NamedTempFile::new().unwrap();
+        let file = NamedTempFile::new().expect("create temp ini file");
         let path = file.path().display().to_string();
         Python::with_gil(|py| {
             let err = parse_ini_file(py, &path, None).expect_err("empty files must fail");
@@ -217,17 +217,23 @@ level = INFO
             .lock()
             .expect("acquire locale mutation guard");
         use std::io::Write;
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("create temp ini file");
         file.write_all(
             b"[loggers]\nkeys = root\n\n[logger_root]\nlevel = INF\xC9\nhandlers = console",
         )
-        .unwrap();
+        .expect("write cp1252 ini contents");
         let path = file.path().display().to_string();
         Python::with_gil(|py| {
-            let locale = py.import("locale").unwrap();
-            let original = locale.getattr("getpreferredencoding").unwrap().unbind();
-            let expr = CString::new("lambda _=False: 'cp1252'").unwrap();
-            let shim = py.eval(expr.as_c_str(), None, None).unwrap();
+            let locale = py.import("locale").expect("import locale module");
+            let original = locale
+                .getattr("getpreferredencoding")
+                .expect("get locale.getpreferredencoding")
+                .unbind();
+            let expr =
+                CString::new("lambda _=False: 'cp1252'").expect("create CString for locale shim");
+            let shim = py
+                .eval(expr.as_c_str(), None, None)
+                .expect("evaluate locale shim");
             locale
                 .setattr("getpreferredencoding", shim)
                 .expect("patch locale encoding");
@@ -261,8 +267,16 @@ level = INFO
                 .value(py)
                 .downcast::<PyUnicodeDecodeError>()
                 .expect("unicode decode error");
-            let start: isize = value.getattr("start").unwrap().extract().unwrap();
-            let end: isize = value.getattr("end").unwrap().extract().unwrap();
+            let start: isize = value
+                .getattr("start")
+                .expect("unicode decode error start")
+                .extract()
+                .expect("extract start");
+            let end: isize = value
+                .getattr("end")
+                .expect("unicode decode error end")
+                .extract()
+                .expect("extract end");
             assert_eq!((start, end), (5, 6));
         });
     }

@@ -69,7 +69,8 @@ fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crat
             } else {
                 "unexpected error resolving logger"
             };
-            eprintln!(
+            log::warn!(
+                target: "femtologging.log_compat",
                 "femtologging: {reason} {:?} (normalised {:?}); falling back to root: {}",
                 target,
                 normalised.as_ref(),

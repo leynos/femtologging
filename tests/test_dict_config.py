@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 import typing as typ
 
 import pytest
@@ -12,6 +11,7 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
+from tests.helpers import _poll_file_for_text
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -35,16 +35,7 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     dictConfig(cfg)
     logger = get_logger("root")
     logger.log("INFO", "file")
-    contents = ""
-    deadline = time.time() + 1.0
-    while time.time() < deadline:
-        if path.exists():
-            contents = path.read_text()
-            if "file" in contents:
-                break
-        time.sleep(0.01)
-    else:
-        pytest.fail("log file not written in time")
+    contents = _poll_file_for_text(path, "file", timeout=1.0)
     assert "file" in contents
 
 

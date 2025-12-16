@@ -76,7 +76,7 @@ def when_set_logger_level(name: str, level: str) -> None:
     logger.set_level(level)
 
 
-@dataclass
+@dataclass(slots=True, frozen=True)
 class RustLogParams:
     """Parameters for emitting a Rust log record."""
 
