@@ -18,6 +18,18 @@ fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult
 
 #[pymethods]
 impl BackoffOverrides {
+    /// Construct `BackoffOverrides` from an optional configuration dictionary.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Optional dictionary with keys: `base_ms`, `cap_ms`,
+    ///   `reset_after_ms`, `deadline_ms`. All values must be integers or `None`.
+    ///   If `config` is `None`, returns empty overrides (all fields `None`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValueError` if `config` contains unknown keys.
+    /// Returns `TypeError` if any value is not an integer or `None`.
     #[new]
     #[pyo3(signature = (config=None))]
     fn py_new<'py>(config: Option<Bound<'py, PyDict>>) -> PyResult<Self> {

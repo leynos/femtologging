@@ -11,7 +11,7 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
-from tests.helpers import _poll_file_for_text
+from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -35,8 +35,7 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     dictConfig(cfg)
     logger = get_logger("root")
     logger.log("INFO", "file")
-    contents = _poll_file_for_text(path, "file", timeout=1.0)
-    assert "file" in contents
+    poll_file_for_text(path, "file", timeout=1.0)
 
 
 @pytest.mark.parametrize(

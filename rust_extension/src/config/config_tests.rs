@@ -5,8 +5,8 @@ use super::*;
 use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
 use crate::manager;
-use crate::{FemtoLevel, FileHandlerBuilder, StreamHandlerBuilder};
-use pyo3::Python;
+use crate::{FemtoLevel, FemtoLogger, FileHandlerBuilder, StreamHandlerBuilder};
+use pyo3::{Py, Python};
 use rstest::{fixture, rstest};
 use serial_test::serial;
 use std::fs;
@@ -39,6 +39,13 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let builder = builder_with_root(root.clone());
     (builder, root)
+}
+
+fn flush_logger_and_assert(py: Python<'_>, logger: &Py<FemtoLogger>, name: &str) {
+    assert!(
+        logger.borrow(py).flush_handlers(),
+        "{name} flush should succeed"
+    );
 }
 
 fn assert_handler_count(py: Python<'_>, name: &str, expected: usize, reason: &str) {
@@ -120,14 +127,8 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
         assert!(child.borrow(py).handlers_for_test().is_empty());
         child.borrow(py).log(FemtoLevel::Info, "msg");
         let root = manager::get_logger(py, "root").expect("root logger should exist");
-        assert!(
-            child.borrow(py).flush_handlers(),
-            "child flush should succeed"
-        );
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root flush should succeed"
-        );
+        flush_logger_and_assert(py, &child, "child");
+        flush_logger_and_assert(py, &root, "root");
         assert!(
             read_log_file(&file).is_empty(),
             "root handler should receive no records"
@@ -152,14 +153,8 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
         let child = manager::get_logger(py, "child").expect("get_logger('child') should succeed");
         child.borrow(py).log(FemtoLevel::Info, "msg");
         let root = manager::get_logger(py, "root").expect("root logger should exist");
-        assert!(
-            child.borrow(py).flush_handlers(),
-            "child flush should succeed"
-        );
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root flush should succeed"
-        );
+        flush_logger_and_assert(py, &child, "child");
+        flush_logger_and_assert(py, &root, "root");
         let contents = read_log_file(&file);
         assert!(
             contents.contains("msg"),
@@ -378,28 +373,16 @@ fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
         let root = manager::get_logger(py, "root").expect("root logger should exist");
         child.borrow(py).set_propagate(false);
         child.borrow(py).log(FemtoLevel::Info, "one");
-        assert!(
-            child.borrow(py).flush_handlers(),
-            "child flush should succeed"
-        );
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root flush should succeed"
-        );
+        flush_logger_and_assert(py, &child, "child");
+        flush_logger_and_assert(py, &root, "root");
         assert!(
             !read_log_file(&file).contains("one"),
             "records should not propagate when disabled"
         );
         child.borrow(py).set_propagate(true);
         child.borrow(py).log(FemtoLevel::Info, "two");
-        assert!(
-            child.borrow(py).flush_handlers(),
-            "child flush should succeed"
-        );
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root flush should succeed"
-        );
+        flush_logger_and_assert(py, &child, "child");
+        flush_logger_and_assert(py, &root, "root");
         assert!(
             read_log_file(&file).contains("two"),
             "record should propagate after enabling"
