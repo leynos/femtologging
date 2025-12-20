@@ -1,6 +1,7 @@
 //! Unit tests for configuration builders.
 #![cfg(all(test, feature = "python"))]
 
+use super::test_utils::gil_and_clean_manager;
 use super::*;
 use crate::config::ConfigError;
 use crate::filters::{FilterBuilder, LevelFilterBuilder};
@@ -10,11 +11,6 @@ use pyo3::Python;
 use rstest::{fixture, rstest};
 use serial_test::serial;
 use std::sync::Arc;
-
-#[fixture]
-fn gil_and_clean_manager() {
-    Python::with_gil(|_| manager::reset_manager());
-}
 
 fn builder_with_root(root: LoggerConfigBuilder) -> ConfigBuilder {
     ConfigBuilder::new()

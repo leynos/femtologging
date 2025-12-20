@@ -17,3 +17,5 @@ pub use types::{ConfigBuilder, ConfigError, FormatterBuilder, LoggerConfigBuilde
 mod config_tests;
 #[cfg(all(test, feature = "python"))]
 mod propagate_tests;
+#[cfg(all(test, feature = "python"))]
+mod test_utils;

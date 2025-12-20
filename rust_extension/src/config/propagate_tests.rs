@@ -1,11 +1,12 @@
 //! Unit tests for logger propagation behaviour.
 #![cfg(all(test, feature = "python"))]
 
+use super::test_utils::gil_and_clean_manager;
 use super::*;
 use crate::manager;
 use crate::{FemtoLevel, FemtoLogger, FileHandlerBuilder};
 use pyo3::{Py, Python};
-use rstest::{fixture, rstest};
+use rstest::rstest;
 use serial_test::serial;
 use std::fs;
 use tempfile::NamedTempFile;
@@ -18,11 +19,6 @@ fn new_root_file_handler() -> (FileHandlerBuilder, NamedTempFile) {
 
 fn read_log_file(file: &NamedTempFile) -> String {
     fs::read_to_string(file.path()).expect("test log file must be readable")
-}
-
-#[fixture]
-fn gil_and_clean_manager() {
-    Python::with_gil(|_| manager::reset_manager());
 }
 
 fn flush_logger_and_assert(py: Python<'_>, logger: &Py<FemtoLogger>, name: &str) {
