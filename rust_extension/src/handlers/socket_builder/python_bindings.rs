@@ -1,4 +1,10 @@
-//! Python bindings for [`SocketHandlerBuilder`].
+//! Python bindings for [`SocketHandlerBuilder`] and [`BackoffOverrides`].
+//!
+//! This module exposes Python APIs for constructing socket handlers and configuring
+//! exponential backoff behaviour. [`BackoffOverrides`] (presented as `BackoffConfig`
+//! to Python) allows callers to override default backoff timing parameters via a
+//! dictionary, while [`SocketHandlerBuilder`] provides a fluent interface for
+//! assembling socket handler instances with TCP/Unix endpoints, TLS, and timeouts.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -8,6 +14,10 @@ use crate::socket_handler::FemtoSocketHandler;
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
 
+/// Extract an optional `u64` value from a Python dictionary.
+///
+/// Returns `Ok(None)` if the key is missing or explicitly set to Python `None`.
+/// Propagates extraction errors (e.g. `TypeError`) for invalid value types.
 fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<u64>> {
     match config.get_item(key)? {
         None => Ok(None),
@@ -246,6 +256,10 @@ mod tests {
         });
     }
 
+    /// Test helper enum for parameterising validation error scenarios.
+    ///
+    /// Variants represent different failure modes (unknown keys, invalid types)
+    /// with methods to set up test cases and verify error types.
     #[derive(Clone, Copy)]
     enum BackoffErrorKind {
         UnknownKey,
@@ -293,7 +307,8 @@ mod tests {
         Python::with_gil(|py| {
             let d = PyDict::new(py);
             kind.setup_dict(&d);
-            let err = BackoffOverrides::py_new(Some(d)).unwrap_err();
+            let err = BackoffOverrides::py_new(Some(d))
+                .expect_err("config with validation errors should fail");
             kind.check_error(py, err);
         });
     }
