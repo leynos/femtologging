@@ -48,6 +48,7 @@ check-fmt: ## Verify formatting
 lint: ## Run linters
 	ruff check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
 
 markdownlint: ## Lint Markdown files
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT)
@@ -58,6 +59,7 @@ nixie: ## Validate Mermaid diagrams
 test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
 	# Test baseline without optional features, then with log-compat bridge.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat

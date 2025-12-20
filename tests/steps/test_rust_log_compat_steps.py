@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses as dc
 import subprocess  # noqa: S404 - FIXME: required to test fresh-process global logger semantics.
 import sys
 import time
 import typing as typ
-from dataclasses import dataclass  # noqa: ICN003 - required by the refactor task.
 from pathlib import Path
 
 import pytest
@@ -76,7 +76,7 @@ def when_set_logger_level(name: str, level: str) -> None:
     logger.set_level(level)
 
 
-@dataclass(slots=True, frozen=True)
+@dc.dataclass(slots=True, frozen=True)
 class RustLogParams:
     """Parameters for emitting a Rust log record."""
 

@@ -149,15 +149,15 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
 #[cfg(test)]
 mod tests {
     use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
-    use std::sync::Mutex;
-    static LOCALE_MUTATION_GUARD: Mutex<()> = Mutex::new(());
-    use pyo3::Python;
-    use pyo3::exceptions::PyUnicodeDecodeError;
-    use pyo3::exceptions::{PyLookupError, PyRuntimeError};
+    use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyUnicodeDecodeError};
+    use pyo3::prelude::*;
     use pyo3::types::PyAnyMethods;
     use rstest::rstest;
     use std::ffi::CString;
+    use std::sync::Mutex;
     use tempfile::NamedTempFile;
+
+    static LOCALE_MUTATION_GUARD: Mutex<()> = Mutex::new(());
 
     #[rstest]
     fn parses_sections_in_order() {

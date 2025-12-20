@@ -189,52 +189,38 @@ mod tests {
     use pyo3::types::PyAnyMethods;
     use pyo3::types::PyDict;
     use pyo3::types::PyDictMethods;
+    use rstest::rstest;
 
     use super::{BackoffOverrides, SocketHandlerBuilder};
 
-    type BackoffFields = (Option<u64>, Option<u64>, Option<u64>, Option<u64>);
-
     /// Assert all backoff fields on BackoffOverrides match expected values.
-    fn assert_backoff_overrides(overrides: &BackoffOverrides, expected: BackoffFields) {
-        let (base_ms, cap_ms, reset_after_ms, deadline_ms) = expected;
-        assert_eq!(overrides.base_ms, base_ms);
-        assert_eq!(overrides.cap_ms, cap_ms);
-        assert_eq!(overrides.reset_after_ms, reset_after_ms);
-        assert_eq!(overrides.deadline_ms, deadline_ms);
+    fn assert_backoff_overrides(actual: &BackoffOverrides, expected: &BackoffOverrides) {
+        assert_eq!(actual.base_ms, expected.base_ms);
+        assert_eq!(actual.cap_ms, expected.cap_ms);
+        assert_eq!(actual.reset_after_ms, expected.reset_after_ms);
+        assert_eq!(actual.deadline_ms, expected.deadline_ms);
     }
 
     /// Assert all backoff fields in a PyDict match expected values.
-    fn assert_backoff_dict_fields(dict: &pyo3::Bound<'_, PyDict>, expected: BackoffFields) {
-        let (base_ms, cap_ms, reset_after_ms, deadline_ms) = expected;
+    fn assert_backoff_dict_fields(dict: &pyo3::Bound<'_, PyDict>, expected: &BackoffOverrides) {
         let get_field = |key: &str| -> Option<u64> {
-            dict.get_item(key).unwrap().and_then(|v| v.extract().ok())
+            dict.get_item(key)
+                .expect("dict.get_item should succeed in test")
+                .map(|v| v.extract().expect("field should extract to u64 in test"))
         };
 
-        assert_eq!(get_field("backoff_base_ms"), base_ms);
-        assert_eq!(get_field("backoff_cap_ms"), cap_ms);
-        assert_eq!(get_field("backoff_reset_after_ms"), reset_after_ms);
-        assert_eq!(get_field("backoff_deadline_ms"), deadline_ms);
-    }
-
-    /// Helper to test BackoffOverrides::py_new error cases.
-    /// Takes a closure that populates a PyDict and returns the expected error.
-    fn assert_backoff_config_new_error<F>(setup: F, check_error: fn(Python, PyErr))
-    where
-        F: FnOnce(Python, &pyo3::Bound<'_, PyDict>),
-    {
-        Python::with_gil(|py| {
-            let d = PyDict::new(py);
-            setup(py, &d);
-            let err = BackoffOverrides::py_new(Some(d)).unwrap_err();
-            check_error(py, err);
-        });
+        assert_eq!(get_field("backoff_base_ms"), expected.base_ms);
+        assert_eq!(get_field("backoff_cap_ms"), expected.cap_ms);
+        assert_eq!(get_field("backoff_reset_after_ms"), expected.reset_after_ms);
+        assert_eq!(get_field("backoff_deadline_ms"), expected.deadline_ms);
     }
 
     #[test]
     fn backoff_config_new_defaults_when_config_is_none() {
         Python::with_gil(|py| {
             let overrides = BackoffOverrides::py_new(None).expect("construct default overrides");
-            assert_backoff_overrides(&overrides, (None, None, None, None));
+            let expected = BackoffOverrides::default();
+            assert_backoff_overrides(&overrides, &expected);
 
             let builder = SocketHandlerBuilder::new().with_backoff(overrides);
             let d = PyDict::new(py);
@@ -242,7 +228,7 @@ mod tests {
                 .extend_dict(&d)
                 .expect("dict serialisation succeeds");
 
-            assert_backoff_dict_fields(&d, (None, None, None, None));
+            assert_backoff_dict_fields(&d, &expected);
         });
     }
 
@@ -254,39 +240,58 @@ mod tests {
 
             let overrides =
                 BackoffOverrides::py_new(Some(d)).expect("construct overrides with missing keys");
-            assert_backoff_overrides(&overrides, (Some(50), None, None, None));
+            let expected = BackoffOverrides::from_options(Some(50), None, None, None);
+            assert_backoff_overrides(&overrides, &expected);
         });
     }
 
-    #[test]
-    fn backoff_config_new_rejects_unknown_keys() {
-        assert_backoff_config_new_error(
-            |py, d| {
-                d.set_item("base_ms", 50_u64).unwrap();
-                d.set_item("typo_ms", 1_u64).unwrap();
-            },
-            |py, err| {
-                assert!(
-                    err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
-                    "unknown keys should raise ValueError"
-                );
-            },
-        );
+    #[derive(Clone, Copy)]
+    enum BackoffErrorKind {
+        UnknownKey,
+        InvalidType,
     }
 
-    #[test]
-    fn backoff_config_new_rejects_invalid_types() {
-        assert_backoff_config_new_error(
-            |_py, d| {
-                d.set_item("base_ms", "not-an-int").unwrap();
-            },
-            |py, err| {
-                assert!(
-                    err.is_instance_of::<pyo3::exceptions::PyTypeError>(py),
-                    "invalid value types should raise TypeError"
-                );
-            },
-        );
+    impl BackoffErrorKind {
+        fn setup_dict(self, d: &pyo3::Bound<'_, PyDict>) {
+            match self {
+                BackoffErrorKind::UnknownKey => {
+                    d.set_item("base_ms", 50_u64).unwrap();
+                    d.set_item("typo_ms", 1_u64).unwrap();
+                }
+                BackoffErrorKind::InvalidType => {
+                    d.set_item("base_ms", "not-an-int").unwrap();
+                }
+            }
+        }
+
+        fn check_error(self, py: Python, err: PyErr) {
+            match self {
+                BackoffErrorKind::UnknownKey => {
+                    assert!(
+                        err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
+                        "unknown keys should raise ValueError"
+                    );
+                }
+                BackoffErrorKind::InvalidType => {
+                    assert!(
+                        err.is_instance_of::<pyo3::exceptions::PyTypeError>(py),
+                        "invalid value types should raise TypeError"
+                    );
+                }
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::unknown_key(BackoffErrorKind::UnknownKey)]
+    #[case::invalid_type(BackoffErrorKind::InvalidType)]
+    fn backoff_config_new_rejects_errors(#[case] kind: BackoffErrorKind) {
+        Python::with_gil(|py| {
+            let d = PyDict::new(py);
+            kind.setup_dict(&d);
+            let err = BackoffOverrides::py_new(Some(d)).unwrap_err();
+            kind.check_error(py, err);
+        });
     }
 
     #[test]
@@ -306,19 +311,16 @@ mod tests {
     fn with_backoff_stores_overrides_on_builder() {
         Python::with_gil(|py| {
             let builder = pyo3::Py::new(py, SocketHandlerBuilder::new()).unwrap();
-            let overrides =
+            let expected =
                 BackoffOverrides::from_options(Some(10), Some(100), Some(200), Some(300));
 
             let builder_ref = builder.borrow_mut(py);
-            let builder_ref =
-                SocketHandlerBuilder::py_with_backoff(builder_ref, overrides).expect("apply");
+            let builder_ref = SocketHandlerBuilder::py_with_backoff(builder_ref, expected.clone())
+                .expect("apply");
             drop(builder_ref);
 
             let builder_ref = builder.borrow(py);
-            assert_backoff_overrides(
-                &builder_ref.backoff,
-                (Some(10), Some(100), Some(200), Some(300)),
-            );
+            assert_backoff_overrides(&builder_ref.backoff, &expected);
 
             let d = PyDict::new(py);
             builder_ref
@@ -350,7 +352,8 @@ mod tests {
                 .extend_dict(&out)
                 .expect("dict serialisation succeeds");
 
-            assert_backoff_dict_fields(&out, (Some(5), Some(25), None, None));
+            let expected = BackoffOverrides::from_options(Some(5), Some(25), None, None);
+            assert_backoff_dict_fields(&out, &expected);
         });
     }
 }
