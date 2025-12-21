@@ -387,12 +387,16 @@ classDiagram
     class HTTPHandlerBuilder {
         +with_url(url: str): HTTPHandlerBuilder
         +with_method(method: str): HTTPHandlerBuilder
-        +with_secure(secure: bool): HTTPHandlerBuilder
-        +with_credentials(user: str, password: str): HTTPHandlerBuilder
+        +with_basic_auth(username: str, password: str): HTTPHandlerBuilder
+        +with_bearer_token(token: str): HTTPHandlerBuilder
         +with_headers(headers: dict): HTTPHandlerBuilder
+        +with_header(key: str, value: str): HTTPHandlerBuilder
+        +with_capacity(capacity: int): HTTPHandlerBuilder
         +with_connect_timeout_ms(timeout: int): HTTPHandlerBuilder
         +with_write_timeout_ms(timeout: int): HTTPHandlerBuilder
-        +with_backoff(...): HTTPHandlerBuilder
+        +with_backoff(overrides: BackoffOverrides): HTTPHandlerBuilder
+        +with_json_format(): HTTPHandlerBuilder
+        +with_record_fields(fields: list): HTTPHandlerBuilder
         +build(): FemtoHTTPHandler
     }
     class FemtoHTTPHandler {
@@ -404,27 +408,36 @@ classDiagram
         capacity: usize
         url: String
         method: HTTPMethod
-        secure: bool
-        credentials: Option~Credentials~
+        auth: AuthConfig
         headers: HashMap~String, String~
         connect_timeout: Duration
         write_timeout: Duration
         backoff: BackoffPolicy
+        format: SerializationFormat
+        record_fields: Option~Vec~String~~
     }
     class HTTPMethod {
         <<enumeration>>
         GET
         POST
     }
-    class Credentials {
-        username: String
-        password: String
+    class AuthConfig {
+        <<enumeration>>
+        None
+        Basic~username, password~
+        Bearer~token~
+    }
+    class SerializationFormat {
+        <<enumeration>>
+        UrlEncoded
+        Json
     }
     HTTPHandlerBuilder --> "1" FemtoHTTPHandler : build()
     HTTPHandlerBuilder --> "1" HTTPHandlerConfig
     FemtoHTTPHandler --> "1" HTTPHandlerConfig
     HTTPHandlerConfig --> "1" HTTPMethod
-    HTTPHandlerConfig --> "0..1" Credentials
+    HTTPHandlerConfig --> "1" AuthConfig
+    HTTPHandlerConfig --> "1" SerializationFormat
     HTTPHandlerConfig --> "1" BackoffPolicy
 ```
 

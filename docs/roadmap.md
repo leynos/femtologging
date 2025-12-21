@@ -201,7 +201,7 @@ steps below summarize the actionable items from that design.
 - [x] Implement `FemtoHTTPHandler` for sending logs over HTTP.
   - [x] Resolve open design questions documented in the
     [`FemtoHTTPHandler Design`][http-design] section of the design document
-    (serialisation format, HTTP client library, retry semantics,
+    (serialization format, HTTP client library, retry semantics,
     `mapLogRecord` equivalent).
   - [x] Implement HTTP transport configuration supporting URL, method
     (GET/POST), HTTPS, authentication (Basic, Bearer, or custom headers),
