@@ -85,8 +85,7 @@ impl Worker {
                 return;
             }
         };
-        let now = Instant::now();
-        self.send_request(&payload, now);
+        self.send_request(&payload);
     }
 
     fn serialise_record(&self, record: &FemtoLogRecord) -> io::Result<String> {
@@ -97,26 +96,33 @@ impl Worker {
         }
     }
 
-    fn send_request(&mut self, payload: &str, now: Instant) {
-        let result = self.execute_request(payload);
-        match result {
-            Ok(class) => match class {
-                ResponseClass::Success => {
+    fn send_request(&mut self, payload: &str) {
+        loop {
+            let now = Instant::now();
+            let result = self.execute_request(payload);
+            match result {
+                Ok(ResponseClass::Success) => {
                     self.backoff.record_success(now);
                     self.backoff.reset_after_idle(now);
+                    return;
                 }
-                ResponseClass::Retryable => {
-                    self.handle_retryable_error("server returned retryable status", now);
+                Ok(ResponseClass::Retryable) => {
+                    if !self.sleep_and_should_retry("server returned retryable status", now) {
+                        return;
+                    }
                 }
-                ResponseClass::Permanent => {
+                Ok(ResponseClass::Permanent) => {
                     warn!("FemtoHTTPHandler received permanent error (4xx), dropping record");
                     warn_drops(&self.warner, |count| {
                         warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
                     });
+                    return;
                 }
-            },
-            Err(err) => {
-                self.handle_retryable_error(&err, now);
+                Err(err) => {
+                    if !self.sleep_and_should_retry(&err, now) {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -180,18 +186,21 @@ impl Worker {
         req
     }
 
-    fn handle_retryable_error(&mut self, err: &str, now: Instant) {
+    /// Handles a retryable error by logging, sleeping with backoff, and returning
+    /// whether a retry should be attempted.
+    ///
+    /// Returns `true` if the caller should retry, `false` if the backoff deadline
+    /// has been exceeded and the record should be dropped.
+    fn sleep_and_should_retry(&mut self, err: &str, now: Instant) -> bool {
         warn!("FemtoHTTPHandler request failed: {err}");
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to request failures");
-        });
-        self.sleep_if_backing_off(now);
-    }
-
-    fn sleep_if_backing_off(&mut self, now: Instant) {
-        if let Some(delay) = self.backoff.next_sleep(now) {
-            thread::sleep(delay);
-        }
+        let Some(delay) = self.backoff.next_sleep(now) else {
+            warn_drops(&self.warner, |count| {
+                warn!("FemtoHTTPHandler dropped {count} records after exhausting retry deadline");
+            });
+            return false;
+        };
+        thread::sleep(delay);
+        true
     }
 
     fn handle_flush_command(&mut self, ack: Sender<()>) {
