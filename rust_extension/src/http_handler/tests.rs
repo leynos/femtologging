@@ -82,12 +82,13 @@ fn read_headers(reader: &mut BufReader<TcpStream>) -> (Vec<(String, String)>, us
         if line.trim().is_empty() {
             break;
         }
-        if let Some((key, value)) = parse_header_line(&line) {
-            if key == "content-length" {
-                content_length = value.parse().unwrap_or(0);
-            }
-            headers.push((key, value));
+        let Some((key, value)) = parse_header_line(&line) else {
+            continue;
+        };
+        if key == "content-length" {
+            content_length = value.parse().unwrap_or(0);
         }
+        headers.push((key, value));
     }
 
     (headers, content_length)
