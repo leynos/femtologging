@@ -41,6 +41,7 @@ struct TlsConfig {
 ///
 /// Refer to the module-level documentation and the design documents for the
 /// full semantics of each backoff phase.
+#[cfg_attr(feature = "python", pyclass(name = "BackoffConfig"))]
 #[derive(Clone, Debug, Default)]
 pub struct BackoffOverrides {
     base_ms: Option<u64>,

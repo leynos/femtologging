@@ -242,9 +242,9 @@ tests (e.g. TLS handshake failure scenarios) remain on the roadmap but the core
 transport, framing, and reconnection behaviour is now implemented end to end.
 
 Rust callers configure jitter timings through a `BackoffOverrides` helper
-passed to `SocketHandlerBuilder::with_backoff`. This groups the optional
-durations into a fluent struct so the builder keeps its argument count under
-control while mirroring the Python keyword parameters one-to-one.
+passed to `SocketHandlerBuilder::with_backoff`. Python callers supply the same
+configuration via the `BackoffConfig` PyO3 class, keeping the builder method
+signature compact while still allowing per-field overrides.
 
 ```mermaid
 classDiagram
@@ -255,14 +255,15 @@ classDiagram
         +with_write_timeout_ms(timeout: int): SocketHandlerBuilder
         +with_max_frame_size(size: int): SocketHandlerBuilder
         +with_tls(domain: str | None = None, insecure: bool = False): SocketHandlerBuilder
-        +with_backoff(
-            base_ms: int | None = None,
-            cap_ms: int | None = None,
-            reset_after_ms: int | None = None,
-            deadline_ms: int | None = None
-        ): SocketHandlerBuilder
+        +with_backoff(config: BackoffConfig): SocketHandlerBuilder
         +as_dict(): dict[str, object]
         +build(): FemtoSocketHandler
+    }
+    class BackoffConfig {
+        base_ms: int | None
+        cap_ms: int | None
+        reset_after_ms: int | None
+        deadline_ms: int | None
     }
     class FemtoSocketHandler {
         +handle(record: FemtoLogRecord): Result
@@ -1021,6 +1022,11 @@ The `log::Record::target()` field typically contains the Rust module path
 hierarchical logger system via `Manager::get_logger()`, which creates parent
 loggers automatically based on dotted names.
 
+The implemented bridge normalises Rust-style `::` separators to `.` before
+resolving the logger, preserving femtologging's dotted hierarchy semantics. If
+a target is invalid after normalisation, the record is routed to the root
+logger rather than panicking.
+
 **Conceptual Implementation:**
 
 ```rust
@@ -1174,6 +1180,56 @@ classDiagram
     SetupModule ..> Manager
 ```
 
+```mermaid
+sequenceDiagram
+    actor PythonApp
+    participant PythonFemtoLogging as Python_femtologging
+    participant PyO3Bridge as Rust_PyO3_module
+    participant FemtoLogCompat as FemtoLogAdapter
+    participant RustLog as log_crate
+    participant Manager as Manager
+    participant FemtoLogger
+    participant Handler
+
+    PythonApp->>PythonFemtoLogging: import femtologging
+    PythonApp->>PythonFemtoLogging: setup_rust_logging()
+    PythonFemtoLogging->>PyO3Bridge: call setup_rust_logging
+    PyO3Bridge->>FemtoLogCompat: setup_rust_logging()
+    FemtoLogCompat->>FemtoLogCompat: install_global_logger()
+    FemtoLogCompat->>RustLog: set_logger(FemtoLogAdapter)
+    RustLog-->>FemtoLogCompat: Result
+    FemtoLogCompat->>RustLog: set_max_level(Trace)
+    FemtoLogCompat-->>PyO3Bridge: Ok or RuntimeError
+    PyO3Bridge-->>PythonFemtoLogging: return
+    PythonFemtoLogging-->>PythonApp: return
+
+    rect rgb(230,230,250)
+        participant RustComponent
+        RustComponent->>RustLog: log::info!("hello")
+        RustLog->>FemtoLogCompat: log(record)
+        FemtoLogCompat->>Manager: get_logger(normalised_target)
+        Manager-->>FemtoLogCompat: FemtoLogger or root
+        FemtoLogCompat->>FemtoLogger: is_enabled_for(level)
+        FemtoLogger-->>FemtoLogCompat: bool
+        alt enabled
+            FemtoLogCompat->>FemtoLogRecord: construct with metadata
+            FemtoLogCompat->>FemtoLogger: dispatch_record(record)
+            FemtoLogger->>FemtoLogger: passes_all_filters(record)
+            FemtoLogger->>Handler: dispatch_to_handlers(record)
+        else not_enabled
+            FemtoLogCompat-->>RustLog: return
+        end
+    end
+
+    PythonApp->>PythonFemtoLogging: shutdown or test flush
+    PythonFemtoLogging->>PyO3Bridge: call flush (via FemtoLogAdapter.flush)
+    PyO3Bridge->>FemtoLogCompat: flush()
+    FemtoLogCompat->>Manager: flush_all_handlers(py)
+    Manager->>Handler: flush()
+    Handler-->>Manager: result
+    Manager-->>FemtoLogCompat: return
+```
+
 **Initialisation Options:**
 
 The logger must be set after femtologging's `Manager` is initialised. Options
@@ -1185,6 +1241,11 @@ include:
 
 The recommended approach is explicit initialisation via a Python-callable
 function, giving applications control over when the bridge is activated.
+
+`setup_rust_logging()` is idempotent: once femtologging installs the global
+Rust logger, repeated calls are no-ops. If a different global logger is already
+installed, the call raises `RuntimeError` and femtologging does not override
+the existing configuration.
 
 **Cargo Feature Scope (`log-compat`):**
 

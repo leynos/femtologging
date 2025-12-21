@@ -1,5 +1,6 @@
 import collections.abc as cabc
 import typing as typ
+from typing import TypedDict  # noqa: ICN003 - explicit import required for stubs.
 
 Callable = cabc.Callable
 Mapping = cabc.Mapping
@@ -75,6 +76,17 @@ class RotatingFileHandlerBuilder:
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> FemtoRotatingFileHandler: ...
 
+class BackoffConfigDict(TypedDict, total=False):
+    """Configuration options for exponential backoff retry behaviour."""
+
+    base_ms: int | None
+    cap_ms: int | None
+    reset_after_ms: int | None
+    deadline_ms: int | None
+
+class BackoffConfig:
+    def __init__(self, config: BackoffConfigDict | None = None) -> None: ...
+
 class SocketHandlerBuilder:
     def __init__(self) -> None: ...
     def with_tcp(self, host: str, port: int) -> Self: ...
@@ -84,13 +96,7 @@ class SocketHandlerBuilder:
     def with_write_timeout_ms(self, timeout_ms: int) -> Self: ...
     def with_max_frame_size(self, size: int) -> Self: ...
     def with_tls(self, domain: str | None = ..., *, insecure: bool = ...) -> Self: ...
-    def with_backoff(
-        self,
-        base_ms: int | None = ...,
-        cap_ms: int | None = ...,
-        reset_after_ms: int | None = ...,
-        deadline_ms: int | None = ...,
-    ) -> Self: ...
+    def with_backoff(self, config: BackoffConfig) -> Self: ...
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> FemtoSocketHandler: ...
 
@@ -106,7 +112,9 @@ HandlerIOError: type[Exception]
 hello: _Any
 get_logger: _Any
 reset_manager_py: _Any
+setup_rust_logging: Callable[[], None]
 
+def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> None: ...
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...

@@ -138,7 +138,7 @@ your process exits.
 - Socket handlers must be built via `SocketHandlerBuilder`. Typical usage:
 
 ```python
-from femtologging import SocketHandlerBuilder
+from femtologging import BackoffConfig, SocketHandlerBuilder
 
 socket_handler = (
     SocketHandlerBuilder()
@@ -147,7 +147,16 @@ socket_handler = (
     .with_connect_timeout_ms(5000)
     .with_write_timeout_ms(1000)
     .with_tls("logs.example.com", insecure=False)
-    .with_backoff(base_ms=100, cap_ms=5000, reset_after_ms=30000, deadline_ms=120000)
+    .with_backoff(
+        BackoffConfig(
+            {
+                "base_ms": 100,
+                "cap_ms": 5000,
+                "reset_after_ms": 30000,
+                "deadline_ms": 120000,
+            }
+        )
+    )
     .build()
 )
 ```

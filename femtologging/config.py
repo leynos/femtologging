@@ -54,6 +54,7 @@ HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 SocketHandlerBuilder = rust.SocketHandlerBuilder
+BackoffConfig = getattr(rust, "BackoffConfig", None)
 FileHandlerBuilder = rust.FileHandlerBuilder
 RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
@@ -303,6 +304,16 @@ def _apply_socket_kwargs(
     return builder, transport_configured
 
 
+def _apply_backoff_to_builder(
+    builder: SocketHandlerBuilder,
+    backoff_overrides: dict[str, int | None],
+) -> SocketHandlerBuilder:
+    """Apply backoff configuration to the socket handler builder."""
+    if BackoffConfig is None:
+        return builder.with_backoff(**backoff_overrides)
+    return builder.with_backoff(BackoffConfig(backoff_overrides))
+
+
 def _apply_socket_tuning_kwargs(
     hid: str,
     builder: SocketHandlerBuilder,
@@ -331,7 +342,7 @@ def _apply_socket_tuning_kwargs(
 
     backoff_overrides = _pop_socket_backoff_kwargs(hid, kwargs)
     if backoff_overrides is not None:
-        builder = builder.with_backoff(**backoff_overrides)
+        builder = _apply_backoff_to_builder(builder, backoff_overrides)
 
     return builder
 

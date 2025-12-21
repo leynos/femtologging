@@ -144,54 +144,56 @@ steps below summarize the actionable items from that design.
     rejection.
   - [x] Document runtime level semantics and the Python surface area in
     `rust-extension.md` and the configuration design notes.
-- [ ] Implement the `log::Log` trait for compatibility with the `log` crate.
-  - [ ] Create `FemtoLogAdapter` implementing `log::Log` in a dedicated module
+- [x] Implement the `log::Log` trait for compatibility with the `log` crate.
+  - [x] Create `FemtoLogAdapter` implementing `log::Log` in a dedicated module
     (e.g., `rust_extension/src/log_compat.rs`).
-  - [ ] Implement level mapping between `log::Level` and `FemtoLevel`:
+  - [x] Implement level mapping between `log::Level` and `FemtoLevel`:
     - `Trace` → `Trace`
     - `Debug` → `Debug`
     - `Info` → `Info`
     - `Warn` → `Warn`
     - `Error` → `Error` (Note: `log` crate has no `Critical` level)
-  - [ ] Implement `Log::enabled()` to check the effective level for the target
+  - [x] Implement `Log::enabled()` to check the effective level for the target
     logger via `Manager::get_logger()`.
-  - [ ] Implement `Log::log()` to convert `log::Record` to `FemtoLogRecord` and
-    dispatch through the target logger:
+  - [x] Implement `Log::log()` to convert `log::Record` to a `FemtoLogRecord`
+    and dispatch through the target logger:
     - Map `record.target()` (module path) to logger name via hierarchical
       lookup.
     - Populate `FemtoLogRecord` metadata from `record.module_path()`,
       `record.file()`, `record.line()`, and `record.args()`.
-  - [ ] Implement `Log::flush()` to flush all registered handlers via
-        `Manager::flush_all_handlers()`. This is a best-effort operation: each
-        handler's buffer is flushed with a configurable timeout, individual
-        failures are logged internally, and records still in MPSC transit are
-        not awaited.
-  - [ ] Provide a `setup_rust_logging()` function callable from Python that
+  - [x] Implement `Log::flush()` to flush all registered handlers via
+    `Manager::flush_all_handlers()`. This is a best-effort operation: each
+    handler's buffer is flushed with a configurable timeout, individual
+    failures are logged internally, and records still in MPSC transit are not
+    awaited.
+  - [x] Provide a `setup_rust_logging()` function callable from Python that
     calls `log::set_logger()` and `log::set_max_level()`.
-    - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section on
-      releasing the GIL).
+    - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section
+      on releasing the GIL).
     - GIL acquisition failures block until the GIL is available (standard PyO3
       behaviour). Python exceptions during `log()` or `flush()` are swallowed
       so that logging does not disrupt application flow; failures are tracked
       via handler metrics.
-  - [ ] Expose this via a Cargo feature flag (`features = ["log-compat"]`) to
+  - [x] Expose this via a Cargo feature flag (`features = ["log-compat"]`) to
     make the integration optional. This is a **Rust-side feature only**; it is
     not surfaced through Python packaging extras. The default distribution
     enables `log-compat`. Users building from source can disable it via
     `--no-default-features` for a smaller binary.
-  - [ ] Add Rust unit tests validating:
+  - [x] Add Rust unit tests validating:
     - `log::info!()` macros route to femtologging handlers.
     - Level filtering works correctly across the bridge.
     - Target-based logger resolution follows hierarchical rules.
     - GIL is not held across blocking calls in `setup_rust_logging()`.
     - Concurrent access from Rust and Python logging paths is safe.
-  - [ ] Add Python integration tests demonstrating unified logging from both
+  - [x] Add Python integration tests demonstrating unified logging from both
     Python and Rust code paths.
-  - [ ] Document the feature in `docs/rust-extension.md` and API docstrings.
-  - [ ] Create migration notes explaining how to enable the `log-compat` feature
-    and invoke `setup_rust_logging()` early during application initialisation.
-  - [ ] Document that enabling the `log::Log` bridge installs a global Rust
-    logger (exclusive) and the implications for existing logging configurations.
+  - [x] Document the feature in `docs/rust-extension.md` and API docstrings.
+  - [ ] Create migration notes explaining how to enable the `log-compat`
+    feature and invoke `setup_rust_logging()` early during application
+    initialization.
+  - [x] Document that enabling the `log::Log` bridge installs a global Rust
+    logger (exclusive) and the implications for existing logging
+    configurations.
 - [x] Expand test coverage and start benchmarking.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
