@@ -61,6 +61,47 @@ struct CapturedRequest {
     body: String,
 }
 
+/// Parses a single header line into a key-value pair.
+fn parse_header_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    line.split_once(':')
+        .map(|(key, value)| (key.trim().to_lowercase(), value.trim().to_string()))
+}
+
+/// Reads all headers from the request and returns them with the content length.
+fn read_headers(reader: &mut BufReader<TcpStream>) -> (Vec<(String, String)>, usize) {
+    let mut headers = Vec::new();
+    let mut content_length = 0usize;
+
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read header");
+        if line.trim().is_empty() {
+            break;
+        }
+        if let Some((key, value)) = parse_header_line(&line) {
+            if key == "content-length" {
+                content_length = value.parse().unwrap_or(0);
+            }
+            headers.push((key, value));
+        }
+    }
+
+    (headers, content_length)
+}
+
+/// Reads the request body given the content length.
+fn read_body(reader: &mut BufReader<TcpStream>, content_length: usize) -> String {
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 {
+        reader.read_exact(&mut body).expect("read body");
+    }
+    String::from_utf8_lossy(&body).to_string()
+}
+
 fn read_http_request(stream: &mut TcpStream) -> CapturedRequest {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
@@ -74,37 +115,14 @@ fn read_http_request(stream: &mut TcpStream) -> CapturedRequest {
     let method = parts.first().unwrap_or(&"").to_string();
     let path = parts.get(1).unwrap_or(&"").to_string();
 
-    // Read headers
-    let mut headers = Vec::new();
-    let mut content_length = 0usize;
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line).expect("read header");
-        let line = line.trim();
-        if line.is_empty() {
-            break;
-        }
-        if let Some((key, value)) = line.split_once(':') {
-            let key = key.trim().to_lowercase();
-            let value = value.trim().to_string();
-            if key == "content-length" {
-                content_length = value.parse().unwrap_or(0);
-            }
-            headers.push((key, value));
-        }
-    }
-
-    // Read body
-    let mut body = vec![0u8; content_length];
-    if content_length > 0 {
-        reader.read_exact(&mut body).expect("read body");
-    }
+    let (headers, content_length) = read_headers(&mut reader);
+    let body = read_body(&mut reader, content_length);
 
     CapturedRequest {
         method,
         path,
         headers,
-        body: String::from_utf8_lossy(&body).to_string(),
+        body,
     }
 }
 
@@ -172,16 +190,23 @@ fn sends_json_format(tcp_listener: TcpListener) {
     drop(handler);
 }
 
-#[rstest]
-fn sends_basic_auth_header(tcp_listener: TcpListener) {
-    let (addr, rx) = spawn_mock_server(tcp_listener, 200);
+/// Helper function for testing authentication headers.
+///
+/// # Parameters
+/// - `listener`: The TCP listener to use for the mock server
+/// - `configure_auth`: Closure to configure authentication on the builder
+/// - `verify_header`: Closure to verify the authorization header value
+/// - `message`: The test message to send
+fn test_auth_header<F, V>(listener: TcpListener, configure_auth: F, verify_header: V, message: &str)
+where
+    F: FnOnce(HTTPHandlerBuilder) -> HTTPHandlerBuilder,
+    V: FnOnce(&str),
+{
+    let (addr, rx) = spawn_mock_server(listener, 200);
     let url = format!("http://{}/log", addr);
-    let handler = HTTPHandlerBuilder::new()
-        .with_url(url)
-        .with_basic_auth("user", "pass")
-        .build_inner()
-        .expect("build");
-    send_info_record(&handler, "auth test");
+    let builder = HTTPHandlerBuilder::new().with_url(url);
+    let handler = configure_auth(builder).build_inner().expect("build");
+    send_info_record(&handler, message);
 
     let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
     let auth = captured
@@ -190,34 +215,35 @@ fn sends_basic_auth_header(tcp_listener: TcpListener) {
         .find(|(k, _)| k == "authorization")
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
-    assert!(auth.starts_with("Basic "));
-    // "user:pass" base64 encoded is "dXNlcjpwYXNz"
-    assert!(auth.contains("dXNlcjpwYXNz"));
+    verify_header(auth);
 
     drop(handler);
 }
 
 #[rstest]
+fn sends_basic_auth_header(tcp_listener: TcpListener) {
+    test_auth_header(
+        tcp_listener,
+        |builder| builder.with_basic_auth("user", "pass"),
+        |auth| {
+            assert!(auth.starts_with("Basic "));
+            // "user:pass" base64 encoded is "dXNlcjpwYXNz"
+            assert!(auth.contains("dXNlcjpwYXNz"));
+        },
+        "auth test",
+    );
+}
+
+#[rstest]
 fn sends_bearer_token(tcp_listener: TcpListener) {
-    let (addr, rx) = spawn_mock_server(tcp_listener, 200);
-    let url = format!("http://{}/log", addr);
-    let handler = HTTPHandlerBuilder::new()
-        .with_url(url)
-        .with_bearer_token("my-secret-token")
-        .build_inner()
-        .expect("build");
-    send_info_record(&handler, "bearer test");
-
-    let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
-    let auth = captured
-        .headers
-        .iter()
-        .find(|(k, _)| k == "authorization")
-        .map(|(_, v)| v.as_str())
-        .unwrap_or("");
-    assert_eq!(auth, "Bearer my-secret-token");
-
-    drop(handler);
+    test_auth_header(
+        tcp_listener,
+        |builder| builder.with_bearer_token("my-secret-token"),
+        |auth| {
+            assert_eq!(auth, "Bearer my-secret-token");
+        },
+        "bearer test",
+    );
 }
 
 #[rstest]
