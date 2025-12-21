@@ -286,11 +286,20 @@ fn spawn_retry_server(
     (addr, rx)
 }
 
-#[rstest]
-fn retries_on_503_then_succeeds(tcp_listener: TcpListener) {
+/// Helper function for testing retry behaviour.
+///
+/// # Parameters
+/// - `listener`: The TCP listener to use for the mock server
+/// - `statuses`: The sequence of HTTP status codes to return
+/// - `message`: The test message to send
+/// - `verify`: Closure to verify the captured requests
+fn test_retry_behaviour<F>(listener: TcpListener, statuses: Vec<u16>, message: &str, verify: F)
+where
+    F: FnOnce(mpsc::Receiver<CapturedRequest>),
+{
     use crate::socket_handler::BackoffPolicy;
 
-    let (addr, rx) = spawn_retry_server(tcp_listener, vec![503, 200]);
+    let (addr, rx) = spawn_retry_server(listener, statuses);
     let url = format!("http://{}/log", addr);
     let config = HTTPHandlerConfig {
         url,
@@ -306,93 +315,59 @@ fn retries_on_503_then_succeeds(tcp_listener: TcpListener) {
         ..Default::default()
     };
     let handler = FemtoHTTPHandler::with_config(config);
-    send_info_record(&handler, "retry test");
+    send_info_record(&handler, message);
 
-    // First request should get 503
-    let first = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("first request");
-    assert!(first.body.contains("msg=retry%20test"));
-
-    // Second request should succeed with 200
-    let second = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("second request");
-    assert!(second.body.contains("msg=retry%20test"));
+    verify(rx);
 
     drop(handler);
+}
+
+#[rstest]
+fn retries_on_503_then_succeeds(tcp_listener: TcpListener) {
+    test_retry_behaviour(tcp_listener, vec![503, 200], "retry test", |rx| {
+        // First request should get 503
+        let first = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first request");
+        assert!(first.body.contains("msg=retry%20test"));
+
+        // Second request should succeed with 200
+        let second = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second request");
+        assert!(second.body.contains("msg=retry%20test"));
+    });
 }
 
 #[rstest]
 fn retries_on_429_then_succeeds(tcp_listener: TcpListener) {
-    use crate::socket_handler::BackoffPolicy;
+    test_retry_behaviour(tcp_listener, vec![429, 200], "rate limit test", |rx| {
+        // First request should get 429
+        let first = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first request");
+        assert!(first.body.contains("msg=rate%20limit%20test"));
 
-    let (addr, rx) = spawn_retry_server(tcp_listener, vec![429, 200]);
-    let url = format!("http://{}/log", addr);
-    let config = HTTPHandlerConfig {
-        url,
-        method: HTTPMethod::POST,
-        connect_timeout: Duration::from_secs(5),
-        write_timeout: Duration::from_secs(5),
-        backoff: BackoffPolicy {
-            base: Duration::from_millis(10),
-            cap: Duration::from_millis(50),
-            reset_after: Duration::from_secs(1),
-            deadline: Duration::from_secs(5),
-        },
-        ..Default::default()
-    };
-    let handler = FemtoHTTPHandler::with_config(config);
-    send_info_record(&handler, "rate limit test");
-
-    // First request should get 429
-    let first = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("first request");
-    assert!(first.body.contains("msg=rate%20limit%20test"));
-
-    // Second request should succeed with 200
-    let second = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("second request");
-    assert!(second.body.contains("msg=rate%20limit%20test"));
-
-    drop(handler);
+        // Second request should succeed with 200
+        let second = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second request");
+        assert!(second.body.contains("msg=rate%20limit%20test"));
+    });
 }
 
 #[rstest]
 fn does_not_retry_on_400(tcp_listener: TcpListener) {
-    use crate::socket_handler::BackoffPolicy;
+    test_retry_behaviour(tcp_listener, vec![400], "permanent error test", |rx| {
+        // Should receive exactly one request
+        let first = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first request");
+        assert!(first.body.contains("msg=permanent%20error%20test"));
 
-    // Server expects only one request since 400 should not be retried
-    let (addr, rx) = spawn_retry_server(tcp_listener, vec![400]);
-    let url = format!("http://{}/log", addr);
-    let config = HTTPHandlerConfig {
-        url,
-        method: HTTPMethod::POST,
-        connect_timeout: Duration::from_secs(5),
-        write_timeout: Duration::from_secs(5),
-        backoff: BackoffPolicy {
-            base: Duration::from_millis(10),
-            cap: Duration::from_millis(50),
-            reset_after: Duration::from_secs(1),
-            deadline: Duration::from_secs(5),
-        },
-        ..Default::default()
-    };
-    let handler = FemtoHTTPHandler::with_config(config);
-    send_info_record(&handler, "permanent error test");
-
-    // Should receive exactly one request
-    let first = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("first request");
-    assert!(first.body.contains("msg=permanent%20error%20test"));
-
-    // No second request should come (give it a short timeout to confirm)
-    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
-
-    drop(handler);
+        // No second request should come (give it a short timeout to confirm)
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+    });
 }
 
 // Response classification tests (unit tests for the worker module)
