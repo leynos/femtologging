@@ -17,6 +17,7 @@ pub(crate) mod common;
 pub mod file;
 pub mod file_builder;
 mod formatter_id;
+pub mod http_builder;
 pub mod rotating;
 pub mod rotating_builder;
 pub mod socket_builder;
@@ -26,6 +27,7 @@ pub mod test_helpers;
 
 pub use file_builder::FileHandlerBuilder;
 pub use formatter_id::FormatterId;
+pub use http_builder::HTTPHandlerBuilder;
 pub use rotating::FemtoRotatingFileHandler;
 #[cfg(feature = "python")]
 pub use rotating::HandlerOptions;

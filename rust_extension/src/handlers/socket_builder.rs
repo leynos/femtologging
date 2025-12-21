@@ -117,7 +117,7 @@ impl BackoffOverrides {
         }
     }
 
-    fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
+    pub(crate) fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
         apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
         apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");
         apply_backoff_field!(

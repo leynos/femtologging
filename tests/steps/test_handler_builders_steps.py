@@ -13,6 +13,7 @@ import femtologging.config as config_module
 from femtologging import (
     FileHandlerBuilder,
     HandlerConfigError,
+    HTTPHandlerBuilder,
     OverflowPolicy,
     RotatingFileHandlerBuilder,
     SocketHandlerBuilder,
@@ -341,3 +342,138 @@ def then_setting_flush_record_interval_fails(
     exc = ValueError if interval == 0 else OverflowError
     with pytest.raises(exc):
         file_builder.with_flush_record_interval(interval)
+
+
+# --- HTTP Handler Steps ---
+
+
+@given(
+    parsers.parse('an HTTPHandlerBuilder for URL "{url}"'),
+    target_fixture="http_builder",
+)
+def given_http_builder(url: str) -> HTTPHandlerBuilder:
+    return HTTPHandlerBuilder().with_url(url)
+
+
+@given("an empty HTTPHandlerBuilder", target_fixture="http_builder")
+def given_empty_http_builder() -> HTTPHandlerBuilder:
+    return HTTPHandlerBuilder()
+
+
+@when("I set HTTP method POST", target_fixture="http_builder")
+def when_set_http_method_post(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuilder:
+    return http_builder.with_method("POST")
+
+
+@when(
+    parsers.parse("I set HTTP connect timeout {timeout:d}"),
+    target_fixture="http_builder",
+)
+def when_set_http_connect_timeout(
+    http_builder: HTTPHandlerBuilder, timeout: int
+) -> HTTPHandlerBuilder:
+    return http_builder.with_connect_timeout_ms(timeout)
+
+
+@when(
+    parsers.parse("I set HTTP write timeout {timeout:d}"),
+    target_fixture="http_builder",
+)
+def when_set_http_write_timeout(
+    http_builder: HTTPHandlerBuilder, timeout: int
+) -> HTTPHandlerBuilder:
+    return http_builder.with_write_timeout_ms(timeout)
+
+
+@when("I enable JSON format", target_fixture="http_builder")
+def when_enable_json_format(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuilder:
+    return http_builder.with_json_format()
+
+
+@when(
+    parsers.parse('I set basic auth user "{user}" password "{password}"'),
+    target_fixture="http_builder",
+)
+def when_set_basic_auth(
+    http_builder: HTTPHandlerBuilder, user: str, password: str
+) -> HTTPHandlerBuilder:
+    return http_builder.with_basic_auth(user, password)
+
+
+@when(parsers.parse('I set bearer token "{token}"'), target_fixture="http_builder")
+def when_set_bearer_token(
+    http_builder: HTTPHandlerBuilder, token: str
+) -> HTTPHandlerBuilder:
+    return http_builder.with_bearer_token(token)
+
+
+@when(parsers.parse('I set record fields to "{fields}"'), target_fixture="http_builder")
+def when_set_record_fields(
+    http_builder: HTTPHandlerBuilder, fields: str
+) -> HTTPHandlerBuilder:
+    field_list = [f.strip() for f in fields.split(",")]
+    return http_builder.with_record_fields(field_list)
+
+
+@then("the HTTP handler builder matches snapshot")
+def then_http_builder_snapshot(
+    http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
+    assert http_builder.as_dict() == snapshot, "HTTP builder dict must match snapshot"
+    handler = http_builder.build()
+    handler.flush()
+    handler.close()
+
+
+@then("the JSON HTTP handler builder matches snapshot")
+def then_json_http_builder_snapshot(
+    http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
+    data = http_builder.as_dict()
+    assert data.get("format") == "json", "must have JSON format"
+    assert data == snapshot, "JSON HTTP builder dict must match snapshot"
+    handler = http_builder.build()
+    handler.flush()
+    handler.close()
+
+
+@then("the HTTP handler builder with auth matches snapshot")
+def then_http_builder_auth_snapshot(
+    http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
+    data = http_builder.as_dict()
+    assert data.get("auth_type") == "basic", "must have basic auth"
+    assert data == snapshot, "HTTP builder with auth must match snapshot"
+    handler = http_builder.build()
+    handler.flush()
+    handler.close()
+
+
+@then("the HTTP handler builder with bearer matches snapshot")
+def then_http_builder_bearer_snapshot(
+    http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
+    data = http_builder.as_dict()
+    assert data.get("auth_type") == "bearer", "must have bearer auth"
+    assert data == snapshot, "HTTP builder with bearer must match snapshot"
+    handler = http_builder.build()
+    handler.flush()
+    handler.close()
+
+
+@then("the HTTP handler builder with fields matches snapshot")
+def then_http_builder_fields_snapshot(
+    http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
+) -> None:
+    data = http_builder.as_dict()
+    assert "record_fields" in data, "must have record_fields"
+    assert data == snapshot, "HTTP builder with fields must match snapshot"
+    handler = http_builder.build()
+    handler.flush()
+    handler.close()
+
+
+@then(parsers.parse('building the HTTP handler fails with "{message}"'))
+def then_http_builder_fails(http_builder: HTTPHandlerBuilder, message: str) -> None:
+    with pytest.raises(HandlerConfigError, match=re.escape(message)):
+        http_builder.build()

@@ -345,29 +345,28 @@ Key methods:
 Notable behaviour: the handler ignores any `Formatter` set via
 `setFormatter()`; formatting is controlled entirely through `mapLogRecord`.
 
-##### Open Design Questions
+##### Resolved Design Decisions
 
-The following questions remain open. Resolution should follow from the three
-drivers listed above, with explicit justification documented before
-implementation begins.
+The following questions were resolved during implementation. Each decision
+balances the three drivers listed above.
 
 <!-- markdownlint-disable MD056 -->
 
-| Question                           | Options                                                                            | Decision Drivers                                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Serialization format**           | URL-encoded form data (CPython default), JSON, MessagePack                         | CPython parity favours URL-encoded; JSON aligns with modern HTTP APIs; MessagePack matches `FemtoSocketHandler` |
-| **HTTP client library**            | `ureq` (blocking, minimal), `reqwest` (async with blocking facade), raw `hyper`    | `FemtoSocketHandler` uses blocking I/O in worker thread; `ureq` is lightweight and blocking-native              |
-| **Connection management**          | Per-request, keep-alive pool, configurable                                         | HTTP best practices favour keep-alive; must consider worker-thread lifecycle                                    |
-| **Retry semantics by status code** | 2xx success, 5xx retryable, 4xx permanent failure; or CPython behaviour (no retry) | HTTP standards suggest retry on 5xx/network errors; CPython does not retry                                      |
-| **`mapLogRecord` equivalent**      | Trait with default impl, closure, configuration-driven field list                  | Rust idioms favour traits; closures offer flexibility; config-driven is simpler                                 |
-| **Authentication methods**         | Basic only (CPython parity), Bearer token, custom `Authorization` header           | CPython supports Basic; modern APIs often use Bearer; custom headers cover both                                 |
-| **Timeout granularity**            | Single timeout, split connect/write (like `FemtoSocketHandler`)                    | `FemtoSocketHandler` uses `connect_timeout` and `write_timeout`; HTTP handler should mirror this                |
+| Question                           | Decision                                                        | Rationale                                                                                                                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Serialisation format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                      |
+| **HTTP client library**            | `ureq` 2.x with `native-tls` feature                            | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency.                                                                                                      |
+| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains connection pool across requests. Created once per worker thread and reused for the handler's lifetime.                                                                                            |
+| **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                               |
+| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialised by default; specifying fields limits output. Future work may add a Python callable for custom transforms. |
+| **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.         |
+| **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults match `ureq` library defaults when not specified.                                                                 |
 
 <!-- markdownlint-enable MD056 -->
 
-##### Preliminary Architecture
+##### Implemented Architecture
 
-Subject to resolution of open questions, the handler will follow this structure:
+The handler follows this structure:
 
 - **Producer-consumer model**: Application threads enqueue `HttpCommand` values
   (variants: `Record`, `Flush`, `Shutdown`) via a bounded MPSC channel; a

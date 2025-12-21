@@ -198,31 +198,30 @@ steps below summarize the actionable items from that design.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
 
-- [ ] Implement `FemtoHTTPHandler` for sending logs over HTTP.
-  - [ ] Resolve open design questions documented in the
+- [x] Implement `FemtoHTTPHandler` for sending logs over HTTP.
+  - [x] Resolve open design questions documented in the
     [`FemtoHTTPHandler Design`][http-design] section of the design document
-    (serialization format, HTTP client library, retry semantics,
+    (serialisation format, HTTP client library, retry semantics,
     `mapLogRecord` equivalent).
-  - [ ] Implement HTTP transport configuration supporting URL, method
+  - [x] Implement HTTP transport configuration supporting URL, method
     (GET/POST), HTTPS, authentication (Basic, Bearer, or custom headers),
     and timeouts (`connect_timeout`, `write_timeout`) through the builder
-    API and Python bindings, following the preliminary architecture in
-    [http-design].
-  - [ ] Implement a consumer-thread event loop following the
+    API and Python bindings, following the architecture in [http-design].
+  - [x] Implement a consumer-thread event loop following the
     `FemtoSocketHandler` pattern, with HTTP request dispatch and payload
     preparation per the resolved `mapLogRecord` design.
-  - [ ] Add retry logic reusing `BackoffPolicy` from `FemtoSocketHandler`,
+  - [x] Add retry logic reusing `BackoffPolicy` from `FemtoSocketHandler`,
     classifying HTTP status codes per the design document, and honouring the
     GIL-handling constraints in
     [`multithreading-in-pyo3.md`](./multithreading-in-pyo3.md).
-  - [ ] Extend the builder and Python configuration interfaces with
+  - [x] Extend the builder and Python configuration interfaces with
     `HTTPHandlerBuilder`, including `dictConfig`/`basicConfig` integration
     and doctests kept dry per
     [`rust-doctest-dry-guide.md`](./rust-doctest-dry-guide.md).
-  - [ ] Write integration tests using `rstest` fixtures (see
+  - [x] Write integration tests using `rstest` fixtures (see
     [`rust-testing-with-rstest-fixtures.md`][rstest-doc]), including CPython
     `logging.HTTPHandler` parity tests.
-  - [ ] Mark complete and propagate status to configuration roadmap.
+  - [x] Mark complete and propagate status to configuration roadmap.
 
 [http-design]:
 ./rust-multithreaded-logging-framework-for-python-design.md#femtohttphandler-design

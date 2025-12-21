@@ -25,11 +25,13 @@ FemtoStreamHandler = rust.FemtoStreamHandler
 FemtoFileHandler = rust.FemtoFileHandler
 FemtoRotatingFileHandler = rust.FemtoRotatingFileHandler
 FemtoSocketHandler = rust.FemtoSocketHandler
+FemtoHTTPHandler = rust.FemtoHTTPHandler
 HandlerOptions = rust.HandlerOptions
 BackoffConfig = rust.BackoffConfig
 ROTATION_VALIDATION_MSG = rust.ROTATION_VALIDATION_MSG
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 SocketHandlerBuilder = rust.SocketHandlerBuilder
+HTTPHandlerBuilder = rust.HTTPHandlerBuilder
 FileHandlerBuilder = rust.FileHandlerBuilder
 RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
@@ -310,6 +312,7 @@ __all__ = [
     "BasicConfig",
     "ConfigBuilder",
     "FemtoFileHandler",
+    "FemtoHTTPHandler",
     "FemtoHandler",
     "FemtoLogger",
     "FemtoRotatingFileHandler",
@@ -318,6 +321,7 @@ __all__ = [
     "FileHandlerBuilder",
     "FilterBuildError",
     "FormatterBuilder",
+    "HTTPHandlerBuilder",
     "HandlerConfigError",
     "HandlerIOError",
     "HandlerOptions",
