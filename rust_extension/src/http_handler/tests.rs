@@ -306,37 +306,31 @@ where
     drop(handler);
 }
 
+/// Verifies that the expected number of requests are received, each containing the expected message fragment.
+fn verify_requests_with_message(
+    rx: mpsc::Receiver<CapturedRequest>,
+    count: usize,
+    expected_msg_fragment: &str,
+) {
+    for _ in 0..count {
+        let request = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("expected request");
+        assert!(request.body.contains(expected_msg_fragment));
+    }
+}
+
 #[rstest]
 fn retries_on_503_then_succeeds(tcp_listener: TcpListener) {
     test_retry_behaviour(tcp_listener, vec![503, 200], "retry test", |rx| {
-        // First request should get 503
-        let first = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("first request");
-        assert!(first.body.contains("msg=retry%20test"));
-
-        // Second request should succeed with 200
-        let second = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("second request");
-        assert!(second.body.contains("msg=retry%20test"));
+        verify_requests_with_message(rx, 2, "msg=retry%20test");
     });
 }
 
 #[rstest]
 fn retries_on_429_then_succeeds(tcp_listener: TcpListener) {
     test_retry_behaviour(tcp_listener, vec![429, 200], "rate limit test", |rx| {
-        // First request should get 429
-        let first = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("first request");
-        assert!(first.body.contains("msg=rate%20limit%20test"));
-
-        // Second request should succeed with 200
-        let second = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("second request");
-        assert!(second.body.contains("msg=rate%20limit%20test"));
+        verify_requests_with_message(rx, 2, "msg=rate%20limit%20test");
     });
 }
 
