@@ -21,23 +21,7 @@ fn spawn_mock_server(
     listener: TcpListener,
     response_status: u16,
 ) -> (SocketAddr, mpsc::Receiver<CapturedRequest>) {
-    let addr = listener.local_addr().expect("listener has address");
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        if let Ok((mut stream, _)) = listener.accept() {
-            let captured = read_http_request(&mut stream);
-            let response = format!(
-                "HTTP/1.1 {} {}\r\nContent-Length: 0\r\n\r\n",
-                response_status,
-                status_text(response_status)
-            );
-            let _ = stream.write_all(response.as_bytes());
-            let _ = tx.send(captured);
-        }
-    });
-
-    (addr, rx)
+    spawn_retry_server(listener, vec![response_status])
 }
 
 fn status_text(code: u16) -> &'static str {
