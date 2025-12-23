@@ -205,9 +205,18 @@ impl Worker {
         true
     }
 
+    /// Handles a flush command by immediately acknowledging completion.
+    ///
+    /// Unlike file or socket handlers, HTTP has no persistent connection or
+    /// internal buffer to flush. Each request is sent synchronously in
+    /// `send_request`, so there is no buffered data awaiting transmission.
+    ///
+    /// **Important**: This does not wait for in-flight retry attempts. If a
+    /// record is currently in a backoff/retry loop, `flush()` returns
+    /// immediately without blocking until those retries complete. Callers
+    /// should not rely on `flush()` to guarantee delivery of records that
+    /// encountered transient failures.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
-        // HTTP has no persistent connection to flush in the traditional sense.
-        // We simply acknowledge the flush request.
         let _ = ack.send(());
     }
 
