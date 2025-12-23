@@ -109,3 +109,34 @@ Feature: Handler builders
   Scenario: socket handler builder requires transport
     Given an empty SocketHandlerBuilder
     Then building the socket handler fails with "socket handler requires a transport"
+
+  Scenario: build HTTP handler builder
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I set HTTP method POST
+    And I set HTTP connect timeout 1000
+    And I set HTTP write timeout 5000
+    Then the HTTP handler builder matches snapshot
+
+  Scenario: HTTP handler builder with JSON format
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I enable JSON format
+    Then the JSON HTTP handler builder matches snapshot
+
+  Scenario: HTTP handler builder with basic auth
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I set basic auth user "admin" password "secret"
+    Then the HTTP handler builder with auth matches snapshot
+
+  Scenario: HTTP handler builder with bearer token
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I set bearer token "my-api-token"
+    Then the HTTP handler builder with bearer matches snapshot
+
+  Scenario: HTTP handler builder with record fields
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I set record fields to "name,msg,levelname"
+    Then the HTTP handler builder with fields matches snapshot
+
+  Scenario: HTTP handler requires URL
+    Given an empty HTTPHandlerBuilder
+    Then building the HTTP handler fails with "HTTP handler requires a URL"

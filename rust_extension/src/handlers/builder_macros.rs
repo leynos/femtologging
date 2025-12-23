@@ -4,6 +4,41 @@
 //! These macros centralise the shared method definitions so the two bindings
 //! remain in sync and avoid repetitive boilerplate.
 
+/// Validate that a value is greater than zero, returning an error otherwise.
+///
+/// This macro is used across handler builders for validating positive integer
+/// configuration values like capacity, timeout, and size fields.
+macro_rules! ensure_positive {
+    ($value:expr, $field:expr) => {{
+        if $value == 0 {
+            Err($crate::handlers::HandlerBuildError::InvalidConfig(format!(
+                "{} must be greater than zero",
+                $field
+            )))
+        } else {
+            Ok($value)
+        }
+    }};
+}
+
+pub(crate) use ensure_positive;
+
+/// Set an item in a Python dict if the option contains a value.
+///
+/// This macro reduces boilerplate when populating Python dict representations
+/// of builder configurations.
+#[cfg(feature = "python")]
+macro_rules! dict_set {
+    ($dict:expr, $key:expr, $opt:expr) => {
+        if let Some(value) = $opt {
+            $dict.set_item($key, value)?;
+        }
+    };
+}
+
+#[cfg(feature = "python")]
+pub(crate) use dict_set;
+
 /// Generate fluent builder methods for Rust and matching Python wrappers.
 ///
 /// The macro accepts a builder type and a list of methods. Provide an optional

@@ -14,6 +14,9 @@ use crate::socket_handler::{
     TlsOptions, UnixTransport,
 };
 
+#[cfg(feature = "python")]
+use super::builder_macros::dict_set;
+use super::builder_macros::ensure_positive;
 use super::{HandlerBuildError, HandlerBuilderTrait};
 
 #[derive(Clone, Debug)]
@@ -50,19 +53,6 @@ pub struct BackoffOverrides {
     deadline_ms: Option<u64>,
 }
 
-macro_rules! ensure_positive {
-    ($value:expr, $field:expr) => {{
-        if $value == 0 {
-            Err(HandlerBuildError::InvalidConfig(format!(
-                "{} must be greater than zero",
-                $field
-            )))
-        } else {
-            Ok($value)
-        }
-    }};
-}
-
 macro_rules! apply_backoff_field {
     ($self:expr, $field:ident, $policy:expr, $policy_field:ident, $name:expr) => {{
         if let Some(value) = $self.$field {
@@ -76,6 +66,26 @@ impl BackoffOverrides {
     /// Create overrides with no custom values.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Get the base jitter override if configured.
+    pub fn base_ms(&self) -> Option<u64> {
+        self.base_ms
+    }
+
+    /// Get the cap override if configured.
+    pub fn cap_ms(&self) -> Option<u64> {
+        self.cap_ms
+    }
+
+    /// Get the reset-after override if configured.
+    pub fn reset_after_ms(&self) -> Option<u64> {
+        self.reset_after_ms
+    }
+
+    /// Get the deadline override if configured.
+    pub fn deadline_ms(&self) -> Option<u64> {
+        self.deadline_ms
     }
 
     /// Override the base jitter duration in milliseconds.
@@ -117,7 +127,7 @@ impl BackoffOverrides {
         }
     }
 
-    fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
+    pub(crate) fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
         apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
         apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");
         apply_backoff_field!(
@@ -138,15 +148,6 @@ macro_rules! option_setter {
         pub fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
-        }
-    };
-}
-
-#[cfg(feature = "python")]
-macro_rules! dict_set {
-    ($dict:expr, $key:expr, $opt:expr) => {
-        if let Some(value) = $opt {
-            $dict.set_item($key, value)?;
         }
     };
 }

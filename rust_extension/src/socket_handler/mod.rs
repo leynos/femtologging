@@ -7,7 +7,7 @@
 //! exponential backoff, and exposes builder-friendly configuration points for
 //! transport selection, timeouts, and TLS options.
 
-mod backoff;
+pub(crate) mod backoff;
 mod config;
 mod handler;
 mod serialise;

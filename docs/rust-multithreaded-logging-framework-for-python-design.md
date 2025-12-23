@@ -345,29 +345,28 @@ Key methods:
 Notable behaviour: the handler ignores any `Formatter` set via
 `setFormatter()`; formatting is controlled entirely through `mapLogRecord`.
 
-##### Open Design Questions
+##### Resolved Design Decisions
 
-The following questions remain open. Resolution should follow from the three
-drivers listed above, with explicit justification documented before
-implementation begins.
+The following questions were resolved during implementation. Each decision
+balances the three drivers listed above.
 
 <!-- markdownlint-disable MD056 -->
 
-| Question                           | Options                                                                            | Decision Drivers                                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Serialization format**           | URL-encoded form data (CPython default), JSON, MessagePack                         | CPython parity favours URL-encoded; JSON aligns with modern HTTP APIs; MessagePack matches `FemtoSocketHandler` |
-| **HTTP client library**            | `ureq` (blocking, minimal), `reqwest` (async with blocking facade), raw `hyper`    | `FemtoSocketHandler` uses blocking I/O in worker thread; `ureq` is lightweight and blocking-native              |
-| **Connection management**          | Per-request, keep-alive pool, configurable                                         | HTTP best practices favour keep-alive; must consider worker-thread lifecycle                                    |
-| **Retry semantics by status code** | 2xx success, 5xx retryable, 4xx permanent failure; or CPython behaviour (no retry) | HTTP standards suggest retry on 5xx/network errors; CPython does not retry                                      |
-| **`mapLogRecord` equivalent**      | Trait with default impl, closure, configuration-driven field list                  | Rust idioms favour traits; closures offer flexibility; config-driven is simpler                                 |
-| **Authentication methods**         | Basic only (CPython parity), Bearer token, custom `Authorization` header           | CPython supports Basic; modern APIs often use Bearer; custom headers cover both                                 |
-| **Timeout granularity**            | Single timeout, split connect/write (like `FemtoSocketHandler`)                    | `FemtoSocketHandler` uses `connect_timeout` and `write_timeout`; HTTP handler should mirror this                |
+| Question                           | Decision                                                        | Rationale                                                                                                                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Serialization format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                      |
+| **HTTP client library**            | `ureq` 2.x with `native-tls` feature                            | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency.                                                                                                      |
+| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                  |
+| **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                               |
+| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms.  |
+| **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.         |
+| **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults match `ureq` library defaults when not specified.                                                                 |
 
 <!-- markdownlint-enable MD056 -->
 
-##### Preliminary Architecture
+##### Implemented Architecture
 
-Subject to resolution of open questions, the handler will follow this structure:
+The handler follows this structure:
 
 - **Producer-consumer model**: Application threads enqueue `HttpCommand` values
   (variants: `Record`, `Flush`, `Shutdown`) via a bounded MPSC channel; a
@@ -388,12 +387,16 @@ classDiagram
     class HTTPHandlerBuilder {
         +with_url(url: str): HTTPHandlerBuilder
         +with_method(method: str): HTTPHandlerBuilder
-        +with_secure(secure: bool): HTTPHandlerBuilder
-        +with_credentials(user: str, password: str): HTTPHandlerBuilder
+        +with_basic_auth(username: str, password: str): HTTPHandlerBuilder
+        +with_bearer_token(token: str): HTTPHandlerBuilder
         +with_headers(headers: dict): HTTPHandlerBuilder
+        +with_header(key: str, value: str): HTTPHandlerBuilder
+        +with_capacity(capacity: int): HTTPHandlerBuilder
         +with_connect_timeout_ms(timeout: int): HTTPHandlerBuilder
         +with_write_timeout_ms(timeout: int): HTTPHandlerBuilder
-        +with_backoff(...): HTTPHandlerBuilder
+        +with_backoff(overrides: BackoffOverrides): HTTPHandlerBuilder
+        +with_json_format(): HTTPHandlerBuilder
+        +with_record_fields(fields: list): HTTPHandlerBuilder
         +build(): FemtoHTTPHandler
     }
     class FemtoHTTPHandler {
@@ -405,27 +408,36 @@ classDiagram
         capacity: usize
         url: String
         method: HTTPMethod
-        secure: bool
-        credentials: Option~Credentials~
+        auth: AuthConfig
         headers: HashMap~String, String~
         connect_timeout: Duration
         write_timeout: Duration
         backoff: BackoffPolicy
+        format: SerializationFormat
+        record_fields: Option~Vec~String~~
     }
     class HTTPMethod {
         <<enumeration>>
         GET
         POST
     }
-    class Credentials {
-        username: String
-        password: String
+    class AuthConfig {
+        <<enumeration>>
+        None
+        Basic~username, password~
+        Bearer~token~
+    }
+    class SerializationFormat {
+        <<enumeration>>
+        UrlEncoded
+        Json
     }
     HTTPHandlerBuilder --> "1" FemtoHTTPHandler : build()
     HTTPHandlerBuilder --> "1" HTTPHandlerConfig
     FemtoHTTPHandler --> "1" HTTPHandlerConfig
     HTTPHandlerConfig --> "1" HTTPMethod
-    HTTPHandlerConfig --> "0..1" Credentials
+    HTTPHandlerConfig --> "1" AuthConfig
+    HTTPHandlerConfig --> "1" SerializationFormat
     HTTPHandlerConfig --> "1" BackoffPolicy
 ```
 
@@ -1087,7 +1099,7 @@ application flow. If a Python-side error occurs (e.g., handler I/O failure),
 femtologging's internal error tracking (via handler metrics) records the
 failure while the Rust caller continues uninterrupted.
 
-**Thread Safety:** The GIL ensures serialised access to Python objects.
+**Thread Safety:** The GIL ensures serialized access to Python objects.
 Consumer threads (which perform actual I/O) release the GIL during blocking
 operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 `log::log()` calls from Rust do not contend with handler I/O.

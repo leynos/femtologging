@@ -11,6 +11,7 @@ mod filters;
 mod formatter;
 mod handler;
 mod handlers;
+mod http_handler;
 mod level;
 #[cfg(all(feature = "python", feature = "log-compat"))]
 mod log_compat;
@@ -54,9 +55,14 @@ pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
 pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.
 pub use handlers::{
-    FemtoRotatingFileHandler, FileHandlerBuilder, HandlerBuilderTrait, HandlerConfigError,
-    HandlerIOError, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    FemtoRotatingFileHandler, FileHandlerBuilder, HTTPHandlerBuilder, HandlerBuilderTrait,
+    HandlerConfigError, HandlerIOError, RotatingFileHandlerBuilder, SocketHandlerBuilder,
+    StreamHandlerBuilder,
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
+};
+/// Re-export HTTP handler types.
+pub use http_handler::{
+    AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
@@ -170,6 +176,7 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             py.get_type::<SocketHandlerBuilder>(),
         ),
         ("FileHandlerBuilder", py.get_type::<FileHandlerBuilder>()),
+        ("HTTPHandlerBuilder", py.get_type::<HTTPHandlerBuilder>()),
         (
             "RotatingFileHandlerBuilder",
             py.get_type::<RotatingFileHandlerBuilder>(),
@@ -215,6 +222,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoFileHandler>()?;
     #[cfg(feature = "python")]
     m.add_class::<FemtoSocketHandler>()?;
+    #[cfg(feature = "python")]
+    m.add_class::<FemtoHTTPHandler>()?;
     #[cfg(feature = "python")]
     m.add_class::<FemtoRotatingFileHandler>()?;
     #[cfg(feature = "python")]
@@ -285,6 +294,7 @@ mod tests {
                 "StreamHandlerBuilder",
                 "OverflowPolicy",
                 "FileHandlerBuilder",
+                "HTTPHandlerBuilder",
                 "RotatingFileHandlerBuilder",
                 "LevelFilterBuilder",
                 "NameFilterBuilder",
