@@ -129,6 +129,7 @@ impl Worker {
     }
 
     fn execute_request(&self, payload: &str) -> Result<ResponseClass, String> {
+        // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
         let request = match self.config.method {
             HTTPMethod::GET => self.build_get_request(payload),
             HTTPMethod::POST => self.build_post_request(payload),

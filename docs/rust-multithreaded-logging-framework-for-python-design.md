@@ -354,11 +354,11 @@ balances the three drivers listed above.
 
 | Question                           | Decision                                                        | Rationale                                                                                                                                                                                                         |
 | ---------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Serialisation format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                      |
+| **Serialization format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                      |
 | **HTTP client library**            | `ureq` 2.x with `native-tls` feature                            | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency.                                                                                                      |
-| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains connection pool across requests. Created once per worker thread and reused for the handler's lifetime.                                                                                            |
+| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                  |
 | **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                               |
-| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialised by default; specifying fields limits output. Future work may add a Python callable for custom transforms. |
+| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms.  |
 | **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.         |
 | **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults match `ureq` library defaults when not specified.                                                                 |
 
@@ -1099,7 +1099,7 @@ application flow. If a Python-side error occurs (e.g., handler I/O failure),
 femtologging's internal error tracking (via handler metrics) records the
 failure while the Rust caller continues uninterrupted.
 
-**Thread Safety:** The GIL ensures serialised access to Python objects.
+**Thread Safety:** The GIL ensures serialized access to Python objects.
 Consumer threads (which perform actual I/O) release the GIL during blocking
 operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 `log::log()` calls from Rust do not contend with handler I/O.

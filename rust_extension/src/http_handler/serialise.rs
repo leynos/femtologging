@@ -2,6 +2,9 @@
 //!
 //! Provides URL-encoded form data (CPython `logging.HTTPHandler` default) and
 //! JSON serialization formats for log records.
+//!
+//! The URL encoding uses `+` for spaces to match CPython's `urllib.parse.urlencode`
+//! behaviour (which uses `quote_plus` internally).
 
 use std::collections::{BTreeMap, HashSet};
 use std::io;
@@ -107,7 +110,8 @@ fn filter_fields(
 
 /// Serialise a record to URL-encoded form data (CPython parity).
 ///
-/// This produces output compatible with `urllib.parse.urlencode(record.__dict__)`.
+/// This produces output compatible with `urllib.parse.urlencode(record.__dict__)`,
+/// using `+` for spaces as CPython's `urlencode` does by default.
 pub fn serialise_url_encoded(
     record: &FemtoLogRecord,
     fields: Option<&[String]>,
@@ -146,9 +150,14 @@ pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
     serde_json::to_string(&map).map_err(io::Error::other)
 }
 
-/// URL-encode a string following RFC 3986.
+/// URL-encode a string using `+` for spaces (CPython `urlencode` parity).
+///
+/// This matches the behaviour of `urllib.parse.urlencode`, which uses
+/// `quote_plus` internally and encodes spaces as `+` rather than `%20`.
 fn url_encode(s: &str) -> String {
-    utf8_percent_encode(s, QUERY_ENCODE_SET).to_string()
+    utf8_percent_encode(s, QUERY_ENCODE_SET)
+        .to_string()
+        .replace("%20", "+")
 }
 
 #[cfg(test)]
@@ -177,7 +186,7 @@ mod tests {
         let encoded = serialise_url_encoded(&record, None).expect("serialise");
         assert!(encoded.contains("name=test.logger"));
         assert!(encoded.contains("levelname=INFO"));
-        assert!(encoded.contains("msg=Hello%20World"));
+        assert!(encoded.contains("msg=Hello+World"));
         assert!(encoded.contains("lineno=42"));
     }
 
@@ -206,7 +215,7 @@ mod tests {
 
     #[test]
     fn url_encode_special_chars() {
-        assert_eq!(url_encode("hello world"), "hello%20world");
+        assert_eq!(url_encode("hello world"), "hello+world");
         assert_eq!(url_encode("a=b&c=d"), "a%3Db%26c%3Dd");
         assert_eq!(url_encode("test_value-123.txt"), "test_value-123.txt");
     }

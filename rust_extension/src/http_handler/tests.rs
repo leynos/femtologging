@@ -142,7 +142,7 @@ fn sends_records_over_http(tcp_listener: TcpListener) {
     let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
     assert_eq!(captured.method, "POST");
     assert_eq!(captured.path, "/log");
-    assert!(captured.body.contains("msg=test%20message"));
+    assert!(captured.body.contains("msg=test+message"));
     assert!(captured.body.contains("levelname=INFO"));
 
     drop(handler);
@@ -323,14 +323,14 @@ fn verify_requests_with_message(
 #[rstest]
 fn retries_on_503_then_succeeds(tcp_listener: TcpListener) {
     test_retry_behaviour(tcp_listener, vec![503, 200], "retry test", |rx| {
-        verify_requests_with_message(rx, 2, "msg=retry%20test");
+        verify_requests_with_message(rx, 2, "msg=retry+test");
     });
 }
 
 #[rstest]
 fn retries_on_429_then_succeeds(tcp_listener: TcpListener) {
     test_retry_behaviour(tcp_listener, vec![429, 200], "rate limit test", |rx| {
-        verify_requests_with_message(rx, 2, "msg=rate%20limit%20test");
+        verify_requests_with_message(rx, 2, "msg=rate+limit+test");
     });
 }
 
@@ -341,7 +341,7 @@ fn does_not_retry_on_400(tcp_listener: TcpListener) {
         let first = rx
             .recv_timeout(Duration::from_secs(5))
             .expect("first request");
-        assert!(first.body.contains("msg=permanent%20error%20test"));
+        assert!(first.body.contains("msg=permanent+error+test"));
 
         // No second request should come (give it a short timeout to confirm)
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
