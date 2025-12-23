@@ -42,6 +42,20 @@ pub enum ResponseClass {
     Permanent,
 }
 
+/// Spawns a background worker thread to process HTTP commands.
+///
+/// The worker maintains a connection pool via `ureq::Agent` and handles
+/// retries with exponential backoff for transient failures (5xx, 429).
+///
+/// # Arguments
+///
+/// * `config` - Configuration for the HTTP handler including URL, auth, timeouts, etc.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// * A sender for submitting [`HTTPCommand`]s to the worker
+/// * A join handle for the spawned thread
 pub fn spawn_worker(config: HTTPHandlerConfig) -> (Sender<HTTPCommand>, thread::JoinHandle<()>) {
     let (tx, rx) = bounded(config.capacity);
     let handle = thread::spawn(move || worker_loop(rx, config));
@@ -79,9 +93,9 @@ impl Worker {
         let payload = match self.serialise_record(&record) {
             Ok(p) => p,
             Err(err) => {
-                warn!("FemtoHTTPHandler serialisation error: {err}");
+                warn!("FemtoHTTPHandler serialization error: {err}");
                 warn_drops(&self.warner, |count| {
-                    warn!("FemtoHTTPHandler dropped {count} records due to serialisation failures");
+                    warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
                 });
                 return;
             }
@@ -216,6 +230,7 @@ impl Worker {
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
+        // Ignore send error: if the receiver has dropped, there's nothing to do.
         let _ = ack.send(());
     }
 
@@ -251,6 +266,14 @@ impl Worker {
     }
 }
 
+/// Classifies an HTTP status code for retry logic.
+///
+/// # Classification rules
+///
+/// * **2xx** → [`ResponseClass::Success`] - request completed successfully
+/// * **429** → [`ResponseClass::Retryable`] - rate limited, retry with backoff
+/// * **5xx** → [`ResponseClass::Retryable`] - server error, retry with backoff
+/// * **Other** → [`ResponseClass::Permanent`] - client error (4xx except 429), do not retry
 pub(crate) fn classify_status(status: u16) -> ResponseClass {
     match status {
         200..=299 => ResponseClass::Success,
@@ -270,6 +293,21 @@ fn base64_encode(input: &[u8]) -> String {
     BASE64_STANDARD.encode(input)
 }
 
+/// Enqueues a log record for transmission by the HTTP worker.
+///
+/// This is a non-blocking operation. If the queue is full, the record is
+/// dropped and a rate-limited warning is emitted.
+///
+/// # Arguments
+///
+/// * `tx` - Sender channel to the HTTP worker thread
+/// * `record` - The log record to enqueue
+/// * `warner` - Rate-limited warner for drop notifications
+///
+/// # Errors
+///
+/// * [`HandlerError::QueueFull`] - The queue is at capacity; record was dropped
+/// * [`HandlerError::Closed`] - The worker has shut down; record was dropped
 pub fn enqueue_record(
     tx: &Sender<HTTPCommand>,
     record: FemtoLogRecord,
@@ -294,6 +332,19 @@ pub fn enqueue_record(
     }
 }
 
+/// Sends a flush command to the HTTP worker and waits for acknowledgment.
+///
+/// Uses a deadline-based approach to ensure the total wait time does not
+/// exceed `timeout`, even if the send operation consumes part of the budget.
+///
+/// # Arguments
+///
+/// * `tx` - Sender channel to the HTTP worker thread
+/// * `timeout` - Maximum time to wait for both sending and receiving the ack
+///
+/// # Returns
+///
+/// `true` if the flush was acknowledged within the timeout, `false` otherwise.
 pub fn flush_queue(tx: &Sender<HTTPCommand>, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     let (ack_tx, ack_rx) = bounded(1);

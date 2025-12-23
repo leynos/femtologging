@@ -161,10 +161,12 @@ pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 /// encoding to `%20` and then replacing in a second pass.
 fn url_encode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
+    let mut first = true;
     for chunk in s.split(' ') {
-        if !result.is_empty() {
+        if !first {
             result.push('+');
         }
+        first = false;
         result.push_str(&utf8_percent_encode(chunk, QUERY_ENCODE_SET_NO_SPACE).to_string());
     }
     result
@@ -228,5 +230,24 @@ mod tests {
         assert_eq!(url_encode("hello world"), "hello+world");
         assert_eq!(url_encode("a=b&c=d"), "a%3Db%26c%3Dd");
         assert_eq!(url_encode("test_value-123.txt"), "test_value-123.txt");
+    }
+
+    #[test]
+    fn url_encode_edge_cases() {
+        // Empty string
+        assert_eq!(url_encode(""), "");
+        // Consecutive spaces
+        assert_eq!(url_encode("a  b"), "a++b");
+        assert_eq!(url_encode("a   b"), "a+++b");
+        // Leading spaces
+        assert_eq!(url_encode(" hello"), "+hello");
+        assert_eq!(url_encode("  hello"), "++hello");
+        // Trailing spaces
+        assert_eq!(url_encode("hello "), "hello+");
+        assert_eq!(url_encode("hello  "), "hello++");
+        // Only spaces
+        assert_eq!(url_encode(" "), "+");
+        assert_eq!(url_encode("  "), "++");
+        assert_eq!(url_encode("   "), "+++");
     }
 }

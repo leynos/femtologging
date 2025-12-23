@@ -1,4 +1,7 @@
-"""Behaviour-driven tests for handler builders (file, rotating, stream, socket)."""
+"""Behaviour-driven tests for handler builders.
+
+Covers file, rotating, stream, socket, and HTTP handler builders.
+"""
 
 from __future__ import annotations
 
