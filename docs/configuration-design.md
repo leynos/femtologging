@@ -816,7 +816,136 @@ handlers can be shared safely across threads without resorting to `unsafe`
 code. Compile‑time assertions in `rust_extension/tests/send_sync.rs` enforce
 these guarantees.
 
-## 6. Testing and Benchmarking Coverage
+## 6. Logger Propagation
+
+Logger propagation controls whether log records emitted by a child logger are
+forwarded to ancestor loggers in the hierarchy. This mirrors the behaviour of
+Python's standard `logging.Logger.propagate` attribute.
+
+### 6.1. Propagation Semantics
+
+Each `FemtoLogger` maintains a `propagate` flag (default: `true`). When a
+logger emits a record:
+
+1. The record passes through the logger's level check and filters.
+2. If accepted, the record is dispatched to the logger's own handlers.
+3. If `propagate` is `true` and the logger has a parent, the record is
+   **cloned** and forwarded to the parent's `dispatch_to_handlers()` method.
+4. The parent applies the same propagation logic, creating a chain that
+   continues up to the root logger.
+
+The root logger's `propagate` flag is effectively a no-op since it has no
+parent, but it can still be set without error for API consistency.
+
+### 6.2. Thread-Safe Implementation
+
+The `propagate` flag is stored as an `AtomicBool` with `SeqCst` (sequentially
+consistent) memory ordering:
+
+```rust
+propagate: AtomicBool,
+
+pub fn propagate(&self) -> bool {
+    self.propagate.load(Ordering::SeqCst)
+}
+
+pub fn set_propagate(&self, flag: bool) {
+    self.propagate.store(flag, Ordering::SeqCst);
+}
+```
+
+`SeqCst` ordering ensures immediate visibility of propagation changes across
+all threads. While `Release`/`Acquire` pairs would suffice for correctness,
+`SeqCst` provides simpler reasoning about cross-thread behaviour and the
+performance difference is negligible for this infrequently-toggled flag.
+
+### 6.3. Record Cloning Strategy
+
+Before propagating, the record is cloned:
+
+```rust
+let parent_record = self.should_propagate_to_parent().then(|| record.clone());
+self.send_to_local_handlers(record);
+if let Some(pr) = parent_record {
+    self.handle_parent_propagation(pr);
+}
+```
+
+This ensures that:
+
+- The original record is consumed by the child's handlers without aliasing.
+- The parent receives an independent copy, avoiding ownership conflicts.
+- Handler modifications to the record (if any) do not affect the propagated
+  copy.
+
+The clone occurs only when propagation is enabled, avoiding unnecessary
+allocations when `propagate=false`.
+
+### 6.4. Parent Resolution
+
+Parent loggers are resolved through the global `Manager` registry using dotted
+name semantics:
+
+- `"a.b.c"` → parent is `"a.b"`
+- `"a.b"` → parent is `"a"`
+- `"a"` → parent is `"root"`
+- `"root"` → no parent
+
+Parent resolution requires acquiring the GIL (Global Interpreter Lock) to
+access the `Py<FemtoLogger>` references stored in the manager. This is
+acceptable because:
+
+- Propagation is a relatively infrequent operation compared to local dispatch.
+- The GIL acquisition is brief (just a HashMap lookup).
+- Most applications have shallow logger hierarchies (2-4 levels).
+
+### 6.5. Configuration API
+
+Propagation can be configured via the builder API:
+
+```python
+LoggerConfigBuilder().with_level("DEBUG").with_propagate(False)
+```
+
+Or through `dictConfig`:
+
+```python
+femtologging.dictConfig({
+    "version": 1,
+    "loggers": {
+        "worker": {"level": "DEBUG", "propagate": False}
+    },
+    "root": {"level": "INFO"}
+})
+```
+
+Or at runtime:
+
+```python
+logger = femtologging.get_logger("worker")
+logger.set_propagate(False)  # Disable propagation
+```
+
+### 6.6. Design Decisions
+
+1. **Default `true`**: Matches Python `logging` semantics where propagation is
+   enabled by default, ensuring records reach the root handler unless
+   explicitly disabled.
+
+2. **Clone before propagate**: Avoids ownership issues and allows handlers to
+   mutate records without affecting propagation. The alternative (passing
+   references) would require complex lifetime management across the async
+   worker threads.
+
+3. **Recursive dispatch**: Rather than accumulating handlers and dispatching
+   once, each ancestor logger runs its own `dispatch_to_handlers()`. This
+   preserves per-logger filter semantics and simplifies the implementation.
+
+4. **SeqCst ordering**: Chosen for simplicity over minimal performance gains
+   from weaker orderings. The flag is rarely toggled after initial
+   configuration.
+
+## 7. Testing and Benchmarking Coverage
 
 - **Rust unit tests:** `rust_extension/src/config/config_tests.rs` now includes
   `rstest` cases guaranteeing that `ConfigBuilder.with_default_level` applies

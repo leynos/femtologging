@@ -35,7 +35,7 @@ steps below summarize the actionable items from that design.
   - [x] Allow a handler instance to be shared by multiple loggers safely.
 - [x] Build a `Manager` registry, so `get_logger(name)` returns existing loggers
   and establishes parent relationships based on dotted names.
-- [ ] Implement `propagate` behaviour so loggers inherit configuration from
+- [x] Implement `propagate` behaviour so loggers inherit configuration from
   their parents up to the root logger.
 - [x] Implement the `FemtoFormatter` trait with a default formatter.
 - [x] Select and integrate an MPSC channel for producer‑consumer queues.

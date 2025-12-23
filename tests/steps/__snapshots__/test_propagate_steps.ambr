@@ -1,0 +1,41 @@
+# serializer version: 1
+# name: test_configuration_matches_snapshot_with_propagate_disabled
+  dict({
+    'disable_existing_loggers': False,
+    'handlers': dict({
+      'console': dict({
+        'target': 'stderr',
+      }),
+    }),
+    'loggers': dict({
+      'worker': dict({
+        'level': 'DEBUG',
+        'propagate': False,
+      }),
+    }),
+    'root': dict({
+      'level': 'INFO',
+    }),
+    'version': 1,
+  })
+# ---
+# name: test_configuration_matches_snapshot_with_propagate_enabled
+  dict({
+    'disable_existing_loggers': False,
+    'handlers': dict({
+      'console': dict({
+        'target': 'stderr',
+      }),
+    }),
+    'loggers': dict({
+      'worker': dict({
+        'level': 'DEBUG',
+        'propagate': True,
+      }),
+    }),
+    'root': dict({
+      'level': 'INFO',
+    }),
+    'version': 1,
+  })
+# ---
