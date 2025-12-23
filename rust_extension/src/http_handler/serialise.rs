@@ -11,13 +11,15 @@ use std::io;
 
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
-/// Characters to percent-encode in URL query values.
+/// Characters to percent-encode in URL query values (excluding space).
 ///
 /// This encodes all control characters plus characters with special meaning in
 /// URLs (query separators, reserved characters), while leaving unreserved
 /// characters (alphanumeric, `-`, `_`, `.`, `~`) as-is per RFC 3986.
-const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
-    .add(b' ')
+///
+/// Space is handled separately by [`url_encode`] which maps it directly to `+`
+/// during iteration, avoiding a second pass over the encoded string.
+const QUERY_ENCODE_SET_NO_SPACE: &AsciiSet = &CONTROLS
     .add(b'"')
     .add(b'#')
     .add(b'$')
@@ -154,10 +156,18 @@ pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 ///
 /// This matches the behaviour of `urllib.parse.urlencode`, which uses
 /// `quote_plus` internally and encodes spaces as `+` rather than `%20`.
+///
+/// Spaces are mapped to `+` directly during encoding (single pass), rather than
+/// encoding to `%20` and then replacing in a second pass.
 fn url_encode(s: &str) -> String {
-    utf8_percent_encode(s, QUERY_ENCODE_SET)
-        .to_string()
-        .replace("%20", "+")
+    let mut result = String::with_capacity(s.len());
+    for chunk in s.split(' ') {
+        if !result.is_empty() {
+            result.push('+');
+        }
+        result.push_str(&utf8_percent_encode(chunk, QUERY_ENCODE_SET_NO_SPACE).to_string());
+    }
+    result
 }
 
 #[cfg(test)]
