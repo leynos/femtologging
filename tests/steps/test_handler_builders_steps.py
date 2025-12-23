@@ -56,7 +56,8 @@ def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
 def _build_flush_close(builder: HTTPHandlerBuilder) -> None:
     """Build, flush, and close a handler from a builder."""
     handler = builder.build()
-    handler.flush()
+    ok = handler.flush()
+    assert ok, "handler.flush() timed out"
     handler.close()
 
 

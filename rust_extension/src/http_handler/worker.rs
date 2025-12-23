@@ -104,7 +104,6 @@ impl Worker {
             match result {
                 Ok(ResponseClass::Success) => {
                     self.backoff.record_success(now);
-                    self.backoff.reset_after_idle(now);
                     return;
                 }
                 Ok(ResponseClass::Retryable) => {
@@ -296,6 +295,7 @@ pub fn enqueue_record(
 }
 
 pub fn flush_queue(tx: &Sender<HTTPCommand>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
     let (ack_tx, ack_rx) = bounded(1);
     if tx
         .send_timeout(HTTPCommand::Flush(ack_tx), timeout)
@@ -303,7 +303,8 @@ pub fn flush_queue(tx: &Sender<HTTPCommand>, timeout: Duration) -> bool {
     {
         return false;
     }
-    ack_rx.recv_timeout(timeout).is_ok()
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    ack_rx.recv_timeout(remaining).is_ok()
 }
 
 #[cfg(test)]
