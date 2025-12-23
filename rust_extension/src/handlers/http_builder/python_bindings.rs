@@ -90,13 +90,10 @@ impl HTTPHandlerBuilder {
 
     #[pyo3(name = "with_capacity")]
     #[pyo3(signature = (capacity))]
-    fn py_with_capacity<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        capacity: usize,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
         let updated = slf.clone().with_capacity(capacity);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     #[pyo3(name = "with_connect_timeout_ms")]
@@ -104,10 +101,10 @@ impl HTTPHandlerBuilder {
     fn py_with_connect_timeout<'py>(
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    ) -> PyRefMut<'py, Self> {
         let updated = slf.clone().with_connect_timeout_ms(timeout_ms);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     #[pyo3(name = "with_write_timeout_ms")]
@@ -115,20 +112,20 @@ impl HTTPHandlerBuilder {
     fn py_with_write_timeout<'py>(
         mut slf: PyRefMut<'py, Self>,
         timeout_ms: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    ) -> PyRefMut<'py, Self> {
         let updated = slf.clone().with_write_timeout_ms(timeout_ms);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     #[pyo3(name = "with_backoff")]
     fn py_with_backoff<'py>(
         mut slf: PyRefMut<'py, Self>,
         config: BackoffOverrides,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    ) -> PyRefMut<'py, Self> {
         let updated = slf.clone().with_backoff(config);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     #[pyo3(name = "with_json_format")]

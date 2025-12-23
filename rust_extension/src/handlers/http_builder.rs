@@ -14,21 +14,11 @@ use crate::http_handler::{
     AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
 };
 
+#[cfg(feature = "python")]
+use super::builder_macros::dict_set;
+use super::builder_macros::ensure_positive;
 use super::socket_builder::BackoffOverrides;
 use super::{HandlerBuildError, HandlerBuilderTrait};
-
-macro_rules! ensure_positive {
-    ($value:expr, $field:expr) => {{
-        if $value == 0 {
-            Err(HandlerBuildError::InvalidConfig(format!(
-                "{} must be greater than zero",
-                $field
-            )))
-        } else {
-            Ok($value)
-        }
-    }};
-}
 
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
@@ -36,15 +26,6 @@ macro_rules! option_setter {
         pub fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
-        }
-    };
-}
-
-#[cfg(feature = "python")]
-macro_rules! dict_set {
-    ($dict:expr, $key:expr, $opt:expr) => {
-        if let Some(value) = $opt {
-            $dict.set_item($key, value)?;
         }
     };
 }
@@ -104,7 +85,12 @@ impl HTTPHandlerBuilder {
         self
     }
 
-    /// Add custom HTTP headers to requests.
+    /// Replace all custom HTTP headers with the provided map.
+    ///
+    /// This replaces any previously configured headers. Use [`with_header`] to
+    /// add individual headers without replacing existing ones.
+    ///
+    /// [`with_header`]: HTTPHandlerBuilder::with_header
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.headers = headers;
         self
@@ -253,6 +239,10 @@ impl HTTPHandlerBuilder {
         if let Some(ref fields) = self.record_fields {
             d.set_item("record_fields", fields.clone())?;
         }
+        dict_set!(d, "backoff_base_ms", self.backoff.base_ms());
+        dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms());
+        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms());
+        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms());
         Ok(())
     }
 }

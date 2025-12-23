@@ -353,6 +353,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 name = "femtologging_rs"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "criterion",
  "crossbeam-channel",
  "delegate",
@@ -365,6 +366,7 @@ dependencies = [
  "native-tls",
  "once_cell",
  "parking_lot",
+ "percent-encoding",
  "proptest",
  "pyo3",
  "rand 0.8.5",

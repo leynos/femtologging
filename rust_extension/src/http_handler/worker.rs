@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 use ureq::{Agent, AgentBuilder};
@@ -241,7 +242,7 @@ impl Worker {
     }
 }
 
-fn classify_status(status: u16) -> ResponseClass {
+pub(crate) fn classify_status(status: u16) -> ResponseClass {
     match status {
         200..=299 => ResponseClass::Success,
         429 => ResponseClass::Retryable,
@@ -255,35 +256,9 @@ fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.warn_if_due(log);
 }
 
-/// Simple Base64 encoder for Basic auth.
+/// Base64-encode a byte slice for Basic auth.
 fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
-
-    for chunk in input.chunks(3) {
-        let b0 = chunk[0] as usize;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
-
-        let combined = (b0 << 16) | (b1 << 8) | b2;
-
-        result.push(ALPHABET[(combined >> 18) & 0x3F] as char);
-        result.push(ALPHABET[(combined >> 12) & 0x3F] as char);
-
-        if chunk.len() > 1 {
-            result.push(ALPHABET[(combined >> 6) & 0x3F] as char);
-        } else {
-            result.push('=');
-        }
-
-        if chunk.len() > 2 {
-            result.push(ALPHABET[combined & 0x3F] as char);
-        } else {
-            result.push('=');
-        }
-    }
-
-    result
+    BASE64_STANDARD.encode(input)
 }
 
 pub fn enqueue_record(

@@ -28,6 +28,11 @@ pub struct FemtoHTTPHandler {
     tx: Option<crossbeam_channel::Sender<HTTPCommand>>,
     handle: Mutex<Option<thread::JoinHandle<()>>>,
     warner: RateLimitedWarner,
+    /// Timeout for flush and shutdown operations.
+    ///
+    /// Derived from `write_timeout` in the configuration: a flush or graceful
+    /// shutdown should complete within the same time bounds as a single HTTP
+    /// request.
     flush_timeout: Duration,
 }
 

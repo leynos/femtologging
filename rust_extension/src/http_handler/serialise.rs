@@ -3,8 +3,42 @@
 //! Provides URL-encoded form data (CPython `logging.HTTPHandler` default) and
 //! JSON serialization formats for log records.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io;
+
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+
+/// Characters to percent-encode in URL query values.
+///
+/// This encodes all control characters plus characters with special meaning in
+/// URLs (query separators, reserved characters), while leaving unreserved
+/// characters (alphanumeric, `-`, `_`, `.`, `~`) as-is per RFC 3986.
+const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'$')
+    .add(b'%')
+    .add(b'&')
+    .add(b'+')
+    .add(b',')
+    .add(b'/')
+    .add(b':')
+    .add(b';')
+    .add(b'<')
+    .add(b'=')
+    .add(b'>')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}')
+    .add(b'\'');
 
 use crate::log_record::FemtoLogRecord;
 
@@ -64,9 +98,10 @@ fn filter_fields(
     full_map: BTreeMap<String, serde_json::Value>,
     fields: &[String],
 ) -> BTreeMap<String, serde_json::Value> {
+    let field_set: HashSet<&str> = fields.iter().map(String::as_str).collect();
     full_map
         .into_iter()
-        .filter(|(k, _)| fields.iter().any(|f| f == k))
+        .filter(|(k, _)| field_set.contains(k.as_str()))
         .collect()
 }
 
@@ -113,28 +148,7 @@ pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 
 /// URL-encode a string following RFC 3986.
 fn url_encode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() * 3);
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                result.push(byte as char);
-            }
-            _ => {
-                result.push('%');
-                result.push(to_hex_upper(byte >> 4));
-                result.push(to_hex_upper(byte & 0x0F));
-            }
-        }
-    }
-    result
-}
-
-fn to_hex_upper(nibble: u8) -> char {
-    match nibble {
-        0..=9 => (b'0' + nibble) as char,
-        10..=15 => (b'A' + nibble - 10) as char,
-        _ => unreachable!(),
-    }
+    utf8_percent_encode(s, QUERY_ENCODE_SET).to_string()
 }
 
 #[cfg(test)]

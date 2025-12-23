@@ -25,6 +25,8 @@ rand = "0.8"
 encoding_rs = "0.8"
 ini = { package = "rust-ini", version = "0.21.3" }
 ureq = { version = "2.9", features = ["native-tls"] }
+percent-encoding = "2.3"
+base64 = "0.22"
 
 [features]
 default = ["extension-module", "python", "log-compat"]

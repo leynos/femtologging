@@ -352,14 +352,7 @@ fn does_not_retry_on_400(tcp_listener: TcpListener) {
 mod response_classification {
     use super::*;
 
-    fn classify(status: u16) -> ResponseClass {
-        match status {
-            200..=299 => ResponseClass::Success,
-            429 => ResponseClass::Retryable,
-            500..=599 => ResponseClass::Retryable,
-            _ => ResponseClass::Permanent,
-        }
-    }
+    use crate::http_handler::worker::classify_status;
 
     #[rstest]
     #[case(200, ResponseClass::Success)]
@@ -374,6 +367,6 @@ mod response_classification {
     #[case(502, ResponseClass::Retryable)]
     #[case(503, ResponseClass::Retryable)]
     fn status_classification(#[case] status: u16, #[case] expected: ResponseClass) {
-        assert_eq!(classify(status), expected);
+        assert_eq!(classify_status(status), expected);
     }
 }

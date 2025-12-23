@@ -53,6 +53,13 @@ def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
     raise AssertionError(msg)
 
 
+def _build_flush_close(builder: HTTPHandlerBuilder) -> None:
+    """Build, flush, and close a handler from a builder."""
+    handler = builder.build()
+    handler.flush()
+    handler.close()
+
+
 @given('a FileHandlerBuilder for path "test.log"', target_fixture="file_builder")
 def given_file_builder(tmp_path: Path) -> FileHandlerBuilder:
     path = tmp_path / "test.log"
@@ -420,9 +427,7 @@ def then_http_builder_snapshot(
     http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     assert http_builder.as_dict() == snapshot, "HTTP builder dict must match snapshot"
-    handler = http_builder.build()
-    handler.flush()
-    handler.close()
+    _build_flush_close(http_builder)
 
 
 @then("the JSON HTTP handler builder matches snapshot")
@@ -432,9 +437,7 @@ def then_json_http_builder_snapshot(
     data = http_builder.as_dict()
     assert data.get("format") == "json", "must have JSON format"
     assert data == snapshot, "JSON HTTP builder dict must match snapshot"
-    handler = http_builder.build()
-    handler.flush()
-    handler.close()
+    _build_flush_close(http_builder)
 
 
 @then("the HTTP handler builder with auth matches snapshot")
@@ -444,9 +447,7 @@ def then_http_builder_auth_snapshot(
     data = http_builder.as_dict()
     assert data.get("auth_type") == "basic", "must have basic auth"
     assert data == snapshot, "HTTP builder with auth must match snapshot"
-    handler = http_builder.build()
-    handler.flush()
-    handler.close()
+    _build_flush_close(http_builder)
 
 
 @then("the HTTP handler builder with bearer matches snapshot")
@@ -456,9 +457,7 @@ def then_http_builder_bearer_snapshot(
     data = http_builder.as_dict()
     assert data.get("auth_type") == "bearer", "must have bearer auth"
     assert data == snapshot, "HTTP builder with bearer must match snapshot"
-    handler = http_builder.build()
-    handler.flush()
-    handler.close()
+    _build_flush_close(http_builder)
 
 
 @then("the HTTP handler builder with fields matches snapshot")
@@ -468,9 +467,7 @@ def then_http_builder_fields_snapshot(
     data = http_builder.as_dict()
     assert "record_fields" in data, "must have record_fields"
     assert data == snapshot, "HTTP builder with fields must match snapshot"
-    handler = http_builder.build()
-    handler.flush()
-    handler.close()
+    _build_flush_close(http_builder)
 
 
 @then(parsers.parse('building the HTTP handler fails with "{message}"'))
