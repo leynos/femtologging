@@ -136,6 +136,9 @@ The primary components of the `femtologging` system include:
   particularly user-provided arguments, will also need to adhere to these trait
   bounds if they are to be processed in their original form by the consumer;
   otherwise, they may need to be pre-formatted into strings by the producer.
+  For Python bindings, exception and stack data must be captured on the
+  producer thread and serialised into a Rust-owned, versioned payload so
+  consumer threads never retain Python objects or frames.
 
 - `FemtoHandler` **Trait and Implementations:** A trait defining the contract
   for log handlers. Concrete implementations (e.g., `FemtoFileHandler`,
@@ -163,7 +166,8 @@ The logging process will follow these steps:
 
 3. `FemtoLogRecord` **Creation:** If the level check passes, a `FemtoLogRecord`
    is created on the producer thread, capturing the message, arguments, and
-   contextual information.
+   contextual information. Any requested exception or stack payload is captured
+   and serialised at this stage.
 
 4. **Channel Send:** The `FemtoLogRecord` is sent through one or more MPSC
    channels to the consumer threads associated with the active handlers for
@@ -215,6 +219,20 @@ A `FemtoLogRecord` will contain at least the following fields:
 
 - `key_values`: A collection of structured key-value pairs provided at the log
   call site.
+
+- `exception_payload`: Optional structured exception payload containing the
+  exception type, message, stack frames, and chained causes.
+
+- `stack_payload`: Optional structured stack payload containing frames and
+  code context for `stack_info`.
+
+- `payload_schema_version`: Optional version marker for the structured
+  exception and stack payload schema.
+
+The exception and stack payloads are captured from Python `traceback`
+structures on the producer thread. Each frame should include filename, line
+number, function name, optional code context, and a serialised snapshot of
+local variables where available.
 
 These contextual fields are grouped within a `RecordMetadata` struct. Each
 `FemtoLogRecord` owns its metadata, keeping the main record lightweight. Future
@@ -441,6 +459,10 @@ classDiagram
     HTTPHandlerConfig --> "1" BackoffPolicy
 ```
 
+For screen readers: The following class diagram outlines the log record
+structure, including optional exception and stack payloads with a schema
+version marker.
+
 ```mermaid
 classDiagram
     class FemtoLogRecord {
@@ -448,6 +470,9 @@ classDiagram
         +String level
         +String message
         +RecordMetadata metadata
+        +Option~ExceptionPayload~ exception_payload
+        +Option~StackTracePayload~ stack_payload
+        +Option~u16~ payload_schema_version
         +new(logger: &str, level: &str, message: &str) FemtoLogRecord
         +with_metadata(logger: &str, level: &str, message: &str, metadata: RecordMetadata) FemtoLogRecord
     }
@@ -461,8 +486,31 @@ classDiagram
         +BTreeMap~String, String~ key_values
         +default() RecordMetadata
     }
+    class ExceptionPayload {
+        +String type_name
+        +String message
+        +Vec~StackFrame~ frames
+        +Option~Box~ExceptionPayload~~ cause
+    }
+    class StackTracePayload {
+        +Vec~StackFrame~ frames
+    }
+    class StackFrame {
+        +String filename
+        +u32 line_number
+        +String function
+        +Option~String~ code_context
+        +Option~BTreeMap~String, String~~ locals
+    }
     FemtoLogRecord --> RecordMetadata : has a
+    FemtoLogRecord --> ExceptionPayload : optional
+    FemtoLogRecord --> StackTracePayload : optional
+    ExceptionPayload --> StackFrame : frames
+    StackTracePayload --> StackFrame : frames
 ```
+
+_Figure 1: `FemtoLogRecord` structure with optional exception and stack
+payloads._
 
 ### 3.4 Handler Implementation Strategy
 
