@@ -97,8 +97,22 @@ def given_child_no_handlers(
     propagate_ctx: PropagateContext, name: str, level: str
 ) -> PropagateContext:
     """Configure a child logger with no handlers (relies on propagation)."""
-    child = LoggerConfigBuilder().with_level(level)
-    propagate_ctx.config_builder.with_logger(name, child)
+    logger_cfg = LoggerConfigBuilder().with_level(level)
+    propagate_ctx.config_builder.with_logger(name, logger_cfg)
+    propagate_ctx.loggers.add(name)
+    return propagate_ctx
+
+
+@given(
+    parsers.parse('a logger "{name}" at level "{level}" without handlers'),
+    target_fixture="propagate_ctx",
+)
+def given_logger_no_handlers(
+    propagate_ctx: PropagateContext, name: str, level: str
+) -> PropagateContext:
+    """Configure a non-root logger with no handlers (relies on propagation)."""
+    logger_cfg = LoggerConfigBuilder().with_level(level)
+    propagate_ctx.config_builder.with_logger(name, logger_cfg)
     propagate_ctx.loggers.add(name)
     return propagate_ctx
 

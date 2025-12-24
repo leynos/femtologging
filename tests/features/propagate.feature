@@ -40,8 +40,8 @@ Feature: Logger propagation behaviour
   Scenario: multi-level hierarchy propagation
     Given a file handler "root_handler" writing to a temporary file
     And a ConfigBuilder with root logger using handler "root_handler" at level "INFO"
-    And a child logger "parent" at level "INFO" without handlers
-    And a child logger "parent.child" at level "INFO" without handlers
+    And a logger "parent" at level "INFO" without handlers
+    And a logger "parent.child" at level "INFO" without handlers
     When I build and initialise the configuration
     And I log "deep message" at level "INFO" from logger "parent.child"
     And I flush all loggers
