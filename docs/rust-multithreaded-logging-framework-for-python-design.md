@@ -136,6 +136,9 @@ The primary components of the `femtologging` system include:
   particularly user-provided arguments, will also need to adhere to these trait
   bounds if they are to be processed in their original form by the consumer;
   otherwise, they may need to be pre-formatted into strings by the producer.
+  For Python bindings, exception and stack data must be captured on the
+  producer thread and serialised into a Rust-owned, versioned payload so
+  consumer threads never retain Python objects or frames.
 
 - `FemtoHandler` **Trait and Implementations:** A trait defining the contract
   for log handlers. Concrete implementations (e.g., `FemtoFileHandler`,
@@ -163,7 +166,8 @@ The logging process will follow these steps:
 
 3. `FemtoLogRecord` **Creation:** If the level check passes, a `FemtoLogRecord`
    is created on the producer thread, capturing the message, arguments, and
-   contextual information.
+   contextual information. Any requested exception or stack payload is captured
+   and serialised at this stage.
 
 4. **Channel Send:** The `FemtoLogRecord` is sent through one or more MPSC
    channels to the consumer threads associated with the active handlers for
@@ -216,12 +220,41 @@ A `FemtoLogRecord` will contain at least the following fields:
 - `key_values`: A collection of structured key-value pairs provided at the log
   call site.
 
+- `exception_payload`: Optional structured exception payload containing the
+  exception type, message, stack frames, and chained causes.
+
+- `stack_payload`: Optional structured stack payload containing frames and
+  code context for `stack_info`.
+
+- `payload_schema_version`: Optional version marker for the structured
+  exception and stack payload schema.
+
+The exception and stack payloads are captured from Python 3.12+ `traceback`
+structures on the producer thread. Each frame should include filename, line
+number, end-line number, column offsets, function name, optional source line,
+and a serialised snapshot of local variables where available. Exception
+payloads should encode chaining (`cause`, `context`, and `suppress_context`),
+`__notes__`, and exception groups.
+
 These contextual fields are grouped within a `RecordMetadata` struct. Each
 `FemtoLogRecord` owns its metadata, keeping the main record lightweight. Future
 fields can be added without altering the core API.
 
 This structure ensures all relevant information is captured once and passed
 efficiently to consumer threads.
+
+#### Exception and stack payload schema (Python 3.12-3.14)
+
+The schema mirrors the data exposed by `traceback.TracebackException` and
+`traceback.StackSummary` in Python 3.12+:
+
+- `ExceptionPayload` models both normal exceptions and `BaseExceptionGroup`.
+  For non-group exceptions, `exceptions` is empty.
+- `cause`, `context`, and `suppress_context` preserve standard exception
+  chaining semantics, while `notes` captures `__notes__`.
+- `StackFrame` captures `lineno`, `end_lineno`, `colno`, and `end_colno` to
+  preserve the positional ranges introduced in Python 3.11 and carried forward
+  through 3.14.
 
 #### FemtoSocketHandler Implementation Update
 
@@ -358,7 +391,7 @@ balances the three drivers listed above.
 | **HTTP client library**            | `ureq` 2.x with `native-tls` feature                            | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency.                                                                                                      |
 | **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                  |
 | **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                               |
-| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms.  |
+| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms. |
 | **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.         |
 | **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults match `ureq` library defaults when not specified.                                                                 |
 
@@ -441,6 +474,10 @@ classDiagram
     HTTPHandlerConfig --> "1" BackoffPolicy
 ```
 
+For screen readers: The following class diagram outlines the log record
+structure, including optional exception and stack payloads with a schema
+version marker.
+
 ```mermaid
 classDiagram
     class FemtoLogRecord {
@@ -448,6 +485,9 @@ classDiagram
         +String level
         +String message
         +RecordMetadata metadata
+        +Option~ExceptionPayload~ exception_payload
+        +Option~StackTracePayload~ stack_payload
+        +Option~u16~ payload_schema_version
         +new(logger: &str, level: &str, message: &str) FemtoLogRecord
         +with_metadata(logger: &str, level: &str, message: &str, metadata: RecordMetadata) FemtoLogRecord
     }
@@ -461,8 +501,40 @@ classDiagram
         +BTreeMap~String, String~ key_values
         +default() RecordMetadata
     }
+    class ExceptionPayload {
+        +String type_name
+        +String module
+        +String message
+        +Vec~String~ args_repr
+        +Vec~String~ notes
+        +Vec~StackFrame~ frames
+        +Option~ExceptionPayload~ cause
+        +Option~ExceptionPayload~ context
+        +bool suppress_context
+        +Vec~ExceptionPayload~ exceptions
+    }
+    class StackTracePayload {
+        +Vec~StackFrame~ frames
+    }
+    class StackFrame {
+        +String filename
+        +u32 lineno
+        +Option~u32~ end_lineno
+        +Option~u32~ colno
+        +Option~u32~ end_colno
+        +String function
+        +Option~String~ source_line
+        +Option~BTreeMap~String, String~~ locals
+    }
     FemtoLogRecord --> RecordMetadata : has a
+    FemtoLogRecord --> ExceptionPayload : optional
+    FemtoLogRecord --> StackTracePayload : optional
+    ExceptionPayload --> StackFrame : frames
+    StackTracePayload --> StackFrame : frames
 ```
+
+_Figure 1: `FemtoLogRecord` structure with optional exception and stack
+payloads aligned to Python 3.12-3.14 traceback data._
 
 ### 3.4 Handler Implementation Strategy
 

@@ -14,6 +14,11 @@ libraries. Use the links below to explore each topic.
 - [roadmap.md](./roadmap.md)
   - Lists milestones for porting picologging to a Rust/PyO3 implementation.
 
+## Architecture decision records
+
+- [adr-001-python-exception-logging.md](./adr-001-python-exception-logging.md)
+  - Proposes support for `exc_info` and `stack_info` in the Python logging API.
+
 ## Logging Architecture
 
 - [logging-class-overview.md](./logging-class-overview.md)

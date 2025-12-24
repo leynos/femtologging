@@ -194,6 +194,20 @@ steps below summarize the actionable items from that design.
   - [x] Document that enabling the `log::Log` bridge installs a global Rust
     logger (exclusive) and the implications for existing logging
     configurations.
+- [ ] Add structured exception and stack payloads for Python `exc_info` and
+  `stack_info` (see [ADR 001](./adr-001-python-exception-logging.md)).
+  - [ ] Define a versioned schema for exception and stack payloads captured
+    from Python `traceback` data (frames, locals, code context, and cause
+    chains).
+  - [ ] Extend `FemtoLogger.log` to accept keyword-only `exc_info` and
+    `stack_info`, capturing structured payloads on the producer thread.
+  - [ ] Extend `FemtoLogRecord` and formatter adapters to carry the structured
+    payload and render both string and structured outputs.
+  - [ ] Add a `handle_record(record: Mapping)` hook for Python handlers that
+    need direct access to structured payloads.
+  - [ ] Add unit and integration tests covering payload capture, formatting,
+    and Python handler interoperability, and update
+    `docs/users-guide.md` accordingly.
 - [x] Expand test coverage and start benchmarking.
 
 ## Phase 3 – Advanced Features & Ecosystem Integration
