@@ -40,14 +40,16 @@ class PropagateContext:
 
     config_builder: ConfigBuilder
     handlers: dict[str, HandlerContext]
+    loggers: set[str]
 
 
 @pytest.fixture
-def propagate_ctx(tmp_path: Path) -> PropagateContext:
+def propagate_ctx() -> PropagateContext:
     """Create a fresh propagation context for each scenario."""
     return PropagateContext(
         config_builder=ConfigBuilder(),
         handlers={},
+        loggers=set(),
     )
 
 
@@ -97,6 +99,7 @@ def given_child_no_handlers(
     """Configure a child logger with no handlers (relies on propagation)."""
     child = LoggerConfigBuilder().with_level(level)
     propagate_ctx.config_builder.with_logger(name, child)
+    propagate_ctx.loggers.add(name)
     return propagate_ctx
 
 
@@ -111,6 +114,7 @@ def given_child_propagate_disabled(
     propagate = False
     child = LoggerConfigBuilder().with_level(level).with_propagate(propagate)
     propagate_ctx.config_builder.with_logger(name, child)
+    propagate_ctx.loggers.add(name)
     return propagate_ctx
 
 
@@ -124,6 +128,7 @@ def given_child_with_handler(
     """Configure a child logger with its own handler."""
     child = LoggerConfigBuilder().with_level(level).with_handlers([hid])
     propagate_ctx.config_builder.with_logger(name, child)
+    propagate_ctx.loggers.add(name)
     return propagate_ctx
 
 
@@ -186,8 +191,13 @@ def when_log_message(message: str, level: str, name: str) -> None:
 
 
 @when("I flush all loggers")
-def when_flush_all() -> None:
+def when_flush_all(propagate_ctx: PropagateContext) -> None:
     """Flush all loggers to ensure records are written."""
+    # Flush all tracked child loggers first
+    for name in propagate_ctx.loggers:
+        logger = get_logger(name)
+        logger.flush_handlers()
+    # Always flush root last to ensure propagated records are written
     root = get_logger("root")
     root.flush_handlers()
 

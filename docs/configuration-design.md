@@ -857,7 +857,7 @@ pub fn set_propagate(&self, flag: bool) {
 `SeqCst` ordering ensures immediate visibility of propagation changes across
 all threads. While `Release`/`Acquire` pairs would suffice for correctness,
 `SeqCst` provides simpler reasoning about cross-thread behaviour and the
-performance difference is negligible for this infrequently-toggled flag.
+performance difference is negligible for this infrequently toggled flag.
 
 ### 6.3. Record Cloning Strategy
 
@@ -944,6 +944,48 @@ logger.set_propagate(False)  # Disable propagation
 4. **SeqCst ordering**: Chosen for simplicity over minimal performance gains
    from weaker orderings. The flag is rarely toggled after initial
    configuration.
+
+### 6.7. Propagation Flow Diagram
+
+The following diagram illustrates how a log record flows through the logger
+hierarchy when propagation is enabled:
+
+```mermaid
+sequenceDiagram
+    participant Child as Child Logger
+    participant Parent as Parent Logger
+    participant Root as Root Logger
+    participant Handler as Handler
+
+    Child->>Child: Log message<br/>(propagate=true)
+    activate Child
+
+    rect rgb(220, 240, 255)
+    note over Child,Handler: Child handler processes (if attached)
+    Child->>Handler: Emit to handler
+    end
+
+    rect rgb(240, 255, 240)
+    note over Child,Root: Propagation phase
+    Child->>Parent: Check propagate flag
+    alt propagate enabled
+        Parent->>Parent: Process message
+        Parent->>Root: Propagate upward
+        Root->>Root: Process message
+        Root->>Handler: Emit to root handler
+    else propagate disabled
+        note over Parent,Root: Stop propagation
+    end
+    end
+
+    deactivate Child
+```
+
+**Figure 6.1:** Log record propagation through a three-level logger hierarchy.
+When a child logger emits a record with `propagate=true`, the record first
+passes through any local handlers, then propagates to the parent logger. Each
+ancestor applies its own filters and handlers before forwarding the record
+further up the chain until the root logger is reached.
 
 ## 7. Testing and Benchmarking Coverage
 
