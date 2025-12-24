@@ -105,9 +105,12 @@ Cons:
 
 ## Decision
 
-Adopt Option A for the initial implementation. Option A.2 remains a follow-up
-candidate once a stable structured schema is agreed, because it increases
-payload size and API surface area.
+Adopt Option A.2.
+
+The structured payload is preferred because it keeps the worker threads
+GIL-free while enabling both human-readable and structured renderings without
+re-parsing text. The initial schema should be versioned to allow evolution
+without breaking formatters.
 
 The implementation should serialize exception and stack data in the caller
 thread, store it in the record as Rust-owned strings, and let formatters attach
@@ -120,19 +123,22 @@ providing output aligned with standard logging behaviour.
   `exc_info` and `stack_info` parameters.
 - Accept `exc_info` values matching standard logging behaviour: `True` to use
   `sys.exc_info()`, an exception instance, or a three-item exception tuple.
-- Use Python's `traceback` helpers to format exception and stack data into
-  strings before the record is queued.
-- Add optional fields to `FemtoLogRecord` for exception text and stack text.
-- Extend the default Rust formatter and the Python formatter adapter to include
-  these fields when present.
+- Use Python's `traceback` helpers to collect a structured representation of
+  the exception and stack, preserving frames, code context, and exception
+  chaining where available.
+- Add optional structured fields to `FemtoLogRecord` for exception and stack
+  payloads, plus a `schema_version` marker to allow evolution.
+- Extend the default Rust formatter and the Python formatter adapter to render
+  both a concise human-readable string and structured output (for example, JSON
+  fields) from the stored payload.
 - Keep the existing Python handler `handle(logger, level, message)` signature,
   but add an optional `handle_record(record: Mapping)` hook for handlers that
-  need structured access to exception and stack data.
+  need direct access to the structured payload.
 
 ## Consequences
 
 - The fast path remains unchanged when exception and stack data are absent.
-- Memory use increases for records with exception or stack text.
-- Worker threads remain GIL-free because only Rust-owned strings are queued.
-- Python handler authors who need structured exception data should implement
-  `handle_record` once it is available.
+- Memory use increases for records with structured exception or stack payloads.
+- Worker threads remain GIL-free because only Rust-owned data is queued.
+- Formatter and handler interfaces must account for the schema version and
+  optional structured payload fields.
