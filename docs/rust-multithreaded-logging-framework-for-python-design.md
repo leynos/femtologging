@@ -229,10 +229,12 @@ A `FemtoLogRecord` will contain at least the following fields:
 - `payload_schema_version`: Optional version marker for the structured
   exception and stack payload schema.
 
-The exception and stack payloads are captured from Python `traceback`
+The exception and stack payloads are captured from Python 3.12+ `traceback`
 structures on the producer thread. Each frame should include filename, line
-number, function name, optional code context, and a serialised snapshot of
-local variables where available.
+number, end-line number, column offsets, function name, optional source line,
+and a serialised snapshot of local variables where available. Exception
+payloads should encode chaining (`cause`, `context`, and `suppress_context`),
+`__notes__`, and exception groups.
 
 These contextual fields are grouped within a `RecordMetadata` struct. Each
 `FemtoLogRecord` owns its metadata, keeping the main record lightweight. Future
@@ -240,6 +242,19 @@ fields can be added without altering the core API.
 
 This structure ensures all relevant information is captured once and passed
 efficiently to consumer threads.
+
+#### Exception and stack payload schema (Python 3.12-3.14)
+
+The schema mirrors the data exposed by `traceback.TracebackException` and
+`traceback.StackSummary` in Python 3.12+:
+
+- `ExceptionPayload` models both normal exceptions and `BaseExceptionGroup`.
+  For non-group exceptions, `exceptions` is empty.
+- `cause`, `context`, and `suppress_context` preserve standard exception
+  chaining semantics, while `notes` captures `__notes__`.
+- `StackFrame` captures `lineno`, `end_lineno`, `colno`, and `end_colno` to
+  preserve the positional ranges introduced in Python 3.11 and carried forward
+  through 3.14.
 
 #### FemtoSocketHandler Implementation Update
 
@@ -488,18 +503,27 @@ classDiagram
     }
     class ExceptionPayload {
         +String type_name
+        +String module
         +String message
+        +Vec~String~ args_repr
+        +Vec~String~ notes
         +Vec~StackFrame~ frames
-        +Option~Box~ExceptionPayload~~ cause
+        +Option~ExceptionPayload~ cause
+        +Option~ExceptionPayload~ context
+        +bool suppress_context
+        +Vec~ExceptionPayload~ exceptions
     }
     class StackTracePayload {
         +Vec~StackFrame~ frames
     }
     class StackFrame {
         +String filename
-        +u32 line_number
+        +u32 lineno
+        +Option~u32~ end_lineno
+        +Option~u32~ colno
+        +Option~u32~ end_colno
         +String function
-        +Option~String~ code_context
+        +Option~String~ source_line
         +Option~BTreeMap~String, String~~ locals
     }
     FemtoLogRecord --> RecordMetadata : has a
@@ -510,7 +534,7 @@ classDiagram
 ```
 
 _Figure 1: `FemtoLogRecord` structure with optional exception and stack
-payloads._
+payloads aligned to Python 3.12-3.14 traceback data._
 
 ### 3.4 Handler Implementation Strategy
 
