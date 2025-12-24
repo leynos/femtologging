@@ -56,7 +56,7 @@ Capture exception and stack data in the caller thread, serialize to a semantic
 representation (for example, frames, locals, exception type, and message), and
 store the structured payload in the `FemtoLogRecord`. Formatters can then
 render either a human-readable string or structured output (such as JSON)
-without re-parsing text.
+without reparsing text.
 
 Pros:
 
@@ -109,7 +109,7 @@ Adopt Option A.2.
 
 The structured payload is preferred because it keeps the worker threads
 GIL-free while enabling both human-readable and structured renderings without
-re-parsing text. The initial schema should be versioned to allow evolution
+reparsing text. The initial schema should be versioned to allow evolution
 without breaking formatters.
 
 The implementation should serialize exception and stack data in the caller
