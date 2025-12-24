@@ -50,6 +50,26 @@ Cons:
 - Duplicates work if multiple handlers reformat the same record.
 - Limits access to structured traceback data unless extra fields are added.
 
+### Option A.2: Semantic stack trace serialization
+
+Capture exception and stack data in the caller thread, serialize to a semantic
+representation (for example, frames, locals, exception type, and message), and
+store the structured payload in the `FemtoLogRecord`. Formatters can then
+render either a human-readable string or structured output (such as JSON)
+without re-parsing text.
+
+Pros:
+
+- Preserves the full stack trace details for multiple formatter styles.
+- Avoids repeated parsing or reformatting across handlers.
+- Keeps worker threads free of Python object lifetimes and GIL usage.
+
+Cons:
+
+- Increases record size and serialization overhead.
+- Requires a stable schema for exceptions and stack frames.
+- Adds complexity to formatter and handler interfaces.
+
 ### Option B: Deferred formatting with PyO3 exceptions
 
 Capture `exc_info` as a Python object, store it in the queued record, and
@@ -85,7 +105,9 @@ Cons:
 
 ## Decision
 
-Adopt Option A.
+Adopt Option A for the initial implementation. Option A.2 remains a follow-up
+candidate once a stable structured schema is agreed, because it increases
+payload size and API surface area.
 
 The implementation should serialize exception and stack data in the caller
 thread, store it in the record as Rust-owned strings, and let formatters attach
