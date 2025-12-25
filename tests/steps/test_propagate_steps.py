@@ -104,13 +104,29 @@ def given_child_no_handlers(
 
 
 @given(
-    parsers.parse('a logger "{name}" at level "{level}" without handlers'),
+    parsers.parse(
+        'an intermediate logger "{name}" at level "{level}" without handlers'
+    ),
     target_fixture="propagate_ctx",
 )
-def given_logger_no_handlers(
+def given_intermediate_logger_no_handlers(
     propagate_ctx: PropagateContext, name: str, level: str
 ) -> PropagateContext:
-    """Configure a non-root logger with no handlers (relies on propagation)."""
+    """Configure an intermediate (non-leaf, non-root) logger without handlers."""
+    logger_cfg = LoggerConfigBuilder().with_level(level)
+    propagate_ctx.config_builder.with_logger(name, logger_cfg)
+    propagate_ctx.loggers.add(name)
+    return propagate_ctx
+
+
+@given(
+    parsers.parse('a leaf logger "{name}" at level "{level}" without handlers'),
+    target_fixture="propagate_ctx",
+)
+def given_leaf_logger_no_handlers(
+    propagate_ctx: PropagateContext, name: str, level: str
+) -> PropagateContext:
+    """Configure a leaf logger (deepest in hierarchy) without handlers."""
     logger_cfg = LoggerConfigBuilder().with_level(level)
     propagate_ctx.config_builder.with_logger(name, logger_cfg)
     propagate_ctx.loggers.add(name)
