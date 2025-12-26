@@ -196,7 +196,7 @@ steps below summarize the actionable items from that design.
     configurations.
 - [ ] Add structured exception and stack payloads for Python `exc_info` and
   `stack_info` (see [ADR 001](./adr-001-python-exception-logging.md)).
-  - [ ] Define a versioned schema for exception and stack payloads captured
+  - [x] Define a versioned schema for exception and stack payloads captured
     from Python `traceback` data (frames, locals, code context, and cause
     chains).
   - [ ] Extend `FemtoLogger.log` to accept keyword-only `exc_info` and

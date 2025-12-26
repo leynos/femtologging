@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 
 mod config;
+mod exception_schema;
 #[cfg(feature = "python")]
 mod file_config;
 mod filters;
@@ -47,6 +48,10 @@ use handlers::socket_builder::BackoffOverrides;
 #[cfg(feature = "python")]
 use pyo3::wrap_pyfunction;
 
+/// Re-export exception schema types.
+pub use exception_schema::{
+    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackFrame, StackTracePayload,
+};
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
