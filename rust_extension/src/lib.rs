@@ -5,7 +5,7 @@
 use pyo3::prelude::*;
 
 mod config;
-mod exception_schema;
+pub mod exception_schema;
 #[cfg(feature = "python")]
 mod file_config;
 mod filters;
