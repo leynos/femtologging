@@ -114,7 +114,7 @@ pub struct ExceptionPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<ExceptionPayload>>,
     /// Whether implicit context should be suppressed in display.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppress_context: bool,
     /// Nested exceptions (for `ExceptionGroup`, Python 3.11+).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -347,13 +347,24 @@ mod tests {
     }
 
     #[rstest]
-    fn exception_payload_skips_empty_vectors() {
+    fn exception_payload_skips_default_fields() {
         let payload = ExceptionPayload::new("Error", "msg");
         let json = serde_json::to_string(&payload).expect("serialise");
         assert!(!json.contains("args_repr"));
         assert!(!json.contains("notes"));
         assert!(!json.contains("frames"));
         assert!(!json.contains("exceptions"));
+        assert!(!json.contains("suppress_context"));
+    }
+
+    #[rstest]
+    fn exception_payload_includes_suppress_context_when_true() {
+        let payload = ExceptionPayload {
+            suppress_context: true,
+            ..ExceptionPayload::new("Error", "msg")
+        };
+        let json = serde_json::to_string(&payload).expect("serialise");
+        assert!(json.contains("suppress_context"));
     }
 
     #[rstest]
@@ -361,7 +372,7 @@ mod tests {
         let payload = ExceptionPayload::new("ValueError", "test")
             .with_frames(vec![StackFrame::new("test.py", 1, "main")]);
 
-        // Use with_struct_map() for compatibility with deserialisation
+        // Use with_struct_map() for compatibility with deserialization
         let mut buf = Vec::new();
         payload
             .serialize(&mut Serializer::new(&mut buf).with_struct_map())
