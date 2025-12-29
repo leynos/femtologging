@@ -7,7 +7,7 @@
 //! # Schema Version
 //!
 //! The current schema version is [`EXCEPTION_SCHEMA_VERSION`]. Consumers
-//! should check this version when deserialising payloads to handle
+//! should check this version when deserializing payloads to handle
 //! forward/backward compatibility.
 //!
 //! # Example
@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 /// Current schema version for exception payloads.
 ///
 /// Increment this when making breaking changes to the schema structure.
-/// Consumers should check this value when deserialising to handle
+/// Consumers should check this value when deserializing to handle
 /// compatibility.
 pub const EXCEPTION_SCHEMA_VERSION: u16 = 1;
 
@@ -117,8 +117,8 @@ pub struct ExceptionPayload {
     #[serde(default)]
     pub suppress_context: bool,
     /// Nested exceptions (for `ExceptionGroup`, Python 3.11+).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exceptions: Option<Vec<ExceptionPayload>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exceptions: Vec<ExceptionPayload>,
 }
 
 impl StackFrame {
@@ -338,7 +338,7 @@ mod tests {
             cause: Some(Box::new(cause)),
             context: None,
             suppress_context: true,
-            exceptions: None,
+            exceptions: vec![],
         };
 
         let json = serde_json::to_string(&payload).expect("serialise");
@@ -353,6 +353,7 @@ mod tests {
         assert!(!json.contains("args_repr"));
         assert!(!json.contains("notes"));
         assert!(!json.contains("frames"));
+        assert!(!json.contains("exceptions"));
     }
 
     #[rstest]
@@ -378,13 +379,13 @@ mod tests {
             schema_version: EXCEPTION_SCHEMA_VERSION,
             type_name: "ExceptionGroup".into(),
             message: "multiple errors".into(),
-            exceptions: Some(vec![exc1, exc2]),
+            exceptions: vec![exc1, exc2],
             ..Default::default()
         };
 
         let json = serde_json::to_string(&group).expect("serialise");
         let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialise");
-        assert_eq!(decoded.exceptions.as_ref().map(Vec::len), Some(2));
+        assert_eq!(decoded.exceptions.len(), 2);
     }
 
     #[rstest]

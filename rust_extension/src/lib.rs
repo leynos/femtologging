@@ -245,6 +245,7 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<HandlerConfigError>(),
     )?;
     m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
+    m.add("EXCEPTION_SCHEMA_VERSION", EXCEPTION_SCHEMA_VERSION)?;
     #[cfg(feature = "python")]
     // Register builder types and errors that are only compiled when the
     // `python` feature is enabled.

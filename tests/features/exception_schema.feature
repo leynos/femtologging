@@ -36,4 +36,9 @@ Feature: Exception schema serialisation
   Scenario: Schema version is included
     Given an exception "Error" with message "test"
     When I serialise the exception to JSON
-    Then the JSON contains "schema_version" as 1
+    Then the JSON contains "schema_version"
+    And the schema version matches the Rust constant
+
+  Scenario: Schema version constant is exported
+    Then the EXCEPTION_SCHEMA_VERSION constant is accessible from Python
+    And the constant value is a positive integer

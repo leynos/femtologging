@@ -29,6 +29,7 @@ FemtoHTTPHandler = rust.FemtoHTTPHandler
 HandlerOptions = rust.HandlerOptions
 BackoffConfig = rust.BackoffConfig
 ROTATION_VALIDATION_MSG = rust.ROTATION_VALIDATION_MSG
+EXCEPTION_SCHEMA_VERSION = rust.EXCEPTION_SCHEMA_VERSION
 StreamHandlerBuilder = rust.StreamHandlerBuilder
 SocketHandlerBuilder = rust.SocketHandlerBuilder
 HTTPHandlerBuilder = rust.HTTPHandlerBuilder
@@ -308,6 +309,7 @@ def _set_logger_level(root: FemtoLogger, level: str | int | None) -> None:
 
 
 __all__ = [
+    "EXCEPTION_SCHEMA_VERSION",
     "ROTATION_VALIDATION_MSG",
     "BasicConfig",
     "ConfigBuilder",

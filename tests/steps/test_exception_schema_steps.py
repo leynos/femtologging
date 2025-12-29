@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from femtologging import EXCEPTION_SCHEMA_VERSION
+
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
 
@@ -69,7 +71,7 @@ def create_exception(
     exception_data: dict[str, typ.Any], type_name: str, message: str
 ) -> None:
     exception_data.update({
-        "schema_version": 1,
+        "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
         "message": message,
     })
@@ -78,7 +80,7 @@ def create_exception(
 @given(parsers.parse('the exception has cause "{type_name}" with message "{message}"'))
 def add_cause(exception_data: dict[str, typ.Any], type_name: str, message: str) -> None:
     exception_data["cause"] = {
-        "schema_version": 1,
+        "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
         "message": message,
     }
@@ -89,7 +91,7 @@ def create_exception_group(
     exception_data: dict[str, typ.Any], type_name: str, message: str
 ) -> None:
     exception_data.update({
-        "schema_version": 1,
+        "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
         "message": message,
         "exceptions": [],
@@ -103,7 +105,7 @@ def add_nested_exception(
     exception_data: dict[str, typ.Any], type_name: str, message: str
 ) -> None:
     exception_data["exceptions"].append({
-        "schema_version": 1,
+        "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
         "message": message,
     })
@@ -167,3 +169,21 @@ def json_matches_snapshot(
 ) -> None:
     data = json.loads(serialised_json["value"])
     assert data == snapshot
+
+
+@then("the schema version matches the Rust constant")
+def schema_version_matches_rust(serialised_json: dict[str, str]) -> None:
+    data = json.loads(serialised_json["value"])
+    assert data["schema_version"] == EXCEPTION_SCHEMA_VERSION
+
+
+@then("the EXCEPTION_SCHEMA_VERSION constant is accessible from Python")
+def constant_is_accessible() -> None:
+    # This test will fail at import time if the constant is not exported
+    assert EXCEPTION_SCHEMA_VERSION is not None
+
+
+@then("the constant value is a positive integer")
+def constant_is_positive_int() -> None:
+    assert isinstance(EXCEPTION_SCHEMA_VERSION, int)
+    assert EXCEPTION_SCHEMA_VERSION > 0
