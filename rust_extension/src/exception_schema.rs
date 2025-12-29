@@ -261,15 +261,15 @@ mod tests {
             locals: Some(locals),
         };
 
-        let json = serde_json::to_string(&frame).expect("serialise frame");
-        let decoded: StackFrame = serde_json::from_str(&json).expect("deserialise frame");
+        let json = serde_json::to_string(&frame).expect("serialize frame");
+        let decoded: StackFrame = serde_json::from_str(&json).expect("deserialize frame");
         assert_eq!(frame, decoded);
     }
 
     #[rstest]
     fn stack_frame_skips_none_fields_in_json() {
         let frame = StackFrame::new("test.py", 1, "main");
-        let json = serde_json::to_string(&frame).expect("serialise frame");
+        let json = serde_json::to_string(&frame).expect("serialize frame");
         assert!(!json.contains("end_lineno"));
         assert!(!json.contains("source_line"));
         assert!(!json.contains("locals"));
@@ -289,8 +289,8 @@ mod tests {
         ];
         let payload = StackTracePayload::new(frames);
 
-        let json = serde_json::to_string(&payload).expect("serialise");
-        let decoded: StackTracePayload = serde_json::from_str(&json).expect("deserialise");
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let decoded: StackTracePayload = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(payload, decoded);
     }
 
@@ -341,15 +341,15 @@ mod tests {
             exceptions: vec![],
         };
 
-        let json = serde_json::to_string(&payload).expect("serialise");
-        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialise");
+        let json = serde_json::to_string(&payload).expect("serialize");
+        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(payload, decoded);
     }
 
     #[rstest]
     fn exception_payload_skips_default_fields() {
         let payload = ExceptionPayload::new("Error", "msg");
-        let json = serde_json::to_string(&payload).expect("serialise");
+        let json = serde_json::to_string(&payload).expect("serialize");
         assert!(!json.contains("args_repr"));
         assert!(!json.contains("notes"));
         assert!(!json.contains("frames"));
@@ -363,7 +363,7 @@ mod tests {
             suppress_context: true,
             ..ExceptionPayload::new("Error", "msg")
         };
-        let json = serde_json::to_string(&payload).expect("serialise");
+        let json = serde_json::to_string(&payload).expect("serialize");
         assert!(json.contains("suppress_context"));
     }
 
@@ -376,8 +376,8 @@ mod tests {
         let mut buf = Vec::new();
         payload
             .serialize(&mut Serializer::new(&mut buf).with_struct_map())
-            .expect("serialise msgpack");
-        let decoded: ExceptionPayload = rmp_serde::from_slice(&buf).expect("deserialise msgpack");
+            .expect("serialize msgpack");
+        let decoded: ExceptionPayload = rmp_serde::from_slice(&buf).expect("deserialize msgpack");
         assert_eq!(payload, decoded);
     }
 
@@ -394,13 +394,13 @@ mod tests {
             ..Default::default()
         };
 
-        let json = serde_json::to_string(&group).expect("serialise");
-        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialise");
+        let json = serde_json::to_string(&group).expect("serialize");
+        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.exceptions.len(), 2);
     }
 
     #[rstest]
-    fn deep_cause_chain_serialises() {
+    fn deep_cause_chain_serializes() {
         // Test a chain of 10 nested causes to ensure no stack overflow
         let mut current = ExceptionPayload::new("BaseError", "root cause");
         for i in 1..10 {
@@ -408,8 +408,8 @@ mod tests {
                 .with_cause(current);
         }
 
-        let json = serde_json::to_string(&current).expect("serialise deep chain");
-        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialise");
+        let json = serde_json::to_string(&current).expect("serialize deep chain");
+        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
 
         // Verify chain depth
         let mut depth = 0;

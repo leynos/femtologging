@@ -1,4 +1,4 @@
-"""BDD steps for exception schema serialisation scenarios."""
+"""BDD steps for exception schema serialization scenarios."""
 
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ def exception_data() -> dict[str, typ.Any]:
 
 
 @pytest.fixture
-def serialised_json() -> dict[str, str]:
-    """Storage for serialised JSON output."""
+def serialized_json() -> dict[str, str]:
+    """Storage for serialized JSON output."""
     return {"value": ""}
 
 
@@ -111,53 +111,53 @@ def add_nested_exception(
     })
 
 
-@when("I serialise the frame to JSON")
-def serialise_frame(
-    frame_data: dict[str, typ.Any], serialised_json: dict[str, str]
+@when("I serialize the frame to JSON")
+def serialize_frame(
+    frame_data: dict[str, typ.Any], serialized_json: dict[str, str]
 ) -> None:
-    serialised_json["value"] = json.dumps(frame_data, sort_keys=True)
+    serialized_json["value"] = json.dumps(frame_data, sort_keys=True)
 
 
-@when("I serialise the exception to JSON")
-def serialise_exception(
-    exception_data: dict[str, typ.Any], serialised_json: dict[str, str]
+@when("I serialize the exception to JSON")
+def serialize_exception(
+    exception_data: dict[str, typ.Any], serialized_json: dict[str, str]
 ) -> None:
-    serialised_json["value"] = json.dumps(exception_data, sort_keys=True)
+    serialized_json["value"] = json.dumps(exception_data, sort_keys=True)
 
 
 @then(parsers.parse('the JSON contains "{key}" as "{value}"'))
-def json_contains_string(serialised_json: dict[str, str], key: str, value: str) -> None:
-    data = json.loads(serialised_json["value"])
+def json_contains_string(serialized_json: dict[str, str], key: str, value: str) -> None:
+    data = json.loads(serialized_json["value"])
     assert key in data
     assert data[key] == value
 
 
 @then(parsers.parse('the JSON contains "{key}" as {value:d}'))
-def json_contains_int(serialised_json: dict[str, str], key: str, value: int) -> None:
-    data = json.loads(serialised_json["value"])
+def json_contains_int(serialized_json: dict[str, str], key: str, value: int) -> None:
+    data = json.loads(serialized_json["value"])
     assert key in data
     assert data[key] == value
 
 
 @then(parsers.parse('the JSON contains "{key}"'))
-def json_has_key(serialised_json: dict[str, str], key: str) -> None:
-    data = json.loads(serialised_json["value"])
+def json_has_key(serialized_json: dict[str, str], key: str) -> None:
+    data = json.loads(serialized_json["value"])
     assert key in data
 
 
 @then(parsers.parse('the JSON contains nested "{parent}" with "{key}" as "{value}"'))
 def json_contains_nested(
-    serialised_json: dict[str, str], parent: str, key: str, value: str
+    serialized_json: dict[str, str], parent: str, key: str, value: str
 ) -> None:
-    data = json.loads(serialised_json["value"])
+    data = json.loads(serialized_json["value"])
     assert parent in data
     assert key in data[parent]
     assert data[parent][key] == value
 
 
 @then(parsers.parse('the JSON contains "{key}" array with {count:d} items'))
-def json_array_length(serialised_json: dict[str, str], key: str, count: int) -> None:
-    data = json.loads(serialised_json["value"])
+def json_array_length(serialized_json: dict[str, str], key: str, count: int) -> None:
+    data = json.loads(serialized_json["value"])
     assert key in data
     assert isinstance(data[key], list)
     assert len(data[key]) == count
@@ -165,15 +165,15 @@ def json_array_length(serialised_json: dict[str, str], key: str, count: int) -> 
 
 @then("the JSON matches snapshot")
 def json_matches_snapshot(
-    serialised_json: dict[str, str], snapshot: SnapshotAssertion
+    serialized_json: dict[str, str], snapshot: SnapshotAssertion
 ) -> None:
-    data = json.loads(serialised_json["value"])
+    data = json.loads(serialized_json["value"])
     assert data == snapshot
 
 
 @then("the schema version matches the Rust constant")
-def schema_version_matches_rust(serialised_json: dict[str, str]) -> None:
-    data = json.loads(serialised_json["value"])
+def schema_version_matches_rust(serialized_json: dict[str, str]) -> None:
+    data = json.loads(serialized_json["value"])
     assert data["schema_version"] == EXCEPTION_SCHEMA_VERSION
 
 

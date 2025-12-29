@@ -30,7 +30,7 @@
     'type_name': 'RuntimeError',
   })
 # ---
-# name: test_stack_frame_serialises_to_json
+# name: test_stack_frame_serializes_to_json
   dict({
     'filename': 'test.py',
     'function': 'main',
