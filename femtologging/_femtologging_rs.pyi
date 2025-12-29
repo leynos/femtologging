@@ -46,6 +46,7 @@ class HandlerOptions:
     ) -> None: ...
 
 ROTATION_VALIDATION_MSG: Final[str]
+EXCEPTION_SCHEMA_VERSION: Final[int]
 StreamHandlerBuilder: _Any
 SocketHandlerBuilder: _Any
 FileHandlerBuilder: _Any

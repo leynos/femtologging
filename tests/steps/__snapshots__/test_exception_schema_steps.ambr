@@ -1,0 +1,54 @@
+# serializer version: 1
+# name: test_exception_group_with_nested_exceptions
+  dict({
+    'exceptions': list([
+      dict({
+        'message': 'bad value',
+        'schema_version': 1,
+        'type_name': 'ValueError',
+      }),
+      dict({
+        'message': 'wrong type',
+        'schema_version': 1,
+        'type_name': 'TypeError',
+      }),
+    ]),
+    'message': 'multiple errors',
+    'schema_version': 1,
+    'type_name': 'ExceptionGroup',
+  })
+# ---
+# name: test_exception_payload_with_cause_chain
+  dict({
+    'cause': dict({
+      'message': 'read error',
+      'schema_version': 1,
+      'type_name': 'IOError',
+    }),
+    'message': 'operation failed',
+    'schema_version': 1,
+    'type_name': 'RuntimeError',
+  })
+# ---
+# name: test_stack_frame_serializes_to_json
+  dict({
+    'filename': 'test.py',
+    'function': 'main',
+    'lineno': 42,
+  })
+# ---
+# name: test_stack_frame_with_optional_fields
+  dict({
+    'colno': 4,
+    'end_colno': 20,
+    'end_lineno': 12,
+    'filename': 'example.py',
+    'function': 'process',
+    'lineno': 10,
+    'locals': dict({
+      'x': '42',
+      'y': "'hello'",
+    }),
+    'source_line': '    result = compute(x)',
+  })
+# ---

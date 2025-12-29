@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 
 mod config;
+pub mod exception_schema;
 #[cfg(feature = "python")]
 mod file_config;
 mod filters;
@@ -47,6 +48,10 @@ use handlers::socket_builder::BackoffOverrides;
 #[cfg(feature = "python")]
 use pyo3::wrap_pyfunction;
 
+/// Re-export exception schema types.
+pub use exception_schema::{
+    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackFrame, StackTracePayload,
+};
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
@@ -240,6 +245,7 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<HandlerConfigError>(),
     )?;
     m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
+    m.add("EXCEPTION_SCHEMA_VERSION", EXCEPTION_SCHEMA_VERSION)?;
     #[cfg(feature = "python")]
     // Register builder types and errors that are only compiled when the
     // `python` feature is enabled.
