@@ -211,7 +211,7 @@ fn drop_with_sender_clone_exits() {
     let t = std::thread::spawn(move || {
         thread_barrier.wait();
         let res = tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("clone", "INFO", "late"),
+            record: FemtoLogRecord::new("clone", FemtoLevel::Info, "late"),
             handlers: Vec::new(),
         });
         assert!(

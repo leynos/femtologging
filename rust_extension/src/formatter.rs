@@ -91,24 +91,68 @@ fn format_stack_payload(payload: &StackTracePayload) -> String {
     output
 }
 
+/// Format exception chaining (cause or context) if present.
+///
+/// Returns the formatted chain output with appropriate separator message.
+fn format_exception_chain(payload: &ExceptionPayload) -> String {
+    if let Some(ref cause) = payload.cause {
+        let mut output = format_exception_payload(cause);
+        output
+            .push_str("\nThe above exception was the direct cause of the following exception:\n\n");
+        output
+    } else if let Some(ref context) = payload.context
+        && !payload.suppress_context
+    {
+        let mut output = format_exception_payload(context);
+        output
+            .push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
+        output
+    } else {
+        String::new()
+    }
+}
+
+/// Format the exception header line (module, type, and message).
+fn format_exception_header(payload: &ExceptionPayload) -> String {
+    if let Some(ref module) = payload.module {
+        format!("{}.{}: {}\n", module, payload.type_name, payload.message)
+    } else {
+        format!("{}: {}\n", payload.type_name, payload.message)
+    }
+}
+
+/// Format exception notes as indented lines.
+fn format_exception_notes(notes: &[String]) -> String {
+    let mut output = String::new();
+    for note in notes {
+        output.push_str(&format!("  {}\n", note));
+    }
+    output
+}
+
+/// Format exception groups with indentation.
+fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
+    if exceptions.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::from("  |\n");
+    for (i, nested) in exceptions.iter().enumerate() {
+        output.push_str(&format!("  +---- [{}] ", i + 1));
+        let nested_str = format_exception_payload(nested);
+        // Indent nested exception output
+        for line in nested_str.lines() {
+            output.push_str(&format!("  |     {}\n", line));
+        }
+    }
+    output
+}
+
 /// Format an exception payload into a human-readable string.
 ///
 /// Handles exception chaining and follows Python's traceback formatting style.
 fn format_exception_payload(payload: &ExceptionPayload) -> String {
-    let mut output = String::new();
-
-    // Handle exception chaining (cause first, then context)
-    if let Some(ref cause) = payload.cause {
-        output.push_str(&format_exception_payload(cause));
-        output
-            .push_str("\nThe above exception was the direct cause of the following exception:\n\n");
-    } else if let Some(ref context) = payload.context
-        && !payload.suppress_context
-    {
-        output.push_str(&format_exception_payload(context));
-        output
-            .push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
-    }
+    let mut output = format_exception_chain(payload);
 
     // Format the traceback header and frames
     output.push_str("Traceback (most recent call last):\n");
@@ -117,32 +161,13 @@ fn format_exception_payload(payload: &ExceptionPayload) -> String {
     }
 
     // Format the exception type and message
-    if let Some(ref module) = payload.module {
-        output.push_str(&format!(
-            "{}.{}: {}\n",
-            module, payload.type_name, payload.message
-        ));
-    } else {
-        output.push_str(&format!("{}: {}\n", payload.type_name, payload.message));
-    }
+    output.push_str(&format_exception_header(payload));
 
     // Append notes if present
-    for note in &payload.notes {
-        output.push_str(&format!("  {}\n", note));
-    }
+    output.push_str(&format_exception_notes(&payload.notes));
 
     // Handle exception groups
-    if !payload.exceptions.is_empty() {
-        output.push_str("  |\n");
-        for (i, nested) in payload.exceptions.iter().enumerate() {
-            output.push_str(&format!("  +---- [{}] ", i + 1));
-            let nested_str = format_exception_payload(nested);
-            // Indent nested exception output
-            for line in nested_str.lines() {
-                output.push_str(&format!("  |     {}\n", line));
-            }
-        }
-    }
+    output.push_str(&format_exception_group(&payload.exceptions));
 
     output
 }
@@ -348,39 +373,53 @@ pub mod python {
         Ok(dict.into())
     }
 
-    /// Convert an `ExceptionPayload` to a Python dict.
-    fn exception_payload_to_py(py: Python<'_>, payload: &ExceptionPayload) -> PyResult<PyObject> {
-        let dict = PyDict::new(py);
-        dict.set_item("schema_version", payload.schema_version)?;
-        dict.set_item("type_name", &payload.type_name)?;
-        dict.set_item("message", &payload.message)?;
+    /// Convert a `&[String]` to a Python list.
+    fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyObject {
+        let list = PyList::empty(py);
+        for s in strings {
+            list.append(s).expect("append string to list");
+        }
+        list.into()
+    }
 
+    /// Convert a `&[StackFrame]` to a Python list of dicts.
+    fn frames_to_pylist(py: Python<'_>, frames: &[StackFrame]) -> PyResult<PyObject> {
+        let list = PyList::empty(py);
+        for frame in frames {
+            list.append(stack_frame_to_py(py, frame)?)?;
+        }
+        Ok(list.into())
+    }
+
+    /// Convert a `&[ExceptionPayload]` to a Python list of dicts.
+    fn exceptions_to_pylist(py: Python<'_>, exceptions: &[ExceptionPayload]) -> PyResult<PyObject> {
+        let list = PyList::empty(py);
+        for exc in exceptions {
+            list.append(exception_payload_to_py(py, exc)?)?;
+        }
+        Ok(list.into())
+    }
+
+    /// Set optional fields on the exception payload dict.
+    fn set_optional_exception_items(
+        py: Python<'_>,
+        dict: &Bound<'_, PyDict>,
+        payload: &ExceptionPayload,
+    ) -> PyResult<()> {
         if let Some(ref module) = payload.module {
             dict.set_item("module", module)?;
         }
 
         if !payload.args_repr.is_empty() {
-            let args_list = PyList::empty(py);
-            for arg in &payload.args_repr {
-                args_list.append(arg)?;
-            }
-            dict.set_item("args_repr", args_list)?;
+            dict.set_item("args_repr", string_vec_to_pylist(py, &payload.args_repr))?;
         }
 
         if !payload.notes.is_empty() {
-            let notes_list = PyList::empty(py);
-            for note in &payload.notes {
-                notes_list.append(note)?;
-            }
-            dict.set_item("notes", notes_list)?;
+            dict.set_item("notes", string_vec_to_pylist(py, &payload.notes))?;
         }
 
         if !payload.frames.is_empty() {
-            let frames_list = PyList::empty(py);
-            for frame in &payload.frames {
-                frames_list.append(stack_frame_to_py(py, frame)?)?;
-            }
-            dict.set_item("frames", frames_list)?;
+            dict.set_item("frames", frames_to_pylist(py, &payload.frames)?)?;
         }
 
         if let Some(ref cause) = payload.cause {
@@ -396,12 +435,20 @@ pub mod python {
         }
 
         if !payload.exceptions.is_empty() {
-            let exceptions_list = PyList::empty(py);
-            for exc in &payload.exceptions {
-                exceptions_list.append(exception_payload_to_py(py, exc)?)?;
-            }
-            dict.set_item("exceptions", exceptions_list)?;
+            dict.set_item("exceptions", exceptions_to_pylist(py, &payload.exceptions)?)?;
         }
+
+        Ok(())
+    }
+
+    /// Convert an `ExceptionPayload` to a Python dict.
+    fn exception_payload_to_py(py: Python<'_>, payload: &ExceptionPayload) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        dict.set_item("schema_version", payload.schema_version)?;
+        dict.set_item("type_name", &payload.type_name)?;
+        dict.set_item("message", &payload.message)?;
+
+        set_optional_exception_items(py, &dict, payload)?;
 
         Ok(dict.into())
     }

@@ -40,7 +40,7 @@ fn handle_log_record_dispatches() {
     let h1 = Arc::new(CollectingHandler::new());
     let h2 = Arc::new(CollectingHandler::new());
     let record = QueuedRecord {
-        record: FemtoLogRecord::new("core", "INFO", "msg"),
+        record: FemtoLogRecord::new("core", FemtoLevel::Info, "msg"),
         handlers: vec![
             h1.clone() as Arc<dyn FemtoHandlerTrait>,
             h2.clone() as Arc<dyn FemtoHandlerTrait>,
@@ -63,7 +63,7 @@ fn drain_remaining_records_pulls_all() {
     let h = Arc::new(CollectingHandler::new());
     for i in 0..3 {
         tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", "INFO", &format!("{i}")),
+            record: FemtoLogRecord::new("core", FemtoLevel::Info, &format!("{i}")),
             handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
         })
         .expect("Failed to send test record");
@@ -87,12 +87,12 @@ fn worker_thread_loop_processes_and_drains() {
     });
 
     tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", "INFO", "one"),
+        record: FemtoLogRecord::new("core", FemtoLevel::Info, "one"),
         handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
     })
     .expect("Failed to send first test record");
     tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", "INFO", "two"),
+        record: FemtoLogRecord::new("core", FemtoLevel::Info, "two"),
         handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
     })
     .expect("Failed to send second test record");

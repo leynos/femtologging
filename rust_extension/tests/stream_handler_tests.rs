@@ -5,7 +5,9 @@ use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+};
 use log;
 use logtest;
 use rstest::*;
@@ -83,7 +85,7 @@ impl Write for BlockingBuf {
 fn stream_handler_writes_to_buffer(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "hello"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
     drop(handler); // ensure thread completes
 
     assert_eq!(read_output(&buffer), "core [INFO] hello\n");
@@ -93,9 +95,9 @@ fn stream_handler_writes_to_buffer(
 fn stream_handler_multiple_records(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.expect_handle(FemtoLogRecord::new("core", "WARN", "second"));
-    handler.expect_handle(FemtoLogRecord::new("core", "ERROR", "third"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Warn, "second"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Error, "third"));
     drop(handler);
 
     let output = read_output(&buffer);
@@ -109,9 +111,9 @@ fn stream_handler_multiple_records(
 fn stream_handler_flush(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "one"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "one"));
     assert!(handler.flush());
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "two"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "two"));
     drop(handler);
 
     assert_eq!(read_output(&buffer), "core [INFO] one\ncore [INFO] two\n");
@@ -121,7 +123,7 @@ fn stream_handler_flush(
 fn stream_handler_close_flushes_pending(
     #[from(handler_tuple)] (buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "close"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "close"));
     handler.close();
 
     assert_eq!(read_output(&buffer), "core [INFO] close\n");
@@ -145,7 +147,11 @@ fn stream_handler_concurrent_usage(
     for i in 0..10 {
         let h = Arc::clone(&handler);
         handles.push(thread::spawn(move || {
-            h.expect_handle(FemtoLogRecord::new("core", "INFO", &format!("msg{}", i)));
+            h.expect_handle(FemtoLogRecord::new(
+                "core",
+                FemtoLevel::Info,
+                &format!("msg{}", i),
+            ));
         }));
     }
     for h in handles {
@@ -164,7 +170,7 @@ fn stream_handler_trait_object_usage(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
     let handler: Box<dyn FemtoHandlerTrait> = Box::new(handler);
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "trait"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "trait"));
     drop(handler);
 
     assert_eq!(read_output(&buffer), "core [INFO] trait\n");
@@ -184,7 +190,7 @@ fn stream_handler_poisoned_mutex(
         });
     }
 
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "ok"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "ok"));
     drop(handler);
 
     // The buffer should remain poisoned; handler must not panic
@@ -209,7 +215,7 @@ fn stream_handler_drop_timeout() {
         },
         DefaultFormatter,
     );
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "slow"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "slow"));
     let start = Instant::now();
     drop(handler);
     assert!(start.elapsed() < Duration::from_millis(1500));
@@ -232,8 +238,8 @@ fn stream_handler_reports_dropped_records() {
         Duration::from_millis(50),
     );
 
-    let _ = handler.handle(FemtoLogRecord::new("core", "INFO", "first"));
-    let _ = handler.handle(FemtoLogRecord::new("core", "INFO", "second"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
     assert!(handler.flush());
 
     let warnings: Vec<_> = logger
@@ -257,19 +263,19 @@ fn stream_handler_rate_limits_warnings(
 ) {
     let logger = logtest::start();
     // First drop triggers a warning
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "first"));
-    handler.expect_handle(FemtoLogRecord::new("core", "INFO", "second"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
     assert!(handler.flush());
 
     // Second drop within interval should be suppressed
-    let _ = handler.handle(FemtoLogRecord::new("core", "INFO", "third"));
-    let _ = handler.handle(FemtoLogRecord::new("core", "INFO", "fourth"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "third"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "fourth"));
     assert!(handler.flush());
 
     // Wait for interval to elapse then drop again
     std::thread::sleep(Duration::from_millis(60));
-    let _ = handler.handle(FemtoLogRecord::new("core", "INFO", "fifth"));
-    let _ = handler.handle(FemtoLogRecord::new("core", "INFO", "sixth"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "fifth"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "sixth"));
     assert!(handler.flush());
 
     let warnings: Vec<_> = logger

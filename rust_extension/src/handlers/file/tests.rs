@@ -130,10 +130,10 @@ fn build_from_worker_invokes_rotation_strategy() {
     );
 
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "one"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "one"))
         .expect("record one queued");
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "two"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "two"))
         .expect("record two queued");
 
     assert!(handler.flush());
@@ -210,7 +210,9 @@ fn build_from_worker_wires_handler_components() {
     let handle = handler.handle.take().expect("handle missing");
 
     tx.send(FileCommand::Record(Box::new(FemtoLogRecord::new(
-        "core", "INFO", "test",
+        "core",
+        FemtoLevel::Info,
+        "test",
     ))))
     .expect("send");
     drop(tx);
@@ -254,7 +256,7 @@ fn worker_writes_record_when_rotation_fails() {
     handler
         .handle(FemtoLogRecord::new(
             "core",
-            "INFO",
+            FemtoLevel::Info,
             "after rotation failure",
         ))
         .expect("record queued after rotation warning");
@@ -291,10 +293,10 @@ fn femto_file_handler_queue_overflow_drop_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);
 
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
         .expect("first record queued");
     let err = handler
-        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
         .expect_err("second record should overflow");
     assert_eq!(err, HandlerError::QueueFull);
     start_barrier.wait();
@@ -307,13 +309,13 @@ fn femto_file_handler_queue_overflow_drop_policy() {
 fn femto_file_handler_queue_overflow_block_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Block);
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
         .expect("first record queued");
 
     let handler = Arc::new(handler);
     let (send_barrier, done_rx, t) = spawn_record_thread(
         Arc::clone(&handler),
-        FemtoLogRecord::new("core", "INFO", "second"),
+        FemtoLogRecord::new("core", FemtoLevel::Info, "second"),
     );
 
     send_barrier.wait();
@@ -379,7 +381,7 @@ fn femto_file_handler_worker_thread_failure() {
     cfg.flush_interval = 1;
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "slow"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "slow"))
         .expect("record queued");
     let start = Instant::now();
     drop(handler);

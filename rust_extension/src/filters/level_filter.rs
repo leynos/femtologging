@@ -75,7 +75,7 @@ mod tests {
     use rstest::rstest;
 
     fn record(level: FemtoLevel) -> FemtoLogRecord {
-        FemtoLogRecord::new("core", &level.to_string(), "msg")
+        FemtoLogRecord::new("core", level, "msg")
     }
 
     #[rstest]
@@ -92,13 +92,25 @@ mod tests {
         let filter = builder.build().expect("build should succeed");
         assert_eq!(filter.should_log(&record(rec_level)), expected);
     }
+
     #[test]
     fn rejects_unparseable_level() {
+        use crate::log_record::RecordMetadata;
+
         let filter = LevelFilterBuilder::new()
             .with_max_level(FemtoLevel::Info)
             .build()
             .expect("build should succeed");
-        let record = FemtoLogRecord::new("core", "NOPE", "msg");
+        // Simulate a record with an invalid/missing parsed level
+        let record = FemtoLogRecord {
+            logger: "core".to_owned(),
+            level: "NOPE".to_owned(),
+            parsed_level: None,
+            message: "msg".to_owned(),
+            metadata: RecordMetadata::default(),
+            exception_payload: None,
+            stack_payload: None,
+        };
         assert!(!filter.should_log(&record));
     }
 }

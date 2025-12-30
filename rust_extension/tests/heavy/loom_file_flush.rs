@@ -8,7 +8,7 @@ use loom::thread;
 use tempfile::NamedTempFile;
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoFileHandler, FemtoLogRecord, HandlerConfig, OverflowPolicy,
+    DefaultFormatter, FemtoFileHandler, FemtoLevel, FemtoLogRecord, HandlerConfig, OverflowPolicy,
 };
 
 #[test]
@@ -31,7 +31,7 @@ fn loom_file_handler_flush_concurrent() {
         for _ in 0..5 {
             let h = Arc::clone(&handler);
             threads.push(thread::spawn(move || {
-                h.handle(FemtoLogRecord::new("core", "INFO", "msg"));
+                h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg"));
                 assert!(h.flush());
             }));
         }

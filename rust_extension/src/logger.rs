@@ -294,7 +294,7 @@ impl FemtoLogger {
         }
 
         // Create base record
-        let mut record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
+        let mut record = FemtoLogRecord::new(&self.name, level, message);
 
         // Capture exception payload if exc_info is provided and truthy
         #[cfg(feature = "python")]
@@ -427,7 +427,7 @@ impl FemtoLogger {
             return None;
         }
 
-        let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
+        let record = FemtoLogRecord::new(&self.name, level, message);
         if !self.passes_all_filters(&record) {
             return None;
         }
@@ -540,7 +540,7 @@ impl FemtoLogger {
         };
         let (ack_tx, ack_rx) = bounded(1);
         let ack_handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FlushAckHandler::new(ack_tx));
-        let record = FemtoLogRecord::new("__femtologging__", "INFO", "__flush__");
+        let record = FemtoLogRecord::new("__femtologging__", FemtoLevel::Info, "__flush__");
         if tx
             .send(QueuedRecord {
                 record,

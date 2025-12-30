@@ -115,7 +115,7 @@ impl log::Log for FemtoLogAdapter {
 
             let femto_record = FemtoLogRecord::with_metadata(
                 logger_name.as_str(),
-                &level.to_string(),
+                level,
                 &record.args().to_string(),
                 metadata,
             );

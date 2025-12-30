@@ -34,6 +34,8 @@ use pyo3::prelude::*;
 use std::any::Any;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(test)]
+use crate::level::FemtoLevel;
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -144,8 +146,12 @@ impl FemtoFileHandler {
 
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        let parsed_level = crate::level::FemtoLevel::parse_or_warn(level);
+        <Self as FemtoHandlerTrait>::handle(
+            self,
+            FemtoLogRecord::new(logger, parsed_level, message),
+        )
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to the underlying file without closing the

@@ -3,6 +3,8 @@
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+#[cfg(test)]
+use crate::level::FemtoLevel;
 #[cfg(feature = "python")]
 use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
 use crate::{
@@ -78,7 +80,7 @@ mod tests {
     use rstest::rstest;
 
     fn record(name: &str) -> FemtoLogRecord {
-        FemtoLogRecord::new(name, "INFO", "msg")
+        FemtoLogRecord::new(name, FemtoLevel::Info, "msg")
     }
 
     #[rstest]

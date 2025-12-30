@@ -77,11 +77,11 @@ pub struct FemtoLogRecord {
 
 impl FemtoLogRecord {
     /// Construct a new log record from logger `name`, `level`, and `message`.
-    pub fn new(logger: &str, level: &str, message: &str) -> Self {
+    pub fn new(logger: &str, level: FemtoLevel, message: &str) -> Self {
         Self {
             logger: logger.to_owned(),
-            level: level.to_owned(),
-            parsed_level: level.parse().ok(),
+            level: level.as_str().to_owned(),
+            parsed_level: Some(level),
             message: message.to_owned(),
             metadata: RecordMetadata::default(),
             exception_payload: None,
@@ -92,7 +92,7 @@ impl FemtoLogRecord {
     /// Construct a log record with explicit source location and key-values.
     pub fn with_metadata(
         logger: &str,
-        level: &str,
+        level: FemtoLevel,
         message: &str,
         mut metadata: RecordMetadata,
     ) -> Self {
@@ -102,8 +102,8 @@ impl FemtoLogRecord {
         metadata.thread_name = thread_name;
         Self {
             logger: logger.to_owned(),
-            level: level.to_owned(),
-            parsed_level: level.parse().ok(),
+            level: level.as_str().to_owned(),
+            parsed_level: Some(level),
             message: message.to_owned(),
             metadata,
             exception_payload: None,
@@ -140,7 +140,7 @@ mod tests {
 
     #[rstest]
     fn new_record_has_no_payloads() {
-        let record = FemtoLogRecord::new("test", "INFO", "message");
+        let record = FemtoLogRecord::new("test", FemtoLevel::Info, "message");
         assert!(record.exception_payload.is_none());
         assert!(record.stack_payload.is_none());
     }
@@ -148,7 +148,7 @@ mod tests {
     #[rstest]
     fn with_exception_attaches_payload() {
         let exc = ExceptionPayload::new("ValueError", "bad input");
-        let record = FemtoLogRecord::new("test", "ERROR", "failed").with_exception(exc);
+        let record = FemtoLogRecord::new("test", FemtoLevel::Error, "failed").with_exception(exc);
 
         assert!(record.exception_payload.is_some());
         let payload = record.exception_payload.unwrap();
@@ -160,7 +160,7 @@ mod tests {
     fn with_stack_attaches_payload() {
         let frames = vec![StackFrame::new("test.py", 10, "main")];
         let stack = StackTracePayload::new(frames);
-        let record = FemtoLogRecord::new("test", "DEBUG", "trace").with_stack(stack);
+        let record = FemtoLogRecord::new("test", FemtoLevel::Debug, "trace").with_stack(stack);
 
         assert!(record.stack_payload.is_some());
         let payload = record.stack_payload.unwrap();
@@ -173,7 +173,7 @@ mod tests {
         let exc = ExceptionPayload::new("RuntimeError", "oops");
         let stack = StackTracePayload::new(vec![StackFrame::new("a.py", 1, "f")]);
 
-        let record = FemtoLogRecord::new("test", "ERROR", "error")
+        let record = FemtoLogRecord::new("test", FemtoLevel::Error, "error")
             .with_exception(exc)
             .with_stack(stack);
 

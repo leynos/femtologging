@@ -86,6 +86,40 @@ def create_exception_group(exception_state: dict[str, typ.Any]) -> None:
     exception_state["group"] = True
 
 
+def _log_with_chained_exception(logger: FemtoLogger, level: str, message: str) -> str:
+    """Log a message with a chained exception (RuntimeError from OSError)."""
+    try:
+        _raise_chained_exception()
+    except RuntimeError:
+        return logger.log(level, message, exc_info=True)
+    return ""  # unreachable, but keeps type checker happy
+
+
+def _log_with_exception_group(logger: FemtoLogger, level: str, message: str) -> str:
+    """Log a message with an exception group."""
+    try:
+        _raise_exception_group()
+    except ExceptionGroup:
+        return logger.log(level, message, exc_info=True)
+    return ""  # unreachable, but keeps type checker happy
+
+
+def _log_with_simple_exception(
+    logger: FemtoLogger,
+    level: str,
+    message: str,
+    exception_state: dict[str, typ.Any],
+) -> str:
+    """Log a message with a simple exception."""
+    exc_type = exception_state.get("type", ValueError)
+    exc_message = exception_state.get("message", "error")
+    try:
+        _raise_exception(exc_type, exc_message)
+    except exc_type:
+        return logger.log(level, message, exc_info=True)
+    return ""  # unreachable, but keeps type checker happy
+
+
 @when(parsers.parse('I log at {level} with message "{message}" and exc_info=True'))
 def log_with_exc_info_true(
     logger_fixture: dict[str, typ.Any],
@@ -95,26 +129,18 @@ def log_with_exc_info_true(
 ) -> None:
     logger = logger_fixture["logger"]
 
-    if exception_state.get("active"):
-        if exception_state.get("chained"):
-            try:
-                _raise_chained_exception()
-            except RuntimeError:
-                logger_fixture["output"] = logger.log(level, message, exc_info=True)
-        elif exception_state.get("group"):
-            try:
-                _raise_exception_group()
-            except ExceptionGroup:
-                logger_fixture["output"] = logger.log(level, message, exc_info=True)
-        else:
-            exc_type = exception_state.get("type", ValueError)
-            exc_message = exception_state.get("message", "error")
-            try:
-                _raise_exception(exc_type, exc_message)
-            except exc_type:
-                logger_fixture["output"] = logger.log(level, message, exc_info=True)
-    else:
+    if not exception_state.get("active"):
         logger_fixture["output"] = logger.log(level, message, exc_info=True)
+        return
+
+    if exception_state.get("chained"):
+        logger_fixture["output"] = _log_with_chained_exception(logger, level, message)
+    elif exception_state.get("group"):
+        logger_fixture["output"] = _log_with_exception_group(logger, level, message)
+    else:
+        logger_fixture["output"] = _log_with_simple_exception(
+            logger, level, message, exception_state
+        )
 
 
 @when(

@@ -52,6 +52,18 @@ impl FromStr for FemtoLevel {
 }
 
 impl FemtoLevel {
+    /// Return the canonical string representation of the level.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Trace => "TRACE",
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Critical => "CRITICAL",
+        }
+    }
+
     /// Parse a string into a level, warning on invalid input.
     pub fn parse_or_warn(s: &str) -> Self {
         match s.parse() {
