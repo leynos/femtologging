@@ -32,6 +32,8 @@ pub mod rate_limited_warner;
 mod rate_limited_warner;
 mod socket_handler;
 mod stream_handler;
+#[cfg(feature = "python")]
+pub(crate) mod traceback_capture;
 
 /// Re-export configuration builders for external consumers.
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};

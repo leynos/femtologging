@@ -25,6 +25,7 @@ use super::{
 
 /// Commands processed by the worker thread.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum HTTPCommand {
     Record(FemtoLogRecord),
     Flush(Sender<()>),

@@ -1,0 +1,23 @@
+# serializer version: 1
+# name: test_log_with_exc_infotrue_captures_active_exception
+  '''
+  test [ERROR] failed
+  Traceback (most recent call last):
+    File "<test>", line <N>, in log_with_exc_info_true
+      _raise_exception(exc_type, exc_message)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "<test>", line <N>, in _raise_exception
+      raise exc_type(message)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  ValueError: bad input
+  
+  '''
+# ---
+# name: test_log_with_exception_instance
+  '''
+  test [ERROR] caught
+  Traceback (most recent call last):
+  KeyError: 'missing'
+  
+  '''
+# ---

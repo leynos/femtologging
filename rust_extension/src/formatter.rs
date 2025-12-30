@@ -7,6 +7,7 @@
 
 use std::{fmt, sync::Arc};
 
+use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 use crate::log_record::FemtoLogRecord;
 
 /// Trait for formatting log records into strings.
@@ -61,8 +62,118 @@ pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        format!("{} [{}] {}", record.logger, record.level, record.message)
+        let mut output = format!("{} [{}] {}", record.logger, record.level, record.message);
+
+        // Append stack trace if present (before exception for readability)
+        if let Some(ref stack) = record.stack_payload {
+            output.push('\n');
+            output.push_str(&format_stack_payload(stack));
+        }
+
+        // Append exception info if present
+        if let Some(ref exc) = record.exception_payload {
+            output.push('\n');
+            output.push_str(&format_exception_payload(exc));
+        }
+
+        output
     }
+}
+
+/// Format a stack trace payload into a human-readable string.
+///
+/// Follows Python's traceback formatting style.
+fn format_stack_payload(payload: &StackTracePayload) -> String {
+    let mut output = String::from("Stack (most recent call last):\n");
+    for frame in &payload.frames {
+        output.push_str(&format_stack_frame(frame));
+    }
+    output
+}
+
+/// Format an exception payload into a human-readable string.
+///
+/// Handles exception chaining and follows Python's traceback formatting style.
+fn format_exception_payload(payload: &ExceptionPayload) -> String {
+    let mut output = String::new();
+
+    // Handle exception chaining (cause first, then context)
+    if let Some(ref cause) = payload.cause {
+        output.push_str(&format_exception_payload(cause));
+        output
+            .push_str("\nThe above exception was the direct cause of the following exception:\n\n");
+    } else if let Some(ref context) = payload.context
+        && !payload.suppress_context
+    {
+        output.push_str(&format_exception_payload(context));
+        output
+            .push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
+    }
+
+    // Format the traceback header and frames
+    output.push_str("Traceback (most recent call last):\n");
+    for frame in &payload.frames {
+        output.push_str(&format_stack_frame(frame));
+    }
+
+    // Format the exception type and message
+    if let Some(ref module) = payload.module {
+        output.push_str(&format!(
+            "{}.{}: {}\n",
+            module, payload.type_name, payload.message
+        ));
+    } else {
+        output.push_str(&format!("{}: {}\n", payload.type_name, payload.message));
+    }
+
+    // Append notes if present
+    for note in &payload.notes {
+        output.push_str(&format!("  {}\n", note));
+    }
+
+    // Handle exception groups
+    if !payload.exceptions.is_empty() {
+        output.push_str("  |\n");
+        for (i, nested) in payload.exceptions.iter().enumerate() {
+            output.push_str(&format!("  +---- [{}] ", i + 1));
+            let nested_str = format_exception_payload(nested);
+            // Indent nested exception output
+            for line in nested_str.lines() {
+                output.push_str(&format!("  |     {}\n", line));
+            }
+        }
+    }
+
+    output
+}
+
+/// Format a single stack frame into a human-readable string.
+fn format_stack_frame(frame: &StackFrame) -> String {
+    let mut output = format!(
+        "  File \"{}\", line {}, in {}\n",
+        frame.filename, frame.lineno, frame.function
+    );
+
+    if let Some(ref source) = frame.source_line {
+        let trimmed = source.trim();
+        if !trimmed.is_empty() {
+            output.push_str(&format!("    {}\n", trimmed));
+
+            // Add column indicators if available (Python 3.11+)
+            if let (Some(colno), Some(end_colno)) = (frame.colno, frame.end_colno) {
+                let col_start = colno.saturating_sub(1) as usize;
+                let col_end = end_colno.saturating_sub(1) as usize;
+                let underline_len = col_end.saturating_sub(col_start).max(1);
+                output.push_str(&format!(
+                    "    {}{}\n",
+                    " ".repeat(col_start),
+                    "^".repeat(underline_len)
+                ));
+            }
+        }
+    }
+
+    output
 }
 
 impl FemtoFormatter for Arc<dyn FemtoFormatter + Send + Sync> {
@@ -86,9 +197,10 @@ pub mod python {
     use pyo3::{
         exceptions::PyTypeError,
         prelude::*,
-        types::{PyDict, PyString},
+        types::{PyDict, PyList, PyString},
     };
 
+    use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
     use crate::{log_record::FemtoLogRecord, python::fq_py_type};
 
     use super::{FemtoFormatter, SharedFormatter};
@@ -131,7 +243,7 @@ pub mod python {
 
         fn call(&self, record: &FemtoLogRecord) -> PyResult<String> {
             Python::with_gil(|py| {
-                let payload = Self::record_to_dict(py, record)?;
+                let payload = record_to_dict(py, record)?;
                 let callable = {
                     let guard = self
                         .callable
@@ -143,39 +255,155 @@ pub mod python {
                 result.extract::<String>(py)
             })
         }
+    }
 
-        fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObject> {
-            let dict = PyDict::new(py);
-            dict.set_item("logger", &record.logger)?;
-            dict.set_item("level", &record.level)?;
-            dict.set_item("message", &record.message)?;
-            if let Some(level) = record.parsed_level {
-                dict.set_item("levelno", u8::from(level))?;
-            }
-
-            let metadata = PyDict::new(py);
-            metadata.set_item("module_path", &record.metadata.module_path)?;
-            metadata.set_item("filename", &record.metadata.filename)?;
-            metadata.set_item("line_number", record.metadata.line_number)?;
-            metadata.set_item("thread_name", &record.metadata.thread_name)?;
-            metadata.set_item("thread_id", format!("{:?}", record.metadata.thread_id))?;
-            let timestamp = record
-                .metadata
-                .timestamp
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs_f64())
-                .unwrap_or_default();
-            metadata.set_item("timestamp", timestamp)?;
-
-            let kv = PyDict::new(py);
-            for (key, value) in &record.metadata.key_values {
-                kv.set_item(key, value)?;
-            }
-            metadata.set_item("key_values", kv)?;
-            dict.set_item("metadata", metadata)?;
-
-            Ok(dict.into())
+    /// Convert a [`FemtoLogRecord`] to a Python dict for use by Python handlers/formatters.
+    ///
+    /// This function is used by both the Python formatter adapter and the
+    /// `handle_record` hook for Python handlers.
+    pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        dict.set_item("logger", &record.logger)?;
+        dict.set_item("level", &record.level)?;
+        dict.set_item("message", &record.message)?;
+        if let Some(level) = record.parsed_level {
+            dict.set_item("levelno", u8::from(level))?;
         }
+
+        let metadata = PyDict::new(py);
+        metadata.set_item("module_path", &record.metadata.module_path)?;
+        metadata.set_item("filename", &record.metadata.filename)?;
+        metadata.set_item("line_number", record.metadata.line_number)?;
+        metadata.set_item("thread_name", &record.metadata.thread_name)?;
+        metadata.set_item("thread_id", format!("{:?}", record.metadata.thread_id))?;
+        let timestamp = record
+            .metadata
+            .timestamp
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or_default();
+        metadata.set_item("timestamp", timestamp)?;
+
+        let kv = PyDict::new(py);
+        for (key, value) in &record.metadata.key_values {
+            kv.set_item(key, value)?;
+        }
+        metadata.set_item("key_values", kv)?;
+        dict.set_item("metadata", metadata)?;
+
+        // Add exception payload if present
+        if let Some(ref exc) = record.exception_payload {
+            dict.set_item("exc_info", exception_payload_to_py(py, exc)?)?;
+        }
+
+        // Add stack payload if present
+        if let Some(ref stack) = record.stack_payload {
+            dict.set_item("stack_info", stack_payload_to_py(py, stack)?)?;
+        }
+
+        Ok(dict.into())
+    }
+
+    /// Convert a `StackFrame` to a Python dict.
+    fn stack_frame_to_py(py: Python<'_>, frame: &StackFrame) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        dict.set_item("filename", &frame.filename)?;
+        dict.set_item("lineno", frame.lineno)?;
+        dict.set_item("function", &frame.function)?;
+
+        if let Some(end_lineno) = frame.end_lineno {
+            dict.set_item("end_lineno", end_lineno)?;
+        }
+        if let Some(colno) = frame.colno {
+            dict.set_item("colno", colno)?;
+        }
+        if let Some(end_colno) = frame.end_colno {
+            dict.set_item("end_colno", end_colno)?;
+        }
+        if let Some(ref source_line) = frame.source_line {
+            dict.set_item("source_line", source_line)?;
+        }
+        if let Some(ref locals) = frame.locals {
+            let locals_dict = PyDict::new(py);
+            for (k, v) in locals {
+                locals_dict.set_item(k, v)?;
+            }
+            dict.set_item("locals", locals_dict)?;
+        }
+
+        Ok(dict.into())
+    }
+
+    /// Convert a `StackTracePayload` to a Python dict.
+    fn stack_payload_to_py(py: Python<'_>, payload: &StackTracePayload) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        dict.set_item("schema_version", payload.schema_version)?;
+
+        let frames_list = PyList::empty(py);
+        for frame in &payload.frames {
+            frames_list.append(stack_frame_to_py(py, frame)?)?;
+        }
+        dict.set_item("frames", frames_list)?;
+
+        Ok(dict.into())
+    }
+
+    /// Convert an `ExceptionPayload` to a Python dict.
+    fn exception_payload_to_py(py: Python<'_>, payload: &ExceptionPayload) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        dict.set_item("schema_version", payload.schema_version)?;
+        dict.set_item("type_name", &payload.type_name)?;
+        dict.set_item("message", &payload.message)?;
+
+        if let Some(ref module) = payload.module {
+            dict.set_item("module", module)?;
+        }
+
+        if !payload.args_repr.is_empty() {
+            let args_list = PyList::empty(py);
+            for arg in &payload.args_repr {
+                args_list.append(arg)?;
+            }
+            dict.set_item("args_repr", args_list)?;
+        }
+
+        if !payload.notes.is_empty() {
+            let notes_list = PyList::empty(py);
+            for note in &payload.notes {
+                notes_list.append(note)?;
+            }
+            dict.set_item("notes", notes_list)?;
+        }
+
+        if !payload.frames.is_empty() {
+            let frames_list = PyList::empty(py);
+            for frame in &payload.frames {
+                frames_list.append(stack_frame_to_py(py, frame)?)?;
+            }
+            dict.set_item("frames", frames_list)?;
+        }
+
+        if let Some(ref cause) = payload.cause {
+            dict.set_item("cause", exception_payload_to_py(py, cause)?)?;
+        }
+
+        if let Some(ref context) = payload.context {
+            dict.set_item("context", exception_payload_to_py(py, context)?)?;
+        }
+
+        if payload.suppress_context {
+            dict.set_item("suppress_context", true)?;
+        }
+
+        if !payload.exceptions.is_empty() {
+            let exceptions_list = PyList::empty(py);
+            for exc in &payload.exceptions {
+                exceptions_list.append(exception_payload_to_py(py, exc)?)?;
+            }
+            dict.set_item("exceptions", exceptions_list)?;
+        }
+
+        Ok(dict.into())
     }
 
     impl FemtoFormatter for PythonFormatter {

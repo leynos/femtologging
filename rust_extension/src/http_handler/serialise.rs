@@ -189,6 +189,8 @@ mod tests {
                 line_number: 42,
                 ..Default::default()
             },
+            exception_payload: None,
+            stack_payload: None,
         }
     }
 

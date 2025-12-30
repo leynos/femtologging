@@ -21,6 +21,7 @@ use super::{
 
 /// Commands processed by the worker thread.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SocketCommand {
     Record(FemtoLogRecord),
     Flush(Sender<()>),

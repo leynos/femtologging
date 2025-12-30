@@ -4,6 +4,7 @@
 //! along with their contextual metadata such as timestamps, source location,
 //! and thread information.
 
+use crate::exception_schema::{ExceptionPayload, StackTracePayload};
 use crate::level::FemtoLevel;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -68,6 +69,10 @@ pub struct FemtoLogRecord {
     pub message: String,
     /// Contextual metadata for the record.
     pub metadata: RecordMetadata,
+    /// Structured exception payload (when `exc_info` is provided).
+    pub exception_payload: Option<ExceptionPayload>,
+    /// Structured stack trace payload (when `stack_info=True`).
+    pub stack_payload: Option<StackTracePayload>,
 }
 
 impl FemtoLogRecord {
@@ -79,6 +84,8 @@ impl FemtoLogRecord {
             parsed_level: level.parse().ok(),
             message: message.to_owned(),
             metadata: RecordMetadata::default(),
+            exception_payload: None,
+            stack_payload: None,
         }
     }
 
@@ -99,12 +106,78 @@ impl FemtoLogRecord {
             parsed_level: level.parse().ok(),
             message: message.to_owned(),
             metadata,
+            exception_payload: None,
+            stack_payload: None,
         }
+    }
+
+    /// Attach an exception payload to the record.
+    #[must_use]
+    pub fn with_exception(mut self, payload: ExceptionPayload) -> Self {
+        self.exception_payload = Some(payload);
+        self
+    }
+
+    /// Attach a stack trace payload to the record.
+    #[must_use]
+    pub fn with_stack(mut self, payload: StackTracePayload) -> Self {
+        self.stack_payload = Some(payload);
+        self
     }
 }
 
 impl fmt::Display for FemtoLogRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} - {}", self.level, self.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
+    use rstest::rstest;
+
+    #[rstest]
+    fn new_record_has_no_payloads() {
+        let record = FemtoLogRecord::new("test", "INFO", "message");
+        assert!(record.exception_payload.is_none());
+        assert!(record.stack_payload.is_none());
+    }
+
+    #[rstest]
+    fn with_exception_attaches_payload() {
+        let exc = ExceptionPayload::new("ValueError", "bad input");
+        let record = FemtoLogRecord::new("test", "ERROR", "failed").with_exception(exc);
+
+        assert!(record.exception_payload.is_some());
+        let payload = record.exception_payload.unwrap();
+        assert_eq!(payload.type_name, "ValueError");
+        assert_eq!(payload.message, "bad input");
+    }
+
+    #[rstest]
+    fn with_stack_attaches_payload() {
+        let frames = vec![StackFrame::new("test.py", 10, "main")];
+        let stack = StackTracePayload::new(frames);
+        let record = FemtoLogRecord::new("test", "DEBUG", "trace").with_stack(stack);
+
+        assert!(record.stack_payload.is_some());
+        let payload = record.stack_payload.unwrap();
+        assert_eq!(payload.frames.len(), 1);
+        assert_eq!(payload.frames[0].function, "main");
+    }
+
+    #[rstest]
+    fn record_can_have_both_payloads() {
+        let exc = ExceptionPayload::new("RuntimeError", "oops");
+        let stack = StackTracePayload::new(vec![StackFrame::new("a.py", 1, "f")]);
+
+        let record = FemtoLogRecord::new("test", "ERROR", "error")
+            .with_exception(exc)
+            .with_stack(stack);
+
+        assert!(record.exception_payload.is_some());
+        assert!(record.stack_payload.is_some());
     }
 }

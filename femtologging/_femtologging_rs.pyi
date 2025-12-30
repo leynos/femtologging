@@ -1,4 +1,5 @@
 import collections.abc as cabc
+import types
 import typing as typ
 from typing import TypedDict  # noqa: ICN003 - explicit import required for stubs.
 
@@ -15,7 +16,67 @@ FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
 LevelArg = Union[LevelName, FemtoLevel]
 
-FemtoLogger: _Any
+# Type alias for exc_info parameter
+ExcInfo = Union[
+    bool,
+    BaseException,
+    tuple[type[BaseException], BaseException, types.TracebackType | None],
+    tuple[None, None, None],
+    None,
+]
+
+class FemtoLogger:
+    """A high-performance logger implemented in Rust."""
+
+    def __init__(self, name: str) -> None: ...
+    @property
+    def parent(self) -> str | None: ...
+    @property
+    def level(self) -> str: ...
+    @property
+    def propagate(self) -> bool: ...
+    def log(
+        self,
+        level: LevelArg,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at the given level.
+
+        Parameters
+        ----------
+        level
+            The log level (e.g., "INFO", "ERROR").
+        message
+            The log message.
+        exc_info
+            Optional exception information. Accepts:
+            - ``True``: Capture the current exception via ``sys.exc_info()``.
+            - An exception instance: Capture that exception's traceback.
+            - A 3-tuple ``(type, value, traceback)``: Use directly.
+        stack_info
+            If ``True``, capture the current call stack.
+
+        Returns
+        -------
+        str | None
+            The formatted log message if the record passes level and filter
+            checks, otherwise ``None``.
+
+        """
+        ...
+    def set_level(self, level: LevelArg) -> None: ...
+    def set_propagate(self, flag: bool) -> None: ...
+    def add_handler(self, handler: object) -> None: ...
+    def remove_handler(self, handler: object) -> bool: ...
+    def clear_handlers(self) -> None: ...
+    def clear_filters(self) -> None: ...
+    def get_dropped(self) -> int: ...
+    def flush_handlers(self) -> bool: ...
+
 FemtoHandler: _Any
 FemtoStreamHandler: _Any
 FemtoFileHandler: _Any

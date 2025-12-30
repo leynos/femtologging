@@ -69,6 +69,7 @@ impl HandlerConfig {
 /// blocks. The handler supports explicit flushing to ensure all queued records
 /// are written. Flush operations wait up to `flush_timeout` for the worker
 /// thread to confirm completion.
+#[allow(clippy::large_enum_variant)]
 enum StreamCommand {
     Record(FemtoLogRecord),
     Flush(Sender<()>),

@@ -3,13 +3,19 @@
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::PyBool;
 use pyo3::{Py, PyAny};
 use std::any::Any;
 
 use crate::filters::FemtoFilter;
+#[cfg(feature = "python")]
+use crate::formatter::python::record_to_dict;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
+#[cfg(feature = "python")]
+use crate::traceback_capture;
 
 use crate::{
     formatter::{DefaultFormatter, SharedFormatter},
@@ -58,6 +64,24 @@ pub struct QueuedRecord {
     pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
 }
 
+/// Determine whether exc_info should trigger exception capture.
+///
+/// Returns `true` if `exc_info` is truthy (True, an exception, or a non-None
+/// tuple). Returns `false` for False or None values.
+#[cfg(feature = "python")]
+fn should_capture_exc_info(exc_info: &Bound<'_, PyAny>) -> PyResult<bool> {
+    // Handle boolean False explicitly
+    if let Ok(b) = exc_info.downcast::<PyBool>() {
+        return Ok(b.is_true());
+    }
+    // None means no capture
+    if exc_info.is_none() {
+        return Ok(false);
+    }
+    // Any other value (exception instance, tuple) is truthy
+    Ok(true)
+}
+
 fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
     let py = obj.py();
     let handle = obj.getattr("handle").map_err(|err| {
@@ -88,10 +112,94 @@ fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
 }
 
 /// Wrapper allowing Python handler objects to be used by the logger.
+#[cfg(feature = "python")]
+struct PyHandler {
+    obj: Py<PyAny>,
+    /// Whether this handler has a `handle_record` method for structured payloads.
+    has_handle_record: bool,
+}
+
+#[cfg(feature = "python")]
+impl PyHandler {
+    /// Create a new `PyHandler` from a Python object.
+    ///
+    /// Checks whether the handler has a callable `handle_record` method for
+    /// structured payload access.
+    fn new(py: Python<'_>, obj: Py<PyAny>) -> Self {
+        let has_handle_record = obj
+            .getattr(py, "handle_record")
+            .map(|attr| attr.bind(py).is_callable())
+            .unwrap_or(false);
+        Self {
+            obj,
+            has_handle_record,
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+impl FemtoHandlerTrait for PyHandler {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Python::with_gil(|py| {
+            // Prefer handle_record if available for structured payload access
+            if self.has_handle_record {
+                let record_dict = record_to_dict(py, &record).map_err(|err| {
+                    let message = err.to_string();
+                    err.print(py);
+                    HandlerError::Message(format!("failed to convert record to dict: {message}"))
+                })?;
+
+                match self.obj.call_method1(py, "handle_record", (record_dict,)) {
+                    Ok(_) => return Ok(()),
+                    Err(err) => {
+                        let message = err.to_string();
+                        err.print(py);
+                        warn!("PyHandler: error calling handle_record");
+                        return Err(HandlerError::Message(format!(
+                            "python handler raised an exception: {message}"
+                        )));
+                    }
+                }
+            }
+
+            // Fall back to the legacy 3-argument handle method
+            match self.obj.call_method1(
+                py,
+                "handle",
+                (&record.logger, &record.level, &record.message),
+            ) {
+                Ok(_) => Ok(()),
+                Err(err) => {
+                    let message = err.to_string();
+                    err.print(py);
+                    warn!("PyHandler: error calling handle");
+                    Err(HandlerError::Message(format!(
+                        "python handler raised an exception: {message}"
+                    )))
+                }
+            }
+        })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Fallback PyHandler when python feature is disabled.
+#[cfg(not(feature = "python"))]
 struct PyHandler {
     obj: Py<PyAny>,
 }
 
+#[cfg(not(feature = "python"))]
+impl PyHandler {
+    fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
+        Self { obj }
+    }
+}
+
+#[cfg(not(feature = "python"))]
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         Python::with_gil(|py| {
@@ -149,21 +257,66 @@ impl FemtoLogger {
 
     /// Format a message at the provided level and return it.
     ///
-    /// This method currently builds a simple string combining the logger's
-    /// name with the level and message.
-    #[pyo3(text_signature = "(self, level, message)")]
-    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
+    /// This method builds a log record, optionally capturing exception and
+    /// stack trace information if `exc_info` or `stack_info` are provided.
+    ///
+    /// # Parameters
+    ///
+    /// - `level`: The log level (e.g., "INFO", "ERROR").
+    /// - `message`: The log message.
+    /// - `exc_info`: Optional exception information. Accepts:
+    ///   - `True`: Capture the current exception via `sys.exc_info()`.
+    ///   - An exception instance: Capture that exception's traceback.
+    ///   - A 3-tuple `(type, value, traceback)`: Use directly.
+    /// - `stack_info`: If `True`, capture the current call stack.
+    ///
+    /// # Returns
+    ///
+    /// The formatted log message if the record passes level and filter checks,
+    /// otherwise `None`.
+    #[pyo3(
+        name = "log",
+        signature = (level, message, /, *, exc_info=None, stack_info=false),
+        text_signature = "(self, level, message, /, *, exc_info=None, stack_info=False)"
+    )]
+    #[allow(unused_variables, unused_mut)]
+    pub fn py_log(
+        &self,
+        py: Python<'_>,
+        level: FemtoLevel,
+        message: &str,
+        exc_info: Option<&Bound<'_, PyAny>>,
+        stack_info: Option<bool>,
+    ) -> PyResult<Option<String>> {
         let threshold = self.level.load(Ordering::Relaxed);
         if (level as u8) < threshold {
-            return None;
+            return Ok(None);
         }
-        let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
+
+        // Create base record
+        let mut record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
+
+        // Capture exception payload if exc_info is provided and truthy
+        #[cfg(feature = "python")]
+        if let Some(exc) = exc_info
+            && should_capture_exc_info(exc)?
+            && let Some(payload) = traceback_capture::capture_exception(py, exc)?
+        {
+            record.exception_payload = Some(payload);
+        }
+
+        // Capture stack payload if stack_info=True
+        #[cfg(feature = "python")]
+        if stack_info.unwrap_or(false) {
+            record.stack_payload = Some(traceback_capture::capture_stack(py)?);
+        }
+
         if !self.passes_all_filters(&record) {
-            return None;
+            return Ok(None);
         }
         let msg = self.formatter.format(&record);
         self.dispatch_to_handlers(record);
-        Some(msg)
+        Ok(Some(msg))
     }
 
     /// Update the logger's minimum level.
@@ -203,7 +356,8 @@ impl FemtoLogger {
         Python::with_gil(|py| {
             let obj = handler.bind(py);
             validate_handler(obj)?;
-            self.add_handler(Arc::new(PyHandler { obj: handler }) as Arc<dyn FemtoHandlerTrait>);
+            let py_handler = PyHandler::new(py, handler);
+            self.add_handler(Arc::new(py_handler) as Arc<dyn FemtoHandlerTrait>);
             Ok(())
         })
     }
@@ -263,6 +417,25 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Log a message at the given level (Rust-only API).
+    ///
+    /// This method is a simplified version of the PyO3-exposed `log` method
+    /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
+    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
+        let threshold = self.level.load(Ordering::Relaxed);
+        if (level as u8) < threshold {
+            return None;
+        }
+
+        let record = FemtoLogRecord::new(&self.name, &level.to_string(), message);
+        if !self.passes_all_filters(&record) {
+            return None;
+        }
+        let msg = self.formatter.format(&record);
+        self.dispatch_to_handlers(record);
+        Some(msg)
+    }
+
     /// Return whether `level` is enabled for this logger.
     #[cfg(feature = "log-compat")]
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
