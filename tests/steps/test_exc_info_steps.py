@@ -86,22 +86,26 @@ def create_exception_group(exception_state: dict[str, typ.Any]) -> None:
     exception_state["group"] = True
 
 
-def _log_with_chained_exception(logger: FemtoLogger, level: str, message: str) -> str:
+def _log_with_chained_exception(
+    logger: FemtoLogger, level: str, message: str
+) -> str | None:
     """Log a message with a chained exception (RuntimeError from OSError)."""
     try:
         _raise_chained_exception()
     except RuntimeError:
         return logger.log(level, message, exc_info=True)
-    return ""  # unreachable, but keeps type checker happy
+    return None  # unreachable, but keeps type checker happy
 
 
-def _log_with_exception_group(logger: FemtoLogger, level: str, message: str) -> str:
+def _log_with_exception_group(
+    logger: FemtoLogger, level: str, message: str
+) -> str | None:
     """Log a message with an exception group."""
     try:
         _raise_exception_group()
     except ExceptionGroup:
         return logger.log(level, message, exc_info=True)
-    return ""  # unreachable, but keeps type checker happy
+    return None  # unreachable, but keeps type checker happy
 
 
 def _log_with_simple_exception(
@@ -109,7 +113,7 @@ def _log_with_simple_exception(
     level: str,
     message: str,
     exception_state: dict[str, typ.Any],
-) -> str:
+) -> str | None:
     """Log a message with a simple exception."""
     exc_type = exception_state.get("type", ValueError)
     exc_message = exception_state.get("message", "error")
@@ -117,7 +121,7 @@ def _log_with_simple_exception(
         _raise_exception(exc_type, exc_message)
     except exc_type:
         return logger.log(level, message, exc_info=True)
-    return ""  # unreachable, but keeps type checker happy
+    return None  # unreachable, but keeps type checker happy
 
 
 @when(parsers.parse('I log at {level} with message "{message}" and exc_info=True'))
