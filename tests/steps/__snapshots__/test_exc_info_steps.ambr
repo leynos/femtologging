@@ -3,9 +3,9 @@
   '''
   test [ERROR] failed
   Traceback (most recent call last):
-    File "<test>", line <N>, in log_with_exc_info_true
+    File "<test>", line <N>, in _log_with_simple_exception
       _raise_exception(exc_type, exc_message)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "<test>", line <N>, in _raise_exception
       raise exc_type(message)
          ^^^^^^^^^^^^^^^^^^^^^^^
