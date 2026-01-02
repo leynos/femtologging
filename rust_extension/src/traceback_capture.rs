@@ -67,8 +67,9 @@ pub fn capture_exception(
 
 /// Capture the current call stack for `stack_info=True`.
 ///
-/// Uses `traceback.extract_stack()` to get the current stack frames,
-/// excluding the logging infrastructure frames.
+/// Uses `traceback.extract_stack()` to get the current stack frames.
+/// The full call stack is returned; frame filtering (e.g., to remove
+/// logging infrastructure frames) is left to the caller or formatter.
 ///
 /// # Errors
 ///
@@ -76,7 +77,6 @@ pub fn capture_exception(
 pub fn capture_stack(py: Python<'_>) -> PyResult<StackTracePayload> {
     let traceback = py.import("traceback")?;
     // extract_stack() returns a StackSummary (list of FrameSummary)
-    // We skip the last few frames which are internal to the logging call
     let stack_summary = traceback.call_method0("extract_stack")?;
     let frames = extract_frames_from_stack_summary(py, &stack_summary)?;
 

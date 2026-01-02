@@ -374,12 +374,12 @@ pub mod python {
     }
 
     /// Convert a `&[String]` to a Python list.
-    fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyObject {
+    fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyResult<PyObject> {
         let list = PyList::empty(py);
         for s in strings {
-            list.append(s).expect("append string to list");
+            list.append(s)?;
         }
-        list.into()
+        Ok(list.into())
     }
 
     /// Convert a `&[StackFrame]` to a Python list of dicts.
@@ -411,11 +411,11 @@ pub mod python {
         }
 
         if !payload.args_repr.is_empty() {
-            dict.set_item("args_repr", string_vec_to_pylist(py, &payload.args_repr))?;
+            dict.set_item("args_repr", string_vec_to_pylist(py, &payload.args_repr)?)?;
         }
 
         if !payload.notes.is_empty() {
-            dict.set_item("notes", string_vec_to_pylist(py, &payload.notes))?;
+            dict.set_item("notes", string_vec_to_pylist(py, &payload.notes)?)?;
         }
 
         if !payload.frames.is_empty() {
