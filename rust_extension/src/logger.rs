@@ -140,49 +140,60 @@ impl PyHandler {
             has_handle_record,
         }
     }
+
+    /// Call the structured `handle_record` method with the full record dict.
+    fn call_handle_record(
+        &self,
+        py: Python<'_>,
+        record: &FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
+        let record_dict = record_to_dict(py, record).map_err(|err| {
+            let message = err.to_string();
+            err.print(py);
+            HandlerError::Message(format!("failed to convert record to dict: {message}"))
+        })?;
+
+        self.obj
+            .call_method1(py, "handle_record", (record_dict,))
+            .map(|_| ())
+            .map_err(|err| {
+                let message = err.to_string();
+                err.print(py);
+                warn!("PyHandler: error calling handle_record");
+                HandlerError::Message(format!("python handler raised an exception: {message}"))
+            })
+    }
+
+    /// Call the legacy 3-argument `handle` method.
+    fn call_legacy_handle(
+        &self,
+        py: Python<'_>,
+        record: &FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
+        self.obj
+            .call_method1(
+                py,
+                "handle",
+                (&record.logger, record.level.as_str(), &record.message),
+            )
+            .map(|_| ())
+            .map_err(|err| {
+                let message = err.to_string();
+                err.print(py);
+                warn!("PyHandler: error calling handle");
+                HandlerError::Message(format!("python handler raised an exception: {message}"))
+            })
+    }
 }
 
 #[cfg(feature = "python")]
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         Python::with_gil(|py| {
-            // Prefer handle_record if available for structured payload access
             if self.has_handle_record {
-                let record_dict = record_to_dict(py, &record).map_err(|err| {
-                    let message = err.to_string();
-                    err.print(py);
-                    HandlerError::Message(format!("failed to convert record to dict: {message}"))
-                })?;
-
-                match self.obj.call_method1(py, "handle_record", (record_dict,)) {
-                    Ok(_) => return Ok(()),
-                    Err(err) => {
-                        let message = err.to_string();
-                        err.print(py);
-                        warn!("PyHandler: error calling handle_record");
-                        return Err(HandlerError::Message(format!(
-                            "python handler raised an exception: {message}"
-                        )));
-                    }
-                }
+                return self.call_handle_record(py, &record);
             }
-
-            // Fall back to the legacy 3-argument handle method
-            match self.obj.call_method1(
-                py,
-                "handle",
-                (&record.logger, &record.level, &record.message),
-            ) {
-                Ok(_) => Ok(()),
-                Err(err) => {
-                    let message = err.to_string();
-                    err.print(py);
-                    warn!("PyHandler: error calling handle");
-                    Err(HandlerError::Message(format!(
-                        "python handler raised an exception: {message}"
-                    )))
-                }
-            }
+            self.call_legacy_handle(py, &record)
         })
     }
 
@@ -306,11 +317,6 @@ impl FemtoLogger {
         exc_info: Option<&Bound<'_, PyAny>>,
         stack_info: Option<bool>,
     ) -> PyResult<Option<String>> {
-        let threshold = self.level.load(Ordering::Relaxed);
-        if (level as u8) < threshold {
-            return Ok(None);
-        }
-
         // Create base record
         let mut record = FemtoLogRecord::new(&self.name, level, message);
 
@@ -329,12 +335,7 @@ impl FemtoLogger {
             record.stack_payload = Some(traceback_capture::capture_stack(py)?);
         }
 
-        if !self.passes_all_filters(&record) {
-            return Ok(None);
-        }
-        let msg = self.formatter.format(&record);
-        self.dispatch_to_handlers(record);
-        Ok(Some(msg))
+        Ok(self.log_record(record))
     }
 
     /// Update the logger's minimum level.
@@ -435,23 +436,40 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
-    /// Log a message at the given level (Rust-only API).
+    /// Core logging logic shared between Python and Rust APIs.
     ///
-    /// This method is a simplified version of the PyO3-exposed `log` method
-    /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
-    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
+    /// Checks level threshold and filters, formats the record, and dispatches
+    /// to handlers. Returns `Some(formatted_message)` if the record was logged,
+    /// or `None` if it was filtered out.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `record.parsed_level` is `None`. All records created via
+    /// `FemtoLogRecord::new` have a parsed level set.
+    fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
+        let level = record
+            .parsed_level
+            .expect("log_record requires parsed_level to be set");
         if (level as u8) < threshold {
             return None;
         }
 
-        let record = FemtoLogRecord::new(&self.name, level, message);
         if !self.passes_all_filters(&record) {
             return None;
         }
         let msg = self.formatter.format(&record);
         self.dispatch_to_handlers(record);
         Some(msg)
+    }
+
+    /// Log a message at the given level (Rust-only API).
+    ///
+    /// This method is a simplified version of the PyO3-exposed `log` method
+    /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
+    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
+        let record = FemtoLogRecord::new(&self.name, level, message);
+        self.log_record(record)
     }
 
     /// Return whether `level` is enabled for this logger.

@@ -153,30 +153,27 @@ def test_set_level_invalid_raises_value_error() -> None:
         logger.set_level("INVALID")
 
 
-def _raise_value_error(msg: str = "") -> None:
-    """Raise a ValueError for testing.
+def _raise_exception(exc_type: type[BaseException] = ValueError, msg: str = "") -> None:
+    """Raise an exception of the given type for testing.
 
     Parameters
     ----------
+    exc_type
+        The exception class to raise. Defaults to ValueError.
     msg
         The exception message. Defaults to empty string.
 
     """
     if msg:
-        raise ValueError(msg)
-    raise ValueError
-
-
-def _raise_runtime_error() -> None:
-    """Raise a RuntimeError for testing."""
-    raise RuntimeError
+        raise exc_type(msg)
+    raise exc_type
 
 
 def test_log_with_exc_info_true_captures_exception() -> None:
     """exc_info=True should capture the current exception."""
     logger = FemtoLogger("core")
     try:
-        _raise_value_error()
+        _raise_exception()
     except ValueError:
         output = logger.log("ERROR", "caught", exc_info=True)
 
@@ -202,18 +199,12 @@ def test_log_with_exc_info_instance() -> None:
     assert "KeyError" in output
 
 
-def _raise_key_error() -> None:
-    """Raise a KeyError for testing."""
-    msg = "missing"
-    raise KeyError(msg)
-
-
 def test_log_with_exc_info_tuple() -> None:
     """exc_info as a (type, value, traceback) tuple should capture that traceback."""
     logger = FemtoLogger("core")
 
     try:
-        _raise_key_error()
+        _raise_exception(KeyError, "missing")
     except KeyError as exc:
         exc_info = (KeyError, exc, exc.__traceback__)
 
@@ -230,7 +221,7 @@ def test_log_with_exc_info_tuple_preserves_explicit_traceback() -> None:
     logger = FemtoLogger("core")
 
     try:
-        _raise_key_error()
+        _raise_exception(KeyError, "missing")
     except KeyError as exc:
         # Capture the traceback before clearing it
         tb = exc.__traceback__
@@ -246,7 +237,7 @@ def test_log_with_exc_info_tuple_preserves_explicit_traceback() -> None:
     assert "KeyError" in output
     assert "Traceback" in output
     # Should contain at least one stack frame
-    assert "_raise_key_error" in output
+    assert "_raise_exception" in output
 
 
 def test_log_with_invalid_exc_info_type() -> None:
@@ -284,7 +275,7 @@ def test_log_with_both_exc_and_stack_info() -> None:
     """Both exc_info and stack_info should work together."""
     logger = FemtoLogger("core")
     try:
-        _raise_runtime_error()
+        _raise_exception(RuntimeError)
     except RuntimeError:
         output = logger.log("ERROR", "debug", exc_info=True, stack_info=True)
 
@@ -326,7 +317,7 @@ def test_handle_record_receives_structured_payload() -> None:
 
     sentinel_msg = "sentinel message"
     try:
-        _raise_value_error(sentinel_msg)
+        _raise_exception(ValueError, sentinel_msg)
     except ValueError:
         logger.log("ERROR", "caught", exc_info=True)
 

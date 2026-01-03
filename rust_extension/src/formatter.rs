@@ -488,14 +488,170 @@ pub mod python {
 
 #[cfg(test)]
 mod tests {
-    //! Send/Sync guarantees for formatter trait objects.
+    //! Tests for formatter implementations.
 
     use super::*;
+    use crate::level::FemtoLevel;
     use static_assertions::assert_impl_all;
 
     #[test]
     fn shared_formatter_is_send_sync() {
         assert_impl_all!(SharedFormatter: Send, Sync);
         assert_impl_all!(Arc<dyn FemtoFormatter + Send + Sync>: Send, Sync);
+    }
+
+    #[test]
+    fn default_formatter_formats_basic_record() {
+        let formatter = DefaultFormatter;
+        let record = FemtoLogRecord::new("test", FemtoLevel::Info, "hello");
+        let output = formatter.format(&record);
+        assert_eq!(output, "test [INFO] hello");
+    }
+
+    #[test]
+    fn default_formatter_includes_exception_payload() {
+        let formatter = DefaultFormatter;
+        let exception = ExceptionPayload::new("ValueError", "test error");
+        let mut record = FemtoLogRecord::new("test", FemtoLevel::Error, "failed");
+        record.exception_payload = Some(exception);
+
+        let output = formatter.format(&record);
+
+        assert!(output.starts_with("test [ERROR] failed\n"));
+        assert!(output.contains("Traceback (most recent call last):"));
+        assert!(output.contains("ValueError: test error"));
+    }
+
+    #[test]
+    fn default_formatter_includes_stack_payload() {
+        let formatter = DefaultFormatter;
+        let frame = StackFrame::new("test.py", 42, "test_func");
+        let stack = StackTracePayload::new(vec![frame]);
+        let mut record = FemtoLogRecord::new("test", FemtoLevel::Debug, "debug info");
+        record.stack_payload = Some(stack);
+
+        let output = formatter.format(&record);
+
+        assert!(output.starts_with("test [DEBUG] debug info\n"));
+        assert!(output.contains("Stack (most recent call last):"));
+        assert!(output.contains("test.py"));
+        assert!(output.contains("line 42"));
+        assert!(output.contains("test_func"));
+    }
+
+    #[test]
+    fn default_formatter_includes_both_payloads() {
+        let formatter = DefaultFormatter;
+        let exception = ExceptionPayload::new("RuntimeError", "runtime issue");
+        let frame = StackFrame::new("main.py", 10, "main");
+        let stack = StackTracePayload::new(vec![frame]);
+
+        let mut record = FemtoLogRecord::new("app", FemtoLevel::Critical, "crash");
+        record.exception_payload = Some(exception);
+        record.stack_payload = Some(stack);
+
+        let output = formatter.format(&record);
+
+        // Verify structure: message, then stack, then exception
+        assert!(output.starts_with("app [CRITICAL] crash\n"));
+        let stack_pos = output
+            .find("Stack (most recent call last):")
+            .expect("stack should be present");
+        let traceback_pos = output
+            .find("Traceback (most recent call last):")
+            .expect("traceback should be present");
+        assert!(
+            stack_pos < traceback_pos,
+            "stack should appear before exception"
+        );
+        assert!(output.contains("RuntimeError: runtime issue"));
+    }
+
+    #[test]
+    fn format_stack_frame_with_source_line() {
+        let mut frame = StackFrame::new("example.py", 5, "do_something");
+        frame.source_line = Some("    result = calculate()".to_string());
+
+        let output = format_stack_frame(&frame);
+
+        assert!(output.contains("example.py"));
+        assert!(output.contains("line 5"));
+        assert!(output.contains("do_something"));
+        assert!(output.contains("result = calculate()"));
+    }
+
+    #[test]
+    fn format_stack_frame_with_column_indicators() {
+        let mut frame = StackFrame::new("test.py", 10, "func");
+        frame.source_line = Some("    x = foo()".to_string());
+        frame.colno = Some(9); // 1-indexed, pointing to 'foo'
+        frame.end_colno = Some(14); // end of 'foo()'
+
+        let output = format_stack_frame(&frame);
+
+        // Should have underline indicators
+        assert!(output.contains("^"));
+    }
+
+    #[test]
+    fn format_exception_with_cause_chain() {
+        let cause = ExceptionPayload::new("OSError", "file not found");
+        let mut effect = ExceptionPayload::new("RuntimeError", "operation failed");
+        effect.cause = Some(Box::new(cause));
+
+        let output = format_exception_payload(&effect);
+
+        assert!(output.contains("OSError: file not found"));
+        assert!(output.contains("RuntimeError: operation failed"));
+        assert!(output.contains("The above exception was the direct cause"));
+    }
+
+    #[test]
+    fn format_exception_with_context_chain() {
+        let context = ExceptionPayload::new("ValueError", "invalid input");
+        let mut effect = ExceptionPayload::new("TypeError", "type mismatch");
+        effect.context = Some(Box::new(context));
+
+        let output = format_exception_payload(&effect);
+
+        assert!(output.contains("ValueError: invalid input"));
+        assert!(output.contains("TypeError: type mismatch"));
+        assert!(output.contains("During handling of the above exception"));
+    }
+
+    #[test]
+    fn format_exception_with_module() {
+        let mut exception = ExceptionPayload::new("CustomError", "custom message");
+        exception.module = Some("myapp.errors".to_string());
+
+        let output = format_exception_payload(&exception);
+
+        assert!(output.contains("myapp.errors.CustomError: custom message"));
+    }
+
+    #[test]
+    fn format_exception_with_notes() {
+        let mut exception = ExceptionPayload::new("ValueError", "bad value");
+        exception.notes = vec!["Note 1".to_string(), "Note 2".to_string()];
+
+        let output = format_exception_payload(&exception);
+
+        assert!(output.contains("  Note 1"));
+        assert!(output.contains("  Note 2"));
+    }
+
+    #[test]
+    fn format_exception_group() {
+        let nested1 = ExceptionPayload::new("ValueError", "value error");
+        let nested2 = ExceptionPayload::new("TypeError", "type error");
+        let mut group = ExceptionPayload::new("ExceptionGroup", "multiple errors");
+        group.exceptions = vec![nested1, nested2];
+
+        let output = format_exception_payload(&group);
+
+        assert!(output.contains("[1]"));
+        assert!(output.contains("[2]"));
+        assert!(output.contains("ValueError: value error"));
+        assert!(output.contains("TypeError: type error"));
     }
 }

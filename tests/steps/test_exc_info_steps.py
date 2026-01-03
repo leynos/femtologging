@@ -206,5 +206,5 @@ def output_matches_snapshot(
 ) -> None:
     output = logger_fixture["output"]
     # Normalise paths and line numbers for snapshot stability
-    normalised = normalise_traceback_output(output, placeholder="<test>")
+    normalised = normalise_traceback_output(output)
     assert normalised == snapshot

@@ -53,6 +53,13 @@ impl FromStr for FemtoLevel {
 
 impl FemtoLevel {
     /// Return the canonical string representation of the level.
+    ///
+    /// This is a `const fn` enabling compile-time evaluation and zero-cost
+    /// access to level names. Use this instead of [`Display`]/[`to_string()`]
+    /// when you need a static string slice without allocation overhead.
+    ///
+    /// [`Display`]: std::fmt::Display
+    /// [`to_string()`]: std::string::ToString::to_string
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Trace => "TRACE",

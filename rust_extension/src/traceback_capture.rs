@@ -24,6 +24,18 @@ use crate::exception_schema::{
 
 /// Get an optional attribute from a Python object, returning `None` if the
 /// attribute doesn't exist or is Python `None`.
+///
+/// # Behaviour
+///
+/// This function silently returns `None` in the following cases:
+/// - The attribute does not exist on the object
+/// - The attribute value is Python `None`
+/// - The attribute exists but cannot be extracted to type `T`
+///
+/// Type mismatches are treated the same as missing attributes to provide
+/// graceful degradation when Python objects have unexpected structures.
+/// This is intentional for traceback capture where partial data is preferred
+/// over failure.
 fn get_optional_attr<'py, T>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<T>
 where
     T: FromPyObject<'py>,
