@@ -96,6 +96,12 @@ fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value
     for (k, v) in &record.metadata.key_values {
         map.insert(k.clone(), serde_json::Value::String(v.clone()));
     }
+    if let Some(ref exc) = record.exception_payload {
+        map.insert("exc_info".into(), serde_json::json!(exc));
+    }
+    if let Some(ref stack) = record.stack_payload {
+        map.insert("stack_info".into(), serde_json::json!(stack));
+    }
     map
 }
 

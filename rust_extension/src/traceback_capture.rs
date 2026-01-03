@@ -18,6 +18,35 @@ use crate::exception_schema::{
     EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackFrame, StackTracePayload,
 };
 
+// --------------------------------
+// Helper functions for PyO3 access
+// --------------------------------
+
+/// Get an optional attribute from a Python object, returning `None` if the
+/// attribute doesn't exist or is Python `None`.
+fn get_optional_attr<'py, T>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<T>
+where
+    T: FromPyObject<'py>,
+{
+    obj.getattr(attr)
+        .ok()
+        .filter(|v| !v.is_none())
+        .and_then(|v| v.extract().ok())
+}
+
+/// Iterate over a Python list, extracting string representations of each element.
+///
+/// # Errors
+///
+/// Returns an error if the object is not a list or if string extraction fails.
+fn iter_pylist_str(list: &Bound<'_, PyList>) -> PyResult<Vec<String>> {
+    let mut result = Vec::with_capacity(list.len());
+    for item in list.iter() {
+        result.push(item.str()?.extract()?);
+    }
+    Ok(result)
+}
+
 /// Capture exception information from Python `exc_info` argument.
 ///
 /// Handles the various forms of `exc_info` accepted by Python's logging:
@@ -271,11 +300,7 @@ fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     };
 
     let notes_list = notes_attr.downcast::<PyList>()?;
-    let mut result = Vec::with_capacity(notes_list.len());
-    for note in notes_list.iter() {
-        result.push(note.str()?.extract()?);
-    }
-    Ok(result)
+    iter_pylist_str(notes_list)
 }
 
 /// Extract stack frames from a TracebackException's stack attribute.
@@ -309,44 +334,13 @@ fn frame_summary_to_stack_frame(frame: &Bound<'_, PyAny>) -> PyResult<StackFrame
     let function: String = frame.getattr("name")?.extract()?;
 
     // Python 3.11+ enhanced traceback info
-    let end_lineno: Option<u32> = frame
-        .getattr("end_lineno")
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { v.extract().ok() });
-
-    let colno: Option<u32> = frame
-        .getattr("colno")
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { v.extract().ok() });
-
-    let end_colno: Option<u32> = frame
-        .getattr("end_colno")
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { v.extract().ok() });
-
-    let source_line: Option<String> = frame
-        .getattr("line")
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { v.extract().ok() });
+    let end_lineno: Option<u32> = get_optional_attr(frame, "end_lineno");
+    let colno: Option<u32> = get_optional_attr(frame, "colno");
+    let end_colno: Option<u32> = get_optional_attr(frame, "end_colno");
+    let source_line: Option<String> = get_optional_attr(frame, "line");
 
     // Locals are only present if capture_locals=True was used
-    let locals: Option<BTreeMap<String, String>> = frame
-        .getattr("locals")
-        .ok()
-        .and_then(|v| {
-            if v.is_none() {
-                return None;
-            }
-            let dict = v.downcast::<PyDict>().ok()?;
-            let mut map = BTreeMap::new();
-            for (key, value) in dict.iter() {
-                let k: String = key.extract().ok()?;
-                let v: String = value.repr().ok()?.extract().ok()?;
-                map.insert(k, v);
-            }
-            Some(map)
-        })
-        .filter(|m| !m.is_empty());
+    let locals: Option<BTreeMap<String, String>> = extract_locals_dict(frame);
 
     Ok(StackFrame {
         filename,
@@ -358,6 +352,22 @@ fn frame_summary_to_stack_frame(frame: &Bound<'_, PyAny>) -> PyResult<StackFrame
         source_line,
         locals,
     })
+}
+
+/// Extract the locals dictionary from a frame, converting values to repr strings.
+fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<String, String>> {
+    let locals_attr = frame.getattr("locals").ok()?;
+    if locals_attr.is_none() {
+        return None;
+    }
+    let dict = locals_attr.downcast::<PyDict>().ok()?;
+    let mut map = BTreeMap::new();
+    for (key, value) in dict.iter() {
+        let k: String = key.extract().ok()?;
+        let v: String = value.repr().ok()?.extract().ok()?;
+        map.insert(k, v);
+    }
+    if map.is_empty() { None } else { Some(map) }
 }
 
 /// Extract a chained exception (__cause__ or __context__).
@@ -419,7 +429,8 @@ mod tests {
     fn capture_exception_with_true_no_active_exception() {
         Python::with_gil(|py| {
             let true_val = PyBool::new(py, true);
-            let result = capture_exception(py, true_val.as_any()).unwrap();
+            let result = capture_exception(py, true_val.as_any())
+                .expect("capture_exception should not fail with True");
             assert!(result.is_none(), "No active exception should return None");
         });
     }
@@ -428,7 +439,8 @@ mod tests {
     fn capture_exception_with_false_returns_none() {
         Python::with_gil(|py| {
             let false_val = PyBool::new(py, false);
-            let result = capture_exception(py, false_val.as_any()).unwrap();
+            let result = capture_exception(py, false_val.as_any())
+                .expect("capture_exception should not fail with False");
             assert!(result.is_none());
         });
     }
@@ -439,16 +451,17 @@ mod tests {
             // Create an exception instance
             let exc = py
                 .import("builtins")
-                .unwrap()
+                .expect("builtins module should exist")
                 .getattr("ValueError")
-                .unwrap()
+                .expect("ValueError should exist")
                 .call1(("test error",))
-                .unwrap();
+                .expect("ValueError constructor should succeed");
 
-            let result = capture_exception(py, &exc).unwrap();
+            let result = capture_exception(py, &exc)
+                .expect("capture_exception should succeed with exception instance");
             assert!(result.is_some());
 
-            let payload = result.unwrap();
+            let payload = result.expect("payload should be Some for valid exception");
             assert_eq!(payload.type_name, "ValueError");
             assert_eq!(payload.message, "test error");
             assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
@@ -459,20 +472,27 @@ mod tests {
     fn capture_exception_with_tuple() {
         Python::with_gil(|py| {
             // Create a 3-tuple (type, value, traceback)
-            let exc_type = py.import("builtins").unwrap().getattr("KeyError").unwrap();
-            let exc_value = exc_type.call1(("missing_key",)).unwrap();
+            let exc_type = py
+                .import("builtins")
+                .expect("builtins module should exist")
+                .getattr("KeyError")
+                .expect("KeyError should exist");
+            let exc_value = exc_type
+                .call1(("missing_key",))
+                .expect("KeyError constructor should succeed");
             let exc_tb = py.None();
 
             let tuple = PyTuple::new(
                 py,
                 &[exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)],
             )
-            .unwrap();
+            .expect("tuple creation should succeed");
 
-            let result = capture_exception(py, tuple.as_any()).unwrap();
+            let result = capture_exception(py, tuple.as_any())
+                .expect("capture_exception should succeed with tuple");
             assert!(result.is_some());
 
-            let payload = result.unwrap();
+            let payload = result.expect("payload should be Some for valid tuple");
             assert_eq!(payload.type_name, "KeyError");
         });
     }
@@ -482,9 +502,11 @@ mod tests {
         Python::with_gil(|py| {
             // 3-tuple with None value means no exception
             let none = py.None();
-            let tuple = PyTuple::new(py, &[none.bind(py), none.bind(py), none.bind(py)]).unwrap();
+            let tuple = PyTuple::new(py, &[none.bind(py), none.bind(py), none.bind(py)])
+                .expect("tuple creation should succeed");
 
-            let result = capture_exception(py, tuple.as_any()).unwrap();
+            let result = capture_exception(py, tuple.as_any())
+                .expect("capture_exception should not fail with None-value tuple");
             assert!(result.is_none());
         });
     }
@@ -493,7 +515,9 @@ mod tests {
     fn capture_exception_invalid_type_raises_error() {
         Python::with_gil(|py| {
             let code = c"42";
-            let invalid = py.eval(code, None, None).unwrap();
+            let invalid = py
+                .eval(code, None, None)
+                .expect("eval of integer literal should succeed");
             let result = capture_exception(py, &invalid);
             assert!(result.is_err());
         });
@@ -509,15 +533,17 @@ mod tests {
             let result = py.run(code, None, None);
             assert!(result.is_err());
 
-            let err = result.unwrap_err();
+            let err = result.expect_err("code should raise an exception");
             let exc_value = err.value(py);
 
-            let payload = capture_exception(py, exc_value).unwrap().unwrap();
+            let payload = capture_exception(py, exc_value)
+                .expect("capture_exception should succeed")
+                .expect("payload should be Some for chained exception");
 
             assert_eq!(payload.type_name, "RuntimeError");
             assert!(payload.cause.is_some());
 
-            let cause = payload.cause.unwrap();
+            let cause = payload.cause.expect("cause should be Some");
             // IOError is an alias for OSError in Python 3
             assert_eq!(cause.type_name, "OSError");
             assert_eq!(cause.message, "read failed");
@@ -527,7 +553,7 @@ mod tests {
     #[rstest]
     fn capture_stack_returns_frames() {
         Python::with_gil(|py| {
-            let payload = capture_stack(py).unwrap();
+            let payload = capture_stack(py).expect("capture_stack should succeed");
             assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
             assert!(!payload.frames.is_empty(), "Stack should have frames");
 
@@ -544,10 +570,16 @@ mod tests {
             // Create an exception with notes (Python 3.11+)
             let code = c"e = ValueError('test'); e.add_note('Note 1'); e.add_note('Note 2')";
             let globals = PyDict::new(py);
-            py.run(code, Some(&globals), None).unwrap();
-            let exc = globals.get_item("e").unwrap().unwrap();
+            py.run(code, Some(&globals), None)
+                .expect("code to create exception with notes should succeed");
+            let exc = globals
+                .get_item("e")
+                .expect("get_item should not fail")
+                .expect("exception 'e' should exist in globals");
 
-            let payload = capture_exception(py, &exc).unwrap().unwrap();
+            let payload = capture_exception(py, &exc)
+                .expect("capture_exception should succeed")
+                .expect("payload should be Some");
 
             assert_eq!(payload.notes.len(), 2);
             assert_eq!(payload.notes[0], "Note 1");
@@ -560,13 +592,15 @@ mod tests {
         Python::with_gil(|py| {
             let exc = py
                 .import("builtins")
-                .unwrap()
+                .expect("builtins module should exist")
                 .getattr("ValueError")
-                .unwrap()
+                .expect("ValueError should exist")
                 .call1(("message", 42))
-                .unwrap();
+                .expect("ValueError constructor should succeed");
 
-            let payload = capture_exception(py, &exc).unwrap().unwrap();
+            let payload = capture_exception(py, &exc)
+                .expect("capture_exception should succeed")
+                .expect("payload should be Some");
 
             assert_eq!(payload.args_repr.len(), 2);
             assert_eq!(payload.args_repr[0], "'message'");

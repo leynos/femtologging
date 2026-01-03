@@ -21,7 +21,10 @@ use super::{
 
 /// Commands processed by the worker thread.
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
+)]
 pub enum SocketCommand {
     Record(FemtoLogRecord),
     Flush(Sender<()>),

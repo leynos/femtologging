@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import typing as typ
 
 from pytest_bdd import given, parsers, then
@@ -10,6 +11,32 @@ from femtologging import get_logger, reset_manager
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
+
+
+def normalise_traceback_output(output: str | None, placeholder: str = "<file>") -> str:
+    """Normalise traceback output for snapshot comparison.
+
+    Replaces file paths and line numbers with stable placeholders.
+
+    Args:
+        output: The traceback output string to normalise, or None.
+        placeholder: The placeholder to use for file paths (default: "<file>").
+
+    Returns:
+        Normalised output string, or empty string if output is None.
+
+    """
+    if output is None:
+        return ""
+
+    # Replace file paths with placeholder
+    result = re.sub(
+        r'File "[^"]+"',
+        f'File "{placeholder}"',
+        output,
+    )
+    # Replace line numbers
+    return re.sub(r", line \d+,", ", line <N>,", result)
 
 
 @given("the logging system is reset")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import typing as typ
 from pathlib import Path
 
@@ -10,6 +9,8 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoLogger
+
+from .conftest import normalise_traceback_output
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
@@ -116,23 +117,5 @@ def output_matches_snapshot(
 ) -> None:
     output = logger_fixture["output"]
     # Normalise paths and line numbers for snapshot stability
-    normalised = _normalise_traceback_output(output)
+    normalised = normalise_traceback_output(output)
     assert normalised == snapshot
-
-
-def _normalise_traceback_output(output: str | None) -> str:
-    """Normalise traceback output for snapshot comparison.
-
-    Replaces file paths and line numbers with stable placeholders.
-    """
-    if output is None:
-        return ""
-
-    # Replace file paths with placeholder
-    result = re.sub(
-        r'File "[^"]+"',
-        'File "<file>"',
-        output,
-    )
-    # Replace line numbers
-    return re.sub(r", line \d+,", ", line <N>,", result)

@@ -279,7 +279,20 @@ impl FemtoLogger {
         signature = (level, message, /, *, exc_info=None, stack_info=false),
         text_signature = "(self, level, message, /, *, exc_info=None, stack_info=False)"
     )]
-    #[allow(unused_variables, unused_mut)]
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(
+            unused_variables,
+            reason = "py parameter is only used when python feature is enabled"
+        )
+    )]
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(
+            unused_mut,
+            reason = "record is only mutated when python feature is enabled"
+        )
+    )]
     pub fn py_log(
         &self,
         py: Python<'_>,
