@@ -88,7 +88,7 @@ impl FemtoSocketHandler {
 impl FemtoSocketHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        let parsed_level = crate::level::FemtoLevel::parse_or_warn(level);
+        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
         self.handle(FemtoLogRecord::new(logger, parsed_level, message))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }

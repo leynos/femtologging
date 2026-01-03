@@ -153,8 +153,17 @@ def test_set_level_invalid_raises_value_error() -> None:
         logger.set_level("INVALID")
 
 
-def _raise_value_error() -> None:
-    """Raise a ValueError for testing."""
+def _raise_value_error(msg: str = "") -> None:
+    """Raise a ValueError for testing.
+
+    Parameters
+    ----------
+    msg
+        The exception message. Defaults to empty string.
+
+    """
+    if msg:
+        raise ValueError(msg)
     raise ValueError
 
 
@@ -216,6 +225,30 @@ def test_log_with_exc_info_tuple() -> None:
     assert "Traceback" in output
 
 
+def test_log_with_exc_info_tuple_preserves_explicit_traceback() -> None:
+    """Explicit traceback in tuple persists when __traceback__ is None."""
+    logger = FemtoLogger("core")
+
+    try:
+        _raise_key_error()
+    except KeyError as exc:
+        # Capture the traceback before clearing it
+        tb = exc.__traceback__
+        exc_info = (KeyError, exc, tb)
+        # Clear the exception's __traceback__ attribute
+        exc.__traceback__ = None
+
+    output = logger.log("ERROR", "caught", exc_info=exc_info)
+
+    # The output should still contain the traceback because we passed it
+    # explicitly in the tuple
+    assert output is not None
+    assert "KeyError" in output
+    assert "Traceback" in output
+    # Should contain at least one stack frame
+    assert "_raise_key_error" in output
+
+
 def test_log_with_invalid_exc_info_type() -> None:
     """Invalid exc_info type should raise a TypeError with a useful message."""
     logger = FemtoLogger("core")
@@ -274,18 +307,15 @@ class RecordCollectingHandler:
         """Initialise an empty record buffer."""
         self.records: list[dict[str, typ.Any]] = []
 
-    def handle(self, _logger: str, _level: str, _message: str) -> None:
+    @staticmethod
+    def handle(_logger: str, _level: str, _message: str) -> None:
         """Fallback handle method (required by FemtoLogger validation)."""
         # Should not be called when handle_record is present
+        return
 
     def handle_record(self, record: dict[str, typ.Any]) -> None:
         """Collect full records for later assertions."""
         self.records.append(record)
-
-
-def _raise_value_error_with_message(msg: str) -> None:
-    """Raise a ValueError with a specific message for testing."""
-    raise ValueError(msg)
 
 
 def test_handle_record_receives_structured_payload() -> None:
@@ -296,7 +326,7 @@ def test_handle_record_receives_structured_payload() -> None:
 
     sentinel_msg = "sentinel message"
     try:
-        _raise_value_error_with_message(sentinel_msg)
+        _raise_value_error(sentinel_msg)
     except ValueError:
         logger.log("ERROR", "caught", exc_info=True)
 

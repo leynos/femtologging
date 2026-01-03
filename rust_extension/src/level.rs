@@ -74,6 +74,19 @@ impl FemtoLevel {
             }
         }
     }
+
+    /// Parse a string into a level, returning PyValueError on invalid input.
+    ///
+    /// Use this in PyO3 bindings instead of `parse_or_warn` to propagate
+    /// errors to Python rather than silently defaulting.
+    pub fn parse_py(s: &str) -> PyResult<Self> {
+        match s.parse() {
+            Ok(level) => Ok(level),
+            Err(_) => Err(PyErr::new::<PyValueError, _>(format!(
+                "invalid log level: {s}"
+            ))),
+        }
+    }
 }
 
 impl From<FemtoLevel> for u8 {

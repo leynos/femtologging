@@ -163,22 +163,34 @@ fn capture_from_exception_instance(
 }
 
 /// Build an `ExceptionPayload` from a Python exception value and optional traceback.
+///
+/// When `traceback` is provided, it takes precedence over `exc_value.__traceback__`.
+/// This is important for exc_info tuples where the exception's `__traceback__` may
+/// have been cleared but a valid traceback was passed explicitly.
 fn build_exception_payload(
     py: Python<'_>,
     exc_value: &Bound<'_, PyAny>,
     traceback: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Option<ExceptionPayload>> {
     let traceback_mod = py.import("traceback")?;
-
-    // Use TracebackException for comprehensive exception info
     let tb_exc_class = traceback_mod.getattr("TracebackException")?;
-
-    // TracebackException.from_exception(exc, capture_locals=False)
     let kwargs = PyDict::new(py);
     kwargs.set_item("capture_locals", false)?;
-    let tb_exc = tb_exc_class.call_method("from_exception", (exc_value,), Some(&kwargs))?;
 
-    build_payload_from_traceback_exception(py, &tb_exc, traceback, Some(exc_value))
+    // When we have an explicit traceback (e.g., from exc_info tuple), use the
+    // TracebackException constructor directly to preserve it. Otherwise, use
+    // from_exception which reads exc_value.__traceback__.
+    let tb_exc = if let Some(tb) = traceback {
+        // Get the exception type from the value
+        let exc_type = exc_value.get_type();
+        // TracebackException(exc_type, exc_value, exc_traceback, capture_locals=False)
+        tb_exc_class.call((exc_type, exc_value, tb), Some(&kwargs))?
+    } else {
+        // TracebackException.from_exception(exc, capture_locals=False)
+        tb_exc_class.call_method("from_exception", (exc_value,), Some(&kwargs))?
+    };
+
+    build_payload_from_traceback_exception(py, &tb_exc, Some(exc_value))
 }
 
 /// Build payload from a `TracebackException` object.
@@ -189,7 +201,6 @@ fn build_exception_payload(
 fn build_payload_from_traceback_exception(
     py: Python<'_>,
     tb_exc: &Bound<'_, PyAny>,
-    _traceback: Option<&Bound<'_, PyAny>>,
     exc_value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Option<ExceptionPayload>> {
     // Extract exception type name
@@ -383,7 +394,7 @@ fn extract_chained_exception(
 
     // chained is itself a TracebackException
     // We don't have direct access to the chained exception instance here
-    build_payload_from_traceback_exception(py, &chained, None, None)?
+    build_payload_from_traceback_exception(py, &chained, None)?
         .map(Ok)
         .transpose()
 }
@@ -404,9 +415,7 @@ fn extract_exception_group(
 
     for nested_tb_exc in exceptions_list.iter() {
         // We don't have direct access to the nested exception instances here
-        if let Some(payload) =
-            build_payload_from_traceback_exception(py, &nested_tb_exc, None, None)?
-        {
+        if let Some(payload) = build_payload_from_traceback_exception(py, &nested_tb_exc, None)? {
             result.push(payload);
         }
     }

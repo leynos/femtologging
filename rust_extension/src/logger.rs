@@ -66,8 +66,12 @@ pub struct QueuedRecord {
 
 /// Determine whether exc_info should trigger exception capture.
 ///
-/// Returns `true` if `exc_info` is truthy (True, an exception, or a non-None
-/// tuple). Returns `false` for False or None values.
+/// Returns `true` for any non-False, non-None value (including exception
+/// instances and 3-tuples). The actual type validation happens in
+/// [`capture_exception`], which will raise `TypeError` for invalid types.
+///
+/// Returns `false` for `False` or `None` values—these explicitly disable
+/// exception capture.
 #[cfg(feature = "python")]
 fn should_capture_exc_info(exc_info: &Bound<'_, PyAny>) -> PyResult<bool> {
     // Handle boolean False explicitly
@@ -78,7 +82,8 @@ fn should_capture_exc_info(exc_info: &Bound<'_, PyAny>) -> PyResult<bool> {
     if exc_info.is_none() {
         return Ok(false);
     }
-    // Any other value (exception instance, tuple) is truthy
+    // Any other value (exception instance, tuple, or invalid type) triggers
+    // capture attempt. Invalid types will fail in capture_exception.
     Ok(true)
 }
 

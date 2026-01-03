@@ -180,14 +180,20 @@ fn format_stack_frame(frame: &StackFrame) -> String {
     );
 
     if let Some(ref source) = frame.source_line {
-        let trimmed = source.trim();
-        if !trimmed.is_empty() {
-            output.push_str(&format!("    {}\n", trimmed));
+        let trimmed = source.trim_start();
+        let trimmed_end = trimmed.trim_end();
+        if !trimmed_end.is_empty() {
+            output.push_str(&format!("    {}\n", trimmed_end));
 
             // Add column indicators if available (Python 3.11+)
+            // Adjust for leading whitespace that was trimmed
             if let (Some(colno), Some(end_colno)) = (frame.colno, frame.end_colno) {
-                let col_start = colno.saturating_sub(1) as usize;
-                let col_end = end_colno.saturating_sub(1) as usize;
+                // Calculate how many leading chars were trimmed
+                let leading_trimmed = source.len() - trimmed.len();
+                // Adjust column positions (colno/end_colno are 1-indexed)
+                let col_start = (colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+                let col_end =
+                    (end_colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
                 let underline_len = col_end.saturating_sub(col_start).max(1);
                 output.push_str(&format!(
                     "    {}{}\n",

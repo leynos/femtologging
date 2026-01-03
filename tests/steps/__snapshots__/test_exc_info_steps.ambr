@@ -4,11 +4,11 @@
   test [ERROR] failed
   Traceback (most recent call last):
     File "<test>", line <N>, in _log_with_simple_exception
-      _raise_exception(exc_type, exc_message)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "<test>", line <N>, in _raise_exception
-      raise exc_type(message)
-         ^^^^^^^^^^^^^^^^^^^^^^^
+      _raise_dynamic_exception(exc_type, exc_message)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "<test>", line <N>, in _raise_dynamic_exception
+      raise exc_type(exc_message)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
   ValueError: bad input
   
   '''
