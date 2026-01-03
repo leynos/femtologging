@@ -380,3 +380,32 @@ def test_handle_record_includes_stack_info() -> None:
     assert "stack_info" in record
     assert "frames" in record["stack_info"]
     assert len(record["stack_info"]["frames"]) > 0
+
+
+def test_handle_record_includes_both_exc_and_stack_info() -> None:
+    """handle_record should include both exc_info and stack_info when present."""
+    logger = FemtoLogger("core")
+    handler = RecordCollectingHandler()
+    logger.add_handler(handler)
+
+    try:
+        _raise_exception(ValueError, "test error")
+    except ValueError:
+        logger.log("ERROR", "caught", exc_info=True, stack_info=True)
+
+    del logger
+
+    assert len(handler.records) == 1
+    record = handler.records[0]
+
+    # Verify exc_info is present
+    assert "exc_info" in record
+    assert record["exc_info"]["type_name"] == "ValueError"
+    assert record["exc_info"]["message"] == "test error"
+    assert "frames" in record["exc_info"]
+    assert len(record["exc_info"]["frames"]) > 0
+
+    # Verify stack_info is present
+    assert "stack_info" in record
+    assert "frames" in record["stack_info"]
+    assert len(record["stack_info"]["frames"]) > 0
