@@ -7,6 +7,36 @@ use pyo3::Python;
 use pyo3::types::{PyBool, PyTuple};
 use rstest::rstest;
 
+// --------------------------------
+// Test helpers
+// --------------------------------
+
+/// Create a Python exception instance by type name and message.
+fn create_py_exception<'py>(
+    py: Python<'py>,
+    exc_type: &str,
+    message: &str,
+) -> pyo3::Bound<'py, pyo3::PyAny> {
+    py.import("builtins")
+        .expect("builtins module should exist")
+        .getattr(exc_type)
+        .unwrap_or_else(|_| panic!("{exc_type} should exist"))
+        .call1((message,))
+        .unwrap_or_else(|_| panic!("{exc_type} constructor should succeed"))
+}
+
+/// Assert that output contains the base log message and all expected substrings.
+fn assert_output_contains(output: Option<String>, expected_substrings: &[&str]) {
+    assert!(output.is_some(), "Should produce output");
+    let text = output.expect("output should be Some");
+    for substring in expected_substrings {
+        assert!(
+            text.contains(substring),
+            "Output should contain '{substring}', got: {text}"
+        );
+    }
+}
+
 /// Test inputs for `should_capture_exc_info` parameterised testing.
 #[derive(Debug)]
 enum ExcInfoInput {
@@ -76,24 +106,12 @@ fn should_capture_exc_info_cases(
                 should_capture_exc_info(none.bind(py))
             }
             ExcInfoInput::ExceptionInstance => {
-                let exc = py
-                    .import("builtins")
-                    .expect("builtins module should exist")
-                    .getattr("ValueError")
-                    .expect("ValueError should exist")
-                    .call1(("test error",))
-                    .expect("ValueError constructor should succeed");
+                let exc = create_py_exception(py, "ValueError", "test error");
                 should_capture_exc_info(&exc)
             }
             ExcInfoInput::Tuple3 => {
-                let exc_type = py
-                    .import("builtins")
-                    .expect("builtins module should exist")
-                    .getattr("KeyError")
-                    .expect("KeyError should exist");
-                let exc_value = exc_type
-                    .call1(("key",))
-                    .expect("KeyError constructor should succeed");
+                let exc_value = create_py_exception(py, "KeyError", "key");
+                let exc_type = exc_value.get_type();
                 let exc_tb = py.None();
                 let tuple = PyTuple::new(
                     py,
@@ -202,13 +220,7 @@ fn py_log_with_stack_info_true() {
             .py_log(py, FemtoLevel::Info, "with stack", None, Some(true))
             .expect("py_log should not fail with stack_info=true");
 
-        assert!(result.is_some(), "Should produce output");
-        let output = result.expect("output should be Some");
-        assert!(
-            output.contains("test [INFO] with stack"),
-            "Should contain base message"
-        );
-        assert!(output.contains("Stack"), "Should contain stack trace");
+        assert_output_contains(result, &["test [INFO] with stack", "Stack"]);
     });
 }
 
@@ -216,32 +228,13 @@ fn py_log_with_stack_info_true() {
 fn py_log_with_exception_instance() {
     Python::with_gil(|py| {
         let logger = FemtoLogger::new("test".to_string());
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("test error",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_py_exception(py, "ValueError", "test error");
 
         let result = logger
             .py_log(py, FemtoLevel::Error, "caught", Some(&exc), None)
             .expect("py_log should not fail with exception instance");
 
-        assert!(result.is_some(), "Should produce output");
-        let output = result.expect("output should be Some");
-        assert!(
-            output.contains("test [ERROR] caught"),
-            "Should contain base message"
-        );
-        assert!(
-            output.contains("ValueError"),
-            "Should contain exception type"
-        );
-        assert!(
-            output.contains("test error"),
-            "Should contain exception message"
-        );
+        assert_output_contains(result, &["test [ERROR] caught", "ValueError", "test error"]);
     });
 }
 
@@ -249,32 +242,15 @@ fn py_log_with_exception_instance() {
 fn py_log_with_exc_info_and_stack_info() {
     Python::with_gil(|py| {
         let logger = FemtoLogger::new("test".to_string());
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("combined test",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_py_exception(py, "ValueError", "combined test");
 
         let result = logger
             .py_log(py, FemtoLevel::Error, "both", Some(&exc), Some(true))
             .expect("py_log should not fail with both exc_info and stack_info");
 
-        assert!(result.is_some(), "Should produce output");
-        let output = result.expect("output should be Some");
-        assert!(
-            output.contains("test [ERROR] both"),
-            "Should contain base message"
+        assert_output_contains(
+            result,
+            &["test [ERROR] both", "ValueError", "combined test", "Stack"],
         );
-        assert!(
-            output.contains("ValueError"),
-            "Should contain exception type"
-        );
-        assert!(
-            output.contains("combined test"),
-            "Should contain exception message"
-        );
-        assert!(output.contains("Stack"), "Should contain stack trace");
     });
 }
