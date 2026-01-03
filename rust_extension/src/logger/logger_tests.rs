@@ -178,14 +178,17 @@ fn drop_counter_increments_on_queue_overflow() {
     };
 
     struct BlockingHandler {
-        barrier: Arc<Barrier>,
+        started: Arc<Barrier>,
+        release: Arc<Barrier>,
         waited: AtomicBool,
     }
 
     impl FemtoHandlerTrait for BlockingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
             if !self.waited.swap(true, Ordering::SeqCst) {
-                self.barrier.wait();
+                // Signal that we've started processing, then block until released
+                self.started.wait();
+                self.release.wait();
             }
             Ok(())
         }
@@ -195,20 +198,29 @@ fn drop_counter_increments_on_queue_overflow() {
         }
     }
 
-    let barrier = Arc::new(Barrier::new(2));
+    let started = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
     let handler = Arc::new(BlockingHandler {
-        barrier: Arc::clone(&barrier),
+        started: Arc::clone(&started),
+        release: Arc::clone(&release),
         waited: AtomicBool::new(false),
     }) as Arc<dyn FemtoHandlerTrait>;
     let logger = FemtoLogger::new("drop".to_string());
     logger.add_handler(handler);
     logger.log(FemtoLevel::Info, "block");
+
+    // Wait for worker to confirm it's processing (prevents race condition)
+    started.wait();
+
+    // Now safe to fill the queue - worker is blocked on release barrier
     for _ in 0..super::DEFAULT_CHANNEL_CAPACITY {
         logger.log(FemtoLevel::Info, "fill");
     }
     logger.log(FemtoLevel::Info, "overflow");
     assert_eq!(logger.get_dropped(), 1);
-    barrier.wait();
+
+    // Release the worker to allow cleanup
+    release.wait();
 }
 
 // Python integration tests are in a separate module to respect the 400-line limit.
