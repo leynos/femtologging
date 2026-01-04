@@ -166,7 +166,7 @@ def _raise_exception(exc_type: type[BaseException] = ValueError, msg: str = "") 
     """
     if msg:
         raise exc_type(msg)
-    raise exc_type
+    raise exc_type()
 
 
 def test_log_with_exc_info_true_captures_exception() -> None:

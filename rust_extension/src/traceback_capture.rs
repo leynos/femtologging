@@ -317,13 +317,10 @@ fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
 
 /// Extract exception notes from the exception instance (__notes__).
 fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
-    let notes_attr = match exc.getattr("__notes__") {
-        Ok(n) if !n.is_none() => n,
-        _ => return Ok(Vec::new()),
+    let Some(notes_list): Option<Bound<'_, PyList>> = get_optional_attr(exc, "__notes__") else {
+        return Ok(Vec::new());
     };
-
-    let notes_list = notes_attr.downcast::<PyList>()?;
-    iter_pylist_str(notes_list)
+    iter_pylist_str(&notes_list)
 }
 
 /// Extract stack frames from a TracebackException's stack attribute.

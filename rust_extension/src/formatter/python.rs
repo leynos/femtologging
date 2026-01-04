@@ -55,10 +55,11 @@ impl PythonFormatter {
         Python::with_gil(|py| {
             let payload = record_to_dict(py, record)?;
             let callable = {
-                let guard = self
-                    .callable
-                    .lock()
-                    .expect("Python formatter mutex must not be poisoned");
+                let guard = self.callable.lock().map_err(|_| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "Python formatter mutex poisoned by prior panic",
+                    )
+                })?;
                 guard.clone_ref(py)
             };
             let result = callable.call1(py, (payload,))?;

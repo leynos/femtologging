@@ -27,8 +27,7 @@ fn create_py_exception<'py>(
 
 /// Assert that output contains the base log message and all expected substrings.
 fn assert_output_contains(output: Option<String>, expected_substrings: &[&str]) {
-    assert!(output.is_some(), "Should produce output");
-    let text = output.expect("output should be Some");
+    let text = output.expect("Should produce output");
     for substring in expected_substrings {
         assert!(
             text.contains(substring),

@@ -13,6 +13,14 @@ use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
 use log::warn;
 
+/// Map a Python error to a [`HandlerError`], logging a warning.
+fn map_py_err(py: Python<'_>, err: PyErr, method: &str) -> HandlerError {
+    let message = err.to_string();
+    err.print(py);
+    warn!("PyHandler: error calling {method}: {message}");
+    HandlerError::Message(format!("python handler raised an exception: {message}"))
+}
+
 /// Validate that a Python object has a callable `handle` method.
 pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
     let py = obj.py();
@@ -83,12 +91,7 @@ impl PyHandler {
         self.obj
             .call_method1(py, "handle_record", (record_dict,))
             .map(|_| ())
-            .map_err(|err| {
-                let message = err.to_string();
-                err.print(py);
-                warn!("PyHandler: error calling handle_record");
-                HandlerError::Message(format!("python handler raised an exception: {message}"))
-            })
+            .map_err(|err| map_py_err(py, err, "handle_record"))
     }
 
     /// Call the legacy 3-argument `handle` method.
@@ -104,12 +107,7 @@ impl PyHandler {
                 (&record.logger, record.level.as_str(), &record.message),
             )
             .map(|_| ())
-            .map_err(|err| {
-                let message = err.to_string();
-                err.print(py);
-                warn!("PyHandler: error calling handle");
-                HandlerError::Message(format!("python handler raised an exception: {message}"))
-            })
+            .map_err(|err| map_py_err(py, err, "handle"))
     }
 }
 
@@ -146,21 +144,14 @@ impl PyHandler {
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         Python::with_gil(|py| {
-            match self.obj.call_method1(
-                py,
-                "handle",
-                (&record.logger, record.level.as_str(), &record.message),
-            ) {
-                Ok(_) => Ok(()),
-                Err(err) => {
-                    let message = err.to_string();
-                    err.print(py);
-                    warn!("PyHandler: error calling handle");
-                    Err(HandlerError::Message(format!(
-                        "python handler raised an exception: {message}"
-                    )))
-                }
-            }
+            self.obj
+                .call_method1(
+                    py,
+                    "handle",
+                    (&record.logger, record.level.as_str(), &record.message),
+                )
+                .map(|_| ())
+                .map_err(|err| map_py_err(py, err, "handle"))
         })
     }
 
