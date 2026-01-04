@@ -82,11 +82,8 @@ impl PyHandler {
         py: Python<'_>,
         record: &FemtoLogRecord,
     ) -> Result<(), HandlerError> {
-        let record_dict = record_to_dict(py, record).map_err(|err| {
-            let message = err.to_string();
-            err.print(py);
-            HandlerError::Message(format!("failed to convert record to dict: {message}"))
-        })?;
+        let record_dict =
+            record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
 
         self.obj
             .call_method1(py, "handle_record", (record_dict,))

@@ -54,6 +54,17 @@ enum ExpectedCapture {
     NoCapture,
 }
 
+/// Test inputs for py_log exc_info parameter tests.
+#[derive(Debug)]
+enum PyLogExcInfoInput {
+    BoolFalse,
+    PythonNone,
+    ExceptionInstance {
+        exc_type: &'static str,
+        exc_msg: &'static str,
+    },
+}
+
 #[rstest]
 #[case(
     ExcInfoInput::True,
@@ -164,39 +175,64 @@ fn py_log_filtered_by_level() {
     });
 }
 
-#[test]
-fn py_log_with_exc_info_false() {
+#[rstest]
+#[case::exc_info_false(
+    PyLogExcInfoInput::BoolFalse,
+    "no traceback",
+    None,
+    "test [ERROR] no traceback"
+)]
+#[case::exc_info_none(
+    PyLogExcInfoInput::PythonNone,
+    "no traceback",
+    None,
+    "test [ERROR] no traceback"
+)]
+#[case::exception_instance(
+    PyLogExcInfoInput::ExceptionInstance { exc_type: "ValueError", exc_msg: "test error" },
+    "caught",
+    None,
+    "test [ERROR] caught\nValueError\ntest error"
+)]
+#[case::exc_info_and_stack_info(
+    PyLogExcInfoInput::ExceptionInstance { exc_type: "ValueError", exc_msg: "combined test" },
+    "both",
+    Some(true),
+    "test [ERROR] both\nValueError\ncombined test\nStack"
+)]
+fn py_log_exc_info_variation_cases(
+    #[case] input: PyLogExcInfoInput,
+    #[case] message: &str,
+    #[case] stack_info: Option<bool>,
+    #[case] expected: &str,
+) {
     Python::with_gil(|py| {
         let logger = FemtoLogger::new("test".to_string());
-        let false_val = PyBool::new(py, false);
-        let result = logger
-            .py_log(
-                py,
-                FemtoLevel::Error,
-                "no traceback",
-                Some(false_val.as_any()),
-                None,
-            )
-            .expect("py_log should not fail with exc_info=False");
-        assert_eq!(result, Some("test [ERROR] no traceback".to_string()));
-    });
-}
+        let exc_info: Option<pyo3::Bound<'_, pyo3::PyAny>> = match &input {
+            PyLogExcInfoInput::BoolFalse => Some(PyBool::new(py, false).to_owned().into_any()),
+            PyLogExcInfoInput::PythonNone => Some(py.None().into_bound(py)),
+            PyLogExcInfoInput::ExceptionInstance { exc_type, exc_msg } => {
+                Some(create_py_exception(py, exc_type, exc_msg))
+            }
+        };
 
-#[test]
-fn py_log_with_exc_info_none() {
-    Python::with_gil(|py| {
-        let logger = FemtoLogger::new("test".to_string());
-        let none = py.None();
         let result = logger
             .py_log(
                 py,
                 FemtoLevel::Error,
-                "no traceback",
-                Some(none.bind(py)),
-                None,
+                message,
+                exc_info.as_ref(),
+                stack_info,
             )
-            .expect("py_log should not fail with exc_info=None");
-        assert_eq!(result, Some("test [ERROR] no traceback".to_string()));
+            .expect("py_log should succeed");
+
+        // expected contains newline-separated substrings to check
+        let expected_parts: Vec<&str> = expected.split('\n').collect();
+        if expected_parts.len() == 1 {
+            assert_eq!(result, Some(expected.to_string()));
+        } else {
+            assert_output_contains(result, &expected_parts);
+        }
     });
 }
 
@@ -220,36 +256,5 @@ fn py_log_with_stack_info_true() {
             .expect("py_log should not fail with stack_info=true");
 
         assert_output_contains(result, &["test [INFO] with stack", "Stack"]);
-    });
-}
-
-#[test]
-fn py_log_with_exception_instance() {
-    Python::with_gil(|py| {
-        let logger = FemtoLogger::new("test".to_string());
-        let exc = create_py_exception(py, "ValueError", "test error");
-
-        let result = logger
-            .py_log(py, FemtoLevel::Error, "caught", Some(&exc), None)
-            .expect("py_log should not fail with exception instance");
-
-        assert_output_contains(result, &["test [ERROR] caught", "ValueError", "test error"]);
-    });
-}
-
-#[test]
-fn py_log_with_exc_info_and_stack_info() {
-    Python::with_gil(|py| {
-        let logger = FemtoLogger::new("test".to_string());
-        let exc = create_py_exception(py, "ValueError", "combined test");
-
-        let result = logger
-            .py_log(py, FemtoLevel::Error, "both", Some(&exc), Some(true))
-            .expect("py_log should not fail with both exc_info and stack_info");
-
-        assert_output_contains(
-            result,
-            &["test [ERROR] both", "ValueError", "combined test", "Stack"],
-        );
     });
 }
