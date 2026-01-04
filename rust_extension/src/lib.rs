@@ -34,6 +34,10 @@ mod socket_handler;
 mod stream_handler;
 #[cfg(feature = "python")]
 pub(crate) mod traceback_capture;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_tests;
+#[cfg(feature = "python")]
+pub(crate) mod traceback_frames;
 
 /// Re-export configuration builders for external consumers.
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
