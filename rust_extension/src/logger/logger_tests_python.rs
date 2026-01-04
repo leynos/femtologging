@@ -20,9 +20,9 @@ fn create_py_exception<'py>(
     py.import("builtins")
         .expect("builtins module should exist")
         .getattr(exc_type)
-        .unwrap_or_else(|_| panic!("{exc_type} should exist"))
+        .expect("exception type should exist in builtins")
         .call1((message,))
-        .unwrap_or_else(|_| panic!("{exc_type} constructor should succeed"))
+        .expect("exception constructor should succeed")
 }
 
 /// Assert that output contains the base log message and all expected substrings.

@@ -79,6 +79,9 @@ fn frame_summary_to_stack_frame(frame: &Bound<'_, PyAny>) -> PyResult<StackFrame
 }
 
 /// Extract the locals dictionary from a frame, converting values to repr strings.
+///
+/// Skips individual entries that fail to extract rather than discarding the
+/// entire dictionary, ensuring partial data is preserved when possible.
 fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<String, String>> {
     let locals_attr = frame.getattr("locals").ok()?;
     if locals_attr.is_none() {
@@ -87,8 +90,12 @@ fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<String, Stri
     let dict = locals_attr.downcast::<PyDict>().ok()?;
     let mut map = BTreeMap::new();
     for (key, value) in dict.iter() {
-        let k: String = key.extract().ok()?;
-        let v: String = value.repr().ok()?.extract().ok()?;
+        let Some(k) = key.extract::<String>().ok() else {
+            continue;
+        };
+        let Some(v) = value.repr().ok().and_then(|r| r.extract::<String>().ok()) else {
+            continue;
+        };
         map.insert(k, v);
     }
     if map.is_empty() { None } else { Some(map) }

@@ -22,6 +22,26 @@ fn map_py_err(py: Python<'_>, err: PyErr, method: &str) -> HandlerError {
 }
 
 /// Validate that a Python object has a callable `handle` method.
+///
+/// This function checks whether the provided Python object is suitable for use
+/// as a handler by verifying it has a `handle` attribute that is callable.
+///
+/// # Parameters
+///
+/// * `obj` - A reference to the Python object to validate.
+///
+/// # Returns
+///
+/// * `Ok(())` if the object has a callable `handle` method.
+/// * `Err(PyTypeError)` if the `handle` attribute is missing or not callable.
+///
+/// # Errors
+///
+/// Returns a `PyTypeError` in the following cases:
+/// - The object has no `handle` attribute (message: "handler must implement a
+///   callable 'handle' method")
+/// - The `handle` attribute exists but is not callable (message includes the
+///   attribute type and handler representation)
 pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
     let py = obj.py();
     let handle = obj.getattr("handle").map_err(|err| {
@@ -52,8 +72,23 @@ pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
 }
 
 /// Wrapper allowing Python handler objects to be used by the logger.
+///
+/// `PyHandler` bridges the Rust logging infrastructure with Python handler
+/// objects by implementing [`FemtoHandlerTrait`]. It supports two handler
+/// interfaces:
+///
+/// 1. **Structured interface** (`handle_record`): If the Python handler has a
+///    callable `handle_record` method, the full log record is passed as a
+///    dictionary, providing access to all structured fields.
+///
+/// 2. **Legacy interface** (`handle`): The handler's `handle` method is called
+///    with three positional arguments: logger name, level, and message.
+///
+/// The structured interface is preferred when available, falling back to the
+/// legacy interface otherwise.
 #[cfg(feature = "python")]
 pub struct PyHandler {
+    /// The underlying Python handler object.
     pub obj: Py<PyAny>,
     /// Whether this handler has a `handle_record` method for structured payloads.
     has_handle_record: bool,
@@ -63,8 +98,20 @@ pub struct PyHandler {
 impl PyHandler {
     /// Create a new `PyHandler` from a Python object.
     ///
-    /// Checks whether the handler has a callable `handle_record` method for
-    /// structured payload access.
+    /// Inspects the Python object to determine whether it has a callable
+    /// `handle_record` method. If present, the structured interface will be
+    /// used when handling log records; otherwise, the legacy `handle` method
+    /// will be called.
+    ///
+    /// # Parameters
+    ///
+    /// * `py` - The Python interpreter token.
+    /// * `obj` - The Python handler object to wrap. Should have at least a
+    ///   callable `handle` method (validated separately via [`validate_handler`]).
+    ///
+    /// # Returns
+    ///
+    /// A new `PyHandler` instance wrapping the provided object.
     pub fn new(py: Python<'_>, obj: Py<PyAny>) -> Self {
         let has_handle_record = obj
             .getattr(py, "handle_record")
