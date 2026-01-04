@@ -110,6 +110,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         use pyo3::Python;
+        use serial_test::serial;
 
         use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
         use crate::handler::{FemtoHandlerTrait, HandlerError};
@@ -136,6 +137,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn flush_all_handlers_flushes_loggers_with_handlers() {
             Python::with_gil(|py| {
                 reset_manager();
@@ -161,6 +163,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn flush_all_handlers_invokes_flush_once_per_registered_logger() {
             Python::with_gil(|py| {
                 reset_manager();
