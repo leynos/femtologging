@@ -54,7 +54,6 @@ fn assert_frame_extraction_fails(dict: &Bound<'_, PyDict>, expected_msg: &str) {
 ///
 /// Groups related frame attributes and provides chainable setters for optional
 /// fields, reducing parameter count and improving readability at call sites.
-#[derive(Clone)]
 struct MockFrameBuilder {
     filename: String,
     lineno: u32,
