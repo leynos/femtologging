@@ -50,68 +50,121 @@ fn assert_frame_extraction_fails(dict: &Bound<'_, PyDict>, expected_msg: &str) {
     assert!(result.is_err(), "{}", expected_msg);
 }
 
-/// Create a mock FrameSummary-like object with the given attributes.
-fn create_mock_frame<'py>(
-    py: Python<'py>,
-    filename: &str,
+/// Builder for creating mock FrameSummary-like objects in tests.
+///
+/// Groups related frame attributes and provides chainable setters for optional
+/// fields, reducing parameter count and improving readability at call sites.
+#[derive(Clone)]
+struct MockFrameBuilder {
+    filename: String,
     lineno: u32,
-    name: &str,
+    name: String,
     end_lineno: Option<u32>,
     colno: Option<u32>,
     end_colno: Option<u32>,
-    line: Option<&str>,
-    locals: Option<&[(&str, &str)]>,
-) -> Bound<'py, PyAny> {
-    let dict = PyDict::new(py);
-    dict.set_item("filename", filename)
-        .expect("set filename should succeed");
-    dict.set_item("lineno", lineno)
-        .expect("set lineno should succeed");
-    dict.set_item("name", name)
-        .expect("set name should succeed");
+    line: Option<String>,
+    locals: Option<Vec<(String, String)>>,
+}
 
-    if let Some(v) = end_lineno {
-        dict.set_item("end_lineno", v)
-            .expect("set end_lineno should succeed");
-    }
-    if let Some(v) = colno {
-        dict.set_item("colno", v).expect("set colno should succeed");
-    }
-    if let Some(v) = end_colno {
-        dict.set_item("end_colno", v)
-            .expect("set end_colno should succeed");
-    }
-    if let Some(v) = line {
-        dict.set_item("line", v).expect("set line should succeed");
-    }
-    if let Some(entries) = locals {
-        let locals_dict = PyDict::new(py);
-        for (k, v) in entries {
-            locals_dict
-                .set_item(*k, *v)
-                .expect("set local entry should succeed");
+impl MockFrameBuilder {
+    /// Create a new builder with required fields.
+    fn new(filename: impl Into<String>, lineno: u32, name: impl Into<String>) -> Self {
+        Self {
+            filename: filename.into(),
+            lineno,
+            name: name.into(),
+            end_lineno: None,
+            colno: None,
+            end_colno: None,
+            line: None,
+            locals: None,
         }
-        dict.set_item("locals", locals_dict)
-            .expect("set locals should succeed");
     }
 
-    create_simple_namespace(py, &dict)
+    /// Set the end line number.
+    fn end_lineno(mut self, value: u32) -> Self {
+        self.end_lineno = Some(value);
+        self
+    }
+
+    /// Set the column offset.
+    fn colno(mut self, value: u32) -> Self {
+        self.colno = Some(value);
+        self
+    }
+
+    /// Set the end column offset.
+    fn end_colno(mut self, value: u32) -> Self {
+        self.end_colno = Some(value);
+        self
+    }
+
+    /// Set the source line.
+    fn line(mut self, value: impl Into<String>) -> Self {
+        self.line = Some(value.into());
+        self
+    }
+
+    /// Set the locals dictionary entries.
+    fn locals(mut self, entries: &[(&str, &str)]) -> Self {
+        self.locals = Some(
+            entries
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+        );
+        self
+    }
+
+    /// Build the mock frame as a Python SimpleNamespace object.
+    fn build<'py>(self, py: Python<'py>) -> Bound<'py, PyAny> {
+        let dict = PyDict::new(py);
+        dict.set_item("filename", &self.filename)
+            .expect("set filename should succeed");
+        dict.set_item("lineno", self.lineno)
+            .expect("set lineno should succeed");
+        dict.set_item("name", &self.name)
+            .expect("set name should succeed");
+
+        if let Some(v) = self.end_lineno {
+            dict.set_item("end_lineno", v)
+                .expect("set end_lineno should succeed");
+        }
+        if let Some(v) = self.colno {
+            dict.set_item("colno", v).expect("set colno should succeed");
+        }
+        if let Some(v) = self.end_colno {
+            dict.set_item("end_colno", v)
+                .expect("set end_colno should succeed");
+        }
+        if let Some(v) = &self.line {
+            dict.set_item("line", v).expect("set line should succeed");
+        }
+        if let Some(entries) = &self.locals {
+            let locals_dict = PyDict::new(py);
+            for (k, v) in entries {
+                locals_dict
+                    .set_item(k, v)
+                    .expect("set local entry should succeed");
+            }
+            dict.set_item("locals", locals_dict)
+                .expect("set locals should succeed");
+        }
+
+        create_simple_namespace(py, &dict)
+    }
 }
 
 #[test]
 fn frame_with_all_optional_fields_present() {
     Python::with_gil(|py| {
-        let frame = create_mock_frame(
-            py,
-            "test.py",
-            42,
-            "test_function",
-            Some(45),
-            Some(4),
-            Some(20),
-            Some("    result = compute(x)"),
-            Some(&[("x", "10"), ("result", "None")]),
-        );
+        let frame = MockFrameBuilder::new("test.py", 42, "test_function")
+            .end_lineno(45)
+            .colno(4)
+            .end_colno(20)
+            .line("    result = compute(x)")
+            .locals(&[("x", "10"), ("result", "None")])
+            .build(py);
 
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
         let frames =
@@ -135,30 +188,67 @@ fn frame_with_all_optional_fields_present() {
     });
 }
 
+/// Configuration for optional frame fields in parameterized tests.
+#[derive(Debug, Clone, Default)]
+struct OptionalFrameFields {
+    end_lineno: Option<u32>,
+    colno: Option<u32>,
+    end_colno: Option<u32>,
+    line: Option<&'static str>,
+}
+
+impl OptionalFrameFields {
+    const fn new() -> Self {
+        Self {
+            end_lineno: None,
+            colno: None,
+            end_colno: None,
+            line: None,
+        }
+    }
+
+    const fn with_end_lineno(mut self, v: u32) -> Self {
+        self.end_lineno = Some(v);
+        self
+    }
+
+    const fn with_colno(mut self, v: u32) -> Self {
+        self.colno = Some(v);
+        self
+    }
+
+    const fn with_line(mut self, v: &'static str) -> Self {
+        self.line = Some(v);
+        self
+    }
+
+    /// Apply these optional fields to a MockFrameBuilder.
+    fn apply(self, mut builder: MockFrameBuilder) -> MockFrameBuilder {
+        if let Some(v) = self.end_lineno {
+            builder = builder.end_lineno(v);
+        }
+        if let Some(v) = self.colno {
+            builder = builder.colno(v);
+        }
+        if let Some(v) = self.end_colno {
+            builder = builder.end_colno(v);
+        }
+        if let Some(v) = self.line {
+            builder = builder.line(v);
+        }
+        builder
+    }
+}
+
 #[rstest]
-#[case::no_optional_fields(None, None, None, None, None)]
-#[case::only_end_lineno(Some(50), None, None, None, None)]
-#[case::only_colno(None, Some(8), None, None, None)]
-#[case::only_source_line(None, None, None, Some("x = 1"), None)]
-fn frame_with_missing_optional_fields(
-    #[case] end_lineno: Option<u32>,
-    #[case] colno: Option<u32>,
-    #[case] end_colno: Option<u32>,
-    #[case] line: Option<&str>,
-    #[case] locals: Option<&[(&str, &str)]>,
-) {
+#[case::no_optional_fields(OptionalFrameFields::new())]
+#[case::only_end_lineno(OptionalFrameFields::new().with_end_lineno(50))]
+#[case::only_colno(OptionalFrameFields::new().with_colno(8))]
+#[case::only_source_line(OptionalFrameFields::new().with_line("x = 1"))]
+fn frame_with_missing_optional_fields(#[case] opts: OptionalFrameFields) {
     Python::with_gil(|py| {
-        let frame = create_mock_frame(
-            py,
-            "module.py",
-            10,
-            "my_func",
-            end_lineno,
-            colno,
-            end_colno,
-            line,
-            locals,
-        );
+        let builder = MockFrameBuilder::new("module.py", 10, "my_func");
+        let frame = opts.clone().apply(builder).build(py);
 
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
         let frames =
@@ -169,10 +259,10 @@ fn frame_with_missing_optional_fields(
         assert_eq!(result.filename, "module.py");
         assert_eq!(result.lineno, 10);
         assert_eq!(result.function, "my_func");
-        assert_eq!(result.end_lineno, end_lineno);
-        assert_eq!(result.colno, colno);
-        assert_eq!(result.end_colno, end_colno);
-        assert_eq!(result.source_line, line.map(String::from));
+        assert_eq!(result.end_lineno, opts.end_lineno);
+        assert_eq!(result.colno, opts.colno);
+        assert_eq!(result.end_colno, opts.end_colno);
+        assert_eq!(result.source_line, opts.line.map(String::from));
         assert_eq!(result.locals, None);
     });
 }
@@ -301,8 +391,8 @@ fn extract_locals_handles_mixed_entries(
 #[test]
 fn extract_frames_from_stack_summary_converts_list() {
     Python::with_gil(|py| {
-        let frame1 = create_mock_frame(py, "a.py", 1, "func_a", None, None, None, None, None);
-        let frame2 = create_mock_frame(py, "b.py", 2, "func_b", None, None, None, None, None);
+        let frame1 = MockFrameBuilder::new("a.py", 1, "func_a").build(py);
+        let frame2 = MockFrameBuilder::new("b.py", 2, "func_b").build(py);
 
         let list = PyList::new(py, &[frame1, frame2]).expect("list creation should succeed");
 
