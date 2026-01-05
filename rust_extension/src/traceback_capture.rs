@@ -91,7 +91,7 @@ pub fn capture_stack(py: Python<'_>) -> PyResult<StackTracePayload> {
     let traceback = py.import("traceback")?;
     // extract_stack() returns a StackSummary (list of FrameSummary)
     let stack_summary = traceback.call_method0("extract_stack")?;
-    let frames = extract_frames_from_stack_summary(py, &stack_summary)?;
+    let frames = extract_frames_from_stack_summary(&stack_summary)?;
 
     Ok(StackTracePayload {
         schema_version: EXCEPTION_SCHEMA_VERSION,
@@ -216,7 +216,7 @@ fn build_payload_from_traceback_exception(
     };
 
     // Extract stack frames
-    let frames = extract_frames_from_tb_exception(py, tb_exc)?;
+    let frames = extract_frames_from_tb_exception(tb_exc)?;
 
     // Handle exception chaining
     let cause = extract_chained_exception(py, tb_exc, "__cause__")?;

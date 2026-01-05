@@ -27,18 +27,32 @@ where
         .and_then(|v| v.extract().ok())
 }
 
-/// Extract stack frames from a TracebackException's stack attribute.
+/// Extract stack frames from a `TracebackException`'s `stack` attribute.
+///
+/// Retrieves the `stack` attribute from the provided `TracebackException` and
+/// delegates to [`extract_frames_from_stack_summary`] for conversion.
+///
+/// # Errors
+///
+/// Returns an error in the following cases:
+/// - `PyAttributeError` if `tb_exc` lacks a `stack` attribute
+/// - `PyDowncastError` or `PyTypeError` if the `stack` cannot be converted to a
+///   list of `FrameSummary` objects (propagated from `extract_frames_from_stack_summary`)
+/// - Any extraction error from individual frame conversion
 pub(crate) fn extract_frames_from_tb_exception(
-    py: Python<'_>,
     tb_exc: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<StackFrame>> {
     let stack = tb_exc.getattr("stack")?;
-    extract_frames_from_stack_summary(py, &stack)
+    extract_frames_from_stack_summary(&stack)
 }
 
-/// Extract stack frames from a StackSummary (list of FrameSummary).
+/// Extract stack frames from a `StackSummary` (list of `FrameSummary`).
+///
+/// # Errors
+///
+/// Returns an error if `stack_summary` cannot be downcast to a list or if any
+/// individual frame fails to convert (e.g., missing required attributes).
 pub(crate) fn extract_frames_from_stack_summary(
-    _py: Python<'_>,
     stack_summary: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<StackFrame>> {
     let list = stack_summary.downcast::<PyList>()?;
@@ -82,7 +96,7 @@ fn frame_summary_to_stack_frame(frame: &Bound<'_, PyAny>) -> PyResult<StackFrame
 ///
 /// Skips individual entries that fail to extract rather than discarding the
 /// entire dictionary, ensuring partial data is preserved when possible.
-fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<String, String>> {
+pub(crate) fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<String, String>> {
     let locals_attr = frame.getattr("locals").ok()?;
     if locals_attr.is_none() {
         return None;
