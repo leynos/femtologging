@@ -236,11 +236,13 @@ fn frame_with_missing_optional_fields(
 enum MissingField {
     Filename,
     Lineno,
+    Name,
 }
 
 #[rstest]
 #[case::missing_filename(MissingField::Filename, "should fail when filename is missing")]
 #[case::missing_lineno(MissingField::Lineno, "should fail when lineno is missing")]
+#[case::missing_name(MissingField::Name, "should fail when name is missing")]
 fn frame_missing_required_field_returns_error(
     #[case] missing: MissingField,
     #[case] expected_msg: &str,
@@ -251,14 +253,22 @@ fn frame_missing_required_field_returns_error(
             MissingField::Filename => {
                 dict.set_item("lineno", 1)
                     .expect("set lineno should succeed");
+                dict.set_item("name", "func")
+                    .expect("set name should succeed");
             }
             MissingField::Lineno => {
                 dict.set_item("filename", "test.py")
                     .expect("set filename should succeed");
+                dict.set_item("name", "func")
+                    .expect("set name should succeed");
+            }
+            MissingField::Name => {
+                dict.set_item("filename", "test.py")
+                    .expect("set filename should succeed");
+                dict.set_item("lineno", 1)
+                    .expect("set lineno should succeed");
             }
         }
-        dict.set_item("name", "func")
-            .expect("set name should succeed");
 
         assert_frame_extraction_fails(&dict, expected_msg);
     });
