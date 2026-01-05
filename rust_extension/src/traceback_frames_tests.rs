@@ -188,67 +188,32 @@ fn frame_with_all_optional_fields_present() {
     });
 }
 
-/// Configuration for optional frame fields in parameterized tests.
-#[derive(Debug, Clone, Default)]
-struct OptionalFrameFields {
-    end_lineno: Option<u32>,
-    colno: Option<u32>,
-    end_colno: Option<u32>,
-    line: Option<&'static str>,
-}
-
-impl OptionalFrameFields {
-    const fn new() -> Self {
-        Self {
-            end_lineno: None,
-            colno: None,
-            end_colno: None,
-            line: None,
-        }
-    }
-
-    const fn with_end_lineno(mut self, v: u32) -> Self {
-        self.end_lineno = Some(v);
-        self
-    }
-
-    const fn with_colno(mut self, v: u32) -> Self {
-        self.colno = Some(v);
-        self
-    }
-
-    const fn with_line(mut self, v: &'static str) -> Self {
-        self.line = Some(v);
-        self
-    }
-
-    /// Apply these optional fields to a MockFrameBuilder.
-    fn apply(self, mut builder: MockFrameBuilder) -> MockFrameBuilder {
-        if let Some(v) = self.end_lineno {
+#[rstest]
+#[case::no_optional_fields(None, None, None, None)]
+#[case::only_end_lineno(Some(50), None, None, None)]
+#[case::only_colno(None, Some(8), None, None)]
+#[case::only_source_line(None, None, None, Some("x = 1"))]
+fn frame_with_missing_optional_fields(
+    #[case] end_lineno: Option<u32>,
+    #[case] colno: Option<u32>,
+    #[case] end_colno: Option<u32>,
+    #[case] line: Option<&str>,
+) {
+    Python::with_gil(|py| {
+        let mut builder = MockFrameBuilder::new("module.py", 10, "my_func");
+        if let Some(v) = end_lineno {
             builder = builder.end_lineno(v);
         }
-        if let Some(v) = self.colno {
+        if let Some(v) = colno {
             builder = builder.colno(v);
         }
-        if let Some(v) = self.end_colno {
+        if let Some(v) = end_colno {
             builder = builder.end_colno(v);
         }
-        if let Some(v) = self.line {
+        if let Some(v) = line {
             builder = builder.line(v);
         }
-        builder
-    }
-}
-
-#[rstest]
-#[case::no_optional_fields(OptionalFrameFields::new())]
-#[case::only_end_lineno(OptionalFrameFields::new().with_end_lineno(50))]
-#[case::only_colno(OptionalFrameFields::new().with_colno(8))]
-#[case::only_source_line(OptionalFrameFields::new().with_line("x = 1"))]
-fn frame_with_missing_optional_fields(#[case] opts: OptionalFrameFields) {
-    Python::with_gil(|py| {
-        let builder = MockFrameBuilder::new("module.py", 10, "my_func");
-        let frame = opts.clone().apply(builder).build(py);
+        let frame = builder.build(py);
 
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
         let frames =
@@ -259,10 +224,10 @@ fn frame_with_missing_optional_fields(#[case] opts: OptionalFrameFields) {
         assert_eq!(result.filename, "module.py");
         assert_eq!(result.lineno, 10);
         assert_eq!(result.function, "my_func");
-        assert_eq!(result.end_lineno, opts.end_lineno);
-        assert_eq!(result.colno, opts.colno);
-        assert_eq!(result.end_colno, opts.end_colno);
-        assert_eq!(result.source_line, opts.line.map(String::from));
+        assert_eq!(result.end_lineno, end_lineno);
+        assert_eq!(result.colno, colno);
+        assert_eq!(result.end_colno, end_colno);
+        assert_eq!(result.source_line, line.map(String::from));
         assert_eq!(result.locals, None);
     });
 }
