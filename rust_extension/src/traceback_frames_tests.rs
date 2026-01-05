@@ -225,46 +225,76 @@ fn frame_with_wrong_type_lineno_returns_error() {
     });
 }
 
-#[test]
-fn extract_locals_skips_failed_entries() {
-    Python::with_gil(|py| {
-        // Create a dict with mixed valid and invalid entries
-        let locals_dict = PyDict::new(py);
-        locals_dict
-            .set_item("valid_key", "valid_value")
-            .expect("set valid entry should succeed");
-        // Add an entry with a non-string key (integer)
-        locals_dict
-            .set_item(123, "int_key_value")
-            .expect("set int key entry should succeed");
-
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
-
-        let result = extract_locals_dict(&frame);
-        let locals = result.expect("should return partial locals");
-        assert_eq!(locals.len(), 1, "should have one valid entry");
-        assert_eq!(locals.get("valid_key"), Some(&"'valid_value'".to_string()));
-    });
+/// Key descriptor for parameterized locals extraction tests.
+/// Keys starting with digits are parsed as integers; others are strings.
+#[derive(Debug, Clone)]
+struct LocalEntry {
+    key: &'static str,
+    value: &'static str,
 }
 
-#[test]
-fn extract_locals_returns_none_when_all_fail() {
+impl LocalEntry {
+    const fn new(key: &'static str, value: &'static str) -> Self {
+        Self { key, value }
+    }
+
+    /// Returns true if the key should be inserted as an integer.
+    fn is_int_key(&self) -> bool {
+        self.key.chars().next().is_some_and(|c| c.is_ascii_digit())
+    }
+}
+
+#[rstest]
+#[case::mixed_valid_and_invalid(
+    &[LocalEntry::new("valid_key", "valid_value"), LocalEntry::new("123", "int_key_value")],
+    Some(1),
+    "should return partial locals when some entries fail"
+)]
+#[case::all_invalid_int_keys(
+    &[LocalEntry::new("1", "value1"), LocalEntry::new("2", "value2")],
+    None,
+    "should return None when all entries fail"
+)]
+fn extract_locals_handles_mixed_entries(
+    #[case] entries: &[LocalEntry],
+    #[case] expected: Option<usize>,
+    #[case] description: &str,
+) {
     Python::with_gil(|py| {
-        // Create a dict with only invalid entries (non-string keys)
         let locals_dict = PyDict::new(py);
-        locals_dict
-            .set_item(1, "value1")
-            .expect("set int key 1 should succeed");
-        locals_dict
-            .set_item(2, "value2")
-            .expect("set int key 2 should succeed");
+        for entry in entries {
+            if entry.is_int_key() {
+                let int_key: i32 = entry.key.parse().expect("int key should parse");
+                locals_dict
+                    .set_item(int_key, entry.value)
+                    .expect("set int key entry should succeed");
+            } else {
+                locals_dict
+                    .set_item(entry.key, entry.value)
+                    .expect("set string key entry should succeed");
+            }
+        }
 
         let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
         let frame = create_simple_namespace(py, &frame_dict);
 
         let result = extract_locals_dict(&frame);
-        assert!(result.is_none(), "should return None when all entries fail");
+        match expected {
+            Some(count) => {
+                let locals = result.expect(description);
+                assert_eq!(locals.len(), count, "{}", description);
+                if count == 1 {
+                    assert_eq!(
+                        locals.get("valid_key"),
+                        Some(&"'valid_value'".to_string()),
+                        "valid_key should have expected value"
+                    );
+                }
+            }
+            None => {
+                assert!(result.is_none(), "{}", description);
+            }
+        }
     });
 }
 
