@@ -6,6 +6,50 @@ use rstest::rstest;
 
 use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
 
+// --------------------------------
+// Test helpers
+// --------------------------------
+
+/// Create a SimpleNamespace object from a PyDict.
+fn create_simple_namespace<'py>(py: Python<'py>, dict: &Bound<'py, PyDict>) -> Bound<'py, PyAny> {
+    let types = py.import("types").expect("types module should exist");
+    types
+        .getattr("SimpleNamespace")
+        .expect("SimpleNamespace should exist")
+        .call((), Some(dict))
+        .expect("SimpleNamespace creation should succeed")
+}
+
+/// Create a frame dict with locals for testing extract_locals_dict.
+fn create_frame_dict_with_locals<'py>(
+    py: Python<'py>,
+    locals_dict: &Bound<'py, PyDict>,
+) -> Bound<'py, PyDict> {
+    let frame_dict = PyDict::new(py);
+    frame_dict
+        .set_item("filename", "test.py")
+        .expect("set filename should succeed");
+    frame_dict
+        .set_item("lineno", 1)
+        .expect("set lineno should succeed");
+    frame_dict
+        .set_item("name", "func")
+        .expect("set name should succeed");
+    frame_dict
+        .set_item("locals", locals_dict)
+        .expect("set locals should succeed");
+    frame_dict
+}
+
+/// Test that a frame dict with a specific issue returns an error.
+fn assert_frame_extraction_fails(dict: &Bound<'_, PyDict>, expected_msg: &str) {
+    let py = dict.py();
+    let frame = create_simple_namespace(py, dict);
+    let list = PyList::new(py, &[frame]).expect("list creation should succeed");
+    let result = extract_frames_from_stack_summary(list.as_any());
+    assert!(result.is_err(), "{}", expected_msg);
+}
+
 /// Create a mock FrameSummary-like object with the given attributes.
 fn create_mock_frame<'py>(
     py: Python<'py>,
@@ -51,13 +95,7 @@ fn create_mock_frame<'py>(
             .expect("set locals should succeed");
     }
 
-    // Create a SimpleNamespace-like object from the dict
-    let types = py.import("types").expect("types module should exist");
-    types
-        .getattr("SimpleNamespace")
-        .expect("SimpleNamespace should exist")
-        .call((), Some(&dict))
-        .expect("SimpleNamespace creation should succeed")
+    create_simple_namespace(py, &dict)
 }
 
 #[test]
@@ -139,49 +177,36 @@ fn frame_with_missing_optional_fields(
     });
 }
 
-#[test]
-fn frame_missing_required_filename_returns_error() {
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("lineno", 1)
-            .expect("set lineno should succeed");
-        dict.set_item("name", "func")
-            .expect("set name should succeed");
-        // Missing filename
-
-        let types = py.import("types").expect("types module should exist");
-        let frame = types
-            .getattr("SimpleNamespace")
-            .expect("SimpleNamespace should exist")
-            .call((), Some(&dict))
-            .expect("SimpleNamespace creation should succeed");
-
-        let list = PyList::new(py, &[frame]).expect("list creation should succeed");
-        let result = extract_frames_from_stack_summary(list.as_any());
-        assert!(result.is_err(), "should fail when filename is missing");
-    });
+/// Which required field is missing from the frame dict.
+#[derive(Debug)]
+enum MissingField {
+    Filename,
+    Lineno,
 }
 
-#[test]
-fn frame_missing_required_lineno_returns_error() {
+#[rstest]
+#[case::missing_filename(MissingField::Filename, "should fail when filename is missing")]
+#[case::missing_lineno(MissingField::Lineno, "should fail when lineno is missing")]
+fn frame_missing_required_field_returns_error(
+    #[case] missing: MissingField,
+    #[case] expected_msg: &str,
+) {
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
-        dict.set_item("filename", "test.py")
-            .expect("set filename should succeed");
+        match missing {
+            MissingField::Filename => {
+                dict.set_item("lineno", 1)
+                    .expect("set lineno should succeed");
+            }
+            MissingField::Lineno => {
+                dict.set_item("filename", "test.py")
+                    .expect("set filename should succeed");
+            }
+        }
         dict.set_item("name", "func")
             .expect("set name should succeed");
-        // Missing lineno
 
-        let types = py.import("types").expect("types module should exist");
-        let frame = types
-            .getattr("SimpleNamespace")
-            .expect("SimpleNamespace should exist")
-            .call((), Some(&dict))
-            .expect("SimpleNamespace creation should succeed");
-
-        let list = PyList::new(py, &[frame]).expect("list creation should succeed");
-        let result = extract_frames_from_stack_summary(list.as_any());
-        assert!(result.is_err(), "should fail when lineno is missing");
+        assert_frame_extraction_fails(&dict, expected_msg);
     });
 }
 
@@ -196,16 +221,7 @@ fn frame_with_wrong_type_lineno_returns_error() {
         dict.set_item("name", "func")
             .expect("set name should succeed");
 
-        let types = py.import("types").expect("types module should exist");
-        let frame = types
-            .getattr("SimpleNamespace")
-            .expect("SimpleNamespace should exist")
-            .call((), Some(&dict))
-            .expect("SimpleNamespace creation should succeed");
-
-        let list = PyList::new(py, &[frame]).expect("list creation should succeed");
-        let result = extract_frames_from_stack_summary(list.as_any());
-        assert!(result.is_err(), "should fail when lineno has wrong type");
+        assert_frame_extraction_fails(&dict, "should fail when lineno has wrong type");
     });
 }
 
@@ -222,26 +238,8 @@ fn extract_locals_skips_failed_entries() {
             .set_item(123, "int_key_value")
             .expect("set int key entry should succeed");
 
-        let frame_dict = PyDict::new(py);
-        frame_dict
-            .set_item("filename", "test.py")
-            .expect("set filename should succeed");
-        frame_dict
-            .set_item("lineno", 1)
-            .expect("set lineno should succeed");
-        frame_dict
-            .set_item("name", "func")
-            .expect("set name should succeed");
-        frame_dict
-            .set_item("locals", locals_dict)
-            .expect("set locals should succeed");
-
-        let types = py.import("types").expect("types module should exist");
-        let frame = types
-            .getattr("SimpleNamespace")
-            .expect("SimpleNamespace should exist")
-            .call((), Some(&frame_dict))
-            .expect("SimpleNamespace creation should succeed");
+        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
+        let frame = create_simple_namespace(py, &frame_dict);
 
         let result = extract_locals_dict(&frame);
         let locals = result.expect("should return partial locals");
@@ -262,26 +260,8 @@ fn extract_locals_returns_none_when_all_fail() {
             .set_item(2, "value2")
             .expect("set int key 2 should succeed");
 
-        let frame_dict = PyDict::new(py);
-        frame_dict
-            .set_item("filename", "test.py")
-            .expect("set filename should succeed");
-        frame_dict
-            .set_item("lineno", 1)
-            .expect("set lineno should succeed");
-        frame_dict
-            .set_item("name", "func")
-            .expect("set name should succeed");
-        frame_dict
-            .set_item("locals", locals_dict)
-            .expect("set locals should succeed");
-
-        let types = py.import("types").expect("types module should exist");
-        let frame = types
-            .getattr("SimpleNamespace")
-            .expect("SimpleNamespace should exist")
-            .call((), Some(&frame_dict))
-            .expect("SimpleNamespace creation should succeed");
+        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
+        let frame = create_simple_namespace(py, &frame_dict);
 
         let result = extract_locals_dict(&frame);
         assert!(result.is_none(), "should return None when all entries fail");
