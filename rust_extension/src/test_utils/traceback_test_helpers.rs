@@ -43,15 +43,6 @@ pub fn create_frame_dict_with_locals<'py>(
     frame_dict
 }
 
-/// Assert that extracting a frame from the provided dict fails.
-pub fn assert_frame_extraction_fails(dict: &Bound<'_, PyDict>, expected_msg: &str) {
-    let py = dict.py();
-    let frame = create_simple_namespace(py, dict);
-    let list = PyList::new(py, &[frame]).expect("list creation should succeed");
-    let result = extract_frames_from_stack_summary(list.as_any());
-    assert!(result.is_err(), "{}", expected_msg);
-}
-
 /// Builder for creating mock FrameSummary-like objects in tests.
 ///
 /// Groups related frame attributes and provides chainable setters for optional
@@ -111,7 +102,7 @@ impl MockFrameBuilder {
         self.locals = Some(
             entries
                 .iter()
-                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         );
         self
@@ -161,13 +152,21 @@ impl MockFrameBuilder {
 /// Keys starting with digits are parsed as integers; others are strings.
 #[derive(Debug, Clone)]
 pub struct LocalEntry {
-    pub key: &'static str,
-    pub value: &'static str,
+    key: &'static str,
+    value: &'static str,
 }
 
 impl LocalEntry {
     pub const fn new(key: &'static str, value: &'static str) -> Self {
         Self { key, value }
+    }
+
+    pub const fn key(&self) -> &'static str {
+        self.key
+    }
+
+    pub const fn value(&self) -> &'static str {
+        self.value
     }
 
     /// Returns true if the key should be inserted as an integer.
@@ -178,4 +177,29 @@ impl LocalEntry {
     pub fn is_int_key(&self) -> bool {
         self.key.chars().next().is_some_and(|c| c.is_ascii_digit())
     }
+}
+
+/// Assert that extracting a frame from the provided dict fails.
+pub fn assert_frame_extraction_fails(dict: &Bound<'_, PyDict>) {
+    let py = dict.py();
+    let frame = create_simple_namespace(py, dict);
+    let list = PyList::new(py, &[frame]).expect("list creation should succeed");
+    let result = extract_frames_from_stack_summary(list.as_any());
+    assert!(result.is_err(), "frame extraction should fail");
+}
+
+/// Assert that extracting a frame from the provided dict fails with an error
+/// containing the expected substring.
+pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected_substr: &str) {
+    let py = dict.py();
+    let frame = create_simple_namespace(py, dict);
+    let list = PyList::new(py, &[frame]).expect("list creation should succeed");
+    let result = extract_frames_from_stack_summary(list.as_any());
+    let err = result.expect_err("frame extraction should fail");
+    let err_text = err.to_string();
+
+    assert!(
+        err_text.contains(expected_substr),
+        "expected error containing {expected_substr:?}, got {err_text:?}"
+    );
 }

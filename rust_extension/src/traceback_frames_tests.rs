@@ -93,12 +93,12 @@ enum MissingField {
 }
 
 #[rstest]
-#[case::missing_filename(MissingField::Filename, "should fail when filename is missing")]
-#[case::missing_lineno(MissingField::Lineno, "should fail when lineno is missing")]
-#[case::missing_name(MissingField::Name, "should fail when name is missing")]
+#[case::missing_filename(MissingField::Filename, "filename")]
+#[case::missing_lineno(MissingField::Lineno, "lineno")]
+#[case::missing_name(MissingField::Name, "name")]
 fn frame_missing_required_field_returns_error(
     #[case] missing: MissingField,
-    #[case] expected_msg: &str,
+    #[case] expected_error_substr: &str,
 ) {
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
@@ -123,7 +123,7 @@ fn frame_missing_required_field_returns_error(
             }
         }
 
-        assert_frame_extraction_fails(&dict, expected_msg);
+        assert_frame_extraction_error_contains(&dict, expected_error_substr);
     });
 }
 
@@ -138,7 +138,7 @@ fn frame_with_wrong_type_lineno_returns_error() {
         dict.set_item("name", "func")
             .expect("set name should succeed");
 
-        assert_frame_extraction_fails(&dict, "should fail when lineno has wrong type");
+        assert_frame_extraction_error_contains(&dict, "integer");
     });
 }
 
@@ -162,13 +162,13 @@ fn extract_locals_handles_mixed_entries(
         let locals_dict = PyDict::new(py);
         for entry in entries {
             if entry.is_int_key() {
-                let int_key: i32 = entry.key.parse().expect("int key should parse");
+                let int_key: i32 = entry.key().parse().expect("int key should parse");
                 locals_dict
-                    .set_item(int_key, entry.value)
+                    .set_item(int_key, entry.value())
                     .expect("set int key entry should succeed");
             } else {
                 locals_dict
-                    .set_item(entry.key, entry.value)
+                    .set_item(entry.key(), entry.value())
                     .expect("set string key entry should succeed");
             }
         }
