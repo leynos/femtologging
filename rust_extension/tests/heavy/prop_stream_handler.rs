@@ -5,7 +5,7 @@
 
 use std::io::{self, Write};
 
-use _femtologging_rs::{DefaultFormatter, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
 use itertools::iproduct;
 use proptest::prelude::*;
 
@@ -22,11 +22,11 @@ proptest! {
         ref messages in proptest::collection::vec("[^\n]*", 1..5),
         ref logger_names in proptest::collection::vec("[a-zA-Z_][a-zA-Z0-9_]{0,10}", 1..3),
         ref log_levels in proptest::collection::vec(prop_oneof![
-            Just("INFO"),
-            Just("DEBUG"),
-            Just("WARN"),
-            Just("ERROR"),
-            Just("TRACE"),
+            Just(FemtoLevel::Info),
+            Just(FemtoLevel::Debug),
+            Just(FemtoLevel::Warn),
+            Just(FemtoLevel::Error),
+            Just(FemtoLevel::Trace),
         ], 1..3)
     ) {
         let buffer = Arc::new(Mutex::new(Vec::new()));
@@ -37,8 +37,8 @@ proptest! {
 
         let mut expected = String::new();
         for (logger, level, msg) in iproduct!(logger_names, log_levels, messages) {
-            handler.handle(FemtoLogRecord::new(logger, level, msg));
-            expected.push_str(&format!("{} [{}] {}\n", logger, level, msg));
+            handler.handle(FemtoLogRecord::new(logger, *level, msg));
+            expected.push_str(&format!("{} [{}] {}\n", logger, level.as_str(), msg));
         }
         drop(handler);
 

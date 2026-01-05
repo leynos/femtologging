@@ -151,3 +151,261 @@ def test_set_level_invalid_raises_value_error() -> None:
     logger = FemtoLogger("core")
     with pytest.raises(ValueError, match="level"):
         logger.set_level("INVALID")
+
+
+def _raise_exception(exc_type: type[BaseException] = ValueError, msg: str = "") -> None:
+    """Raise an exception of the given type for testing.
+
+    Parameters
+    ----------
+    exc_type
+        The exception class to raise. Defaults to ValueError.
+    msg
+        The exception message. Defaults to empty string.
+
+    """
+    if msg:
+        raise exc_type(msg)
+    raise exc_type()
+
+
+def test_log_with_exc_info_true_captures_exception() -> None:
+    """exc_info=True should capture the current exception."""
+    logger = FemtoLogger("core")
+    try:
+        _raise_exception()
+    except ValueError:
+        output = logger.log("ERROR", "caught", exc_info=True)
+
+    assert output is not None
+    assert "ValueError" in output
+    assert "Traceback" in output
+
+
+def test_log_with_exc_info_true_no_exception() -> None:
+    """exc_info=True with no active exception should not add traceback."""
+    logger = FemtoLogger("core")
+    output = logger.log("INFO", "no error", exc_info=True)
+    assert output == "core [INFO] no error"
+
+
+def test_log_with_exc_info_instance() -> None:
+    """exc_info with an exception instance should capture it."""
+    logger = FemtoLogger("core")
+    exc = KeyError("missing")
+    output = logger.log("ERROR", "caught", exc_info=exc)
+
+    assert output is not None
+    assert "KeyError" in output
+
+
+def test_log_with_exc_info_tuple() -> None:
+    """exc_info as a (type, value, traceback) tuple should capture that traceback."""
+    logger = FemtoLogger("core")
+
+    try:
+        _raise_exception(KeyError, "missing")
+    except KeyError as exc:
+        exc_info = (KeyError, exc, exc.__traceback__)
+
+    output = logger.log("ERROR", "caught", exc_info=exc_info)
+
+    assert output is not None
+    assert "KeyError" in output
+    assert "missing" in output
+    assert "Traceback" in output
+
+
+def test_log_with_exc_info_tuple_preserves_explicit_traceback() -> None:
+    """Explicit traceback in tuple persists when __traceback__ is None."""
+    logger = FemtoLogger("core")
+
+    try:
+        _raise_exception(KeyError, "missing")
+    except KeyError as exc:
+        # Capture the traceback before clearing it
+        tb = exc.__traceback__
+        exc_info = (KeyError, exc, tb)
+        # Clear the exception's __traceback__ attribute
+        exc.__traceback__ = None
+
+    output = logger.log("ERROR", "caught", exc_info=exc_info)
+
+    # The output should still contain the traceback because we passed it
+    # explicitly in the tuple
+    assert output is not None
+    assert "KeyError" in output
+    assert "Traceback" in output
+    # Should contain at least one stack frame
+    assert "_raise_exception" in output
+
+
+def test_log_with_invalid_exc_info_type() -> None:
+    """Invalid exc_info type should raise a TypeError with a useful message."""
+    logger = FemtoLogger("core")
+
+    with pytest.raises(TypeError, match="exc_info"):
+        logger.log("ERROR", "bad exc_info", exc_info="bad")  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="exc_info"):
+        logger.log("ERROR", "bad exc_info", exc_info=123)  # type: ignore[arg-type]
+
+
+def test_log_with_exc_info_false_and_none() -> None:
+    """exc_info=False and exc_info=None should behave as no traceback capture."""
+    logger = FemtoLogger("core")
+
+    output_false = logger.log("INFO", "no error", exc_info=False)
+    assert output_false == "core [INFO] no error"
+
+    output_none = logger.log("INFO", "no error", exc_info=None)
+    assert output_none == "core [INFO] no error"
+
+
+def test_log_with_stack_info_true() -> None:
+    """stack_info=True should include call stack."""
+    logger = FemtoLogger("core")
+    output = logger.log("INFO", "debug", stack_info=True)
+
+    assert output is not None
+    assert "Stack (most recent call last)" in output
+
+
+def test_log_with_both_exc_and_stack_info() -> None:
+    """Both exc_info and stack_info should work together."""
+    logger = FemtoLogger("core")
+    try:
+        _raise_exception(RuntimeError)
+    except RuntimeError:
+        output = logger.log("ERROR", "debug", exc_info=True, stack_info=True)
+
+    assert output is not None
+    assert "Stack (most recent call last)" in output
+    assert "RuntimeError" in output
+
+
+def test_log_fast_path_without_exc_or_stack() -> None:
+    """Without exc_info or stack_info, output should be simple."""
+    logger = FemtoLogger("core")
+    output = logger.log("INFO", "simple")
+    assert output == "core [INFO] simple"
+
+
+class RecordCollectingHandler:
+    """Handler that uses handle_record for structured access."""
+
+    def __init__(self) -> None:
+        """Initialise an empty record buffer."""
+        self.records: list[dict[str, typ.Any]] = []
+
+    @staticmethod
+    def handle(_logger: str, _level: str, _message: str) -> None:
+        """Fallback handle method (required by FemtoLogger validation)."""
+        # Should not be called when handle_record is present
+        return
+
+    def handle_record(self, record: dict[str, typ.Any]) -> None:
+        """Collect full records for later assertions."""
+        self.records.append(record)
+
+
+def test_handle_record_receives_structured_payload() -> None:
+    """Handlers with handle_record should receive the full record dict."""
+    logger = FemtoLogger("core")
+    handler = RecordCollectingHandler()
+    logger.add_handler(handler)
+
+    sentinel_msg = "sentinel message"
+    try:
+        _raise_exception(ValueError, sentinel_msg)
+    except ValueError:
+        logger.log("ERROR", "caught", exc_info=True)
+
+    del logger
+
+    assert len(handler.records) == 1
+    record = handler.records[0]
+    assert record["logger"] == "core"
+    assert record["level"] == "ERROR"
+    assert record["message"] == "caught"
+
+    # Verify exc_info structure
+    assert "exc_info" in record
+    exc_info = record["exc_info"]
+
+    # Basic shape
+    assert exc_info["type_name"] == "ValueError"
+
+    # schema_version should be present and numeric
+    assert "schema_version" in exc_info
+    assert isinstance(exc_info["schema_version"], int)
+
+    # message should match the original exception message
+    assert exc_info["message"] == sentinel_msg
+
+    # frames should be a non-empty list with expected structure
+    assert "frames" in exc_info
+    assert isinstance(exc_info["frames"], list)
+    assert len(exc_info["frames"]) > 0
+
+    # First frame should have expected keys
+    frame = exc_info["frames"][0]
+    assert "filename" in frame
+    assert "lineno" in frame
+    assert "function" in frame
+
+
+def test_handle_record_fallback_to_handle() -> None:
+    """Handlers without handle_record should use the 3-arg handle method."""
+    logger = FemtoLogger("core")
+    handler = CollectingHandler()
+    logger.add_handler(handler)
+    logger.log("INFO", "test")
+    del logger
+    assert handler.records == [("core", "INFO", "test")]
+
+
+def test_handle_record_includes_stack_info() -> None:
+    """handle_record should include stack_info when present."""
+    logger = FemtoLogger("core")
+    handler = RecordCollectingHandler()
+    logger.add_handler(handler)
+
+    logger.log("INFO", "debug", stack_info=True)
+
+    del logger
+
+    assert len(handler.records) == 1
+    record = handler.records[0]
+    assert "stack_info" in record
+    assert "frames" in record["stack_info"]
+    assert len(record["stack_info"]["frames"]) > 0
+
+
+def test_handle_record_includes_both_exc_and_stack_info() -> None:
+    """handle_record should include both exc_info and stack_info when present."""
+    logger = FemtoLogger("core")
+    handler = RecordCollectingHandler()
+    logger.add_handler(handler)
+
+    try:
+        _raise_exception(ValueError, "test error")
+    except ValueError:
+        logger.log("ERROR", "caught", exc_info=True, stack_info=True)
+
+    del logger
+
+    assert len(handler.records) == 1
+    record = handler.records[0]
+
+    # Verify exc_info is present
+    assert "exc_info" in record
+    assert record["exc_info"]["type_name"] == "ValueError"
+    assert record["exc_info"]["message"] == "test error"
+    assert "frames" in record["exc_info"]
+    assert len(record["exc_info"]["frames"]) > 0
+
+    # Verify stack_info is present
+    assert "stack_info" in record
+    assert "frames" in record["stack_info"]
+    assert len(record["stack_info"]["frames"]) > 0

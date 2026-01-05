@@ -10,6 +10,7 @@ use rstest::{fixture, rstest};
 
 use crate::handler::FemtoHandlerTrait;
 use crate::handlers::{HTTPHandlerBuilder, HandlerBuilderTrait};
+use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 
 use super::FemtoHTTPHandler;
@@ -129,7 +130,7 @@ fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
 }
 
 fn send_info_record(handler: &FemtoHTTPHandler, message: &str) {
-    let record = FemtoLogRecord::new("test", "INFO", message);
+    let record = FemtoLogRecord::new("test", FemtoLevel::Info, message);
     let _ = handler.handle(record);
 }
 

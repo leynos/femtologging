@@ -29,9 +29,11 @@ pub(crate) fn fq_py_type(obj: &Bound<'_, PyAny>) -> String {
 mod tests {
     use super::*;
     use pyo3::types::{PyList, PyModule};
+    use serial_test::serial;
     use std::ffi::CString;
 
     #[test]
+    #[serial]
     fn returns_builtin_name_without_module() {
         Python::with_gil(|py| {
             let list = PyList::empty(py);
@@ -41,6 +43,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn returns_user_defined_fq_name() {
         Python::with_gil(|py| {
             let code = CString::new("class Foo: pass\n").expect("valid Python code");
@@ -64,6 +67,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn falls_back_when_attrs_missing() {
         Python::with_gil(|py| {
             let code = CString::new(concat!(

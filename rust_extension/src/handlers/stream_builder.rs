@@ -20,6 +20,8 @@ use super::{
 };
 
 use crate::handlers::builder_macros::builder_methods;
+#[cfg(test)]
+use crate::level::FemtoLevel;
 #[cfg(feature = "python")]
 use crate::macros::{AsPyDict, dict_into_py};
 use crate::{
@@ -315,7 +317,7 @@ mod tests {
         };
         FemtoHandlerTrait::handle(
             &handler,
-            FemtoLogRecord::new("logger", "INFO", "stream hello"),
+            FemtoLogRecord::new("logger", FemtoLevel::Info, "stream hello"),
         )
         .expect("custom formatter stream write must succeed");
         assert!(handler.flush(), "flush must succeed for stream handler");

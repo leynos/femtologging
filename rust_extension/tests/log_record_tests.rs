@@ -1,4 +1,4 @@
-use _femtologging_rs::FemtoLogRecord;
+use _femtologging_rs::{FemtoLevel, FemtoLogRecord};
 use rstest::rstest;
 use std::collections::BTreeMap;
 use std::thread;
@@ -8,12 +8,13 @@ use std::time::SystemTime;
 
 #[rstest]
 fn metadata_sets_fields(
-    #[values("INFO", "ERROR")] level: &'static str,
+    #[values(FemtoLevel::Info, FemtoLevel::Error)] level: FemtoLevel,
     #[values("", "mod::path")] module_path: &'static str,
     #[values("", "file.rs")] filename: &'static str,
     #[values(None, Some("worker"))] thread_name: Option<&'static str>,
 ) {
     let expected_thread = thread_name.map(str::to_string);
+    let expected_level = level.as_str();
     let builder = thread::Builder::new();
     let builder = if let Some(ref name) = expected_thread {
         builder.name(name.clone())
@@ -33,7 +34,7 @@ fn metadata_sets_fields(
             };
             let record = FemtoLogRecord::with_metadata("core", level, "fail", metadata);
             assert_eq!(record.logger, "core");
-            assert_eq!(record.level, level);
+            assert_eq!(record.level, expected_level);
             assert_eq!(record.message, "fail");
             assert!(record.metadata.timestamp > SystemTime::UNIX_EPOCH);
             assert_eq!(record.metadata.module_path, module_path);

@@ -69,6 +69,10 @@ impl HandlerConfig {
 /// blocks. The handler supports explicit flushing to ensure all queued records
 /// are written. Flush operations wait up to `flush_timeout` for the worker
 /// thread to confirm completion.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
+)]
 enum StreamCommand {
     Record(FemtoLogRecord),
     Flush(Sender<()>),
@@ -151,8 +155,12 @@ impl FemtoStreamHandler {
     /// Dispatch a log record to the handler's worker thread.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        <Self as FemtoHandlerTrait>::handle(self, FemtoLogRecord::new(logger, level, message))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
+        <Self as FemtoHandlerTrait>::handle(
+            self,
+            FemtoLogRecord::new(logger, parsed_level, message),
+        )
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush pending log records without shutting down the worker thread.

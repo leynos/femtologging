@@ -52,6 +52,25 @@ impl FromStr for FemtoLevel {
 }
 
 impl FemtoLevel {
+    /// Return the canonical string representation of the level.
+    ///
+    /// This is a `const fn` enabling compile-time evaluation and zero-cost
+    /// access to level names. Use this instead of [`Display`]/[`to_string()`]
+    /// when you need a static string slice without allocation overhead.
+    ///
+    /// [`Display`]: std::fmt::Display
+    /// [`to_string()`]: std::string::ToString::to_string
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Trace => "TRACE",
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Critical => "CRITICAL",
+        }
+    }
+
     /// Parse a string into a level, warning on invalid input.
     pub fn parse_or_warn(s: &str) -> Self {
         match s.parse() {
@@ -60,6 +79,19 @@ impl FemtoLevel {
                 eprintln!("Warning: unrecognised log level '{s}', defaulting to INFO");
                 Self::Info
             }
+        }
+    }
+
+    /// Parse a string into a level, returning PyValueError on invalid input.
+    ///
+    /// Use this in PyO3 bindings instead of `parse_or_warn` to propagate
+    /// errors to Python rather than silently defaulting.
+    pub fn parse_py(s: &str) -> PyResult<Self> {
+        match s.parse() {
+            Ok(level) => Ok(level),
+            Err(_) => Err(PyErr::new::<PyValueError, _>(format!(
+                "invalid log level: {s}"
+            ))),
         }
     }
 }

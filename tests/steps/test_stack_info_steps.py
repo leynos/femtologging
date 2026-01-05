@@ -1,0 +1,144 @@
+"""BDD steps for stack info logging scenarios."""
+
+from __future__ import annotations
+
+import typing as typ
+from pathlib import Path
+
+import pytest
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from femtologging import FemtoLogger
+
+from .conftest import normalise_traceback_output
+
+if typ.TYPE_CHECKING:
+    from syrupy import SnapshotAssertion
+
+
+class LoggerState(typ.TypedDict, total=False):
+    """State storage for logger fixture."""
+
+    logger: FemtoLogger | None
+    output: str | None
+
+
+class ExceptionState(typ.TypedDict, total=False):
+    """State storage for exception fixture."""
+
+    active: bool
+    type: type[BaseException] | None
+    message: str | None
+
+
+FEATURES = Path(__file__).resolve().parents[1] / "features"
+
+scenarios(str(FEATURES / "stack_info.feature"))
+
+
+@pytest.fixture
+def logger_fixture() -> LoggerState:
+    """Storage for the logger and related state."""
+    return {"logger": None, "output": None}
+
+
+@pytest.fixture
+def exception_state() -> ExceptionState:
+    """Storage for exception state."""
+    return {"active": False, "type": None, "message": None}
+
+
+def _raise_dynamic_exception(
+    exc_type: type[BaseException], exc_message: str
+) -> typ.NoReturn:
+    """Raise an exception of the given type with the given message."""
+    raise exc_type(exc_message)
+
+
+@given(parsers.parse('a logger named "{name}"'))
+def create_logger(logger_fixture: LoggerState, name: str) -> None:
+    logger_fixture["logger"] = FemtoLogger(name)
+
+
+@given(parsers.parse('an active ValueError exception with message "{message}"'))
+def set_active_value_error(exception_state: ExceptionState, message: str) -> None:
+    exception_state["active"] = True
+    exception_state["type"] = ValueError
+    exception_state["message"] = message
+
+
+@when(parsers.parse('I log at {level} with message "{message}" and stack_info=True'))
+def log_with_stack_info(
+    logger_fixture: LoggerState,
+    level: str,
+    message: str,
+) -> None:
+    logger = logger_fixture["logger"]
+    assert logger is not None, "Logger must be initialized"
+    logger_fixture["output"] = logger.log(level, message, stack_info=True)
+
+
+@when(parsers.parse('I log at {level} with message "{message}"'))
+def log_without_extras(
+    logger_fixture: LoggerState,
+    level: str,
+    message: str,
+) -> None:
+    logger = logger_fixture["logger"]
+    assert logger is not None, "Logger must be initialized"
+    logger_fixture["output"] = logger.log(level, message)
+
+
+@when(
+    parsers.parse(
+        'I log at {level} with message "{message}" '
+        "and exc_info=True and stack_info=True"
+    )
+)
+def log_with_both(
+    logger_fixture: LoggerState,
+    exception_state: ExceptionState,
+    level: str,
+    message: str,
+) -> None:
+    logger = logger_fixture["logger"]
+    assert logger is not None, "Logger must be initialized"
+
+    if exception_state.get("active"):
+        exc_type = exception_state.get("type", ValueError)
+        exc_message = exception_state.get("message", "error")
+        assert exc_type is not None, "Exception type must be set"
+        assert exc_message is not None, "Exception message must be set"
+        try:
+            _raise_dynamic_exception(exc_type, exc_message)
+        except exc_type:
+            logger_fixture["output"] = logger.log(
+                level, message, exc_info=True, stack_info=True
+            )
+    else:
+        logger_fixture["output"] = logger.log(
+            level, message, exc_info=True, stack_info=True
+        )
+
+
+@then(parsers.parse('the formatted output contains "{text}"'))
+def output_contains(logger_fixture: LoggerState, text: str) -> None:
+    output = logger_fixture["output"]
+    assert output is not None, "Expected output but got None"
+    assert text in output, f"Expected '{text}' in output: {output}"
+
+
+@then(parsers.parse('the formatted output equals "{expected}"'))
+def output_equals(logger_fixture: LoggerState, expected: str) -> None:
+    output = logger_fixture["output"]
+    assert output == expected, f"Expected '{expected}' but got '{output}'"
+
+
+@then("the formatted output matches snapshot")
+def output_matches_snapshot(
+    logger_fixture: LoggerState, snapshot: SnapshotAssertion
+) -> None:
+    output = logger_fixture["output"]
+    # Normalise paths and line numbers for snapshot stability
+    normalised = normalise_traceback_output(output)
+    assert normalised == snapshot

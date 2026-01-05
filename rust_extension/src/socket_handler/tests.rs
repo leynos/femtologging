@@ -14,6 +14,7 @@ use serde::Deserialize;
 use crate::{
     handler::FemtoHandlerTrait,
     handlers::{HandlerBuildError, HandlerBuilderTrait, socket_builder::SocketHandlerBuilder},
+    level::FemtoLevel,
     log_record::FemtoLogRecord,
     socket_handler::FemtoSocketHandler,
 };
@@ -96,7 +97,7 @@ fn build_tcp_handler(addr: SocketAddr) -> FemtoSocketHandler {
 
 fn send_info_record(handler: &mut FemtoSocketHandler, message: &str) {
     handler
-        .handle(FemtoLogRecord::new("test", "INFO", message))
+        .handle(FemtoLogRecord::new("test", FemtoLevel::Info, message))
         .expect("send record");
 }
 
@@ -204,7 +205,7 @@ fn frame_payload_prefixes_length() {
 
 #[rstest]
 fn serialise_record_round_trips() {
-    let record = FemtoLogRecord::new("logger", "INFO", "hello");
+    let record = FemtoLogRecord::new("logger", FemtoLevel::Info, "hello");
     let payload = serialise_record(&record).expect("serialise record");
     let decoded: Payload = rmp_serde::from_slice(&payload).expect("decode payload");
     assert_eq!(decoded.logger, "logger");

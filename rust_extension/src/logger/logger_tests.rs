@@ -40,7 +40,7 @@ fn handle_log_record_dispatches() {
     let h1 = Arc::new(CollectingHandler::new());
     let h2 = Arc::new(CollectingHandler::new());
     let record = QueuedRecord {
-        record: FemtoLogRecord::new("core", "INFO", "msg"),
+        record: FemtoLogRecord::new("core", FemtoLevel::Info, "msg"),
         handlers: vec![
             h1.clone() as Arc<dyn FemtoHandlerTrait>,
             h2.clone() as Arc<dyn FemtoHandlerTrait>,
@@ -63,7 +63,7 @@ fn drain_remaining_records_pulls_all() {
     let h = Arc::new(CollectingHandler::new());
     for i in 0..3 {
         tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", "INFO", &format!("{i}")),
+            record: FemtoLogRecord::new("core", FemtoLevel::Info, &format!("{i}")),
             handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
         })
         .expect("Failed to send test record");
@@ -87,12 +87,12 @@ fn worker_thread_loop_processes_and_drains() {
     });
 
     tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", "INFO", "one"),
+        record: FemtoLogRecord::new("core", FemtoLevel::Info, "one"),
         handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
     })
     .expect("Failed to send first test record");
     tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", "INFO", "two"),
+        record: FemtoLogRecord::new("core", FemtoLevel::Info, "two"),
         handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
     })
     .expect("Failed to send second test record");
@@ -178,14 +178,17 @@ fn drop_counter_increments_on_queue_overflow() {
     };
 
     struct BlockingHandler {
-        barrier: Arc<Barrier>,
+        started: Arc<Barrier>,
+        release: Arc<Barrier>,
         waited: AtomicBool,
     }
 
     impl FemtoHandlerTrait for BlockingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
             if !self.waited.swap(true, Ordering::SeqCst) {
-                self.barrier.wait();
+                // Signal that we've started processing, then block until released
+                self.started.wait();
+                self.release.wait();
             }
             Ok(())
         }
@@ -195,18 +198,32 @@ fn drop_counter_increments_on_queue_overflow() {
         }
     }
 
-    let barrier = Arc::new(Barrier::new(2));
+    let started = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
     let handler = Arc::new(BlockingHandler {
-        barrier: Arc::clone(&barrier),
+        started: Arc::clone(&started),
+        release: Arc::clone(&release),
         waited: AtomicBool::new(false),
     }) as Arc<dyn FemtoHandlerTrait>;
     let logger = FemtoLogger::new("drop".to_string());
     logger.add_handler(handler);
     logger.log(FemtoLevel::Info, "block");
+
+    // Wait for worker to confirm it's processing (prevents race condition)
+    started.wait();
+
+    // Now safe to fill the queue - worker is blocked on release barrier
     for _ in 0..super::DEFAULT_CHANNEL_CAPACITY {
         logger.log(FemtoLevel::Info, "fill");
     }
     logger.log(FemtoLevel::Info, "overflow");
     assert_eq!(logger.get_dropped(), 1);
-    barrier.wait();
+
+    // Release the worker to allow cleanup
+    release.wait();
 }
+
+// Python integration tests are in a separate module to respect the 400-line limit.
+#[cfg(feature = "python")]
+#[path = "logger_tests_python.rs"]
+mod logger_tests_python;

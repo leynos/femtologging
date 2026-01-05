@@ -1,0 +1,78 @@
+# serializer version: 1
+# name: test_log_with_stack_infotrue_includes_call_stack
+  '''
+  test [INFO] debug
+  Stack (most recent call last):
+    File "<file>", line <N>, in <module>
+      sys.exit(console_main())
+    File "<file>", line <N>, in console_main
+      code = main()
+    File "<file>", line <N>, in main
+      ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+    File "<file>", line <N>, in __call__
+      return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    File "<file>", line <N>, in _hookexec
+      return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    File "<file>", line <N>, in _multicall
+      res = hook_impl.function(*args)
+    File "<file>", line <N>, in pytest_cmdline_main
+      return wrap_session(config, _main)
+    File "<file>", line <N>, in wrap_session
+      session.exitstatus = doit(config, session) or 0
+    File "<file>", line <N>, in _main
+      config.hook.pytest_runtestloop(session=session)
+    File "<file>", line <N>, in __call__
+      return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    File "<file>", line <N>, in _hookexec
+      return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    File "<file>", line <N>, in _multicall
+      res = hook_impl.function(*args)
+    File "<file>", line <N>, in pytest_runtestloop
+      item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+    File "<file>", line <N>, in __call__
+      return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    File "<file>", line <N>, in _hookexec
+      return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    File "<file>", line <N>, in _multicall
+      res = hook_impl.function(*args)
+    File "<file>", line <N>, in pytest_runtest_protocol
+      runtestprotocol(item, nextitem=nextitem)
+    File "<file>", line <N>, in runtestprotocol
+      reports.append(call_and_report(item, "call", log))
+    File "<file>", line <N>, in call_and_report
+      call = CallInfo.from_call(
+    File "<file>", line <N>, in from_call
+      result: TResult | None = func()
+    File "<file>", line <N>, in <lambda>
+      lambda: runtest_hook(item=item, **kwds),
+    File "<file>", line <N>, in __call__
+      return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    File "<file>", line <N>, in _hookexec
+      return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    File "<file>", line <N>, in _multicall
+      res = hook_impl.function(*args)
+    File "<file>", line <N>, in pytest_runtest_call
+      item.runtest()
+    File "<file>", line <N>, in runtest
+      self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+    File "<file>", line <N>, in __call__
+      return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    File "<file>", line <N>, in _hookexec
+      return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    File "<file>", line <N>, in _multicall
+      res = hook_impl.function(*args)
+    File "<file>", line <N>, in pytest_pyfunc_call
+      result = testfunction(**testargs)
+    File "<file>", line <N>, in scenario_wrapper
+      _execute_scenario(feature, scenario, request)
+    File "<file>", line <N>, in _execute_scenario
+      _execute_step_function(request, scenario, step, step_func_context)
+    File "<file>", line <N>, in _execute_step_function
+      return_value = call_fixture_func(fixturefunc=context.step_func, request=request, kwargs=kwargs)
+    File "<file>", line <N>, in call_fixture_func
+      fixture_result = fixturefunc(**kwargs)
+    File "<file>", line <N>, in log_with_stack_info
+      logger_fixture["output"] = logger.log(level, message, stack_info=True)
+  
+  '''
+# ---

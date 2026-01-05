@@ -32,6 +32,14 @@ pub mod rate_limited_warner;
 mod rate_limited_warner;
 mod socket_handler;
 mod stream_handler;
+#[cfg(feature = "python")]
+pub(crate) mod traceback_capture;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_tests;
+#[cfg(feature = "python")]
+pub(crate) mod traceback_frames;
+#[cfg(all(test, feature = "python"))]
+mod traceback_frames_tests;
 
 /// Re-export configuration builders for external consumers.
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};

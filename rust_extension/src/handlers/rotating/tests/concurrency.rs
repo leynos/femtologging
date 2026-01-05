@@ -4,6 +4,7 @@ use super::super::*;
 use crate::formatter::DefaultFormatter;
 use crate::handler::HandlerError;
 use crate::handlers::file::{BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy};
+use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter};
@@ -82,7 +83,11 @@ fn wait_for_rotation_start(flag: &AtomicBool, timeout: Duration) {
 fn attempt_non_blocking_writes(handler: &FemtoRotatingFileHandler, count: usize) -> Duration {
     let started_at = Instant::now();
     for idx in 0..count {
-        match handler.handle(FemtoLogRecord::new("core", "INFO", &format!("extra {idx}"))) {
+        match handler.handle(FemtoLogRecord::new(
+            "core",
+            FemtoLevel::Info,
+            &format!("extra {idx}"),
+        )) {
             Ok(()) => {}
             Err(HandlerError::QueueFull) => {
                 // Dropped records are acceptable here because the test exercises non-blocking queueing.
@@ -119,10 +124,10 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
 
     let producer_id = thread::current().id();
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "alpha"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "alpha"))
         .expect("initial record should be written");
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "beta"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "beta"))
         .expect("second record should be written");
     assert!(handler.flush());
     handler.close();
@@ -168,10 +173,10 @@ fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
     );
 
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "seed"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "seed"))
         .expect("seed record should be written");
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "trigger"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "trigger"))
         .expect("trigger record should be written to trigger rotation");
 
     wait_for_rotation_start(&started, Duration::from_secs(2));

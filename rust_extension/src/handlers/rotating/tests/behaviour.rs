@@ -7,6 +7,7 @@ use crate::handlers::rotating::strategy::RotationOutcome;
 use crate::handlers::rotating::{
     FemtoRotatingFileHandler, RotationConfig, force_fresh_failure_once_for_test,
 };
+use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use rstest::rstest;
 use std::fs::{self, OpenOptions};
@@ -156,10 +157,10 @@ fn rotating_handler_performs_size_based_rotation() -> io::Result<()> {
         RotationConfig::new(20, 2),
     )?;
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "first"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
         .expect("first record queued");
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "second"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
         .expect("second record queued");
     drop(handler);
 
@@ -201,7 +202,7 @@ fn rotating_handler_respects_test_builder_defaults() {
 
     let handler = FemtoFileHandler::with_writer_for_test(cfg);
     handler
-        .handle(FemtoLogRecord::new("core", "INFO", "message"))
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"))
         .expect("record queued");
     drop(handler);
 }

@@ -19,6 +19,8 @@ use super::{
     file::{FemtoFileHandler, OverflowPolicy},
 };
 use crate::formatter::DefaultFormatter;
+#[cfg(test)]
+use crate::level::FemtoLevel;
 
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
@@ -222,7 +224,7 @@ mod tests {
             .build_inner()
             .expect("build_inner must support custom formatter instances");
         handler
-            .handle(FemtoLogRecord::new("logger", "INFO", "hello"))
+            .handle(FemtoLogRecord::new("logger", FemtoLevel::Info, "hello"))
             .expect("custom formatter write must succeed");
         assert!(handler.flush(), "flush must succeed for custom formatter");
         handler.close();
