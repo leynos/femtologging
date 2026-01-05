@@ -32,6 +32,8 @@ pub mod rate_limited_warner;
 mod rate_limited_warner;
 mod socket_handler;
 mod stream_handler;
+#[cfg(all(test, feature = "python"))]
+mod test_utils;
 #[cfg(feature = "python")]
 pub(crate) mod traceback_capture;
 #[cfg(all(test, feature = "python"))]
