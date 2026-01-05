@@ -293,6 +293,10 @@ impl LocalEntry {
     }
 
     /// Returns true if the key should be inserted as an integer.
+    ///
+    /// This is a simple heuristic that only checks whether the first character
+    /// is an ASCII digit. It is sufficient for the test cases in this module,
+    /// which use single-digit integer keys like "1" or "123".
     fn is_int_key(&self) -> bool {
         self.key.chars().next().is_some_and(|c| c.is_ascii_digit())
     }
@@ -301,7 +305,7 @@ impl LocalEntry {
 #[rstest]
 #[case::mixed_valid_and_invalid(
     &[LocalEntry::new("valid_key", "valid_value"), LocalEntry::new("123", "int_key_value")],
-    Some(1),
+    Some(&[("valid_key", "'valid_value'")] as &[_]),
     "should return partial locals when some entries fail"
 )]
 #[case::all_invalid_int_keys(
@@ -311,7 +315,7 @@ impl LocalEntry {
 )]
 fn extract_locals_handles_mixed_entries(
     #[case] entries: &[LocalEntry],
-    #[case] expected: Option<usize>,
+    #[case] expected: Option<&[(&str, &str)]>,
     #[case] description: &str,
 ) {
     Python::with_gil(|py| {
@@ -334,14 +338,16 @@ fn extract_locals_handles_mixed_entries(
 
         let result = extract_locals_dict(&frame);
         match expected {
-            Some(count) => {
+            Some(expected_entries) => {
                 let locals = result.expect(description);
-                assert_eq!(locals.len(), count, "{}", description);
-                if count == 1 {
+                assert_eq!(locals.len(), expected_entries.len(), "{}", description);
+                for (key, value) in expected_entries {
                     assert_eq!(
-                        locals.get("valid_key"),
-                        Some(&"'valid_value'".to_string()),
-                        "valid_key should have expected value"
+                        locals.get(*key),
+                        Some(&(*value).to_string()),
+                        "{}: key '{}' should have expected value",
+                        description,
+                        key
                     );
                 }
             }
