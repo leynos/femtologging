@@ -265,17 +265,9 @@ impl FemtoLogger {
     /// Checks level threshold and filters, formats the record, and dispatches
     /// to handlers. Returns `Some(formatted_message)` if the record was logged,
     /// or `None` if it was filtered out.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `record.parsed_level` is `None`. All records created via
-    /// `FemtoLogRecord::new` have a parsed level set.
     fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
-        let level = record
-            .parsed_level
-            .expect("log_record requires parsed_level to be set");
-        if (level as u8) < threshold {
+        if (record.level as u8) < threshold {
             return None;
         }
 
@@ -308,10 +300,7 @@ impl FemtoLogger {
     /// being enqueued for handler processing.
     #[cfg(feature = "log-compat")]
     pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
-        let Some(level) = record.parsed_level else {
-            return;
-        };
-        if !self.is_enabled_for(level) {
+        if !self.is_enabled_for(record.level) {
             return;
         }
         if !self.passes_all_filters(&record) {

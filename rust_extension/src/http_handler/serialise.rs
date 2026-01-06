@@ -62,7 +62,7 @@ fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value
     );
     map.insert(
         "levelname".into(),
-        serde_json::Value::String(record.level.clone()),
+        serde_json::Value::String(record.level_str().to_owned()),
     );
     map.insert(
         "msg".into(),
@@ -181,23 +181,14 @@ fn url_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::log_record::RecordMetadata;
+    use crate::level::FemtoLevel;
 
     fn test_record() -> FemtoLogRecord {
-        FemtoLogRecord {
-            logger: "test.logger".into(),
-            level: "INFO".into(),
-            parsed_level: None,
-            message: "Hello World".into(),
-            metadata: RecordMetadata {
-                module_path: "test.module".into(),
-                filename: "test.rs".into(),
-                line_number: 42,
-                ..Default::default()
-            },
-            exception_payload: None,
-            stack_payload: None,
-        }
+        let mut record = FemtoLogRecord::new("test.logger", FemtoLevel::Info, "Hello World");
+        record.metadata.module_path = "test.module".into();
+        record.metadata.filename = "test.rs".into();
+        record.metadata.line_number = 42;
+        record
     }
 
     #[test]

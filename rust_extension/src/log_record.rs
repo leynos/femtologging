@@ -61,10 +61,8 @@ impl Default for RecordMetadata {
 pub struct FemtoLogRecord {
     /// Name of the logger that created this record.
     pub logger: String,
-    /// The log level as a string (e.g. "INFO" or "ERROR").
-    pub level: String,
-    /// Cached parsed representation of the level.
-    pub parsed_level: Option<FemtoLevel>,
+    /// The log level for this record.
+    pub level: FemtoLevel,
     /// The log message content.
     pub message: String,
     /// Contextual metadata for the record.
@@ -80,8 +78,7 @@ impl FemtoLogRecord {
     pub fn new(logger: &str, level: FemtoLevel, message: &str) -> Self {
         Self {
             logger: logger.to_owned(),
-            level: level.as_str().to_owned(),
-            parsed_level: Some(level),
+            level,
             message: message.to_owned(),
             metadata: RecordMetadata::default(),
             exception_payload: None,
@@ -102,13 +99,21 @@ impl FemtoLogRecord {
         metadata.thread_name = thread_name;
         Self {
             logger: logger.to_owned(),
-            level: level.as_str().to_owned(),
-            parsed_level: Some(level),
+            level,
             message: message.to_owned(),
             metadata,
             exception_payload: None,
             stack_payload: None,
         }
+    }
+
+    /// Return the level name as a static string slice.
+    ///
+    /// This is a zero-cost accessor that returns the canonical level name
+    /// (e.g., "INFO", "ERROR") without allocation.
+    #[inline]
+    pub fn level_str(&self) -> &'static str {
+        self.level.as_str()
     }
 
     /// Attach an exception payload to the record.
@@ -128,7 +133,7 @@ impl FemtoLogRecord {
 
 impl fmt::Display for FemtoLogRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} - {}", self.level, self.message)
+        write!(f, "{} - {}", self.level_str(), self.message)
     }
 }
 

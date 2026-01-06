@@ -75,11 +75,9 @@ impl PythonFormatter {
 pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     dict.set_item("logger", &record.logger)?;
-    dict.set_item("level", &record.level)?;
+    dict.set_item("level", record.level_str())?;
     dict.set_item("message", &record.message)?;
-    if let Some(level) = record.parsed_level {
-        dict.set_item("levelno", u8::from(level))?;
-    }
+    dict.set_item("levelno", u8::from(record.level))?;
 
     let metadata = PyDict::new(py);
     metadata.set_item("module_path", &record.metadata.module_path)?;

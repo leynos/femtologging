@@ -293,7 +293,7 @@ mod tests {
             assert_eq!(records.len(), 1);
             let rec = &records[0];
             assert_eq!(rec.logger, "bridge.test");
-            assert_eq!(rec.level, "INFO");
+            assert_eq!(rec.level_str(), "INFO");
             assert_eq!(rec.message, "hello");
             assert_eq!(rec.metadata.module_path, "bridge::test");
             assert_eq!(rec.metadata.filename, "lib.rs");
@@ -368,7 +368,7 @@ mod tests {
                 .expect("handler downcast")
                 .collected();
             assert_eq!(records.len(), 1, "only WARN should pass threshold");
-            assert_eq!(records[0].level, "WARN");
+            assert_eq!(records[0].level_str(), "WARN");
         });
     }
 }

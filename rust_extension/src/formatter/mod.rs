@@ -65,7 +65,12 @@ pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        let mut output = format!("{} [{}] {}", record.logger, record.level, record.message);
+        let mut output = format!(
+            "{} [{}] {}",
+            record.logger,
+            record.level_str(),
+            record.message
+        );
 
         // Append stack trace if present (before exception for readability)
         if let Some(ref stack) = record.stack_payload {

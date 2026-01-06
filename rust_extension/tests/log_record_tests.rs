@@ -34,7 +34,7 @@ fn metadata_sets_fields(
             };
             let record = FemtoLogRecord::with_metadata("core", level, "fail", metadata);
             assert_eq!(record.logger, "core");
-            assert_eq!(record.level, expected_level);
+            assert_eq!(record.level_str(), expected_level);
             assert_eq!(record.message, "fail");
             assert!(record.metadata.timestamp > SystemTime::UNIX_EPOCH);
             assert_eq!(record.metadata.module_path, module_path);

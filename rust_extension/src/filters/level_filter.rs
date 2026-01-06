@@ -14,10 +14,7 @@ pub struct LevelFilter {
 
 impl FemtoFilter for LevelFilter {
     fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        match record.parsed_level {
-            Some(level) => level <= self.max_level,
-            None => false,
-        }
+        record.level <= self.max_level
     }
 }
 
@@ -91,26 +88,5 @@ mod tests {
         let builder = LevelFilterBuilder::new().with_max_level(max);
         let filter = builder.build().expect("build should succeed");
         assert_eq!(filter.should_log(&record(rec_level)), expected);
-    }
-
-    #[test]
-    fn rejects_unparseable_level() {
-        use crate::log_record::RecordMetadata;
-
-        let filter = LevelFilterBuilder::new()
-            .with_max_level(FemtoLevel::Info)
-            .build()
-            .expect("build should succeed");
-        // Simulate a record with an invalid/missing parsed level
-        let record = FemtoLogRecord {
-            logger: "core".to_owned(),
-            level: "NOPE".to_owned(),
-            parsed_level: None,
-            message: "msg".to_owned(),
-            metadata: RecordMetadata::default(),
-            exception_payload: None,
-            stack_payload: None,
-        };
-        assert!(!filter.should_log(&record));
     }
 }

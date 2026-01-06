@@ -32,7 +32,7 @@ impl<'a> From<&'a FemtoLogRecord> for SerializableRecord<'a> {
 
         Self {
             logger: &record.logger,
-            level: &record.level,
+            level: record.level_str(),
             message: &record.message,
             timestamp_ns,
             filename: &record.metadata.filename,
