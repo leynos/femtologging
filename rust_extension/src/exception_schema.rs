@@ -298,6 +298,155 @@ impl StackTracePayload {
             frames,
         }
     }
+
+    /// Return a new payload with frames filtered by the given predicate.
+    ///
+    /// Frames for which the predicate returns `true` are included in the
+    /// result.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{StackFrame, StackTracePayload};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("app.py", 10, "main"),
+    ///     StackFrame::new("logging/__init__.py", 20, "info"),
+    /// ];
+    /// let payload = StackTracePayload::new(frames);
+    ///
+    /// // Exclude logging frames
+    /// let filtered = payload.filter(|f| !f.filename.contains("logging"));
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn filter<F>(&self, predicate: F) -> Self
+    where
+        F: Fn(&StackFrame) -> bool,
+    {
+        Self {
+            schema_version: self.schema_version,
+            frames: self
+                .frames
+                .iter()
+                .filter(|f| predicate(f))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Return a new payload with at most `n` frames (most recent).
+    ///
+    /// Stack frames are typically ordered from oldest to newest. This keeps
+    /// the last `n` frames, which are closest to where the exception occurred.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{StackFrame, StackTracePayload};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("a.py", 1, "outer"),
+    ///     StackFrame::new("b.py", 2, "middle"),
+    ///     StackFrame::new("c.py", 3, "inner"),
+    /// ];
+    /// let payload = StackTracePayload::new(frames);
+    ///
+    /// let limited = payload.limit(2);
+    /// assert_eq!(limited.frames.len(), 2);
+    /// assert_eq!(limited.frames[0].filename, "b.py");
+    /// ```
+    #[must_use]
+    pub fn limit(&self, n: usize) -> Self {
+        use crate::frame_filter::limit_frames;
+        Self {
+            schema_version: self.schema_version,
+            frames: limit_frames(&self.frames, n),
+        }
+    }
+
+    /// Return a new payload excluding frames matching filename patterns.
+    ///
+    /// Patterns are matched as substrings of the filename.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{StackFrame, StackTracePayload};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("myapp/main.py", 10, "main"),
+    ///     StackFrame::new(".venv/lib/foo.py", 20, "foo"),
+    /// ];
+    /// let payload = StackTracePayload::new(frames);
+    ///
+    /// let filtered = payload.exclude_filenames(&[".venv/"]);
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn exclude_filenames(&self, patterns: &[&str]) -> Self {
+        use crate::frame_filter::exclude_by_filename;
+        Self {
+            schema_version: self.schema_version,
+            frames: exclude_by_filename(&self.frames, patterns),
+        }
+    }
+
+    /// Return a new payload excluding frames matching function name patterns.
+    ///
+    /// Patterns are matched as substrings of the function name.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{StackFrame, StackTracePayload};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("app.py", 10, "main"),
+    ///     StackFrame::new("app.py", 20, "_internal_helper"),
+    /// ];
+    /// let payload = StackTracePayload::new(frames);
+    ///
+    /// let filtered = payload.exclude_functions(&["_internal"]);
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn exclude_functions(&self, patterns: &[&str]) -> Self {
+        use crate::frame_filter::exclude_by_function;
+        Self {
+            schema_version: self.schema_version,
+            frames: exclude_by_function(&self.frames, patterns),
+        }
+    }
+
+    /// Return a new payload excluding common logging infrastructure frames.
+    ///
+    /// Removes frames from femtologging, Python's standard logging module,
+    /// and import machinery.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{StackFrame, StackTracePayload};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("myapp/main.py", 10, "run"),
+    ///     StackFrame::new("femtologging/__init__.py", 50, "info"),
+    ///     StackFrame::new("logging/__init__.py", 100, "_log"),
+    /// ];
+    /// let payload = StackTracePayload::new(frames);
+    ///
+    /// let filtered = payload.exclude_logging_infrastructure();
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn exclude_logging_infrastructure(&self) -> Self {
+        use crate::frame_filter::exclude_logging_infrastructure;
+        Self {
+            schema_version: self.schema_version,
+            frames: exclude_logging_infrastructure(&self.frames),
+        }
+    }
 }
 
 impl SchemaVersioned for StackTracePayload {
@@ -359,6 +508,225 @@ impl ExceptionPayload {
     pub fn with_frames(mut self, frames: Vec<StackFrame>) -> Self {
         self.frames = frames;
         self
+    }
+
+    /// Return a new payload with frames filtered by the given predicate.
+    ///
+    /// Recursively filters frames in the cause chain, context chain, and
+    /// exception groups.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{ExceptionPayload, StackFrame};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("app.py", 10, "main"),
+    ///     StackFrame::new("logging/__init__.py", 20, "info"),
+    /// ];
+    /// let payload = ExceptionPayload::new("ValueError", "test")
+    ///     .with_frames(frames);
+    ///
+    /// let filtered = payload.filter_frames(|f| !f.filename.contains("logging"));
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn filter_frames<F>(&self, predicate: F) -> Self
+    where
+        F: Fn(&StackFrame) -> bool + Clone,
+    {
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: self
+                .frames
+                .iter()
+                .filter(|f| predicate(f))
+                .cloned()
+                .collect(),
+            cause: self
+                .cause
+                .as_ref()
+                .map(|c| Box::new(c.filter_frames(predicate.clone()))),
+            context: self
+                .context
+                .as_ref()
+                .map(|c| Box::new(c.filter_frames(predicate.clone()))),
+            suppress_context: self.suppress_context,
+            exceptions: self
+                .exceptions
+                .iter()
+                .map(|e| e.filter_frames(predicate.clone()))
+                .collect(),
+        }
+    }
+
+    /// Return a new payload with at most `n` frames (most recent).
+    ///
+    /// Recursively limits frames in the cause chain, context chain, and
+    /// exception groups.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{ExceptionPayload, StackFrame};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("a.py", 1, "outer"),
+    ///     StackFrame::new("b.py", 2, "middle"),
+    ///     StackFrame::new("c.py", 3, "inner"),
+    /// ];
+    /// let payload = ExceptionPayload::new("Error", "test").with_frames(frames);
+    ///
+    /// let limited = payload.limit_frames(2);
+    /// assert_eq!(limited.frames.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn limit_frames(&self, n: usize) -> Self {
+        use crate::frame_filter::limit_frames;
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: limit_frames(&self.frames, n),
+            cause: self.cause.as_ref().map(|c| Box::new(c.limit_frames(n))),
+            context: self.context.as_ref().map(|c| Box::new(c.limit_frames(n))),
+            suppress_context: self.suppress_context,
+            exceptions: self.exceptions.iter().map(|e| e.limit_frames(n)).collect(),
+        }
+    }
+
+    /// Return a new payload excluding frames matching filename patterns.
+    ///
+    /// Recursively excludes frames in the cause chain, context chain, and
+    /// exception groups.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{ExceptionPayload, StackFrame};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("myapp/main.py", 10, "main"),
+    ///     StackFrame::new(".venv/lib/foo.py", 20, "foo"),
+    /// ];
+    /// let payload = ExceptionPayload::new("Error", "test").with_frames(frames);
+    ///
+    /// let filtered = payload.exclude_filenames(&[".venv/"]);
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn exclude_filenames(&self, patterns: &[&str]) -> Self {
+        use crate::frame_filter::exclude_by_filename;
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: exclude_by_filename(&self.frames, patterns),
+            cause: self
+                .cause
+                .as_ref()
+                .map(|c| Box::new(c.exclude_filenames(patterns))),
+            context: self
+                .context
+                .as_ref()
+                .map(|c| Box::new(c.exclude_filenames(patterns))),
+            suppress_context: self.suppress_context,
+            exceptions: self
+                .exceptions
+                .iter()
+                .map(|e| e.exclude_filenames(patterns))
+                .collect(),
+        }
+    }
+
+    /// Return a new payload excluding frames matching function name patterns.
+    ///
+    /// Recursively excludes frames in the cause chain, context chain, and
+    /// exception groups.
+    #[must_use]
+    pub fn exclude_functions(&self, patterns: &[&str]) -> Self {
+        use crate::frame_filter::exclude_by_function;
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: exclude_by_function(&self.frames, patterns),
+            cause: self
+                .cause
+                .as_ref()
+                .map(|c| Box::new(c.exclude_functions(patterns))),
+            context: self
+                .context
+                .as_ref()
+                .map(|c| Box::new(c.exclude_functions(patterns))),
+            suppress_context: self.suppress_context,
+            exceptions: self
+                .exceptions
+                .iter()
+                .map(|e| e.exclude_functions(patterns))
+                .collect(),
+        }
+    }
+
+    /// Return a new payload excluding common logging infrastructure frames.
+    ///
+    /// Recursively excludes frames in the cause chain, context chain, and
+    /// exception groups.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{ExceptionPayload, StackFrame};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("myapp/main.py", 10, "run"),
+    ///     StackFrame::new("femtologging/__init__.py", 50, "info"),
+    /// ];
+    /// let payload = ExceptionPayload::new("Error", "test").with_frames(frames);
+    ///
+    /// let filtered = payload.exclude_logging_infrastructure();
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn exclude_logging_infrastructure(&self) -> Self {
+        use crate::frame_filter::exclude_logging_infrastructure;
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: exclude_logging_infrastructure(&self.frames),
+            cause: self
+                .cause
+                .as_ref()
+                .map(|c| Box::new(c.exclude_logging_infrastructure())),
+            context: self
+                .context
+                .as_ref()
+                .map(|c| Box::new(c.exclude_logging_infrastructure())),
+            suppress_context: self.suppress_context,
+            exceptions: self
+                .exceptions
+                .iter()
+                .map(ExceptionPayload::exclude_logging_infrastructure)
+                .collect(),
+        }
     }
 }
 
