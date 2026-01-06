@@ -238,3 +238,173 @@ fn extract_frames_from_stack_summary_not_a_list_returns_error() {
         assert!(result.is_err(), "should fail when input is not a list");
     });
 }
+
+// --------------------------------
+// Skip path behaviour tests
+// --------------------------------
+
+#[rstest]
+#[case::mixed_skip_reasons(
+    &[
+        LocalEntry::new("valid", "value"),
+        LocalEntry::new("123", "int_key"),
+        LocalEntry::new("456", "another_int"),
+    ],
+    Some(&[("valid", "'value'")] as &[_]),
+    "should handle multiple non-string keys without panic"
+)]
+#[case::many_invalid_entries(
+    &[
+        LocalEntry::new("1", "a"),
+        LocalEntry::new("2", "b"),
+        LocalEntry::new("3", "c"),
+        LocalEntry::new("4", "d"),
+        LocalEntry::new("5", "e"),
+    ],
+    None,
+    "should handle many invalid entries without panic"
+)]
+#[case::single_valid_among_many_invalid(
+    &[
+        LocalEntry::new("1", "a"),
+        LocalEntry::new("ok", "value"),
+        LocalEntry::new("2", "b"),
+        LocalEntry::new("3", "c"),
+    ],
+    Some(&[("ok", "'value'")] as &[_]),
+    "should extract single valid entry among many invalid"
+)]
+fn extract_locals_skip_path_does_not_panic(
+    #[case] entries: &[LocalEntry],
+    #[case] expected: Option<&[(&str, &str)]>,
+    #[case] description: &str,
+) {
+    Python::with_gil(|py| {
+        let locals_dict = PyDict::new(py);
+        for entry in entries {
+            if entry.is_int_key() {
+                let int_key: i32 = entry.key.parse().expect("int key should parse");
+                locals_dict
+                    .set_item(int_key, entry.value)
+                    .expect("set int key entry should succeed");
+            } else {
+                locals_dict
+                    .set_item(entry.key, entry.value)
+                    .expect("set string key entry should succeed");
+            }
+        }
+
+        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
+        let frame = create_simple_namespace(py, &frame_dict);
+
+        let result = extract_locals_dict(&frame);
+        match expected {
+            Some(expected_entries) => {
+                let locals = result.expect(description);
+                assert_eq!(locals.len(), expected_entries.len(), "{}", description);
+                for (key, value) in expected_entries {
+                    assert_eq!(
+                        locals.get(*key),
+                        Some(&(*value).to_string()),
+                        "{}: key '{}' should have expected value",
+                        description,
+                        key
+                    );
+                }
+            }
+            None => {
+                assert!(result.is_none(), "{}", description);
+            }
+        }
+    });
+}
+
+#[test]
+fn extract_locals_with_repr_failure_returns_partial() {
+    Python::with_gil(|py| {
+        let locals_dict = PyDict::new(py);
+
+        // Add a valid entry
+        locals_dict
+            .set_item("good", "value")
+            .expect("set good entry should succeed");
+
+        // Create an object whose __repr__ raises an exception
+        let globals = PyDict::new(py);
+        py.run(
+            c"class BadRepr:\n    def __repr__(self): raise RuntimeError('no repr')",
+            Some(&globals),
+            None,
+        )
+        .expect("class definition should succeed");
+        let bad_repr_obj = py
+            .eval(c"BadRepr()", Some(&globals), None)
+            .expect("object creation should succeed");
+        locals_dict
+            .set_item("bad", bad_repr_obj)
+            .expect("set bad repr entry should succeed");
+
+        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
+        let frame = create_simple_namespace(py, &frame_dict);
+
+        let result = extract_locals_dict(&frame);
+
+        // Should return partial result with only the good entry
+        let locals = result.expect("should return partial locals");
+        assert_eq!(locals.len(), 1, "should have exactly one entry");
+        assert!(
+            locals.contains_key("good"),
+            "should contain the valid entry"
+        );
+        assert!(
+            !locals.contains_key("bad"),
+            "should not contain the bad repr entry"
+        );
+    });
+}
+
+#[test]
+fn extract_locals_with_mixed_skip_reasons_returns_partial() {
+    Python::with_gil(|py| {
+        let locals_dict = PyDict::new(py);
+
+        // Valid entry
+        locals_dict
+            .set_item("valid", "value")
+            .expect("set valid entry should succeed");
+
+        // Non-string key (integer)
+        locals_dict
+            .set_item(42, "int_key_value")
+            .expect("set int key entry should succeed");
+
+        // Object with failing repr
+        let globals = PyDict::new(py);
+        py.run(
+            c"class BadRepr:\n    def __repr__(self): raise ValueError('boom')",
+            Some(&globals),
+            None,
+        )
+        .expect("class definition should succeed");
+        let bad_repr_obj = py
+            .eval(c"BadRepr()", Some(&globals), None)
+            .expect("object creation should succeed");
+        locals_dict
+            .set_item("bad_repr", bad_repr_obj)
+            .expect("set bad repr entry should succeed");
+
+        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
+        let frame = create_simple_namespace(py, &frame_dict);
+
+        let result = extract_locals_dict(&frame);
+
+        // Should return only the valid entry
+        let locals = result.expect("should return partial locals");
+        assert_eq!(locals.len(), 1, "should have exactly one entry");
+        assert_eq!(
+            locals.get("valid"),
+            Some(&"'value'".to_string()),
+            "should have the valid entry with repr'd value"
+        );
+    });
+}
