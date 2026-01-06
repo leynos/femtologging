@@ -179,15 +179,6 @@ impl LocalEntry {
     }
 }
 
-/// Assert that extracting a frame from the provided dict fails.
-pub fn assert_frame_extraction_fails(dict: &Bound<'_, PyDict>) {
-    let py = dict.py();
-    let frame = create_simple_namespace(py, dict);
-    let list = PyList::new(py, &[frame]).expect("list creation should succeed");
-    let result = extract_frames_from_stack_summary(list.as_any());
-    assert!(result.is_err(), "frame extraction should fail");
-}
-
 /// Assert that extracting a frame from the provided dict fails with an error
 /// containing the expected substring.
 pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected_substr: &str) {
