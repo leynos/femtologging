@@ -188,9 +188,24 @@ collector = Collector()
 logger.add_handler(collector)
 ```
 
-The handler’s `handle` method must be callable and thread-safe. Exceptions are
+The handler's `handle` method must be callable and thread-safe. Exceptions are
 printed to stderr and counted as handler errors, so prefer defensive code and
 avoid raising from `handle`.
+
+#### Handler stability contract
+
+Handler capabilities are inspected **once** when `add_handler()` is called:
+
+- The presence of a callable `handle_record` method is cached at registration
+  time and determines which dispatch path is used for all subsequent records.
+- **Do not mutate the handler after calling `add_handler()`.** Adding or
+  removing `handle_record` after registration has no effect and results in
+  undefined behaviour.
+- Ensure the handler is fully configured before passing it to `add_handler()`.
+
+This design keeps per-record overhead low by avoiding repeated attribute
+lookups on the hot path and aligns with the standard library expectation that
+handlers are configured before use.
 
 ## Configuration options
 

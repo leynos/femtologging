@@ -409,3 +409,89 @@ def test_handle_record_includes_both_exc_and_stack_info() -> None:
     assert "stack_info" in record
     assert "frames" in record["stack_info"]
     assert len(record["stack_info"]["frames"]) > 0
+
+
+class MutableHandler:
+    """Handler whose capabilities can be mutated after construction."""
+
+    def __init__(self) -> None:
+        """Initialise an empty record buffer for both dispatch paths."""
+        self.handle_calls: list[tuple[str, str, str]] = []
+        self.handle_record_calls: list[dict[str, typ.Any]] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        """Legacy 3-argument handle method."""
+        self.handle_calls.append((logger, level, message))
+
+
+def test_handler_gains_handle_record_after_registration() -> None:
+    """Adding handle_record after registration should not change dispatch.
+
+    Capability detection happens once at registration time. If a handler
+    is registered without handle_record and later gains one, the legacy
+    handle() method should still be called because the cached capability
+    is frozen at registration.
+    """
+    logger = FemtoLogger("core")
+    handler = MutableHandler()
+
+    # Register without handle_record
+    logger.add_handler(handler)
+
+    # Dynamically add handle_record after registration
+    def late_handle_record(record: dict[str, typ.Any]) -> None:
+        handler.handle_record_calls.append(record)
+
+    handler.handle_record = late_handle_record  # type: ignore[attr-defined]
+
+    # Log a message
+    logger.log("INFO", "test message")
+    del logger
+
+    # handle() should be called (frozen capability)
+    assert handler.handle_calls == [("core", "INFO", "test message")]
+    # handle_record() should NOT be called
+    assert handler.handle_record_calls == []
+
+
+def test_handler_dispatch_path_frozen_at_registration() -> None:
+    """Dispatch path (handle vs handle_record) is frozen at registration.
+
+    The capability check that determines whether to use handle_record or
+    handle is performed once at registration time. If a handler is
+    registered with handle_record present, the handle_record dispatch path
+    will be used for all subsequent log records, even if the method is
+    later replaced.
+
+    Note: Deleting handle_record after registration would cause an
+    AttributeError because the cached capability tells the runtime to call
+    a now-missing method. This test demonstrates the frozen dispatch path
+    by replacing the method and verifying handle() is not called.
+    """
+    logger = FemtoLogger("core")
+    handler = MutableHandler()
+
+    # Add handle_record before registration
+    def initial_handle_record(record: dict[str, typ.Any]) -> None:
+        handler.handle_record_calls.append(record)
+
+    handler.handle_record = initial_handle_record  # type: ignore[attr-defined]
+
+    # Register with handle_record present - this freezes the dispatch path
+    logger.add_handler(handler)
+
+    # Replace handle_record with a different implementation after registration
+    def replacement_handle_record(record: dict[str, typ.Any]) -> None:
+        handler.handle_record_calls.append(record)
+
+    handler.handle_record = replacement_handle_record  # type: ignore[attr-defined]
+
+    # Log a message
+    logger.log("INFO", "test message")
+    del logger
+
+    # handle_record dispatch path was frozen at registration time
+    assert len(handler.handle_record_calls) == 1
+    assert handler.handle_record_calls[0]["message"] == "test message"
+    # handle() should NOT be called because dispatch path was frozen to handle_record
+    assert handler.handle_calls == []

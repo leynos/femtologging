@@ -112,6 +112,24 @@ impl PyHandler {
     /// # Returns
     ///
     /// A new `PyHandler` instance wrapping the provided object.
+    ///
+    /// # Handler stability contract
+    ///
+    /// Handler capabilities are inspected **once** at construction time and
+    /// cached for the lifetime of the `PyHandler`. Specifically, the presence
+    /// of a callable `handle_record` method is checked when `PyHandler::new`
+    /// is called and determines which dispatch path is used for all
+    /// subsequent log records.
+    ///
+    /// **Mutating the handler object after registration results in undefined
+    /// behaviour.** If `handle_record` is added to or removed from the
+    /// underlying Python object after construction, the cached capability
+    /// will not reflect the change and the wrong method may be invoked.
+    ///
+    /// This design mirrors [`validate_handler`], which also performs a
+    /// one-time check at registration rather than on every log record, and
+    /// aligns with the standard library `logging.Handler` expectation that
+    /// handlers are fully configured before use.
     pub fn new(py: Python<'_>, obj: Py<PyAny>) -> Self {
         let has_handle_record = obj
             .getattr(py, "handle_record")

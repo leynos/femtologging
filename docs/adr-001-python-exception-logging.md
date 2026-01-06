@@ -134,6 +134,11 @@ providing output aligned with standard logging behaviour.
 - Keep the existing Python handler `handle(logger, level, message)` signature,
   but add an optional `handle_record(record: Mapping)` hook for handlers that
   need direct access to the structured payload.
+- Detect the presence of `handle_record` **once at registration time** and cache
+  the result. This avoids per-record attribute lookups and keeps the hot path
+  fast. Handlers must be fully configured before calling `add_handler()`;
+  adding or removing `handle_record` after registration results in undefined
+  behaviour.
 
 ## Consequences
 
