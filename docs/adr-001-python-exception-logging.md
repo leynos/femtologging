@@ -177,6 +177,80 @@ The schema version must be incremented when:
 
 Adding optional fields with `#[serde(default)]` does not require a version bump.
 
+## Graceful degradation rules
+
+The capture logic intentionally degrades gracefully when Python objects are
+malformed, missing attributes, or contain values that cannot be extracted to
+the expected Rust types. This design ensures the logging system remains
+operational even when tracebacks have unusual shapes.
+
+### Required vs optional extraction
+
+Fields fall into two categories:
+
+**Required fields** cause extraction to fail if missing or malformed. The
+entire frame or exception capture aborts with an error:
+
+- Stack frame: `filename`, `lineno`, `name`
+- Exception: `exc_type`, `__name__` (for type name)
+
+**Optional fields** degrade silently to `None` or an empty collection when
+missing, `None`, or the wrong type:
+
+- Stack frame: `end_lineno`, `colno`, `end_colno`, `line` (source line),
+  `locals`
+- Exception: `module`, `args`, `__notes__`, `__cause__`, `__context__`,
+  `exceptions` (for `ExceptionGroup`)
+
+### The `get_optional_attr` helper
+
+The `get_optional_attr<T>` function encapsulates the degradation logic for
+optional attributes. It returns `None` in all of the following cases:
+
+1. The attribute does not exist on the Python object
+2. The attribute value is Python `None`
+3. The attribute exists but cannot be extracted to type `T`
+
+This single helper eliminates repetitive error handling and guarantees
+consistent behaviour across all optional field extractions.
+
+### Partial extraction for collections
+
+When extracting collection fields, individual entries that fail are skipped
+rather than aborting the entire collection:
+
+- **`locals` dictionary:** Entries with non-string keys or values whose
+  `repr()` fails are skipped. Valid entries are preserved. An empty result
+  becomes `None`.
+- **`args_repr` list:** If `.args` is missing, `None`, or not a tuple, the
+  result is an empty vector. Individual elements that fail `repr()` extraction
+  are skipped.
+- **`notes` list:** If `__notes__` is missing or `None`, the result is an empty
+  vector.
+- **`exceptions` list (ExceptionGroup):** Individual nested exceptions that
+  fail to convert are skipped from the result vector.
+
+### Design rationale
+
+This approach was chosen for several reasons:
+
+1. **Python version compatibility:** Enhanced traceback fields (`end_lineno`,
+   `colno`, `end_colno`) were added in Python 3.11. Graceful degradation allows
+   the same code to work on older Python versions without version checks.
+
+2. **Partial data over total failure:** When capturing diagnostic information,
+   having some data is better than none. A traceback with missing column
+   numbers is still useful; a completely failed capture is not.
+
+3. **Resilience to unusual objects:** Exception subclasses may override
+   attributes in unexpected ways. Defensive extraction prevents edge cases from
+   crashing the logger.
+
+4. **Logging must not fail:** The logging system is the last line of defence
+   for diagnostics. If capturing exception details fails, the original error
+   context is lost entirely. Graceful degradation ensures the log record is
+   still emitted with whatever data was recoverable.
+
 ## Consequences
 
 - The fast path remains unchanged when exception and stack data are absent.
