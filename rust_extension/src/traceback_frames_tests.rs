@@ -319,61 +319,50 @@ fn extract_locals_skip_path_does_not_panic(
     });
 }
 
-#[test]
-fn extract_locals_with_repr_failure_returns_partial() {
+/// Scenario for testing locals extraction with various skip reasons.
+#[derive(Debug)]
+enum SkipScenario {
+    /// Single valid entry, one bad repr object.
+    ReprFailure,
+    /// Single valid entry, one integer key, one bad repr object.
+    MixedSkipReasons,
+}
+
+#[rstest]
+#[case::repr_failure(SkipScenario::ReprFailure, "good", "'value'")]
+#[case::mixed_skip_reasons(SkipScenario::MixedSkipReasons, "valid", "'value'")]
+fn extract_locals_with_skip_reasons_returns_partial(
+    #[case] scenario: SkipScenario,
+    #[case] expected_key: &str,
+    #[case] expected_value: &str,
+) {
     Python::with_gil(|py| {
         let locals_dict = PyDict::new(py);
 
         // Add a valid entry
         locals_dict
-            .set_item("good", "value")
-            .expect("set good entry should succeed");
-
-        // Add an object whose __repr__ raises an exception
-        let bad_repr_obj = create_bad_repr_object(py);
-        locals_dict
-            .set_item("bad", bad_repr_obj)
-            .expect("set bad repr entry should succeed");
-
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
-
-        let result = extract_locals_dict(&frame);
-
-        // Should return partial result with only the good entry
-        let locals = result.expect("should return partial locals");
-        assert_eq!(locals.len(), 1, "should have exactly one entry");
-        assert!(
-            locals.contains_key("good"),
-            "should contain the valid entry"
-        );
-        assert!(
-            !locals.contains_key("bad"),
-            "should not contain the bad repr entry"
-        );
-    });
-}
-
-#[test]
-fn extract_locals_with_mixed_skip_reasons_returns_partial() {
-    Python::with_gil(|py| {
-        let locals_dict = PyDict::new(py);
-
-        // Valid entry
-        locals_dict
-            .set_item("valid", "value")
+            .set_item(expected_key, "value")
             .expect("set valid entry should succeed");
 
-        // Non-string key (integer)
-        locals_dict
-            .set_item(42, "int_key_value")
-            .expect("set int key entry should succeed");
+        // Add scenario-specific invalid entries
+        match scenario {
+            SkipScenario::ReprFailure => {
+                let bad_repr_obj = create_bad_repr_object(py);
+                locals_dict
+                    .set_item("bad", bad_repr_obj)
+                    .expect("set bad repr entry should succeed");
+            }
+            SkipScenario::MixedSkipReasons => {
+                locals_dict
+                    .set_item(42, "int_key_value")
+                    .expect("set int key entry should succeed");
 
-        // Object with failing repr
-        let bad_repr_obj = create_bad_repr_object(py);
-        locals_dict
-            .set_item("bad_repr", bad_repr_obj)
-            .expect("set bad repr entry should succeed");
+                let bad_repr_obj = create_bad_repr_object(py);
+                locals_dict
+                    .set_item("bad_repr", bad_repr_obj)
+                    .expect("set bad repr entry should succeed");
+            }
+        }
 
         let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
         let frame = create_simple_namespace(py, &frame_dict);
@@ -384,8 +373,8 @@ fn extract_locals_with_mixed_skip_reasons_returns_partial() {
         let locals = result.expect("should return partial locals");
         assert_eq!(locals.len(), 1, "should have exactly one entry");
         assert_eq!(
-            locals.get("valid"),
-            Some(&"'value'".to_string()),
+            locals.get(expected_key),
+            Some(&expected_value.to_string()),
             "should have the valid entry with repr'd value"
         );
     });
