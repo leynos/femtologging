@@ -10,6 +10,45 @@
 //! should check this version when deserializing payloads to handle
 //! forward/backward compatibility.
 //!
+//! # Versioning Policy
+//!
+//! Exception payloads include a `schema_version` field to enable schema
+//! evolution without breaking consumers.
+//!
+//! ## Compatibility Guarantees
+//!
+//! - **Backward compatible**: Code supporting version N can read payloads from
+//!   versions 1 through N. Missing optional fields use serde default values.
+//! - **Forward incompatible**: Code supporting version N rejects payloads with
+//!   version > N. Use [`validate_schema_version`] or the `validate_version`
+//!   methods on payload types to check before processing.
+//!
+//! ## Version Increment Rules
+//!
+//! Increment [`EXCEPTION_SCHEMA_VERSION`] when making breaking changes:
+//!
+//! - Adding required fields
+//! - Removing fields (even optional ones)
+//! - Changing field types or semantics
+//! - Renaming fields
+//!
+//! Non-breaking changes (no version bump required):
+//!
+//! - Adding optional fields with `#[serde(default)]`
+//!
+//! ## Validation Example
+//!
+//! ```rust
+//! use _femtologging_rs::exception_schema::{ExceptionPayload, SchemaVersionError};
+//!
+//! fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
+//!     let payload: ExceptionPayload = serde_json::from_str(json)?;
+//!     payload.validate_version()?;
+//!     // Process the validated payload...
+//!     Ok(())
+//! }
+//! ```
+//!
 //! # Example
 //!
 //! ```rust
@@ -35,6 +74,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use thiserror::Error;
 
 /// Current schema version for exception payloads.
 ///
@@ -42,6 +82,53 @@ use std::collections::BTreeMap;
 /// Consumers should check this value when deserializing to handle
 /// compatibility.
 pub const EXCEPTION_SCHEMA_VERSION: u16 = 1;
+
+/// Errors related to exception schema version validation.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SchemaVersionError {
+    /// The payload schema version is newer than supported.
+    #[error(
+        "unsupported exception schema version: found {found}, \
+         maximum supported is {supported}"
+    )]
+    UnsupportedVersion {
+        /// The schema version found in the payload.
+        found: u16,
+        /// The maximum schema version supported by this library.
+        supported: u16,
+    },
+}
+
+/// Validate that a schema version is supported.
+///
+/// Returns `Ok(())` if the version is in the supported range (1 through
+/// [`EXCEPTION_SCHEMA_VERSION`]), or an error if the version is unsupported.
+///
+/// # Errors
+///
+/// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is zero
+/// or greater than the current schema version.
+///
+/// # Examples
+///
+/// ```rust
+/// use _femtologging_rs::exception_schema::{
+///     validate_schema_version, EXCEPTION_SCHEMA_VERSION,
+/// };
+///
+/// assert!(validate_schema_version(1).is_ok());
+/// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION).is_ok());
+/// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION + 1).is_err());
+/// ```
+pub fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
+    if version == 0 || version > EXCEPTION_SCHEMA_VERSION {
+        return Err(SchemaVersionError::UnsupportedVersion {
+            found: version,
+            supported: EXCEPTION_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
 
 /// A single frame in a Python stack trace.
 ///
@@ -164,6 +251,25 @@ impl StackTracePayload {
             frames,
         }
     }
+
+    /// Validate that this payload's schema version is supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
+    /// outside the supported range.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::StackTracePayload;
+    ///
+    /// let payload = StackTracePayload::new(vec![]);
+    /// assert!(payload.validate_version().is_ok());
+    /// ```
+    pub fn validate_version(&self) -> Result<(), SchemaVersionError> {
+        validate_schema_version(self.schema_version)
+    }
 }
 
 impl ExceptionPayload {
@@ -219,6 +325,25 @@ impl ExceptionPayload {
     pub fn with_frames(mut self, frames: Vec<StackFrame>) -> Self {
         self.frames = frames;
         self
+    }
+
+    /// Validate that this payload's schema version is supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
+    /// outside the supported range.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::ExceptionPayload;
+    ///
+    /// let payload = ExceptionPayload::new("ValueError", "test");
+    /// assert!(payload.validate_version().is_ok());
+    /// ```
+    pub fn validate_version(&self) -> Result<(), SchemaVersionError> {
+        validate_schema_version(self.schema_version)
     }
 }
 
@@ -427,5 +552,108 @@ mod tests {
         assert_send_sync::<StackFrame>();
         assert_send_sync::<StackTracePayload>();
         assert_send_sync::<ExceptionPayload>();
+    }
+
+    #[rstest]
+    #[case(1, true)]
+    #[case(EXCEPTION_SCHEMA_VERSION, true)]
+    #[case(0, false)]
+    #[case(EXCEPTION_SCHEMA_VERSION + 1, false)]
+    #[case(u16::MAX, false)]
+    fn validate_schema_version_cases(#[case] version: u16, #[case] valid: bool) {
+        let result = validate_schema_version(version);
+        assert_eq!(result.is_ok(), valid);
+    }
+
+    #[rstest]
+    fn unsupported_version_error_includes_versions() {
+        let future_version = EXCEPTION_SCHEMA_VERSION + 1;
+        let err =
+            validate_schema_version(future_version).expect_err("should fail for future version");
+
+        match err {
+            SchemaVersionError::UnsupportedVersion { found, supported } => {
+                assert_eq!(found, future_version);
+                assert_eq!(supported, EXCEPTION_SCHEMA_VERSION);
+            }
+        }
+
+        // Verify error message includes both versions
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&future_version.to_string()),
+            "error message should contain found version"
+        );
+        assert!(
+            msg.contains(&EXCEPTION_SCHEMA_VERSION.to_string()),
+            "error message should contain supported version"
+        );
+    }
+
+    #[rstest]
+    fn exception_payload_validate_version_ok() {
+        let payload = ExceptionPayload::new("ValueError", "test");
+        assert!(payload.validate_version().is_ok());
+    }
+
+    #[rstest]
+    fn exception_payload_validate_version_future() {
+        let mut payload = ExceptionPayload::new("ValueError", "test");
+        payload.schema_version = EXCEPTION_SCHEMA_VERSION + 1;
+        assert!(payload.validate_version().is_err());
+    }
+
+    #[rstest]
+    fn stack_trace_payload_validate_version_ok() {
+        let payload = StackTracePayload::new(vec![]);
+        assert!(payload.validate_version().is_ok());
+    }
+
+    #[rstest]
+    fn stack_trace_payload_validate_version_future() {
+        let mut payload = StackTracePayload::new(vec![]);
+        payload.schema_version = EXCEPTION_SCHEMA_VERSION + 1;
+        assert!(payload.validate_version().is_err());
+    }
+
+    #[rstest]
+    fn deserialize_future_version_then_validate() {
+        // Simulate receiving a payload with a higher schema version
+        let json = r#"{
+            "schema_version": 999,
+            "type_name": "FutureError",
+            "message": "from the future"
+        }"#;
+
+        // Deserialization succeeds (serde does not validate version)
+        let payload: ExceptionPayload =
+            serde_json::from_str(json).expect("deserialization should succeed");
+
+        // Validation fails with informative error
+        let err = payload
+            .validate_version()
+            .expect_err("validation should fail for future version");
+        assert!(matches!(
+            err,
+            SchemaVersionError::UnsupportedVersion { found: 999, .. }
+        ));
+    }
+
+    #[rstest]
+    fn backward_compatible_missing_optional_fields() {
+        // Minimal v1 payload without optional fields
+        let json = r#"{
+            "schema_version": 1,
+            "type_name": "Error",
+            "message": "test"
+        }"#;
+
+        let payload: ExceptionPayload =
+            serde_json::from_str(json).expect("should deserialize minimal payload");
+
+        assert!(payload.validate_version().is_ok());
+        assert!(payload.module.is_none());
+        assert!(payload.frames.is_empty());
+        assert!(payload.cause.is_none());
     }
 }
