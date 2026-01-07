@@ -169,7 +169,7 @@ impl FemtoLogger {
     /// `AtomicU8`.
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
-        self.level.store(level as u8, Ordering::Relaxed);
+        self.level.store(u8::from(level), Ordering::Relaxed);
     }
 
     /// Return the logger's current minimum level as a string.
@@ -267,7 +267,7 @@ impl FemtoLogger {
     /// or `None` if it was filtered out.
     fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
-        if (record.level as u8) < threshold {
+        if u8::from(record.level) < threshold {
             return None;
         }
 
@@ -291,7 +291,7 @@ impl FemtoLogger {
     /// Return whether `level` is enabled for this logger.
     #[cfg(feature = "log-compat")]
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
-        level as u8 >= self.level.load(Ordering::Relaxed)
+        u8::from(level) >= self.level.load(Ordering::Relaxed)
     }
 
     /// Dispatch an already-constructed record through this logger.
@@ -498,7 +498,7 @@ impl FemtoLogger {
             name,
             parent,
             formatter,
-            level: AtomicU8::new(FemtoLevel::Info as u8),
+            level: AtomicU8::new(u8::from(FemtoLevel::Info)),
             propagate: AtomicBool::new(true),
             handlers,
             filters,

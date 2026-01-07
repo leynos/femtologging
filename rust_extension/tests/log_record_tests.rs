@@ -1,6 +1,7 @@
 use _femtologging_rs::{FemtoLevel, FemtoLogRecord};
 use rstest::rstest;
 use std::collections::BTreeMap;
+use std::fmt::Write;
 use std::thread;
 use std::time::SystemTime;
 
@@ -50,4 +51,37 @@ fn metadata_sets_fields(
         .expect("spawn thread")
         .join()
         .expect("thread joined without panic");
+}
+
+/// Test that `level_str()` returns the canonical string for each `FemtoLevel` variant.
+#[rstest]
+#[case(FemtoLevel::Trace, "TRACE")]
+#[case(FemtoLevel::Debug, "DEBUG")]
+#[case(FemtoLevel::Info, "INFO")]
+#[case(FemtoLevel::Warn, "WARN")]
+#[case(FemtoLevel::Error, "ERROR")]
+#[case(FemtoLevel::Critical, "CRITICAL")]
+fn level_str_returns_canonical_string(#[case] level: FemtoLevel, #[case] expected: &str) {
+    let record = FemtoLogRecord::new("test", level, "msg");
+    assert_eq!(record.level_str(), expected);
+}
+
+/// Test that `Display` for `FemtoLogRecord` includes the level string and message.
+///
+/// The Display format is `"{level} - {message}"` (logger name is not included).
+#[rstest]
+#[case(FemtoLevel::Trace, "TRACE")]
+#[case(FemtoLevel::Debug, "DEBUG")]
+#[case(FemtoLevel::Info, "INFO")]
+#[case(FemtoLevel::Warn, "WARN")]
+#[case(FemtoLevel::Error, "ERROR")]
+#[case(FemtoLevel::Critical, "CRITICAL")]
+fn display_includes_level_string(#[case] level: FemtoLevel, #[case] expected_level: &str) {
+    let record = FemtoLogRecord::new("mylogger", level, "test message");
+    let mut output = String::new();
+    write!(&mut output, "{}", record).expect("write to string");
+
+    // Display format is "{level} - {message}"
+    let expected = format!("{} - test message", expected_level);
+    assert_eq!(output, expected);
 }
