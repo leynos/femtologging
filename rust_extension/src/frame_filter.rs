@@ -263,6 +263,30 @@ mod tests {
         StackFrame::new(filename, lineno, function)
     }
 
+    /// Assert filtered frames have expected length and filenames.
+    fn assert_filter_result(
+        filtered: &[StackFrame],
+        expected_len: usize,
+        expected_filenames: &[&str],
+    ) {
+        assert_eq!(filtered.len(), expected_len);
+        for (i, expected) in expected_filenames.iter().enumerate() {
+            assert_eq!(filtered[i].filename, *expected);
+        }
+    }
+
+    /// Assert filtered frames have expected length and function names.
+    fn assert_filter_result_by_function(
+        filtered: &[StackFrame],
+        expected_len: usize,
+        expected_functions: &[&str],
+    ) {
+        assert_eq!(filtered.len(), expected_len);
+        for (i, expected) in expected_functions.iter().enumerate() {
+            assert_eq!(filtered[i].function, *expected);
+        }
+    }
+
     #[rstest]
     fn filter_frames_with_predicate() {
         let frames = vec![
@@ -273,9 +297,7 @@ mod tests {
 
         let filtered = filter_frames(&frames, |f| f.filename != "b.py");
 
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].filename, "a.py");
-        assert_eq!(filtered[1].filename, "c.py");
+        assert_filter_result(&filtered, 2, &["a.py", "c.py"]);
     }
 
     #[rstest]
@@ -320,9 +342,7 @@ mod tests {
 
         let limited = limit_frames(&frames, 2);
 
-        assert_eq!(limited.len(), 2);
-        assert_eq!(limited[0].filename, "b.py");
-        assert_eq!(limited[1].filename, "c.py");
+        assert_filter_result(&limited, 2, &["b.py", "c.py"]);
     }
 
     #[rstest]
@@ -342,9 +362,7 @@ mod tests {
 
         let filtered = exclude_by_filename(&frames, &[".venv/"]);
 
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].filename, "app/main.py");
-        assert_eq!(filtered[1].filename, "app/utils.py");
+        assert_filter_result(&filtered, 2, &["app/main.py", "app/utils.py"]);
     }
 
     #[rstest]
@@ -357,8 +375,7 @@ mod tests {
 
         let filtered = exclude_by_filename(&frames, &[".venv/", "site-packages/"]);
 
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].filename, "app/main.py");
+        assert_filter_result(&filtered, 1, &["app/main.py"]);
     }
 
     #[rstest]
@@ -383,9 +400,7 @@ mod tests {
 
         let filtered = exclude_by_function(&frames, &["_private"]);
 
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].function, "main");
-        assert_eq!(filtered[1].function, "public_api");
+        assert_filter_result_by_function(&filtered, 2, &["main", "public_api"]);
     }
 
     #[rstest]
@@ -397,8 +412,7 @@ mod tests {
 
         let filtered = exclude_logging_infrastructure(&frames);
 
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].filename, "myapp/main.py");
+        assert_filter_result(&filtered, 1, &["myapp/main.py"]);
     }
 
     #[rstest]
@@ -485,8 +499,6 @@ mod tests {
 
         // Finally limit depth
         let step3 = limit_frames(&step2, 2);
-        assert_eq!(step3.len(), 2);
-        assert_eq!(step3[0].filename, "myapp/api.py");
-        assert_eq!(step3[1].filename, "myapp/handler.py");
+        assert_filter_result(&step3, 2, &["myapp/api.py", "myapp/handler.py"]);
     }
 }

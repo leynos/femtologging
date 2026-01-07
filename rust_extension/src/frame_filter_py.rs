@@ -382,6 +382,29 @@ mod tests {
         payload
     }
 
+    /// Helper to call filter_frames and extract the resulting frames list.
+    fn filter_and_extract_frames<'py>(
+        py: Python<'py>,
+        payload: &Bound<'py, PyDict>,
+        exclude_filenames: Option<Vec<String>>,
+        exclude_functions: Option<Vec<String>>,
+        max_depth: Option<usize>,
+        exclude_logging: bool,
+    ) -> Bound<'py, PyList> {
+        let result = filter_frames(
+            py,
+            payload,
+            exclude_filenames,
+            exclude_functions,
+            max_depth,
+            exclude_logging,
+        )
+        .unwrap();
+        let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
+        let frames = result_dict.get_item("frames").unwrap().unwrap();
+        frames.downcast::<PyList>().unwrap().clone()
+    }
+
     #[rstest]
     #[serial]
     fn filter_stack_payload_exclude_logging() {
@@ -395,10 +418,7 @@ mod tests {
                 ],
             );
 
-            let result = filter_frames(py, &payload, None, None, None, true).unwrap();
-            let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
-            let frames = result_dict.get_item("frames").unwrap().unwrap();
-            let frames_list = frames.downcast::<PyList>().unwrap();
+            let frames_list = filter_and_extract_frames(py, &payload, None, None, None, true);
 
             assert_eq!(frames_list.len(), 1);
             let frame = frames_list.get_item(0).unwrap();
@@ -422,18 +442,14 @@ mod tests {
                 &["myapp/main.py", ".venv/lib/requests.py", "myapp/utils.py"],
             );
 
-            let result = filter_frames(
+            let frames_list = filter_and_extract_frames(
                 py,
                 &payload,
                 Some(vec![".venv/".to_string()]),
                 None,
                 None,
                 false,
-            )
-            .unwrap();
-            let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
-            let frames = result_dict.get_item("frames").unwrap().unwrap();
-            let frames_list = frames.downcast::<PyList>().unwrap();
+            );
 
             assert_eq!(frames_list.len(), 2);
         });
@@ -445,10 +461,7 @@ mod tests {
         Python::with_gil(|py| {
             let payload = make_stack_payload_dict(py, &["a.py", "b.py", "c.py", "d.py", "e.py"]);
 
-            let result = filter_frames(py, &payload, None, None, Some(2), false).unwrap();
-            let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
-            let frames = result_dict.get_item("frames").unwrap().unwrap();
-            let frames_list = frames.downcast::<PyList>().unwrap();
+            let frames_list = filter_and_extract_frames(py, &payload, None, None, Some(2), false);
 
             assert_eq!(frames_list.len(), 2);
             // Should be the last 2 frames (d.py, e.py)
