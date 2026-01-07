@@ -533,36 +533,11 @@ impl ExceptionPayload {
     #[must_use]
     pub fn filter_frames<F>(&self, predicate: F) -> Self
     where
-        F: Fn(&StackFrame) -> bool + Clone,
+        F: Fn(&StackFrame) -> bool,
     {
-        Self {
-            schema_version: self.schema_version,
-            type_name: self.type_name.clone(),
-            module: self.module.clone(),
-            message: self.message.clone(),
-            args_repr: self.args_repr.clone(),
-            notes: self.notes.clone(),
-            frames: self
-                .frames
-                .iter()
-                .filter(|f| predicate(f))
-                .cloned()
-                .collect(),
-            cause: self
-                .cause
-                .as_ref()
-                .map(|c| Box::new(c.filter_frames(predicate.clone()))),
-            context: self
-                .context
-                .as_ref()
-                .map(|c| Box::new(c.filter_frames(predicate.clone()))),
-            suppress_context: self.suppress_context,
-            exceptions: self
-                .exceptions
-                .iter()
-                .map(|e| e.filter_frames(predicate.clone()))
-                .collect(),
-        }
+        self.apply_frame_transform(&|frames| {
+            frames.iter().filter(|f| predicate(f)).cloned().collect()
+        })
     }
 
     /// Return a new payload with at most `n` frames (most recent).
