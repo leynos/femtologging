@@ -130,6 +130,103 @@ logger's minimum level using a `FemtoLevel` value. Likewise, `log()` accepts a
 `FemtoLevel` and message, returning the formatted string or `None` when a
 record is filtered out.
 
+### Log record structure
+
+`FemtoLogRecord` stores a single `FemtoLevel` value as its source of truth for
+the log level. The `level_str()` method provides zero-allocation access to the
+canonical string representation via `FemtoLevel::as_str()`. This design
+eliminates split-brain scenarios where string and enum representations could
+diverge.
+
+```mermaid
+classDiagram
+    class FemtoLevel {
+        <<enum>>
+        Info
+        Warn
+        Error
+        as_str() &'static str
+    }
+
+    class RecordMetadata {
+        +String module_path
+        +String filename
+        +u32 line_number
+        +String thread_name
+    }
+
+    class ExceptionPayload
+    class StackPayload
+
+    class FemtoLogRecord {
+        +String logger
+        +FemtoLevel level
+        +String message
+        +RecordMetadata metadata
+        +Option~ExceptionPayload~ exception_payload
+        +Option~StackPayload~ stack_payload
+        +new(logger: &str, level: FemtoLevel, message: &str) FemtoLogRecord
+        +new_with_thread(logger: &str, level: FemtoLevel, message: &str, thread_name: String) FemtoLogRecord
+        +level_str() &'static str
+        +with_exception(payload: ExceptionPayload) FemtoLogRecord
+        +with_stack(payload: StackPayload) FemtoLogRecord
+        +fmt(f: Formatter) fmt::Result
+    }
+
+    class LevelFilter {
+        +FemtoLevel max_level
+        +should_log(record: &FemtoLogRecord) bool
+    }
+
+    class FemtoLogger {
+        +AtomicU8 level
+        +log_record(record: FemtoLogRecord) Option~String~
+        +dispatch_record(record: FemtoLogRecord)
+        +is_enabled_for(level: FemtoLevel) bool
+    }
+
+    class DefaultFormatter {
+        +format(record: &FemtoLogRecord) String
+    }
+
+    class PythonFormatter {
+        +record_to_dict(py: Python, record: &FemtoLogRecord) PyObject
+    }
+
+    class PyHandler {
+        +handle_record(py: Python, record: &FemtoLogRecord)
+    }
+
+    class SerializableRecord {
+        +&str logger
+        +&str level
+        +&str message
+        +u64 timestamp_ns
+        +&str filename
+    }
+
+    FemtoLogRecord --> FemtoLevel : has
+    FemtoLogRecord --> RecordMetadata : has
+    FemtoLogRecord --> ExceptionPayload : optional
+    FemtoLogRecord --> StackPayload : optional
+
+    LevelFilter --> FemtoLogRecord : reads_level
+    FemtoLogger --> FemtoLogRecord : owns
+    FemtoLogger --> LevelFilter : uses
+
+    DefaultFormatter --> FemtoLogRecord : reads_level_str
+
+    PythonFormatter --> FemtoLogRecord : reads_level_and_levelno
+    PyHandler --> FemtoLogRecord : passes_level_str_to_python
+
+    SerializableRecord --> FemtoLogRecord : From<&FemtoLogRecord>
+    SerializableRecord --> FemtoLevel : uses_as_str_via_level_str
+```
+
+*Figure 1: Class diagram showing `FemtoLogRecord` with its single `FemtoLevel`
+source of truth. Consumers access the level string via `level_str()`, which
+delegates to `FemtoLevel::as_str()` for zero-allocation string access.*
+
 ## Runtime level updates
 
 `FemtoLogger` supports dynamic log level changes at runtime via `set_level()`
