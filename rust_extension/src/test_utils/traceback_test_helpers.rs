@@ -179,6 +179,21 @@ impl LocalEntry {
     }
 }
 
+/// Create a Python object whose `__repr__` raises an exception.
+///
+/// Useful for testing repr failure handling in locals extraction.
+pub fn create_bad_repr_object<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
+    let globals = PyDict::new(py);
+    py.run(
+        c"class BadRepr:\n    def __repr__(self): raise ValueError('boom')",
+        Some(&globals),
+        None,
+    )
+    .expect("class definition should succeed");
+    py.eval(c"BadRepr()", Some(&globals), None)
+        .expect("object creation should succeed")
+}
+
 /// Assert that extracting a frame from the provided dict fails with an error
 /// containing the expected substring.
 pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected_substr: &str) {

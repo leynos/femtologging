@@ -283,13 +283,13 @@ fn extract_locals_skip_path_does_not_panic(
         let locals_dict = PyDict::new(py);
         for entry in entries {
             if entry.is_int_key() {
-                let int_key: i32 = entry.key.parse().expect("int key should parse");
+                let int_key: i32 = entry.key().parse().expect("int key should parse");
                 locals_dict
-                    .set_item(int_key, entry.value)
+                    .set_item(int_key, entry.value())
                     .expect("set int key entry should succeed");
             } else {
                 locals_dict
-                    .set_item(entry.key, entry.value)
+                    .set_item(entry.key(), entry.value())
                     .expect("set string key entry should succeed");
             }
         }
@@ -329,17 +329,8 @@ fn extract_locals_with_repr_failure_returns_partial() {
             .set_item("good", "value")
             .expect("set good entry should succeed");
 
-        // Create an object whose __repr__ raises an exception
-        let globals = PyDict::new(py);
-        py.run(
-            c"class BadRepr:\n    def __repr__(self): raise RuntimeError('no repr')",
-            Some(&globals),
-            None,
-        )
-        .expect("class definition should succeed");
-        let bad_repr_obj = py
-            .eval(c"BadRepr()", Some(&globals), None)
-            .expect("object creation should succeed");
+        // Add an object whose __repr__ raises an exception
+        let bad_repr_obj = create_bad_repr_object(py);
         locals_dict
             .set_item("bad", bad_repr_obj)
             .expect("set bad repr entry should succeed");
@@ -379,16 +370,7 @@ fn extract_locals_with_mixed_skip_reasons_returns_partial() {
             .expect("set int key entry should succeed");
 
         // Object with failing repr
-        let globals = PyDict::new(py);
-        py.run(
-            c"class BadRepr:\n    def __repr__(self): raise ValueError('boom')",
-            Some(&globals),
-            None,
-        )
-        .expect("class definition should succeed");
-        let bad_repr_obj = py
-            .eval(c"BadRepr()", Some(&globals), None)
-            .expect("object creation should succeed");
+        let bad_repr_obj = create_bad_repr_object(py);
         locals_dict
             .set_item("bad_repr", bad_repr_obj)
             .expect("set bad repr entry should succeed");
