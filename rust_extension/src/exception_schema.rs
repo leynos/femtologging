@@ -603,6 +603,37 @@ impl ExceptionPayload {
         }
     }
 
+    /// Private helper to apply a frame transformation recursively across
+    /// the exception payload, its cause chain, context chain, and exception groups.
+    fn apply_frame_transform<F>(&self, transform: &F) -> Self
+    where
+        F: Fn(&[StackFrame]) -> Vec<StackFrame>,
+    {
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: transform(&self.frames),
+            cause: self
+                .cause
+                .as_ref()
+                .map(|c| Box::new(c.apply_frame_transform(transform))),
+            context: self
+                .context
+                .as_ref()
+                .map(|c| Box::new(c.apply_frame_transform(transform))),
+            suppress_context: self.suppress_context,
+            exceptions: self
+                .exceptions
+                .iter()
+                .map(|e| e.apply_frame_transform(transform))
+                .collect(),
+        }
+    }
+
     /// Return a new payload excluding frames matching filename patterns.
     ///
     /// Recursively excludes frames in the cause chain, context chain, and
@@ -625,29 +656,7 @@ impl ExceptionPayload {
     #[must_use]
     pub fn exclude_filenames(&self, patterns: &[&str]) -> Self {
         use crate::frame_filter::exclude_by_filename;
-        Self {
-            schema_version: self.schema_version,
-            type_name: self.type_name.clone(),
-            module: self.module.clone(),
-            message: self.message.clone(),
-            args_repr: self.args_repr.clone(),
-            notes: self.notes.clone(),
-            frames: exclude_by_filename(&self.frames, patterns),
-            cause: self
-                .cause
-                .as_ref()
-                .map(|c| Box::new(c.exclude_filenames(patterns))),
-            context: self
-                .context
-                .as_ref()
-                .map(|c| Box::new(c.exclude_filenames(patterns))),
-            suppress_context: self.suppress_context,
-            exceptions: self
-                .exceptions
-                .iter()
-                .map(|e| e.exclude_filenames(patterns))
-                .collect(),
-        }
+        self.apply_frame_transform(&|frames| exclude_by_filename(frames, patterns))
     }
 
     /// Return a new payload excluding frames matching function name patterns.
@@ -657,29 +666,7 @@ impl ExceptionPayload {
     #[must_use]
     pub fn exclude_functions(&self, patterns: &[&str]) -> Self {
         use crate::frame_filter::exclude_by_function;
-        Self {
-            schema_version: self.schema_version,
-            type_name: self.type_name.clone(),
-            module: self.module.clone(),
-            message: self.message.clone(),
-            args_repr: self.args_repr.clone(),
-            notes: self.notes.clone(),
-            frames: exclude_by_function(&self.frames, patterns),
-            cause: self
-                .cause
-                .as_ref()
-                .map(|c| Box::new(c.exclude_functions(patterns))),
-            context: self
-                .context
-                .as_ref()
-                .map(|c| Box::new(c.exclude_functions(patterns))),
-            suppress_context: self.suppress_context,
-            exceptions: self
-                .exceptions
-                .iter()
-                .map(|e| e.exclude_functions(patterns))
-                .collect(),
-        }
+        self.apply_frame_transform(&|frames| exclude_by_function(frames, patterns))
     }
 
     /// Return a new payload excluding common logging infrastructure frames.
@@ -704,29 +691,7 @@ impl ExceptionPayload {
     #[must_use]
     pub fn exclude_logging_infrastructure(&self) -> Self {
         use crate::frame_filter::exclude_logging_infrastructure;
-        Self {
-            schema_version: self.schema_version,
-            type_name: self.type_name.clone(),
-            module: self.module.clone(),
-            message: self.message.clone(),
-            args_repr: self.args_repr.clone(),
-            notes: self.notes.clone(),
-            frames: exclude_logging_infrastructure(&self.frames),
-            cause: self
-                .cause
-                .as_ref()
-                .map(|c| Box::new(c.exclude_logging_infrastructure())),
-            context: self
-                .context
-                .as_ref()
-                .map(|c| Box::new(c.exclude_logging_infrastructure())),
-            suppress_context: self.suppress_context,
-            exceptions: self
-                .exceptions
-                .iter()
-                .map(ExceptionPayload::exclude_logging_infrastructure)
-                .collect(),
-        }
+        self.apply_frame_transform(&exclude_logging_infrastructure)
     }
 }
 
