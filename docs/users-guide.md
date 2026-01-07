@@ -188,9 +188,87 @@ collector = Collector()
 logger.add_handler(collector)
 ```
 
-The handler’s `handle` method must be callable and thread-safe. Exceptions are
+The handler's `handle` method must be callable and thread-safe. Exceptions are
 printed to stderr and counted as handler errors, so prefer defensive code and
 avoid raising from `handle`.
+
+#### Handler stability contract
+
+Handler capabilities are inspected **once** when `add_handler()` is called:
+
+- The presence of a callable `handle_record` method is cached at registration
+  time and determines which dispatch path is used for all subsequent records.
+- **Do not mutate the handler after calling `add_handler()`.** Adding or
+  removing `handle_record` after registration has no effect and results in
+  undefined behaviour.
+- Ensure the handler is fully configured before passing it to `add_handler()`.
+
+This design keeps per-record overhead low by avoiding repeated attribute
+lookups on the hot path and aligns with the standard library expectation that
+handlers are configured before use.
+
+The following diagram shows how capability detection works at registration time
+and how the cached result determines dispatch for all subsequent records:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Logger
+    participant PyHandler
+    participant PythonHandlerObject
+
+    User->>Logger: add_handler(python_handler)
+    Logger->>PyHandler: new(py, python_handler)
+    PyHandler->>PythonHandlerObject: getattr(handle_record)
+    alt handle_record exists and is callable
+        PyHandler-->>PyHandler: has_handle_record = true
+    else handle_record missing or not callable
+        PyHandler-->>PyHandler: has_handle_record = false
+    end
+    PyHandler-->>Logger: PyHandler instance (with cached has_handle_record)
+    Logger-->>Logger: register handler with cached capability
+
+    User->>Logger: log(record)
+    Logger->>PyHandler: handle(record)
+    alt has_handle_record is true
+        PyHandler->>PythonHandlerObject: handle_record(record)
+    else has_handle_record is false
+        PyHandler->>PythonHandlerObject: handle(logger, level, message)
+    end
+```
+
+_Figure 1: Capability detection at registration and dispatch based on cached
+result._
+
+This next diagram illustrates why mutating the handler after registration has
+no effect—the capability was already cached:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Logger
+    participant PyHandler
+    participant PythonHandlerObject
+
+    User->>Logger: add_handler(python_handler)
+    Logger->>PyHandler: new(py, python_handler)
+    PyHandler->>PythonHandlerObject: getattr(handle_record)
+    PyHandler-->>PyHandler: has_handle_record = false
+    PyHandler-->>Logger: PyHandler instance (has_handle_record = false)
+
+    User->>PythonHandlerObject: add method handle_record
+    PythonHandlerObject-->>PythonHandlerObject: mutate object
+
+    User->>Logger: log(record)
+    Logger->>PyHandler: handle(record)
+    PyHandler-->>PyHandler: uses cached has_handle_record = false
+    PyHandler->>PythonHandlerObject: handle(logger, level, message)
+
+    Note over PyHandler,PythonHandlerObject: New handle_record is not used because capability was cached at registration
+```
+
+_Figure 2: Mutating the handler after registration does not change dispatch
+behaviour._
 
 ## Configuration options
 
