@@ -198,8 +198,8 @@ mod tests {
     #[rstest]
     fn new_record_has_no_payloads() {
         let record = FemtoLogRecord::new("test", FemtoLevel::Info, "message");
-        assert!(record.exception_payload.is_none());
-        assert!(record.stack_payload.is_none());
+        assert!(record.exception_payload().is_none());
+        assert!(record.stack_payload().is_none());
     }
 
     #[rstest]
@@ -207,9 +207,9 @@ mod tests {
         let exc = ExceptionPayload::new("ValueError", "bad input");
         let record = FemtoLogRecord::new("test", FemtoLevel::Error, "failed").with_exception(exc);
 
-        assert!(record.exception_payload.is_some());
+        assert!(record.exception_payload().is_some());
         let payload = record
-            .exception_payload
+            .exception_payload()
             .expect("exception_payload should be Some after with_exception");
         assert_eq!(payload.type_name, "ValueError");
         assert_eq!(payload.message, "bad input");
@@ -221,9 +221,9 @@ mod tests {
         let stack = StackTracePayload::new(frames);
         let record = FemtoLogRecord::new("test", FemtoLevel::Debug, "trace").with_stack(stack);
 
-        assert!(record.stack_payload.is_some());
+        assert!(record.stack_payload().is_some());
         let payload = record
-            .stack_payload
+            .stack_payload()
             .expect("stack_payload should be Some after with_stack");
         assert_eq!(payload.frames.len(), 1);
         assert_eq!(payload.frames[0].function, "main");
@@ -238,7 +238,7 @@ mod tests {
             .with_exception(exc)
             .with_stack(stack);
 
-        assert!(record.exception_payload.is_some());
-        assert!(record.stack_payload.is_some());
+        assert!(record.exception_payload().is_some());
+        assert!(record.stack_payload().is_some());
     }
 }
