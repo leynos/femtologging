@@ -153,6 +153,36 @@ fn frame_with_wrong_type_lineno_returns_error() {
     None,
     "should return None when all entries fail"
 )]
+#[case::multiple_non_string_keys(
+    &[
+        LocalEntry::new("valid", "value"),
+        LocalEntry::new("123", "int_key"),
+        LocalEntry::new("456", "another_int"),
+    ],
+    Some(&[("valid", "'value'")] as &[_]),
+    "should handle multiple non-string keys without panic"
+)]
+#[case::many_invalid_entries(
+    &[
+        LocalEntry::new("1", "a"),
+        LocalEntry::new("2", "b"),
+        LocalEntry::new("3", "c"),
+        LocalEntry::new("4", "d"),
+        LocalEntry::new("5", "e"),
+    ],
+    None,
+    "should handle many invalid entries without panic"
+)]
+#[case::single_valid_among_many_invalid(
+    &[
+        LocalEntry::new("1", "a"),
+        LocalEntry::new("ok", "value"),
+        LocalEntry::new("2", "b"),
+        LocalEntry::new("3", "c"),
+    ],
+    Some(&[("ok", "'value'")] as &[_]),
+    "should extract single valid entry among many invalid"
+)]
 fn extract_locals_handles_mixed_entries(
     #[case] entries: &[LocalEntry],
     #[case] expected: Option<&[(&str, &str)]>,
@@ -203,53 +233,6 @@ fn extract_frames_from_stack_summary_not_a_list_returns_error() {
 
         let result = extract_frames_from_stack_summary(dict.as_any());
         assert!(result.is_err(), "should fail when input is not a list");
-    });
-}
-
-// --------------------------------
-// Skip path behaviour tests
-// --------------------------------
-
-#[rstest]
-#[case::mixed_skip_reasons(
-    &[
-        LocalEntry::new("valid", "value"),
-        LocalEntry::new("123", "int_key"),
-        LocalEntry::new("456", "another_int"),
-    ],
-    Some(&[("valid", "'value'")] as &[_]),
-    "should handle multiple non-string keys without panic"
-)]
-#[case::many_invalid_entries(
-    &[
-        LocalEntry::new("1", "a"),
-        LocalEntry::new("2", "b"),
-        LocalEntry::new("3", "c"),
-        LocalEntry::new("4", "d"),
-        LocalEntry::new("5", "e"),
-    ],
-    None,
-    "should handle many invalid entries without panic"
-)]
-#[case::single_valid_among_many_invalid(
-    &[
-        LocalEntry::new("1", "a"),
-        LocalEntry::new("ok", "value"),
-        LocalEntry::new("2", "b"),
-        LocalEntry::new("3", "c"),
-    ],
-    Some(&[("ok", "'value'")] as &[_]),
-    "should extract single valid entry among many invalid"
-)]
-fn extract_locals_skip_path_does_not_panic(
-    #[case] entries: &[LocalEntry],
-    #[case] expected: Option<&[(&str, &str)]>,
-    #[case] description: &str,
-) {
-    Python::with_gil(|py| {
-        let locals_dict = PyDict::new(py);
-        populate_locals_dict_from_entries(&locals_dict, entries);
-        assert_locals_extraction_result(&locals_dict, expected, description);
     });
 }
 
