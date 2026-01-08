@@ -6,7 +6,9 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::collections::BTreeMap;
 
+use crate::exception_schema::StackFrame;
 use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
 
 /// Create a `types.SimpleNamespace` object from a [`PyDict`].
@@ -274,4 +276,61 @@ pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entrie
             .set_item(entry.key(), entry.value())
             .expect("set string key entry should succeed");
     }
+}
+
+// --------------------------------
+// Frame field assertion helpers
+// --------------------------------
+
+/// Assert that a locals map contains the expected key-value pair.
+pub fn assert_local_equals(locals: &BTreeMap<String, String>, key: &str, expected: &str) {
+    assert_eq!(
+        locals.get(key),
+        Some(&expected.to_string()),
+        "locals[{key:?}] should equal {expected:?}"
+    );
+}
+
+/// Assert that a locals map does not contain the specified key.
+pub fn assert_local_absent(locals: &BTreeMap<String, String>, key: &str, reason: &str) {
+    assert!(locals.get(key).is_none(), "{}", reason);
+}
+
+/// Helper to assert that a frame has the expected required fields.
+pub fn assert_frame_required_fields(
+    frame: &StackFrame,
+    filename: &str,
+    lineno: u32,
+    function: &str,
+) {
+    assert_eq!(frame.filename, filename, "filename should match");
+    assert_eq!(frame.lineno, lineno, "lineno should match");
+    assert_eq!(frame.function, function, "function should match");
+}
+
+/// Expected values for optional frame fields in test assertions.
+#[derive(Default)]
+pub struct ExpectedOptionalFields<'a> {
+    pub end_lineno: Option<u32>,
+    pub colno: Option<u32>,
+    pub end_colno: Option<u32>,
+    pub source_line: Option<&'a str>,
+}
+
+/// Helper to assert that a frame's optional fields match expected values.
+pub fn assert_frame_optional_fields(frame: &StackFrame, expected: ExpectedOptionalFields<'_>) {
+    assert_eq!(
+        frame.end_lineno, expected.end_lineno,
+        "end_lineno should match"
+    );
+    assert_eq!(frame.colno, expected.colno, "colno should match");
+    assert_eq!(
+        frame.end_colno, expected.end_colno,
+        "end_colno should match"
+    );
+    assert_eq!(
+        frame.source_line,
+        expected.source_line.map(String::from),
+        "source_line should match"
+    );
 }
