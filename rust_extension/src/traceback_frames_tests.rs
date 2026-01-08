@@ -243,14 +243,14 @@ enum SkipScenario {
     ReprFailure,
     /// Single valid entry, one integer key, one bad repr object.
     MixedSkipReasons,
-    /// All entries have failing `__repr__` or non-string keys.
-    AllReprFailures,
+    /// All entries fail: some with failing `__repr__`, others with non-string keys.
+    AllFailMixed,
 }
 
 #[rstest]
 #[case::repr_failure(SkipScenario::ReprFailure, Some(("good", "'value'")))]
 #[case::mixed_skip_reasons(SkipScenario::MixedSkipReasons, Some(("valid", "'value'")))]
-#[case::all_repr_failures(SkipScenario::AllReprFailures, None)]
+#[case::all_fail_mixed(SkipScenario::AllFailMixed, None)]
 fn extract_locals_with_skip_reasons_returns_partial(
     #[case] scenario: SkipScenario,
     #[case] expected: Option<(&str, &str)>,
@@ -283,7 +283,7 @@ fn extract_locals_with_skip_reasons_returns_partial(
                     .set_item("bad_repr", bad_repr_obj)
                     .expect("set bad repr entry should succeed");
             }
-            SkipScenario::AllReprFailures => {
+            SkipScenario::AllFailMixed => {
                 // Add multiple entries with failing repr
                 for name in ["bad1", "bad2", "bad3"] {
                     let bad_repr_obj = create_bad_repr_object(py);
