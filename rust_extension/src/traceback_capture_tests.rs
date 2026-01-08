@@ -396,3 +396,80 @@ except ValueError as e:
         );
     });
 }
+
+#[rstest]
+fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
+    // Exceptions with a non-iterable __notes__ attribute should degrade gracefully.
+    // This tests the type-mismatch degradation path for __notes__.
+    Python::with_gil(|py| {
+        let exc = py
+            .import("builtins")
+            .expect("builtins module should exist")
+            .getattr("ValueError")
+            .expect("ValueError should exist")
+            .call1(("test error",))
+            .expect("ValueError constructor should succeed");
+
+        // Set a malformed, non-iterable __notes__ value (integer instead of list)
+        exc.setattr("__notes__", 123_i32)
+            .expect("setting non-iterable __notes__ should succeed at Python level");
+
+        let payload = capture_exception(py, &exc)
+            .expect("capture_exception should succeed even with malformed __notes__")
+            .expect("payload should be Some");
+
+        // For non-iterable __notes__, we expect graceful degradation to empty notes
+        assert!(
+            payload.notes.is_empty(),
+            "expected empty notes for non-iterable __notes__, got: {:?}",
+            payload.notes
+        );
+        assert_eq!(payload.type_name, "ValueError");
+    });
+}
+
+#[rstest]
+fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
+    // Exceptions with __notes__ containing non-string elements should still
+    // be captured without failing, degrading notes content as needed.
+    Python::with_gil(|py| {
+        let exc = py
+            .import("builtins")
+            .expect("builtins module should exist")
+            .getattr("ValueError")
+            .expect("ValueError should exist")
+            .call1(("test error",))
+            .expect("ValueError constructor should succeed");
+
+        // Create a list with mixed types: valid string, integer, bytes
+        let code = c"
+notes_list = ['valid note', 42, b'bytes note', None]
+";
+        let globals = PyDict::new(py);
+        py.run(code, Some(&globals), None)
+            .expect("code to create notes list should succeed");
+        let notes_list = globals
+            .get_item("notes_list")
+            .expect("get_item should not fail")
+            .expect("notes_list should exist");
+
+        exc.setattr("__notes__", notes_list)
+            .expect("setting list-valued __notes__ should succeed");
+
+        let payload = capture_exception(py, &exc)
+            .expect("capture_exception should succeed even with malformed note entries")
+            .expect("payload should be Some");
+
+        // The implementation should degrade gracefully - either skipping bad entries
+        // or stringifying them. We verify it doesn't error and produces a result.
+        assert_eq!(payload.type_name, "ValueError");
+
+        // At minimum, the valid string note should be captured
+        // (implementation may vary in handling of non-string elements)
+        assert!(
+            payload.notes.iter().any(|n| n.contains("valid note")),
+            "valid string note should be captured, got: {:?}",
+            payload.notes
+        );
+    });
+}
