@@ -7,7 +7,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::traceback_frames::extract_frames_from_stack_summary;
+use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
 
 /// Create a `types.SimpleNamespace` object from a [`PyDict`].
 pub fn create_simple_namespace<'py>(
@@ -208,4 +208,55 @@ pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected
         err_text.contains(expected_substr),
         "expected error containing {expected_substr:?}, got {err_text:?}"
     );
+}
+
+/// Assert the result of `extract_locals_dict` against expected entries.
+///
+/// Builds a frame from the provided locals dict, calls `extract_locals_dict`,
+/// and verifies that the result matches the expected entries (or is `None`).
+pub fn assert_locals_extraction_result(
+    locals_dict: &Bound<'_, PyDict>,
+    expected: Option<&[(&str, &str)]>,
+    description: &str,
+) {
+    let py = locals_dict.py();
+    let frame_dict = create_frame_dict_with_locals(py, locals_dict);
+    let frame = create_simple_namespace(py, &frame_dict);
+
+    let result = extract_locals_dict(&frame);
+    match expected {
+        Some(expected_entries) => {
+            let locals = result.expect(description);
+            assert_eq!(locals.len(), expected_entries.len(), "{}", description);
+            for (key, value) in expected_entries {
+                assert_eq!(
+                    locals.get(*key),
+                    Some(&(*value).to_string()),
+                    "{}: key '{}' should have expected value",
+                    description,
+                    key
+                );
+            }
+        }
+        None => {
+            assert!(result.is_none(), "{}", description);
+        }
+    }
+}
+
+/// Populate a PyDict with LocalEntry items, inserting integer keys for entries
+/// where `is_int_key()` returns true.
+pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entries: &[LocalEntry]) {
+    for entry in entries {
+        if entry.is_int_key() {
+            let int_key: i32 = entry.key().parse().expect("int key should parse");
+            locals_dict
+                .set_item(int_key, entry.value())
+                .expect("set int key entry should succeed");
+        } else {
+            locals_dict
+                .set_item(entry.key(), entry.value())
+                .expect("set string key entry should succeed");
+        }
+    }
 }

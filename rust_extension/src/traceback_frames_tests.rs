@@ -160,41 +160,8 @@ fn extract_locals_handles_mixed_entries(
 ) {
     Python::with_gil(|py| {
         let locals_dict = PyDict::new(py);
-        for entry in entries {
-            if entry.is_int_key() {
-                let int_key: i32 = entry.key().parse().expect("int key should parse");
-                locals_dict
-                    .set_item(int_key, entry.value())
-                    .expect("set int key entry should succeed");
-            } else {
-                locals_dict
-                    .set_item(entry.key(), entry.value())
-                    .expect("set string key entry should succeed");
-            }
-        }
-
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
-
-        let result = extract_locals_dict(&frame);
-        match expected {
-            Some(expected_entries) => {
-                let locals = result.expect(description);
-                assert_eq!(locals.len(), expected_entries.len(), "{}", description);
-                for (key, value) in expected_entries {
-                    assert_eq!(
-                        locals.get(*key),
-                        Some(&(*value).to_string()),
-                        "{}: key '{}' should have expected value",
-                        description,
-                        key
-                    );
-                }
-            }
-            None => {
-                assert!(result.is_none(), "{}", description);
-            }
-        }
+        populate_locals_dict_from_entries(&locals_dict, entries);
+        assert_locals_extraction_result(&locals_dict, expected, description);
     });
 }
 
@@ -281,41 +248,8 @@ fn extract_locals_skip_path_does_not_panic(
 ) {
     Python::with_gil(|py| {
         let locals_dict = PyDict::new(py);
-        for entry in entries {
-            if entry.is_int_key() {
-                let int_key: i32 = entry.key().parse().expect("int key should parse");
-                locals_dict
-                    .set_item(int_key, entry.value())
-                    .expect("set int key entry should succeed");
-            } else {
-                locals_dict
-                    .set_item(entry.key(), entry.value())
-                    .expect("set string key entry should succeed");
-            }
-        }
-
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
-
-        let result = extract_locals_dict(&frame);
-        match expected {
-            Some(expected_entries) => {
-                let locals = result.expect(description);
-                assert_eq!(locals.len(), expected_entries.len(), "{}", description);
-                for (key, value) in expected_entries {
-                    assert_eq!(
-                        locals.get(*key),
-                        Some(&(*value).to_string()),
-                        "{}: key '{}' should have expected value",
-                        description,
-                        key
-                    );
-                }
-            }
-            None => {
-                assert!(result.is_none(), "{}", description);
-            }
-        }
+        populate_locals_dict_from_entries(&locals_dict, entries);
+        assert_locals_extraction_result(&locals_dict, expected, description);
     });
 }
 
@@ -326,23 +260,27 @@ enum SkipScenario {
     ReprFailure,
     /// Single valid entry, one integer key, one bad repr object.
     MixedSkipReasons,
+    /// All entries have failing `__repr__` or non-string keys.
+    AllReprFailures,
 }
 
 #[rstest]
-#[case::repr_failure(SkipScenario::ReprFailure, "good", "'value'")]
-#[case::mixed_skip_reasons(SkipScenario::MixedSkipReasons, "valid", "'value'")]
+#[case::repr_failure(SkipScenario::ReprFailure, Some(("good", "'value'")))]
+#[case::mixed_skip_reasons(SkipScenario::MixedSkipReasons, Some(("valid", "'value'")))]
+#[case::all_repr_failures(SkipScenario::AllReprFailures, None)]
 fn extract_locals_with_skip_reasons_returns_partial(
     #[case] scenario: SkipScenario,
-    #[case] expected_key: &str,
-    #[case] expected_value: &str,
+    #[case] expected: Option<(&str, &str)>,
 ) {
     Python::with_gil(|py| {
         let locals_dict = PyDict::new(py);
 
-        // Add a valid entry
-        locals_dict
-            .set_item(expected_key, "value")
-            .expect("set valid entry should succeed");
+        // Add a valid entry only for scenarios that expect one
+        if let Some((key, _)) = expected {
+            locals_dict
+                .set_item(key, "value")
+                .expect("set valid entry should succeed");
+        }
 
         // Add scenario-specific invalid entries
         match scenario {
@@ -362,6 +300,19 @@ fn extract_locals_with_skip_reasons_returns_partial(
                     .set_item("bad_repr", bad_repr_obj)
                     .expect("set bad repr entry should succeed");
             }
+            SkipScenario::AllReprFailures => {
+                // Add multiple entries with failing repr
+                for name in ["bad1", "bad2", "bad3"] {
+                    let bad_repr_obj = create_bad_repr_object(py);
+                    locals_dict
+                        .set_item(name, bad_repr_obj)
+                        .expect("set bad repr entry should succeed");
+                }
+                // Also add a non-string key
+                locals_dict
+                    .set_item(99, "int_key_value")
+                    .expect("set int key entry should succeed");
+            }
         }
 
         let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
@@ -369,13 +320,19 @@ fn extract_locals_with_skip_reasons_returns_partial(
 
         let result = extract_locals_dict(&frame);
 
-        // Should return only the valid entry
-        let locals = result.expect("should return partial locals");
-        assert_eq!(locals.len(), 1, "should have exactly one entry");
-        assert_eq!(
-            locals.get(expected_key),
-            Some(&expected_value.to_string()),
-            "should have the valid entry with repr'd value"
-        );
+        match expected {
+            Some((key, value)) => {
+                let locals = result.expect("should return partial locals");
+                assert_eq!(locals.len(), 1, "should have exactly one entry");
+                assert_eq!(
+                    locals.get(key),
+                    Some(&value.to_string()),
+                    "should have the valid entry with repr'd value"
+                );
+            }
+            None => {
+                assert!(result.is_none(), "should return None when all entries fail");
+            }
+        }
     });
 }

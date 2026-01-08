@@ -146,8 +146,10 @@ pub(crate) fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<S
 
     if skip_counts.any_skipped() {
         trace!(
-            "extract_locals_dict: skipped {}/{} entries \
-             (non-string keys: {}, repr failures: {})",
+            concat!(
+                "extract_locals_dict: skipped {}/{} entries ",
+                "(non-string keys: {}, repr failures: {})"
+            ),
             skip_counts.total(),
             total_entries,
             skip_counts.non_string_keys,
