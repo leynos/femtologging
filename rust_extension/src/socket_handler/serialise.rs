@@ -23,24 +23,24 @@ struct SerializableRecord<'a> {
 
 impl<'a> From<&'a FemtoLogRecord> for SerializableRecord<'a> {
     fn from(record: &'a FemtoLogRecord) -> Self {
-        let timestamp_ns = record
-            .metadata
+        let metadata = record.metadata();
+        let timestamp_ns = metadata
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
             .map(|dur| dur.as_nanos())
             .unwrap_or_default();
 
         Self {
-            logger: &record.logger,
+            logger: record.logger(),
             level: record.level_str(),
-            message: &record.message,
+            message: record.message(),
             timestamp_ns,
-            filename: &record.metadata.filename,
-            line_number: record.metadata.line_number,
-            module_path: &record.metadata.module_path,
-            thread_id: format!("{:?}", record.metadata.thread_id),
-            thread_name: record.metadata.thread_name.as_deref(),
-            key_values: &record.metadata.key_values,
+            filename: &metadata.filename,
+            line_number: metadata.line_number,
+            module_path: &metadata.module_path,
+            thread_id: format!("{:?}", metadata.thread_id),
+            thread_name: metadata.thread_name.as_deref(),
+            key_values: &metadata.key_values,
         }
     }
 }

@@ -74,19 +74,19 @@ impl PythonFormatter {
 /// `handle_record` hook for Python handlers.
 pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
-    dict.set_item("logger", &record.logger)?;
+    dict.set_item("logger", record.logger())?;
     dict.set_item("level", record.level_str())?;
-    dict.set_item("message", &record.message)?;
-    dict.set_item("levelno", u8::from(record.level))?;
+    dict.set_item("message", record.message())?;
+    dict.set_item("levelno", u8::from(record.level()))?;
 
+    let rec_metadata = record.metadata();
     let metadata = PyDict::new(py);
-    metadata.set_item("module_path", &record.metadata.module_path)?;
-    metadata.set_item("filename", &record.metadata.filename)?;
-    metadata.set_item("line_number", record.metadata.line_number)?;
-    metadata.set_item("thread_name", &record.metadata.thread_name)?;
-    metadata.set_item("thread_id", format!("{:?}", record.metadata.thread_id))?;
-    let timestamp = record
-        .metadata
+    metadata.set_item("module_path", &rec_metadata.module_path)?;
+    metadata.set_item("filename", &rec_metadata.filename)?;
+    metadata.set_item("line_number", rec_metadata.line_number)?;
+    metadata.set_item("thread_name", &rec_metadata.thread_name)?;
+    metadata.set_item("thread_id", format!("{:?}", rec_metadata.thread_id))?;
+    let timestamp = rec_metadata
         .timestamp
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
@@ -94,19 +94,19 @@ pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObj
     metadata.set_item("timestamp", timestamp)?;
 
     let kv = PyDict::new(py);
-    for (key, value) in &record.metadata.key_values {
+    for (key, value) in &rec_metadata.key_values {
         kv.set_item(key, value)?;
     }
     metadata.set_item("key_values", kv)?;
     dict.set_item("metadata", metadata)?;
 
     // Add exception payload if present
-    if let Some(ref exc) = record.exception_payload {
+    if let Some(exc) = record.exception_payload() {
         dict.set_item("exc_info", exception_payload_to_py(py, exc)?)?;
     }
 
     // Add stack payload if present
-    if let Some(ref stack) = record.stack_payload {
+    if let Some(stack) = record.stack_payload() {
         dict.set_item("stack_info", stack_payload_to_py(py, stack)?)?;
     }
 

@@ -14,7 +14,7 @@ pub struct LevelFilter {
 
 impl FemtoFilter for LevelFilter {
     fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        record.level <= self.max_level
+        record.level() <= self.max_level
     }
 }
 

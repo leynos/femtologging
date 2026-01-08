@@ -48,8 +48,8 @@ const QUERY_ENCODE_SET_NO_SPACE: &AsciiSet = &CONTROLS
 use crate::log_record::FemtoLogRecord;
 
 fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value> {
-    let timestamp = record
-        .metadata
+    let metadata = record.metadata();
+    let timestamp = metadata
         .timestamp
         .duration_since(std::time::UNIX_EPOCH)
         .map(|dur| dur.as_secs_f64())
@@ -58,7 +58,7 @@ fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value
     let mut map = BTreeMap::new();
     map.insert(
         "name".into(),
-        serde_json::Value::String(record.logger.clone()),
+        serde_json::Value::String(record.logger().to_owned()),
     );
     map.insert(
         "levelname".into(),
@@ -66,7 +66,7 @@ fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value
     );
     map.insert(
         "msg".into(),
-        serde_json::Value::String(record.message.clone()),
+        serde_json::Value::String(record.message().to_owned()),
     );
     map.insert(
         "created".into(),
@@ -76,30 +76,30 @@ fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value
     );
     map.insert(
         "filename".into(),
-        serde_json::Value::String(record.metadata.filename.clone()),
+        serde_json::Value::String(metadata.filename.clone()),
     );
     map.insert(
         "lineno".into(),
-        serde_json::Value::Number(record.metadata.line_number.into()),
+        serde_json::Value::Number(metadata.line_number.into()),
     );
     map.insert(
         "module".into(),
-        serde_json::Value::String(record.metadata.module_path.clone()),
+        serde_json::Value::String(metadata.module_path.clone()),
     );
     map.insert(
         "thread".into(),
-        serde_json::Value::String(format!("{:?}", record.metadata.thread_id)),
+        serde_json::Value::String(format!("{:?}", metadata.thread_id)),
     );
-    if let Some(ref name) = record.metadata.thread_name {
+    if let Some(ref name) = metadata.thread_name {
         map.insert("threadName".into(), serde_json::Value::String(name.clone()));
     }
-    for (k, v) in &record.metadata.key_values {
+    for (k, v) in &metadata.key_values {
         map.insert(k.clone(), serde_json::Value::String(v.clone()));
     }
-    if let Some(ref exc) = record.exception_payload {
+    if let Some(exc) = record.exception_payload() {
         map.insert("exc_info".into(), serde_json::json!(exc));
     }
-    if let Some(ref stack) = record.stack_payload {
+    if let Some(stack) = record.stack_payload() {
         map.insert("stack_info".into(), serde_json::json!(stack));
     }
     map
@@ -182,13 +182,16 @@ fn url_encode(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::level::FemtoLevel;
+    use crate::log_record::RecordMetadata;
 
     fn test_record() -> FemtoLogRecord {
-        let mut record = FemtoLogRecord::new("test.logger", FemtoLevel::Info, "Hello World");
-        record.metadata.module_path = "test.module".into();
-        record.metadata.filename = "test.rs".into();
-        record.metadata.line_number = 42;
-        record
+        let metadata = RecordMetadata {
+            module_path: "test.module".into(),
+            filename: "test.rs".into(),
+            line_number: 42,
+            ..RecordMetadata::default()
+        };
+        FemtoLogRecord::with_metadata("test.logger", FemtoLevel::Info, "Hello World", metadata)
     }
 
     #[test]

@@ -292,12 +292,12 @@ mod tests {
                 .collected();
             assert_eq!(records.len(), 1);
             let rec = &records[0];
-            assert_eq!(rec.logger, "bridge.test");
+            assert_eq!(rec.logger(), "bridge.test");
             assert_eq!(rec.level_str(), "INFO");
-            assert_eq!(rec.message, "hello");
-            assert_eq!(rec.metadata.module_path, "bridge::test");
-            assert_eq!(rec.metadata.filename, "lib.rs");
-            assert_eq!(rec.metadata.line_number, 42);
+            assert_eq!(rec.message(), "hello");
+            assert_eq!(rec.metadata().module_path, "bridge::test");
+            assert_eq!(rec.metadata().filename, "lib.rs");
+            assert_eq!(rec.metadata().line_number, 42);
         });
     }
 
@@ -327,7 +327,7 @@ mod tests {
                 .expect("handler downcast")
                 .collected();
             assert_eq!(records.len(), 1);
-            assert_eq!(records[0].logger, "bridge.mod");
+            assert_eq!(records[0].logger(), "bridge.mod");
         });
     }
 

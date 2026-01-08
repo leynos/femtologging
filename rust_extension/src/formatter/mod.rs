@@ -70,19 +70,19 @@ impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
         let mut output = format!(
             "{} [{}] {}",
-            record.logger,
+            record.logger(),
             record.level_str(),
-            record.message
+            record.message()
         );
 
         // Append stack trace if present (before exception for readability)
-        if let Some(ref stack) = record.stack_payload {
+        if let Some(stack) = record.stack_payload() {
             output.push('\n');
             output.push_str(&format_stack_payload(stack));
         }
 
         // Append exception info if present
-        if let Some(ref exc) = record.exception_payload {
+        if let Some(exc) = record.exception_payload() {
             output.push('\n');
             output.push_str(&format_exception_payload(exc));
         }
@@ -130,8 +130,8 @@ mod tests {
     fn default_formatter_includes_exception_payload() {
         let formatter = DefaultFormatter;
         let exception = ExceptionPayload::new("ValueError", "test error");
-        let mut record = FemtoLogRecord::new("test", FemtoLevel::Error, "failed");
-        record.exception_payload = Some(exception);
+        let record =
+            FemtoLogRecord::new("test", FemtoLevel::Error, "failed").with_exception(exception);
 
         let output = formatter.format(&record);
 
@@ -145,8 +145,7 @@ mod tests {
         let formatter = DefaultFormatter;
         let frame = StackFrame::new("test.py", 42, "test_func");
         let stack = StackTracePayload::new(vec![frame]);
-        let mut record = FemtoLogRecord::new("test", FemtoLevel::Debug, "debug info");
-        record.stack_payload = Some(stack);
+        let record = FemtoLogRecord::new("test", FemtoLevel::Debug, "debug info").with_stack(stack);
 
         let output = formatter.format(&record);
 
@@ -164,9 +163,9 @@ mod tests {
         let frame = StackFrame::new("main.py", 10, "main");
         let stack = StackTracePayload::new(vec![frame]);
 
-        let mut record = FemtoLogRecord::new("app", FemtoLevel::Critical, "crash");
-        record.exception_payload = Some(exception);
-        record.stack_payload = Some(stack);
+        let record = FemtoLogRecord::new("app", FemtoLevel::Critical, "crash")
+            .with_exception(exception)
+            .with_stack(stack);
 
         let output = formatter.format(&record);
 

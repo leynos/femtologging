@@ -150,13 +150,13 @@ impl FemtoLogger {
             && should_capture_exc_info(exc)?
             && let Some(payload) = traceback_capture::capture_exception(py, exc)?
         {
-            record.exception_payload = Some(payload);
+            record.set_exception_payload(payload);
         }
 
         // Capture stack payload if stack_info=True
         #[cfg(feature = "python")]
         if stack_info.unwrap_or(false) {
-            record.stack_payload = Some(traceback_capture::capture_stack(py)?);
+            record.set_stack_payload(traceback_capture::capture_stack(py)?);
         }
 
         Ok(self.log_record(record))
@@ -267,7 +267,7 @@ impl FemtoLogger {
     /// or `None` if it was filtered out.
     fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
-        if u8::from(record.level) < threshold {
+        if u8::from(record.level()) < threshold {
             return None;
         }
 
@@ -300,7 +300,7 @@ impl FemtoLogger {
     /// being enqueued for handler processing.
     #[cfg(feature = "log-compat")]
     pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
-        if !self.is_enabled_for(record.level) {
+        if !self.is_enabled_for(record.level()) {
             return;
         }
         if !self.passes_all_filters(&record) {

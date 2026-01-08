@@ -60,17 +60,69 @@ impl Default for RecordMetadata {
 #[derive(Clone, Debug)]
 pub struct FemtoLogRecord {
     /// Name of the logger that created this record.
-    pub logger: String,
+    logger: String,
     /// The log level for this record.
-    pub level: FemtoLevel,
+    level: FemtoLevel,
     /// The log message content.
-    pub message: String,
+    message: String,
     /// Contextual metadata for the record.
-    pub metadata: RecordMetadata,
+    metadata: RecordMetadata,
     /// Structured exception payload (when `exc_info` is provided).
-    pub exception_payload: Option<ExceptionPayload>,
+    exception_payload: Option<ExceptionPayload>,
     /// Structured stack trace payload (when `stack_info=True`).
-    pub stack_payload: Option<StackTracePayload>,
+    stack_payload: Option<StackTracePayload>,
+}
+
+impl FemtoLogRecord {
+    /// Returns the logger name.
+    #[inline]
+    pub fn logger(&self) -> &str {
+        &self.logger
+    }
+
+    /// Returns the log level.
+    #[inline]
+    pub fn level(&self) -> FemtoLevel {
+        self.level
+    }
+
+    /// Returns the log message.
+    #[inline]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Returns a reference to the record metadata.
+    #[inline]
+    pub fn metadata(&self) -> &RecordMetadata {
+        &self.metadata
+    }
+
+    /// Returns a reference to the exception payload, if present.
+    #[inline]
+    pub fn exception_payload(&self) -> Option<&ExceptionPayload> {
+        self.exception_payload.as_ref()
+    }
+
+    /// Returns a reference to the stack trace payload, if present.
+    #[inline]
+    pub fn stack_payload(&self) -> Option<&StackTracePayload> {
+        self.stack_payload.as_ref()
+    }
+
+    /// Sets the exception payload.
+    #[inline]
+    #[cfg(feature = "python")]
+    pub(crate) fn set_exception_payload(&mut self, payload: ExceptionPayload) {
+        self.exception_payload = Some(payload);
+    }
+
+    /// Sets the stack trace payload.
+    #[inline]
+    #[cfg(feature = "python")]
+    pub(crate) fn set_stack_payload(&mut self, payload: StackTracePayload) {
+        self.stack_payload = Some(payload);
+    }
 }
 
 impl FemtoLogRecord {
