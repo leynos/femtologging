@@ -166,11 +166,25 @@ classDiagram
         +Option~ExceptionPayload~ exception_payload
         +Option~StackPayload~ stack_payload
         +new(logger: &str, level: FemtoLevel, message: &str) FemtoLogRecord
-        +new_with_thread(logger: &str, level: FemtoLevel, message: &str, thread_name: String) FemtoLogRecord
         +level_str() &'static str
         +with_exception(payload: ExceptionPayload) FemtoLogRecord
         +with_stack(payload: StackPayload) FemtoLogRecord
-        +fmt(f: Formatter) fmt::Result
+    }
+
+    FemtoLogRecord --> FemtoLevel : has
+    FemtoLogRecord --> RecordMetadata : has
+    FemtoLogRecord --> ExceptionPayload : optional
+    FemtoLogRecord --> StackPayload : optional
+```
+
+*Figure 1: Core record structure. `FemtoLogRecord` stores a single `FemtoLevel`
+value as its source of truth. The `level_str()` method provides zero-allocation
+access to the canonical string representation via `FemtoLevel::as_str()`.*
+
+```mermaid
+classDiagram
+    class FemtoLogRecord {
+        +level_str() &'static str
     }
 
     class LevelFilter {
@@ -181,7 +195,6 @@ classDiagram
     class FemtoLogger {
         +AtomicU8 level
         +log_record(record: FemtoLogRecord) Option~String~
-        +dispatch_record(record: FemtoLogRecord)
         +is_enabled_for(level: FemtoLevel) bool
     }
 
@@ -198,34 +211,24 @@ classDiagram
     }
 
     class SerializableRecord {
-        +&str logger
         +&str level
-        +&str message
-        +u64 timestamp_ns
-        +&str filename
+        +From<&FemtoLogRecord>
     }
 
-    FemtoLogRecord --> FemtoLevel : has
-    FemtoLogRecord --> RecordMetadata : has
-    FemtoLogRecord --> ExceptionPayload : optional
-    FemtoLogRecord --> StackPayload : optional
-
-    LevelFilter --> FemtoLogRecord : reads_level
+    LevelFilter --> FemtoLogRecord : reads level()
     FemtoLogger --> FemtoLogRecord : owns
     FemtoLogger --> LevelFilter : uses
 
-    DefaultFormatter --> FemtoLogRecord : reads_level_str
+    DefaultFormatter --> FemtoLogRecord : reads level_str()
+    PythonFormatter --> FemtoLogRecord : reads level() and level_str()
+    PyHandler --> FemtoLogRecord : passes level_str()
 
-    PythonFormatter --> FemtoLogRecord : reads_level_and_levelno
-    PyHandler --> FemtoLogRecord : passes_level_str_to_python
-
-    SerializableRecord --> FemtoLogRecord : From<&FemtoLogRecord>
-    SerializableRecord --> FemtoLevel : uses_as_str_via_level_str
+    SerializableRecord --> FemtoLogRecord : borrows level_str()
 ```
 
-*Figure 1: Class diagram showing `FemtoLogRecord` with its single `FemtoLevel`
-source of truth. Consumers access the level string via `level_str()`, which
-delegates to `FemtoLevel::as_str()` for zero-allocation string access.*
+*Figure 2: Consumer relationships. Components read the log level through
+`level()` for comparisons or `level_str()` for string output. All string access
+is zero-allocation via `FemtoLevel::as_str()`.*
 
 ## Runtime level updates
 

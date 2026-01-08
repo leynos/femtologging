@@ -10,6 +10,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::io;
 
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use serde::Serialize;
+use serde::ser::{SerializeMap, Serializer};
+
+use crate::exception_schema::{ExceptionPayload, StackTracePayload};
+use crate::log_record::FemtoLogRecord;
 
 /// Characters to percent-encode in URL query values (excluding space).
 ///
@@ -45,75 +50,166 @@ const QUERY_ENCODE_SET_NO_SPACE: &AsciiSet = &CONTROLS
     .add(b'}')
     .add(b'\'');
 
-use crate::log_record::FemtoLogRecord;
-
-fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value> {
-    let metadata = record.metadata();
-    let timestamp = metadata
-        .timestamp
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|dur| dur.as_secs_f64())
-        .unwrap_or_default();
-
-    let mut map = BTreeMap::new();
-    map.insert(
-        "name".into(),
-        serde_json::Value::String(record.logger().to_owned()),
-    );
-    map.insert(
-        "levelname".into(),
-        serde_json::Value::String(record.level_str().to_owned()),
-    );
-    map.insert(
-        "msg".into(),
-        serde_json::Value::String(record.message().to_owned()),
-    );
-    map.insert(
-        "created".into(),
-        serde_json::Value::Number(
-            serde_json::Number::from_f64(timestamp).unwrap_or_else(|| serde_json::Number::from(0)),
-        ),
-    );
-    map.insert(
-        "filename".into(),
-        serde_json::Value::String(metadata.filename.clone()),
-    );
-    map.insert(
-        "lineno".into(),
-        serde_json::Value::Number(metadata.line_number.into()),
-    );
-    map.insert(
-        "module".into(),
-        serde_json::Value::String(metadata.module_path.clone()),
-    );
-    map.insert(
-        "thread".into(),
-        serde_json::Value::String(format!("{:?}", metadata.thread_id)),
-    );
-    if let Some(ref name) = metadata.thread_name {
-        map.insert("threadName".into(), serde_json::Value::String(name.clone()));
-    }
-    for (k, v) in &metadata.key_values {
-        map.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    if let Some(exc) = record.exception_payload() {
-        map.insert("exc_info".into(), serde_json::json!(exc));
-    }
-    if let Some(stack) = record.stack_payload() {
-        map.insert("stack_info".into(), serde_json::json!(stack));
-    }
-    map
+/// Zero-copy serializable record for HTTP payloads.
+///
+/// This struct borrows from the original record to avoid allocations for string
+/// fields during serialization. The `level` field holds a `&'static str` from
+/// `FemtoLevel::as_str()`, enabling zero-allocation level serialization.
+struct HttpSerializableRecord<'a> {
+    name: &'a str,
+    levelname: &'static str,
+    msg: &'a str,
+    created: f64,
+    filename: &'a str,
+    lineno: u32,
+    module: &'a str,
+    thread: String,
+    thread_name: Option<&'a str>,
+    key_values: &'a BTreeMap<String, String>,
+    exc_info: Option<&'a ExceptionPayload>,
+    stack_info: Option<&'a StackTracePayload>,
 }
 
-fn filter_fields(
-    full_map: BTreeMap<String, serde_json::Value>,
-    fields: &[String],
-) -> BTreeMap<String, serde_json::Value> {
-    let field_set: HashSet<&str> = fields.iter().map(String::as_str).collect();
-    full_map
-        .into_iter()
-        .filter(|(k, _)| field_set.contains(k.as_str()))
-        .collect()
+impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
+    fn from(record: &'a FemtoLogRecord) -> Self {
+        let metadata = record.metadata();
+        let created = metadata
+            .timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|dur| dur.as_secs_f64())
+            .unwrap_or_default();
+
+        Self {
+            name: record.logger(),
+            levelname: record.level_str(),
+            msg: record.message(),
+            created,
+            filename: &metadata.filename,
+            lineno: metadata.line_number,
+            module: &metadata.module_path,
+            thread: format!("{:?}", metadata.thread_id),
+            thread_name: metadata.thread_name.as_deref(),
+            key_values: &metadata.key_values,
+            exc_info: record.exception_payload(),
+            stack_info: record.stack_payload(),
+        }
+    }
+}
+
+impl Serialize for HttpSerializableRecord<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Count fields: 8 base + optional thread_name + key_values + optional payloads
+        let field_count = 8
+            + usize::from(self.thread_name.is_some())
+            + self.key_values.len()
+            + usize::from(self.exc_info.is_some())
+            + usize::from(self.stack_info.is_some());
+
+        let mut map = serializer.serialize_map(Some(field_count))?;
+        map.serialize_entry("name", self.name)?;
+        map.serialize_entry("levelname", self.levelname)?;
+        map.serialize_entry("msg", self.msg)?;
+        map.serialize_entry("created", &self.created)?;
+        map.serialize_entry("filename", self.filename)?;
+        map.serialize_entry("lineno", &self.lineno)?;
+        map.serialize_entry("module", self.module)?;
+        map.serialize_entry("thread", &self.thread)?;
+        if let Some(name) = self.thread_name {
+            map.serialize_entry("threadName", name)?;
+        }
+        for (k, v) in self.key_values {
+            map.serialize_entry(k, v)?;
+        }
+        if let Some(exc) = self.exc_info {
+            map.serialize_entry("exc_info", exc)?;
+        }
+        if let Some(stack) = self.stack_info {
+            map.serialize_entry("stack_info", stack)?;
+        }
+        map.end()
+    }
+}
+
+/// Wrapper for filtered serialization with zero-copy where possible.
+struct FilteredRecord<'a> {
+    record: HttpSerializableRecord<'a>,
+    fields: &'a HashSet<&'a str>,
+}
+
+impl Serialize for FilteredRecord<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let r = &self.record;
+        let f = self.fields;
+
+        // Helper to check if a field should be included
+        let has = |name: &str| f.contains(name);
+
+        // Count matching fields
+        let base_count = [
+            "name",
+            "levelname",
+            "msg",
+            "created",
+            "filename",
+            "lineno",
+            "module",
+            "thread",
+        ]
+        .iter()
+        .filter(|&&k| has(k))
+        .count();
+        let optional_count = usize::from(has("threadName") && r.thread_name.is_some())
+            + usize::from(has("exc_info") && r.exc_info.is_some())
+            + usize::from(has("stack_info") && r.stack_info.is_some())
+            + r.key_values.keys().filter(|k| has(k)).count();
+
+        let mut map = serializer.serialize_map(Some(base_count + optional_count))?;
+
+        macro_rules! emit {
+            ($key:literal, $val:expr) => {
+                if has($key) {
+                    map.serialize_entry($key, $val)?;
+                }
+            };
+        }
+
+        emit!("name", r.name);
+        emit!("levelname", r.levelname);
+        emit!("msg", r.msg);
+        emit!("created", &r.created);
+        emit!("filename", r.filename);
+        emit!("lineno", &r.lineno);
+        emit!("module", r.module);
+        emit!("thread", &r.thread);
+
+        if has("threadName")
+            && let Some(name) = r.thread_name
+        {
+            map.serialize_entry("threadName", name)?;
+        }
+        for (k, v) in r.key_values {
+            if f.contains(k.as_str()) {
+                map.serialize_entry(k, v)?;
+            }
+        }
+        if has("exc_info")
+            && let Some(exc) = r.exc_info
+        {
+            map.serialize_entry("exc_info", exc)?;
+        }
+        if has("stack_info")
+            && let Some(stack) = r.stack_info
+        {
+            map.serialize_entry("stack_info", stack)?;
+        }
+        map.end()
+    }
 }
 
 /// Serialise a record to URL-encoded form data (CPython parity).
@@ -124,38 +220,76 @@ pub fn serialise_url_encoded(
     record: &FemtoLogRecord,
     fields: Option<&[String]>,
 ) -> io::Result<String> {
-    let full_map = build_full_map(record);
-    let map = match fields {
-        Some(f) => filter_fields(full_map, f),
-        None => full_map,
-    };
+    let r = HttpSerializableRecord::from(record);
+    let filter: Option<HashSet<&str>> = fields.map(|f| f.iter().map(String::as_str).collect());
+    let has = |name: &str| filter.as_ref().is_none_or(|f| f.contains(name));
 
-    let pairs: Vec<String> = map
-        .into_iter()
-        .map(|(k, v)| {
-            let value_str = match v {
-                serde_json::Value::String(s) => s,
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::Bool(b) => b.to_string(),
-                serde_json::Value::Null => String::new(),
-                other => other.to_string(),
-            };
-            format!("{}={}", url_encode(&k), url_encode(&value_str))
-        })
-        .collect();
+    let mut pairs = Vec::new();
+
+    macro_rules! emit {
+        ($key:literal, $val:expr) => {
+            if has($key) {
+                pairs.push(format!("{}={}", url_encode($key), url_encode($val)));
+            }
+        };
+    }
+
+    emit!("name", r.name);
+    emit!("levelname", r.levelname);
+    emit!("msg", r.msg);
+    if has("created") {
+        pairs.push(format!("created={}", r.created));
+    }
+    emit!("filename", r.filename);
+    if has("lineno") {
+        pairs.push(format!("lineno={}", r.lineno));
+    }
+    emit!("module", r.module);
+    emit!("thread", &r.thread);
+    if has("threadName")
+        && let Some(name) = r.thread_name
+    {
+        pairs.push(format!("threadName={}", url_encode(name)));
+    }
+    for (k, v) in r.key_values {
+        if has(k) {
+            pairs.push(format!("{}={}", url_encode(k), url_encode(v)));
+        }
+    }
+    if has("exc_info")
+        && let Some(exc) = r.exc_info
+    {
+        let json = serde_json::to_string(exc).map_err(io::Error::other)?;
+        pairs.push(format!("exc_info={}", url_encode(&json)));
+    }
+    if has("stack_info")
+        && let Some(stack) = r.stack_info
+    {
+        let json = serde_json::to_string(stack).map_err(io::Error::other)?;
+        pairs.push(format!("stack_info={}", url_encode(&json)));
+    }
 
     Ok(pairs.join("&"))
 }
 
 /// Serialise a record to JSON.
+///
+/// Uses zero-copy serialization where possible to avoid allocations.
+/// The `levelname` field is serialized directly from `&'static str`.
 pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io::Result<String> {
-    let full_map = build_full_map(record);
-    let map = match fields {
-        Some(f) => filter_fields(full_map, f),
-        None => full_map,
-    };
+    let serializable = HttpSerializableRecord::from(record);
 
-    serde_json::to_string(&map).map_err(io::Error::other)
+    match fields {
+        Some(f) => {
+            let field_set: HashSet<&str> = f.iter().map(String::as_str).collect();
+            let filtered = FilteredRecord {
+                record: serializable,
+                fields: &field_set,
+            };
+            serde_json::to_string(&filtered).map_err(io::Error::other)
+        }
+        None => serde_json::to_string(&serializable).map_err(io::Error::other),
+    }
 }
 
 /// URL-encode a string using `+` for spaces (CPython `urlencode` parity).
