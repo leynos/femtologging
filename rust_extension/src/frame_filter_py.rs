@@ -14,6 +14,17 @@ use crate::frame_filter::{
     exclude_logging_infrastructure, limit_frames,
 };
 
+/// Filter options encapsulating all filtering parameters.
+///
+/// This struct groups related filter parameters to reduce function argument counts
+/// and improve code clarity.
+struct FilterOptions<'a> {
+    exclude_filenames: Option<&'a [String]>,
+    exclude_functions: Option<&'a [String]>,
+    max_depth: Option<usize>,
+    exclude_logging: bool,
+}
+
 /// Extract a StackFrame from a Python dict.
 fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
     let filename: String = dict
@@ -106,34 +117,28 @@ fn frames_to_py_list<'py>(py: Python<'py>, frames: &[StackFrame]) -> PyResult<Bo
 }
 
 /// Apply filtering options to a list of frames.
-fn apply_filters(
-    frames: Vec<StackFrame>,
-    exclude_filenames: Option<&[String]>,
-    exclude_functions: Option<&[String]>,
-    max_depth: Option<usize>,
-    exclude_logging: bool,
-) -> Vec<StackFrame> {
+fn apply_filters(frames: Vec<StackFrame>, opts: &FilterOptions<'_>) -> Vec<StackFrame> {
     let mut result = frames;
 
     // Apply filename exclusions
-    if let Some(patterns) = exclude_filenames {
+    if let Some(patterns) = opts.exclude_filenames {
         let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
         result = exclude_by_filename(&result, &pattern_refs);
     }
 
     // Apply function exclusions
-    if let Some(patterns) = exclude_functions {
+    if let Some(patterns) = opts.exclude_functions {
         let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
         result = exclude_by_function(&result, &pattern_refs);
     }
 
     // Apply logging infrastructure filter
-    if exclude_logging {
+    if opts.exclude_logging {
         result = exclude_logging_infrastructure(&result);
     }
 
     // Apply depth limit
-    if let Some(n) = max_depth {
+    if let Some(n) = opts.max_depth {
         result = limit_frames(&result, n);
     }
 
@@ -144,19 +149,10 @@ fn apply_filters(
 fn filter_stack_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
-    exclude_filenames: Option<&[String]>,
-    exclude_functions: Option<&[String]>,
-    max_depth: Option<usize>,
-    exclude_logging: bool,
+    opts: &FilterOptions<'_>,
 ) -> PyResult<PyObject> {
     let frames = extract_frames(payload)?;
-    let filtered = apply_filters(
-        frames,
-        exclude_filenames,
-        exclude_functions,
-        max_depth,
-        exclude_logging,
-    );
+    let filtered = apply_filters(frames, opts);
 
     // Build result dict
     let result = PyDict::new(py);
@@ -176,19 +172,10 @@ fn filter_stack_payload(
 fn filter_exception_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
-    exclude_filenames: Option<&[String]>,
-    exclude_functions: Option<&[String]>,
-    max_depth: Option<usize>,
-    exclude_logging: bool,
+    opts: &FilterOptions<'_>,
 ) -> PyResult<PyObject> {
     let frames = extract_frames(payload)?;
-    let filtered = apply_filters(
-        frames,
-        exclude_filenames,
-        exclude_functions,
-        max_depth,
-        exclude_logging,
-    );
+    let filtered = apply_filters(frames, opts);
 
     // Build result dict, copying all keys
     let result = PyDict::new(py);
@@ -221,28 +208,14 @@ fn filter_exception_payload(
     // Recursively filter cause
     if let Some(cause) = payload.get_item("cause")? {
         let cause_dict = cause.downcast::<PyDict>()?;
-        let filtered_cause = filter_exception_payload(
-            py,
-            cause_dict,
-            exclude_filenames,
-            exclude_functions,
-            max_depth,
-            exclude_logging,
-        )?;
+        let filtered_cause = filter_exception_payload(py, cause_dict, opts)?;
         result.set_item("cause", filtered_cause)?;
     }
 
     // Recursively filter context
     if let Some(context) = payload.get_item("context")? {
         let context_dict = context.downcast::<PyDict>()?;
-        let filtered_context = filter_exception_payload(
-            py,
-            context_dict,
-            exclude_filenames,
-            exclude_functions,
-            max_depth,
-            exclude_logging,
-        )?;
+        let filtered_context = filter_exception_payload(py, context_dict, opts)?;
         result.set_item("context", filtered_context)?;
     }
 
@@ -252,14 +225,7 @@ fn filter_exception_payload(
         let filtered_list = PyList::empty(py);
         for exc in exceptions_list.iter() {
             let exc_dict = exc.downcast::<PyDict>()?;
-            let filtered_exc = filter_exception_payload(
-                py,
-                exc_dict,
-                exclude_filenames,
-                exclude_functions,
-                max_depth,
-                exclude_logging,
-            )?;
+            let filtered_exc = filter_exception_payload(py, exc_dict, opts)?;
             filtered_list.append(filtered_exc)?;
         }
         result.set_item("exceptions", filtered_list)?;
@@ -315,27 +281,17 @@ pub fn filter_frames(
     max_depth: Option<usize>,
     exclude_logging: bool,
 ) -> PyResult<PyObject> {
-    let filenames_ref = exclude_filenames.as_deref();
-    let functions_ref = exclude_functions.as_deref();
+    let opts = FilterOptions {
+        exclude_filenames: exclude_filenames.as_deref(),
+        exclude_functions: exclude_functions.as_deref(),
+        max_depth,
+        exclude_logging,
+    };
 
     if is_exception_payload(payload) {
-        filter_exception_payload(
-            py,
-            payload,
-            filenames_ref,
-            functions_ref,
-            max_depth,
-            exclude_logging,
-        )
+        filter_exception_payload(py, payload, &opts)
     } else {
-        filter_stack_payload(
-            py,
-            payload,
-            filenames_ref,
-            functions_ref,
-            max_depth,
-            exclude_logging,
-        )
+        filter_stack_payload(py, payload, &opts)
     }
 }
 
