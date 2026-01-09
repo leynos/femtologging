@@ -142,10 +142,13 @@ diverge.
 classDiagram
     class FemtoLevel {
         <<enum>>
+        Trace
+        Debug
         Info
         Warn
         Error
-        as_str() &'static str
+        Critical
+        +as_str() &'static str
     }
 
     class RecordMetadata {

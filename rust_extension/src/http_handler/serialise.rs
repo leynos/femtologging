@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::io;
+use std::thread::ThreadId;
 
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::Serialize;
@@ -55,6 +56,8 @@ const QUERY_ENCODE_SET_NO_SPACE: &AsciiSet = &CONTROLS
 /// This struct borrows from the original record to avoid allocations for string
 /// fields during serialization. The `level` field holds a `&'static str` from
 /// `FemtoLevel::as_str()`, enabling zero-allocation level serialization.
+/// The `thread_id` field stores the raw `ThreadId` and is formatted only during
+/// serialization, avoiding per-record String allocations.
 struct HttpSerializableRecord<'a> {
     name: &'a str,
     levelname: &'static str,
@@ -63,11 +66,26 @@ struct HttpSerializableRecord<'a> {
     filename: &'a str,
     lineno: u32,
     module: &'a str,
-    thread: String,
+    thread_id: ThreadId,
     thread_name: Option<&'a str>,
     key_values: &'a BTreeMap<String, String>,
     exc_info: Option<&'a ExceptionPayload>,
     stack_info: Option<&'a StackTracePayload>,
+}
+
+impl HttpSerializableRecord<'_> {
+    /// Count the total number of fields that will be serialized.
+    fn count_fields(&self) -> usize {
+        8 + usize::from(self.thread_name.is_some())
+            + self.key_values.len()
+            + usize::from(self.exc_info.is_some())
+            + usize::from(self.stack_info.is_some())
+    }
+
+    /// Format the thread ID as a debug string for serialization.
+    fn thread_string(&self) -> String {
+        format!("{:?}", self.thread_id)
+    }
 }
 
 impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
@@ -87,7 +105,7 @@ impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
             filename: &metadata.filename,
             lineno: metadata.line_number,
             module: &metadata.module_path,
-            thread: format!("{:?}", metadata.thread_id),
+            thread_id: metadata.thread_id,
             thread_name: metadata.thread_name.as_deref(),
             key_values: &metadata.key_values,
             exc_info: record.exception_payload(),
@@ -101,14 +119,7 @@ impl Serialize for HttpSerializableRecord<'_> {
     where
         S: Serializer,
     {
-        // Count fields: 8 base + optional thread_name + key_values + optional payloads
-        let field_count = 8
-            + usize::from(self.thread_name.is_some())
-            + self.key_values.len()
-            + usize::from(self.exc_info.is_some())
-            + usize::from(self.stack_info.is_some());
-
-        let mut map = serializer.serialize_map(Some(field_count))?;
+        let mut map = serializer.serialize_map(Some(self.count_fields()))?;
         map.serialize_entry("name", self.name)?;
         map.serialize_entry("levelname", self.levelname)?;
         map.serialize_entry("msg", self.msg)?;
@@ -116,7 +127,7 @@ impl Serialize for HttpSerializableRecord<'_> {
         map.serialize_entry("filename", self.filename)?;
         map.serialize_entry("lineno", &self.lineno)?;
         map.serialize_entry("module", self.module)?;
-        map.serialize_entry("thread", &self.thread)?;
+        map.serialize_entry("thread", &self.thread_string())?;
         if let Some(name) = self.thread_name {
             map.serialize_entry("threadName", name)?;
         }
@@ -169,6 +180,22 @@ impl<'a> FilteredRecord<'a> {
         base_count + optional_count
     }
 
+    /// Serialize key-value pairs that match the filter.
+    fn serialize_key_values<S>(
+        &self,
+        map: &mut <S as Serializer>::SerializeMap,
+    ) -> Result<(), S::Error>
+    where
+        S: Serializer,
+    {
+        for (k, v) in self.record.key_values {
+            if self.fields.contains(k.as_str()) {
+                map.serialize_entry(k, v)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Serialize optional fields (threadName, key_values, exc_info, stack_info).
     fn serialize_optional_fields<S>(
         &self,
@@ -185,11 +212,7 @@ impl<'a> FilteredRecord<'a> {
         {
             map.serialize_entry("threadName", name)?;
         }
-        for (k, v) in r.key_values {
-            if f.contains(k.as_str()) {
-                map.serialize_entry(k, v)?;
-            }
-        }
+        self.serialize_key_values::<S>(map)?;
         if f.contains("exc_info")
             && let Some(exc) = r.exc_info
         {
@@ -229,7 +252,9 @@ impl Serialize for FilteredRecord<'_> {
         emit!("filename", r.filename);
         emit!("lineno", &r.lineno);
         emit!("module", r.module);
-        emit!("thread", &r.thread);
+        if f.contains("thread") {
+            map.serialize_entry("thread", &r.thread_string())?;
+        }
 
         self.serialize_optional_fields::<S>(&mut map)?;
         map.end()
@@ -311,7 +336,7 @@ fn emit_all_fields(
     emit_string_field(pairs, "filename", r.filename, has);
     emit_numeric_field(pairs, "lineno", r.lineno, has);
     emit_string_field(pairs, "module", r.module, has);
-    emit_string_field(pairs, "thread", &r.thread, has);
+    emit_string_field(pairs, "thread", &r.thread_string(), has);
     emit_optional_string_field(pairs, "threadName", r.thread_name, has);
     emit_key_values(pairs, r.key_values.iter(), has);
     emit_json_field(pairs, "exc_info", r.exc_info, has)?;
@@ -381,7 +406,9 @@ mod tests {
     use super::*;
     use crate::level::FemtoLevel;
     use crate::log_record::RecordMetadata;
+    use rstest::{fixture, rstest};
 
+    #[fixture]
     fn test_record() -> FemtoLogRecord {
         let metadata = RecordMetadata {
             module_path: "test.module".into(),
@@ -392,20 +419,18 @@ mod tests {
         FemtoLogRecord::with_metadata("test.logger", FemtoLevel::Info, "Hello World", metadata)
     }
 
-    #[test]
-    fn url_encoded_contains_expected_fields() {
-        let record = test_record();
-        let encoded = serialise_url_encoded(&record, None).expect("serialise");
+    #[rstest]
+    fn url_encoded_contains_expected_fields(test_record: FemtoLogRecord) {
+        let encoded = serialise_url_encoded(&test_record, None).expect("serialise");
         assert!(encoded.contains("name=test.logger"));
         assert!(encoded.contains("levelname=INFO"));
         assert!(encoded.contains("msg=Hello+World"));
         assert!(encoded.contains("lineno=42"));
     }
 
-    #[test]
-    fn json_contains_expected_fields() {
-        let record = test_record();
-        let json = serialise_json(&record, None).expect("serialise");
+    #[rstest]
+    fn json_contains_expected_fields(test_record: FemtoLogRecord) {
+        let json = serialise_json(&test_record, None).expect("serialise");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed["name"], "test.logger");
         assert_eq!(parsed["levelname"], "INFO");
@@ -413,11 +438,10 @@ mod tests {
         assert_eq!(parsed["lineno"], 42);
     }
 
-    #[test]
-    fn field_filter_limits_output() {
-        let record = test_record();
+    #[rstest]
+    fn field_filter_limits_output(test_record: FemtoLogRecord) {
         let fields = vec!["name".into(), "msg".into()];
-        let json = serialise_json(&record, Some(&fields)).expect("serialise");
+        let json = serialise_json(&test_record, Some(&fields)).expect("serialise");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed["name"], "test.logger");
         assert_eq!(parsed["msg"], "Hello World");
