@@ -7,7 +7,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::traceback_frames::extract_frames_from_stack_summary;
+use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
 
 /// Create a `types.SimpleNamespace` object from a [`PyDict`].
 pub fn create_simple_namespace<'py>(
@@ -179,6 +179,32 @@ impl LocalEntry {
     }
 }
 
+/// Create a Python object whose `__repr__` raises an exception.
+///
+/// Useful for testing repr failure handling in locals extraction.
+pub fn create_bad_repr_object<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
+    let globals = PyDict::new(py);
+    py.run(
+        c"class BadRepr:\n    def __repr__(self): raise ValueError('boom')",
+        Some(&globals),
+        None,
+    )
+    .expect("class definition should succeed");
+    py.eval(c"BadRepr()", Some(&globals), None)
+        .expect("object creation should succeed")
+}
+
+/// Add a bad repr entry to the given dictionary.
+///
+/// Creates a Python object whose `__repr__` raises an exception and inserts it
+/// with the given key.
+pub fn add_bad_repr_entry(locals_dict: &Bound<'_, PyDict>, key: &str) {
+    let bad_repr_obj = create_bad_repr_object(locals_dict.py());
+    locals_dict
+        .set_item(key, bad_repr_obj)
+        .expect("set bad repr entry should succeed");
+}
+
 /// Assert that extracting a frame from the provided dict fails with an error
 /// containing the expected substring.
 pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected_substr: &str) {
@@ -193,4 +219,59 @@ pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected
         err_text.contains(expected_substr),
         "expected error containing {expected_substr:?}, got {err_text:?}"
     );
+}
+
+/// Assert the result of `extract_locals_dict` against expected entries.
+///
+/// Builds a frame from the provided locals dict, calls `extract_locals_dict`,
+/// and verifies that the result matches the expected entries (or is `None`).
+pub fn assert_locals_extraction_result(
+    locals_dict: &Bound<'_, PyDict>,
+    expected: Option<&[(&str, &str)]>,
+    description: &str,
+) {
+    let py = locals_dict.py();
+    let frame_dict = create_frame_dict_with_locals(py, locals_dict);
+    let frame = create_simple_namespace(py, &frame_dict);
+
+    let result = extract_locals_dict(&frame);
+    match expected {
+        Some(expected_entries) => {
+            let locals = result.expect(description);
+            assert_eq!(locals.len(), expected_entries.len(), "{}", description);
+            for (key, value) in expected_entries {
+                assert_eq!(
+                    locals.get(*key).map(String::as_str),
+                    Some(*value),
+                    "{}: key '{}' should have expected value",
+                    description,
+                    key
+                );
+            }
+        }
+        None => {
+            assert!(result.is_none(), "{}", description);
+        }
+    }
+}
+
+/// Populate a PyDict with LocalEntry items, inserting integer keys for entries
+/// where `is_int_key()` returns true and the key successfully parses as `i32`.
+///
+/// Falls back to inserting as a string key if parsing fails (e.g., overflow).
+pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entries: &[LocalEntry]) {
+    for entry in entries {
+        if entry.is_int_key() {
+            if let Ok(int_key) = entry.key().parse::<i32>() {
+                locals_dict
+                    .set_item(int_key, entry.value())
+                    .expect("set int key entry should succeed");
+                continue;
+            }
+        }
+        // Fallback: insert as string key (either not an int key, or parsing failed)
+        locals_dict
+            .set_item(entry.key(), entry.value())
+            .expect("set string key entry should succeed");
+    }
 }

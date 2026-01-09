@@ -5,7 +5,7 @@ use pyo3::types::{PyDict, PyList};
 use rstest::rstest;
 
 use crate::test_utils::traceback_test_helpers::*;
-use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
+use crate::traceback_frames::extract_frames_from_stack_summary;
 
 #[test]
 fn frame_with_all_optional_fields_present() {
@@ -153,6 +153,36 @@ fn frame_with_wrong_type_lineno_returns_error() {
     None,
     "should return None when all entries fail"
 )]
+#[case::multiple_non_string_keys(
+    &[
+        LocalEntry::new("valid", "value"),
+        LocalEntry::new("123", "int_key"),
+        LocalEntry::new("456", "another_int"),
+    ],
+    Some(&[("valid", "'value'")] as &[_]),
+    "should handle multiple non-string keys without panic"
+)]
+#[case::many_invalid_entries(
+    &[
+        LocalEntry::new("1", "a"),
+        LocalEntry::new("2", "b"),
+        LocalEntry::new("3", "c"),
+        LocalEntry::new("4", "d"),
+        LocalEntry::new("5", "e"),
+    ],
+    None,
+    "should handle many invalid entries without panic"
+)]
+#[case::single_valid_among_many_invalid(
+    &[
+        LocalEntry::new("1", "a"),
+        LocalEntry::new("ok", "value"),
+        LocalEntry::new("2", "b"),
+        LocalEntry::new("3", "c"),
+    ],
+    Some(&[("ok", "'value'")] as &[_]),
+    "should extract single valid entry among many invalid"
+)]
 fn extract_locals_handles_mixed_entries(
     #[case] entries: &[LocalEntry],
     #[case] expected: Option<&[(&str, &str)]>,
@@ -160,41 +190,8 @@ fn extract_locals_handles_mixed_entries(
 ) {
     Python::with_gil(|py| {
         let locals_dict = PyDict::new(py);
-        for entry in entries {
-            if entry.is_int_key() {
-                let int_key: i32 = entry.key().parse().expect("int key should parse");
-                locals_dict
-                    .set_item(int_key, entry.value())
-                    .expect("set int key entry should succeed");
-            } else {
-                locals_dict
-                    .set_item(entry.key(), entry.value())
-                    .expect("set string key entry should succeed");
-            }
-        }
-
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
-
-        let result = extract_locals_dict(&frame);
-        match expected {
-            Some(expected_entries) => {
-                let locals = result.expect(description);
-                assert_eq!(locals.len(), expected_entries.len(), "{}", description);
-                for (key, value) in expected_entries {
-                    assert_eq!(
-                        locals.get(*key),
-                        Some(&(*value).to_string()),
-                        "{}: key '{}' should have expected value",
-                        description,
-                        key
-                    );
-                }
-            }
-            None => {
-                assert!(result.is_none(), "{}", description);
-            }
-        }
+        populate_locals_dict_from_entries(&locals_dict, entries);
+        assert_locals_extraction_result(&locals_dict, expected, description);
     });
 }
 
@@ -236,5 +233,67 @@ fn extract_frames_from_stack_summary_not_a_list_returns_error() {
 
         let result = extract_frames_from_stack_summary(dict.as_any());
         assert!(result.is_err(), "should fail when input is not a list");
+    });
+}
+
+/// Scenario for testing locals extraction with various skip reasons.
+#[derive(Debug)]
+enum SkipScenario {
+    /// Single valid entry, one bad repr object.
+    ReprFailure,
+    /// Single valid entry, one integer key, one bad repr object.
+    MixedSkipReasons,
+    /// All entries fail: some with failing `__repr__`, others with non-string keys.
+    AllFailMixed,
+}
+
+#[rstest]
+#[case::repr_failure(SkipScenario::ReprFailure, Some(("good", "'value'")))]
+#[case::mixed_skip_reasons(SkipScenario::MixedSkipReasons, Some(("valid", "'value'")))]
+#[case::all_fail_mixed(SkipScenario::AllFailMixed, None)]
+fn extract_locals_with_skip_reasons_returns_partial(
+    #[case] scenario: SkipScenario,
+    #[case] expected: Option<(&str, &str)>,
+) {
+    Python::with_gil(|py| {
+        let locals_dict = PyDict::new(py);
+
+        // Add a valid entry only for scenarios that expect one
+        if let Some((key, _)) = expected {
+            locals_dict
+                .set_item(key, "value")
+                .expect("set valid entry should succeed");
+        }
+
+        // Add scenario-specific invalid entries
+        match scenario {
+            SkipScenario::ReprFailure => {
+                add_bad_repr_entry(&locals_dict, "bad");
+            }
+            SkipScenario::MixedSkipReasons => {
+                locals_dict
+                    .set_item(42, "int_key_value")
+                    .expect("set int key entry should succeed");
+                add_bad_repr_entry(&locals_dict, "bad_repr");
+            }
+            SkipScenario::AllFailMixed => {
+                // Add multiple entries with failing repr
+                for name in ["bad1", "bad2", "bad3"] {
+                    add_bad_repr_entry(&locals_dict, name);
+                }
+                // Also add a non-string key
+                locals_dict
+                    .set_item(99, "int_key_value")
+                    .expect("set int key entry should succeed");
+            }
+        }
+
+        let expected_array = expected.map(|(key, value)| [(key, value)]);
+        let expected_slice = expected_array.as_ref().map(|arr| arr.as_slice());
+        assert_locals_extraction_result(
+            &locals_dict,
+            expected_slice,
+            "should handle skip scenario correctly",
+        );
     });
 }
