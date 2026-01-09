@@ -139,6 +139,71 @@ struct FilteredRecord<'a> {
     fields: &'a HashSet<&'a str>,
 }
 
+/// Base field names for counting and iteration.
+const BASE_FIELDS: [&str; 8] = [
+    "name",
+    "levelname",
+    "msg",
+    "created",
+    "filename",
+    "lineno",
+    "module",
+    "thread",
+];
+
+impl<'a> FilteredRecord<'a> {
+    /// Count the total number of fields that will be serialized.
+    fn count_fields(&self) -> usize {
+        let r = &self.record;
+        let f = self.fields;
+
+        let base_count = BASE_FIELDS.iter().filter(|&&k| f.contains(k)).count();
+        let optional_count = usize::from(f.contains("threadName") && r.thread_name.is_some())
+            + usize::from(f.contains("exc_info") && r.exc_info.is_some())
+            + usize::from(f.contains("stack_info") && r.stack_info.is_some())
+            + r.key_values
+                .keys()
+                .filter(|k| f.contains(k.as_str()))
+                .count();
+
+        base_count + optional_count
+    }
+
+    /// Serialize optional fields (threadName, key_values, exc_info, stack_info).
+    fn serialize_optional_fields<S>(
+        &self,
+        map: &mut <S as Serializer>::SerializeMap,
+    ) -> Result<(), S::Error>
+    where
+        S: Serializer,
+    {
+        let r = &self.record;
+        let f = self.fields;
+
+        if f.contains("threadName")
+            && let Some(name) = r.thread_name
+        {
+            map.serialize_entry("threadName", name)?;
+        }
+        for (k, v) in r.key_values {
+            if f.contains(k.as_str()) {
+                map.serialize_entry(k, v)?;
+            }
+        }
+        if f.contains("exc_info")
+            && let Some(exc) = r.exc_info
+        {
+            map.serialize_entry("exc_info", exc)?;
+        }
+        if f.contains("stack_info")
+            && let Some(stack) = r.stack_info
+        {
+            map.serialize_entry("stack_info", stack)?;
+        }
+        Ok(())
+    }
+}
+
 impl Serialize for FilteredRecord<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -147,33 +212,11 @@ impl Serialize for FilteredRecord<'_> {
         let r = &self.record;
         let f = self.fields;
 
-        // Helper to check if a field should be included
-        let has = |name: &str| f.contains(name);
-
-        // Count matching fields
-        let base_count = [
-            "name",
-            "levelname",
-            "msg",
-            "created",
-            "filename",
-            "lineno",
-            "module",
-            "thread",
-        ]
-        .iter()
-        .filter(|&&k| has(k))
-        .count();
-        let optional_count = usize::from(has("threadName") && r.thread_name.is_some())
-            + usize::from(has("exc_info") && r.exc_info.is_some())
-            + usize::from(has("stack_info") && r.stack_info.is_some())
-            + r.key_values.keys().filter(|k| has(k)).count();
-
-        let mut map = serializer.serialize_map(Some(base_count + optional_count))?;
+        let mut map = serializer.serialize_map(Some(self.count_fields()))?;
 
         macro_rules! emit {
             ($key:literal, $val:expr) => {
-                if has($key) {
+                if f.contains($key) {
                     map.serialize_entry($key, $val)?;
                 }
             };
@@ -188,27 +231,49 @@ impl Serialize for FilteredRecord<'_> {
         emit!("module", r.module);
         emit!("thread", &r.thread);
 
-        if has("threadName")
-            && let Some(name) = r.thread_name
-        {
-            map.serialize_entry("threadName", name)?;
-        }
-        for (k, v) in r.key_values {
-            if f.contains(k.as_str()) {
-                map.serialize_entry(k, v)?;
-            }
-        }
-        if has("exc_info")
-            && let Some(exc) = r.exc_info
-        {
-            map.serialize_entry("exc_info", exc)?;
-        }
-        if has("stack_info")
-            && let Some(stack) = r.stack_info
-        {
-            map.serialize_entry("stack_info", stack)?;
-        }
+        self.serialize_optional_fields::<S>(&mut map)?;
         map.end()
+    }
+}
+
+/// Emit a numeric field as URL-encoded key=value pair if included by the filter.
+fn emit_numeric_field(
+    pairs: &mut Vec<String>,
+    key: &str,
+    value: impl std::fmt::Display,
+    has: &impl Fn(&str) -> bool,
+) {
+    if has(key) {
+        pairs.push(format!("{key}={value}"));
+    }
+}
+
+/// Emit a JSON-serialised optional field as URL-encoded key=value pair.
+fn emit_json_field<T: Serialize>(
+    pairs: &mut Vec<String>,
+    key: &str,
+    value: Option<&T>,
+    has: &impl Fn(&str) -> bool,
+) -> io::Result<()> {
+    if has(key)
+        && let Some(v) = value
+    {
+        let json = serde_json::to_string(v).map_err(io::Error::other)?;
+        pairs.push(format!("{}={}", url_encode(key), url_encode(&json)));
+    }
+    Ok(())
+}
+
+/// Emit key-value pairs as URL-encoded pairs if included by the filter.
+fn emit_key_values<'a>(
+    pairs: &mut Vec<String>,
+    key_values: impl Iterator<Item = (&'a String, &'a String)>,
+    has: &impl Fn(&str) -> bool,
+) {
+    for (k, v) in key_values {
+        if has(k) {
+            pairs.push(format!("{}={}", url_encode(k), url_encode(v)));
+        }
     }
 }
 
@@ -237,37 +302,21 @@ pub fn serialise_url_encoded(
     emit!("name", r.name);
     emit!("levelname", r.levelname);
     emit!("msg", r.msg);
-    if has("created") {
-        pairs.push(format!("created={}", r.created));
-    }
+    emit_numeric_field(&mut pairs, "created", r.created, &has);
     emit!("filename", r.filename);
-    if has("lineno") {
-        pairs.push(format!("lineno={}", r.lineno));
-    }
+    emit_numeric_field(&mut pairs, "lineno", r.lineno, &has);
     emit!("module", r.module);
     emit!("thread", &r.thread);
+
     if has("threadName")
         && let Some(name) = r.thread_name
     {
         pairs.push(format!("threadName={}", url_encode(name)));
     }
-    for (k, v) in r.key_values {
-        if has(k) {
-            pairs.push(format!("{}={}", url_encode(k), url_encode(v)));
-        }
-    }
-    if has("exc_info")
-        && let Some(exc) = r.exc_info
-    {
-        let json = serde_json::to_string(exc).map_err(io::Error::other)?;
-        pairs.push(format!("exc_info={}", url_encode(&json)));
-    }
-    if has("stack_info")
-        && let Some(stack) = r.stack_info
-    {
-        let json = serde_json::to_string(stack).map_err(io::Error::other)?;
-        pairs.push(format!("stack_info={}", url_encode(&json)));
-    }
+
+    emit_key_values(&mut pairs, r.key_values.iter(), &has);
+    emit_json_field(&mut pairs, "exc_info", r.exc_info, &has)?;
+    emit_json_field(&mut pairs, "stack_info", r.stack_info, &has)?;
 
     Ok(pairs.join("&"))
 }
