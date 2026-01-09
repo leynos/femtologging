@@ -277,6 +277,48 @@ fn emit_key_values<'a>(
     }
 }
 
+/// Emit a string field as URL-encoded key=value pair if included by the filter.
+fn emit_string_field(pairs: &mut Vec<String>, key: &str, value: &str, has: &impl Fn(&str) -> bool) {
+    if has(key) {
+        pairs.push(format!("{}={}", url_encode(key), url_encode(value)));
+    }
+}
+
+/// Emit an optional string field as URL-encoded key=value pair.
+fn emit_optional_string_field(
+    pairs: &mut Vec<String>,
+    key: &str,
+    value: Option<&str>,
+    has: &impl Fn(&str) -> bool,
+) {
+    if has(key)
+        && let Some(v) = value
+    {
+        pairs.push(format!("{}={}", url_encode(key), url_encode(v)));
+    }
+}
+
+/// Emit all fields from an `HttpSerializableRecord` as URL-encoded pairs.
+fn emit_all_fields(
+    pairs: &mut Vec<String>,
+    r: &HttpSerializableRecord<'_>,
+    has: &impl Fn(&str) -> bool,
+) -> io::Result<()> {
+    emit_string_field(pairs, "name", r.name, has);
+    emit_string_field(pairs, "levelname", r.levelname, has);
+    emit_string_field(pairs, "msg", r.msg, has);
+    emit_numeric_field(pairs, "created", r.created, has);
+    emit_string_field(pairs, "filename", r.filename, has);
+    emit_numeric_field(pairs, "lineno", r.lineno, has);
+    emit_string_field(pairs, "module", r.module, has);
+    emit_string_field(pairs, "thread", &r.thread, has);
+    emit_optional_string_field(pairs, "threadName", r.thread_name, has);
+    emit_key_values(pairs, r.key_values.iter(), has);
+    emit_json_field(pairs, "exc_info", r.exc_info, has)?;
+    emit_json_field(pairs, "stack_info", r.stack_info, has)?;
+    Ok(())
+}
+
 /// Serialise a record to URL-encoded form data (CPython parity).
 ///
 /// This produces output compatible with `urllib.parse.urlencode(record.__dict__)`,
@@ -290,34 +332,7 @@ pub fn serialise_url_encoded(
     let has = |name: &str| filter.as_ref().is_none_or(|f| f.contains(name));
 
     let mut pairs = Vec::new();
-
-    macro_rules! emit {
-        ($key:literal, $val:expr) => {
-            if has($key) {
-                pairs.push(format!("{}={}", url_encode($key), url_encode($val)));
-            }
-        };
-    }
-
-    emit!("name", r.name);
-    emit!("levelname", r.levelname);
-    emit!("msg", r.msg);
-    emit_numeric_field(&mut pairs, "created", r.created, &has);
-    emit!("filename", r.filename);
-    emit_numeric_field(&mut pairs, "lineno", r.lineno, &has);
-    emit!("module", r.module);
-    emit!("thread", &r.thread);
-
-    if has("threadName")
-        && let Some(name) = r.thread_name
-    {
-        pairs.push(format!("threadName={}", url_encode(name)));
-    }
-
-    emit_key_values(&mut pairs, r.key_values.iter(), &has);
-    emit_json_field(&mut pairs, "exc_info", r.exc_info, &has)?;
-    emit_json_field(&mut pairs, "stack_info", r.stack_info, &has)?;
-
+    emit_all_fields(&mut pairs, &r, &has)?;
     Ok(pairs.join("&"))
 }
 
