@@ -106,7 +106,7 @@ def filter_max_depth(filter_fixture: FilterFixture, n: int) -> None:
     parsers.parse(
         'I filter with exclude_logging=True, exclude_filenames=["{p}"], max_depth={n:d}'
     )
-)  # noqa: E501
+)
 def filter_combined(filter_fixture: FilterFixture, p: str, n: int) -> None:
     filter_fixture["filtered"] = filter_frames(
         filter_fixture["payload"],
