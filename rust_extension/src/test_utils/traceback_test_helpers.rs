@@ -194,6 +194,17 @@ pub fn create_bad_repr_object<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
         .expect("object creation should succeed")
 }
 
+/// Add a bad repr entry to the given dictionary.
+///
+/// Creates a Python object whose `__repr__` raises an exception and inserts it
+/// with the given key.
+pub fn add_bad_repr_entry(locals_dict: &Bound<'_, PyDict>, key: &str) {
+    let bad_repr_obj = create_bad_repr_object(locals_dict.py());
+    locals_dict
+        .set_item(key, bad_repr_obj)
+        .expect("set bad repr entry should succeed");
+}
+
 /// Assert that extracting a frame from the provided dict fails with an error
 /// containing the expected substring.
 pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected_substr: &str) {

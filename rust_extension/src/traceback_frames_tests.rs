@@ -268,28 +268,18 @@ fn extract_locals_with_skip_reasons_returns_partial(
         // Add scenario-specific invalid entries
         match scenario {
             SkipScenario::ReprFailure => {
-                let bad_repr_obj = create_bad_repr_object(py);
-                locals_dict
-                    .set_item("bad", bad_repr_obj)
-                    .expect("set bad repr entry should succeed");
+                add_bad_repr_entry(&locals_dict, "bad");
             }
             SkipScenario::MixedSkipReasons => {
                 locals_dict
                     .set_item(42, "int_key_value")
                     .expect("set int key entry should succeed");
-
-                let bad_repr_obj = create_bad_repr_object(py);
-                locals_dict
-                    .set_item("bad_repr", bad_repr_obj)
-                    .expect("set bad repr entry should succeed");
+                add_bad_repr_entry(&locals_dict, "bad_repr");
             }
             SkipScenario::AllFailMixed => {
                 // Add multiple entries with failing repr
                 for name in ["bad1", "bad2", "bad3"] {
-                    let bad_repr_obj = create_bad_repr_object(py);
-                    locals_dict
-                        .set_item(name, bad_repr_obj)
-                        .expect("set bad repr entry should succeed");
+                    add_bad_repr_entry(&locals_dict, name);
                 }
                 // Also add a non-string key
                 locals_dict
@@ -298,14 +288,8 @@ fn extract_locals_with_skip_reasons_returns_partial(
             }
         }
 
-        let expected_array: [(&str, &str); 1];
-        let expected_slice: Option<&[(&str, &str)]> = match expected {
-            Some((key, value)) => {
-                expected_array = [(key, value)];
-                Some(&expected_array)
-            }
-            None => None,
-        };
+        let expected_array = expected.map(|(key, value)| [(key, value)]);
+        let expected_slice = expected_array.as_ref().map(|arr| arr.as_slice());
         assert_locals_extraction_result(
             &locals_dict,
             expected_slice,
