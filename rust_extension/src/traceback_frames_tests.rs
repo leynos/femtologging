@@ -298,8 +298,12 @@ fn extract_locals_with_skip_reasons_returns_partial(
             }
         }
 
+        let expected_array: [(&str, &str); 1];
         let expected_slice: Option<&[(&str, &str)]> = match expected {
-            Some((key, value)) => Some(&[(key, value)]),
+            Some((key, value)) => {
+                expected_array = [(key, value)];
+                Some(&expected_array)
+            }
             None => None,
         };
         assert_locals_extraction_result(
