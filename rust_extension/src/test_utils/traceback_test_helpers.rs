@@ -241,8 +241,8 @@ pub fn assert_locals_extraction_result(
             assert_eq!(locals.len(), expected_entries.len(), "{}", description);
             for (key, value) in expected_entries {
                 assert_eq!(
-                    locals.get(*key),
-                    Some(&(*value).to_string()),
+                    locals.get(*key).map(String::as_str),
+                    Some(*value),
                     "{}: key '{}' should have expected value",
                     description,
                     key
@@ -256,18 +256,22 @@ pub fn assert_locals_extraction_result(
 }
 
 /// Populate a PyDict with LocalEntry items, inserting integer keys for entries
-/// where `is_int_key()` returns true.
+/// where `is_int_key()` returns true and the key successfully parses as `i32`.
+///
+/// Falls back to inserting as a string key if parsing fails (e.g., overflow).
 pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entries: &[LocalEntry]) {
     for entry in entries {
         if entry.is_int_key() {
-            let int_key: i32 = entry.key().parse().expect("int key should parse");
-            locals_dict
-                .set_item(int_key, entry.value())
-                .expect("set int key entry should succeed");
-        } else {
-            locals_dict
-                .set_item(entry.key(), entry.value())
-                .expect("set string key entry should succeed");
+            if let Ok(int_key) = entry.key().parse::<i32>() {
+                locals_dict
+                    .set_item(int_key, entry.value())
+                    .expect("set int key entry should succeed");
+                continue;
+            }
         }
+        // Fallback: insert as string key (either not an int key, or parsing failed)
+        locals_dict
+            .set_item(entry.key(), entry.value())
+            .expect("set string key entry should succeed");
     }
 }
