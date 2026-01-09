@@ -5,7 +5,7 @@ use pyo3::types::{PyDict, PyList};
 use rstest::rstest;
 
 use crate::test_utils::traceback_test_helpers::*;
-use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
+use crate::traceback_frames::extract_frames_from_stack_summary;
 
 #[test]
 fn frame_with_all_optional_fields_present() {
@@ -298,24 +298,14 @@ fn extract_locals_with_skip_reasons_returns_partial(
             }
         }
 
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
-
-        let result = extract_locals_dict(&frame);
-
-        match expected {
-            Some((key, value)) => {
-                let locals = result.expect("should return partial locals");
-                assert_eq!(locals.len(), 1, "should have exactly one entry");
-                assert_eq!(
-                    locals.get(key),
-                    Some(&value.to_string()),
-                    "should have the valid entry with repr'd value"
-                );
-            }
-            None => {
-                assert!(result.is_none(), "should return None when all entries fail");
-            }
-        }
+        let expected_slice: Option<&[(&str, &str)]> = match expected {
+            Some((key, value)) => Some(&[(key, value)]),
+            None => None,
+        };
+        assert_locals_extraction_result(
+            &locals_dict,
+            expected_slice,
+            "should handle skip scenario correctly",
+        );
     });
 }
