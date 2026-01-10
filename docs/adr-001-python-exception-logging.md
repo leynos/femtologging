@@ -140,6 +140,43 @@ providing output aligned with standard logging behaviour.
   adding or removing `handle_record` after registration results in undefined
   behaviour.
 
+## Schema Versioning
+
+### Version Policy
+
+The exception and stack trace payload schemas are versioned to allow evolution
+without breaking consumers. The `schema_version` field is included in every
+payload.
+
+- **Backward compatibility**: Newer code can always read older payloads.
+  Optional fields use serde defaults when absent.
+- **Forward compatibility**: Not guaranteed. Code should validate the schema
+  version before processing payloads from external sources.
+
+### Validation
+
+Consumers deserializing payloads from network or storage should call
+`validate_version()` to ensure compatibility:
+
+```rust
+let payload: ExceptionPayload = serde_json::from_str(&json)?;
+payload.validate_version()?;
+```
+
+If the version is unsupported, the error message includes both the observed and
+supported versions for diagnostic purposes.
+
+### Breaking Changes
+
+The schema version must be incremented when:
+
+- Adding required fields
+- Removing fields
+- Changing field types or semantics
+- Renaming fields
+
+Adding optional fields with `#[serde(default)]` does not require a version bump.
+
 ## Consequences
 
 - The fast path remains unchanged when exception and stack data are absent.
