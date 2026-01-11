@@ -54,7 +54,9 @@ pub(super) fn url_encode(s: &str) -> String {
             result.push('+');
         }
         first = false;
-        result.push_str(&utf8_percent_encode(chunk, QUERY_ENCODE_SET_NO_SPACE).to_string());
+        for part in utf8_percent_encode(chunk, QUERY_ENCODE_SET_NO_SPACE) {
+            result.push_str(part);
+        }
     }
     result
 }
