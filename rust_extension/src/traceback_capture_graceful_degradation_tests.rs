@@ -33,23 +33,18 @@ fn create_base_exception<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
         .expect("BaseException constructor should succeed")
 }
 
-/// Check if Python version supports add_note() (Python 3.11+).
+/// Check if Python supports add_note() via capability check (Python 3.11+).
+///
+/// Uses `hasattr(BaseException, "add_note")` to detect support, which is more
+/// robust than version parsing and handles interpreter variants gracefully.
 fn supports_add_note(py: Python<'_>) -> bool {
-    let sys = py.import("sys").expect("sys module should exist");
-    let version_info = sys
-        .getattr("version_info")
-        .expect("version_info should exist");
-    let major: u32 = version_info
-        .getattr("major")
-        .expect("major version should exist")
-        .extract()
-        .expect("major should be u32");
-    let minor: u32 = version_info
-        .getattr("minor")
-        .expect("minor version should exist")
-        .extract()
-        .expect("minor should be u32");
-    major > 3 || (major == 3 && minor >= 11)
+    let builtins = py.import("builtins").expect("builtins module should exist");
+    let base_exception = builtins
+        .getattr("BaseException")
+        .expect("BaseException should exist");
+    base_exception
+        .hasattr("add_note")
+        .expect("hasattr should succeed")
 }
 
 #[rstest]
@@ -215,7 +210,7 @@ fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
     Python::with_gil(|py| {
         let exc = create_value_error(py, "test error");
 
-        // Create a list with mixed types: valid string, integer, bytes
+        // Create a list with mixed types: valid string, integer, bytes, None
         let code = c"
 notes_list = ['valid note', 42, b'bytes note', None]
 ";
@@ -234,17 +229,14 @@ notes_list = ['valid note', 42, b'bytes note', None]
             .expect("capture_exception should succeed even with malformed note entries")
             .expect("payload should be Some");
 
-        // The implementation should degrade gracefully - either skipping bad entries
-        // or stringifying them. We verify it doesn't error and produces a result.
         assert_eq!(payload.type_name, "ValueError");
 
-        // Per "partial extraction of collections" rule: valid string entries are
-        // preserved exactly. Assert exact match, not substring, to avoid false
-        // positives from stringified containers.
-        assert!(
-            payload.notes.iter().any(|n| n == "valid note"),
-            "valid string note should be captured exactly, got: {:?}",
-            payload.notes
+        // Per ADR "partial extraction of collections" rule: only valid string
+        // entries are preserved; non-strings are skipped.
+        assert_eq!(
+            payload.notes,
+            vec!["valid note"],
+            "only valid string notes should survive; non-strings should be skipped"
         );
     });
 }
