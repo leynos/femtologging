@@ -74,7 +74,7 @@ in-place. This approach:
 - Aligns with the current design where `capture_*` functions return full frames
 - Allows different formatters and handlers to filter differently
 - Maintains testability and composability
-- Keeps worker threads GIL-free (filtering operates on Rust-owned data)
+- Keeps worker threads Global Interpreter Lock (GIL)-free (filtering operates on Rust-owned data)
 
 ### Filter order
 
