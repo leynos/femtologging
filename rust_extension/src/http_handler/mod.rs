@@ -25,8 +25,11 @@
 //! - **Network errors**: Retryable - apply backoff and retry.
 
 mod config;
+mod filtered;
 mod handler;
+mod record;
 mod serialise;
+mod url_encoding;
 mod worker;
 
 #[cfg(test)]
