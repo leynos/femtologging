@@ -205,7 +205,7 @@ missing, `None`, or the wrong type:
 ### The `get_optional_attr` helper
 
 The `get_optional_attr<T>` function encapsulates the degradation logic for
-optional attributes. It returns `None` in all of the following cases:
+optional attributes. It returns `None` in all the following cases:
 
 1. The attribute does not exist on the Python object
 2. The attribute value is Python `None`

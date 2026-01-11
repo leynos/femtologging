@@ -9,37 +9,65 @@ use rstest::rstest;
 
 use crate::traceback_capture::capture_exception;
 
+// --------------------------------
+// Helper functions for common setup
+// --------------------------------
+
+/// Create a ValueError instance with the given message.
+fn create_value_error<'py>(py: Python<'py>, message: &str) -> Bound<'py, PyAny> {
+    let builtins = py.import("builtins").expect("builtins module should exist");
+    builtins
+        .getattr("ValueError")
+        .expect("ValueError should exist")
+        .call1((message,))
+        .expect("ValueError constructor should succeed")
+}
+
+/// Create a BaseException instance with no arguments.
+fn create_base_exception<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
+    let builtins = py.import("builtins").expect("builtins module should exist");
+    builtins
+        .getattr("BaseException")
+        .expect("BaseException should exist")
+        .call0()
+        .expect("BaseException constructor should succeed")
+}
+
+/// Check if Python version supports add_note() (Python 3.11+).
+fn supports_add_note(py: Python<'_>) -> bool {
+    let sys = py.import("sys").expect("sys module should exist");
+    let version_info = sys
+        .getattr("version_info")
+        .expect("version_info should exist");
+    let major: u32 = version_info
+        .getattr("major")
+        .expect("major version should exist")
+        .extract()
+        .expect("major should be u32");
+    let minor: u32 = version_info
+        .getattr("minor")
+        .expect("minor version should exist")
+        .extract()
+        .expect("minor should be u32");
+    major > 3 || (major == 3 && minor >= 11)
+}
+
 #[rstest]
 fn capture_exception_without_notes_returns_empty_notes() {
     // Standard exceptions without __notes__ should return empty notes vector.
     // This tests the get_optional_attr degradation path for missing attributes.
     Python::with_gil(|py| {
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("test error",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_value_error(py, "test error");
 
-        // Verify the exception has no __notes__ attribute
-        assert!(
-            exc.getattr("__notes__").is_err()
-                || exc
-                    .getattr("__notes__")
-                    .map(|n| n.is_none())
-                    .unwrap_or(true),
-            "fresh exception should have no __notes__"
-        );
-
+        // Do not assert CPython internals/version-specific defaults for __notes__.
+        // Only assert the capture output degrades to an empty notes vector.
         let payload = capture_exception(py, &exc)
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 
-        // notes should be empty (graceful degradation from missing attribute)
         assert!(
             payload.notes.is_empty(),
-            "notes should be empty when __notes__ is missing"
+            "notes should be empty when __notes__ is missing/None/empty"
         );
         assert_eq!(payload.type_name, "ValueError");
     });
@@ -50,13 +78,7 @@ fn capture_exception_with_empty_args_tuple() {
     // Exception with empty args tuple should produce empty args_repr.
     Python::with_gil(|py| {
         // BaseException() with no arguments has args = ()
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("BaseException")
-            .expect("BaseException should exist")
-            .call0()
-            .expect("BaseException constructor should succeed");
+        let exc = create_base_exception(py);
 
         let payload = capture_exception(py, &exc)
             .expect("capture_exception should succeed")
@@ -76,7 +98,47 @@ fn capture_exception_chained_cause_has_empty_notes_and_args() {
     // Chained exceptions (where we only have TracebackException, not the instance)
     // should have empty notes and args_repr because those require the original instance.
     Python::with_gil(|py| {
-        // Create a chained exception where the cause has notes
+        // Skip test if Python version doesn't support add_note()
+        if !supports_add_note(py) {
+            // On Python < 3.11, run a simpler version without add_note()
+            let code = c"
+cause = ValueError('original error')
+
+try:
+    raise cause
+except ValueError as e:
+    raise RuntimeError('wrapped error') from e
+";
+            let result = py.run(code, None, None);
+            assert!(result.is_err());
+
+            let err = result.expect_err("code should raise an exception");
+            let exc_value = err.value(py);
+
+            let payload = capture_exception(py, exc_value)
+                .expect("capture_exception should succeed")
+                .expect("payload should be Some");
+
+            assert_eq!(payload.type_name, "RuntimeError");
+            assert!(
+                !payload.args_repr.is_empty(),
+                "outer exception should have args_repr"
+            );
+
+            let cause = payload.cause.expect("cause should be present");
+            assert_eq!(cause.type_name, "ValueError");
+            assert!(
+                cause.notes.is_empty(),
+                "chained exception notes should be empty (no instance access)"
+            );
+            assert!(
+                cause.args_repr.is_empty(),
+                "chained exception args_repr should be empty (no instance access)"
+            );
+            return;
+        }
+
+        // Python 3.11+: test with add_note()
         let code = c"
 cause = ValueError('original error')
 cause.add_note('This note should NOT appear in the captured cause')
@@ -124,13 +186,7 @@ fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
     // Exceptions with a non-iterable __notes__ attribute should degrade gracefully.
     // This tests the type-mismatch degradation path for __notes__.
     Python::with_gil(|py| {
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("test error",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_value_error(py, "test error");
 
         // Set a malformed, non-iterable __notes__ value (integer instead of list)
         exc.setattr("__notes__", 123_i32)
@@ -154,14 +210,10 @@ fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
 fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
     // Exceptions with __notes__ containing non-string elements should still
     // be captured without failing, degrading notes content as needed.
+    // Per ADR "partial extraction of collections" rule: non-string entries are
+    // dropped/ignored but valid strings are preserved.
     Python::with_gil(|py| {
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("test error",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_value_error(py, "test error");
 
         // Create a list with mixed types: valid string, integer, bytes
         let code = c"
@@ -186,11 +238,12 @@ notes_list = ['valid note', 42, b'bytes note', None]
         // or stringifying them. We verify it doesn't error and produces a result.
         assert_eq!(payload.type_name, "ValueError");
 
-        // At minimum, the valid string note should be captured
-        // (implementation may vary in handling of non-string elements)
+        // Per "partial extraction of collections" rule: valid string entries are
+        // preserved exactly. Assert exact match, not substring, to avoid false
+        // positives from stringified containers.
         assert!(
-            payload.notes.iter().any(|n| n.contains("valid note")),
-            "valid string note should be captured, got: {:?}",
+            payload.notes.iter().any(|n| n == "valid note"),
+            "valid string note should be captured exactly, got: {:?}",
             payload.notes
         );
     });
