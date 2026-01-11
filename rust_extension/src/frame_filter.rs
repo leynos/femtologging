@@ -263,16 +263,33 @@ mod tests {
         StackFrame::new(filename, lineno, function)
     }
 
+    /// Generic helper to assert filtered frames have expected length and field values.
+    fn assert_filter_result_by_field<F>(
+        filtered: &[StackFrame],
+        expected_len: usize,
+        expected_values: &[&str],
+        field_extractor: F,
+    ) where
+        F: Fn(&StackFrame) -> &str,
+    {
+        assert_eq!(filtered.len(), expected_len);
+        for (i, expected) in expected_values.iter().enumerate() {
+            assert_eq!(
+                field_extractor(&filtered[i]),
+                *expected,
+                "Mismatch at index {}",
+                i
+            );
+        }
+    }
+
     /// Assert filtered frames have expected length and filenames.
     fn assert_filter_result(
         filtered: &[StackFrame],
         expected_len: usize,
         expected_filenames: &[&str],
     ) {
-        assert_eq!(filtered.len(), expected_len);
-        for (i, expected) in expected_filenames.iter().enumerate() {
-            assert_eq!(filtered[i].filename, *expected);
-        }
+        assert_filter_result_by_field(filtered, expected_len, expected_filenames, |f| &f.filename);
     }
 
     /// Assert filtered frames have expected length and function names.
@@ -281,10 +298,7 @@ mod tests {
         expected_len: usize,
         expected_functions: &[&str],
     ) {
-        assert_eq!(filtered.len(), expected_len);
-        for (i, expected) in expected_functions.iter().enumerate() {
-            assert_eq!(filtered[i].function, *expected);
-        }
+        assert_filter_result_by_field(filtered, expected_len, expected_functions, |f| &f.function);
     }
 
     #[rstest]

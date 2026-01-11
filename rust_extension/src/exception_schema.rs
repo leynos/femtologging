@@ -665,6 +665,38 @@ impl SchemaVersioned for ExceptionPayload {
 
     // Tests for ExceptionPayload recursive filtering methods
 
+    /// Assert that a payload contains expected number of frames with specific filenames.
+    fn assert_payload_frames(
+        payload: &ExceptionPayload,
+        expected_len: usize,
+        expected_filenames: &[&str],
+    ) {
+        assert_eq!(payload.frames.len(), expected_len);
+        for (i, expected) in expected_filenames.iter().enumerate() {
+            assert_eq!(
+                payload.frames[i].filename, *expected,
+                "Mismatch at frame index {}",
+                i
+            );
+        }
+    }
+
+    /// Assert that a payload contains expected number of frames with specific function names.
+    fn assert_payload_frames_by_function(
+        payload: &ExceptionPayload,
+        expected_len: usize,
+        expected_functions: &[&str],
+    ) {
+        assert_eq!(payload.frames.len(), expected_len);
+        for (i, expected) in expected_functions.iter().enumerate() {
+            assert_eq!(
+                payload.frames[i].function, *expected,
+                "Mismatch at frame index {}",
+                i
+            );
+        }
+    }
+
     #[rstest]
     fn exception_payload_limit_frames_recursive_on_cause() {
         let cause_frames = vec![
@@ -685,15 +717,11 @@ impl SchemaVersioned for ExceptionPayload {
         let limited = payload.limit_frames(2);
 
         // Main frames limited to 2
-        assert_eq!(limited.frames.len(), 2);
-        assert_eq!(limited.frames[0].filename, "main_a.py");
-        assert_eq!(limited.frames[1].filename, "main_b.py");
+        assert_payload_frames(&limited, 2, &["main_a.py", "main_b.py"]);
 
         // Cause frames also limited to 2 (last 2)
         let limited_cause = limited.cause.as_ref().expect("cause exists");
-        assert_eq!(limited_cause.frames.len(), 2);
-        assert_eq!(limited_cause.frames[0].filename, "cause_b.py");
-        assert_eq!(limited_cause.frames[1].filename, "cause_c.py");
+        assert_payload_frames(limited_cause, 2, &["cause_b.py", "cause_c.py"]);
     }
 
     #[rstest]
@@ -776,16 +804,13 @@ impl SchemaVersioned for ExceptionPayload {
         let filtered = group.exclude_filenames(&[".venv/", "site-packages/"]);
 
         // Group's own frames unchanged
-        assert_eq!(filtered.frames.len(), 1);
-        assert_eq!(filtered.frames[0].filename, "app/main.py");
+        assert_payload_frames(&filtered, 1, &["app/main.py"]);
 
         // exc1's venv frame removed
-        assert_eq!(filtered.exceptions[0].frames.len(), 1);
-        assert_eq!(filtered.exceptions[0].frames[0].filename, "app/module1.py");
+        assert_payload_frames(&filtered.exceptions[0], 1, &["app/module1.py"]);
 
         // exc2's site-packages frame removed
-        assert_eq!(filtered.exceptions[1].frames.len(), 1);
-        assert_eq!(filtered.exceptions[1].frames[0].filename, "app/module2.py");
+        assert_payload_frames(&filtered.exceptions[1], 1, &["app/module2.py"]);
     }
 
     #[rstest]
@@ -809,18 +834,15 @@ impl SchemaVersioned for ExceptionPayload {
         let filtered = payload.exclude_functions(&["_private", "__internal", "_setup"]);
 
         // Main frames: _setup removed
-        assert_eq!(filtered.frames.len(), 1);
-        assert_eq!(filtered.frames[0].function, "main");
+        assert_payload_frames_by_function(&filtered, 1, &["main"]);
 
         // Cause frames: _private_helper removed
         let cause_result = filtered.cause.as_ref().expect("cause exists");
-        assert_eq!(cause_result.frames.len(), 1);
-        assert_eq!(cause_result.frames[0].function, "public_func");
+        assert_payload_frames_by_function(cause_result, 1, &["public_func"]);
 
         // Context frames: __internal removed
         let context_result = filtered.context.as_ref().expect("context exists");
-        assert_eq!(context_result.frames.len(), 1);
-        assert_eq!(context_result.frames[0].function, "visible_func");
+        assert_payload_frames_by_function(context_result, 1, &["visible_func"]);
     }
 
     #[rstest]
@@ -839,13 +861,11 @@ impl SchemaVersioned for ExceptionPayload {
         let filtered = payload.exclude_logging_infrastructure();
 
         // Main frames: logging removed
-        assert_eq!(filtered.frames.len(), 1);
-        assert_eq!(filtered.frames[0].filename, "main.py");
+        assert_payload_frames(&filtered, 1, &["main.py"]);
 
         // Cause frames: femtologging removed
         let cause_result = filtered.cause.as_ref().expect("cause exists");
-        assert_eq!(cause_result.frames.len(), 1);
-        assert_eq!(cause_result.frames[0].filename, "cause.py");
+        assert_payload_frames(cause_result, 1, &["cause.py"]);
     }
 }
 
