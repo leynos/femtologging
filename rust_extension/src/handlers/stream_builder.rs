@@ -256,7 +256,7 @@ mod tests {
 
     impl FemtoFormatter for UpperFormatter {
         fn format(&self, record: &FemtoLogRecord) -> String {
-            record.message.to_uppercase()
+            record.message().to_uppercase()
         }
     }
 

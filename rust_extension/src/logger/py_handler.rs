@@ -166,7 +166,7 @@ impl PyHandler {
             .call_method1(
                 py,
                 "handle",
-                (&record.logger, record.level.as_str(), &record.message),
+                (record.logger(), record.level_str(), record.message()),
             )
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, "handle"))
@@ -210,7 +210,7 @@ impl FemtoHandlerTrait for PyHandler {
                 .call_method1(
                     py,
                     "handle",
-                    (&record.logger, record.level.as_str(), &record.message),
+                    (record.logger(), record.level_str(), record.message()),
                 )
                 .map(|_| ())
                 .map_err(|err| map_py_err(py, err, "handle"))

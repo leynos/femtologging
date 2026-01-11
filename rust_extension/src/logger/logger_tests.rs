@@ -53,8 +53,8 @@ fn handle_log_record_dispatches() {
     let r2 = h2.collected();
     assert_eq!(r1.len(), 1);
     assert_eq!(r2.len(), 1);
-    assert_eq!(r1[0].message, "msg");
-    assert_eq!(r2[0].message, "msg");
+    assert_eq!(r1[0].message(), "msg");
+    assert_eq!(r2[0].message(), "msg");
 }
 
 #[test]
@@ -72,7 +72,8 @@ fn drain_remaining_records_pulls_all() {
 
     FemtoLogger::drain_remaining_records(&rx);
 
-    let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
+    let collected = h.collected();
+    let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
     assert_eq!(msgs, vec!["0", "1", "2"]);
 }
 
@@ -101,7 +102,8 @@ fn worker_thread_loop_processes_and_drains() {
         .expect("Failed to send shutdown signal");
     thread.join().expect("Worker thread panicked");
 
-    let msgs: Vec<String> = h.collected().into_iter().map(|r| r.message).collect();
+    let collected = h.collected();
+    let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
     assert_eq!(msgs, vec!["one", "two"]);
 }
 

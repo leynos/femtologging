@@ -60,19 +60,69 @@ impl Default for RecordMetadata {
 #[derive(Clone, Debug)]
 pub struct FemtoLogRecord {
     /// Name of the logger that created this record.
-    pub logger: String,
-    /// The log level as a string (e.g. "INFO" or "ERROR").
-    pub level: String,
-    /// Cached parsed representation of the level.
-    pub parsed_level: Option<FemtoLevel>,
+    logger: String,
+    /// The log level for this record.
+    level: FemtoLevel,
     /// The log message content.
-    pub message: String,
+    message: String,
     /// Contextual metadata for the record.
-    pub metadata: RecordMetadata,
+    metadata: RecordMetadata,
     /// Structured exception payload (when `exc_info` is provided).
-    pub exception_payload: Option<ExceptionPayload>,
+    exception_payload: Option<ExceptionPayload>,
     /// Structured stack trace payload (when `stack_info=True`).
-    pub stack_payload: Option<StackTracePayload>,
+    stack_payload: Option<StackTracePayload>,
+}
+
+impl FemtoLogRecord {
+    /// Returns the logger name.
+    #[inline]
+    pub fn logger(&self) -> &str {
+        &self.logger
+    }
+
+    /// Returns the log level.
+    #[inline]
+    pub fn level(&self) -> FemtoLevel {
+        self.level
+    }
+
+    /// Returns the log message.
+    #[inline]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Returns a reference to the record metadata.
+    #[inline]
+    pub fn metadata(&self) -> &RecordMetadata {
+        &self.metadata
+    }
+
+    /// Returns a reference to the exception payload, if present.
+    #[inline]
+    pub fn exception_payload(&self) -> Option<&ExceptionPayload> {
+        self.exception_payload.as_ref()
+    }
+
+    /// Returns a reference to the stack trace payload, if present.
+    #[inline]
+    pub fn stack_payload(&self) -> Option<&StackTracePayload> {
+        self.stack_payload.as_ref()
+    }
+
+    /// Sets the exception payload.
+    #[inline]
+    #[cfg(feature = "python")]
+    pub(crate) fn set_exception_payload(&mut self, payload: ExceptionPayload) {
+        self.exception_payload = Some(payload);
+    }
+
+    /// Sets the stack trace payload.
+    #[inline]
+    #[cfg(feature = "python")]
+    pub(crate) fn set_stack_payload(&mut self, payload: StackTracePayload) {
+        self.stack_payload = Some(payload);
+    }
 }
 
 impl FemtoLogRecord {
@@ -80,8 +130,7 @@ impl FemtoLogRecord {
     pub fn new(logger: &str, level: FemtoLevel, message: &str) -> Self {
         Self {
             logger: logger.to_owned(),
-            level: level.as_str().to_owned(),
-            parsed_level: Some(level),
+            level,
             message: message.to_owned(),
             metadata: RecordMetadata::default(),
             exception_payload: None,
@@ -102,13 +151,21 @@ impl FemtoLogRecord {
         metadata.thread_name = thread_name;
         Self {
             logger: logger.to_owned(),
-            level: level.as_str().to_owned(),
-            parsed_level: Some(level),
+            level,
             message: message.to_owned(),
             metadata,
             exception_payload: None,
             stack_payload: None,
         }
+    }
+
+    /// Return the level name as a static string slice.
+    ///
+    /// This is a zero-cost accessor that returns the canonical level name
+    /// (e.g., "INFO", "ERROR") without allocation.
+    #[inline]
+    pub fn level_str(&self) -> &'static str {
+        self.level.as_str()
     }
 
     /// Attach an exception payload to the record.
@@ -128,7 +185,7 @@ impl FemtoLogRecord {
 
 impl fmt::Display for FemtoLogRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} - {}", self.level, self.message)
+        write!(f, "{} - {}", self.level_str(), self.message)
     }
 }
 
@@ -141,8 +198,8 @@ mod tests {
     #[rstest]
     fn new_record_has_no_payloads() {
         let record = FemtoLogRecord::new("test", FemtoLevel::Info, "message");
-        assert!(record.exception_payload.is_none());
-        assert!(record.stack_payload.is_none());
+        assert!(record.exception_payload().is_none());
+        assert!(record.stack_payload().is_none());
     }
 
     #[rstest]
@@ -150,9 +207,9 @@ mod tests {
         let exc = ExceptionPayload::new("ValueError", "bad input");
         let record = FemtoLogRecord::new("test", FemtoLevel::Error, "failed").with_exception(exc);
 
-        assert!(record.exception_payload.is_some());
+        assert!(record.exception_payload().is_some());
         let payload = record
-            .exception_payload
+            .exception_payload()
             .expect("exception_payload should be Some after with_exception");
         assert_eq!(payload.type_name, "ValueError");
         assert_eq!(payload.message, "bad input");
@@ -164,9 +221,9 @@ mod tests {
         let stack = StackTracePayload::new(frames);
         let record = FemtoLogRecord::new("test", FemtoLevel::Debug, "trace").with_stack(stack);
 
-        assert!(record.stack_payload.is_some());
+        assert!(record.stack_payload().is_some());
         let payload = record
-            .stack_payload
+            .stack_payload()
             .expect("stack_payload should be Some after with_stack");
         assert_eq!(payload.frames.len(), 1);
         assert_eq!(payload.frames[0].function, "main");
@@ -181,7 +238,7 @@ mod tests {
             .with_exception(exc)
             .with_stack(stack);
 
-        assert!(record.exception_payload.is_some());
-        assert!(record.stack_payload.is_some());
+        assert!(record.exception_payload().is_some());
+        assert!(record.stack_payload().is_some());
     }
 }
