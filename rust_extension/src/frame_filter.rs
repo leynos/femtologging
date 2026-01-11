@@ -456,27 +456,21 @@ mod tests {
     }
 
     #[rstest]
-    fn is_logging_infrastructure_detects_patterns() {
-        assert!(is_logging_infrastructure(&make_frame(
-            "femtologging/__init__.py",
-            1,
-            "log"
-        )));
-        assert!(is_logging_infrastructure(&make_frame(
-            "logging/__init__.py",
-            1,
-            "_log"
-        )));
-        assert!(is_logging_infrastructure(&make_frame(
-            "_femtologging_rs.so",
-            0,
-            "emit"
-        )));
-        assert!(!is_logging_infrastructure(&make_frame(
-            "myapp/main.py",
-            1,
-            "run"
-        )));
+    #[case("femtologging/__init__.py", true)]
+    #[case("logging/__init__.py", true)]
+    #[case("_femtologging_rs.so", true)]
+    #[case("myapp/main.py", false)]
+    #[case("/usr/lib/python3.11/logging/handlers.py", true)]
+    #[case("<frozen importlib._bootstrap>", true)]
+    fn is_logging_infrastructure_detects_patterns(#[case] filename: &str, #[case] expected: bool) {
+        let frame = make_frame(filename, 1, "func");
+        assert_eq!(
+            is_logging_infrastructure(&frame),
+            expected,
+            "Expected is_logging_infrastructure('{}') to be {}",
+            filename,
+            expected
+        );
     }
 
     #[rstest]

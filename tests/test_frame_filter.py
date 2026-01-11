@@ -146,12 +146,13 @@ def test_stack_preserves_schema_version() -> None:
 
 
 def test_stack_empty_frames() -> None:
-    """Empty frames list should produce empty result."""
+    """Empty frames list should omit frames key to match serialisation semantics."""
     payload: dict = {"schema_version": 1, "frames": []}
 
     result = filter_frames(payload, exclude_logging=True)
 
-    assert result["frames"] == []
+    # Empty frames omitted to match serde skip_serializing_if = "Vec::is_empty"
+    assert "frames" not in result
 
 
 def test_stack_no_filters_returns_copy() -> None:
@@ -355,3 +356,95 @@ def test_edge_invalid_frame_missing_function() -> None:
 
     with pytest.raises(TypeError, match="function"):
         filter_frames(payload)
+
+
+def test_edge_frames_not_list() -> None:
+    """Frames that is not a list should raise TypeError."""
+    payload: dict = {
+        "schema_version": 1,
+        "frames": "not a list",
+    }
+
+    with pytest.raises(TypeError, match="must be a list"):
+        filter_frames(payload)
+
+
+def test_edge_frame_not_dict() -> None:
+    """Frame that is not a dict should raise TypeError."""
+    payload: dict = {
+        "schema_version": 1,
+        "frames": ["not a dict"],
+    }
+
+    with pytest.raises(TypeError, match="must be a dict"):
+        filter_frames(payload)
+
+
+def test_edge_optional_field_wrong_type() -> None:
+    """Optional field with wrong type should raise TypeError."""
+    payload: dict = {
+        "schema_version": 1,
+        "frames": [
+            {"filename": "a.py", "lineno": 1, "function": "test", "end_lineno": "wrong"}
+        ],
+    }
+
+    with pytest.raises(TypeError, match="wrong type"):
+        filter_frames(payload)
+
+
+def test_exc_exclude_functions() -> None:
+    """Function patterns should exclude matching frames in exception payloads."""
+    payload = make_exception_payload(["a.py", "b.py", "c.py"])
+    payload["frames"][1]["function"] = "_internal_helper"
+
+    result = filter_frames(payload, exclude_functions=["_internal"])
+
+    assert len(result["frames"]) == 2
+    functions = [f["function"] for f in result["frames"]]
+    assert "_internal_helper" not in functions
+    # Should preserve exception fields
+    assert result["type_name"] == "ValueError"
+    assert result["message"] == "test error"
+
+
+def test_exc_exclude_functions_in_cause() -> None:
+    """Function patterns should exclude matching frames in cause chain."""
+    cause = make_exception_payload(
+        ["cause_a.py", "cause_b.py"],
+        type_name="IOError",
+        message="cause error",
+    )
+    cause["frames"][0]["function"] = "_internal_cause"
+    payload = make_exception_payload(["main.py"])
+    payload["cause"] = cause
+
+    result = filter_frames(payload, exclude_functions=["_internal"])
+
+    # Cause frames should be filtered
+    assert len(result["cause"]["frames"]) == 1
+    assert result["cause"]["frames"][0]["function"] == "func_1"
+
+
+def test_stack_preserves_extra_keys() -> None:
+    """Stack payload should preserve all keys, not just schema_version and frames."""
+    payload = make_stack_payload(["a.py", "b.py"])
+    payload["thread_id"] = 12345
+    payload["process_id"] = 67890
+    payload["custom_field"] = "preserved"
+
+    result = filter_frames(payload, max_depth=1)
+
+    assert result["thread_id"] == 12345
+    assert result["process_id"] == 67890
+    assert result["custom_field"] == "preserved"
+
+
+def test_frame_locals_preserved() -> None:
+    """Frame locals should be preserved after filtering."""
+    payload = make_stack_payload(["a.py", "b.py"])
+    payload["frames"][0]["locals"] = {"x": "42", "y": "hello"}
+
+    result = filter_frames(payload)
+
+    assert result["frames"][0]["locals"] == {"x": "42", "y": "hello"}

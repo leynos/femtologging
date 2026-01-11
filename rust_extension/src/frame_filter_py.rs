@@ -25,6 +25,24 @@ struct FilterOptions<'a> {
     exclude_logging: bool,
 }
 
+/// Helper to extract an optional field with type error reporting.
+///
+/// If the field is present but has the wrong type, returns a TypeError instead
+/// of silently dropping the value.
+fn extract_optional<'py, T>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<T>>
+where
+    T: pyo3::FromPyObject<'py>,
+{
+    match dict.get_item(key)? {
+        Some(v) if v.is_none() => Ok(None),
+        Some(v) => v
+            .extract()
+            .map(Some)
+            .map_err(|_| PyTypeError::new_err(format!("frame dict key '{}' has wrong type", key))),
+        None => Ok(None),
+    }
+}
+
 /// Extract a StackFrame from a Python dict.
 fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
     let filename: String = dict
@@ -42,13 +60,14 @@ fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
         .ok_or_else(|| PyTypeError::new_err("frame dict missing 'function' key"))?
         .extract()?;
 
-    let end_lineno: Option<u32> = dict.get_item("end_lineno")?.and_then(|v| v.extract().ok());
+    let end_lineno: Option<u32> = extract_optional(dict, "end_lineno")?;
+    let colno: Option<u32> = extract_optional(dict, "colno")?;
+    let end_colno: Option<u32> = extract_optional(dict, "end_colno")?;
+    let source_line: Option<String> = extract_optional(dict, "source_line")?;
 
-    let colno: Option<u32> = dict.get_item("colno")?.and_then(|v| v.extract().ok());
-
-    let end_colno: Option<u32> = dict.get_item("end_colno")?.and_then(|v| v.extract().ok());
-
-    let source_line: Option<String> = dict.get_item("source_line")?.and_then(|v| v.extract().ok());
+    // Extract locals if present
+    let locals: Option<std::collections::BTreeMap<String, String>> =
+        extract_optional(dict, "locals")?;
 
     Ok(StackFrame {
         filename,
@@ -58,7 +77,7 @@ fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
         end_colno,
         function,
         source_line,
-        locals: None, // locals are not round-tripped for simplicity
+        locals,
     })
 }
 
@@ -80,6 +99,9 @@ fn stack_frame_to_dict<'py>(py: Python<'py>, frame: &StackFrame) -> PyResult<Bou
     }
     if let Some(ref source_line) = frame.source_line {
         dict.set_item("source_line", source_line)?;
+    }
+    if let Some(ref locals) = frame.locals {
+        dict.set_item("locals", locals.clone())?;
     }
 
     Ok(dict)
@@ -146,24 +168,32 @@ fn apply_filters(frames: Vec<StackFrame>, opts: &FilterOptions<'_>) -> Vec<Stack
 }
 
 /// Filter a stack_info payload dict.
+///
+/// Preserves all keys from the original payload, only updating the frames.
 fn filter_stack_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
 ) -> PyResult<PyObject> {
     let frames = extract_frames(payload)?;
+    let had_frames_key = payload.contains("frames")?;
     let filtered = apply_filters(frames, opts);
 
-    // Build result dict
-    let result = PyDict::new(py);
+    // Clone all keys from the original payload
+    let result = payload.copy()?;
 
-    // Copy schema_version if present
-    if let Some(version) = payload.get_item("schema_version")? {
-        result.set_item("schema_version", version)?;
+    // Update frames only if the original had them, or always set if filtering produced frames
+    // Match the Rust serde behavior: skip_serializing_if = "Vec::is_empty"
+    if had_frames_key {
+        if filtered.is_empty() {
+            // Remove empty frames to match serialisation semantics
+            result.del_item("frames").ok();
+        } else {
+            result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
+        }
+    } else if !filtered.is_empty() {
+        result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
     }
-
-    // Set filtered frames
-    result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
 
     Ok(result.into())
 }
@@ -320,21 +350,35 @@ mod tests {
         let frames = PyList::empty(py);
         for (i, filename) in filenames.iter().enumerate() {
             let frame = PyDict::new(py);
-            frame.set_item("filename", *filename).unwrap();
-            frame.set_item("lineno", i as u32 + 1).unwrap();
-            frame.set_item("function", format!("func_{i}")).unwrap();
-            frames.append(frame).unwrap();
+            frame
+                .set_item("filename", *filename)
+                .expect("failed to set frame filename");
+            frame
+                .set_item("lineno", i as u32 + 1)
+                .expect("failed to set frame lineno");
+            frame
+                .set_item("function", format!("func_{i}"))
+                .expect("failed to set frame function");
+            frames.append(frame).expect("failed to append frame");
         }
         let payload = PyDict::new(py);
-        payload.set_item("schema_version", 1u16).unwrap();
-        payload.set_item("frames", frames).unwrap();
+        payload
+            .set_item("schema_version", 1u16)
+            .expect("failed to set schema_version");
+        payload
+            .set_item("frames", frames)
+            .expect("failed to set frames");
         payload
     }
 
     fn make_exception_payload_dict<'py>(py: Python<'py>, filenames: &[&str]) -> Bound<'py, PyDict> {
         let payload = make_stack_payload_dict(py, filenames);
-        payload.set_item("type_name", "ValueError").unwrap();
-        payload.set_item("message", "test error").unwrap();
+        payload
+            .set_item("type_name", "ValueError")
+            .expect("failed to set type_name");
+        payload
+            .set_item("message", "test error")
+            .expect("failed to set message");
         payload
     }
 
@@ -355,10 +399,18 @@ mod tests {
             max_depth,
             exclude_logging,
         )
-        .unwrap();
-        let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
-        let frames = result_dict.get_item("frames").unwrap().unwrap();
-        frames.downcast::<PyList>().unwrap().clone()
+        .expect("filter_frames failed");
+        let result_dict = result
+            .downcast_bound::<PyDict>(py)
+            .expect("result is not a dict");
+        let frames = result_dict
+            .get_item("frames")
+            .expect("failed to get frames key")
+            .expect("frames key is None");
+        frames
+            .downcast::<PyList>()
+            .expect("frames is not a list")
+            .clone()
     }
 
     #[rstest]
@@ -377,14 +429,14 @@ mod tests {
             let frames_list = filter_and_extract_frames(py, &payload, None, None, None, true);
 
             assert_eq!(frames_list.len(), 1);
-            let frame = frames_list.get_item(0).unwrap();
-            let frame_dict = frame.downcast::<PyDict>().unwrap();
+            let frame = frames_list.get_item(0).expect("failed to get first frame");
+            let frame_dict = frame.downcast::<PyDict>().expect("frame is not a dict");
             let filename: String = frame_dict
                 .get_item("filename")
-                .unwrap()
-                .unwrap()
+                .expect("failed to get filename key")
+                .expect("filename key is None")
                 .extract()
-                .unwrap();
+                .expect("failed to extract filename");
             assert_eq!(filename, "myapp/main.py");
         });
     }
@@ -421,14 +473,14 @@ mod tests {
 
             assert_eq!(frames_list.len(), 2);
             // Should be the last 2 frames (d.py, e.py)
-            let frame0 = frames_list.get_item(0).unwrap();
-            let frame0_dict = frame0.downcast::<PyDict>().unwrap();
+            let frame0 = frames_list.get_item(0).expect("failed to get first frame");
+            let frame0_dict = frame0.downcast::<PyDict>().expect("frame is not a dict");
             let filename0: String = frame0_dict
                 .get_item("filename")
-                .unwrap()
-                .unwrap()
+                .expect("failed to get filename key")
+                .expect("filename key is None")
                 .extract()
-                .unwrap();
+                .expect("failed to extract filename");
             assert_eq!(filename0, "d.py");
         });
     }
@@ -442,20 +494,26 @@ mod tests {
 
             assert!(is_exception_payload(&payload));
 
-            let result = filter_frames(py, &payload, None, None, None, true).unwrap();
-            let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
+            let result =
+                filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
+            let result_dict = result
+                .downcast_bound::<PyDict>(py)
+                .expect("result is not a dict");
 
             // Should preserve exception fields
             let type_name: String = result_dict
                 .get_item("type_name")
-                .unwrap()
-                .unwrap()
+                .expect("failed to get type_name key")
+                .expect("type_name key is None")
                 .extract()
-                .unwrap();
+                .expect("failed to extract type_name");
             assert_eq!(type_name, "ValueError");
 
-            let frames = result_dict.get_item("frames").unwrap().unwrap();
-            let frames_list = frames.downcast::<PyList>().unwrap();
+            let frames = result_dict
+                .get_item("frames")
+                .expect("failed to get frames key")
+                .expect("frames key is None");
+            let frames_list = frames.downcast::<PyList>().expect("frames is not a list");
             assert_eq!(frames_list.len(), 1);
         });
     }
@@ -465,25 +523,47 @@ mod tests {
     fn filter_exception_payload_with_cause() {
         Python::with_gil(|py| {
             let cause = make_exception_payload_dict(py, &["cause.py", "femtologging/__init__.py"]);
-            cause.set_item("type_name", "IOError").unwrap();
-            cause.set_item("message", "cause error").unwrap();
+            cause
+                .set_item("type_name", "IOError")
+                .expect("failed to set type_name");
+            cause
+                .set_item("message", "cause error")
+                .expect("failed to set message");
 
             let payload = make_exception_payload_dict(py, &["main.py", "logging/__init__.py"]);
-            payload.set_item("cause", cause).unwrap();
+            payload
+                .set_item("cause", cause)
+                .expect("failed to set cause");
 
-            let result = filter_frames(py, &payload, None, None, None, true).unwrap();
-            let result_dict = result.downcast_bound::<PyDict>(py).unwrap();
+            let result =
+                filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
+            let result_dict = result
+                .downcast_bound::<PyDict>(py)
+                .expect("result is not a dict");
 
             // Check main frames filtered
-            let frames = result_dict.get_item("frames").unwrap().unwrap();
-            let frames_list = frames.downcast::<PyList>().unwrap();
+            let frames = result_dict
+                .get_item("frames")
+                .expect("failed to get frames key")
+                .expect("frames key is None");
+            let frames_list = frames.downcast::<PyList>().expect("frames is not a list");
             assert_eq!(frames_list.len(), 1);
 
             // Check cause frames also filtered
-            let cause_result = result_dict.get_item("cause").unwrap().unwrap();
-            let cause_dict = cause_result.downcast::<PyDict>().unwrap();
-            let cause_frames = cause_dict.get_item("frames").unwrap().unwrap();
-            let cause_frames_list = cause_frames.downcast::<PyList>().unwrap();
+            let cause_result = result_dict
+                .get_item("cause")
+                .expect("failed to get cause key")
+                .expect("cause key is None");
+            let cause_dict = cause_result
+                .downcast::<PyDict>()
+                .expect("cause is not a dict");
+            let cause_frames = cause_dict
+                .get_item("frames")
+                .expect("failed to get cause frames key")
+                .expect("cause frames key is None");
+            let cause_frames_list = cause_frames
+                .downcast::<PyList>()
+                .expect("cause frames is not a list");
             assert_eq!(cause_frames_list.len(), 1);
         });
     }
