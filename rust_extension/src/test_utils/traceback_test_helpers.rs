@@ -283,6 +283,17 @@ pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entrie
 // --------------------------------
 
 /// Assert that a locals map contains the expected key-value pair.
+///
+/// # Arguments
+///
+/// * `locals` - The locals map to check
+/// * `key` - The key that should be present in the map
+/// * `expected` - The expected value for the key
+///
+/// # Panics
+///
+/// Panics if `key` is not present in `locals` or if its value differs from `expected`.
+#[track_caller]
 pub fn assert_local_equals(locals: &BTreeMap<String, String>, key: &str, expected: &str) {
     assert_eq!(
         locals.get(key).map(String::as_str),
@@ -302,11 +313,28 @@ pub fn assert_local_equals(locals: &BTreeMap<String, String>, key: &str, expecte
 /// # Panics
 ///
 /// Panics if `key` is present in `locals`.
+#[track_caller]
 pub fn assert_local_absent(locals: &BTreeMap<String, String>, key: &str, reason: &str) {
     assert!(locals.get(key).is_none(), "{}", reason);
 }
 
-/// Helper to assert that a frame has the expected required fields.
+/// Assert that a stack frame has the expected required fields.
+///
+/// Verifies that the frame's `filename`, `lineno`, and `function` fields match
+/// the expected values. These are the three required fields for every stack frame
+/// per the exception schema.
+///
+/// # Arguments
+///
+/// * `frame` - The stack frame to verify
+/// * `filename` - Expected filename for the frame
+/// * `lineno` - Expected line number (1-indexed)
+/// * `function` - Expected function name
+///
+/// # Panics
+///
+/// Panics if any of the required fields do not match the expected values.
+#[track_caller]
 pub fn assert_frame_required_fields(
     frame: &StackFrame,
     filename: &str,
@@ -355,6 +383,7 @@ pub struct ExpectedOptionalFields<'a> {
 /// # Panics
 ///
 /// Panics if any optional field does not match the expected value.
+#[track_caller]
 pub fn assert_frame_optional_fields(frame: &StackFrame, expected: ExpectedOptionalFields<'_>) {
     assert_eq!(
         frame.end_lineno, expected.end_lineno,

@@ -110,7 +110,7 @@ except ValueError as e:
             let err = result.expect_err("code should raise an exception");
             let exc_value = err.value(py);
 
-            let payload = capture_exception(py, exc_value)
+            let payload = capture_exception(py, &exc_value)
                 .expect("capture_exception should succeed")
                 .expect("payload should be Some");
 
@@ -150,7 +150,7 @@ except ValueError as e:
         let err = result.expect_err("code should raise an exception");
         let exc_value = err.value(py);
 
-        let payload = capture_exception(py, exc_value)
+        let payload = capture_exception(py, &exc_value)
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 
@@ -237,6 +237,54 @@ notes_list = ['valid note', 42, b'bytes note', None]
             payload.notes,
             vec!["valid note"],
             "only valid string notes should survive; non-strings should be skipped"
+        );
+    });
+}
+
+#[rstest]
+fn capture_exception_with_failing_repr_in_args_degrades_gracefully() {
+    // When an exception's args tuple contains objects whose __repr__ raises,
+    // those elements should be skipped and only valid repr strings preserved.
+    Python::with_gil(|py| {
+        // Create a class with a __repr__ that raises
+        let code = c"
+class BadRepr:
+    def __repr__(self):
+        raise RuntimeError('repr failed')
+";
+        py.run(code, None, None)
+            .expect("class definition should succeed");
+
+        let globals = py.import("__main__").unwrap().dict();
+        let bad_repr_cls = globals.get_item("BadRepr").unwrap().unwrap();
+        let bad_repr_instance = bad_repr_cls.call0().expect("BadRepr() should succeed");
+
+        // Create an exception and manually set args to include a failing repr
+        let exc = create_value_error(py, "test error");
+        let args_tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                "valid arg".into_pyobject(py).unwrap().into_any(),
+                bad_repr_instance.clone(),
+                42i32.into_pyobject(py).unwrap().into_any(),
+            ],
+        )
+        .expect("tuple creation should succeed");
+        exc.setattr("args", args_tuple)
+            .expect("setting args should succeed");
+
+        let payload = capture_exception(py, &exc)
+            .expect("capture_exception should succeed even with failing repr")
+            .expect("payload should be Some");
+
+        assert_eq!(payload.type_name, "ValueError");
+
+        // Per ADR "partial extraction of collections" rule: elements whose
+        // repr() fails are skipped; valid repr strings are preserved.
+        assert_eq!(
+            payload.args_repr,
+            vec!["'valid arg'", "42"],
+            "only valid repr strings should survive; failing repr elements should be skipped"
         );
     });
 }

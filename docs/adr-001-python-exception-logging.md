@@ -191,8 +191,8 @@ Fields fall into two categories:
 **Required fields** cause extraction to fail if missing or malformed. The
 entire frame or exception capture aborts with an error:
 
-- Stack frame: `filename`, `lineno`, `name` (function name)
-- Exception: `exc_type`, `__name__` (for type name)
+- Stack frame: `filename`, `lineno`, `name` (function name).
+- Exception: `exc_type.__name__` (for the type name string).
 
 **Optional fields** degrade silently to `None` or an empty collection when
 missing, `None`, or the wrong type:

@@ -254,6 +254,9 @@ fn format_exception_message(tb_exc: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 /// Extract args as string representations from the exception instance.
+///
+/// Per the ADR "partial extraction of collections" rule, individual elements
+/// whose `repr()` fails are skipped. Valid representations are preserved.
 fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     let args = match exc.getattr("args") {
         Ok(a) => a,
@@ -269,7 +272,10 @@ fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     };
     let mut result = Vec::with_capacity(args_tuple.len());
     for arg in args_tuple.iter() {
-        result.push(arg.repr()?.extract()?);
+        // Skip elements whose repr() fails per ADR partial extraction rule
+        if let Ok(repr_str) = arg.repr().and_then(|r| r.extract::<String>()) {
+            result.push(repr_str);
+        }
     }
     Ok(result)
 }
