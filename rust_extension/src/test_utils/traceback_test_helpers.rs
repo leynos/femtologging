@@ -285,8 +285,8 @@ pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entrie
 /// Assert that a locals map contains the expected key-value pair.
 pub fn assert_local_equals(locals: &BTreeMap<String, String>, key: &str, expected: &str) {
     assert_eq!(
-        locals.get(key),
-        Some(&expected.to_string()),
+        locals.get(key).map(String::as_str),
+        Some(expected),
         "locals[{key:?}] should equal {expected:?}"
     );
 }
@@ -366,8 +366,8 @@ pub fn assert_frame_optional_fields(frame: &StackFrame, expected: ExpectedOption
         "end_colno should match"
     );
     assert_eq!(
-        frame.source_line,
-        expected.source_line.map(String::from),
+        frame.source_line.as_deref(),
+        expected.source_line,
         "source_line should match"
     );
 }

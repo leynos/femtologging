@@ -191,7 +191,7 @@ Fields fall into two categories:
 **Required fields** cause extraction to fail if missing or malformed. The
 entire frame or exception capture aborts with an error:
 
-- Stack frame: `filename`, `lineno`, `name`
+- Stack frame: `filename`, `lineno`, `name` (function name)
 - Exception: `exc_type`, `__name__` (for type name)
 
 **Optional fields** degrade silently to `None` or an empty collection when
@@ -207,9 +207,9 @@ missing, `None`, or the wrong type:
 The `get_optional_attr<T>` function encapsulates the degradation logic for
 optional attributes. It returns `None` in all the following cases:
 
-1. The attribute does not exist on the Python object
-2. The attribute value is Python `None`
-3. The attribute exists but cannot be extracted to type `T`
+1. The attribute does not exist on the Python object.
+2. The attribute value is Python `None`.
+3. The attribute exists but cannot be extracted to type `T`.
 
 This single helper eliminates repetitive error handling and guarantees
 consistent behaviour across all optional field extractions.
@@ -226,7 +226,7 @@ rather than aborting the entire collection:
   result is an empty vector. Individual elements that fail `repr()` extraction
   are skipped.
 - **`notes` list:** If `__notes__` is missing or `None`, the result is an empty
-  vector.
+  vector. Individual elements that are not strings are skipped.
 - **`exceptions` list (ExceptionGroup):** Individual nested exceptions that
   fail to convert are skipped from the result vector.
 
