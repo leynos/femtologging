@@ -1,4 +1,7 @@
 //! Unit tests for traceback capture utilities.
+//!
+//! Graceful degradation tests (missing attributes, malformed `__notes__`,
+//! chained exceptions) are in [`crate::traceback_capture_graceful_degradation_tests`].
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyTuple};

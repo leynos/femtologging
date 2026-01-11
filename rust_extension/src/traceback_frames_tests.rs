@@ -1,4 +1,7 @@
 //! Unit tests for stack frame extraction utilities.
+//!
+//! Graceful degradation tests (type mismatches, non-mapping locals, non-string
+//! keys) are in [`crate::traceback_frames_graceful_degradation_tests`].
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -35,8 +38,8 @@ fn frame_with_all_optional_fields_present() {
             Some("    result = compute(x)".to_string())
         );
         let locals = result.locals.as_ref().expect("locals should be present");
-        assert_eq!(locals.get("x"), Some(&"'10'".to_string()));
-        assert_eq!(locals.get("result"), Some(&"'None'".to_string()));
+        assert_local_equals(locals, "x", "'10'");
+        assert_local_equals(locals, "result", "'None'");
     });
 }
 
