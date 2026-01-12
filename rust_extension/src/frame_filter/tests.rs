@@ -107,37 +107,35 @@ fn exclude_by_filename_no_matches() {
     assert_eq!(filtered.len(), 2);
 }
 
-/// Parameterized test for exclude_by_function with various patterns.
-///
-/// Cases:
-/// - Single pattern: excludes frames matching "_private"
-/// - Multiple patterns: excludes frames matching "_private" or "__dunder"
-/// - No matches: all frames retained when patterns don't match
 #[rstest]
-#[case::single_pattern(
+#[case(
     &["main", "_private_helper", "public_api"],
     &["_private"],
-    &["main", "public_api"]
+    &["main", "public_api"],
+    "single pattern"
 )]
-#[case::multiple_patterns(
+#[case(
     &["main", "_private_helper", "__dunder_method", "public_api"],
     &["_private", "__dunder"],
-    &["main", "public_api"]
+    &["main", "public_api"],
+    "multiple patterns"
 )]
-#[case::no_matches(
+#[case(
     &["main", "public_api", "helper"],
     &["_private", "__internal"],
-    &["main", "public_api", "helper"]
+    &["main", "public_api", "helper"],
+    "no matches"
 )]
-fn exclude_by_function_patterns(
-    #[case] input_functions: &[&str],
+fn exclude_by_function_scenarios(
+    #[case] function_names: &[&str],
     #[case] patterns: &[&str],
     #[case] expected_functions: &[&str],
+    #[case] _scenario: &str,
 ) {
-    let frames: Vec<_> = input_functions
+    let frames: Vec<StackFrame> = function_names
         .iter()
         .enumerate()
-        .map(|(i, func)| make_frame("app.py", (i + 1) as u32, func))
+        .map(|(i, name)| make_frame("app.py", (i + 1) as u32, name))
         .collect();
 
     let filtered = exclude_by_function(&frames, patterns);
