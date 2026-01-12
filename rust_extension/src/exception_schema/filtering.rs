@@ -43,9 +43,7 @@ impl StackTracePayload {
     where
         F: Fn(&StackFrame) -> bool,
     {
-        self.apply_frame_transform(|frames| {
-            frames.iter().filter(|f| predicate(f)).cloned().collect()
-        })
+        self.apply_frame_transform(|frames| frame_filter::filter_frames(frames, &predicate))
     }
 
     /// Return a new payload with at most `n` frames (most recent).
@@ -203,9 +201,7 @@ impl ExceptionPayload {
     where
         F: Fn(&StackFrame) -> bool,
     {
-        self.apply_frame_transform(&|frames| {
-            frames.iter().filter(|f| predicate(f)).cloned().collect()
-        })
+        self.apply_frame_transform(&|frames| frame_filter::filter_frames(frames, &predicate))
     }
 
     /// Return a new payload with at most `n` frames (most recent).

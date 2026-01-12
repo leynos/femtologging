@@ -164,7 +164,7 @@ fn exclude_logging_infrastructure_removes_standard_logging() {
 
     let filtered = exclude_logging_infrastructure(&frames);
 
-    assert_eq!(filtered.len(), 1);
+    assert_frames(&filtered, 1, &["myapp/main.py"]);
 }
 
 #[rstest]
@@ -176,7 +176,7 @@ fn exclude_logging_infrastructure_removes_rust_extension() {
 
     let filtered = exclude_logging_infrastructure(&frames);
 
-    assert_eq!(filtered.len(), 1);
+    assert_frames(&filtered, 1, &["myapp/main.py"]);
 }
 
 #[rstest]
@@ -192,7 +192,7 @@ fn exclude_logging_infrastructure_removes_import_machinery() {
 
     let filtered = exclude_logging_infrastructure(&frames);
 
-    assert_eq!(filtered.len(), 1);
+    assert_frames(&filtered, 1, &["myapp/main.py"]);
 }
 
 #[rstest]
