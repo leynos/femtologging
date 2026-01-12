@@ -255,8 +255,14 @@ class BadRepr:
         py.run(code, None, None)
             .expect("class definition should succeed");
 
-        let globals = py.import("__main__").unwrap().dict();
-        let bad_repr_cls = globals.get_item("BadRepr").unwrap().unwrap();
+        let globals = py
+            .import("__main__")
+            .expect("__main__ module should exist")
+            .dict();
+        let bad_repr_cls = globals
+            .get_item("BadRepr")
+            .expect("get_item should not fail")
+            .expect("BadRepr class should exist in globals");
         let bad_repr_instance = bad_repr_cls.call0().expect("BadRepr() should succeed");
 
         // Create an exception and manually set args to include a failing repr
