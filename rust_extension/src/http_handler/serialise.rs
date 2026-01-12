@@ -6,214 +6,204 @@
 //! The URL encoding uses `+` for spaces to match CPython's `urllib.parse.urlencode`
 //! behaviour (which uses `quote_plus` internally).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::io;
 
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use serde::Serialize;
 
-/// Characters to percent-encode in URL query values (excluding space).
-///
-/// This encodes all control characters plus characters with special meaning in
-/// URLs (query separators, reserved characters), while leaving unreserved
-/// characters (alphanumeric, `-`, `_`, `.`, `~`) as-is per RFC 3986.
-///
-/// Space is handled separately by [`url_encode`] which maps it directly to `+`
-/// during iteration, avoiding a second pass over the encoded string.
-const QUERY_ENCODE_SET_NO_SPACE: &AsciiSet = &CONTROLS
-    .add(b'"')
-    .add(b'#')
-    .add(b'$')
-    .add(b'%')
-    .add(b'&')
-    .add(b'+')
-    .add(b',')
-    .add(b'/')
-    .add(b':')
-    .add(b';')
-    .add(b'<')
-    .add(b'=')
-    .add(b'>')
-    .add(b'?')
-    .add(b'@')
-    .add(b'[')
-    .add(b'\\')
-    .add(b']')
-    .add(b'^')
-    .add(b'`')
-    .add(b'{')
-    .add(b'|')
-    .add(b'}')
-    .add(b'\'');
-
+use super::filtered::FilteredRecord;
+use super::record::HttpSerializableRecord;
+use super::url_encoding::url_encode;
 use crate::log_record::FemtoLogRecord;
 
-fn build_full_map(record: &FemtoLogRecord) -> BTreeMap<String, serde_json::Value> {
-    let timestamp = record
-        .metadata
-        .timestamp
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|dur| dur.as_secs_f64())
-        .unwrap_or_default();
-
-    let mut map = BTreeMap::new();
-    map.insert(
-        "name".into(),
-        serde_json::Value::String(record.logger.clone()),
-    );
-    map.insert(
-        "levelname".into(),
-        serde_json::Value::String(record.level.clone()),
-    );
-    map.insert(
-        "msg".into(),
-        serde_json::Value::String(record.message.clone()),
-    );
-    map.insert(
-        "created".into(),
-        serde_json::Value::Number(
-            serde_json::Number::from_f64(timestamp).unwrap_or_else(|| serde_json::Number::from(0)),
-        ),
-    );
-    map.insert(
-        "filename".into(),
-        serde_json::Value::String(record.metadata.filename.clone()),
-    );
-    map.insert(
-        "lineno".into(),
-        serde_json::Value::Number(record.metadata.line_number.into()),
-    );
-    map.insert(
-        "module".into(),
-        serde_json::Value::String(record.metadata.module_path.clone()),
-    );
-    map.insert(
-        "thread".into(),
-        serde_json::Value::String(format!("{:?}", record.metadata.thread_id)),
-    );
-    if let Some(ref name) = record.metadata.thread_name {
-        map.insert("threadName".into(), serde_json::Value::String(name.clone()));
+/// Emit a numeric field as URL-encoded key=value pair if included by the filter.
+fn emit_numeric_field(
+    pairs: &mut Vec<String>,
+    key: &str,
+    value: impl std::fmt::Display,
+    has: &impl Fn(&str) -> bool,
+) {
+    if has(key) {
+        pairs.push(format!("{key}={value}"));
     }
-    for (k, v) in &record.metadata.key_values {
-        map.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    if let Some(ref exc) = record.exception_payload {
-        map.insert("exc_info".into(), serde_json::json!(exc));
-    }
-    if let Some(ref stack) = record.stack_payload {
-        map.insert("stack_info".into(), serde_json::json!(stack));
-    }
-    map
 }
 
-fn filter_fields(
-    full_map: BTreeMap<String, serde_json::Value>,
-    fields: &[String],
-) -> BTreeMap<String, serde_json::Value> {
-    let field_set: HashSet<&str> = fields.iter().map(String::as_str).collect();
-    full_map
-        .into_iter()
-        .filter(|(k, _)| field_set.contains(k.as_str()))
-        .collect()
+/// Emit a JSON-serialised optional field as URL-encoded key=value pair.
+fn emit_json_field<T: Serialize>(
+    pairs: &mut Vec<String>,
+    key: &str,
+    value: Option<&T>,
+    has: &impl Fn(&str) -> bool,
+) -> io::Result<()> {
+    if has(key)
+        && let Some(v) = value
+    {
+        let json = serde_json::to_string(v).map_err(io::Error::other)?;
+        pairs.push(format!("{}={}", url_encode(key), url_encode(&json)));
+    }
+    Ok(())
+}
+
+/// Emit key-value pairs as URL-encoded pairs if included by the filter.
+fn emit_key_values<'a>(
+    pairs: &mut Vec<String>,
+    key_values: impl Iterator<Item = (&'a String, &'a String)>,
+    has: &impl Fn(&str) -> bool,
+) {
+    for (k, v) in key_values {
+        if has(k) {
+            pairs.push(format!("{}={}", url_encode(k), url_encode(v)));
+        }
+    }
+}
+
+/// Emit a string field as URL-encoded key=value pair if included by the filter.
+fn emit_string_field(pairs: &mut Vec<String>, key: &str, value: &str, has: &impl Fn(&str) -> bool) {
+    if has(key) {
+        pairs.push(format!("{}={}", url_encode(key), url_encode(value)));
+    }
+}
+
+/// Emit an optional string field as URL-encoded key=value pair.
+fn emit_optional_string_field(
+    pairs: &mut Vec<String>,
+    key: &str,
+    value: Option<&str>,
+    has: &impl Fn(&str) -> bool,
+) {
+    if has(key)
+        && let Some(v) = value
+    {
+        pairs.push(format!("{}={}", url_encode(key), url_encode(v)));
+    }
+}
+
+/// Emit all fields from an `HttpSerializableRecord` as URL-encoded pairs.
+fn emit_all_fields(
+    pairs: &mut Vec<String>,
+    r: &HttpSerializableRecord<'_>,
+    has: &impl Fn(&str) -> bool,
+) -> io::Result<()> {
+    emit_string_field(pairs, "name", r.name, has);
+    emit_string_field(pairs, "levelname", r.levelname, has);
+    emit_string_field(pairs, "msg", r.msg, has);
+    emit_numeric_field(pairs, "created", r.created, has);
+    emit_string_field(pairs, "filename", r.filename, has);
+    emit_numeric_field(pairs, "lineno", r.lineno, has);
+    emit_string_field(pairs, "module", r.module, has);
+    if has("thread") {
+        pairs.push(format!(
+            "thread={}",
+            url_encode(&format!("{:?}", r.thread_id))
+        ));
+    }
+    emit_optional_string_field(pairs, "threadName", r.thread_name, has);
+    emit_key_values(pairs, r.key_values.iter(), has);
+    emit_json_field(pairs, "exc_info", r.exc_info, has)?;
+    emit_json_field(pairs, "stack_info", r.stack_info, has)?;
+    Ok(())
 }
 
 /// Serialise a record to URL-encoded form data (CPython parity).
 ///
 /// This produces output compatible with `urllib.parse.urlencode(record.__dict__)`,
 /// using `+` for spaces as CPython's `urlencode` does by default.
+///
+/// # Arguments
+///
+/// * `record` - The log record to serialise.
+/// * `fields` - Optional list of field names to include. If `None`, all fields
+///   are included.
+///
+/// # Returns
+///
+/// A URL-encoded string representation of the record fields, or an
+/// [`io::Error`] if JSON serialization of exception/stack payloads fails.
+///
+/// # Errors
+///
+/// Returns an error if JSON serialization of `exc_info` or `stack_info`
+/// payloads fails.
 pub fn serialise_url_encoded(
     record: &FemtoLogRecord,
     fields: Option<&[String]>,
 ) -> io::Result<String> {
-    let full_map = build_full_map(record);
-    let map = match fields {
-        Some(f) => filter_fields(full_map, f),
-        None => full_map,
-    };
+    let r = HttpSerializableRecord::from(record);
+    let filter: Option<HashSet<&str>> = fields.map(|f| f.iter().map(String::as_str).collect());
+    let has = |name: &str| filter.as_ref().is_none_or(|f| f.contains(name));
 
-    let pairs: Vec<String> = map
-        .into_iter()
-        .map(|(k, v)| {
-            let value_str = match v {
-                serde_json::Value::String(s) => s,
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::Bool(b) => b.to_string(),
-                serde_json::Value::Null => String::new(),
-                other => other.to_string(),
-            };
-            format!("{}={}", url_encode(&k), url_encode(&value_str))
-        })
-        .collect();
-
+    let mut pairs = Vec::new();
+    emit_all_fields(&mut pairs, &r, &has)?;
     Ok(pairs.join("&"))
 }
 
 /// Serialise a record to JSON.
+///
+/// Uses zero-copy serialization where possible to avoid allocations.
+/// The `levelname` field is serialized directly from `&'static str`.
+///
+/// # Arguments
+///
+/// * `record` - The log record to serialise.
+/// * `fields` - Optional list of field names to include. If `None`, all fields
+///   are included.
+///
+/// # Returns
+///
+/// A JSON string representation of the record fields, or an [`io::Error`] if
+/// serialization fails.
+///
+/// # Errors
+///
+/// Returns an error if JSON serialization fails.
 pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io::Result<String> {
-    let full_map = build_full_map(record);
-    let map = match fields {
-        Some(f) => filter_fields(full_map, f),
-        None => full_map,
-    };
+    let serializable = HttpSerializableRecord::from(record);
 
-    serde_json::to_string(&map).map_err(io::Error::other)
-}
-
-/// URL-encode a string using `+` for spaces (CPython `urlencode` parity).
-///
-/// This matches the behaviour of `urllib.parse.urlencode`, which uses
-/// `quote_plus` internally and encodes spaces as `+` rather than `%20`.
-///
-/// Spaces are mapped to `+` directly during encoding (single pass), rather than
-/// encoding to `%20` and then replacing in a second pass.
-fn url_encode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut first = true;
-    for chunk in s.split(' ') {
-        if !first {
-            result.push('+');
+    match fields {
+        Some(f) => {
+            // field_set lives for the duration of this arm; FilteredRecord borrows it
+            // and is consumed by serde_json::to_string before the arm ends.
+            let field_set: HashSet<&str> = f.iter().map(String::as_str).collect();
+            let filtered = FilteredRecord {
+                record: serializable,
+                fields: &field_set,
+            };
+            serde_json::to_string(&filtered).map_err(io::Error::other)
         }
-        first = false;
-        result.push_str(&utf8_percent_encode(chunk, QUERY_ENCODE_SET_NO_SPACE).to_string());
+        None => serde_json::to_string(&serializable).map_err(io::Error::other),
     }
-    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::level::FemtoLevel;
     use crate::log_record::RecordMetadata;
+    use rstest::{fixture, rstest};
 
+    #[fixture]
     fn test_record() -> FemtoLogRecord {
-        FemtoLogRecord {
-            logger: "test.logger".into(),
-            level: "INFO".into(),
-            parsed_level: None,
-            message: "Hello World".into(),
-            metadata: RecordMetadata {
-                module_path: "test.module".into(),
-                filename: "test.rs".into(),
-                line_number: 42,
-                ..Default::default()
-            },
-            exception_payload: None,
-            stack_payload: None,
-        }
+        let metadata = RecordMetadata {
+            module_path: "test.module".into(),
+            filename: "test.rs".into(),
+            line_number: 42,
+            ..RecordMetadata::default()
+        };
+        FemtoLogRecord::with_metadata("test.logger", FemtoLevel::Info, "Hello World", metadata)
     }
 
-    #[test]
-    fn url_encoded_contains_expected_fields() {
-        let record = test_record();
-        let encoded = serialise_url_encoded(&record, None).expect("serialise");
+    #[rstest]
+    fn url_encoded_contains_expected_fields(test_record: FemtoLogRecord) {
+        let encoded = serialise_url_encoded(&test_record, None).expect("serialise");
         assert!(encoded.contains("name=test.logger"));
         assert!(encoded.contains("levelname=INFO"));
         assert!(encoded.contains("msg=Hello+World"));
         assert!(encoded.contains("lineno=42"));
     }
 
-    #[test]
-    fn json_contains_expected_fields() {
-        let record = test_record();
-        let json = serialise_json(&record, None).expect("serialise");
+    #[rstest]
+    fn json_contains_expected_fields(test_record: FemtoLogRecord) {
+        let json = serialise_json(&test_record, None).expect("serialise");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed["name"], "test.logger");
         assert_eq!(parsed["levelname"], "INFO");
@@ -221,41 +211,14 @@ mod tests {
         assert_eq!(parsed["lineno"], 42);
     }
 
-    #[test]
-    fn field_filter_limits_output() {
-        let record = test_record();
+    #[rstest]
+    fn field_filter_limits_output(test_record: FemtoLogRecord) {
         let fields = vec!["name".into(), "msg".into()];
-        let json = serialise_json(&record, Some(&fields)).expect("serialise");
+        let json = serialise_json(&test_record, Some(&fields)).expect("serialise");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed["name"], "test.logger");
         assert_eq!(parsed["msg"], "Hello World");
         assert!(parsed.get("levelname").is_none());
         assert!(parsed.get("lineno").is_none());
-    }
-
-    #[test]
-    fn url_encode_special_chars() {
-        assert_eq!(url_encode("hello world"), "hello+world");
-        assert_eq!(url_encode("a=b&c=d"), "a%3Db%26c%3Dd");
-        assert_eq!(url_encode("test_value-123.txt"), "test_value-123.txt");
-    }
-
-    #[test]
-    fn url_encode_edge_cases() {
-        // Empty string
-        assert_eq!(url_encode(""), "");
-        // Consecutive spaces
-        assert_eq!(url_encode("a  b"), "a++b");
-        assert_eq!(url_encode("a   b"), "a+++b");
-        // Leading spaces
-        assert_eq!(url_encode(" hello"), "+hello");
-        assert_eq!(url_encode("  hello"), "++hello");
-        // Trailing spaces
-        assert_eq!(url_encode("hello "), "hello+");
-        assert_eq!(url_encode("hello  "), "hello++");
-        // Only spaces
-        assert_eq!(url_encode(" "), "+");
-        assert_eq!(url_encode("  "), "++");
-        assert_eq!(url_encode("   "), "+++");
     }
 }

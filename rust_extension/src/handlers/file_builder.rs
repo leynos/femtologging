@@ -196,7 +196,7 @@ mod tests {
 
     impl FemtoFormatter for PrefixFormatter {
         fn format(&self, record: &FemtoLogRecord) -> String {
-            format!("prefix:{}", record.message)
+            format!("prefix:{}", record.message())
         }
     }
 

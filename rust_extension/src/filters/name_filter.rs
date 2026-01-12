@@ -20,7 +20,7 @@ pub struct NameFilter {
 
 impl FemtoFilter for NameFilter {
     fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        record.logger == self.prefix || record.logger.starts_with(&self.prefix_dot)
+        record.logger() == self.prefix || record.logger().starts_with(&self.prefix_dot)
     }
 }
 

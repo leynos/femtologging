@@ -150,13 +150,13 @@ impl FemtoLogger {
             && should_capture_exc_info(exc)?
             && let Some(payload) = traceback_capture::capture_exception(py, exc)?
         {
-            record.exception_payload = Some(payload);
+            record.set_exception_payload(payload);
         }
 
         // Capture stack payload if stack_info=True
         #[cfg(feature = "python")]
         if stack_info.unwrap_or(false) {
-            record.stack_payload = Some(traceback_capture::capture_stack(py)?);
+            record.set_stack_payload(traceback_capture::capture_stack(py)?);
         }
 
         Ok(self.log_record(record))
@@ -169,7 +169,7 @@ impl FemtoLogger {
     /// `AtomicU8`.
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
-        self.level.store(level as u8, Ordering::Relaxed);
+        self.level.store(u8::from(level), Ordering::Relaxed);
     }
 
     /// Return the logger's current minimum level as a string.
@@ -265,17 +265,9 @@ impl FemtoLogger {
     /// Checks level threshold and filters, formats the record, and dispatches
     /// to handlers. Returns `Some(formatted_message)` if the record was logged,
     /// or `None` if it was filtered out.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `record.parsed_level` is `None`. All records created via
-    /// `FemtoLogRecord::new` have a parsed level set.
     fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
-        let level = record
-            .parsed_level
-            .expect("log_record requires parsed_level to be set");
-        if (level as u8) < threshold {
+        if u8::from(record.level()) < threshold {
             return None;
         }
 
@@ -299,7 +291,7 @@ impl FemtoLogger {
     /// Return whether `level` is enabled for this logger.
     #[cfg(feature = "log-compat")]
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
-        level as u8 >= self.level.load(Ordering::Relaxed)
+        u8::from(level) >= self.level.load(Ordering::Relaxed)
     }
 
     /// Dispatch an already-constructed record through this logger.
@@ -308,10 +300,7 @@ impl FemtoLogger {
     /// being enqueued for handler processing.
     #[cfg(feature = "log-compat")]
     pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
-        let Some(level) = record.parsed_level else {
-            return;
-        };
-        if !self.is_enabled_for(level) {
+        if !self.is_enabled_for(record.level()) {
             return;
         }
         if !self.passes_all_filters(&record) {
@@ -509,7 +498,7 @@ impl FemtoLogger {
             name,
             parent,
             formatter,
-            level: AtomicU8::new(FemtoLevel::Info as u8),
+            level: AtomicU8::new(u8::from(FemtoLevel::Info)),
             propagate: AtomicBool::new(true),
             handlers,
             filters,

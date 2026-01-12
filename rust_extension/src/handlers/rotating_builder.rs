@@ -305,7 +305,7 @@ mod tests {
 
     impl FemtoFormatter for SuffixFormatter {
         fn format(&self, record: &FemtoLogRecord) -> String {
-            format!("suffix:{}", record.message)
+            format!("suffix:{}", record.message())
         }
     }
 
