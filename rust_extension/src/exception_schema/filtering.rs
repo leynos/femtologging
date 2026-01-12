@@ -147,6 +147,37 @@ impl StackTracePayload {
 }
 
 impl ExceptionPayload {
+    /// Private helper to apply a frame transformation recursively across
+    /// the exception payload, its cause chain, context chain, and exception groups.
+    fn apply_frame_transform<F>(&self, transform: &F) -> Self
+    where
+        F: Fn(&[StackFrame]) -> Vec<StackFrame>,
+    {
+        Self {
+            schema_version: self.schema_version,
+            type_name: self.type_name.clone(),
+            module: self.module.clone(),
+            message: self.message.clone(),
+            args_repr: self.args_repr.clone(),
+            notes: self.notes.clone(),
+            frames: transform(&self.frames),
+            cause: self
+                .cause
+                .as_ref()
+                .map(|c| Box::new(c.apply_frame_transform(transform))),
+            context: self
+                .context
+                .as_ref()
+                .map(|c| Box::new(c.apply_frame_transform(transform))),
+            suppress_context: self.suppress_context,
+            exceptions: self
+                .exceptions
+                .iter()
+                .map(|e| e.apply_frame_transform(transform))
+                .collect(),
+        }
+    }
+
     /// Return a new payload with frames filtered by the given predicate.
     ///
     /// Recursively filters frames in the cause chain, context chain, and
@@ -200,37 +231,6 @@ impl ExceptionPayload {
     #[must_use]
     pub fn limit_frames(&self, n: usize) -> Self {
         self.apply_frame_transform(&|frames| frame_filter::limit_frames(frames, n))
-    }
-
-    /// Private helper to apply a frame transformation recursively across
-    /// the exception payload, its cause chain, context chain, and exception groups.
-    fn apply_frame_transform<F>(&self, transform: &F) -> Self
-    where
-        F: Fn(&[StackFrame]) -> Vec<StackFrame>,
-    {
-        Self {
-            schema_version: self.schema_version,
-            type_name: self.type_name.clone(),
-            module: self.module.clone(),
-            message: self.message.clone(),
-            args_repr: self.args_repr.clone(),
-            notes: self.notes.clone(),
-            frames: transform(&self.frames),
-            cause: self
-                .cause
-                .as_ref()
-                .map(|c| Box::new(c.apply_frame_transform(transform))),
-            context: self
-                .context
-                .as_ref()
-                .map(|c| Box::new(c.apply_frame_transform(transform))),
-            suppress_context: self.suppress_context,
-            exceptions: self
-                .exceptions
-                .iter()
-                .map(|e| e.apply_frame_transform(transform))
-                .collect(),
-        }
     }
 
     /// Return a new payload excluding frames matching filename patterns.

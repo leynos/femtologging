@@ -1,52 +1,8 @@
 //! Tests for frame filtering utilities.
 
 use super::*;
+use crate::test_utils::frame_test_helpers::{assert_frames, assert_frames_by_function, make_frame};
 use rstest::rstest;
-
-fn make_frame(filename: &str, lineno: u32, function: &str) -> StackFrame {
-    StackFrame::new(filename, lineno, function)
-}
-
-/// Generic helper to assert filtered frames have expected length and field values.
-fn assert_filter_result_by_field<F>(
-    filtered: &[StackFrame],
-    expected_len: usize,
-    expected_values: &[&str],
-    field_extractor: F,
-) where
-    F: Fn(&StackFrame) -> &str,
-{
-    assert_eq!(
-        expected_len,
-        expected_values.len(),
-        "expected_len ({}) must match expected_values.len() ({})",
-        expected_len,
-        expected_values.len()
-    );
-    assert_eq!(filtered.len(), expected_len);
-    for (i, expected) in expected_values.iter().enumerate() {
-        assert_eq!(
-            field_extractor(&filtered[i]),
-            *expected,
-            "Mismatch at index {}",
-            i
-        );
-    }
-}
-
-/// Assert filtered frames have expected length and filenames.
-fn assert_filter_result(filtered: &[StackFrame], expected_len: usize, expected_filenames: &[&str]) {
-    assert_filter_result_by_field(filtered, expected_len, expected_filenames, |f| &f.filename);
-}
-
-/// Assert filtered frames have expected length and function names.
-fn assert_filter_result_by_function(
-    filtered: &[StackFrame],
-    expected_len: usize,
-    expected_functions: &[&str],
-) {
-    assert_filter_result_by_field(filtered, expected_len, expected_functions, |f| &f.function);
-}
 
 #[rstest]
 fn filter_frames_with_predicate() {
@@ -58,7 +14,7 @@ fn filter_frames_with_predicate() {
 
     let filtered = filter_frames(&frames, |f| f.filename != "b.py");
 
-    assert_filter_result(&filtered, 2, &["a.py", "c.py"]);
+    assert_frames(&filtered, 2, &["a.py", "c.py"]);
 }
 
 #[rstest]
@@ -103,7 +59,7 @@ fn limit_frames_over_limit() {
 
     let limited = limit_frames(&frames, 2);
 
-    assert_filter_result(&limited, 2, &["b.py", "c.py"]);
+    assert_frames(&limited, 2, &["b.py", "c.py"]);
 }
 
 #[rstest]
@@ -123,7 +79,7 @@ fn exclude_by_filename_single_pattern() {
 
     let filtered = exclude_by_filename(&frames, &[".venv/"]);
 
-    assert_filter_result(&filtered, 2, &["app/main.py", "app/utils.py"]);
+    assert_frames(&filtered, 2, &["app/main.py", "app/utils.py"]);
 }
 
 #[rstest]
@@ -136,7 +92,7 @@ fn exclude_by_filename_multiple_patterns() {
 
     let filtered = exclude_by_filename(&frames, &[".venv/", "site-packages/"]);
 
-    assert_filter_result(&filtered, 1, &["app/main.py"]);
+    assert_frames(&filtered, 1, &["app/main.py"]);
 }
 
 #[rstest]
@@ -151,44 +107,42 @@ fn exclude_by_filename_no_matches() {
     assert_eq!(filtered.len(), 2);
 }
 
+/// Parameterized test for exclude_by_function with various patterns.
+///
+/// Cases:
+/// - Single pattern: excludes frames matching "_private"
+/// - Multiple patterns: excludes frames matching "_private" or "__dunder"
+/// - No matches: all frames retained when patterns don't match
 #[rstest]
-fn exclude_by_function_single_pattern() {
-    let frames = vec![
-        make_frame("app.py", 1, "main"),
-        make_frame("app.py", 2, "_private_helper"),
-        make_frame("app.py", 3, "public_api"),
-    ];
+#[case::single_pattern(
+    &["main", "_private_helper", "public_api"],
+    &["_private"],
+    &["main", "public_api"]
+)]
+#[case::multiple_patterns(
+    &["main", "_private_helper", "__dunder_method", "public_api"],
+    &["_private", "__dunder"],
+    &["main", "public_api"]
+)]
+#[case::no_matches(
+    &["main", "public_api", "helper"],
+    &["_private", "__internal"],
+    &["main", "public_api", "helper"]
+)]
+fn exclude_by_function_patterns(
+    #[case] input_functions: &[&str],
+    #[case] patterns: &[&str],
+    #[case] expected_functions: &[&str],
+) {
+    let frames: Vec<_> = input_functions
+        .iter()
+        .enumerate()
+        .map(|(i, func)| make_frame("app.py", (i + 1) as u32, func))
+        .collect();
 
-    let filtered = exclude_by_function(&frames, &["_private"]);
+    let filtered = exclude_by_function(&frames, patterns);
 
-    assert_filter_result_by_function(&filtered, 2, &["main", "public_api"]);
-}
-
-#[rstest]
-fn exclude_by_function_multiple_patterns() {
-    let frames = vec![
-        make_frame("app.py", 1, "main"),
-        make_frame("app.py", 2, "_private_helper"),
-        make_frame("app.py", 3, "__dunder_method"),
-        make_frame("app.py", 4, "public_api"),
-    ];
-
-    let filtered = exclude_by_function(&frames, &["_private", "__dunder"]);
-
-    assert_filter_result_by_function(&filtered, 2, &["main", "public_api"]);
-}
-
-#[rstest]
-fn exclude_by_function_no_matches() {
-    let frames = vec![
-        make_frame("app.py", 1, "main"),
-        make_frame("app.py", 2, "public_api"),
-        make_frame("app.py", 3, "helper"),
-    ];
-
-    let filtered = exclude_by_function(&frames, &["_private", "__internal"]);
-
-    assert_filter_result_by_function(&filtered, 3, &["main", "public_api", "helper"]);
+    assert_frames_by_function(&filtered, expected_functions.len(), expected_functions);
 }
 
 #[rstest]
@@ -200,7 +154,7 @@ fn exclude_logging_infrastructure_removes_femtologging() {
 
     let filtered = exclude_logging_infrastructure(&frames);
 
-    assert_filter_result(&filtered, 1, &["myapp/main.py"]);
+    assert_frames(&filtered, 1, &["myapp/main.py"]);
 }
 
 #[rstest]
@@ -281,5 +235,5 @@ fn combined_filtering() {
 
     // Finally limit depth
     let step3 = limit_frames(&step2, 2);
-    assert_filter_result(&step3, 2, &["myapp/api.py", "myapp/handler.py"]);
+    assert_frames(&step3, 2, &["myapp/api.py", "myapp/handler.py"]);
 }
