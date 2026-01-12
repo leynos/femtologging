@@ -271,7 +271,7 @@ class BadRepr:
             py,
             [
                 "valid arg".into_pyobject(py).unwrap().into_any(),
-                bad_repr_instance.clone(),
+                bad_repr_instance,
                 42i32.into_pyobject(py).unwrap().into_any(),
             ],
         )
