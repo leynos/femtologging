@@ -119,7 +119,7 @@ impl Serialize for FilteredRecord<'_> {
         emit!("lineno", &r.lineno);
         emit!("module", r.module);
         if f.contains("thread") {
-            map.serialize_entry("thread", &r.thread_string())?;
+            map.serialize_entry("thread", &format_args!("{:?}", r.thread_id))?;
         }
 
         self.serialize_optional_fields::<S>(&mut map)?;

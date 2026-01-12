@@ -91,7 +91,9 @@ fn emit_all_fields(
     emit_string_field(pairs, "filename", r.filename, has);
     emit_numeric_field(pairs, "lineno", r.lineno, has);
     emit_string_field(pairs, "module", r.module, has);
-    emit_string_field(pairs, "thread", &r.thread_string(), has);
+    if has("thread") {
+        pairs.push(format!("thread={:?}", r.thread_id));
+    }
     emit_optional_string_field(pairs, "threadName", r.thread_name, has);
     emit_key_values(pairs, r.key_values.iter(), has);
     emit_json_field(pairs, "exc_info", r.exc_info, has)?;

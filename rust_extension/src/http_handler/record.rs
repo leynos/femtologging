@@ -42,11 +42,6 @@ impl HttpSerializableRecord<'_> {
             + usize::from(self.exc_info.is_some())
             + usize::from(self.stack_info.is_some())
     }
-
-    /// Format the thread ID as a debug string for serialization.
-    pub(super) fn thread_string(&self) -> String {
-        format!("{:?}", self.thread_id)
-    }
 }
 
 impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
@@ -88,7 +83,7 @@ impl Serialize for HttpSerializableRecord<'_> {
         map.serialize_entry("filename", self.filename)?;
         map.serialize_entry("lineno", &self.lineno)?;
         map.serialize_entry("module", self.module)?;
-        map.serialize_entry("thread", &self.thread_string())?;
+        map.serialize_entry("thread", &format_args!("{:?}", self.thread_id))?;
         if let Some(name) = self.thread_name {
             map.serialize_entry("threadName", name)?;
         }
