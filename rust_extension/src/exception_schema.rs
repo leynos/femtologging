@@ -84,6 +84,8 @@ use thiserror::Error;
 /// Payloads with versions below this value are rejected during validation.
 pub const MIN_EXCEPTION_SCHEMA_VERSION: u16 = 1;
 
+use crate::frame_filter;
+
 /// Current schema version for exception payloads.
 ///
 /// Increment this when making breaking changes to the schema structure.
@@ -299,6 +301,17 @@ impl StackTracePayload {
         }
     }
 
+    /// Private helper to apply a frame transformation and return a new payload.
+    fn apply_frame_transform<F>(&self, transform: F) -> Self
+    where
+        F: FnOnce(&[StackFrame]) -> Vec<StackFrame>,
+    {
+        Self {
+            schema_version: self.schema_version,
+            frames: transform(&self.frames),
+        }
+    }
+
     /// Return a new payload with frames filtered by the given predicate.
     ///
     /// Frames for which the predicate returns `true` are included in the
@@ -324,15 +337,9 @@ impl StackTracePayload {
     where
         F: Fn(&StackFrame) -> bool,
     {
-        Self {
-            schema_version: self.schema_version,
-            frames: self
-                .frames
-                .iter()
-                .filter(|f| predicate(f))
-                .cloned()
-                .collect(),
-        }
+        self.apply_frame_transform(|frames| {
+            frames.iter().filter(|f| predicate(f)).cloned().collect()
+        })
     }
 
     /// Return a new payload with at most `n` frames (most recent).
@@ -358,11 +365,7 @@ impl StackTracePayload {
     /// ```
     #[must_use]
     pub fn limit(&self, n: usize) -> Self {
-        use crate::frame_filter::limit_frames;
-        Self {
-            schema_version: self.schema_version,
-            frames: limit_frames(&self.frames, n),
-        }
+        self.apply_frame_transform(|frames| frame_filter::limit_frames(frames, n))
     }
 
     /// Return a new payload excluding frames matching filename patterns.
@@ -385,11 +388,7 @@ impl StackTracePayload {
     /// ```
     #[must_use]
     pub fn exclude_filenames(&self, patterns: &[&str]) -> Self {
-        use crate::frame_filter::exclude_by_filename;
-        Self {
-            schema_version: self.schema_version,
-            frames: exclude_by_filename(&self.frames, patterns),
-        }
+        self.apply_frame_transform(|frames| frame_filter::exclude_by_filename(frames, patterns))
     }
 
     /// Return a new payload excluding frames matching function name patterns.
@@ -412,11 +411,7 @@ impl StackTracePayload {
     /// ```
     #[must_use]
     pub fn exclude_functions(&self, patterns: &[&str]) -> Self {
-        use crate::frame_filter::exclude_by_function;
-        Self {
-            schema_version: self.schema_version,
-            frames: exclude_by_function(&self.frames, patterns),
-        }
+        self.apply_frame_transform(|frames| frame_filter::exclude_by_function(frames, patterns))
     }
 
     /// Return a new payload excluding common logging infrastructure frames.
@@ -441,11 +436,7 @@ impl StackTracePayload {
     /// ```
     #[must_use]
     pub fn exclude_logging_infrastructure(&self) -> Self {
-        use crate::frame_filter::exclude_logging_infrastructure;
-        Self {
-            schema_version: self.schema_version,
-            frames: exclude_logging_infrastructure(&self.frames),
-        }
+        self.apply_frame_transform(frame_filter::exclude_logging_infrastructure)
     }
 }
 
@@ -562,8 +553,7 @@ impl ExceptionPayload {
     /// ```
     #[must_use]
     pub fn limit_frames(&self, n: usize) -> Self {
-        use crate::frame_filter::limit_frames;
-        self.apply_frame_transform(&|frames| limit_frames(frames, n))
+        self.apply_frame_transform(&|frames| frame_filter::limit_frames(frames, n))
     }
 
     /// Private helper to apply a frame transformation recursively across
@@ -618,8 +608,7 @@ impl ExceptionPayload {
     /// ```
     #[must_use]
     pub fn exclude_filenames(&self, patterns: &[&str]) -> Self {
-        use crate::frame_filter::exclude_by_filename;
-        self.apply_frame_transform(&|frames| exclude_by_filename(frames, patterns))
+        self.apply_frame_transform(&|frames| frame_filter::exclude_by_filename(frames, patterns))
     }
 
     /// Return a new payload excluding frames matching function name patterns.
@@ -643,8 +632,7 @@ impl ExceptionPayload {
     /// ```
     #[must_use]
     pub fn exclude_functions(&self, patterns: &[&str]) -> Self {
-        use crate::frame_filter::exclude_by_function;
-        self.apply_frame_transform(&|frames| exclude_by_function(frames, patterns))
+        self.apply_frame_transform(&|frames| frame_filter::exclude_by_function(frames, patterns))
     }
 
     /// Return a new payload excluding common logging infrastructure frames.
@@ -668,8 +656,7 @@ impl ExceptionPayload {
     /// ```
     #[must_use]
     pub fn exclude_logging_infrastructure(&self) -> Self {
-        use crate::frame_filter::exclude_logging_infrastructure;
-        self.apply_frame_transform(&exclude_logging_infrastructure)
+        self.apply_frame_transform(&frame_filter::exclude_logging_infrastructure)
     }
 }
 
@@ -686,6 +673,13 @@ impl SchemaVersioned for ExceptionPayload {
         expected_len: usize,
         expected_filenames: &[&str],
     ) {
+        assert_eq!(
+            expected_len,
+            expected_filenames.len(),
+            "expected_len ({}) must match expected_filenames.len() ({})",
+            expected_len,
+            expected_filenames.len()
+        );
         assert_eq!(payload.frames.len(), expected_len);
         for (i, expected) in expected_filenames.iter().enumerate() {
             assert_eq!(
@@ -702,6 +696,13 @@ impl SchemaVersioned for ExceptionPayload {
         expected_len: usize,
         expected_functions: &[&str],
     ) {
+        assert_eq!(
+            expected_len,
+            expected_functions.len(),
+            "expected_len ({}) must match expected_functions.len() ({})",
+            expected_len,
+            expected_functions.len()
+        );
         assert_eq!(payload.frames.len(), expected_len);
         for (i, expected) in expected_functions.iter().enumerate() {
             assert_eq!(

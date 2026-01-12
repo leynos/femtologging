@@ -272,6 +272,13 @@ mod tests {
     ) where
         F: Fn(&StackFrame) -> &str,
     {
+        assert_eq!(
+            expected_len,
+            expected_values.len(),
+            "expected_len ({}) must match expected_values.len() ({})",
+            expected_len,
+            expected_values.len()
+        );
         assert_eq!(filtered.len(), expected_len);
         for (i, expected) in expected_values.iter().enumerate() {
             assert_eq!(
