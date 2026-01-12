@@ -626,6 +626,21 @@ impl ExceptionPayload {
     ///
     /// Recursively excludes frames in the cause chain, context chain, and
     /// exception groups.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{ExceptionPayload, StackFrame};
+    ///
+    /// let frames = vec![
+    ///     StackFrame::new("app.py", 10, "main"),
+    ///     StackFrame::new("app.py", 20, "_internal_helper"),
+    /// ];
+    /// let payload = ExceptionPayload::new("Error", "test").with_frames(frames);
+    ///
+    /// let filtered = payload.exclude_functions(&["_internal"]);
+    /// assert_eq!(filtered.frames.len(), 1);
+    /// ```
     #[must_use]
     pub fn exclude_functions(&self, patterns: &[&str]) -> Self {
         use crate::frame_filter::exclude_by_function;
