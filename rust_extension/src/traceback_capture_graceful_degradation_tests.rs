@@ -261,13 +261,9 @@ class BadRepr:
     def __repr__(self):
         raise RuntimeError('repr failed')
 ";
-        py.run(code, None, None)
+        let globals = PyDict::new(py);
+        py.run(code, Some(&globals), None)
             .expect("class definition should succeed");
-
-        let globals = py
-            .import("__main__")
-            .expect("__main__ module should exist")
-            .dict();
         let bad_repr_cls = globals
             .get_item("BadRepr")
             .expect("get_item should not fail")
