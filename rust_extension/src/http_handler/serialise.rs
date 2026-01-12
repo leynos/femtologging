@@ -92,7 +92,10 @@ fn emit_all_fields(
     emit_numeric_field(pairs, "lineno", r.lineno, has);
     emit_string_field(pairs, "module", r.module, has);
     if has("thread") {
-        pairs.push(format!("thread={:?}", r.thread_id));
+        pairs.push(format!(
+            "thread={}",
+            url_encode(&format!("{:?}", r.thread_id))
+        ));
     }
     emit_optional_string_field(pairs, "threadName", r.thread_name, has);
     emit_key_values(pairs, r.key_values.iter(), has);
@@ -158,6 +161,8 @@ pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 
     match fields {
         Some(f) => {
+            // field_set lives for the duration of this arm; FilteredRecord borrows it
+            // and is consumed by serde_json::to_string before the arm ends.
             let field_set: HashSet<&str> = f.iter().map(String::as_str).collect();
             let filtered = FilteredRecord {
                 record: serializable,

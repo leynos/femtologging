@@ -50,8 +50,8 @@ impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
         let created = metadata
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|dur| dur.as_secs_f64())
-            .unwrap_or_default();
+            .expect("timestamp must be after UNIX epoch")
+            .as_secs_f64();
 
         Self {
             name: record.logger(),
