@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rstest::rstest;
 
+use crate::exception_schema::ExceptionPayload;
 use crate::traceback_capture::capture_exception;
 
 // --------------------------------
@@ -45,6 +46,47 @@ fn supports_add_note(py: Python<'_>) -> bool {
     base_exception
         .hasattr("add_note")
         .expect("hasattr should succeed")
+}
+
+/// Assert that a chained exception payload has the expected structure.
+///
+/// Verifies that the outer exception has the expected type and non-empty args_repr,
+/// and that the chained cause has the expected type but empty notes and args_repr
+/// (because we don't have direct access to the chained exception instance).
+///
+/// # Arguments
+///
+/// * `payload` - The exception payload to verify
+/// * `outer_type` - Expected type name of the outer exception
+/// * `cause_type` - Expected type name of the chained cause
+#[track_caller]
+fn assert_chained_exception_structure(
+    payload: &ExceptionPayload,
+    outer_type: &str,
+    cause_type: &str,
+) {
+    assert_eq!(
+        payload.type_name, outer_type,
+        "outer exception type should match"
+    );
+    assert!(
+        !payload.args_repr.is_empty(),
+        "outer exception should have args_repr"
+    );
+
+    let cause = payload.cause.as_ref().expect("cause should be present");
+    assert_eq!(
+        cause.type_name, cause_type,
+        "chained exception type should match"
+    );
+    assert!(
+        cause.notes.is_empty(),
+        "chained exception notes should be empty (no instance access)"
+    );
+    assert!(
+        cause.args_repr.is_empty(),
+        "chained exception args_repr should be empty (no instance access)"
+    );
 }
 
 #[rstest]
@@ -114,22 +156,7 @@ except ValueError as e:
                 .expect("capture_exception should succeed")
                 .expect("payload should be Some");
 
-            assert_eq!(payload.type_name, "RuntimeError");
-            assert!(
-                !payload.args_repr.is_empty(),
-                "outer exception should have args_repr"
-            );
-
-            let cause = payload.cause.expect("cause should be present");
-            assert_eq!(cause.type_name, "ValueError");
-            assert!(
-                cause.notes.is_empty(),
-                "chained exception notes should be empty (no instance access)"
-            );
-            assert!(
-                cause.args_repr.is_empty(),
-                "chained exception args_repr should be empty (no instance access)"
-            );
+            assert_chained_exception_structure(&payload, "RuntimeError", "ValueError");
             return;
         }
 
@@ -154,25 +181,7 @@ except ValueError as e:
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 
-        // The outer exception should have args_repr captured
-        assert_eq!(payload.type_name, "RuntimeError");
-        assert!(
-            !payload.args_repr.is_empty(),
-            "outer exception should have args_repr"
-        );
-
-        // The chained cause should exist but have empty notes and args_repr
-        // because we don't have direct access to the exception instance
-        let cause = payload.cause.expect("cause should be present");
-        assert_eq!(cause.type_name, "ValueError");
-        assert!(
-            cause.notes.is_empty(),
-            "chained exception notes should be empty (no instance access)"
-        );
-        assert!(
-            cause.args_repr.is_empty(),
-            "chained exception args_repr should be empty (no instance access)"
-        );
+        assert_chained_exception_structure(&payload, "RuntimeError", "ValueError");
     });
 }
 
