@@ -275,9 +275,15 @@ class BadRepr:
         let args_tuple = pyo3::types::PyTuple::new(
             py,
             [
-                "valid arg".into_pyobject(py).unwrap().into_any(),
+                "valid arg"
+                    .into_pyobject(py)
+                    .expect("string conversion should succeed")
+                    .into_any(),
                 bad_repr_instance,
-                42i32.into_pyobject(py).unwrap().into_any(),
+                42i32
+                    .into_pyobject(py)
+                    .expect("int conversion should succeed")
+                    .into_any(),
             ],
         )
         .expect("tuple creation should succeed");
