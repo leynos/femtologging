@@ -639,19 +639,28 @@ mod tests {
         ));
     }
 
-    #[rstest]
-    fn backward_compatible_missing_optional_fields() {
-        // Minimal v1 payload without optional fields
-        let json = r#"{
+    /// Minimal v1 payload JSON for backward compatibility tests.
+    fn minimal_v1_payload_json() -> &'static str {
+        r#"{
             "schema_version": 1,
             "type_name": "Error",
             "message": "test"
-        }"#;
+        }"#
+    }
 
+    #[rstest]
+    fn backward_compatible_version_validation() {
         let payload: ExceptionPayload =
-            serde_json::from_str(json).expect("should deserialize minimal payload");
+            serde_json::from_str(minimal_v1_payload_json()).expect("should deserialize");
 
         assert!(payload.validate_version().is_ok());
+    }
+
+    #[rstest]
+    fn backward_compatible_optional_field_defaults() {
+        let payload: ExceptionPayload =
+            serde_json::from_str(minimal_v1_payload_json()).expect("should deserialize");
+
         assert!(payload.module.is_none());
         assert!(payload.frames.is_empty());
         assert!(payload.cause.is_none());
