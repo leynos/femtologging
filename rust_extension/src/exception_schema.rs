@@ -10,6 +10,48 @@
 //! should check this version when deserializing payloads to handle
 //! forward/backward compatibility.
 //!
+//! # Versioning Policy
+//!
+//! Exception payloads include a `schema_version` field to enable schema
+//! evolution without breaking consumers.
+//!
+//! ## Compatibility Guarantees
+//!
+//! - **Backward compatible**: Code supporting version N can read payloads from
+//!   versions [`MIN_EXCEPTION_SCHEMA_VERSION`] through N. Missing optional
+//!   fields use serde default values.
+//! - **Forward incompatible**: Code supporting version N rejects payloads with
+//!   version > N. Use [`validate_schema_version`] or the `validate_version`
+//!   methods on payload types to check before processing.
+//!
+//! ## Version Increment Rules
+//!
+//! Increment [`EXCEPTION_SCHEMA_VERSION`] when making breaking changes:
+//!
+//! - Adding required fields
+//! - Removing fields (even optional ones)
+//! - Changing field types or semantics
+//! - Renaming fields
+//!
+//! Non-breaking changes (no version bump required):
+//!
+//! - Adding optional fields with `#[serde(default)]`
+//!
+//! ## Validation Example
+//!
+//! ```rust
+//! use _femtologging_rs::exception_schema::{
+//!     ExceptionPayload, SchemaVersionError, SchemaVersioned,
+//! };
+//!
+//! fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
+//!     let payload: ExceptionPayload = serde_json::from_str(json)?;
+//!     payload.validate_version()?;
+//!     // Process the validated payload...
+//!     Ok(())
+//! }
+//! ```
+//!
 //! # Example
 //!
 //! ```rust
@@ -35,6 +77,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use thiserror::Error;
+
+/// Minimum supported schema version for exception payloads.
+///
+/// Payloads with versions below this value are rejected during validation.
+pub const MIN_EXCEPTION_SCHEMA_VERSION: u16 = 1;
 
 /// Current schema version for exception payloads.
 ///
@@ -42,6 +90,92 @@ use std::collections::BTreeMap;
 /// Consumers should check this value when deserializing to handle
 /// compatibility.
 pub const EXCEPTION_SCHEMA_VERSION: u16 = 1;
+
+/// Errors related to exception schema version validation.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SchemaVersionError {
+    /// The payload schema version is newer than supported.
+    #[error(
+        "unsupported exception schema version: found {found}, \
+         maximum supported is {max_supported}"
+    )]
+    VersionTooNew {
+        /// The schema version found in the payload.
+        found: u16,
+        /// The maximum schema version supported by this library.
+        max_supported: u16,
+    },
+    /// The payload schema version is older than supported.
+    #[error(
+        "unsupported exception schema version: found {found}, \
+         minimum supported is {min_supported}"
+    )]
+    VersionTooOld {
+        /// The schema version found in the payload.
+        found: u16,
+        /// The minimum schema version supported by this library.
+        min_supported: u16,
+    },
+}
+
+/// Validate that a schema version is supported.
+///
+/// Returns `Ok(())` if the version is in the supported range
+/// ([`MIN_EXCEPTION_SCHEMA_VERSION`] through [`EXCEPTION_SCHEMA_VERSION`]),
+/// or an error if the version is unsupported.
+///
+/// # Errors
+///
+/// Returns [`SchemaVersionError::VersionTooNew`] if the version exceeds
+/// [`EXCEPTION_SCHEMA_VERSION`], or [`SchemaVersionError::VersionTooOld`]
+/// if the version is below [`MIN_EXCEPTION_SCHEMA_VERSION`].
+///
+/// # Examples
+///
+/// ```rust
+/// use _femtologging_rs::exception_schema::{
+///     validate_schema_version, EXCEPTION_SCHEMA_VERSION, MIN_EXCEPTION_SCHEMA_VERSION,
+/// };
+///
+/// assert!(validate_schema_version(MIN_EXCEPTION_SCHEMA_VERSION).is_ok());
+/// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION).is_ok());
+/// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION + 1).is_err());
+/// ```
+pub fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
+    if version > EXCEPTION_SCHEMA_VERSION {
+        return Err(SchemaVersionError::VersionTooNew {
+            found: version,
+            max_supported: EXCEPTION_SCHEMA_VERSION,
+        });
+    }
+    if version < MIN_EXCEPTION_SCHEMA_VERSION {
+        return Err(SchemaVersionError::VersionTooOld {
+            found: version,
+            min_supported: MIN_EXCEPTION_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// Trait for types that carry a schema version.
+///
+/// Implementing this trait provides a blanket `validate_version` method
+/// via the extension trait pattern.
+pub trait SchemaVersioned {
+    /// Returns the schema version of this payload.
+    fn schema_version(&self) -> u16;
+
+    /// Validate that this payload's schema version is supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaVersionError::VersionTooNew`] if the version exceeds
+    /// the maximum supported, or [`SchemaVersionError::VersionTooOld`] if
+    /// below the minimum supported.
+    fn validate_version(&self) -> Result<(), SchemaVersionError> {
+        validate_schema_version(self.schema_version())
+    }
+}
 
 /// A single frame in a Python stack trace.
 ///
@@ -166,6 +300,12 @@ impl StackTracePayload {
     }
 }
 
+impl SchemaVersioned for StackTracePayload {
+    fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+}
+
 impl ExceptionPayload {
     /// Create a new exception payload with the current schema version.
     ///
@@ -222,210 +362,12 @@ impl ExceptionPayload {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rmp_serde::Serializer;
-    use rstest::rstest;
-    use serde::Serialize;
-
-    #[rstest]
-    fn schema_version_is_one() {
-        assert_eq!(EXCEPTION_SCHEMA_VERSION, 1);
-    }
-
-    #[rstest]
-    fn stack_frame_new_sets_required_fields() {
-        let frame = StackFrame::new("test.py", 42, "test_func");
-        assert_eq!(frame.filename, "test.py");
-        assert_eq!(frame.lineno, 42);
-        assert_eq!(frame.function, "test_func");
-        assert!(frame.end_lineno.is_none());
-        assert!(frame.source_line.is_none());
-        assert!(frame.locals.is_none());
-    }
-
-    #[rstest]
-    fn stack_frame_json_round_trip() {
-        let mut locals = BTreeMap::new();
-        locals.insert("x".into(), "42".into());
-
-        let frame = StackFrame {
-            filename: "example.py".into(),
-            lineno: 10,
-            end_lineno: Some(12),
-            colno: Some(4),
-            end_colno: Some(20),
-            function: "process".into(),
-            source_line: Some("    result = compute(x)".into()),
-            locals: Some(locals),
-        };
-
-        let json = serde_json::to_string(&frame).expect("serialize frame");
-        let decoded: StackFrame = serde_json::from_str(&json).expect("deserialize frame");
-        assert_eq!(frame, decoded);
-    }
-
-    #[rstest]
-    fn stack_frame_skips_none_fields_in_json() {
-        let frame = StackFrame::new("test.py", 1, "main");
-        let json = serde_json::to_string(&frame).expect("serialize frame");
-        assert!(!json.contains("end_lineno"));
-        assert!(!json.contains("source_line"));
-        assert!(!json.contains("locals"));
-    }
-
-    #[rstest]
-    fn stack_trace_payload_new_sets_version() {
-        let payload = StackTracePayload::new(vec![]);
-        assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
-    }
-
-    #[rstest]
-    fn stack_trace_payload_json_round_trip() {
-        let frames = vec![
-            StackFrame::new("a.py", 1, "outer"),
-            StackFrame::new("b.py", 2, "inner"),
-        ];
-        let payload = StackTracePayload::new(frames);
-
-        let json = serde_json::to_string(&payload).expect("serialize");
-        let decoded: StackTracePayload = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(payload, decoded);
-    }
-
-    #[rstest]
-    fn exception_payload_new_sets_version_and_message() {
-        let payload = ExceptionPayload::new("KeyError", "missing key");
-        assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
-        assert_eq!(payload.type_name, "KeyError");
-        assert_eq!(payload.message, "missing key");
-        assert!(payload.cause.is_none());
-        assert!(payload.context.is_none());
-    }
-
-    #[rstest]
-    fn exception_payload_with_cause_chains() {
-        let root = ExceptionPayload::new("IOError", "read failed");
-        let wrapped = ExceptionPayload::new("RuntimeError", "operation failed").with_cause(root);
-
-        assert!(wrapped.cause.is_some());
-        let cause = wrapped.cause.as_ref().expect("cause exists");
-        assert_eq!(cause.type_name, "IOError");
-    }
-
-    #[rstest]
-    fn exception_payload_with_context() {
-        let ctx = ExceptionPayload::new("ValueError", "bad input");
-        let error = ExceptionPayload::new("TypeError", "wrong type").with_context(ctx);
-
-        assert!(error.context.is_some());
-        assert!(!error.suppress_context);
-    }
-
-    #[rstest]
-    fn exception_payload_json_round_trip() {
-        let frame = StackFrame::new("main.py", 100, "run");
-        let cause = ExceptionPayload::new("OSError", "file not found");
-        let payload = ExceptionPayload {
-            schema_version: EXCEPTION_SCHEMA_VERSION,
-            type_name: "RuntimeError".into(),
-            module: Some("myapp.errors".into()),
-            message: "failed to process".into(),
-            args_repr: vec!["'path'".into(), "42".into()],
-            notes: vec!["Check file permissions".into()],
-            frames: vec![frame],
-            cause: Some(Box::new(cause)),
-            context: None,
-            suppress_context: true,
-            exceptions: vec![],
-        };
-
-        let json = serde_json::to_string(&payload).expect("serialize");
-        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(payload, decoded);
-    }
-
-    #[rstest]
-    fn exception_payload_skips_default_fields() {
-        let payload = ExceptionPayload::new("Error", "msg");
-        let json = serde_json::to_string(&payload).expect("serialize");
-        assert!(!json.contains("args_repr"));
-        assert!(!json.contains("notes"));
-        assert!(!json.contains("frames"));
-        assert!(!json.contains("exceptions"));
-        assert!(!json.contains("suppress_context"));
-    }
-
-    #[rstest]
-    fn exception_payload_includes_suppress_context_when_true() {
-        let payload = ExceptionPayload {
-            suppress_context: true,
-            ..ExceptionPayload::new("Error", "msg")
-        };
-        let json = serde_json::to_string(&payload).expect("serialize");
-        assert!(json.contains("suppress_context"));
-    }
-
-    #[rstest]
-    fn exception_payload_msgpack_round_trip() {
-        let payload = ExceptionPayload::new("ValueError", "test")
-            .with_frames(vec![StackFrame::new("test.py", 1, "main")]);
-
-        // Use with_struct_map() for compatibility with deserialization
-        let mut buf = Vec::new();
-        payload
-            .serialize(&mut Serializer::new(&mut buf).with_struct_map())
-            .expect("serialize msgpack");
-        let decoded: ExceptionPayload = rmp_serde::from_slice(&buf).expect("deserialize msgpack");
-        assert_eq!(payload, decoded);
-    }
-
-    #[rstest]
-    fn exception_group_with_nested_exceptions() {
-        let exc1 = ExceptionPayload::new("ValueError", "bad value 1");
-        let exc2 = ExceptionPayload::new("TypeError", "wrong type");
-
-        let group = ExceptionPayload {
-            schema_version: EXCEPTION_SCHEMA_VERSION,
-            type_name: "ExceptionGroup".into(),
-            message: "multiple errors".into(),
-            exceptions: vec![exc1, exc2],
-            ..Default::default()
-        };
-
-        let json = serde_json::to_string(&group).expect("serialize");
-        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(decoded.exceptions.len(), 2);
-    }
-
-    #[rstest]
-    fn deep_cause_chain_serializes() {
-        // Test a chain of 10 nested causes to ensure no stack overflow
-        let mut current = ExceptionPayload::new("BaseError", "root cause");
-        for i in 1..10 {
-            current = ExceptionPayload::new(format!("Error{i}"), format!("level {i}"))
-                .with_cause(current);
-        }
-
-        let json = serde_json::to_string(&current).expect("serialize deep chain");
-        let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-
-        // Verify chain depth
-        let mut depth = 0;
-        let mut node = Some(&decoded);
-        while let Some(n) = node {
-            depth += 1;
-            node = n.cause.as_deref();
-        }
-        assert_eq!(depth, 10);
-    }
-
-    #[rstest]
-    fn types_are_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<StackFrame>();
-        assert_send_sync::<StackTracePayload>();
-        assert_send_sync::<ExceptionPayload>();
+impl SchemaVersioned for ExceptionPayload {
+    fn schema_version(&self) -> u16 {
+        self.schema_version
     }
 }
+
+#[cfg(test)]
+#[path = "exception_schema_tests.rs"]
+mod tests;
