@@ -13,12 +13,22 @@ fn schema_version_is_one() {
 #[rstest]
 fn stack_frame_new_sets_required_fields() {
     let frame = StackFrame::new("test.py", 42, "test_func");
-    assert_eq!(frame.filename, "test.py");
-    assert_eq!(frame.lineno, 42);
-    assert_eq!(frame.function, "test_func");
-    assert!(frame.end_lineno.is_none());
-    assert!(frame.source_line.is_none());
-    assert!(frame.locals.is_none());
+
+    // Verify required fields are set
+    assert_eq!(
+        (
+            frame.filename.as_str(),
+            frame.lineno,
+            frame.function.as_str()
+        ),
+        ("test.py", 42, "test_func")
+    );
+
+    // Verify optional fields default to None
+    assert_eq!(
+        (frame.end_lineno, frame.source_line, frame.locals),
+        (None, None, None)
+    );
 }
 
 #[rstest]
@@ -73,11 +83,19 @@ fn stack_trace_payload_json_round_trip() {
 #[rstest]
 fn exception_payload_new_sets_version_and_message() {
     let payload = ExceptionPayload::new("KeyError", "missing key");
-    assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
-    assert_eq!(payload.type_name, "KeyError");
-    assert_eq!(payload.message, "missing key");
-    assert!(payload.cause.is_none());
-    assert!(payload.context.is_none());
+
+    // Verify required fields are set correctly
+    assert_eq!(
+        (
+            payload.schema_version,
+            payload.type_name.as_str(),
+            payload.message.as_str()
+        ),
+        (EXCEPTION_SCHEMA_VERSION, "KeyError", "missing key")
+    );
+
+    // Verify chaining fields default to None
+    assert_eq!((payload.cause, payload.context), (None, None));
 }
 
 #[rstest]
@@ -217,26 +235,54 @@ fn validate_schema_version_cases(#[case] version: u16, #[case] valid: bool) {
 }
 
 #[rstest]
-fn unsupported_version_error_includes_versions() {
+fn version_too_new_error_includes_versions() {
     let future_version = EXCEPTION_SCHEMA_VERSION + 1;
     let err = validate_schema_version(future_version).expect_err("should fail for future version");
 
     match err {
-        SchemaVersionError::UnsupportedVersion { found, supported } => {
+        SchemaVersionError::VersionTooNew {
+            found,
+            max_supported,
+        } => {
             assert_eq!(found, future_version);
-            assert_eq!(supported, EXCEPTION_SCHEMA_VERSION);
+            assert_eq!(max_supported, EXCEPTION_SCHEMA_VERSION);
+        }
+        SchemaVersionError::VersionTooOld { .. } => {
+            panic!("expected VersionTooNew, got VersionTooOld");
         }
     }
 
-    // Verify error message includes both versions
     let msg = err.to_string();
+    assert!(msg.contains("maximum supported"), "should mention maximum");
     assert!(
         msg.contains(&future_version.to_string()),
         "error message should contain found version"
     );
+}
+
+#[rstest]
+fn version_too_old_error_includes_versions() {
+    let old_version = 0;
+    let err = validate_schema_version(old_version).expect_err("should fail for old version");
+
+    match err {
+        SchemaVersionError::VersionTooOld {
+            found,
+            min_supported,
+        } => {
+            assert_eq!(found, old_version);
+            assert_eq!(min_supported, MIN_EXCEPTION_SCHEMA_VERSION);
+        }
+        SchemaVersionError::VersionTooNew { .. } => {
+            panic!("expected VersionTooOld, got VersionTooNew");
+        }
+    }
+
+    let msg = err.to_string();
+    assert!(msg.contains("minimum supported"), "should mention minimum");
     assert!(
-        msg.contains(&EXCEPTION_SCHEMA_VERSION.to_string()),
-        "error message should contain supported version"
+        msg.contains(&old_version.to_string()),
+        "error message should contain found version"
     );
 }
 
@@ -285,7 +331,7 @@ fn deserialize_future_version_then_validate() {
         .expect_err("validation should fail for future version");
     assert!(matches!(
         err,
-        SchemaVersionError::UnsupportedVersion { found: 999, .. }
+        SchemaVersionError::VersionTooNew { found: 999, .. }
     ));
 }
 

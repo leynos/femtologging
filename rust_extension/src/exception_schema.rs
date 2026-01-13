@@ -97,13 +97,24 @@ pub enum SchemaVersionError {
     /// The payload schema version is newer than supported.
     #[error(
         "unsupported exception schema version: found {found}, \
-         maximum supported is {supported}"
+         maximum supported is {max_supported}"
     )]
-    UnsupportedVersion {
+    VersionTooNew {
         /// The schema version found in the payload.
         found: u16,
         /// The maximum schema version supported by this library.
-        supported: u16,
+        max_supported: u16,
+    },
+    /// The payload schema version is older than supported.
+    #[error(
+        "unsupported exception schema version: found {found}, \
+         minimum supported is {min_supported}"
+    )]
+    VersionTooOld {
+        /// The schema version found in the payload.
+        found: u16,
+        /// The minimum schema version supported by this library.
+        min_supported: u16,
     },
 }
 
@@ -115,8 +126,9 @@ pub enum SchemaVersionError {
 ///
 /// # Errors
 ///
-/// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
-/// outside the supported range.
+/// Returns [`SchemaVersionError::VersionTooNew`] if the version exceeds
+/// [`EXCEPTION_SCHEMA_VERSION`], or [`SchemaVersionError::VersionTooOld`]
+/// if the version is below [`MIN_EXCEPTION_SCHEMA_VERSION`].
 ///
 /// # Examples
 ///
@@ -130,10 +142,16 @@ pub enum SchemaVersionError {
 /// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION + 1).is_err());
 /// ```
 pub fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
-    if version < MIN_EXCEPTION_SCHEMA_VERSION || version > EXCEPTION_SCHEMA_VERSION {
-        return Err(SchemaVersionError::UnsupportedVersion {
+    if version > EXCEPTION_SCHEMA_VERSION {
+        return Err(SchemaVersionError::VersionTooNew {
             found: version,
-            supported: EXCEPTION_SCHEMA_VERSION,
+            max_supported: EXCEPTION_SCHEMA_VERSION,
+        });
+    }
+    if version < MIN_EXCEPTION_SCHEMA_VERSION {
+        return Err(SchemaVersionError::VersionTooOld {
+            found: version,
+            min_supported: MIN_EXCEPTION_SCHEMA_VERSION,
         });
     }
     Ok(())
@@ -151,8 +169,9 @@ pub trait SchemaVersioned {
     ///
     /// # Errors
     ///
-    /// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
-    /// outside the supported range.
+    /// Returns [`SchemaVersionError::VersionTooNew`] if the version exceeds
+    /// the maximum supported, or [`SchemaVersionError::VersionTooOld`] if
+    /// below the minimum supported.
     fn validate_version(&self) -> Result<(), SchemaVersionError> {
         validate_schema_version(self.schema_version())
     }
