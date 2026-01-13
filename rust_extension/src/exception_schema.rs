@@ -18,7 +18,8 @@
 //! ## Compatibility Guarantees
 //!
 //! - **Backward compatible**: Code supporting version N can read payloads from
-//!   versions 1 through N. Missing optional fields use serde default values.
+//!   versions [`MIN_EXCEPTION_SCHEMA_VERSION`] through N. Missing optional
+//!   fields use serde default values.
 //! - **Forward incompatible**: Code supporting version N rejects payloads with
 //!   version > N. Use [`validate_schema_version`] or the `validate_version`
 //!   methods on payload types to check before processing.
@@ -39,7 +40,9 @@
 //! ## Validation Example
 //!
 //! ```rust
-//! use _femtologging_rs::exception_schema::{ExceptionPayload, SchemaVersionError};
+//! use _femtologging_rs::exception_schema::{
+//!     ExceptionPayload, SchemaVersionError, SchemaVersioned,
+//! };
 //!
 //! fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
 //!     let payload: ExceptionPayload = serde_json::from_str(json)?;
@@ -76,6 +79,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+/// Minimum supported schema version for exception payloads.
+///
+/// Payloads with versions below this value are rejected during validation.
+pub const MIN_EXCEPTION_SCHEMA_VERSION: u16 = 1;
+
 /// Current schema version for exception payloads.
 ///
 /// Increment this when making breaking changes to the schema structure.
@@ -101,33 +109,53 @@ pub enum SchemaVersionError {
 
 /// Validate that a schema version is supported.
 ///
-/// Returns `Ok(())` if the version is in the supported range (1 through
-/// [`EXCEPTION_SCHEMA_VERSION`]), or an error if the version is unsupported.
+/// Returns `Ok(())` if the version is in the supported range
+/// ([`MIN_EXCEPTION_SCHEMA_VERSION`] through [`EXCEPTION_SCHEMA_VERSION`]),
+/// or an error if the version is unsupported.
 ///
 /// # Errors
 ///
-/// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is zero
-/// or greater than the current schema version.
+/// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
+/// outside the supported range.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use _femtologging_rs::exception_schema::{
-///     validate_schema_version, EXCEPTION_SCHEMA_VERSION,
+///     validate_schema_version, EXCEPTION_SCHEMA_VERSION, MIN_EXCEPTION_SCHEMA_VERSION,
 /// };
 ///
-/// assert!(validate_schema_version(1).is_ok());
+/// assert!(validate_schema_version(MIN_EXCEPTION_SCHEMA_VERSION).is_ok());
 /// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION).is_ok());
 /// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION + 1).is_err());
 /// ```
 pub fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
-    if version == 0 || version > EXCEPTION_SCHEMA_VERSION {
+    if version < MIN_EXCEPTION_SCHEMA_VERSION || version > EXCEPTION_SCHEMA_VERSION {
         return Err(SchemaVersionError::UnsupportedVersion {
             found: version,
             supported: EXCEPTION_SCHEMA_VERSION,
         });
     }
     Ok(())
+}
+
+/// Trait for types that carry a schema version.
+///
+/// Implementing this trait provides a blanket `validate_version` method
+/// via the extension trait pattern.
+pub trait SchemaVersioned {
+    /// Returns the schema version of this payload.
+    fn schema_version(&self) -> u16;
+
+    /// Validate that this payload's schema version is supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
+    /// outside the supported range.
+    fn validate_version(&self) -> Result<(), SchemaVersionError> {
+        validate_schema_version(self.schema_version())
+    }
 }
 
 /// A single frame in a Python stack trace.
@@ -251,24 +279,11 @@ impl StackTracePayload {
             frames,
         }
     }
+}
 
-    /// Validate that this payload's schema version is supported.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
-    /// outside the supported range.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use _femtologging_rs::exception_schema::StackTracePayload;
-    ///
-    /// let payload = StackTracePayload::new(vec![]);
-    /// assert!(payload.validate_version().is_ok());
-    /// ```
-    pub fn validate_version(&self) -> Result<(), SchemaVersionError> {
-        validate_schema_version(self.schema_version)
+impl SchemaVersioned for StackTracePayload {
+    fn schema_version(&self) -> u16 {
+        self.schema_version
     }
 }
 
@@ -326,24 +341,11 @@ impl ExceptionPayload {
         self.frames = frames;
         self
     }
+}
 
-    /// Validate that this payload's schema version is supported.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SchemaVersionError::UnsupportedVersion`] if the version is
-    /// outside the supported range.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use _femtologging_rs::exception_schema::ExceptionPayload;
-    ///
-    /// let payload = ExceptionPayload::new("ValueError", "test");
-    /// assert!(payload.validate_version().is_ok());
-    /// ```
-    pub fn validate_version(&self) -> Result<(), SchemaVersionError> {
-        validate_schema_version(self.schema_version)
+impl SchemaVersioned for ExceptionPayload {
+    fn schema_version(&self) -> u16 {
+        self.schema_version
     }
 }
 

@@ -58,8 +58,8 @@ use pyo3::wrap_pyfunction;
 
 /// Re-export exception schema types.
 pub use exception_schema::{
-    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, SchemaVersionError, StackFrame, StackTracePayload,
-    validate_schema_version,
+    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, MIN_EXCEPTION_SCHEMA_VERSION, SchemaVersionError,
+    SchemaVersioned, StackFrame, StackTracePayload, validate_schema_version,
 };
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, FemtoFormatter};
