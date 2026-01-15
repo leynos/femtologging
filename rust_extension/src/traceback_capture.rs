@@ -11,25 +11,12 @@
 //! and [`capture_stack`] for `stack_info=True` support.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyList, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackTracePayload};
 use crate::traceback_frames::{
     extract_frames_from_stack_summary, extract_frames_from_tb_exception, get_optional_attr,
 };
-
-/// Iterate over a Python list, extracting string representations of each element.
-///
-/// # Errors
-///
-/// Returns an error if the object is not a list or if string extraction fails.
-fn iter_pylist_str(list: &Bound<'_, PyList>) -> PyResult<Vec<String>> {
-    let mut result = Vec::with_capacity(list.len());
-    for item in list.iter() {
-        result.push(item.str()?.extract()?);
-    }
-    Ok(result)
-}
 
 /// Capture exception information from Python `exc_info` argument.
 ///
@@ -267,6 +254,9 @@ fn format_exception_message(tb_exc: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 /// Extract args as string representations from the exception instance.
+///
+/// Per the ADR "partial extraction of collections" rule, individual elements
+/// whose `repr()` fails are skipped. Valid representations are preserved.
 fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     let args = match exc.getattr("args") {
         Ok(a) => a,
@@ -282,17 +272,33 @@ fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     };
     let mut result = Vec::with_capacity(args_tuple.len());
     for arg in args_tuple.iter() {
-        result.push(arg.repr()?.extract()?);
+        // Skip elements whose repr() fails per ADR partial extraction rule
+        if let Ok(repr_str) = arg.repr().and_then(|r| r.extract::<String>()) {
+            result.push(repr_str);
+        }
     }
     Ok(result)
 }
 
 /// Extract exception notes from the exception instance (__notes__).
+///
+/// Per the ADR "partial extraction of collections" rule, individual elements
+/// that are not strings are skipped. Only actual Python `str` objects are
+/// included in the result; non-strings are silently ignored.
 fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     let Some(notes_list): Option<Bound<'_, PyList>> = get_optional_attr(exc, "__notes__") else {
         return Ok(Vec::new());
     };
-    iter_pylist_str(&notes_list)
+    let mut result = Vec::with_capacity(notes_list.len());
+    for item in notes_list.iter() {
+        // Only include actual string objects; skip non-strings per ADR
+        if let Ok(s) = item.downcast::<PyString>()
+            && let Ok(extracted) = s.extract::<String>()
+        {
+            result.push(extracted);
+        }
+    }
+    Ok(result)
 }
 
 /// Extract a chained exception (__cause__ or __context__).
