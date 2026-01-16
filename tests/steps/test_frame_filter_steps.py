@@ -11,8 +11,9 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from femtologging import filter_frames, get_logging_infrastructure_patterns
 from tests.frame_filter.conftest import (
     ExceptionPayload,
-    FrameDict,
     StackPayload,
+    make_exception_payload,
+    make_stack_payload,
 )
 
 
@@ -27,33 +28,6 @@ class FilterFixture(typ.TypedDict, total=False):
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "frame_filter.feature"))
-
-
-def _make_frame(filename: str, lineno: int) -> FrameDict:
-    """Create a frame dict."""
-    return FrameDict(
-        filename=filename,
-        lineno=lineno,
-        function=f"func_{lineno}",
-    )
-
-
-def _make_stack_payload(filenames: list[str]) -> StackPayload:
-    """Create a stack_info payload with given filenames."""
-    return StackPayload(
-        schema_version=1,
-        frames=[_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
-    )
-
-
-def _make_exception_payload(filenames: list[str]) -> ExceptionPayload:
-    """Create an exc_info payload with given filenames."""
-    return ExceptionPayload(
-        schema_version=1,
-        frames=[_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
-        type_name="TestError",
-        message="test error",
-    )
 
 
 def _parse_filenames(filenames_str: str) -> list[str]:
@@ -72,21 +46,21 @@ def filter_fixture() -> FilterFixture:
 @given(parsers.parse("a stack_info payload with frames from {filenames}"))
 def create_stack_payload(filter_fixture: FilterFixture, filenames: str) -> None:
     parsed = _parse_filenames(filenames)
-    filter_fixture["payload"] = _make_stack_payload(parsed)
+    filter_fixture["payload"] = make_stack_payload(parsed)
 
 
 @given(parsers.parse("an exception payload with frames from {filenames}"))
 def create_exception_payload(filter_fixture: FilterFixture, filenames: str) -> None:
     parsed = _parse_filenames(filenames)
-    filter_fixture["payload"] = _make_exception_payload(parsed)
+    filter_fixture["payload"] = make_exception_payload(parsed, type_name="TestError")
 
 
 @given(parsers.parse("the exception has a cause with frames from {filenames}"))
 def add_cause_to_exception(filter_fixture: FilterFixture, filenames: str) -> None:
     parsed = _parse_filenames(filenames)
-    cause = _make_exception_payload(parsed)
-    cause["type_name"] = "CauseError"
-    cause["message"] = "cause error"
+    cause = make_exception_payload(
+        parsed, type_name="CauseError", message="cause error"
+    )
     typ.cast("ExceptionPayload", filter_fixture["payload"])["cause"] = cause
 
 
