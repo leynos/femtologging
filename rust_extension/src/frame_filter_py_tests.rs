@@ -339,9 +339,17 @@ fn filter_malformed_payload_raises_type_error(
         }
 
         let result = filter_frames(py, &payload, None, None, None, false);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains(expected_error_fragment));
+        let err = result.expect_err(&format!(
+            "scenario '{}' should fail with error containing '{}'",
+            scenario, expected_error_fragment
+        ));
+        assert!(
+            err.to_string().contains(expected_error_fragment),
+            "error for scenario '{}' should contain '{}', got: {}",
+            scenario,
+            expected_error_fragment,
+            err
+        );
     });
 }
 

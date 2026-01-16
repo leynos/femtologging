@@ -34,64 +34,52 @@ def test_edge_preserves_frame_details() -> None:
     assert result["frames"][0]["end_colno"] == 10, "end_colno should be preserved"
 
 
-def test_edge_invalid_frame_missing_filename() -> None:
-    """Frame missing required filename should raise TypeError."""
-    payload: dict = {
+@pytest.mark.parametrize(
+    ("missing_field", "frame_data"),
+    [
+        ("filename", {"lineno": 1, "function": "test"}),
+        ("lineno", {"filename": "a.py", "function": "test"}),
+        ("function", {"filename": "a.py", "lineno": 1}),
+    ],
+)
+def test_edge_invalid_frame_missing_required_field(
+    missing_field: str,
+    frame_data: dict[str, object],
+) -> None:
+    """Frame missing a required field should raise TypeError."""
+    payload: dict[str, object] = {
         "schema_version": 1,
-        "frames": [{"lineno": 1, "function": "test"}],
+        "frames": [frame_data],
     }
 
-    with pytest.raises(TypeError, match="filename"):
+    with pytest.raises(TypeError, match=missing_field):
         filter_frames(payload)
 
 
-def test_edge_invalid_frame_missing_lineno() -> None:
-    """Frame missing required lineno should raise TypeError."""
-    payload: dict = {
+@pytest.mark.parametrize(
+    ("frames_value", "expected_error"),
+    [
+        ("not a list", "must be a list"),
+        (["not a dict"], "must be a dict"),
+    ],
+)
+def test_edge_invalid_frames_shape(
+    frames_value: object,
+    expected_error: str,
+) -> None:
+    """Malformed frames should raise TypeError with descriptive message."""
+    payload: dict[str, object] = {
         "schema_version": 1,
-        "frames": [{"filename": "a.py", "function": "test"}],
+        "frames": frames_value,
     }
 
-    with pytest.raises(TypeError, match="lineno"):
-        filter_frames(payload)
-
-
-def test_edge_invalid_frame_missing_function() -> None:
-    """Frame missing required function should raise TypeError."""
-    payload: dict = {
-        "schema_version": 1,
-        "frames": [{"filename": "a.py", "lineno": 1}],
-    }
-
-    with pytest.raises(TypeError, match="function"):
-        filter_frames(payload)
-
-
-def test_edge_frames_not_list() -> None:
-    """Frames that is not a list should raise TypeError."""
-    payload: dict = {
-        "schema_version": 1,
-        "frames": "not a list",
-    }
-
-    with pytest.raises(TypeError, match="must be a list"):
-        filter_frames(payload)
-
-
-def test_edge_frame_not_dict() -> None:
-    """Frame that is not a dict should raise TypeError."""
-    payload: dict = {
-        "schema_version": 1,
-        "frames": ["not a dict"],
-    }
-
-    with pytest.raises(TypeError, match="must be a dict"):
+    with pytest.raises(TypeError, match=expected_error):
         filter_frames(payload)
 
 
 def test_edge_optional_field_wrong_type() -> None:
     """Optional field with wrong type should raise TypeError."""
-    payload: dict = {
+    payload: dict[str, object] = {
         "schema_version": 1,
         "frames": [
             {"filename": "a.py", "lineno": 1, "function": "test", "end_lineno": "wrong"}

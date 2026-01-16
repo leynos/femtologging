@@ -9,47 +9,18 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import filter_frames, get_logging_infrastructure_patterns
-
-
-class FrameDict(typ.TypedDict, total=False):
-    """Structure for a stack frame."""
-
-    filename: str
-    lineno: int
-    function: str
-    end_lineno: int
-    colno: int
-    end_colno: int
-    source_line: str
-    locals: dict[str, str]
-
-
-class StackPayload(typ.TypedDict, total=False):
-    """Structure for a stack_info payload."""
-
-    schema_version: int
-    frames: list[FrameDict]
-
-
-class ExceptionPayload(StackPayload, total=False):
-    """Structure for an exc_info payload (extends StackPayload)."""
-
-    type_name: str
-    message: str
-    module: str
-    args_repr: list[str]
-    notes: list[str]
-    suppress_context: bool
-    cause: ExceptionPayload
-    context: ExceptionPayload
-    exceptions: list[ExceptionPayload]
+from tests.frame_filter.conftest import (
+    ExceptionPayload,
+    FrameDict,
+    StackPayload,
+)
 
 
 class FilterFixture(typ.TypedDict, total=False):
     """State storage for filter fixture."""
 
-    payload: dict[str, typ.Any]
-    filtered: dict[str, typ.Any]
+    payload: StackPayload | ExceptionPayload
+    filtered: StackPayload | ExceptionPayload
     patterns: list[str]
 
 
@@ -58,31 +29,31 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "frame_filter.feature"))
 
 
-def _make_frame(filename: str, lineno: int) -> dict[str, typ.Any]:
+def _make_frame(filename: str, lineno: int) -> FrameDict:
     """Create a frame dict."""
-    return {
-        "filename": filename,
-        "lineno": lineno,
-        "function": f"func_{lineno}",
-    }
+    return FrameDict(
+        filename=filename,
+        lineno=lineno,
+        function=f"func_{lineno}",
+    )
 
 
-def _make_stack_payload(filenames: list[str]) -> dict[str, typ.Any]:
+def _make_stack_payload(filenames: list[str]) -> StackPayload:
     """Create a stack_info payload with given filenames."""
-    return {
-        "schema_version": 1,
-        "frames": [_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
-    }
+    return StackPayload(
+        schema_version=1,
+        frames=[_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
+    )
 
 
-def _make_exception_payload(filenames: list[str]) -> dict[str, typ.Any]:
+def _make_exception_payload(filenames: list[str]) -> ExceptionPayload:
     """Create an exc_info payload with given filenames."""
-    return {
-        "schema_version": 1,
-        "frames": [_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
-        "type_name": "TestError",
-        "message": "test error",
-    }
+    return ExceptionPayload(
+        schema_version=1,
+        frames=[_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
+        type_name="TestError",
+        message="test error",
+    )
 
 
 def _parse_filenames(filenames_str: str) -> list[str]:
@@ -116,26 +87,31 @@ def add_cause_to_exception(filter_fixture: FilterFixture, filenames: str) -> Non
     cause = _make_exception_payload(parsed)
     cause["type_name"] = "CauseError"
     cause["message"] = "cause error"
-    filter_fixture["payload"]["cause"] = cause
+    typ.cast("ExceptionPayload", filter_fixture["payload"])["cause"] = cause
 
 
 @when("I filter with exclude_logging=True")
 def filter_exclude_logging(filter_fixture: FilterFixture) -> None:
-    filter_fixture["filtered"] = filter_frames(
-        filter_fixture["payload"], exclude_logging=True
+    filter_fixture["filtered"] = typ.cast(
+        "StackPayload | ExceptionPayload",
+        filter_frames(filter_fixture["payload"], exclude_logging=True),
     )
 
 
 @when(parsers.parse('I filter with exclude_filenames=["{pattern}"]'))
 def filter_exclude_filenames(filter_fixture: FilterFixture, pattern: str) -> None:
-    filter_fixture["filtered"] = filter_frames(
-        filter_fixture["payload"], exclude_filenames=[pattern]
+    filter_fixture["filtered"] = typ.cast(
+        "StackPayload | ExceptionPayload",
+        filter_frames(filter_fixture["payload"], exclude_filenames=[pattern]),
     )
 
 
 @when(parsers.parse("I filter with max_depth={n:d}"))
 def filter_max_depth(filter_fixture: FilterFixture, n: int) -> None:
-    filter_fixture["filtered"] = filter_frames(filter_fixture["payload"], max_depth=n)
+    filter_fixture["filtered"] = typ.cast(
+        "StackPayload | ExceptionPayload",
+        filter_frames(filter_fixture["payload"], max_depth=n),
+    )
 
 
 @when(
@@ -144,11 +120,14 @@ def filter_max_depth(filter_fixture: FilterFixture, n: int) -> None:
     )
 )
 def filter_combined(filter_fixture: FilterFixture, p: str, n: int) -> None:
-    filter_fixture["filtered"] = filter_frames(
-        filter_fixture["payload"],
-        exclude_logging=True,
-        exclude_filenames=[p],
-        max_depth=n,
+    filter_fixture["filtered"] = typ.cast(
+        "StackPayload | ExceptionPayload",
+        filter_frames(
+            filter_fixture["payload"],
+            exclude_logging=True,
+            exclude_filenames=[p],
+            max_depth=n,
+        ),
     )
 
 
@@ -191,14 +170,16 @@ def check_frames_order(filter_fixture: FilterFixture, f1: str, f2: str) -> None:
 @then(parsers.parse("the filtered cause has {n:d} frame"))
 @then(parsers.parse("the filtered cause has {n:d} frames"))
 def check_cause_frame_count(filter_fixture: FilterFixture, n: int) -> None:
-    cause = filter_fixture["filtered"].get("cause", {})
+    filtered = typ.cast("ExceptionPayload", filter_fixture["filtered"])
+    cause = filtered.get("cause", typ.cast("ExceptionPayload", {}))
     frames = cause.get("frames", [])
     assert len(frames) == n, f"Expected {n} cause frames, got {len(frames)}"
 
 
 @then(parsers.parse('the filtered cause frame filename is "{expected}"'))
 def check_cause_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
-    cause = filter_fixture["filtered"]["cause"]
+    filtered = typ.cast("ExceptionPayload", filter_fixture["filtered"])
+    cause = filtered["cause"]
     frames = cause["frames"]
     assert len(frames) == 1, "Expected exactly 1 cause frame"
     assert frames[0]["filename"] == expected

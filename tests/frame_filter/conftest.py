@@ -1,4 +1,28 @@
-"""Shared fixtures and types for frame filter tests."""
+"""Shared fixtures and types for frame filter tests.
+
+This module provides TypedDict definitions and factory functions for building
+test payloads used across all frame filter tests.
+
+Types exported:
+    - FrameDict: TypedDict for stack frame structure
+    - StackPayload: TypedDict for stack_info payloads
+    - ExceptionPayload: TypedDict for exc_info payloads (extends StackPayload)
+
+Factory functions:
+    - make_frame(filename, lineno, function) -> FrameDict
+    - make_stack_payload(filenames) -> StackPayload
+    - make_exception_payload(filenames, type_name, message) -> ExceptionPayload
+
+Example usage::
+
+    from tests.frame_filter.conftest import make_stack_payload, StackPayload
+    from femtologging import filter_frames
+
+    def test_filters_venv_frames() -> None:
+        payload = make_stack_payload(["app.py", ".venv/lib/foo.py"])
+        result = filter_frames(payload, exclude_filenames=[".venv/"])
+        assert len(result["frames"]) == 1
+"""
 
 from __future__ import annotations
 
