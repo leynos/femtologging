@@ -308,43 +308,40 @@ fn filter_exception_payload_exclude_functions() {
 }
 
 #[rstest]
+#[case("frames_not_list", "must be a list")]
+#[case("frame_not_dict", "must be a dict")]
 #[serial]
-fn filter_frames_not_list_raises_type_error() {
+fn filter_malformed_payload_raises_type_error(
+    #[case] scenario: &str,
+    #[case] expected_error_fragment: &str,
+) {
     Python::with_gil(|py| {
         let payload = PyDict::new(py);
         payload
             .set_item("schema_version", 1u16)
             .expect("failed to set schema_version");
-        payload
-            .set_item("frames", "not a list")
-            .expect("failed to set frames");
+
+        // Set up the invalid payload based on scenario
+        match scenario {
+            "frames_not_list" => {
+                payload
+                    .set_item("frames", "not a list")
+                    .expect("failed to set frames");
+            }
+            "frame_not_dict" => {
+                let frames = PyList::empty(py);
+                frames.append("not a dict").expect("failed to append");
+                payload
+                    .set_item("frames", frames)
+                    .expect("failed to set frames");
+            }
+            _ => panic!("Unknown scenario"),
+        }
 
         let result = filter_frames(py, &payload, None, None, None, false);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("must be a list"));
-    });
-}
-
-#[rstest]
-#[serial]
-fn filter_frame_not_dict_raises_type_error() {
-    Python::with_gil(|py| {
-        let frames = PyList::empty(py);
-        frames.append("not a dict").expect("failed to append");
-
-        let payload = PyDict::new(py);
-        payload
-            .set_item("schema_version", 1u16)
-            .expect("failed to set schema_version");
-        payload
-            .set_item("frames", frames)
-            .expect("failed to set frames");
-
-        let result = filter_frames(py, &payload, None, None, None, false);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("must be a dict"));
+        assert!(err.to_string().contains(expected_error_fragment));
     });
 }
 
