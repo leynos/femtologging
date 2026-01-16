@@ -199,39 +199,31 @@ fn filter_stack_payload(
 }
 
 /// Filter an exc_info payload dict, recursively filtering cause/context/exceptions.
+///
+/// Preserves all keys from the original payload, only updating the frames
+/// and recursively filtering cause/context/exceptions.
 fn filter_exception_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
 ) -> PyResult<PyObject> {
     let frames = extract_frames(payload)?;
+    let had_frames_key = payload.contains("frames")?;
     let filtered = apply_filters(frames, opts);
 
-    // Build result dict, copying all keys
-    let result = PyDict::new(py);
+    // Clone all keys from the original payload (preserves unknown keys)
+    let result = payload.copy()?;
 
-    // Copy simple fields
-    for key in [
-        "schema_version",
-        "type_name",
-        "module",
-        "message",
-        "suppress_context",
-    ] {
-        if let Some(value) = payload.get_item(key)? {
-            result.set_item(key, value)?;
+    // Update frames only if the original had them
+    // Match the Rust serde behavior: skip_serializing_if = "Vec::is_empty"
+    if had_frames_key {
+        if filtered.is_empty() {
+            // Remove empty frames to match serialisation semantics
+            result.del_item("frames").ok();
+        } else {
+            result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
         }
-    }
-
-    // Copy list fields
-    for key in ["args_repr", "notes"] {
-        if let Some(value) = payload.get_item(key)? {
-            result.set_item(key, value)?;
-        }
-    }
-
-    // Set filtered frames
-    if !filtered.is_empty() {
+    } else if !filtered.is_empty() {
         result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
     }
 
@@ -267,8 +259,12 @@ fn filter_exception_payload(
 /// Detect whether a payload is an exception payload or stack payload.
 ///
 /// Exception payloads have 'type_name' and 'message' keys.
-fn is_exception_payload(payload: &Bound<'_, PyDict>) -> bool {
-    payload.contains("type_name").unwrap_or(false) && payload.contains("message").unwrap_or(false)
+///
+/// # Errors
+///
+/// Returns an error if the dict membership check fails.
+fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
+    Ok(payload.contains("type_name")? && payload.contains("message")?)
 }
 
 /// Filter frames from a stack_info or exc_info payload.
@@ -318,7 +314,7 @@ pub fn filter_frames(
         exclude_logging,
     };
 
-    if is_exception_payload(payload) {
+    if is_exception_payload(payload)? {
         filter_exception_payload(py, payload, &opts)
     } else {
         filter_stack_payload(py, payload, &opts)
@@ -339,240 +335,5 @@ pub fn get_logging_infrastructure_patterns() -> Vec<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Tests for Python frame filter bindings.
-
-    use super::*;
-    use rstest::rstest;
-    use serial_test::serial;
-
-    fn make_stack_payload_dict<'py>(py: Python<'py>, filenames: &[&str]) -> Bound<'py, PyDict> {
-        let frames = PyList::empty(py);
-        for (i, filename) in filenames.iter().enumerate() {
-            let frame = PyDict::new(py);
-            frame
-                .set_item("filename", *filename)
-                .expect("failed to set frame filename");
-            frame
-                .set_item("lineno", i as u32 + 1)
-                .expect("failed to set frame lineno");
-            frame
-                .set_item("function", format!("func_{i}"))
-                .expect("failed to set frame function");
-            frames.append(frame).expect("failed to append frame");
-        }
-        let payload = PyDict::new(py);
-        payload
-            .set_item("schema_version", 1u16)
-            .expect("failed to set schema_version");
-        payload
-            .set_item("frames", frames)
-            .expect("failed to set frames");
-        payload
-    }
-
-    fn make_exception_payload_dict<'py>(py: Python<'py>, filenames: &[&str]) -> Bound<'py, PyDict> {
-        let payload = make_stack_payload_dict(py, filenames);
-        payload
-            .set_item("type_name", "ValueError")
-            .expect("failed to set type_name");
-        payload
-            .set_item("message", "test error")
-            .expect("failed to set message");
-        payload
-    }
-
-    /// Helper to call filter_frames and extract the resulting frames list.
-    fn filter_and_extract_frames<'py>(
-        py: Python<'py>,
-        payload: &Bound<'py, PyDict>,
-        exclude_filenames: Option<Vec<String>>,
-        exclude_functions: Option<Vec<String>>,
-        max_depth: Option<usize>,
-        exclude_logging: bool,
-    ) -> Bound<'py, PyList> {
-        let result = filter_frames(
-            py,
-            payload,
-            exclude_filenames,
-            exclude_functions,
-            max_depth,
-            exclude_logging,
-        )
-        .expect("filter_frames failed");
-        let result_dict = result
-            .downcast_bound::<PyDict>(py)
-            .expect("result is not a dict");
-        let frames = result_dict
-            .get_item("frames")
-            .expect("failed to get frames key")
-            .expect("frames key is None");
-        frames
-            .downcast::<PyList>()
-            .expect("frames is not a list")
-            .clone()
-    }
-
-    #[rstest]
-    #[serial]
-    fn filter_stack_payload_exclude_logging() {
-        Python::with_gil(|py| {
-            let payload = make_stack_payload_dict(
-                py,
-                &[
-                    "myapp/main.py",
-                    "femtologging/__init__.py",
-                    "logging/__init__.py",
-                ],
-            );
-
-            let frames_list = filter_and_extract_frames(py, &payload, None, None, None, true);
-
-            assert_eq!(frames_list.len(), 1);
-            let frame = frames_list.get_item(0).expect("failed to get first frame");
-            let frame_dict = frame.downcast::<PyDict>().expect("frame is not a dict");
-            let filename: String = frame_dict
-                .get_item("filename")
-                .expect("failed to get filename key")
-                .expect("filename key is None")
-                .extract()
-                .expect("failed to extract filename");
-            assert_eq!(filename, "myapp/main.py");
-        });
-    }
-
-    #[rstest]
-    #[serial]
-    fn filter_stack_payload_exclude_filenames() {
-        Python::with_gil(|py| {
-            let payload = make_stack_payload_dict(
-                py,
-                &["myapp/main.py", ".venv/lib/requests.py", "myapp/utils.py"],
-            );
-
-            let frames_list = filter_and_extract_frames(
-                py,
-                &payload,
-                Some(vec![".venv/".to_string()]),
-                None,
-                None,
-                false,
-            );
-
-            assert_eq!(frames_list.len(), 2);
-        });
-    }
-
-    #[rstest]
-    #[serial]
-    fn filter_stack_payload_max_depth() {
-        Python::with_gil(|py| {
-            let payload = make_stack_payload_dict(py, &["a.py", "b.py", "c.py", "d.py", "e.py"]);
-
-            let frames_list = filter_and_extract_frames(py, &payload, None, None, Some(2), false);
-
-            assert_eq!(frames_list.len(), 2);
-            // Should be the last 2 frames (d.py, e.py)
-            let frame0 = frames_list.get_item(0).expect("failed to get first frame");
-            let frame0_dict = frame0.downcast::<PyDict>().expect("frame is not a dict");
-            let filename0: String = frame0_dict
-                .get_item("filename")
-                .expect("failed to get filename key")
-                .expect("filename key is None")
-                .extract()
-                .expect("failed to extract filename");
-            assert_eq!(filename0, "d.py");
-        });
-    }
-
-    #[rstest]
-    #[serial]
-    fn filter_exception_payload_detects_type() {
-        Python::with_gil(|py| {
-            let payload =
-                make_exception_payload_dict(py, &["myapp/main.py", "femtologging/__init__.py"]);
-
-            assert!(is_exception_payload(&payload));
-
-            let result =
-                filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
-            let result_dict = result
-                .downcast_bound::<PyDict>(py)
-                .expect("result is not a dict");
-
-            // Should preserve exception fields
-            let type_name: String = result_dict
-                .get_item("type_name")
-                .expect("failed to get type_name key")
-                .expect("type_name key is None")
-                .extract()
-                .expect("failed to extract type_name");
-            assert_eq!(type_name, "ValueError");
-
-            let frames = result_dict
-                .get_item("frames")
-                .expect("failed to get frames key")
-                .expect("frames key is None");
-            let frames_list = frames.downcast::<PyList>().expect("frames is not a list");
-            assert_eq!(frames_list.len(), 1);
-        });
-    }
-
-    #[rstest]
-    #[serial]
-    fn filter_exception_payload_with_cause() {
-        Python::with_gil(|py| {
-            let cause = make_exception_payload_dict(py, &["cause.py", "femtologging/__init__.py"]);
-            cause
-                .set_item("type_name", "IOError")
-                .expect("failed to set type_name");
-            cause
-                .set_item("message", "cause error")
-                .expect("failed to set message");
-
-            let payload = make_exception_payload_dict(py, &["main.py", "logging/__init__.py"]);
-            payload
-                .set_item("cause", cause)
-                .expect("failed to set cause");
-
-            let result =
-                filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
-            let result_dict = result
-                .downcast_bound::<PyDict>(py)
-                .expect("result is not a dict");
-
-            // Check main frames filtered
-            let frames = result_dict
-                .get_item("frames")
-                .expect("failed to get frames key")
-                .expect("frames key is None");
-            let frames_list = frames.downcast::<PyList>().expect("frames is not a list");
-            assert_eq!(frames_list.len(), 1);
-
-            // Check cause frames also filtered
-            let cause_result = result_dict
-                .get_item("cause")
-                .expect("failed to get cause key")
-                .expect("cause key is None");
-            let cause_dict = cause_result
-                .downcast::<PyDict>()
-                .expect("cause is not a dict");
-            let cause_frames = cause_dict
-                .get_item("frames")
-                .expect("failed to get cause frames key")
-                .expect("cause frames key is None");
-            let cause_frames_list = cause_frames
-                .downcast::<PyList>()
-                .expect("cause frames is not a list");
-            assert_eq!(cause_frames_list.len(), 1);
-        });
-    }
-
-    #[rstest]
-    #[serial]
-    fn get_logging_patterns_returns_expected() {
-        let patterns = get_logging_infrastructure_patterns();
-        assert!(patterns.contains(&"femtologging"));
-        assert!(patterns.contains(&"logging/__init__"));
-    }
-}
+#[path = "frame_filter_py_tests.rs"]
+mod tests;

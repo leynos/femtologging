@@ -11,11 +11,45 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from femtologging import filter_frames, get_logging_infrastructure_patterns
 
 
+class FrameDict(typ.TypedDict, total=False):
+    """Structure for a stack frame."""
+
+    filename: str
+    lineno: int
+    function: str
+    end_lineno: int
+    colno: int
+    end_colno: int
+    source_line: str
+    locals: dict[str, str]
+
+
+class StackPayload(typ.TypedDict, total=False):
+    """Structure for a stack_info payload."""
+
+    schema_version: int
+    frames: list[FrameDict]
+
+
+class ExceptionPayload(StackPayload, total=False):
+    """Structure for an exc_info payload (extends StackPayload)."""
+
+    type_name: str
+    message: str
+    module: str
+    args_repr: list[str]
+    notes: list[str]
+    suppress_context: bool
+    cause: ExceptionPayload
+    context: ExceptionPayload
+    exceptions: list[ExceptionPayload]
+
+
 class FilterFixture(typ.TypedDict, total=False):
     """State storage for filter fixture."""
 
-    payload: dict
-    filtered: dict
+    payload: dict[str, typ.Any]
+    filtered: dict[str, typ.Any]
     patterns: list[str]
 
 
@@ -24,7 +58,7 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "frame_filter.feature"))
 
 
-def _make_frame(filename: str, lineno: int) -> dict:
+def _make_frame(filename: str, lineno: int) -> dict[str, typ.Any]:
     """Create a frame dict."""
     return {
         "filename": filename,
@@ -33,7 +67,7 @@ def _make_frame(filename: str, lineno: int) -> dict:
     }
 
 
-def _make_stack_payload(filenames: list[str]) -> dict:
+def _make_stack_payload(filenames: list[str]) -> dict[str, typ.Any]:
     """Create a stack_info payload with given filenames."""
     return {
         "schema_version": 1,
@@ -41,12 +75,14 @@ def _make_stack_payload(filenames: list[str]) -> dict:
     }
 
 
-def _make_exception_payload(filenames: list[str]) -> dict:
+def _make_exception_payload(filenames: list[str]) -> dict[str, typ.Any]:
     """Create an exc_info payload with given filenames."""
-    payload = _make_stack_payload(filenames)
-    payload["type_name"] = "TestError"
-    payload["message"] = "test error"
-    return payload
+    return {
+        "schema_version": 1,
+        "frames": [_make_frame(fn, i + 1) for i, fn in enumerate(filenames)],
+        "type_name": "TestError",
+        "message": "test error",
+    }
 
 
 def _parse_filenames(filenames_str: str) -> list[str]:

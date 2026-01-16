@@ -32,21 +32,18 @@ fn filter_frames_all_excluded() {
 }
 
 #[rstest]
-fn limit_frames_under_limit() {
+#[case(5, 2, "under limit")]
+#[case(2, 2, "at limit")]
+fn limit_frames_within_or_at_limit(
+    #[case] limit: usize,
+    #[case] expected_len: usize,
+    #[case] _scenario: &str,
+) {
     let frames = vec![make_frame("a.py", 1, "a"), make_frame("b.py", 2, "b")];
 
-    let limited = limit_frames(&frames, 5);
+    let limited = limit_frames(&frames, limit);
 
-    assert_eq!(limited.len(), 2);
-}
-
-#[rstest]
-fn limit_frames_at_limit() {
-    let frames = vec![make_frame("a.py", 1, "a"), make_frame("b.py", 2, "b")];
-
-    let limited = limit_frames(&frames, 2);
-
-    assert_eq!(limited.len(), 2);
+    assert_eq!(limited.len(), expected_len);
 }
 
 #[rstest]

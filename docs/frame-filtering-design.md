@@ -1,4 +1,4 @@
-# Frame Filtering API Design
+# Frame filtering API design
 
 This document describes the frame filtering API for `exc_info` and `stack_info`
 payloads in femtologging.
@@ -12,7 +12,7 @@ frames from exception and stack trace payloads. Common use cases include:
 - Limiting stack depth for readability
 - Excluding specific modules or functions from output
 
-## Filter Flow
+## Filter flow
 
 The following diagram shows the flow of the Python `filter_frames()` function,
 which applies each configured filter in sequence to produce a filtered payload:
@@ -64,7 +64,7 @@ flowchart TD
 is applied conditionally based on the provided parameters, with exclusion
 filters applied before depth limiting.*
 
-## Design Decisions
+## Design decisions
 
 ### Payload-level filtering
 
@@ -84,7 +84,7 @@ Exclusion filters are applied before depth limiting. This ensures that:
 2. The depth limit applies to the remaining useful frames
 3. Users get the expected number of relevant frames
 
-## Logging Infrastructure Patterns
+## Logging infrastructure patterns
 
 Default patterns for `exclude_logging=True`:
 
@@ -94,7 +94,7 @@ Default patterns for `exclude_logging=True`:
 - `"logging/config"` - logging configuration
 - `"<frozen importlib"` - import machinery
 
-## API Summary
+## API summary
 
 ### Rust API
 
@@ -144,7 +144,7 @@ get_logging_infrastructure_patterns() -> list[str]
 
 Returns the default patterns used to identify logging infrastructure frames.
 
-## Usage Example
+## Usage example
 
 ```python
 from femtologging import filter_frames

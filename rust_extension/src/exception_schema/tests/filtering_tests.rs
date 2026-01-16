@@ -51,8 +51,7 @@ fn exception_payload_limit_frames_recursive_on_context() {
 
     // Context frames limited to 1 (last 1)
     let limited_context = limited.context.as_ref().expect("context exists");
-    assert_eq!(limited_context.frames.len(), 1);
-    assert_eq!(limited_context.frames[0].filename, "ctx_c.py");
+    assert_payload_frames(limited_context, 1, &["ctx_c.py"]);
 }
 
 #[rstest]
