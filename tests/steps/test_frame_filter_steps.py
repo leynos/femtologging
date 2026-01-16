@@ -45,18 +45,63 @@ def filter_fixture() -> FilterFixture:
 
 @given(parsers.parse("a stack_info payload with frames from {filenames}"))
 def create_stack_payload(filter_fixture: FilterFixture, filenames: str) -> None:
+    """Create a stack_info payload from comma-separated filenames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage.
+    filenames : str
+        Comma-separated quoted filenames (e.g., '"a.py", "b.py"').
+
+    Returns
+    -------
+    None
+        Stores payload in filter_fixture["payload"].
+
+    """
     parsed = _parse_filenames(filenames)
     filter_fixture["payload"] = make_stack_payload(parsed)
 
 
 @given(parsers.parse("an exception payload with frames from {filenames}"))
 def create_exception_payload(filter_fixture: FilterFixture, filenames: str) -> None:
+    """Create an exception payload from comma-separated filenames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage.
+    filenames : str
+        Comma-separated quoted filenames (e.g., '"a.py", "b.py"').
+
+    Returns
+    -------
+    None
+        Stores payload in filter_fixture["payload"].
+
+    """
     parsed = _parse_filenames(filenames)
     filter_fixture["payload"] = make_exception_payload(parsed, type_name="TestError")
 
 
 @given(parsers.parse("the exception has a cause with frames from {filenames}"))
 def add_cause_to_exception(filter_fixture: FilterFixture, filenames: str) -> None:
+    """Add a cause exception to the existing exception payload.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing an exception payload.
+    filenames : str
+        Comma-separated quoted filenames for the cause frames.
+
+    Returns
+    -------
+    None
+        Adds cause to filter_fixture["payload"]["cause"].
+
+    """
     parsed = _parse_filenames(filenames)
     cause = make_exception_payload(
         parsed, type_name="CauseError", message="cause error"
@@ -66,6 +111,19 @@ def add_cause_to_exception(filter_fixture: FilterFixture, filenames: str) -> Non
 
 @when("I filter with exclude_logging=True")
 def filter_exclude_logging(filter_fixture: FilterFixture) -> None:
+    """Filter the payload excluding logging infrastructure frames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the payload to filter.
+
+    Returns
+    -------
+    None
+        Stores filtered result in filter_fixture["filtered"].
+
+    """
     filter_fixture["filtered"] = typ.cast(
         "StackPayload | ExceptionPayload",
         filter_frames(filter_fixture["payload"], exclude_logging=True),
@@ -74,6 +132,21 @@ def filter_exclude_logging(filter_fixture: FilterFixture) -> None:
 
 @when(parsers.parse('I filter with exclude_filenames=["{pattern}"]'))
 def filter_exclude_filenames(filter_fixture: FilterFixture, pattern: str) -> None:
+    """Filter the payload excluding frames matching the filename pattern.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the payload to filter.
+    pattern : str
+        Substring pattern to match against frame filenames.
+
+    Returns
+    -------
+    None
+        Stores filtered result in filter_fixture["filtered"].
+
+    """
     filter_fixture["filtered"] = typ.cast(
         "StackPayload | ExceptionPayload",
         filter_frames(filter_fixture["payload"], exclude_filenames=[pattern]),
@@ -82,6 +155,21 @@ def filter_exclude_filenames(filter_fixture: FilterFixture, pattern: str) -> Non
 
 @when(parsers.parse("I filter with max_depth={n:d}"))
 def filter_max_depth(filter_fixture: FilterFixture, n: int) -> None:
+    """Filter the payload limiting to the deepest n frames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the payload to filter.
+    n : int
+        Maximum number of frames to keep (from the bottom of the stack).
+
+    Returns
+    -------
+    None
+        Stores filtered result in filter_fixture["filtered"].
+
+    """
     filter_fixture["filtered"] = typ.cast(
         "StackPayload | ExceptionPayload",
         filter_frames(filter_fixture["payload"], max_depth=n),
@@ -94,6 +182,23 @@ def filter_max_depth(filter_fixture: FilterFixture, n: int) -> None:
     )
 )
 def filter_combined(filter_fixture: FilterFixture, p: str, n: int) -> None:
+    """Filter with multiple options: exclude logging, filename pattern, and max depth.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the payload to filter.
+    p : str
+        Substring pattern to match against frame filenames.
+    n : int
+        Maximum number of frames to keep (from the bottom of the stack).
+
+    Returns
+    -------
+    None
+        Stores filtered result in filter_fixture["filtered"].
+
+    """
     filter_fixture["filtered"] = typ.cast(
         "StackPayload | ExceptionPayload",
         filter_frames(
@@ -107,18 +212,61 @@ def filter_combined(filter_fixture: FilterFixture, p: str, n: int) -> None:
 
 @when("I get the logging infrastructure patterns")
 def get_patterns(filter_fixture: FilterFixture) -> None:
+    """Retrieve the list of logging infrastructure patterns.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage.
+
+    Returns
+    -------
+    None
+        Stores patterns in filter_fixture["patterns"].
+
+    """
     filter_fixture["patterns"] = list(get_logging_infrastructure_patterns())
 
 
 @then(parsers.parse("the filtered payload has {n:d} frame"))
 @then(parsers.parse("the filtered payload has {n:d} frames"))
 def check_frame_count(filter_fixture: FilterFixture, n: int) -> None:
+    """Assert the filtered payload has exactly n frames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered result.
+    n : int
+        Expected number of frames.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if frame count does not match.
+
+    """
     frames = filter_fixture["filtered"].get("frames", [])
     assert len(frames) == n, f"Expected {n} frames, got {len(frames)}"
 
 
 @then(parsers.parse('the filtered frame filename is "{expected}"'))
 def check_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
+    """Assert the single filtered frame has the expected filename.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered result.
+    expected : str
+        Expected filename of the single frame.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if not exactly 1 frame or filename differs.
+
+    """
     frames = filter_fixture["filtered"]["frames"]
     assert len(frames) == 1, "Expected exactly 1 frame"
     assert frames[0]["filename"] == expected
@@ -126,6 +274,21 @@ def check_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
 
 @then(parsers.parse('the filtered frames do not contain "{pattern}"'))
 def check_frames_exclude_pattern(filter_fixture: FilterFixture, pattern: str) -> None:
+    """Assert no filtered frame filename contains the pattern.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered result.
+    pattern : str
+        Substring that should not appear in any frame filename.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if any frame filename contains the pattern.
+
+    """
     frames = filter_fixture["filtered"]["frames"]
     for frame in frames:
         assert pattern not in frame["filename"], (
@@ -135,6 +298,23 @@ def check_frames_exclude_pattern(filter_fixture: FilterFixture, pattern: str) ->
 
 @then(parsers.parse('the filtered frames are "{f1}", "{f2}"'))
 def check_frames_order(filter_fixture: FilterFixture, f1: str, f2: str) -> None:
+    """Assert the filtered result has exactly two frames in order.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered result.
+    f1 : str
+        Expected filename of the first frame.
+    f2 : str
+        Expected filename of the second frame.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if not exactly 2 frames or order differs.
+
+    """
     frames = filter_fixture["filtered"]["frames"]
     assert len(frames) == 2, f"Expected 2 frames, got {len(frames)}"
     assert frames[0]["filename"] == f1, f"First frame should be {f1}"
@@ -144,6 +324,21 @@ def check_frames_order(filter_fixture: FilterFixture, f1: str, f2: str) -> None:
 @then(parsers.parse("the filtered cause has {n:d} frame"))
 @then(parsers.parse("the filtered cause has {n:d} frames"))
 def check_cause_frame_count(filter_fixture: FilterFixture, n: int) -> None:
+    """Assert the filtered cause exception has exactly n frames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered exception result.
+    n : int
+        Expected number of frames in the cause.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if cause frame count does not match.
+
+    """
     filtered = typ.cast("ExceptionPayload", filter_fixture["filtered"])
     cause = filtered.get("cause", typ.cast("ExceptionPayload", {}))
     frames = cause.get("frames", [])
@@ -152,6 +347,21 @@ def check_cause_frame_count(filter_fixture: FilterFixture, n: int) -> None:
 
 @then(parsers.parse('the filtered cause frame filename is "{expected}"'))
 def check_cause_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
+    """Assert the single filtered cause frame has the expected filename.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered exception result.
+    expected : str
+        Expected filename of the single cause frame.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if not exactly 1 cause frame or filename differs.
+
+    """
     filtered = typ.cast("ExceptionPayload", filter_fixture["filtered"])
     cause = filtered["cause"]
     frames = cause["frames"]
@@ -161,5 +371,20 @@ def check_cause_frame_filename(filter_fixture: FilterFixture, expected: str) -> 
 
 @then(parsers.parse('the patterns contain "{pattern}"'))
 def check_patterns_contain(filter_fixture: FilterFixture, pattern: str) -> None:
+    """Assert the logging infrastructure patterns include the given pattern.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the patterns list.
+    pattern : str
+        Pattern expected to be in the list.
+
+    Returns
+    -------
+    None
+        Raises AssertionError if pattern is not found.
+
+    """
     patterns = filter_fixture["patterns"]
     assert pattern in patterns, f"Expected {pattern} in patterns: {patterns}"
