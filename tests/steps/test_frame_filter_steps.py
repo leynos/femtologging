@@ -1,4 +1,56 @@
-"""BDD steps for frame filtering scenarios."""
+"""BDD step definitions for frame filtering scenarios.
+
+This module provides pytest-bdd step functions that implement the Gherkin
+scenarios defined in ``tests/features/frame_filter.feature``. The steps
+exercise the ``filter_frames`` and ``get_logging_infrastructure_patterns``
+functions from the femtologging package.
+
+Scenarios covered
+-----------------
+- Filtering frames by filename pattern (exclude_filenames parameter)
+- Filtering logging infrastructure frames (exclude_logging parameter)
+- Limiting stack depth (max_depth parameter)
+- Combined filtering with multiple parameters
+- Recursive filtering on exception cause chains
+- Retrieving logging infrastructure patterns
+
+Step definitions
+----------------
+Given steps (payload creation):
+    - ``create_stack_payload``: Creates a stack_info payload from filenames
+    - ``create_exception_payload``: Creates an exception payload from filenames
+    - ``add_cause_to_exception``: Adds a cause exception to an existing payload
+
+When steps (filter operations):
+    - ``filter_exclude_logging``: Filters with exclude_logging=True
+    - ``filter_exclude_filenames``: Filters with an exclude_filenames pattern
+    - ``filter_max_depth``: Filters with a max_depth limit
+    - ``filter_combined``: Filters with multiple parameters combined
+    - ``get_patterns``: Retrieves logging infrastructure patterns
+
+Then steps (assertions):
+    - ``check_frame_count``: Asserts filtered frame count
+    - ``check_frame_filename``: Asserts single frame filename
+    - ``check_frames_exclude_pattern``: Asserts no frame contains pattern
+    - ``check_frames_order``: Asserts two frames in expected order
+    - ``check_cause_frame_count``: Asserts cause exception frame count
+    - ``check_cause_frame_filename``: Asserts single cause frame filename
+    - ``check_patterns_contain``: Asserts pattern list contains value
+
+Fixtures
+--------
+- ``filter_fixture``: A TypedDict storing payload, filtered result, and patterns
+
+Usage
+-----
+Run the frame filter scenarios with pytest::
+
+    pytest tests/features/frame_filter.feature -v
+
+Or run all BDD tests::
+
+    pytest tests/ -k "feature" -v
+"""
 
 from __future__ import annotations
 
@@ -40,7 +92,7 @@ def _parse_filenames(filenames_str: str) -> list[str]:
 @pytest.fixture
 def filter_fixture() -> FilterFixture:
     """Storage for filter state."""
-    return {}
+    return typ.cast("FilterFixture", {})
 
 
 @given(parsers.parse("a stack_info payload with frames from {filenames}"))
@@ -269,7 +321,8 @@ def check_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
     """
     frames = filter_fixture["filtered"]["frames"]
     assert len(frames) == 1, "Expected exactly 1 frame"
-    assert frames[0]["filename"] == expected
+    actual = frames[0]["filename"]
+    assert actual == expected, f"Expected filename '{expected}', got '{actual}'"
 
 
 @then(parsers.parse('the filtered frames do not contain "{pattern}"'))
@@ -366,7 +419,8 @@ def check_cause_frame_filename(filter_fixture: FilterFixture, expected: str) -> 
     cause = filtered["cause"]
     frames = cause["frames"]
     assert len(frames) == 1, "Expected exactly 1 cause frame"
-    assert frames[0]["filename"] == expected
+    actual = frames[0]["filename"]
+    assert actual == expected, f"Expected cause filename '{expected}', got '{actual}'"
 
 
 @then(parsers.parse('the patterns contain "{pattern}"'))
