@@ -63,6 +63,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from femtologging import filter_frames, get_logging_infrastructure_patterns
 from tests.frame_filter.conftest import (
     ExceptionPayload,
+    FrameDict,
     StackPayload,
     make_exception_payload,
     make_stack_payload,
@@ -87,6 +88,35 @@ def _parse_filenames(filenames_str: str) -> list[str]:
     # Input: '"a.py", "b.py", "c.py"'
     # Output: ['a.py', 'b.py', 'c.py']
     return [f.strip().strip('"') for f in filenames_str.split(",")]
+
+
+def _get_frames(
+    filter_fixture: FilterFixture,
+    *,
+    from_cause: bool = False,
+) -> list[FrameDict]:
+    """Extract frames from filtered payload or its cause.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared test state storage containing the filtered result.
+    from_cause : bool, optional
+        If True, extract frames from the cause exception instead.
+
+    Returns
+    -------
+    list[FrameDict]
+        List of frame dicts from the appropriate location.
+
+    """
+    filtered = filter_fixture["filtered"]
+    if from_cause:
+        cause = typ.cast("ExceptionPayload", filtered).get(
+            "cause", typ.cast("ExceptionPayload", {})
+        )
+        return cause.get("frames", [])
+    return filtered.get("frames", [])
 
 
 @pytest.fixture
@@ -298,7 +328,7 @@ def check_frame_count(filter_fixture: FilterFixture, n: int) -> None:
         Raises AssertionError if frame count does not match.
 
     """
-    frames = filter_fixture["filtered"].get("frames", [])
+    frames = _get_frames(filter_fixture)
     assert len(frames) == n, f"Expected {n} frames, got {len(frames)}"
 
 
@@ -319,7 +349,7 @@ def check_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
         Raises AssertionError if not exactly 1 frame or filename differs.
 
     """
-    frames = filter_fixture["filtered"]["frames"]
+    frames = _get_frames(filter_fixture)
     assert len(frames) == 1, "Expected exactly 1 frame"
     actual = frames[0]["filename"]
     assert actual == expected, f"Expected filename '{expected}', got '{actual}'"
@@ -392,9 +422,7 @@ def check_cause_frame_count(filter_fixture: FilterFixture, n: int) -> None:
         Raises AssertionError if cause frame count does not match.
 
     """
-    filtered = typ.cast("ExceptionPayload", filter_fixture["filtered"])
-    cause = filtered.get("cause", typ.cast("ExceptionPayload", {}))
-    frames = cause.get("frames", [])
+    frames = _get_frames(filter_fixture, from_cause=True)
     assert len(frames) == n, f"Expected {n} cause frames, got {len(frames)}"
 
 
@@ -415,9 +443,7 @@ def check_cause_frame_filename(filter_fixture: FilterFixture, expected: str) -> 
         Raises AssertionError if not exactly 1 cause frame or filename differs.
 
     """
-    filtered = typ.cast("ExceptionPayload", filter_fixture["filtered"])
-    cause = filtered["cause"]
-    frames = cause["frames"]
+    frames = _get_frames(filter_fixture, from_cause=True)
     assert len(frames) == 1, "Expected exactly 1 cause frame"
     actual = frames[0]["filename"]
     assert actual == expected, f"Expected cause filename '{expected}', got '{actual}'"
