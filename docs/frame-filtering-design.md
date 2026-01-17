@@ -19,50 +19,62 @@ which applies each configured filter in sequence to produce a filtered payload:
 
 ```mermaid
 flowchart TD
-    A[Python payload dict] --> B{is_exception_payload?}
-    B -->|yes<br/>has type_name and message| C[filter_exception_payload]
-    B -->|no| D[filter_stack_payload]
+    A[payload dict] --> B{is_exception_payload}
+    B -->|true| C[filter_exception_payload]
+    B -->|false| D[filter_stack_payload]
 
     C --> E[extract_frames]
     D --> E
 
     E --> F[apply_filters]
 
-    F --> G{exclude_filenames provided?}
-    G -->|yes| H[exclude_by_filename]
-    G -->|no| I[skip filename filter]
+    F --> G{exclude_filenames}
+    G -->|provided| H[exclude_by_filename]
+    G -->|none| I[skip filename filter]
 
-    H --> J
-    I --> J[frames]
+    H --> J[frames]
+    I --> J
 
-    J --> K{exclude_functions provided?}
-    K -->|yes| L[exclude_by_function]
-    K -->|no| M[skip function filter]
+    J --> K{exclude_functions}
+    K -->|provided| L[exclude_by_function]
+    K -->|none| M[skip function filter]
 
-    L --> N
-    M --> N[frames]
+    L --> N[frames]
+    M --> N
 
-    N --> O{exclude_logging?}
-    O -->|yes| P[exclude_logging_infrastructure]
-    O -->|no| Q[skip logging filter]
+    N --> O{exclude_logging}
+    O -->|true| P[exclude_logging_infrastructure]
+    O -->|false| Q[skip logging filter]
 
-    P --> R
-    Q --> R[frames]
+    P --> R[frames]
+    Q --> R
 
-    R --> S{max_depth provided?}
-    S -->|yes| T[limit_frames]
-    S -->|no| U[skip depth limit]
+    R --> S{max_depth}
+    S -->|provided| T[limit_frames]
+    S -->|none| U[skip depth limit]
 
     T --> V[filtered_frames]
     U --> V
 
-    V --> W[build new payload dict]
-    W --> X[return filtered payload]
+    C --> W[rebuild exception payload
+with filtered frames
+and recursively filtered
+cause/context/exceptions]
+    D --> X[rebuild stack payload
+with filtered frames]
+
+    V --> W
+    V --> X
+
+    W --> Y[return filtered exc_info dict]
+    X --> Z[return filtered stack_info dict]
 ```
 
-*Figure 1: Filter flow for the `filter_frames()` Python function. Each filter
-is applied conditionally based on the provided parameters, with exclusion
-filters applied before depth limiting.*
+*Figure 1: Filter flow for the `filter_frames()` function. The payload is first
+classified as exception or stack type, then filters are applied conditionally
+in sequence (exclusion filters before depth limiting). Exception payloads are
+rebuilt with recursively filtered cause/context/exceptions chains, while stack
+payloads are rebuilt with the filtered frames directly.*
 
 ## Design decisions
 
