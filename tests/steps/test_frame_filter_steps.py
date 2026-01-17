@@ -372,7 +372,7 @@ def check_frames_exclude_pattern(filter_fixture: FilterFixture, pattern: str) ->
         Raises AssertionError if any frame filename contains the pattern.
 
     """
-    frames = filter_fixture["filtered"]["frames"]
+    frames = _get_frames(filter_fixture)
     for frame in frames:
         assert pattern not in frame["filename"], (
             f"Frame {frame['filename']} should not contain {pattern}"
@@ -398,7 +398,7 @@ def check_frames_order(filter_fixture: FilterFixture, f1: str, f2: str) -> None:
         Raises AssertionError if not exactly 2 frames or order differs.
 
     """
-    frames = filter_fixture["filtered"]["frames"]
+    frames = _get_frames(filter_fixture)
     assert len(frames) == 2, f"Expected 2 frames, got {len(frames)}"
     assert frames[0]["filename"] == f1, f"First frame should be {f1}"
     assert frames[1]["filename"] == f2, f"Second frame should be {f2}"
