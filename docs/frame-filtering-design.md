@@ -86,7 +86,8 @@ in-place. This approach:
 - Aligns with the current design where `capture_*` functions return full frames
 - Allows different formatters and handlers to filter differently
 - Maintains testability and composability
-- Keeps worker threads Global Interpreter Lock (GIL)-free (filtering operates on Rust-owned data)
+- Keeps worker threads Global Interpreter Lock (GIL)-free (filtering operates
+  on Rust-owned data)
 
 ### Filter order
 
@@ -100,11 +101,11 @@ Exclusion filters are applied before depth limiting. This ensures that:
 
 Default patterns for `exclude_logging=True`:
 
-- `"femtologging"` - this library
-- `"_femtologging_rs"` - Rust extension
-- `"logging/__init__"` - standard library logging
-- `"logging/config"` - logging configuration
-- `"<frozen importlib"` - import machinery
+- `"femtologging"` — this library
+- `"_femtologging_rs"` — Rust extension
+- `"logging/__init__"` — standard library logging
+- `"logging/config"` — logging configuration
+- `"<frozen importlib"` — import machinery
 
 ## API summary
 
@@ -112,27 +113,27 @@ Default patterns for `exclude_logging=True`:
 
 Methods on `StackTracePayload`:
 
-- `filter()` - filter frames using a predicate
-- `limit()` - keep at most N frames
-- `exclude_filenames()` - exclude by filename patterns
-- `exclude_functions()` - exclude by function patterns
-- `exclude_logging_infrastructure()` - exclude common logging frames
+- `filter()` — filter frames using a predicate
+- `limit()` — keep at most N frames
+- `exclude_filenames()` — exclude by filename patterns
+- `exclude_functions()` — exclude by function patterns
+- `exclude_logging_infrastructure()` — exclude common logging frames
 
 Methods on `ExceptionPayload`:
 
-- `filter_frames()` - recursive filtering (handles cause, context, groups)
-- `limit_frames()` - recursive depth limiting
-- `exclude_filenames()` - recursive filename exclusion
-- `exclude_functions()` - recursive function exclusion
-- `exclude_logging_infrastructure()` - recursive infrastructure exclusion
+- `filter_frames()` — recursive filtering (handles cause, context, groups)
+- `limit_frames()` — recursive depth limiting
+- `exclude_filenames()` — recursive filename exclusion
+- `exclude_functions()` — recursive function exclusion
+- `exclude_logging_infrastructure()` — recursive infrastructure exclusion
 
 Helper functions in `frame_filter` module:
 
-- `filter_frames()` - predicate-based filtering
-- `limit_frames()` - depth limiting
-- `exclude_by_filename()` - filename pattern matching
-- `exclude_by_function()` - function name pattern matching
-- `exclude_logging_infrastructure()` - infrastructure frame removal
+- `filter_frames()` — predicate-based filtering
+- `limit_frames()` — depth limiting
+- `exclude_by_filename()` — filename pattern matching
+- `exclude_by_function()` — function name pattern matching
+- `exclude_logging_infrastructure()` — infrastructure frame removal
 
 ### Python API
 
