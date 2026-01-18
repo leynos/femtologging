@@ -1,0 +1,189 @@
+"""Multi-threading exception capture tests.
+
+This module validates thread safety of exception capture and payload handling.
+It spawns N threads, raises exceptions in each, captures payloads, and asserts:
+
+1. No cross-thread contamination (each thread's payload contains only that
+   thread's data).
+2. No panics during concurrent exception capture.
+3. Payload integrity (correct exception type, message, and stack frames).
+
+The test uses threading.Barrier for deterministic synchronisation, avoiding
+flaky timing assumptions.
+
+Related to: https://github.com/leynos/femtologging/issues/299
+"""
+
+from __future__ import annotations
+
+import re
+import threading
+import typing as typ
+
+import pytest
+
+from femtologging import FemtoLogger
+
+pytestmark = [pytest.mark.concurrency, pytest.mark.send_sync]
+
+
+class ThreadSpecificError(Exception):
+    """Exception type used to identify thread-specific exceptions.
+
+    Args:
+        thread_index: The index of the thread that raised this exception.
+
+    """
+
+    def __init__(self, thread_index: int) -> None:
+        """Initialise with the thread index."""
+        self.thread_index = thread_index
+        super().__init__(f"Thread {thread_index} exception")
+
+
+class RecordCollectingHandler:
+    """Handler that uses handle_record for structured payload access.
+
+    This handler collects all log records with their full structured data,
+    including exception payloads, for later validation.
+    """
+
+    def __init__(self) -> None:
+        """Initialise an empty record buffer with thread-safe access."""
+        self.records: list[dict[str, typ.Any]] = []
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def handle(_logger: str, _level: str, _message: str) -> None:
+        """Fallback handle method (required by FemtoLogger validation)."""
+        # Should not be called when handle_record is present
+        return
+
+    def handle_record(self, record: dict[str, typ.Any]) -> None:
+        """Collect full records for later assertions."""
+        with self._lock:
+            self.records.append(record)
+
+
+def _raise_thread_error(thread_index: int) -> None:
+    """Raise a ThreadSpecificError for the given thread index."""
+    raise ThreadSpecificError(thread_index)
+
+
+def thread_worker(
+    thread_index: int,
+    start_barrier: threading.Barrier,
+    end_barrier: threading.Barrier,
+    logger: FemtoLogger,
+) -> None:
+    """Worker function that raises and logs a thread-specific exception.
+
+    Args:
+        thread_index: Unique index identifying this thread.
+        start_barrier: Barrier to synchronise thread startup.
+        end_barrier: Barrier to synchronise thread completion.
+        logger: Logger instance to use for exception capture.
+
+    """
+    # Wait for all threads to be ready
+    start_barrier.wait()
+
+    # Raise and capture a thread-specific exception
+    try:
+        _raise_thread_error(thread_index)
+    except ThreadSpecificError:
+        logger.log("ERROR", f"Caught exception in thread {thread_index}", exc_info=True)
+
+    # Wait for all threads to complete logging
+    end_barrier.wait()
+
+
+@pytest.mark.parametrize("thread_count", [2, 10, 50])
+def test_multithread_exception_capture(thread_count: int) -> None:
+    """Exception capture should maintain payload integrity across threads.
+
+    This test spawns multiple threads, each raising a unique exception. It
+    validates that:
+
+    1. All exceptions are captured (exactly thread_count records).
+    2. Each payload contains the correct thread's exception message.
+    3. No payload contains data from another thread (no contamination).
+    4. Each payload's stack frames include the thread_worker function.
+    """
+    logger = FemtoLogger("multithread_test")
+    handler = RecordCollectingHandler()
+    logger.add_handler(handler)
+
+    # Barriers include main thread (+1) to ensure we don't validate early
+    start_barrier = threading.Barrier(thread_count + 1)
+    end_barrier = threading.Barrier(thread_count + 1)
+
+    # Spawn worker threads
+    threads = [
+        threading.Thread(
+            target=thread_worker,
+            args=(i, start_barrier, end_barrier, logger),
+        )
+        for i in range(thread_count)
+    ]
+
+    for t in threads:
+        t.start()
+
+    # Release all threads to start together
+    start_barrier.wait()
+
+    # Wait for all threads to complete logging
+    end_barrier.wait()
+
+    for t in threads:
+        t.join()
+
+    # Delete logger to ensure worker thread flushes all records
+    del logger
+
+    # Validate captured records
+    assert len(handler.records) == thread_count, (
+        f"Expected {thread_count} records, got {len(handler.records)}"
+    )
+
+    # Extract and validate thread indices from captured records
+    captured_indices: set[int] = set()
+
+    for record in handler.records:
+        # Verify exc_info is present
+        assert "exc_info" in record, f"Record missing exc_info: {record}"
+        exc_info = record["exc_info"]
+
+        # Verify exception type
+        assert exc_info["type_name"] == "ThreadSpecificError", (
+            f"Unexpected exception type: {exc_info['type_name']}"
+        )
+
+        # Parse thread index from exception message
+        match = re.search(r"Thread (\d+) exception", exc_info["message"])
+        assert match is not None, (
+            f"Unexpected exception message format: {exc_info['message']}"
+        )
+        thread_idx = int(match.group(1))
+
+        # Check for duplicates (would indicate cross-thread contamination)
+        assert thread_idx not in captured_indices, (
+            f"Duplicate thread index {thread_idx} detected - "
+            "possible cross-thread contamination"
+        )
+        captured_indices.add(thread_idx)
+
+        # Verify stack frames contain thread_worker
+        assert "frames" in exc_info, f"exc_info missing frames: {exc_info}"
+        functions = [f["function"] for f in exc_info["frames"]]
+        assert "thread_worker" in functions, (
+            f"Stack frames do not contain thread_worker: {functions}"
+        )
+
+    # All thread indices should be accounted for
+    expected_indices = set(range(thread_count))
+    assert captured_indices == expected_indices, (
+        f"Missing thread indices: {expected_indices - captured_indices}, "
+        f"unexpected indices: {captured_indices - expected_indices}"
+    )
