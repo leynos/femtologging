@@ -79,6 +79,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+mod filtering;
+
+#[cfg(test)]
+mod tests;
+
 /// Minimum supported schema version for exception payloads.
 ///
 /// Payloads with versions below this value are rejected during validation.
@@ -306,6 +311,12 @@ impl SchemaVersioned for StackTracePayload {
     }
 }
 
+impl SchemaVersioned for ExceptionPayload {
+    fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+}
+
 impl ExceptionPayload {
     /// Create a new exception payload with the current schema version.
     ///
@@ -361,13 +372,3 @@ impl ExceptionPayload {
         self
     }
 }
-
-impl SchemaVersioned for ExceptionPayload {
-    fn schema_version(&self) -> u16 {
-        self.schema_version
-    }
-}
-
-#[cfg(test)]
-#[path = "exception_schema_tests.rs"]
-mod tests;

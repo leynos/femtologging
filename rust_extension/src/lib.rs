@@ -10,6 +10,9 @@ pub mod exception_schema;
 mod file_config;
 mod filters;
 mod formatter;
+pub mod frame_filter;
+#[cfg(feature = "python")]
+mod frame_filter_py;
 mod handler;
 mod handlers;
 mod http_handler;
@@ -32,7 +35,7 @@ pub mod rate_limited_warner;
 mod rate_limited_warner;
 mod socket_handler;
 mod stream_handler;
-#[cfg(all(test, feature = "python"))]
+#[cfg(test)]
 mod test_utils;
 #[cfg(feature = "python")]
 pub(crate) mod traceback_capture;
@@ -287,6 +290,13 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "python")]
     m.add_function(wrap_pyfunction!(
         handlers::rotating::clear_rotating_fresh_failure_for_test,
+        m
+    )?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(frame_filter_py::filter_frames, m)?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(
+        frame_filter_py::get_logging_infrastructure_patterns,
         m
     )?)?;
 

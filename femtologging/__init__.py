@@ -29,7 +29,9 @@ from ._femtologging_rs import (
     RotatingFileHandlerBuilder,
     SocketHandlerBuilder,
     StreamHandlerBuilder,
+    filter_frames,
     get_logger,
+    get_logging_infrastructure_patterns,
     hello,
 )
 from ._femtologging_rs import (
@@ -78,7 +80,9 @@ __all__ = [
     "basicConfig",
     "dictConfig",
     "fileConfig",
+    "filter_frames",
     "get_logger",
+    "get_logging_infrastructure_patterns",
     "hello",
     "reset_manager",
     "rust",

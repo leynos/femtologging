@@ -197,3 +197,49 @@ def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> N
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...
+
+# Frame filtering functions
+def filter_frames(
+    payload: Mapping[str, _Any],
+    *,
+    exclude_filenames: list[str] | None = ...,
+    exclude_functions: list[str] | None = ...,
+    max_depth: int | None = ...,
+    exclude_logging: bool = ...,
+) -> dict[str, _Any]:
+    """Filter frames from a stack_info or exc_info payload.
+
+    Parameters
+    ----------
+    payload
+        The stack_info or exc_info dict from a log record.
+    exclude_filenames
+        Filename patterns to exclude (substring matching).
+    exclude_functions
+        Function name patterns to exclude (substring matching).
+    max_depth
+        Maximum number of frames to retain (keeps most recent).
+    exclude_logging
+        If True, exclude common logging infrastructure frames
+        (femtologging, logging module internals).
+
+    Returns
+    -------
+    dict
+        A new payload dict with frames filtered.
+
+    """
+    ...
+
+def get_logging_infrastructure_patterns() -> list[str]:
+    """Return the list of filename patterns used by exclude_logging.
+
+    This is useful for inspecting or extending the default patterns.
+
+    Returns
+    -------
+    list[str]
+        The default logging infrastructure filename patterns.
+
+    """
+    ...
