@@ -1,34 +1,140 @@
 //! Exception and stack trace formatting utilities.
 //!
 //! Provides human-readable formatting for exception payloads and stack traces
-//! following Python's traceback formatting style.
+//! following Python's traceback formatting style. The [`ExceptionFormat`] trait
+//! provides a unified interface for formatting, while free functions maintain
+//! backward compatibility.
 
 use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 
-/// Format a stack trace payload into a human-readable string.
+// ============================================================================
+// Trait Definition
+// ============================================================================
+
+/// Trait for types that can be formatted as human-readable exception output.
 ///
-/// Follows Python's traceback formatting style.
-pub fn format_stack_payload(payload: &StackTracePayload) -> String {
-    let mut output = String::from("Stack (most recent call last):\n");
-    for frame in &payload.frames {
-        output.push_str(&format_stack_frame(frame));
-    }
-    output
+/// Implementors produce Python-style traceback formatting. This trait
+/// centralises formatting logic so schema evolution requires changes in one
+/// place.
+///
+/// # Examples
+///
+/// ```rust
+/// use _femtologging_rs::exception_schema::ExceptionPayload;
+/// use _femtologging_rs::ExceptionFormat;
+///
+/// let exc = ExceptionPayload::new("ValueError", "bad input");
+/// let output = exc.format_exception();
+/// assert!(output.contains("ValueError: bad input"));
+/// ```
+pub trait ExceptionFormat {
+    /// Format this value into a human-readable string following Python's
+    /// traceback formatting style.
+    fn format_exception(&self) -> String;
 }
 
-/// Format exception chaining (cause or context) if present.
+// ============================================================================
+// Trait Implementations
+// ============================================================================
+
+impl ExceptionFormat for StackFrame {
+    fn format_exception(&self) -> String {
+        let mut output = format!(
+            "  File \"{}\", line {}, in {}\n",
+            self.filename, self.lineno, self.function
+        );
+
+        if let Some(ref source) = self.source_line {
+            let trimmed = source.trim_start();
+            let trimmed_end = trimmed.trim_end();
+            if !trimmed_end.is_empty() {
+                output.push_str(&format!("    {}\n", trimmed_end));
+
+                // Add column indicators if available (Python 3.11+)
+                // Adjust for leading whitespace that was trimmed
+                if let (Some(colno), Some(end_colno)) = (self.colno, self.end_colno) {
+                    // Calculate how many leading chars were trimmed
+                    let leading_trimmed = source.len() - trimmed.len();
+                    // Adjust column positions (colno/end_colno are 1-indexed)
+                    let col_start =
+                        (colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+                    let col_end =
+                        (end_colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+                    let underline_len = col_end.saturating_sub(col_start).max(1);
+                    output.push_str(&format!(
+                        "    {}{}\n",
+                        " ".repeat(col_start),
+                        "^".repeat(underline_len)
+                    ));
+                }
+            }
+        }
+
+        output
+    }
+}
+
+impl ExceptionFormat for StackTracePayload {
+    fn format_exception(&self) -> String {
+        let mut output = String::from("Stack (most recent call last):\n");
+        for frame in &self.frames {
+            output.push_str(&frame.format_exception());
+        }
+        output
+    }
+}
+
+impl ExceptionFormat for ExceptionPayload {
+    fn format_exception(&self) -> String {
+        let mut output = format_exception_chain(self);
+
+        output.push_str(&format_exception_body(self));
+
+        // Append notes if present
+        output.push_str(&format_exception_notes(&self.notes));
+
+        // Handle exception groups
+        output.push_str(&format_exception_group(&self.exceptions));
+
+        output
+    }
+}
+
+// ============================================================================
+// Public API Functions (Backward Compatibility)
+// ============================================================================
+
+/// Format a stack trace payload into a human-readable string.
 ///
-/// Returns the formatted chain output with appropriate separator message.
+/// Follows Python's traceback formatting style. Prefer using the
+/// [`ExceptionFormat`] trait for new code.
+pub fn format_stack_payload(payload: &StackTracePayload) -> String {
+    payload.format_exception()
+}
+
+/// Format an exception payload into a human-readable string.
+///
+/// Handles exception chaining and follows Python's traceback formatting style.
+/// Prefer using the [`ExceptionFormat`] trait for new code.
+pub fn format_exception_payload(payload: &ExceptionPayload) -> String {
+    payload.format_exception()
+}
+
+// ============================================================================
+// Private Implementation Helpers
+// ============================================================================
+
+/// Format exception chaining (cause or context) if present.
 fn format_exception_chain(payload: &ExceptionPayload) -> String {
     if let Some(ref cause) = payload.cause {
-        let mut output = format_exception_payload(cause);
+        let mut output = cause.format_exception();
         output
             .push_str("\nThe above exception was the direct cause of the following exception:\n\n");
         output
     } else if let Some(ref context) = payload.context
         && !payload.suppress_context
     {
-        let mut output = format_exception_payload(context);
+        let mut output = context.format_exception();
         output
             .push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
         output
@@ -64,7 +170,7 @@ fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
     let mut output = String::from("  |\n");
     for (i, nested) in exceptions.iter().enumerate() {
         output.push_str(&format!("  +---- [{}] ", i + 1));
-        let nested_str = format_exception_payload(nested);
+        let nested_str = nested.format_exception();
         // Indent nested exception output
         for line in nested_str.lines() {
             output.push_str(&format!("  |     {}\n", line));
@@ -77,61 +183,9 @@ fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
 fn format_exception_body(payload: &ExceptionPayload) -> String {
     let mut output = String::from("Traceback (most recent call last):\n");
     for frame in &payload.frames {
-        output.push_str(&format_stack_frame(frame));
+        output.push_str(&frame.format_exception());
     }
     output.push_str(&format_exception_header(payload));
-    output
-}
-
-/// Format an exception payload into a human-readable string.
-///
-/// Handles exception chaining and follows Python's traceback formatting style.
-pub fn format_exception_payload(payload: &ExceptionPayload) -> String {
-    let mut output = format_exception_chain(payload);
-
-    output.push_str(&format_exception_body(payload));
-
-    // Append notes if present
-    output.push_str(&format_exception_notes(&payload.notes));
-
-    // Handle exception groups
-    output.push_str(&format_exception_group(&payload.exceptions));
-
-    output
-}
-
-/// Format a single stack frame into a human-readable string.
-pub fn format_stack_frame(frame: &StackFrame) -> String {
-    let mut output = format!(
-        "  File \"{}\", line {}, in {}\n",
-        frame.filename, frame.lineno, frame.function
-    );
-
-    if let Some(ref source) = frame.source_line {
-        let trimmed = source.trim_start();
-        let trimmed_end = trimmed.trim_end();
-        if !trimmed_end.is_empty() {
-            output.push_str(&format!("    {}\n", trimmed_end));
-
-            // Add column indicators if available (Python 3.11+)
-            // Adjust for leading whitespace that was trimmed
-            if let (Some(colno), Some(end_colno)) = (frame.colno, frame.end_colno) {
-                // Calculate how many leading chars were trimmed
-                let leading_trimmed = source.len() - trimmed.len();
-                // Adjust column positions (colno/end_colno are 1-indexed)
-                let col_start = (colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
-                let col_end =
-                    (end_colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
-                let underline_len = col_end.saturating_sub(col_start).max(1);
-                output.push_str(&format!(
-                    "    {}{}\n",
-                    " ".repeat(col_start),
-                    "^".repeat(underline_len)
-                ));
-            }
-        }
-    }
-
     output
 }
 
@@ -140,11 +194,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn trait_output_matches_function_output() {
+        // Verify ExceptionFormat trait produces identical output to public functions
+        let frame = StackFrame::new("test.py", 42, "test_func");
+        let stack = StackTracePayload::new(vec![frame]);
+        assert_eq!(stack.format_exception(), format_stack_payload(&stack));
+
+        let exc = ExceptionPayload::new("ValueError", "test error");
+        assert_eq!(exc.format_exception(), format_exception_payload(&exc));
+    }
+
+    #[test]
     fn format_stack_frame_with_source_line() {
         let mut frame = StackFrame::new("example.py", 5, "do_something");
         frame.source_line = Some("    result = calculate()".to_string());
 
-        let output = format_stack_frame(&frame);
+        let output = frame.format_exception();
 
         assert!(output.contains("example.py"));
         assert!(output.contains("line 5"));
@@ -159,7 +224,7 @@ mod tests {
         frame.colno = Some(9); // 1-indexed, pointing to 'foo'
         frame.end_colno = Some(14); // end of 'foo()'
 
-        let output = format_stack_frame(&frame);
+        let output = frame.format_exception();
 
         // Should have underline indicators
         assert!(output.contains("^"));

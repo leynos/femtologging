@@ -71,7 +71,7 @@ pub use exception_schema::{
     SchemaVersioned, StackFrame, StackTracePayload, validate_schema_version,
 };
 /// Re-export formatter types.
-pub use formatter::{DefaultFormatter, FemtoFormatter};
+pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
 pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
 #[cfg(feature = "python")]
