@@ -105,23 +105,23 @@ ______________________________________________________________________
 
 ### Phase 1: Field Renaming
 
-- [ ] Rename `FileHandlerBuilder.state` to `FileHandlerBuilder.common`
-- [ ] Update all `self.state.` references in `file_builder.rs`
-- [ ] Rename `RotatingFileHandlerBuilder.state` to
+- [x] Rename `FileHandlerBuilder.state` to `FileHandlerBuilder.common`
+- [x] Update all `self.state.` references in `file_builder.rs`
+- [x] Rename `RotatingFileHandlerBuilder.state` to
       `RotatingFileHandlerBuilder.common`
-- [ ] Update all `self.state.` references in `rotating_builder.rs`
-- [ ] Update `builder_methods!` capacity clauses to use `common`
+- [x] Update all `self.state.` references in `rotating_builder.rs`
+- [x] Update `builder_methods!` capacity clauses to use `common`
 
 ### Phase 2: Verification
 
-- [ ] Run `make test` — all tests pass
-- [ ] Run `make lint` — no warnings
-- [ ] Run `make fmt` — formatting clean
-- [ ] Verify Python bindings: `with_capacity` method works identically
+- [x] Run `make test` — all tests pass
+- [x] Run `make lint` — no warnings
+- [x] Run `make fmt` — formatting clean
+- [x] Verify Python bindings: `with_capacity` method works identically
 
 ### Phase 3: Commit
 
-- [ ] Commit with message referencing issue #162
+- [x] Commit with message referencing issue #162
 
 ______________________________________________________________________
 
@@ -136,9 +136,9 @@ ______________________________________________________________________
 
 ## Acceptance Criteria (from Issue #162)
 
-- [ ] Both builders use consistent field naming
-- [ ] All existing tests continue to pass
-- [ ] PyO3 bindings maintain identical behaviour
+- [x] Both builders use consistent field naming
+- [x] All existing tests continue to pass
+- [x] PyO3 bindings maintain identical behaviour
 
 ______________________________________________________________________
 
@@ -147,9 +147,9 @@ ______________________________________________________________________
 - [x] Analyse current codebase state
 - [x] Document current architecture
 - [x] Write execplan
-- [ ] Implement changes
-- [ ] Run quality gates
-- [ ] Commit
+- [x] Implement changes
+- [x] Run quality gates
+- [x] Commit
 
 ______________________________________________________________________
 

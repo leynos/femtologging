@@ -27,7 +27,7 @@ use crate::macros::{AsPyDict, dict_into_py};
 #[derive(Clone, Debug)]
 pub struct RotatingFileHandlerBuilder {
     path: String,
-    state: FileLikeBuilderState,
+    common: FileLikeBuilderState,
     max_bytes: Option<NonZeroU64>,
     max_bytes_set: bool,
     backup_count: Option<NonZeroUsize>,
@@ -39,7 +39,7 @@ impl RotatingFileHandlerBuilder {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            state: FileLikeBuilderState::default(),
+            common: FileLikeBuilderState::default(),
             max_bytes: None,
             max_bytes_set: false,
             backup_count: None,
@@ -49,7 +49,7 @@ impl RotatingFileHandlerBuilder {
 
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.state.set_overflow_policy(policy);
+        self.common.set_overflow_policy(policy);
         self
     }
 
@@ -58,7 +58,7 @@ impl RotatingFileHandlerBuilder {
     where
         F: IntoFormatterConfig,
     {
-        self.state.set_formatter(formatter);
+        self.common.set_formatter(formatter);
         self
     }
 
@@ -85,7 +85,7 @@ impl RotatingFileHandlerBuilder {
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.state.validate()?;
+        self.common.validate()?;
         self.ensure_rotation_limits_valid()
     }
 
@@ -119,7 +119,7 @@ impl RotatingFileHandlerBuilder {
     /// Populate a Python dictionary with the builder's fields.
     fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         d.set_item("path", &self.path)?;
-        self.state.extend_py_dict(d)?;
+        self.common.extend_py_dict(d)?;
         d.set_item("max_bytes", self.max_bytes.map_or(0, NonZeroU64::get))?;
         d.set_item(
             "backup_count",
@@ -134,7 +134,7 @@ builder_methods! {
         capacity {
             self_ident = builder,
             setter = |builder_ref, capacity| {
-                builder_ref.state.set_capacity(capacity);
+                builder_ref.common.set_capacity(capacity);
             }
         };
         methods {
@@ -147,7 +147,7 @@ builder_methods! {
                 rust_args: (interval: usize),
                 self_ident: builder,
                 body: {
-                    builder.state.set_flush_record_interval(interval);
+                    builder.common.set_flush_record_interval(interval);
                 }
             }
             method {
@@ -224,7 +224,7 @@ builder_methods! {
                 mut slf: PyRefMut<'py, Self>,
                 policy: PyOverflowPolicy,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.state.set_overflow_policy(policy.inner);
+                slf.common.set_overflow_policy(policy.inner);
                 Ok(slf)
             }
 
@@ -235,7 +235,7 @@ builder_methods! {
                 mut slf: PyRefMut<'py, Self>,
                 formatter: Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.state.set_formatter_from_py(&formatter)?;
+                slf.common.set_formatter_from_py(&formatter)?;
                 Ok(slf)
             }
 
@@ -267,7 +267,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
 
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
-        let cfg = self.state.handler_config();
+        let cfg = self.common.handler_config();
         let rotation = match self.max_bytes {
             Some(max_bytes) => RotationConfig::new(
                 max_bytes.get(),
@@ -277,7 +277,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
             ),
             None => RotationConfig::disabled(),
         };
-        match self.state.formatter() {
+        match self.common.formatter() {
             Some(FormatterConfig::Instance(fmt)) => {
                 self.build_handler_with_formatter(fmt.clone_arc(), cfg, rotation)
             }
