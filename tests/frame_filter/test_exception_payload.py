@@ -149,3 +149,39 @@ def test_exc_exclude_functions_in_cause() -> None:
     assert result["cause"]["frames"][0]["function"] == "func_1", (
         "remaining cause function mismatch"
     )
+
+
+def test_exc_filters_deep_cause_chain() -> None:
+    """Deep cause chain (100 levels) should be recursively filtered."""
+    # Build a 100-level nested cause chain
+    current = make_exception_payload(
+        ["base.py"],
+        type_name="BaseError",
+        message="root cause",
+    )
+    for i in range(1, 100):
+        wrapper = make_exception_payload(
+            [f"level_{i}.py", "femtologging/__init__.py"],
+            type_name=f"Error{i}",
+            message=f"level {i}",
+        )
+        wrapper["cause"] = current
+        current = wrapper
+
+    result = filter_frames(current, exclude_logging=True)
+
+    # Verify filtering was applied recursively
+    # The outermost should have 1 frame (femtologging filtered)
+    assert len(result["frames"]) == 1, "expected 1 frame at top level"
+
+    # Walk the chain and verify each level was filtered
+    depth = 0
+    node = result
+    while "cause" in node and node["cause"] is not None:
+        depth += 1
+        node = node["cause"]
+        # Each level should have 1 frame after filtering
+        assert len(node["frames"]) == 1, f"expected 1 frame at depth {depth}"
+
+    # Should have traversed 99 cause links (100 total exceptions)
+    assert depth == 99, f"expected 99 cause links, got {depth}"

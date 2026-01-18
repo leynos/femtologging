@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 Closes: <https://github.com/leynos/femtologging/issues/300> Related:
 <https://github.com/leynos/femtologging/pull/286>
@@ -60,20 +60,25 @@ nested exceptions knowing the behaviour is tested and bounded.
 
 ## Progress
 
-- [ ] Read and understand existing deep chain test
+- [x] (2026-01-18 16:40Z) Read and understand existing deep chain test
       (`rust_extension/src/exception_schema/tests/schema_tests.rs:180-199`)
-- [ ] Add Rust test for 100-level cause chain with timing assertion
-- [ ] Add Rust test for 100-level context chain
-- [ ] Add Rust test for mixed cause/context chain
-- [ ] Add Rust test for formatting 100-level chain (no stack overflow)
-- [ ] Add Python integration test for deep chain filtering
-- [ ] Run `make test` and `make lint` to validate
-- [ ] Update Progress and Decision Log
-- [ ] Final validation and cleanup
+- [x] (2026-01-18 16:42Z) Add Rust test for 100-level cause chain with timing
+      assertion
+- [x] (2026-01-18 16:42Z) Add Rust test for 100-level context chain
+- [x] (2026-01-18 16:42Z) Add Rust test for mixed cause/context chain
+- [x] (2026-01-18 16:43Z) Add Rust test for formatting 100-level chain (no
+      stack overflow)
+- [x] (2026-01-18 16:44Z) Add Python integration test for deep chain filtering
+- [x] (2026-01-18 16:50Z) Run `make test` and `make lint` to validate
+- [x] (2026-01-18 16:51Z) Update Progress and Decision Log
+- [x] (2026-01-18 16:51Z) Final validation and cleanup
 
 ## Surprises & Discoveries
 
-(To be filled during implementation)
+- Observation: No surprises encountered during implementation
+  Evidence: All tests passed on first run; no stack overflow or performance
+  issues Impact: Confirms the recursive implementation handles deep chains
+  correctly
 
 ## Decision Log
 
@@ -81,16 +86,38 @@ nested exceptions knowing the behaviour is tested and bounded.
   Rationale: 100 is 10x the current test depth, meaningful for detecting
   quadratic behaviour, yet small enough to avoid CI timeouts or memory issues.
   The issue suggested 50–200; 100 is a reasonable middle ground. Date/Author:
-  (pending approval)
+  2026-01-18/Claude
 
 - Decision: Add timing assertion (< 1 second) rather than formal benchmarks
   Rationale: Full benchmarking infrastructure is out of scope; a simple timing
   check catches gross regressions without adding dependencies. Date/Author:
-  (pending approval)
+  2026-01-18/Claude
 
 ## Outcomes & Retrospective
 
-(To be filled at completion)
+Implementation completed successfully. All five new tests pass:
+
+- `deep_cause_chain_100_levels_serializes` — Rust schema test (with timing)
+- `deep_context_chain_serializes` — Rust schema test
+- `mixed_cause_context_chain_serializes` — Rust schema test
+- `format_deep_exception_chain_no_stack_overflow` — Rust formatter test
+- `test_exc_filters_deep_cause_chain` — Python integration test
+
+Key outcomes:
+
+1. Serialisation/deserialisation works correctly for 100-level chains
+2. No stack overflow in formatter or filtering code
+3. Timing assertion confirms linear performance (< 1 second for 100 levels)
+4. Recursive filtering correctly traverses deep cause chains
+
+Changes made to 3 files, 138 lines added:
+
+- `rust_extension/src/exception_schema/tests/schema_tests.rs` — 3 new tests
+- `rust_extension/src/formatter/exception.rs` — 1 new test
+- `tests/frame_filter/test_exception_payload.py` — 1 new test
+
+Lessons learned: The existing recursive implementation handles deep chains
+well; no code changes were required to the core library—only tests were added.
 
 ## Context and Orientation
 

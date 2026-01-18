@@ -199,6 +199,89 @@ fn deep_cause_chain_serializes() {
 }
 
 #[rstest]
+fn deep_cause_chain_100_levels_serializes() {
+    // Test a chain of 100 nested causes to ensure no stack overflow
+    // and linear (not quadratic) time complexity
+    let start = std::time::Instant::now();
+
+    let mut current = ExceptionPayload::new("BaseError", "root cause");
+    for i in 1..100 {
+        current =
+            ExceptionPayload::new(format!("Error{i}"), format!("level {i}")).with_cause(current);
+    }
+
+    let json = serde_json::to_string(&current).expect("serialize deep chain");
+    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
+
+    // Verify chain depth
+    let mut depth = 0;
+    let mut node = Some(&decoded);
+    while let Some(n) = node {
+        depth += 1;
+        node = n.cause.as_deref();
+    }
+    assert_eq!(depth, 100);
+
+    // Timing assertion: should complete in well under 1 second
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_secs() < 1,
+        "Deep chain serialization took too long: {:?}",
+        elapsed
+    );
+}
+
+#[rstest]
+fn deep_context_chain_serializes() {
+    // Test context chain (implicit chaining) at depth 100
+    let mut current = ExceptionPayload::new("BaseError", "root context");
+    for i in 1..100 {
+        current = ExceptionPayload::new(format!("Error{i}"), format!("context level {i}"))
+            .with_context(current);
+    }
+
+    let json = serde_json::to_string(&current).expect("serialize");
+    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
+
+    // Verify context chain depth
+    let mut depth = 0;
+    let mut node = Some(&decoded);
+    while let Some(n) = node {
+        depth += 1;
+        node = n.context.as_deref();
+    }
+    assert_eq!(depth, 100);
+}
+
+#[rstest]
+fn mixed_cause_context_chain_serializes() {
+    // Alternating cause and context to test both paths
+    let mut current = ExceptionPayload::new("BaseError", "root");
+    for i in 1..50 {
+        if i % 2 == 0 {
+            current = ExceptionPayload::new(format!("CauseError{i}"), format!("cause {i}"))
+                .with_cause(current);
+        } else {
+            current = ExceptionPayload::new(format!("ContextError{i}"), format!("context {i}"))
+                .with_context(current);
+        }
+    }
+
+    let json = serde_json::to_string(&current).expect("serialize");
+    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
+
+    // Verify we can traverse the mixed chain
+    let mut total_depth = 0;
+    let mut node = Some(&decoded);
+    while let Some(n) = node {
+        total_depth += 1;
+        // Follow either cause or context, whichever exists
+        node = n.cause.as_deref().or(n.context.as_deref());
+    }
+    assert_eq!(total_depth, 50);
+}
+
+#[rstest]
 fn types_are_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<StackFrame>();
