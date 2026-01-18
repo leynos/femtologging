@@ -7,12 +7,13 @@
 //! measured in records.
 
 #[cfg(feature = "python")]
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 #[cfg(feature = "python")]
-use super::common::PyOverflowPolicy;
+use super::common::{PyOverflowPolicy, py_flush_record_interval_to_nonzero};
 use super::{
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
@@ -80,19 +81,19 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero. Python callers receive ``ValueError``\nwhen the interval is zero; Rust callers observe a ``HandlerBuildError`` during\n``build``.",
+                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide an interval greater than zero.",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
                 py_text_signature: "(self, interval)",
-                rust_args: (interval: usize),
-                py_args: (interval: usize),
+                rust_args: (interval: NonZeroU64),
+                py_args: (interval: u64),
                 py_prelude: {
-                    if interval == 0 {
-                        return Err(PyValueError::new_err(
+                    let interval = NonZeroU64::new(interval).ok_or_else(|| {
+                        PyValueError::new_err(
                             "flush_record_interval must be greater than zero",
-                        ));
-                    }
+                        )
+                    })?;
                 },
                 self_ident: builder,
                 body: {
@@ -206,7 +207,7 @@ mod tests {
         let path = dir.path().join("test.log");
         let builder = FileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(16)
-            .with_flush_record_interval(1);
+            .with_flush_record_interval(NonZeroU64::new(1).expect("1 is non-zero"));
         let handler = builder
             .build_inner()
             .expect("build_inner must succeed for a valid file builder");
@@ -219,7 +220,7 @@ mod tests {
         let path = dir.path().join("custom.log");
         let builder = FileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_formatter(PrefixFormatter)
-            .with_flush_record_interval(1);
+            .with_flush_record_interval(NonZeroU64::new(1).expect("1 is non-zero"));
         let mut handler = builder
             .build_inner()
             .expect("build_inner must support custom formatter instances");
@@ -241,15 +242,6 @@ mod tests {
     fn reject_zero_capacity() {
         let builder = FileHandlerBuilder::new("log.txt").with_capacity(0);
         assert_build_err(&builder, "build_inner must fail for zero capacity");
-    }
-
-    #[rstest]
-    fn reject_zero_flush_record_interval() {
-        let builder = FileHandlerBuilder::new("log.txt").with_flush_record_interval(0);
-        assert_build_err(
-            &builder,
-            "build_inner must fail for zero flush record interval",
-        );
     }
 
     #[rstest]

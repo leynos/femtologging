@@ -17,6 +17,8 @@ use crate::formatter::{FemtoFormatter, SharedFormatter};
 mod python;
 #[cfg(feature = "python")]
 pub use python::PyOverflowPolicy;
+#[cfg(feature = "python")]
+pub(crate) use python::py_flush_record_interval_to_nonzero;
 
 /// Formatter configuration stored by handler builders.
 #[derive(Clone)]
@@ -189,7 +191,7 @@ mod tests {
 #[derive(Clone, Debug)]
 pub(crate) struct FileLikeBuilderState {
     pub(crate) common: CommonBuilder,
-    pub(crate) flush_record_interval: Option<usize>,
+    pub(crate) flush_record_interval: Option<NonZeroU64>,
     pub(crate) overflow_policy: OverflowPolicy,
 }
 
@@ -215,7 +217,10 @@ impl FileLikeBuilderState {
     }
 
     /// Update the flush interval in place.
-    pub(crate) fn set_flush_record_interval(&mut self, interval: usize) {
+    ///
+    /// Accepts a `NonZeroU64` to enforce the non-zero constraint at the type
+    /// level, matching the `StreamHandlerBuilder` pattern for `flush_timeout_ms`.
+    pub(crate) fn set_flush_record_interval(&mut self, interval: NonZeroU64) {
         self.flush_record_interval = Some(interval);
     }
 
@@ -233,12 +238,11 @@ impl FileLikeBuilderState {
     }
 
     /// Validate queue-related settings shared between file-based builders.
+    ///
+    /// The `flush_record_interval` field uses `NonZeroU64`, so zero values are
+    /// rejected at the type level and no explicit check is needed here.
     pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()?;
-        CommonBuilder::ensure_non_zero(
-            "flush_record_interval",
-            self.flush_record_interval.map(|value| value as u64),
-        )?;
         if let OverflowPolicy::Timeout(duration) = self.overflow_policy
             && duration.is_zero()
         {
@@ -250,13 +254,21 @@ impl FileLikeBuilderState {
     }
 
     /// Produce a [`HandlerConfig`] populated with the configured values.
+    ///
+    /// The `flush_record_interval` is stored as `NonZeroU64` but `HandlerConfig`
+    /// uses `usize` internally. Python bindings reject values exceeding
+    /// `usize::MAX` at the boundary via [`py_flush_record_interval_to_nonzero`],
+    /// so the conversion here is infallible for Python callers. Rust callers
+    /// constructing oversized intervals directly will see clamping.
     pub(crate) fn handler_config(&self) -> HandlerConfig {
         let mut cfg = HandlerConfig::default();
         if let Some(capacity) = self.common.capacity {
             cfg.capacity = capacity.get();
         }
         if let Some(interval) = self.flush_record_interval {
-            cfg.flush_interval = interval;
+            // Python callers are validated at the boundary; Rust callers may
+            // still pass large values directly, so clamp as a fallback.
+            cfg.flush_interval = usize::try_from(interval.get()).unwrap_or(usize::MAX);
         }
         cfg.overflow_policy = self.overflow_policy;
         cfg

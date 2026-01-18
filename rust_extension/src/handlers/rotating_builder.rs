@@ -9,7 +9,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use pyo3::prelude::*;
 
 #[cfg(feature = "python")]
-use super::common::PyOverflowPolicy;
+use super::common::{PyOverflowPolicy, py_flush_record_interval_to_nonzero};
 use super::{
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
@@ -139,12 +139,22 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero; invalid values cause `build` to error.",
+                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide an interval greater than zero.",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
                 py_text_signature: "(self, interval)",
-                rust_args: (interval: usize),
+                rust_args: (interval: NonZeroU64),
+                py_args: (interval: u64),
+                py_prelude: {
+                    use pyo3::exceptions::PyValueError;
+
+                    let interval = NonZeroU64::new(interval).ok_or_else(|| {
+                        PyValueError::new_err(
+                            "flush_record_interval must be greater than zero",
+                        )
+                    })?;
+                },
                 self_ident: builder,
                 body: {
                     builder.common.set_flush_record_interval(interval);
@@ -327,7 +337,7 @@ mod tests {
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(32)
-            .with_flush_record_interval(2)
+            .with_flush_record_interval(NonZeroU64::new(2).expect("2 is non-zero"))
             .with_max_bytes(1024)
             .with_backup_count(3);
         let mut handler = builder
@@ -355,15 +365,6 @@ mod tests {
     fn reject_zero_capacity() {
         let builder = RotatingFileHandlerBuilder::new("log.txt").with_capacity(0);
         assert_build_err(&builder, "build_inner must fail for zero capacity");
-    }
-
-    #[rstest]
-    fn reject_zero_flush_record_interval() {
-        let builder = RotatingFileHandlerBuilder::new("log.txt").with_flush_record_interval(0);
-        assert_build_err(
-            &builder,
-            "build_inner must fail for zero flush record interval",
-        );
     }
 
     #[rstest]

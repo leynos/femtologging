@@ -204,3 +204,89 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
     assert "expected a string identifier or callable" in error_message, (
         "formatter error must mention expected formatter types"
     )
+
+
+class TestFlushApiConsistency:
+    """Tests verifying consistent flush parameter types across handler builders.
+
+    Issue #168: FileHandlerBuilder and StreamHandlerBuilder now use u64 for
+    flush parameters, ensuring type consistency while preserving distinct
+    semantics (record-count vs time-based).
+    """
+
+    @staticmethod
+    def test_file_and_stream_builders_accept_same_large_value(tmp_path: Path) -> None:
+        """Both builders accept the same large u64-compatible value."""
+        # Exercise wide-range handling with a value that fits in u64
+        large_value = 2**63 - 1
+
+        # FileHandlerBuilder.with_flush_record_interval accepts u64
+        file_builder = FileHandlerBuilder(str(tmp_path / "large.log"))
+        file_builder = file_builder.with_flush_record_interval(large_value)
+        data = file_builder.as_dict()
+        assert data["flush_record_interval"] == large_value, (
+            f"expected flush_record_interval {large_value} for FileHandlerBuilder, "
+            f"got {data['flush_record_interval']}"
+        )
+
+        # StreamHandlerBuilder.with_flush_timeout_ms accepts u64
+        stream_builder = StreamHandlerBuilder.stderr()
+        stream_builder = stream_builder.with_flush_timeout_ms(large_value)
+        data = stream_builder.as_dict()
+        assert data["flush_timeout_ms"] == large_value, (
+            f"expected flush_timeout_ms {large_value} for StreamHandlerBuilder, "
+            f"got {data['flush_timeout_ms']}"
+        )
+
+    @staticmethod
+    def test_flush_parameter_error_message_format_consistency(tmp_path: Path) -> None:
+        """Zero-value error messages follow the same pattern across builders."""
+        file_builder = FileHandlerBuilder(str(tmp_path / "zero.log"))
+        stream_builder = StreamHandlerBuilder.stderr()
+
+        with pytest.raises(ValueError, match="must be greater than zero"):
+            file_builder.with_flush_record_interval(0)
+
+        with pytest.raises(ValueError, match="must be greater than zero"):
+            stream_builder.with_flush_timeout_ms(0)
+
+    @staticmethod
+    def test_rotating_builder_inherits_file_builder_flush_type(tmp_path: Path) -> None:
+        """RotatingFileHandlerBuilder uses same u64 type as FileHandlerBuilder."""
+        large_value = 2**62
+
+        rotating_builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating.log"))
+        rotating_builder = rotating_builder.with_flush_record_interval(large_value)
+        data = rotating_builder.as_dict()
+        assert data["flush_record_interval"] == large_value, (
+            f"expected flush_record_interval {large_value} for "
+            f"RotatingFileHandlerBuilder, got {data['flush_record_interval']}"
+        )
+
+    @staticmethod
+    def test_rotating_builder_zero_flush_interval_rejected(tmp_path: Path) -> None:
+        """RotatingFileHandlerBuilder rejects zero flush interval with ValueError."""
+        rotating_builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating.log"))
+        with pytest.raises(ValueError, match="must be greater than zero"):
+            rotating_builder.with_flush_record_interval(0)
+
+    @staticmethod
+    def test_rotating_builder_negative_raises_overflow(tmp_path: Path) -> None:
+        """Negative flush intervals raise OverflowError (PyO3 u64 extraction)."""
+        builder = RotatingFileHandlerBuilder(str(tmp_path / "negative.log"))
+        with pytest.raises(OverflowError):
+            builder.with_flush_record_interval(-1)
+
+    @staticmethod
+    @pytest.mark.parametrize("interval", [1, 100, 1_000_000, 2**30])
+    def test_valid_interval_round_trips_in_config(
+        tmp_path: Path, interval: int
+    ) -> None:
+        """Valid non-zero intervals are preserved through as_dict()."""
+        builder = FileHandlerBuilder(str(tmp_path / f"interval_{interval}.log"))
+        builder = builder.with_flush_record_interval(interval)
+        data = builder.as_dict()
+        assert data["flush_record_interval"] == interval, (
+            f"expected flush_record_interval {interval} for FileHandlerBuilder, "
+            f"got {data['flush_record_interval']}"
+        )
