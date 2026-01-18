@@ -50,12 +50,13 @@ def _parse_filenames(filenames_str: str) -> list[str]:
     Returns
     -------
     list[str]
-        List of unquoted filename strings.
+        List of unquoted filename strings. Empty input or trailing commas
+        produce no bogus empty-string entries.
 
     """
     # Input: '"a.py", "b.py", "c.py"'
     # Output: ['a.py', 'b.py', 'c.py']
-    return [f.strip().strip('"') for f in filenames_str.split(",")]
+    return [name for f in filenames_str.split(",") if (name := f.strip().strip('"'))]
 
 
 def _get_frames(
