@@ -47,7 +47,11 @@ check-fmt: ## Verify formatting
 
 lint: ## Run linters
 	ruff check
+	# Lint pure Rust (no Python features)
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
+	# Lint with python feature only
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
+	# Lint with log-compat (implies python)
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
 
 markdownlint: ## Lint Markdown files
@@ -59,9 +63,11 @@ nixie: ## Validate Mermaid diagrams
 test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
-	# Test baseline without optional features, then with log-compat bridge.
+	# Test baseline without optional features, then with python, then with log-compat bridge.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
+	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat
 	uv run pytest -v
 
