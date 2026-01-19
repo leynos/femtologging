@@ -9,7 +9,7 @@ use std::{
 };
 
 use pyo3::{
-    Bound, IntoPyObjectExt,
+    Bound,
     class::basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
@@ -18,6 +18,30 @@ use pyo3::{
 
 use super::{CommonBuilder, FileLikeBuilderState, FormatterConfig};
 use crate::handlers::file::OverflowPolicy;
+
+/// Format an [`OverflowPolicy`] for Python `__repr__`.
+fn format_overflow_policy(policy: &OverflowPolicy) -> String {
+    match policy {
+        OverflowPolicy::Drop => "OverflowPolicy.drop()".to_string(),
+        OverflowPolicy::Block => "OverflowPolicy.block()".to_string(),
+        OverflowPolicy::Timeout(duration) => {
+            format!("OverflowPolicy.timeout({})", duration.as_millis())
+        }
+    }
+}
+
+/// Write overflow policy fields to a Python dictionary.
+fn write_overflow_policy_fields(d: &Bound<'_, PyDict>, policy: &OverflowPolicy) -> PyResult<()> {
+    match policy {
+        OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,
+        OverflowPolicy::Block => d.set_item("overflow_policy", "block")?,
+        OverflowPolicy::Timeout(duration) => {
+            d.set_item("timeout_ms", duration.as_millis() as u64)?;
+            d.set_item("overflow_policy", "timeout")?;
+        }
+    }
+    Ok(())
+}
 
 /// Python wrapper for [`OverflowPolicy`] providing factory methods and Python
 /// protocol implementations.
@@ -58,13 +82,7 @@ impl PyOverflowPolicy {
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            OverflowPolicy::Drop => "OverflowPolicy.drop()".to_string(),
-            OverflowPolicy::Block => "OverflowPolicy.block()".to_string(),
-            OverflowPolicy::Timeout(duration) => {
-                format!("OverflowPolicy.timeout({})", duration.as_millis())
-            }
-        }
+        format_overflow_policy(&self.inner)
     }
 
     fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
@@ -92,39 +110,35 @@ impl PyOverflowPolicy {
 impl CommonBuilder {
     /// Set the formatter from a Python object (string identifier or callable).
     pub fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
-        match formatter.downcast::<PyString>() {
-            Ok(py_str) => {
-                self.set_formatter(py_str.to_str()?.to_owned());
+        // Try string identifier first
+        if let Ok(py_str) = formatter.downcast::<PyString>() {
+            self.set_formatter(py_str.to_str()?.to_owned());
+            return Ok(());
+        }
+
+        // Then try callable-based formatter
+        match crate::formatter::python::formatter_from_py(formatter) {
+            Ok(instance) => {
+                // The extracted formatter is already wrapped in a shared trait
+                // object; storing it directly avoids double `Arc` wrapping via the
+                // blanket `IntoFormatterConfig` implementation.
+                self.formatter = Some(FormatterConfig::Instance(instance));
                 Ok(())
             }
-            Err(downcast_err) => match crate::formatter::python::formatter_from_py(formatter) {
-                Ok(instance) => {
-                    // The extracted formatter is already wrapped in a shared trait
-                    // object; storing it directly avoids double `Arc` wrapping via the
-                    // blanket `IntoFormatterConfig` implementation.
-                    self.formatter = Some(FormatterConfig::Instance(instance));
-                    Ok(())
-                }
-                Err(instance_err) => {
-                    let py = formatter.py();
+            Err(callable_err) => {
+                let py = formatter.py();
+                let callable_msg = callable_err
+                    .value(py)
+                    .repr()
+                    .map(|r| r.to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
 
-                    let string_err: PyErr = downcast_err.into();
-                    let string_context =
-                        PyTypeError::new_err("formatter string identifier extraction failed");
-                    string_context.set_cause(py, Some(string_err));
-
-                    if let Some(existing_cause) = instance_err.cause(py) {
-                        let bound_cause = existing_cause.clone_ref(py).into_bound_py_any(py)?;
-                        let callable_err = PyErr::from_value(bound_cause);
-                        callable_err.set_cause(py, Some(string_context));
-                        instance_err.set_cause(py, Some(callable_err));
-                    } else {
-                        instance_err.set_cause(py, Some(string_context));
-                    }
-
-                    Err(instance_err)
-                }
-            },
+                let msg = format!(
+                    "invalid formatter: expected a string identifier or callable.\n\
+                     - as callable: {callable_msg}",
+                );
+                Err(PyTypeError::new_err(msg))
+            }
         }
     }
 
@@ -139,12 +153,14 @@ impl CommonBuilder {
         if let Some(fmt) = &self.formatter {
             match fmt {
                 FormatterConfig::Id(fid) => {
-                    d.set_item("formatter_kind", "id")?;
-                    d.set_item("formatter_id", fid.as_str())?;
+                    // Just a string id
+                    d.set_item("formatter", fid.as_str())?;
                 }
                 FormatterConfig::Instance(_) => {
-                    d.set_item("formatter_kind", "instance")?;
-                    d.set_item("formatter", "instance")?;
+                    // Tagged object for non-serializable instance
+                    let formatter_dict = PyDict::new(d.py());
+                    formatter_dict.set_item("kind", "instance")?;
+                    d.set_item("formatter", formatter_dict)?;
                 }
             }
         }
@@ -164,14 +180,6 @@ impl FileLikeBuilderState {
         if let Some(flush) = self.flush_record_interval {
             d.set_item("flush_record_interval", flush)?;
         }
-        match self.overflow_policy {
-            OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,
-            OverflowPolicy::Block => d.set_item("overflow_policy", "block")?,
-            OverflowPolicy::Timeout(duration) => {
-                d.set_item("timeout_ms", duration.as_millis() as u64)?;
-                d.set_item("overflow_policy", "timeout")?;
-            }
-        }
-        Ok(())
+        write_overflow_policy_fields(d, &self.overflow_policy)
     }
 }

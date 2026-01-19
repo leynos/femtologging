@@ -22,7 +22,7 @@ Observable outcomes:
 
 - `cargo build --no-default-features` succeeds cleanly (no Python dependency)
 - `make lint` and `make test` pass for both feature sets
-- CI validates both `--no-default-features` and `--features python` builds
+- Continuous Integration (CI) validates both `--no-default-features` and `--features python` builds
 
 ## Constraints
 

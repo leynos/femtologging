@@ -185,7 +185,7 @@ def test_file_builders_accept_callable_formatter(
 
 
 def test_builder_formatter_error_chain(tmp_path: Path) -> None:
-    """Errors when adapting Python formatters preserve both failure causes."""
+    """Errors when adapting Python formatters include both failure causes."""
 
     class NotFormatter:
         def __str__(self) -> str:  # pragma: no cover - invoked via PyO3
@@ -196,18 +196,7 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
     with pytest.raises(TypeError) as excinfo:
         builder.with_formatter(NotFormatter())
 
-    chain_messages: list[str] = [str(excinfo.value)]
-    cause = excinfo.value.__cause__
-    while cause is not None:
-        chain_messages.append(str(cause))
-        cause = cause.__cause__
-
-    assert any(
-        "formatter string identifier extraction failed" in message
-        for message in chain_messages
-    ), "string formatter failure should remain in the cause chain"
-    assert any(
-        "formatter must be callable or expose a format(record: Mapping) -> str method"
-        in message
-        for message in chain_messages
-    ), "callable formatter failure should remain in the cause chain"
+    # The error message now consolidates both failure causes inline
+    error_message = str(excinfo.value)
+    assert "invalid formatter" in error_message
+    assert "expected a string identifier or callable" in error_message

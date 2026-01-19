@@ -55,6 +55,42 @@ pub struct HandlerOptions {
     pub backup_count: usize,
 }
 
+impl HandlerOptions {
+    /// Validate and convert options into handler and rotation configurations.
+    ///
+    /// This centralizes validation logic so that both `HandlerOptions::new` and
+    /// `FemtoRotatingFileHandler::py_new` use the same rules.
+    fn to_configs(&self) -> PyResult<(HandlerConfig, RotationConfig)> {
+        if (self.max_bytes == 0) != (self.backup_count == 0) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                ROTATION_VALIDATION_MSG,
+            ));
+        }
+
+        let flush_interval = match self.flush_interval {
+            -1 => file::validate_params(self.capacity, 1)?,
+            value => file::validate_params(self.capacity, value)?,
+        };
+
+        let overflow_policy = file::policy::parse_policy_string(&self.policy)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+
+        let handler_cfg = HandlerConfig {
+            capacity: self.capacity,
+            flush_interval,
+            overflow_policy,
+        };
+
+        let rotation = if self.max_bytes == 0 {
+            RotationConfig::disabled()
+        } else {
+            RotationConfig::new(self.max_bytes, self.backup_count)
+        };
+
+        Ok((handler_cfg, rotation))
+    }
+}
+
 #[pymethods]
 impl HandlerOptions {
     #[new]
@@ -74,25 +110,18 @@ impl HandlerOptions {
         rotation: Option<(u64, usize)>,
     ) -> PyResult<Self> {
         let (max_bytes, backup_count) = rotation.unwrap_or((0, 0));
-        let flush_interval = if flush_interval == -1 {
-            file::validate_params(capacity, 1)?
-        } else {
-            file::validate_params(capacity, flush_interval)?
-        };
-        let flush_interval = isize::try_from(flush_interval)
-            .expect("validated flush_interval must fit within isize bounds");
-        if (max_bytes == 0) != (backup_count == 0) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                ROTATION_VALIDATION_MSG,
-            ));
-        }
-        Ok(Self {
+
+        let tmp = Self {
             capacity,
             flush_interval,
             policy,
             max_bytes,
             backup_count,
-        })
+        };
+
+        // Validate using the same logic as py_new; discard configs, keep validated opts
+        let _ = tmp.to_configs()?;
+        Ok(tmp)
     }
 }
 
@@ -115,34 +144,8 @@ impl FemtoRotatingFileHandler {
     #[pyo3(signature = (path, options = None))]
     fn py_new(path: String, options: Option<HandlerOptions>) -> PyResult<Self> {
         let opts = options.unwrap_or_default();
-        let HandlerOptions {
-            capacity,
-            flush_interval,
-            policy,
-            max_bytes,
-            backup_count,
-        } = opts;
-        if (max_bytes == 0) != (backup_count == 0) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                ROTATION_VALIDATION_MSG,
-            ));
-        }
-        let overflow_policy = file::policy::parse_policy_string(&policy)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        let flush_interval = match flush_interval {
-            -1 => file::validate_params(capacity, 1)?,
-            value => file::validate_params(capacity, value)?,
-        };
-        let handler_cfg = HandlerConfig {
-            capacity,
-            flush_interval,
-            overflow_policy,
-        };
-        let rotation = if max_bytes == 0 {
-            RotationConfig::disabled()
-        } else {
-            RotationConfig::new(max_bytes, backup_count)
-        };
+        let (handler_cfg, rotation) = opts.to_configs()?;
+
         Self::with_capacity_flush_policy(&path, DefaultFormatter, handler_cfg, rotation)
             .map_err(|err| pyo3::exceptions::PyIOError::new_err(format!("{path}: {err}")))
     }

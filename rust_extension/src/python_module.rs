@@ -109,8 +109,8 @@ mod tests {
         // The module should expose builder types and the build error when the
         // `python` feature is enabled.
         Python::with_gil(|py| {
-            let module = PyModule::new(py, "test").unwrap();
-            add_python_bindings(&module).unwrap();
+            let module = PyModule::new(py, "test").expect("failed to create test module");
+            add_python_bindings(&module).expect("failed to add python bindings");
             for name in [
                 "StreamHandlerBuilder",
                 "OverflowPolicy",
@@ -125,8 +125,11 @@ mod tests {
                 "FormatterBuilder",
             ] {
                 // Ensure each registration exists and is a Python type.
-                let attr = module.getattr(name).unwrap();
-                attr.downcast::<PyType>().unwrap();
+                let attr = module
+                    .getattr(name)
+                    .expect("expected attribute not found on module");
+                attr.downcast::<PyType>()
+                    .expect("attribute is not a Python type");
             }
         });
     }
@@ -134,14 +137,20 @@ mod tests {
     #[test]
     fn module_registers_rotating_classes() {
         Python::with_gil(|py| {
-            let module = PyModule::new(py, "_femtologging_rs").unwrap();
-            register_python_classes(&module).unwrap();
+            let module =
+                PyModule::new(py, "_femtologging_rs").expect("failed to create test module");
+            register_python_classes(&module).expect("failed to register python classes");
             for name in ["FemtoRotatingFileHandler", "HandlerOptions"] {
-                let attr = module.getattr(name).unwrap();
-                attr.downcast::<PyType>().unwrap();
+                let attr = module
+                    .getattr(name)
+                    .expect("expected attribute not found on module");
+                attr.downcast::<PyType>()
+                    .expect("attribute is not a Python type");
             }
-            let message = module.getattr("ROTATION_VALIDATION_MSG").unwrap();
-            let value: &str = message.extract().unwrap();
+            let message = module
+                .getattr("ROTATION_VALIDATION_MSG")
+                .expect("ROTATION_VALIDATION_MSG not found");
+            let value: &str = message.extract().expect("failed to extract message as str");
             assert_eq!(value, ROTATION_VALIDATION_MSG);
         });
     }
