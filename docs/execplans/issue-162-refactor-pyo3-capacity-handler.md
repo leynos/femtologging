@@ -25,7 +25,7 @@ ______________________________________________________________________
 
 The issue describes duplicate `py_with_capacity` method implementations in
 `FileHandlerBuilder` and `StreamHandlerBuilder`. This was accurate when the
-issue was raised but **the codebase has since evolved**.
+issue was raised, but **the codebase has since evolved**.
 
 ### Actual current state
 
@@ -66,7 +66,7 @@ ______________________________________________________________________
 
 ## Recommended approach: field naming unification
 
-Since `FileLikeBuilderState` delegates to `CommonBuilder`, unify field naming
+Since `FileLikeBuilderState` delegates to `CommonBuilder`, unify field naming,
 so all builders use the same path:
 
 1. Rename `FileHandlerBuilder.state` → `FileHandlerBuilder.common`
