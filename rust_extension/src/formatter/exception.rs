@@ -14,7 +14,7 @@ use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 /// Trait for types that can be formatted as human-readable exception output.
 ///
 /// Implementors produce Python-style traceback formatting. This trait
-/// centralises formatting logic so schema evolution requires changes in one
+/// centralizes formatting logic so schema evolution requires changes in one
 /// place.
 ///
 /// # Examples

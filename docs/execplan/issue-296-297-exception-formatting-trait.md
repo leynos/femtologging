@@ -1,22 +1,18 @@
 # ExecPlan: Refactor Exception Formatter (Issues #296 and #297)
 
-| Field          | Value                      |
-| -------------- | -------------------------- |
-| **Status**     | Complete                   |
-| **Issues**     | [#296][i296], [#297][i297] |
-| **Related PR** | [#286][pr286]              |
-| **Author**     | Terry (AI Agent)           |
-| **Created**    | 2026-01-18                 |
-
-[i296]: https://github.com/leynos/femtologging/issues/296
-[i297]: https://github.com/leynos/femtologging/issues/297
-[pr286]: https://github.com/leynos/femtologging/pull/286
+| Field          | Value                                                                                                                |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Status**     | Complete                                                                                                             |
+| **Issues**     | [#296](https://github.com/leynos/femtologging/issues/296), [#297](https://github.com/leynos/femtologging/issues/297) |
+| **Related PR** | [#286](https://github.com/leynos/femtologging/pull/286)                                                              |
+| **Author**     | Terry (AI Agent)                                                                                                     |
+| **Created**    | 2026-01-18                                                                                                           |
 
 ______________________________________________________________________
 
 ## Big Picture
 
-Introduce an `ExceptionFormat` trait that centralises formatting logic for
+Introduce an `ExceptionFormat` trait that centralizes formatting logic for
 exception payloads, ensuring schema evolution requires changes in one place
 rather than scattered across formatting code.
 
@@ -37,7 +33,7 @@ ______________________________________________________________________
 /// Trait for types that can be formatted as human-readable exception output.
 ///
 /// Implementors produce Python-style traceback formatting. This trait
-/// centralises formatting logic so schema evolution requires changes in one
+/// centralizes formatting logic so schema evolution requires changes in one
 /// place.
 pub trait ExceptionFormat {
     /// Format this value into a human-readable string following Python's
@@ -112,7 +108,7 @@ Analysis shows:
 - No further module splitting is necessary
 
 The trait addition (issue #297) addresses the "schema coupling" concern by
-providing a single entrypoint for formatting logic. The module organisation is
+providing a single entry point for formatting logic. The module organisation is
 already correct.
 
 ______________________________________________________________________
