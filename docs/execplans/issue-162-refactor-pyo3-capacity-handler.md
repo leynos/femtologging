@@ -1,9 +1,12 @@
-# ExecPlan: Refactor PyO3 Capacity Handler (Issue #162)
+# Execution Plan: Refactor PyO3 Capacity Handler (Issue #162)
+
+PyO3 is the Rust crate providing Python bindings for Rust code.
 
 ## Big Picture
 
 **Issue:** [#162](https://github.com/leynos/femtologging/issues/162) — DRY
-violation in `py_with_capacity` method across handler builders.
+(Don't Repeat Yourself) violation in `py_with_capacity` method across handler
+builders.
 
 **Goal:** Eliminate duplication in capacity-setting logic across handler
 builders whilst maintaining identical PyO3 binding behaviour and all existing
@@ -30,22 +33,22 @@ The `builder_methods!` macro in `builder_macros.rs` now centralises method
 generation for both Rust and Python bindings. Each builder uses a `capacity`
 clause within the macro invocation:
 
-| Builder                      | File                  | Line      | Capacity Field Path     |
-| ---------------------------- | --------------------- | --------- | ----------------------- |
-| `FileHandlerBuilder`         | `file_builder.rs`     | 73–80     | `state.set_capacity()`  |
-| `StreamHandlerBuilder`       | `stream_builder.rs`   | 133–140   | `common.set_capacity()` |
-| `RotatingFileHandlerBuilder` | `rotating_builder.rs` | 134–139   | `state.set_capacity()`  |
+| Builder                      | Module              | Capacity Field Path     |
+| ---------------------------- | ------------------- | ----------------------- |
+| `FileHandlerBuilder`         | `file_builder`      | `state.set_capacity()`  |
+| `StreamHandlerBuilder`       | `stream_builder`    | `common.set_capacity()` |
+| `RotatingFileHandlerBuilder` | `rotating_builder`  | `state.set_capacity()`  |
 
 The remaining duplication is the **macro invocation pattern** (~4 lines each),
 differing only in the field path (`state` vs `common`).
 
 ### Architecture Context
 
-- **`CommonBuilder`** (`common.rs:158–287`): Base configuration struct with
+- **`CommonBuilder`** (in `common` module): Base configuration struct with
   `set_capacity()` method
-- **`FileLikeBuilderState`** (`common.rs:288–433`): Wraps `CommonBuilder`,
+- **`FileLikeBuilderState`** (in `common` module): Wraps `CommonBuilder`,
   delegates `set_capacity()` to `common.set_capacity()`
-- **`builder_methods!`** (`builder_macros.rs:105–597`): Generates Rust
+- **`builder_methods!`** (in `builder_macros` module): Generates Rust
   consuming methods and `#[pymethods]` wrappers from declarative definitions
 
 ### Why the Original Proposal No Longer Applies
@@ -146,7 +149,7 @@ ______________________________________________________________________
 
 - [x] Analyse current codebase state
 - [x] Document current architecture
-- [x] Write execplan
+- [x] Write execution plan
 - [x] Implement changes
 - [x] Run quality gates
 - [x] Commit
