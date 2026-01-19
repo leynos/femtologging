@@ -1,4 +1,4 @@
-# Execution Plan: Refactor PyO3 Capacity Handler (Issue #162)
+# Execution plan: refactor PyO3 capacity handler (issue #162)
 
 PyO3 is the Rust crate providing Python bindings for Rust code.
 
@@ -29,7 +29,7 @@ issue was raised but **the codebase has since evolved**.
 
 ### Actual current state
 
-The `builder_methods!` macro in `builder_macros.rs` now centralises method
+The `builder_methods!` macro in `builder_macros.rs` now centralizes method
 generation for both Rust and Python bindings. Each builder uses a `capacity`
 clause within the macro invocation:
 
