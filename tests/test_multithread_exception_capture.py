@@ -70,6 +70,72 @@ def _raise_thread_error(thread_index: int) -> None:
     raise ThreadSpecificError(thread_index)
 
 
+def _validate_record(record: dict[str, typ.Any], captured_indices: set[int]) -> int:
+    """Validate a single log record and return the thread index.
+
+    Args:
+        record: The log record to validate.
+        captured_indices: Set of already-seen thread indices for duplicate detection.
+
+    Returns:
+        The thread index extracted from this record.
+
+    Raises:
+        AssertionError: If the record fails any validation check.
+
+    """
+    expected_message_prefix = "Caught exception in thread "
+
+    # Verify log level is ERROR
+    assert record["level"] == "ERROR", f"Unexpected level: {record['level']}"
+
+    # Verify message matches expected format
+    message = record["message"]
+    assert message.startswith(expected_message_prefix), (
+        f"Unexpected message format: {message}"
+    )
+    thread_idx_from_message = message[len(expected_message_prefix) :]
+    assert thread_idx_from_message.isdigit(), (
+        f"Thread index not numeric in message: {message}"
+    )
+
+    # Verify exc_info is present
+    assert "exc_info" in record, f"Record missing exc_info: {record}"
+    exc_info = record["exc_info"]
+
+    # Verify exception type
+    assert exc_info["type_name"] == "ThreadSpecificError", (
+        f"Unexpected exception type: {exc_info['type_name']}"
+    )
+
+    # Parse thread index from exception message
+    match = re.search(r"Thread (\d+) exception", exc_info["message"])
+    assert match is not None, (
+        f"Unexpected exception message format: {exc_info['message']}"
+    )
+    thread_idx = int(match.group(1))
+
+    # Check for duplicates (would indicate cross-thread contamination)
+    assert thread_idx not in captured_indices, (
+        f"Duplicate thread index {thread_idx} detected - "
+        "possible cross-thread contamination"
+    )
+
+    # Verify stack frames contain thread_worker
+    assert "frames" in exc_info, f"exc_info missing frames: {exc_info}"
+    functions = [f["function"] for f in exc_info["frames"]]
+    assert "thread_worker" in functions, (
+        f"Stack frames do not contain thread_worker: {functions}"
+    )
+
+    return thread_idx
+
+
+# Barrier timeout in seconds - generous to avoid flaky failures while
+# still detecting true deadlocks in a reasonable time frame
+BARRIER_TIMEOUT_SECONDS = 30.0
+
+
 def thread_worker(
     thread_index: int,
     start_barrier: threading.Barrier,
@@ -84,9 +150,12 @@ def thread_worker(
         end_barrier: Barrier to synchronise thread completion.
         logger: Logger instance to use for exception capture.
 
+    Raises:
+        threading.BrokenBarrierError: If a barrier wait times out or is broken.
+
     """
-    # Wait for all threads to be ready
-    start_barrier.wait()
+    # Wait for all threads to be ready (timeout prevents permanent hang)
+    start_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
 
     # Raise and capture a thread-specific exception
     try:
@@ -94,8 +163,8 @@ def thread_worker(
     except ThreadSpecificError:
         logger.log("ERROR", f"Caught exception in thread {thread_index}", exc_info=True)
 
-    # Wait for all threads to complete logging
-    end_barrier.wait()
+    # Wait for all threads to complete logging (timeout prevents permanent hang)
+    end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
 
 
 @pytest.mark.parametrize("thread_count", [2, 10, 50])
@@ -130,14 +199,22 @@ def test_multithread_exception_capture(thread_count: int) -> None:
     for t in threads:
         t.start()
 
-    # Release all threads to start together
-    start_barrier.wait()
+    # Release all threads to start together (timeout prevents permanent hang)
+    try:
+        start_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
+    except threading.BrokenBarrierError as exc:
+        pytest.fail(f"Start barrier timed out or was broken: {exc}")
 
-    # Wait for all threads to complete logging
-    end_barrier.wait()
+    # Wait for all threads to complete logging (timeout prevents permanent hang)
+    try:
+        end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
+    except threading.BrokenBarrierError as exc:
+        pytest.fail(f"End barrier timed out or was broken: {exc}")
 
     for t in threads:
-        t.join()
+        t.join(timeout=BARRIER_TIMEOUT_SECONDS)
+        if t.is_alive():
+            pytest.fail(f"Thread {t.name} failed to join within timeout")
 
     # Delete logger to ensure worker thread flushes all records
     del logger
@@ -149,37 +226,9 @@ def test_multithread_exception_capture(thread_count: int) -> None:
 
     # Extract and validate thread indices from captured records
     captured_indices: set[int] = set()
-
     for record in handler.records:
-        # Verify exc_info is present
-        assert "exc_info" in record, f"Record missing exc_info: {record}"
-        exc_info = record["exc_info"]
-
-        # Verify exception type
-        assert exc_info["type_name"] == "ThreadSpecificError", (
-            f"Unexpected exception type: {exc_info['type_name']}"
-        )
-
-        # Parse thread index from exception message
-        match = re.search(r"Thread (\d+) exception", exc_info["message"])
-        assert match is not None, (
-            f"Unexpected exception message format: {exc_info['message']}"
-        )
-        thread_idx = int(match.group(1))
-
-        # Check for duplicates (would indicate cross-thread contamination)
-        assert thread_idx not in captured_indices, (
-            f"Duplicate thread index {thread_idx} detected - "
-            "possible cross-thread contamination"
-        )
+        thread_idx = _validate_record(record, captured_indices)
         captured_indices.add(thread_idx)
-
-        # Verify stack frames contain thread_worker
-        assert "frames" in exc_info, f"exc_info missing frames: {exc_info}"
-        functions = [f["function"] for f in exc_info["frames"]]
-        assert "thread_worker" in functions, (
-            f"Stack frames do not contain thread_worker: {functions}"
-        )
 
     # All thread indices should be accounted for
     expected_indices = set(range(thread_count))
