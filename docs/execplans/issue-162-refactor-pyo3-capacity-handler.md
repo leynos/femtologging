@@ -2,7 +2,7 @@
 
 PyO3 is the Rust crate providing Python bindings for Rust code.
 
-## Big Picture
+## Big picture
 
 **Issue:** [#162](https://github.com/leynos/femtologging/issues/162) — DRY
 (Don't Repeat Yourself) violation in `py_with_capacity` method across handler
@@ -19,19 +19,21 @@ changes.
 
 ______________________________________________________________________
 
-## Current State Analysis
+## Current state analysis
 
-### What the Issue Describes (Outdated)
+### What the issue describes (outdated)
 
 The issue describes duplicate `py_with_capacity` method implementations in
 `FileHandlerBuilder` and `StreamHandlerBuilder`. This was accurate when the
 issue was raised but **the codebase has since evolved**.
 
-### Actual Current State
+### Actual current state
 
 The `builder_methods!` macro in `builder_macros.rs` now centralises method
 generation for both Rust and Python bindings. Each builder uses a `capacity`
 clause within the macro invocation:
+
+Table: Builder capacity clause mapping
 
 | Builder                      | Module              | Capacity Field Path     |
 | ---------------------------- | ------------------- | ----------------------- |
@@ -42,7 +44,7 @@ clause within the macro invocation:
 The remaining duplication is the **macro invocation pattern** (~4 lines each),
 differing only in the field path (`state` vs `common`).
 
-### Architecture Context
+### Architecture context
 
 - **`CommonBuilder`** (in `common` module): Base configuration struct with
   `set_capacity()` method
@@ -51,7 +53,7 @@ differing only in the field path (`state` vs `common`).
 - **`builder_methods!`** (in `builder_macros` module): Generates Rust
   consuming methods and `#[pymethods]` wrappers from declarative definitions
 
-### Why the Original Proposal No Longer Applies
+### Why the original proposal no longer applies
 
 The issue proposes creating a `#[macro_export]` macro named
 `py_common_with_capacity`. However:
@@ -62,7 +64,7 @@ The issue proposes creating a `#[macro_export]` macro named
 
 ______________________________________________________________________
 
-## Recommended Approach: Field Naming Unification
+## Recommended approach: field naming unification
 
 Since `FileLikeBuilderState` delegates to `CommonBuilder`, unify field naming
 so all builders use the same path:
@@ -86,7 +88,7 @@ so all builders use the same path:
 - Semantic: `FileLikeBuilderState` contains more than "common" fields
   (overflow policy, flush interval)
 
-### Alternative: Keep Current State
+### Alternative: keep current state
 
 Given the macro infrastructure already handles most of the DRY concern, the
 remaining ~4-line duplication per builder may be acceptable. The refactoring is
@@ -104,9 +106,9 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Implementation Tasks
+## Implementation tasks
 
-### Phase 1: Field Renaming
+### Phase 1: field renaming
 
 - [x] Rename `FileHandlerBuilder.state` to `FileHandlerBuilder.common`
 - [x] Update all `self.state.` references in `file_builder.rs`
@@ -115,20 +117,22 @@ ______________________________________________________________________
 - [x] Update all `self.state.` references in `rotating_builder.rs`
 - [x] Update `builder_methods!` capacity clauses to use `common`
 
-### Phase 2: Verification
+### Phase 2: verification
 
 - [x] Run `make test` — all tests pass
 - [x] Run `make lint` — no warnings
 - [x] Run `make fmt` — formatting clean
 - [x] Verify Python bindings: `with_capacity` method works identically
 
-### Phase 3: Commit
+### Phase 3: commit
 
 - [x] Commit with message referencing issue #162
 
 ______________________________________________________________________
 
-## Files to Modify
+## Files to modify
+
+Table: Files requiring modification
 
 | File                                              | Changes                                        |
 | ------------------------------------------------- | ---------------------------------------------- |
@@ -137,7 +141,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Acceptance Criteria (from Issue #162)
+## Acceptance criteria (from issue #162)
 
 - [x] Both builders use consistent field naming
 - [x] All existing tests continue to pass
