@@ -1,5 +1,7 @@
 # ExecPlan: Refactor Exception Formatter (Issues #296 and #297)
 
+Table: Execution plan metadata
+
 | Field          | Value                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------- |
 | **Status**     | Complete                                                                                                             |
@@ -10,7 +12,7 @@
 
 ______________________________________________________________________
 
-## Big Picture
+## Big picture
 
 Introduce an `ExceptionFormat` trait that centralizes formatting logic for
 exception payloads, ensuring schema evolution requires changes in one place
@@ -27,7 +29,7 @@ ______________________________________________________________________
 
 ## Design
 
-### Trait Definition
+### Trait definition
 
 ```rust
 /// Trait for types that can be formatted as human-readable exception output.
@@ -42,7 +44,7 @@ pub trait ExceptionFormat {
 }
 ```
 
-### Why a Custom Trait (Not `Display`)
+### Why a custom trait (not `Display`)
 
 1. `Display` is for single-line, user-facing representations
 2. Exception formatting is multi-line and complex
@@ -58,7 +60,7 @@ impl ExceptionFormat for StackTracePayload { ... }
 impl ExceptionFormat for ExceptionPayload { ... }
 ```
 
-### Backward Compatibility
+### Backward compatibility
 
 Existing public functions delegate to trait methods:
 
@@ -70,7 +72,9 @@ pub fn format_exception_payload(payload: &ExceptionPayload) -> String {
 
 ______________________________________________________________________
 
-## File Changes Summary
+## File changes summary
+
+Table: File changes
 
 | File                                        | Action | Description                       |
 | ------------------------------------------- | ------ | --------------------------------- |
@@ -80,7 +84,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Verification Checklist
+## Verification checklist
 
 - [x] `ExceptionFormat` trait defined with rustdoc
 - [x] Trait implemented for `StackFrame`, `StackTracePayload`,
@@ -96,7 +100,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Notes on Issue #296 (Module Organisation)
+## Notes on issue #296 (module organization)
 
 Issue #296 requested moving exception-formatting helpers to a dedicated module.
 Analysis shows:
@@ -108,12 +112,14 @@ Analysis shows:
 - No further module splitting is necessary
 
 The trait addition (issue #297) addresses the "schema coupling" concern by
-providing a single entry point for formatting logic. The module organisation is
+providing a single entry point for formatting logic. The module organization is
 already correct.
 
 ______________________________________________________________________
 
-## Progress Log
+## Progress log
+
+Table: Progress log
 
 | Date       | Status   | Notes                               |
 | ---------- | -------- | ----------------------------------- |
