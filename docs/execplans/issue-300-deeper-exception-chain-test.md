@@ -1,4 +1,4 @@
-# Add Deep Exception Chain Tests (Issue #300)
+# Add deep exception chain tests (Issue #300)
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
@@ -11,12 +11,12 @@ Closes: <https://github.com/leynos/femtologging/issues/300> Related:
 
 ## Purpose / Big Picture
 
-The femtologging library captures and serialises Python exception chains
+The femtologging library captures and serializes Python exception chains
 (cause/context relationships) into structured `ExceptionPayload` objects for
 logging. The current test suite only validates chains up to 10 levels deep.
 This plan adds tests for deeper chains (100 levels) to verify:
 
-1. Serialisation and deserialisation remain correct at depth
+1. Serialization and deserialization remain correct at depth
 2. No stack overflow or recursion blow-up occurs
 3. Performance remains acceptable (no quadratic time complexity)
 
@@ -50,7 +50,7 @@ nested exceptions knowing the behaviour is tested and bounded.
   is modest) Mitigation: Test explicitly; if overflow occurs, document and
   raise issue for iterative rewrite
 
-- Risk: Deep chain serialisation exhibits quadratic time
+- Risk: Deep chain serialization exhibits quadratic time
   Severity: medium Likelihood: low (current code is linear) Mitigation: Add
   timing assertion to Rust test; fail if > 1 second for 100 levels
 
@@ -82,16 +82,16 @@ nested exceptions knowing the behaviour is tested and bounded.
 
 ## Decision Log
 
-- Decision: Use depth of 100 levels for deep chain tests
+- Decision: Use depth of 100 levels for deep chain tests.
   Rationale: 100 is 10x the current test depth, meaningful for detecting
   quadratic behaviour, yet small enough to avoid CI timeouts or memory issues.
   The issue suggested 50–200; 100 is a reasonable middle ground. Date/Author:
-  2026-01-18/Claude
+  2026-01-18/Claude.
 
-- Decision: Add timing assertion (< 1 second) rather than formal benchmarks
+- Decision: Add timing assertion (< 1 second) rather than formal benchmarks.
   Rationale: Full benchmarking infrastructure is out of scope; a simple timing
   check catches gross regressions without adding dependencies. Date/Author:
-  2026-01-18/Claude
+  2026-01-18/Claude.
 
 ## Outcomes & Retrospective
 
@@ -105,7 +105,7 @@ Implementation completed successfully. All five new tests pass:
 
 Key outcomes:
 
-1. Serialisation/deserialisation works correctly for 100-level chains
+1. Serialization/deserialization works correctly for 100-level chains
 2. No stack overflow in formatter or filtering code
 3. Timing assertion confirms linear performance (< 1 second for 100 levels)
 4. Recursive filtering correctly traverses deep cause chains
@@ -124,7 +124,7 @@ well; no code changes were required to the core library—only tests were added.
 The femtologging library is a Rust-based logging framework with Python bindings
 via PyO3. Exception handling is a core feature, capturing Python's exception
 chains (`__cause__` and `__context__`) into structured `ExceptionPayload`
-objects for serialisation.
+objects for serialization.
 
 Key files for this task:
 
@@ -141,9 +141,9 @@ Key files for this task:
   `make_exception_payload()`
 
 The existing `deep_cause_chain_serializes()` test creates a chain of 10 nested
-causes, serialises to JSON, deserialises, and verifies the chain depth. Our
-task is to extend this pattern to 100 levels and add coverage for context
-chains, mixed chains, and formatting.
+causes, serializes to JSON, deserializes, and verifies the chain depth. Extend
+this pattern to 100 levels and add coverage for context chains, mixed chains,
+and formatting.
 
 ## Plan of Work
 
@@ -399,8 +399,8 @@ Expected test output (abbreviated):
 
 No new dependencies required. Uses existing:
 
-- `rstest` for Rust test parameterisation
-- `serde_json` for JSON serialisation
+- `rstest` for Rust test parameterization
+- `serde_json` for JSON serialization
 - `std::time::Instant` for timing (already available in std)
 - `femtologging.filter_frames` for Python filtering
 
