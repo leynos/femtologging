@@ -8,7 +8,7 @@ It spawns N threads, raises exceptions in each, captures payloads, and asserts:
 2. No panics during concurrent exception capture.
 3. Payload integrity (correct exception type, message, and stack frames).
 
-The test uses threading.Barrier for deterministic synchronisation, avoiding
+The test uses threading.Barrier for deterministic synchronization, avoiding
 flaky timing assumptions.
 
 Related to: https://github.com/leynos/femtologging/issues/299
@@ -27,39 +27,66 @@ from femtologging import FemtoLogger
 pytestmark = [pytest.mark.concurrency, pytest.mark.send_sync]
 
 
-class ThreadSpecificError(Exception):
-    """Exception type used to identify thread-specific exceptions.
+class StackFrameDict(typ.TypedDict):
+    """Stack frame structure within exception payloads."""
 
-    Args:
-        thread_index: The index of the thread that raised this exception.
+    filename: str
+    lineno: int
+    function: str
+
+
+class ExceptionInfoDict(typ.TypedDict):
+    """Exception info payload structure."""
+
+    schema_version: int
+    type_name: str
+    message: str
+    frames: list[StackFrameDict]
+
+
+class LogRecordDict(typ.TypedDict):
+    """Log record structure received by handle_record."""
+
+    logger: str
+    level: str
+    message: str
+    exc_info: typ.NotRequired[ExceptionInfoDict]
+
+
+class ThreadSpecificError(Exception):
+    """Exception for identifying thread-specific exceptions in tests.
+
+    Parameters
+    ----------
+    thread_index : int
+        The index of the thread that raised this exception.
 
     """
 
     def __init__(self, thread_index: int) -> None:
-        """Initialise with the thread index."""
+        """Initialize with the thread index."""
         self.thread_index = thread_index
         super().__init__(f"Thread {thread_index} exception")
 
 
 class RecordCollectingHandler:
-    """Handler that uses handle_record for structured payload access.
+    """Handler that collects structured log records for validation.
 
-    This handler collects all log records with their full structured data,
-    including exception payloads, for later validation.
+    This handler uses handle_record to receive full structured payloads,
+    including exception data, for later test assertions.
+
     """
 
     def __init__(self) -> None:
-        """Initialise an empty record buffer with thread-safe access."""
-        self.records: list[dict[str, typ.Any]] = []
+        """Initialize an empty record buffer with thread-safe access."""
+        self.records: list[LogRecordDict] = []
         self._lock = threading.Lock()
 
     @staticmethod
     def handle(_logger: str, _level: str, _message: str) -> None:
-        """Fallback handle method (required by FemtoLogger validation)."""
-        # Should not be called when handle_record is present
-        return
+        """Fallback handle method required by FemtoLogger validation."""
 
-    def handle_record(self, record: dict[str, typ.Any]) -> None:
+    def handle_record(self, record: LogRecordDict) -> None:
         """Collect full records for later assertions."""
         with self._lock:
             self.records.append(record)
@@ -70,20 +97,8 @@ def _raise_thread_error(thread_index: int) -> None:
     raise ThreadSpecificError(thread_index)
 
 
-def _validate_record(record: dict[str, typ.Any], captured_indices: set[int]) -> int:
-    """Validate a single log record and return the thread index.
-
-    Args:
-        record: The log record to validate.
-        captured_indices: Set of already-seen thread indices for duplicate detection.
-
-    Returns:
-        The thread index extracted from this record.
-
-    Raises:
-        AssertionError: If the record fails any validation check.
-
-    """
+def _validate_record(record: LogRecordDict, captured_indices: set[int]) -> int:
+    """Validate a single log record and return the thread index."""
     expected_message_prefix = "Caught exception in thread "
 
     # Verify log level is ERROR
@@ -142,16 +157,23 @@ def thread_worker(
     end_barrier: threading.Barrier,
     logger: FemtoLogger,
 ) -> None:
-    """Worker function that raises and logs a thread-specific exception.
+    """Execute a worker that raises and logs a thread-specific exception.
 
-    Args:
-        thread_index: Unique index identifying this thread.
-        start_barrier: Barrier to synchronise thread startup.
-        end_barrier: Barrier to synchronise thread completion.
-        logger: Logger instance to use for exception capture.
+    Parameters
+    ----------
+    thread_index : int
+        Unique index identifying this thread.
+    start_barrier : threading.Barrier
+        Barrier to synchronize thread startup.
+    end_barrier : threading.Barrier
+        Barrier to synchronize thread completion.
+    logger : FemtoLogger
+        Logger instance to use for exception capture.
 
-    Raises:
-        threading.BrokenBarrierError: If a barrier wait times out or is broken.
+    Raises
+    ------
+    threading.BrokenBarrierError
+        If a barrier wait times out or is broken.
 
     """
     # Wait for all threads to be ready (timeout prevents permanent hang)
@@ -167,72 +189,78 @@ def thread_worker(
     end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
 
 
-@pytest.mark.parametrize("thread_count", [2, 10, 50])
-def test_multithread_exception_capture(thread_count: int) -> None:
-    """Exception capture should maintain payload integrity across threads.
+class TestMultithreadExceptionCapture:
+    """Test suite for multi-threaded exception capture validation."""
 
-    This test spawns multiple threads, each raising a unique exception. It
-    validates that:
+    @pytest.mark.parametrize("thread_count", [2, 10, 50])
+    def test_multithread_exception_capture(  # noqa: PLR6301 - method in class per test guidelines
+        self,
+        thread_count: int,
+    ) -> None:
+        """Exception capture should maintain payload integrity across threads.
 
-    1. All exceptions are captured (exactly thread_count records).
-    2. Each payload contains the correct thread's exception message.
-    3. No payload contains data from another thread (no contamination).
-    4. Each payload's stack frames include the thread_worker function.
-    """
-    logger = FemtoLogger("multithread_test")
-    handler = RecordCollectingHandler()
-    logger.add_handler(handler)
+        This test spawns multiple threads, each raising a unique exception. It
+        validates that:
 
-    # Barriers include main thread (+1) to ensure we don't validate early
-    start_barrier = threading.Barrier(thread_count + 1)
-    end_barrier = threading.Barrier(thread_count + 1)
+        1. All exceptions are captured (exactly thread_count records).
+        2. Each payload contains the correct thread's exception message.
+        3. No payload contains data from another thread (no contamination).
+        4. Each payload's stack frames include the thread_worker function.
+        """
+        logger = FemtoLogger("multithread_test")
+        handler = RecordCollectingHandler()
+        logger.add_handler(handler)
 
-    # Spawn worker threads
-    threads = [
-        threading.Thread(
-            target=thread_worker,
-            args=(i, start_barrier, end_barrier, logger),
+        # Barriers include main thread (+1) to ensure we don't validate early
+        start_barrier = threading.Barrier(thread_count + 1)
+        end_barrier = threading.Barrier(thread_count + 1)
+
+        # Spawn worker threads
+        threads = [
+            threading.Thread(
+                target=thread_worker,
+                args=(i, start_barrier, end_barrier, logger),
+            )
+            for i in range(thread_count)
+        ]
+
+        for t in threads:
+            t.start()
+
+        # Release all threads to start together (timeout prevents permanent hang)
+        try:
+            start_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
+        except threading.BrokenBarrierError as exc:
+            pytest.fail(f"Start barrier timed out or was broken: {exc}")
+
+        # Wait for all threads to complete logging (timeout prevents permanent hang)
+        try:
+            end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
+        except threading.BrokenBarrierError as exc:
+            pytest.fail(f"End barrier timed out or was broken: {exc}")
+
+        for t in threads:
+            t.join(timeout=BARRIER_TIMEOUT_SECONDS)
+            if t.is_alive():
+                pytest.fail(f"Thread {t.name} failed to join within timeout")
+
+        # Delete logger to ensure worker thread flushes all records
+        del logger
+
+        # Validate captured records
+        assert len(handler.records) == thread_count, (
+            f"Expected {thread_count} records, got {len(handler.records)}"
         )
-        for i in range(thread_count)
-    ]
 
-    for t in threads:
-        t.start()
+        # Extract and validate thread indices from captured records
+        captured_indices: set[int] = set()
+        for record in handler.records:
+            thread_idx = _validate_record(record, captured_indices)
+            captured_indices.add(thread_idx)
 
-    # Release all threads to start together (timeout prevents permanent hang)
-    try:
-        start_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
-    except threading.BrokenBarrierError as exc:
-        pytest.fail(f"Start barrier timed out or was broken: {exc}")
-
-    # Wait for all threads to complete logging (timeout prevents permanent hang)
-    try:
-        end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
-    except threading.BrokenBarrierError as exc:
-        pytest.fail(f"End barrier timed out or was broken: {exc}")
-
-    for t in threads:
-        t.join(timeout=BARRIER_TIMEOUT_SECONDS)
-        if t.is_alive():
-            pytest.fail(f"Thread {t.name} failed to join within timeout")
-
-    # Delete logger to ensure worker thread flushes all records
-    del logger
-
-    # Validate captured records
-    assert len(handler.records) == thread_count, (
-        f"Expected {thread_count} records, got {len(handler.records)}"
-    )
-
-    # Extract and validate thread indices from captured records
-    captured_indices: set[int] = set()
-    for record in handler.records:
-        thread_idx = _validate_record(record, captured_indices)
-        captured_indices.add(thread_idx)
-
-    # All thread indices should be accounted for
-    expected_indices = set(range(thread_count))
-    assert captured_indices == expected_indices, (
-        f"Missing thread indices: {expected_indices - captured_indices}, "
-        f"unexpected indices: {captured_indices - expected_indices}"
-    )
+        # All thread indices should be accounted for
+        expected_indices = set(range(thread_count))
+        assert captured_indices == expected_indices, (
+            f"Missing thread indices: {expected_indices - captured_indices}, "
+            f"unexpected indices: {captured_indices - expected_indices}"
+        )

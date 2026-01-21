@@ -6,8 +6,8 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 
 Status: COMPLETE
 
-Issue: <https://github.com/leynos/femtologging/issues/299>
-Related PR: <https://github.com/leynos/femtologging/pull/286>
+Issue: <https://github.com/leynos/femtologging/issues/299> Related PR:
+<https://github.com/leynos/femtologging/pull/286>
 
 ## Purpose / Big Picture
 
@@ -31,10 +31,10 @@ asserts payload integrity.
   must exercise existing public APIs without requiring changes to
   `traceback_capture.rs`, `exception_schema/`, or `logger/`.
 - **Python test**: The test must be written in Python (not Rust) since the
-  exception capture mechanism is exercised through the Python logging interface.
-  This matches the existing `test_send_sync.py` pattern.
+  exception capture mechanism is exercised through the Python logging
+  interface. This matches the existing `test_send_sync.py` pattern.
 - **Deterministic execution**: The test must not use `time.sleep()` for
-  synchronisation. Use barriers, events, or condition variables.
+  synchronization. Use barriers, events, or condition variables.
 - **Bounded time**: The test must complete within pytest's 30-second timeout.
 - **No flaky timing assumptions**: The test must not assume any particular
   ordering of thread execution or timing relationships.
@@ -51,33 +51,30 @@ asserts payload integrity.
 ## Risks
 
 - Risk: Thread scheduling non-determinism could make the test flaky.
-  Severity: medium
-  Likelihood: medium
-  Mitigation: Use `threading.Barrier` to ensure all threads start together and
-  complete together. Validate payload content rather than timing.
+  Severity: medium Likelihood: medium Mitigation: Use `threading.Barrier` to
+  ensure all threads start together and complete together. Validate payload
+  content rather than timing.
 
-- Risk: Python GIL might serialise exception capture, masking real concurrency
-  issues.
-  Severity: low
-  Likelihood: high (GIL does serialise Python execution)
-  Mitigation: This is acceptable. The GIL ensures exception capture is
-  thread-safe at the Python level. The test validates that the Rust extension
-  correctly handles the GIL-held capture and that payloads don't leak between
-  threads. The existing architecture (capture on caller thread with GIL held,
-  worker threads GIL-free) is designed for this.
+- Risk: Python Global Interpreter Lock (GIL) might serialize exception capture,
+  masking real concurrency issues. Severity: low Likelihood: high (GIL does
+  serialize Python execution) Mitigation: This is acceptable. The GIL ensures
+  exception capture is thread-safe at the Python level. The test validates that
+  the Rust extension correctly handles the GIL-held capture and that payloads
+  don't leak between threads. The existing architecture (capture on caller
+  thread with GIL held, worker threads GIL-free) is designed for this.
 
 - Risk: Exception capture might interact with pytest's exception handling.
-  Severity: low
-  Likelihood: low
-  Mitigation: Capture exceptions explicitly using `sys.exc_info()` within
-  try/except blocks rather than relying on pytest fixtures.
+  Severity: low Likelihood: low Mitigation: Capture exceptions explicitly using
+  `sys.exc_info()` within try/except blocks rather than relying on pytest
+  fixtures.
 
 ## Progress
 
-- [x] (2026-01-18) Create test file `tests/test_multithread_exception_capture.py`.
+- [x] (2026-01-18) Create test file
+      `tests/test_multithread_exception_capture.py`.
 - [x] (2026-01-18) Implement thread worker function that raises a unique
       exception.
-- [x] (2026-01-18) Implement barrier-based synchronisation for deterministic
+- [x] (2026-01-18) Implement barrier-based synchronization for deterministic
       startup.
 - [x] (2026-01-18) Implement payload capture and validation.
 - [x] (2026-01-18) Add assertions for no cross-thread contamination.
@@ -91,13 +88,13 @@ asserts payload integrity.
 ## Surprises & Discoveries
 
 - Observation: Lint rules required exception class to be named with `Error`
-  suffix rather than `Exception` suffix.
-  Evidence: ruff N818 error on `ThreadSpecificException`.
-  Impact: Renamed to `ThreadSpecificError` to comply with project style.
+  suffix rather than `Exception` suffix. Evidence: ruff N818 error on
+  `ThreadSpecificException`. Impact: Renamed to `ThreadSpecificError` to comply
+  with project style.
 
 - Observation: Lint rules required abstracting `raise` to inner function.
-  Evidence: ruff TRY301 error for raising directly in try block.
-  Impact: Created `_raise_thread_error()` helper function.
+  Evidence: ruff TRY301 error for raising directly in try block. Impact:
+  Created `_raise_thread_error()` helper function.
 
 ## Decision Log
 
@@ -105,28 +102,25 @@ asserts payload integrity.
   Rationale: The exception capture mechanism is exercised through Python's
   `exc_info` parameter to logging calls. A Python test exercises the full
   integration path including PyO3 bindings. This matches the existing
-  `test_send_sync.py` pattern for concurrency testing.
-  Date/Author: Initial plan.
+  `test_send_sync.py` pattern for concurrency testing. Date/Author: Initial
+  plan.
 
-- Decision: Use `threading.Barrier` for synchronisation.
-  Rationale: Barriers provide deterministic synchronisation without sleep-based
+- Decision: Use `threading.Barrier` for synchronization.
+  Rationale: Barriers provide deterministic synchronization without sleep-based
   timing. All threads wait at the barrier before proceeding, ensuring they
   start the exception-raising phase together. A second barrier ensures all
-  threads complete before validation.
-  Date/Author: Initial plan.
+  threads complete before validation. Date/Author: Initial plan.
 
 - Decision: Use unique exception messages per thread for identification.
   Rationale: Each thread raises an exception with a message containing its
   thread index (e.g., "Thread 5 exception"). This allows the test to verify
   that each captured payload contains only the correct thread's data, detecting
-  any cross-thread contamination.
-  Date/Author: Initial plan.
+  any cross-thread contamination. Date/Author: Initial plan.
 
 - Decision: Use custom `ThreadSpecificError` exception class.
   Rationale: A custom exception type makes it easy to verify the captured
   `type_name` field and ensures the test doesn't accidentally catch unrelated
-  exceptions.
-  Date/Author: Implementation.
+  exceptions. Date/Author: Implementation.
 
 ## Outcomes & Retrospective
 
@@ -135,7 +129,7 @@ asserts payload integrity.
 - Created `tests/test_multithread_exception_capture.py` with 190 lines of code.
 - Test exercises 2, 10, and 50 concurrent threads.
 - Test completes in ~0.07 seconds (well under 30-second timeout).
-- Test uses deterministic `threading.Barrier` synchronisation (no `time.sleep`).
+- Test uses deterministic `threading.Barrier` synchronization (no `time.sleep`).
 - All 289 tests pass including the new test.
 - Lint and format checks pass.
 
@@ -145,7 +139,7 @@ asserts payload integrity.
   patterns (Error suffix, abstract raise, no f-strings in exceptions).
 - The `handle_record` structured interface provides clean access to exception
   payloads for testing.
-- Barrier-based synchronisation is effective for deterministic concurrent tests.
+- Barrier-based synchronization is effective for deterministic concurrent tests.
 
 ## Context and Orientation
 
@@ -170,7 +164,7 @@ Relevant existing tests:
 
 - `tests/test_send_sync.py`: Demonstrates the pattern for multi-threaded Python
   tests. Uses `pytest.mark.concurrency` and `pytest.mark.send_sync` markers.
-  Parametrises thread counts (1, 10, 100).
+  Parametrizes thread counts (1, 10, 100).
 
 - `rust_extension/src/handlers/rotating/tests/concurrency.rs`: Demonstrates
   Rust-side concurrency testing patterns using `AtomicBool`, `Arc<Mutex<>>`,
@@ -203,11 +197,11 @@ Validation: File exists and imports succeed.
 
 Implement a worker function that:
 
-1. Waits at a `threading.Barrier` for synchronised start.
+1. Waits at a `threading.Barrier` for synchronized start.
 2. Raises a `ThreadSpecificError` with a unique message containing the
    thread index (e.g., `f"Thread {thread_index} exception"`).
 3. Captures the exception using a logging call with `exc_info=True`.
-4. Waits at a second barrier for synchronised completion.
+4. Waits at a second barrier for synchronized completion.
 
 The function signature:
 
@@ -229,7 +223,7 @@ Implement `test_multithread_exception_capture` that:
 1. Creates a `FemtoLogger` with a `RecordCollectingHandler` (using
    `handle_record` to receive structured payloads).
 2. Creates barriers for N+1 parties (N threads + main thread waiting).
-3. Spawns N threads (parametrised: 2, 10, 50) each running the worker function.
+3. Spawns N threads (parametrized: 2, 10, 50) each running the worker function.
 4. After all threads complete (via barrier), deletes the logger to flush.
 5. Validates:
    - Exactly N records were captured.
@@ -238,7 +232,7 @@ Implement `test_multithread_exception_capture` that:
    - Each record's `exc_info["frames"]` contains `thread_worker`.
    - All N thread indices are accounted for (no cross-thread contamination).
 
-The test must be parametrised using
+The test must be parametrized using
 `@pytest.mark.parametrize("thread_count", [2, 10, 50])`.
 
 Validation: `pytest tests/test_multithread_exception_capture.py -v` passes.
@@ -268,7 +262,7 @@ Working directory: `/root/repo`
 
        uv run pytest tests/test_multithread_exception_capture.py -v
 
-   Expected output: All tests pass, showing parametrised runs for 2, 10, and 50
+   Expected output: All tests pass, showing parametrized runs for 2, 10, and 50
    threads.
 
 5. Run the full test suite:
@@ -303,7 +297,7 @@ The test is considered complete when:
 3. `make fmt` produces no changes.
 4. The test exercises at least 2, 10, and 50 concurrent threads.
 5. The test completes within the pytest 30-second timeout.
-6. The test does not use `time.sleep()` for synchronisation.
+6. The test does not use `time.sleep()` for synchronization.
 7. The test validates that each thread's exception payload contains only that
    thread's data (exception message, stack frames).
 
@@ -320,7 +314,7 @@ Quality method:
 ## Idempotence and Recovery
 
 The test is fully idempotent. It creates no persistent state. If the test
-fails, simply re-run it. The barriers ensure deterministic synchronisation
+fails, simply re-run it. The barriers ensure deterministic synchronization
 regardless of thread scheduling.
 
 ## Artifacts and Notes
@@ -374,13 +368,13 @@ Record structure received by `handle_record`:
                     "filename": str,
                     "lineno": int,
                     "function": str,  # Function name for validation
-                    ...
+                    …
                 },
-                ...
+                …
             ],
-            ...
+            …
         },
-        ...
+        …
     }
 
 The test validates:
