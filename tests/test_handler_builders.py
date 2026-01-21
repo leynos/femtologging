@@ -198,5 +198,9 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
 
     # The error message now consolidates both failure causes inline
     error_message = str(excinfo.value)
-    assert "invalid formatter" in error_message
-    assert "expected a string identifier or callable" in error_message
+    assert "invalid formatter" in error_message, (
+        "formatter error must mention invalid formatter"
+    )
+    assert "expected a string identifier or callable" in error_message, (
+        "formatter error must mention expected formatter types"
+    )

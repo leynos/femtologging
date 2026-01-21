@@ -1,4 +1,4 @@
-# Reorganise Python-Dependent Modules Behind `feature="python"` Boundaries
+# Reorganize Python-Dependent Modules Behind `feature="python"` Boundaries
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
@@ -73,9 +73,9 @@ Observable outcomes:
 - [x] Phase 1: Consolidate handler Python bindings
   - [x] Create `handlers/common/python.rs` for `PyOverflowPolicy`
   - [x] Create `handlers/rotating/python_bindings.rs` for `HandlerOptions`
-  - [~] Create `handlers/stream_builder/python_bindings.rs` (not needed - already well-structured)
-  - [~] Create `handlers/file_builder/python_bindings.rs` (not needed - already well-structured)
-  - [~] Create `handlers/rotating_builder/python_bindings.rs` (not needed - already well-structured)
+  - [~] Create `handlers/stream_builder/python_bindings.rs` (not needed — already well-structured)
+  - [~] Create `handlers/file_builder/python_bindings.rs` (not needed — already well-structured)
+  - [~] Create `handlers/rotating_builder/python_bindings.rs` (not needed — already well-structured)
 - [x] Phase 2: Consolidate lib.rs Python exports
   - [~] Create `python_exports.rs` for Python-only re-exports (merged into python_module.rs)
   - [x] Move `add_python_bindings()` to dedicated module (`python_module.rs`)
@@ -97,7 +97,7 @@ Observable outcomes:
 - Several builder modules (stream_builder, file_builder, rotating_builder) were
   already well-structured and didn't require the additional `python_bindings.rs`
   submodules originally planned. The consolidation focused on the areas with
-  highest annotation density.
+  the highest annotation density.
 
 - The annotation count reduction (116 → 91) is less than originally targeted
   (~40-50) because many annotations are inherently required for PyO3 attribute
@@ -121,11 +121,11 @@ Observable outcomes:
 
 ## Outcomes & Retrospective
 
-**Status: COMPLETED**
+### Status: COMPLETED
 
 ### Summary
 
-Successfully reorganised Python-dependent modules behind `feature="python"`
+Successfully reorganized Python-dependent modules behind `feature="python"`
 boundaries. The work consolidated scattered conditional compilation into
 dedicated submodules following existing patterns in the codebase.
 
@@ -407,7 +407,7 @@ Expected transcript after completion:
 
 ## Idempotence and Recovery
 
-Each step is a file reorganisation that can be reverted with `git checkout`.
+Each step is a file reorganization that can be reverted with `git checkout`.
 If a step breaks the build:
 
 1. Run `git diff` to see changes
@@ -472,4 +472,4 @@ Key types that must remain accessible after refactoring:
 - `crate::handlers::RotatingFileHandlerBuilder` (public)
 
 All `#[pyclass]` and `#[pymethods]` types must be registered in
-`_femtologging_rs()` module initialiser.
+`_femtologging_rs()` module initializer.
