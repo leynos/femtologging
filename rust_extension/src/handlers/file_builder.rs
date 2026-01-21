@@ -81,7 +81,7 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide an interval greater than zero.",
+                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide an interval greater than zero. Values exceeding `usize::MAX` on the current platform are rejected.",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
@@ -89,11 +89,10 @@ builder_methods! {
                 rust_args: (interval: NonZeroU64),
                 py_args: (interval: u64),
                 py_prelude: {
-                    let interval = NonZeroU64::new(interval).ok_or_else(|| {
-                        PyValueError::new_err(
-                            "flush_record_interval must be greater than zero",
-                        )
-                    })?;
+                    let interval = py_flush_record_interval_to_nonzero(
+                        interval,
+                        "flush_record_interval",
+                    )?;
                 },
                 self_ident: builder,
                 body: {

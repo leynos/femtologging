@@ -17,8 +17,8 @@ typing."
 
 The semantic difference is documented in `docs/configuration-design.md` lines
 282–286 and is by design: file handlers flush after N records written, stream
-handlers flush operations block for a timeout period. The issue is the type
-inconsistency (`usize` vs `u64`), not the semantic difference.
+handlers perform flush operations that block for a timeout period. The issue is
+the type inconsistency (`usize` vs `u64`), not the semantic difference.
 
 ______________________________________________________________________
 
@@ -30,8 +30,7 @@ ______________________________________________________________________
 2. **Semantic clarity:** Method names already convey their purpose (`_interval`
    vs `_timeout_ms`). Rename is **not** required.
 3. **No new abstractions:** The `FlushTrigger` enum (Option 2) is
-   over-engineering
-   for a parameter that differs by design.
+   over-engineering for a parameter that differs by design.
 4. **Type safety:** Rust methods should use `NonZeroU64` internally, with Python
    accepting `u64` and validating via `py_prelude`.
 

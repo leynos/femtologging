@@ -287,10 +287,10 @@ dictionary representations mirror these names to avoid ambiguity.
 
 Both builders now accept `NonZeroU64` in Rust, enforcing the non-zero
 constraint at the type level. Python receives `u64` and validates inputs,
-raising ``ValueError`` for zero or negative values and ``OverflowError`` when
-the value exceeds the unsigned 64-bit range. This type unification (Issue #168)
-ensures consistent error handling while preserving the distinct flush semantics
-described above.
+raising ``ValueError`` for zero values and ``OverflowError`` for negative
+values or values exceeding the unsigned 64-bit range. This type unification
+(Issue #168) ensures consistent error handling while preserving the distinct
+flush semantics described above.
 
 #### 1.1.1 Filters
 
