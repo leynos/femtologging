@@ -176,109 +176,86 @@ fn exception_group_with_nested_exceptions() {
     assert_eq!(decoded.exceptions.len(), 2);
 }
 
-#[rstest]
-fn deep_cause_chain_serializes() {
-    // Test a chain of 10 nested causes to ensure no stack overflow
-    let mut current = ExceptionPayload::new("BaseError", "root cause");
-    for i in 1..10 {
-        current =
-            ExceptionPayload::new(format!("Error{i}"), format!("level {i}")).with_cause(current);
+/// Builds an exception chain of the specified type and depth.
+///
+/// # Arguments
+/// * `chain_type` - "cause", "context", or "mixed" (alternates cause/context)
+/// * `depth` - Total number of exceptions in the chain
+fn build_exception_chain(chain_type: &str, depth: usize) -> ExceptionPayload {
+    let mut current = ExceptionPayload::new("BaseError", "root");
+    for i in 1..depth {
+        current = match chain_type {
+            "cause" => {
+                ExceptionPayload::new(format!("Error{i}"), format!("level {i}")).with_cause(current)
+            }
+            "context" => ExceptionPayload::new(format!("Error{i}"), format!("context level {i}"))
+                .with_context(current),
+            "mixed" => {
+                if i % 2 == 0 {
+                    ExceptionPayload::new(format!("CauseError{i}"), format!("cause {i}"))
+                        .with_cause(current)
+                } else {
+                    ExceptionPayload::new(format!("ContextError{i}"), format!("context {i}"))
+                        .with_context(current)
+                }
+            }
+            _ => panic!("Unknown chain type: {chain_type}"),
+        };
     }
-
-    let json = serde_json::to_string(&current).expect("serialize deep chain");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-
-    // Verify chain depth
-    let mut depth = 0;
-    let mut node = Some(&decoded);
-    while let Some(n) = node {
-        depth += 1;
-        node = n.cause.as_deref();
-    }
-    assert_eq!(depth, 10);
+    current
 }
 
-#[rstest]
-fn deep_cause_chain_100_levels_serializes() {
-    // Test a chain of 100 nested causes to ensure no stack overflow
-    // and linear (not quadratic) time complexity
-    let start = std::time::Instant::now();
-
-    let mut current = ExceptionPayload::new("BaseError", "root cause");
-    for i in 1..100 {
-        current =
-            ExceptionPayload::new(format!("Error{i}"), format!("level {i}")).with_cause(current);
-    }
-
-    let json = serde_json::to_string(&current).expect("serialize deep chain");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-
-    // Verify chain depth
+/// Verifies that a payload has the expected chain depth by traversing links.
+///
+/// For "cause" chains, follows only cause links.
+/// For "context" chains, follows only context links.
+/// For "mixed" chains, follows whichever link exists at each level.
+fn verify_chain_depth(payload: &ExceptionPayload, chain_type: &str, expected_depth: usize) {
     let mut depth = 0;
-    let mut node = Some(&decoded);
+    let mut node = Some(payload);
     while let Some(n) = node {
         depth += 1;
-        node = n.cause.as_deref();
+        node = match chain_type {
+            "cause" => n.cause.as_deref(),
+            "context" => n.context.as_deref(),
+            "mixed" => n.cause.as_deref().or(n.context.as_deref()),
+            _ => panic!("Unknown chain type: {chain_type}"),
+        };
     }
-    assert_eq!(depth, 100);
-
-    // Timing assertion: should complete in well under 1 second
-    let elapsed = start.elapsed();
-    assert!(
-        elapsed.as_secs() < 1,
-        "Deep chain serialization took too long: {:?}",
-        elapsed
+    assert_eq!(
+        depth, expected_depth,
+        "Expected chain depth {expected_depth}, found {depth}"
     );
 }
 
 #[rstest]
-fn deep_context_chain_serializes() {
-    // Test context chain (implicit chaining) at depth 100
-    let mut current = ExceptionPayload::new("BaseError", "root context");
-    for i in 1..100 {
-        current = ExceptionPayload::new(format!("Error{i}"), format!("context level {i}"))
-            .with_context(current);
-    }
+#[case("cause", 10, None)]
+#[case("cause", 100, Some(1))]
+#[case("context", 100, None)]
+#[case("mixed", 50, None)]
+fn deep_chain_serializes(
+    #[case] chain_type: &str,
+    #[case] depth: usize,
+    #[case] max_seconds: Option<u64>,
+) {
+    let start = std::time::Instant::now();
 
-    let json = serde_json::to_string(&current).expect("serialize");
+    let payload = build_exception_chain(chain_type, depth);
+
+    let json = serde_json::to_string(&payload).expect("serialize deep chain");
     let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
 
-    // Verify context chain depth
-    let mut depth = 0;
-    let mut node = Some(&decoded);
-    while let Some(n) = node {
-        depth += 1;
-        node = n.context.as_deref();
-    }
-    assert_eq!(depth, 100);
-}
+    verify_chain_depth(&decoded, chain_type, depth);
 
-#[rstest]
-fn mixed_cause_context_chain_serializes() {
-    // Alternating cause and context to test both paths
-    let mut current = ExceptionPayload::new("BaseError", "root");
-    for i in 1..50 {
-        if i % 2 == 0 {
-            current = ExceptionPayload::new(format!("CauseError{i}"), format!("cause {i}"))
-                .with_cause(current);
-        } else {
-            current = ExceptionPayload::new(format!("ContextError{i}"), format!("context {i}"))
-                .with_context(current);
-        }
+    // Apply timing constraint if specified
+    if let Some(max_secs) = max_seconds {
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_secs() < max_secs,
+            "Deep chain serialization took too long: {:?}",
+            elapsed
+        );
     }
-
-    let json = serde_json::to_string(&current).expect("serialize");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-
-    // Verify we can traverse the mixed chain
-    let mut total_depth = 0;
-    let mut node = Some(&decoded);
-    while let Some(n) = node {
-        total_depth += 1;
-        // Follow either cause or context, whichever exists
-        node = n.cause.as_deref().or(n.context.as_deref());
-    }
-    assert_eq!(total_depth, 50);
 }
 
 #[rstest]
@@ -303,55 +280,49 @@ fn validate_schema_version_cases(#[case] version: u16, #[case] valid: bool) {
 }
 
 #[rstest]
-fn version_too_new_error_includes_versions() {
-    let future_version = EXCEPTION_SCHEMA_VERSION + 1;
-    let err = validate_schema_version(future_version).expect_err("should fail for future version");
+#[case(EXCEPTION_SCHEMA_VERSION + 1, "VersionTooNew")]
+#[case(0, "VersionTooOld")]
+fn version_validation_error_includes_versions(
+    #[case] version: u16,
+    #[case] expected_variant: &str,
+) {
+    let err = validate_schema_version(version).expect_err("should fail for invalid version");
 
-    match err {
-        SchemaVersionError::VersionTooNew {
-            found,
-            max_supported,
-        } => {
-            assert_eq!(found, future_version);
-            assert_eq!(max_supported, EXCEPTION_SCHEMA_VERSION);
+    match (&err, expected_variant) {
+        (
+            SchemaVersionError::VersionTooNew {
+                found,
+                max_supported,
+            },
+            "VersionTooNew",
+        ) => {
+            assert_eq!(*found, version);
+            assert_eq!(*max_supported, EXCEPTION_SCHEMA_VERSION);
+            let msg = err.to_string();
+            assert!(msg.contains("maximum supported"), "should mention maximum");
+            assert!(
+                msg.contains(&version.to_string()),
+                "error message should contain found version"
+            );
         }
-        SchemaVersionError::VersionTooOld { .. } => {
-            panic!("expected VersionTooNew, got VersionTooOld");
+        (
+            SchemaVersionError::VersionTooOld {
+                found,
+                min_supported,
+            },
+            "VersionTooOld",
+        ) => {
+            assert_eq!(*found, version);
+            assert_eq!(*min_supported, MIN_EXCEPTION_SCHEMA_VERSION);
+            let msg = err.to_string();
+            assert!(msg.contains("minimum supported"), "should mention minimum");
+            assert!(
+                msg.contains(&version.to_string()),
+                "error message should contain found version"
+            );
         }
+        _ => panic!("expected {expected_variant}, got {:?}", err),
     }
-
-    let msg = err.to_string();
-    assert!(msg.contains("maximum supported"), "should mention maximum");
-    assert!(
-        msg.contains(&future_version.to_string()),
-        "error message should contain found version"
-    );
-}
-
-#[rstest]
-fn version_too_old_error_includes_versions() {
-    let old_version = 0;
-    let err = validate_schema_version(old_version).expect_err("should fail for old version");
-
-    match err {
-        SchemaVersionError::VersionTooOld {
-            found,
-            min_supported,
-        } => {
-            assert_eq!(found, old_version);
-            assert_eq!(min_supported, MIN_EXCEPTION_SCHEMA_VERSION);
-        }
-        SchemaVersionError::VersionTooNew { .. } => {
-            panic!("expected VersionTooOld, got VersionTooNew");
-        }
-    }
-
-    let msg = err.to_string();
-    assert!(msg.contains("minimum supported"), "should mention minimum");
-    assert!(
-        msg.contains(&old_version.to_string()),
-        "error message should contain found version"
-    );
 }
 
 #[rstest]
