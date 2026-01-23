@@ -7,7 +7,7 @@
 
 ______________________________________________________________________
 
-## Big Picture
+## Big picture
 
 Unify the parameter types of `FileHandlerBuilder.with_flush_record_interval`
 and `StreamHandlerBuilder.with_flush_timeout_ms` to use `u64`, while preserving
@@ -36,9 +36,9 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Implementation Tasks
+## Implementation tasks
 
-### Phase 1: Type Unification (Rust)
+### Phase 1: Type unification (Rust)
 
 #### Task 1.1: Update `FileLikeBuilderState` storage type
 
@@ -80,7 +80,7 @@ ______________________________________________________________________
 - [x] Verified `HandlerConfig.flush_interval` uses `usize` internally
 - [x] Added conversion with clamping: large `u64` values clamp to `usize::MAX`
 
-### Phase 2: Python Binding Validation
+### Phase 2: Python binding validation
 
 #### Task 2.1: Verify Python tests still pass
 
@@ -121,7 +121,7 @@ ______________________________________________________________________
       `NonZeroU64`
       type and validation behaviour
 
-### Phase 4: Quality Gates
+### Phase 4: Quality gates
 
 - [x] `make fmt` passes
 - [x] `make lint` passes (no Clippy warnings)
@@ -131,7 +131,9 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Files Modified
+## Files modified
+
+Table: Files modified in this implementation
 
 | File                                              | Change                                                                                            |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -143,7 +145,9 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Risks and Mitigations
+## Risks and mitigations
+
+Table: Risks and mitigations
 
 | Risk                                                     | Mitigation                                                                          |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -153,7 +157,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Acceptance Criteria (from issue)
+## Acceptance criteria (from issue)
 
 - [x] Consistent parameter types (prefer `u64` for both) – **addressed in Phase
       1**
