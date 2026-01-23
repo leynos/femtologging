@@ -1,4 +1,4 @@
-# Add Multi-Threading Exception Capture Test
+# Add multi-threading exception capture test
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
@@ -162,7 +162,7 @@ Key architectural properties:
 
 Relevant existing tests:
 
-- `tests/test_send_sync.py`: Demonstrates the pattern for multi-threaded Python
+- `tests/test_send_sync.py`: Demonstrates the pattern for multithreaded Python
   tests. Uses `pytest.mark.concurrency` and `pytest.mark.send_sync` markers.
   Parametrizes thread counts (1, 10, 100).
 

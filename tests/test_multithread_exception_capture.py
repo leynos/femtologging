@@ -244,7 +244,10 @@ class TestMultithreadExceptionCapture:
             if t.is_alive():
                 pytest.fail(f"Thread {t.name} failed to join within timeout")
 
-        # Delete logger to ensure worker thread flushes all records
+        # Flush handlers and delete logger to ensure all records are processed
+        # flush_handlers() triggers the worker to process pending records,
+        # and deleting the logger ensures the worker thread drains completely
+        logger.flush_handlers()
         del logger
 
         # Validate captured records
