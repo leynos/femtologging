@@ -387,7 +387,9 @@ Quality criteria:
 
 Quality method:
 
-    make fmt && make lint && make test
+```shell
+make fmt && make lint && make test
+```
 
 The new Rust tests should complete in under 1 second each. The timing assertion
 in `deep_cause_chain_100_levels_serializes` explicitly validates this.
@@ -401,11 +403,13 @@ code and re-run. No destructive operations are involved.
 
 Expected test output (abbreviated):
 
-    running 4 tests
-    test exception_schema::tests::schema_tests::deep_cause_chain_100_levels_serializes … ok
-    test exception_schema::tests::schema_tests::deep_context_chain_serializes … ok
-    test exception_schema::tests::schema_tests::mixed_cause_context_chain_serializes … ok
-    test formatter::exception::tests::format_deep_exception_chain_no_stack_overflow … ok
+```text
+running 4 tests
+test exception_schema::tests::schema_tests::deep_cause_chain_100_levels_serializes … ok
+test exception_schema::tests::schema_tests::deep_context_chain_serializes … ok
+test exception_schema::tests::schema_tests::mixed_cause_context_chain_serializes … ok
+test formatter::exception::tests::format_deep_exception_chain_no_stack_overflow … ok
+```
 
 ## Interfaces and Dependencies
 
