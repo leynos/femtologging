@@ -5,6 +5,11 @@
 //! parameters such as encoding and mode will be added as the project
 //! evolves. Flushing is driven by a `flush_record_interval`
 //! measured in records.
+//!
+//! **Note:** Only the "default" `formatter_id` is currently supported.
+//! Non-default identifiers will produce a build error. A formatter
+//! registry will be wired in future to resolve custom identifiers at
+//! build time.
 
 #[cfg(feature = "python")]
 use pyo3::{exceptions::PyValueError, prelude::*};
