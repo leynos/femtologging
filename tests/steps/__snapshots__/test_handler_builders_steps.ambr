@@ -3,8 +3,7 @@
   dict({
     'capacity': 10,
     'flush_record_interval': 2,
-    'formatter_id': 'default',
-    'formatter_kind': 'id',
+    'formatter': 'default',
     'overflow_policy': 'drop',
     'path': 'test.log',
   })
@@ -23,8 +22,7 @@
     'backup_count': 5,
     'capacity': 10,
     'flush_record_interval': 2,
-    'formatter_id': 'default',
-    'formatter_kind': 'id',
+    'formatter': 'default',
     'max_bytes': 1024,
     'overflow_policy': 'drop',
     'path': 'test.log',
@@ -47,16 +45,14 @@
 # name: test_build_stream_handler_builder
   dict({
     'capacity': 8,
-    'formatter_id': 'default',
-    'formatter_kind': 'id',
+    'formatter': 'default',
     'target': 'stdout',
   })
 # ---
 # name: test_build_stream_handler_builder_with_flush_timeout
   dict({
     'flush_timeout_ms': 250,
-    'formatter_id': 'default',
-    'formatter_kind': 'id',
+    'formatter': 'default',
     'target': 'stdout',
   })
 # ---
@@ -65,8 +61,7 @@
     'backup_count': 5,
     'capacity': 10,
     'flush_record_interval': 2,
-    'formatter_id': 'default',
-    'formatter_kind': 'id',
+    'formatter': 'default',
     'max_bytes': 1024,
     'overflow_policy': 'drop',
     'path': 'test.log',

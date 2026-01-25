@@ -4,66 +4,72 @@
 //! re-exports Rust types used by the Python layer.
 use pyo3::prelude::*;
 
+// Core modules (always compiled)
 mod config;
 pub mod exception_schema;
-#[cfg(feature = "python")]
-mod file_config;
 mod filters;
 mod formatter;
 pub mod frame_filter;
-#[cfg(feature = "python")]
-mod frame_filter_py;
 mod handler;
 mod handlers;
 mod http_handler;
 mod level;
-#[cfg(all(feature = "python", feature = "log-compat"))]
-mod log_compat;
 mod log_record;
 mod logger;
-#[cfg(feature = "python")]
-mod macros;
+mod socket_handler;
+mod stream_handler;
+
+// Feature-gated manager visibility
 #[cfg(feature = "test-util")]
 pub mod manager;
 #[cfg(not(feature = "test-util"))]
 mod manager;
-#[cfg(feature = "python")]
-mod python;
 #[cfg(feature = "test-util")]
 pub mod rate_limited_warner;
 #[cfg(not(feature = "test-util"))]
 mod rate_limited_warner;
-mod socket_handler;
-mod stream_handler;
-#[cfg(test)]
-mod test_utils;
+
+// Python-only modules
+#[cfg(feature = "python")]
+mod file_config;
+#[cfg(feature = "python")]
+mod frame_filter_py;
+#[cfg(feature = "python")]
+mod macros;
+#[cfg(feature = "python")]
+mod python;
+#[cfg(feature = "python")]
+mod python_module;
 #[cfg(feature = "python")]
 pub(crate) mod traceback_capture;
+#[cfg(feature = "python")]
+pub(crate) mod traceback_frames;
+
+// Feature-gated log-compat module
+#[cfg(all(feature = "python", feature = "log-compat"))]
+mod log_compat;
+
+// Test modules
+#[cfg(test)]
+mod test_utils;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_graceful_degradation_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_tests;
-#[cfg(feature = "python")]
-pub(crate) mod traceback_frames;
 #[cfg(all(test, feature = "python"))]
 mod traceback_frames_graceful_degradation_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_frames_tests;
 
-/// Re-export configuration builders for external consumers.
+// Re-exports: configuration builders
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+
+// Re-exports: filter types (FilterBuildErrorPy is Python-only)
 #[cfg(feature = "python")]
 pub use filters::FilterBuildErrorPy;
-/// Re-export filter builders and traits.
 pub use filters::{
     FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
 };
-#[cfg(feature = "python")]
-use handlers::common::PyOverflowPolicy;
-#[cfg(feature = "python")]
-use handlers::socket_builder::BackoffOverrides;
-#[cfg(feature = "python")]
-use pyo3::wrap_pyfunction;
 
 /// Re-export exception schema types.
 pub use exception_schema::{
@@ -179,43 +185,6 @@ mod py_api {
 
 use py_api::{get_logger, reset_manager_py};
 
-/// Register Python-only builders and errors with the module.
-///
-/// The helper runs when the `python` feature is enabled and keeps
-/// conditional compilation tidy by collecting registrations in one place.
-/// It is invoked by [`_femtologging_rs`] during initialisation.
-#[cfg(feature = "python")]
-fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = m.py();
-    // Group type registrations to keep future additions concise.
-    for (name, ty) in [
-        (
-            "StreamHandlerBuilder",
-            py.get_type::<StreamHandlerBuilder>(),
-        ),
-        ("OverflowPolicy", py.get_type::<PyOverflowPolicy>()),
-        (
-            "SocketHandlerBuilder",
-            py.get_type::<SocketHandlerBuilder>(),
-        ),
-        ("FileHandlerBuilder", py.get_type::<FileHandlerBuilder>()),
-        ("HTTPHandlerBuilder", py.get_type::<HTTPHandlerBuilder>()),
-        (
-            "RotatingFileHandlerBuilder",
-            py.get_type::<RotatingFileHandlerBuilder>(),
-        ),
-        ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
-        ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
-        ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
-        ("ConfigBuilder", py.get_type::<ConfigBuilder>()),
-        ("LoggerConfigBuilder", py.get_type::<LoggerConfigBuilder>()),
-        ("FormatterBuilder", py.get_type::<FormatterBuilder>()),
-    ] {
-        m.add(name, ty)?;
-    }
-    Ok(())
-}
-
 /// Initialise the `_femtologging_rs` Python extension module.
 ///
 /// # Parameters
@@ -239,120 +208,36 @@ fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// ```
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Core classes (always registered)
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<FemtoSocketHandler>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<FemtoHTTPHandler>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<FemtoRotatingFileHandler>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<HandlerOptions>()?;
-    #[cfg(feature = "python")]
-    m.add_class::<BackoffOverrides>()?;
-    #[cfg(feature = "python")]
-    m.add(
-        "ROTATION_VALIDATION_MSG",
-        handlers::rotating::ROTATION_VALIDATION_MSG,
-    )?;
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),
     )?;
     m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
     m.add("EXCEPTION_SCHEMA_VERSION", EXCEPTION_SCHEMA_VERSION)?;
-    #[cfg(feature = "python")]
-    // Register builder types and errors that are only compiled when the
-    // `python` feature is enabled.
-    add_python_bindings(m)?;
+
+    // Core functions (always registered)
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+
+    // Python-only classes, builders, and functions
+    #[cfg(feature = "python")]
+    {
+        python_module::register_python_classes(m)?;
+        python_module::add_python_bindings(m)?;
+        python_module::register_python_functions(m)?;
+    }
+
+    // Log-compat functions (requires both python and log-compat features)
     #[cfg(all(feature = "python", feature = "log-compat"))]
-    m.add_function(wrap_pyfunction!(log_compat::setup_rust_logging, m)?)?;
-    #[cfg(all(feature = "python", feature = "log-compat"))]
-    m.add_function(wrap_pyfunction!(log_compat::emit_rust_log, m)?)?;
-    #[cfg(all(feature = "python", feature = "log-compat"))]
-    m.add_function(wrap_pyfunction!(
-        log_compat::install_test_global_rust_logger,
-        m
-    )?)?;
-    #[cfg(feature = "python")]
-    m.add_function(wrap_pyfunction!(file_config::parse_ini_file, m)?)?;
-    #[cfg(feature = "python")]
-    m.add_function(wrap_pyfunction!(
-        handlers::rotating::force_rotating_fresh_failure_for_test,
-        m
-    )?)?;
-    #[cfg(feature = "python")]
-    m.add_function(wrap_pyfunction!(
-        handlers::rotating::clear_rotating_fresh_failure_for_test,
-        m
-    )?)?;
-    #[cfg(feature = "python")]
-    m.add_function(wrap_pyfunction!(frame_filter_py::filter_frames, m)?)?;
-    #[cfg(feature = "python")]
-    m.add_function(wrap_pyfunction!(
-        frame_filter_py::get_logging_infrastructure_patterns,
-        m
-    )?)?;
+    python_module::register_log_compat_functions(m)?;
 
     Ok(())
 }
 
-#[cfg(all(test, feature = "python"))]
-mod tests {
-    //! Ensure Python-only bindings register expected types.
-
-    use super::*;
-    use crate::handlers::rotating::ROTATION_VALIDATION_MSG;
-    use pyo3::{
-        Python,
-        types::{PyModule, PyType},
-    };
-
-    #[test]
-    fn registers_bindings() {
-        // The module should expose builder types and the build error when the
-        // `python` feature is enabled.
-        Python::with_gil(|py| {
-            let module = PyModule::new(py, "test").unwrap();
-            add_python_bindings(&module).unwrap();
-            for name in [
-                "StreamHandlerBuilder",
-                "OverflowPolicy",
-                "FileHandlerBuilder",
-                "HTTPHandlerBuilder",
-                "RotatingFileHandlerBuilder",
-                "LevelFilterBuilder",
-                "NameFilterBuilder",
-                "FilterBuildError",
-                "ConfigBuilder",
-                "LoggerConfigBuilder",
-                "FormatterBuilder",
-            ] {
-                // Ensure each registration exists and is a Python type.
-                let attr = module.getattr(name).unwrap();
-                attr.downcast::<PyType>().unwrap();
-            }
-        });
-    }
-
-    #[test]
-    fn module_registers_rotating_classes() {
-        Python::with_gil(|py| {
-            let module = PyModule::new(py, "_femtologging_rs").unwrap();
-            super::_femtologging_rs(&module).unwrap();
-            for name in ["FemtoRotatingFileHandler", "HandlerOptions"] {
-                let attr = module.getattr(name).unwrap();
-                attr.downcast::<PyType>().unwrap();
-            }
-            let message = module.getattr("ROTATION_VALIDATION_MSG").unwrap();
-            let value: &str = message.extract().unwrap();
-            assert_eq!(value, ROTATION_VALIDATION_MSG);
-        });
-    }
-}
+// Tests are now in python_module.rs when the python feature is enabled.

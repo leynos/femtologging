@@ -55,28 +55,25 @@ def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
 
 
 def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
-    """Supplying an invalid policy value should raise an error."""
+    """Supplying an invalid policy value should raise an error at construction."""
+    # Policy validation now occurs in HandlerOptions constructor (not handler).
     invalid_policy_value = typ.cast(
         "typ.Any",
         "invalid_policy",
     )  # Exercise runtime validation with a value rejected at type-check time.
-    invalid_options = HandlerOptions(
-        capacity=32,
-        flush_interval=2,
-        policy=invalid_policy_value,
-        rotation=(1024, 3),
-    )
-    with (
-        pytest.raises(
-            ValueError,
-            match=(
-                r"invalid overflow policy: '.*'\. Valid options are: "
-                r"drop, block, timeout:N"
-            ),
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"invalid overflow policy: '.*'\. Valid options are: "
+            r"drop, block, timeout:N"
         ),
-        rotating_handler(str(log_path), options=invalid_options),
     ):
-        pass
+        HandlerOptions(
+            capacity=32,
+            flush_interval=2,
+            policy=invalid_policy_value,
+            rotation=(1024, 3),
+        )
 
 
 def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
