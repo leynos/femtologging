@@ -139,7 +139,7 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide an interval greater than zero. Python callers passing values exceeding `usize::MAX` receive an `OverflowError`; Rust callers see such values clamped to `usize::MAX` when the handler is built.",
+                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero (`NonZeroU64`).\n\n# Platform-specific behaviour\n\nOn 32-bit platforms where `usize::MAX < u64::MAX`, values exceeding `usize::MAX` are clamped silently at build time. Python callers receive an `OverflowError` instead (validated at the API boundary).",
                 rust_name: with_flush_record_interval,
                 py_fn: py_with_flush_record_interval,
                 py_name: "with_flush_record_interval",
