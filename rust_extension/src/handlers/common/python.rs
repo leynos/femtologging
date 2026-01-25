@@ -33,9 +33,8 @@ pub(crate) fn py_flush_record_interval_to_nonzero(
             max = usize::MAX,
         )));
     }
-    NonZeroU64::new(interval).ok_or_else(|| {
-        PyValueError::new_err(format!("{field_name} must be greater than zero"))
-    })
+    NonZeroU64::new(interval)
+        .ok_or_else(|| PyValueError::new_err(format!("{field_name} must be greater than zero")))
 }
 
 use super::{CommonBuilder, FileLikeBuilderState, FormatterConfig};
