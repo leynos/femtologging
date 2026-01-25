@@ -10,10 +10,15 @@ ______________________________________________________________________
 ## Big picture
 
 Unify the parameter types of `FileHandlerBuilder.with_flush_record_interval`
-and `StreamHandlerBuilder.with_flush_timeout_ms` to use `u64`, while preserving
-their **distinct and intentional semantics** (record-count vs time-based). This
-is **Option 3** from the issue: "Maintain separate semantics with consistent
-typing."
+and `StreamHandlerBuilder.with_flush_timeout_ms` while preserving their
+**distinct and intentional semantics** (record-count interval vs time-based
+timeout). This is **Option 3** from the issue: "Maintain separate semantics with
+consistent typing."
+
+The public Python API accepts `u64` for both methods; internally, Rust stores
+and validates using `NonZeroU64` to enforce non-zero at the type level.
+Python-side validation in `py_prelude` blocks converts the incoming `u64` to
+`NonZeroU64`, raising `ValueError` for zero before calling the Rust APIs.
 
 The semantic difference is documented in `docs/configuration-design.md` lines
 282–286 and is by design: file handlers flush after N records written, stream
