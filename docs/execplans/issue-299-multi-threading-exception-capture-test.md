@@ -224,7 +224,10 @@ Implement `test_multithread_exception_capture` that:
    `handle_record` to receive structured payloads).
 2. Creates barriers for N+1 parties (N threads + main thread waiting).
 3. Spawns N threads (parametrized: 2, 10, 50) each running the worker function.
-4. After all threads complete (via barrier), deletes the logger to flush.
+4. After all threads complete (via barrier), calls `flush_handlers()` on the
+   `FemtoLogger` to ensure payloads are flushed to the
+   `RecordCollectingHandler` (which receives them via `handle_record`), then
+   deletes the logger to ensure worker threads drain completely.
 5. Validates:
    - Exactly N records were captured.
    - Each record's `exc_info["message"]` matches a unique thread index.

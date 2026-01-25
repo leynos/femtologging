@@ -130,6 +130,12 @@ def _validate_record(record: LogRecordDict, captured_indices: set[int]) -> int:
     )
     thread_idx = int(match.group(1))
 
+    # Verify log message thread index matches exception payload thread index
+    assert int(thread_idx_from_message) == thread_idx, (
+        f"Log message thread index ({thread_idx_from_message}) does not match "
+        f"exception payload thread index ({thread_idx})"
+    )
+
     # Check for duplicates (would indicate cross-thread contamination)
     assert thread_idx not in captured_indices, (
         f"Duplicate thread index {thread_idx} detected - "
