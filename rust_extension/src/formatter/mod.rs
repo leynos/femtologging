@@ -14,7 +14,7 @@ mod exception;
 #[cfg(feature = "python")]
 pub mod python;
 
-pub use exception::{format_exception_payload, format_stack_payload};
+pub use exception::{ExceptionFormat, format_exception_payload, format_stack_payload};
 
 /// Trait for formatting log records into strings.
 ///
