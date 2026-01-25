@@ -21,7 +21,7 @@ This plan adds tests for deeper chains (100 levels) to verify:
 3. Performance remains acceptable (no quadratic time complexity)
 
 After this change, developers can confidently use femtologging with deeply
-nested exceptions knowing the behaviour is tested and bounded.
+nested exceptions, knowing the behaviour is tested and bounded.
 
 ## Constraints
 
@@ -47,7 +47,7 @@ nested exceptions knowing the behaviour is tested and bounded.
 
 - Risk: Deep recursion in Rust formatter causes stack overflow
   Severity: medium Likelihood: low (Rust stack is typically large; 100 levels
-  is modest) Mitigation: Test explicitly; if overflow occurs, document and
+  are modest) Mitigation: Test explicitly; if overflow occurs, document and
   raise issue for iterative rewrite
 
 - Risk: Deep chain serialization exhibits quadratic time
@@ -189,176 +189,188 @@ Edit `rust_extension/src/exception_schema/tests/schema_tests.rs`.
 
 After the existing `deep_cause_chain_serializes()` test (line 199), add:
 
-    #[rstest]
-    fn deep_cause_chain_100_levels_serializes() {
-        // Test a chain of 100 nested causes to ensure no stack overflow
-        // and linear (not quadratic) time complexity
-        let start = std::time::Instant::now();
+```rust
+#[rstest]
+fn deep_cause_chain_100_levels_serializes() {
+    // Test a chain of 100 nested causes to ensure no stack overflow
+    // and linear (not quadratic) time complexity
+    let start = std::time::Instant::now();
 
-        let mut current = ExceptionPayload::new("BaseError", "root cause");
-        for i in 1..100 {
-            current = ExceptionPayload::new(
-                format!("Error{i}"),
-                format!("level {i}"),
-            )
-            .with_cause(current);
-        }
-
-        let json = serde_json::to_string(&current).expect("serialize deep chain");
-        let decoded: ExceptionPayload =
-            serde_json::from_str(&json).expect("deserialize");
-
-        // Verify chain depth
-        let mut depth = 0;
-        let mut node = Some(&decoded);
-        while let Some(n) = node {
-            depth += 1;
-            node = n.cause.as_deref();
-        }
-        assert_eq!(depth, 100);
-
-        // Timing assertion: should complete in well under 1 second
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed.as_secs() < 1,
-            "Deep chain serialization took too long: {:?}",
-            elapsed
-        );
+    let mut current = ExceptionPayload::new("BaseError", "root cause");
+    for i in 1..100 {
+        current = ExceptionPayload::new(
+            format!("Error{i}"),
+            format!("level {i}"),
+        )
+        .with_cause(current);
     }
 
-    #[rstest]
-    fn deep_context_chain_serializes() {
-        // Test context chain (implicit chaining) at depth 100
-        let mut current = ExceptionPayload::new("BaseError", "root context");
-        for i in 1..100 {
+    let json = serde_json::to_string(&current).expect("serialize deep chain");
+    let decoded: ExceptionPayload =
+        serde_json::from_str(&json).expect("deserialize");
+
+    // Verify chain depth
+    let mut depth = 0;
+    let mut node = Some(&decoded);
+    while let Some(n) = node {
+        depth += 1;
+        node = n.cause.as_deref();
+    }
+    assert_eq!(depth, 100);
+
+    // Timing assertion: should complete in well under 1 second
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_secs() < 1,
+        "Deep chain serialization took too long: {:?}",
+        elapsed
+    );
+}
+```
+
+```rust
+#[rstest]
+fn deep_context_chain_serializes() {
+    // Test context chain (implicit chaining) at depth 100
+    let mut current = ExceptionPayload::new("BaseError", "root context");
+    for i in 1..100 {
+        current = ExceptionPayload::new(
+            format!("Error{i}"),
+            format!("context level {i}"),
+        )
+        .with_context(current);
+    }
+
+    let json = serde_json::to_string(&current).expect("serialize");
+    let decoded: ExceptionPayload =
+        serde_json::from_str(&json).expect("deserialize");
+
+    // Verify context chain depth
+    let mut depth = 0;
+    let mut node = Some(&decoded);
+    while let Some(n) = node {
+        depth += 1;
+        node = n.context.as_deref();
+    }
+    assert_eq!(depth, 100);
+}
+```
+
+```rust
+#[rstest]
+fn mixed_cause_context_chain_serializes() {
+    // Alternating cause and context to test both paths
+    let mut current = ExceptionPayload::new("BaseError", "root");
+    for i in 1..50 {
+        if i % 2 == 0 {
             current = ExceptionPayload::new(
-                format!("Error{i}"),
-                format!("context level {i}"),
+                format!("CauseError{i}"),
+                format!("cause {i}"),
+            )
+            .with_cause(current);
+        } else {
+            current = ExceptionPayload::new(
+                format!("ContextError{i}"),
+                format!("context {i}"),
             )
             .with_context(current);
         }
-
-        let json = serde_json::to_string(&current).expect("serialize");
-        let decoded: ExceptionPayload =
-            serde_json::from_str(&json).expect("deserialize");
-
-        // Verify context chain depth
-        let mut depth = 0;
-        let mut node = Some(&decoded);
-        while let Some(n) = node {
-            depth += 1;
-            node = n.context.as_deref();
-        }
-        assert_eq!(depth, 100);
     }
 
-    #[rstest]
-    fn mixed_cause_context_chain_serializes() {
-        // Alternating cause and context to test both paths
-        let mut current = ExceptionPayload::new("BaseError", "root");
-        for i in 1..50 {
-            if i % 2 == 0 {
-                current = ExceptionPayload::new(
-                    format!("CauseError{i}"),
-                    format!("cause {i}"),
-                )
-                .with_cause(current);
-            } else {
-                current = ExceptionPayload::new(
-                    format!("ContextError{i}"),
-                    format!("context {i}"),
-                )
-                .with_context(current);
-            }
-        }
+    let json = serde_json::to_string(&current).expect("serialize");
+    let decoded: ExceptionPayload =
+        serde_json::from_str(&json).expect("deserialize");
 
-        let json = serde_json::to_string(&current).expect("serialize");
-        let decoded: ExceptionPayload =
-            serde_json::from_str(&json).expect("deserialize");
-
-        // Verify we can traverse the mixed chain
-        let mut total_depth = 0;
-        let mut node = Some(&decoded);
-        while let Some(n) = node {
-            total_depth += 1;
-            // Follow either cause or context, whichever exists
-            node = n.cause.as_deref().or(n.context.as_deref());
-        }
-        assert_eq!(total_depth, 50);
+    // Verify we can traverse the mixed chain
+    let mut total_depth = 0;
+    let mut node = Some(&decoded);
+    while let Some(n) = node {
+        total_depth += 1;
+        // Follow either cause or context, whichever exists
+        node = n.cause.as_deref().or(n.context.as_deref());
     }
+    assert_eq!(total_depth, 50);
+}
+```
 
 ### Step 2: Add formatter deep chain test
 
 Edit `rust_extension/src/formatter/exception.rs`, inside the existing
 `mod tests` block (after line 228), add:
 
-    #[test]
-    fn format_deep_exception_chain_no_stack_overflow() {
-        // Build a 100-level cause chain and format it
-        let mut current = ExceptionPayload::new("BaseError", "root cause");
-        for i in 1..100 {
-            let mut wrapper = ExceptionPayload::new(
-                format!("Error{i}"),
-                format!("level {i}"),
-            );
-            wrapper.cause = Some(Box::new(current));
-            current = wrapper;
-        }
-
-        // This should not stack overflow
-        let output = format_exception_payload(&current);
-
-        // Verify output contains markers from different levels
-        assert!(output.contains("BaseError: root cause"));
-        assert!(output.contains("Error99: level 99"));
-        assert!(output.contains("The above exception was the direct cause"));
+```rust
+#[test]
+fn format_deep_exception_chain_no_stack_overflow() {
+    // Build a 100-level cause chain and format it
+    let mut current = ExceptionPayload::new("BaseError", "root cause");
+    for i in 1..100 {
+        let mut wrapper = ExceptionPayload::new(
+            format!("Error{i}"),
+            format!("level {i}"),
+        );
+        wrapper.cause = Some(Box::new(current));
+        current = wrapper;
     }
+
+    // This should not stack overflow
+    let output = format_exception_payload(&current);
+
+    // Verify output contains markers from different levels
+    assert!(output.contains("BaseError: root cause"));
+    assert!(output.contains("Error99: level 99"));
+    assert!(output.contains("The above exception was the direct cause"));
+}
+```
 
 ### Step 3: Add Python integration test
 
 Edit `tests/frame_filter/test_exception_payload.py`, add at end of file:
 
-    def test_exc_filters_deep_cause_chain() -> None:
-        """Deep cause chain (100 levels) should be recursively filtered."""
-        # Build a 100-level nested cause chain
-        current = make_exception_payload(
-            ["base.py"],
-            type_name="BaseError",
-            message="root cause",
+```python
+def test_exc_filters_deep_cause_chain() -> None:
+    """Deep cause chain (100 levels) should be recursively filtered."""
+    # Build a 100-level nested cause chain
+    current = make_exception_payload(
+        ["base.py"],
+        type_name="BaseError",
+        message="root cause",
+    )
+    for i in range(1, 100):
+        wrapper = make_exception_payload(
+            [f"level_{i}.py", "femtologging/__init__.py"],
+            type_name=f"Error{i}",
+            message=f"level {i}",
         )
-        for i in range(1, 100):
-            wrapper = make_exception_payload(
-                [f"level_{i}.py", "femtologging/__init__.py"],
-                type_name=f"Error{i}",
-                message=f"level {i}",
-            )
-            wrapper["cause"] = current
-            current = wrapper
+        wrapper["cause"] = current
+        current = wrapper
 
-        result = filter_frames(current, exclude_logging=True)
+    result = filter_frames(current, exclude_logging=True)
 
-        # Verify filtering was applied recursively
-        # The outermost should have 1 frame (femtologging filtered)
-        assert len(result["frames"]) == 1, "expected 1 frame at top level"
+    # Verify filtering was applied recursively
+    # The outermost should have 1 frame (femtologging filtered)
+    assert len(result["frames"]) == 1, "expected 1 frame at top level"
 
-        # Walk the chain and verify each level was filtered
-        depth = 0
-        node = result
-        while "cause" in node and node["cause"] is not None:
-            depth += 1
-            node = node["cause"]
-            # Each level should have 1 frame after filtering
-            assert len(node["frames"]) == 1, f"expected 1 frame at depth {depth}"
+    # Walk the chain and verify each level was filtered
+    depth = 0
+    node = result
+    while "cause" in node and node["cause"] is not None:
+        depth += 1
+        node = node["cause"]
+        # Each level should have 1 frame after filtering
+        assert len(node["frames"]) == 1, f"expected 1 frame at depth {depth}"
 
-        # Should have traversed 99 cause links (100 total exceptions)
-        assert depth == 99, f"expected 99 cause links, got {depth}"
+    # Should have traversed 99 cause links (100 total exceptions)
+    assert depth == 99, f"expected 99 cause links, got {depth}"
+```
 
 ### Step 4: Run validation
 
-    set -o pipefail
-    make fmt 2>&1 | tee /tmp/fmt.log
-    make lint 2>&1 | tee /tmp/lint.log
-    make test 2>&1 | tee /tmp/test.log
+```shell
+set -o pipefail
+make fmt 2>&1 | tee /tmp/fmt.log
+make lint 2>&1 | tee /tmp/lint.log
+make test 2>&1 | tee /tmp/test.log
+```
 
 Expected: all commands exit 0; no lint warnings; all tests pass.
 
