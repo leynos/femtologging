@@ -31,7 +31,7 @@ use crate::macros::{AsPyDict, dict_into_py};
 #[derive(Clone, Debug)]
 pub struct FileHandlerBuilder {
     path: PathBuf,
-    state: FileLikeBuilderState,
+    common: FileLikeBuilderState,
 }
 
 impl FileHandlerBuilder {
@@ -39,13 +39,13 @@ impl FileHandlerBuilder {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            state: FileLikeBuilderState::default(),
+            common: FileLikeBuilderState::default(),
         }
     }
 
     /// Set the overflow policy for the handler.
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
-        self.state.set_overflow_policy(policy);
+        self.common.set_overflow_policy(policy);
         self
     }
 
@@ -54,7 +54,7 @@ impl FileHandlerBuilder {
     where
         F: IntoFormatterConfig,
     {
-        self.state.set_formatter(formatter);
+        self.common.set_formatter(formatter);
         self
     }
 }
@@ -65,7 +65,7 @@ impl FileHandlerBuilder {
     fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         let path = self.path.to_string_lossy();
         d.set_item("path", path.as_ref())?;
-        self.state.extend_py_dict(d)?;
+        self.common.extend_py_dict(d)?;
         Ok(())
     }
 }
@@ -75,7 +75,7 @@ builder_methods! {
         capacity {
             self_ident = builder,
             setter = |builder_ref, capacity| {
-                builder_ref.state.set_capacity(capacity);
+                builder_ref.common.set_capacity(capacity);
             }
         };
         methods {
@@ -96,7 +96,7 @@ builder_methods! {
                 },
                 self_ident: builder,
                 body: {
-                    builder.state.set_flush_record_interval(interval);
+                    builder.common.set_flush_record_interval(interval);
                 }
             }
         }
@@ -116,7 +116,7 @@ builder_methods! {
                 mut slf: PyRefMut<'py, Self>,
                 policy: PyOverflowPolicy,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.state.set_overflow_policy(policy.inner);
+                slf.common.set_overflow_policy(policy.inner);
                 Ok(slf)
             }
 
@@ -127,7 +127,7 @@ builder_methods! {
                 mut slf: PyRefMut<'py, Self>,
                 formatter: Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.state.set_formatter_from_py(&formatter)?;
+                slf.common.set_formatter_from_py(&formatter)?;
                 Ok(slf)
             }
 
@@ -161,9 +161,9 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
     ///
     /// `DEFAULT_CHANNEL_CAPACITY` (1024) when `with_capacity` is not called.
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
-        self.state.validate()?;
-        let cfg = self.state.handler_config();
-        let handler = match self.state.formatter() {
+        self.common.validate()?;
+        let cfg = self.common.handler_config();
+        let handler = match self.common.formatter() {
             Some(FormatterConfig::Instance(fmt)) => {
                 FemtoFileHandler::with_capacity_flush_policy(&self.path, fmt.clone_arc(), cfg)?
             }
