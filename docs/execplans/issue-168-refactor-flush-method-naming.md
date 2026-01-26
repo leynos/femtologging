@@ -3,7 +3,8 @@
 **Issue:**
 [#168 – Inconsistent flush method naming, types, and semantics](https://github.com/leynos/femtologging/issues/168)
 
-**Status:** Completed — **Criticality:** MEDIUM – API consistency; no runtime risk
+**Status:** Completed — **Criticality:** MEDIUM – API consistency; no runtime
+risk
 
 ______________________________________________________________________
 
@@ -12,8 +13,8 @@ ______________________________________________________________________
 Unify the parameter types of `FileHandlerBuilder.with_flush_record_interval`
 and `StreamHandlerBuilder.with_flush_timeout_ms` while preserving their
 **distinct and intentional semantics** (record-count interval vs time-based
-timeout). This is **Option 3** from the issue: "Maintain separate semantics with
-consistent typing."
+timeout). This is **Option 3** from the issue: "Maintain separate semantics
+with consistent typing."
 
 The public Python API accepts `u64` for both methods; internally, Rust stores
 and validates using `NonZeroU64` to enforce non-zero at the type level.

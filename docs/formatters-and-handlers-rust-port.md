@@ -129,7 +129,7 @@ Legacy constructors have been removed:
 The timeout behaviour is configured via the policy string as ``"timeout:N"``,
 where ``N`` is the timeout in milliseconds and must be greater than zero.
 
-Customise capacity, flush behaviour or overflow policy via keyword arguments on
+Customise capacity, flush behaviour or overflow policy via keyword arguments to
 the constructor.
 
 The constructor enforces several invariants on the configuration:
