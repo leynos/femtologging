@@ -74,8 +74,9 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-fn open_log_file(path: &str) -> PyResult<File> {
-    use pyo3::exceptions::PyIOError;
+fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
+    let path_ref = path.as_ref();
+    let path_display = path_ref.display();
     #[expect(
         clippy::ineffective_open_options,
         reason = "Be explicit about write intent alongside append"
@@ -84,8 +85,8 @@ fn open_log_file(path: &str) -> PyResult<File> {
         .create(true)
         .write(true)
         .append(true)
-        .open(path)
-        .map_err(|e| PyIOError::new_err(format!("{path}: {e}")))
+        .open(path_ref)
+        .map_err(|e| io::Error::new(e.kind(), format!("{path_display}: {e}")))
 }
 
 pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
@@ -136,7 +137,8 @@ impl FemtoFileHandler {
             flush_interval,
             overflow_policy,
         };
-        let file = open_log_file(&path)?;
+        let file = open_log_file(&path)
+            .map_err(|err| pyo3::exceptions::PyIOError::new_err(err.to_string()))?;
         Ok(FemtoFileHandler::from_file(
             file,
             DefaultFormatter,
@@ -245,8 +247,8 @@ impl FemtoFileHandler {
 
     /// Create a handler using an explicit [`HandlerConfig`].
     ///
-    /// This allows callers to override the queue capacity, flush interval (> 0)
-    /// and overflow policy in a single place.
+    /// This allows callers to override the queue capacity (> 0), flush interval
+    /// (> 0), and overflow policy in a single place.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -256,21 +258,19 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
+        if config.capacity == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "capacity must be greater than zero",
+            ));
+        }
         if config.flush_interval == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "flush_interval must be greater than zero",
             ));
         }
-        #[expect(
-            clippy::ineffective_open_options,
-            reason = "Be explicit about write intent alongside append"
-        )]
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(true)
-            .open(path)?;
+        let file = open_log_file(path)?;
         Ok(Self::from_file(file, formatter, config))
     }
 

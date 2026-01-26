@@ -288,6 +288,24 @@ fn femto_file_handler_invalid_file_path() {
 }
 
 #[test]
+fn femto_file_handler_rejects_zero_capacity() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("out.log");
+    let cfg = HandlerConfig {
+        capacity: 0,
+        flush_interval: 1,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+
+    let result = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg);
+    assert!(result.is_err(), "zero capacity should be rejected");
+    let err = result.err().expect("missing error for zero capacity");
+
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(err.to_string(), "capacity must be greater than zero");
+}
+
+#[test]
 #[serial]
 fn femto_file_handler_queue_overflow_drop_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);

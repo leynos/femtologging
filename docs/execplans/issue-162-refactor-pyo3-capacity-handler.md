@@ -35,11 +35,11 @@ clause within the macro invocation:
 
 Table: Builder capacity clause mapping
 
-| Builder                      | Module              | Capacity Field Path     |
-| ---------------------------- | ------------------- | ----------------------- |
-| `FileHandlerBuilder`         | `file_builder`      | `state.set_capacity()`  |
-| `StreamHandlerBuilder`       | `stream_builder`    | `common.set_capacity()` |
-| `RotatingFileHandlerBuilder` | `rotating_builder`  | `state.set_capacity()`  |
+| Builder                      | Module             | Capacity Field Path     |
+| ---------------------------- | ------------------ | ----------------------- |
+| `FileHandlerBuilder`         | `file_builder`     | `state.set_capacity()`  |
+| `StreamHandlerBuilder`       | `stream_builder`   | `common.set_capacity()` |
+| `RotatingFileHandlerBuilder` | `rotating_builder` | `state.set_capacity()`  |
 
 The remaining duplication is the **macro invocation pattern** (~4 lines each),
 differing only in the field path (`state` vs `common`).
