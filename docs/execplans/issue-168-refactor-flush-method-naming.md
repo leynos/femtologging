@@ -3,7 +3,7 @@
 **Issue:**
 [#168 – Inconsistent flush method naming, types, and semantics](https://github.com/leynos/femtologging/issues/168)
 
-**Status:** Completed **Criticality:** MEDIUM – API consistency; no runtime risk
+**Status:** Completed — **Criticality:** MEDIUM – API consistency; no runtime risk
 
 ______________________________________________________________________
 
@@ -30,8 +30,8 @@ ______________________________________________________________________
 ## Constraints
 
 1. **Backward compatibility:** The method name `with_flush_record_interval`
-   remains unchanged. The type change from `usize` to `u64` is technically
-   breaking in Rust but transparent in Python.
+   remains unchanged. The Rust API type changed from `usize` to `NonZeroU64`
+   (breaking); the Python API accepts `u64` and remains transparent.
 2. **Semantic clarity:** Method names already convey their purpose (`_interval`
    vs `_timeout_ms`). Rename is **not** required.
 3. **No new abstractions:** The `FlushTrigger` enum (Option 2) is
