@@ -6,6 +6,7 @@ use crate::handler::{FemtoHandlerTrait, HandlerError};
 use parking_lot::Mutex;
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Default)]
 struct CollectingHandler {
@@ -27,6 +28,34 @@ impl CollectingHandler {
 impl FemtoHandlerTrait for CollectingHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         self.records.lock().push(record);
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(Clone, Default)]
+struct CountingHandler {
+    count: Arc<AtomicUsize>,
+}
+
+impl CountingHandler {
+    fn new() -> Self {
+        Self {
+            count: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.count.load(Ordering::Relaxed)
+    }
+}
+
+impl FemtoHandlerTrait for CountingHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -105,6 +134,62 @@ fn worker_thread_loop_processes_and_drains() {
     let collected = h.collected();
     let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
     assert_eq!(msgs, vec!["one", "two"]);
+}
+
+#[test]
+fn worker_thread_loop_shutdown_exits_under_load() {
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    let (tx, rx) = crossbeam_channel::bounded(64);
+    let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
+    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+    let handler = Arc::new(CountingHandler::new());
+    let handler_trait: Arc<dyn FemtoHandlerTrait> = handler.clone();
+
+    let running = Arc::new(AtomicBool::new(true));
+    let producer_running = Arc::clone(&running);
+    let producer_tx = tx.clone();
+    let producer_handler = handler_trait.clone();
+
+    let producer = std::thread::spawn(move || {
+        while producer_running.load(Ordering::Relaxed) {
+            let record = QueuedRecord {
+                record: FemtoLogRecord::new("core", FemtoLevel::Info, "load"),
+                handlers: vec![producer_handler.clone()],
+            };
+            match producer_tx.try_send(record) {
+                Ok(()) => {}
+                Err(crossbeam_channel::TrySendError::Full(_)) => std::thread::yield_now(),
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => break,
+            }
+        }
+    });
+
+    let worker = std::thread::spawn(move || {
+        FemtoLogger::worker_thread_loop(rx, shutdown_rx);
+        done_tx
+            .send(())
+            .expect("Failed to signal worker completion");
+    });
+
+    let start = std::time::Instant::now();
+    while handler.count() == 0 && start.elapsed() < Duration::from_millis(100) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(handler.count() > 0, "Expected records before shutdown");
+    shutdown_tx
+        .send(())
+        .expect("Failed to send shutdown signal");
+    running.store(false, Ordering::Relaxed);
+    producer.join().expect("Producer thread panicked");
+
+    done_rx
+        .recv_timeout(Duration::from_millis(500))
+        .expect("Worker thread did not shutdown promptly");
+    worker.join().expect("Worker thread panicked");
+
+    assert!(handler.count() > 0);
 }
 
 #[test]
