@@ -199,7 +199,7 @@ maximise durability. To batch writes, pass a custom configuration via
 arguments on ``FemtoFileHandler`` (Python). Setting ``flush_interval`` defers
 flushing until the specified number of records have been written. The value
 must be greater than zero, so periodic flushing always occurs. Higher values
-reduce syscall overhead in high-volume scenarios. Internally the handler
+reduce syscall overhead in high-volume scenarios. Internally, the handler
 buffers writes with `BufWriter`, so records only reach the file once a flush
 occurs or the handler shuts down.
 
