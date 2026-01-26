@@ -1012,8 +1012,7 @@ potential future enhancement.
   thread owns the logic that evaluates when a rollover must occur.
 - The worker evaluates the predicate `current_file_len + buffered_bytes +
   next_record_bytes >
-  max_bytes` before each write. `next_record_bytes` counts the UTF-8 payload plus the newline that `
-   writeln!` appends so the check mirrors the eventual I/O.
+  max_bytes` before each write. Because `writeln!` appends a newline, the byte count includes both payload and newline to mirror I/O.
 - Measuring never flushes buffered data. When the predicate fires, the worker
   flushes once, swaps the live `BufWriter` onto an append handle so the
   original file descriptor can be closed, cascades existing backups (dropping
