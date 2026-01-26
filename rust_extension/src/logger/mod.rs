@@ -575,7 +575,8 @@ impl Drop for FemtoLogger {
             let _ = shutdown_tx.send(());
         }
         self.tx.take();
-        if let Some(handle) = self.handle.lock().take() {
+        let handle = { self.handle.lock().take() };
+        if let Some(handle) = handle {
             Python::with_gil(|py| py.allow_threads(move || log_join_result(handle)));
         }
     }
