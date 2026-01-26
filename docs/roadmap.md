@@ -14,7 +14,9 @@ steps below summarize the actionable items from that design.
 - [x] Implement basic logger in Rust with matching Python API
 - [x] Integrate Rust extension into Python packaging workflow
 - [ ] Port formatting and handler components to Rust
-- [ ] Add concurrency support and thread safety guarantees
+- [x] Add thread-safety guarantees (`Send`/`Sync`) for threaded components
+- [ ] Expand concurrency features (e.g., batching, back-pressure, shutdown
+  semantics)
 - [ ] Benchmark against picologging and optimize hot paths
 - [ ] Provide unit and integration tests for all features
 - [ ] Set up continuous integration for Rust and Python tests
