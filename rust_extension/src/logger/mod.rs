@@ -23,7 +23,7 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
-use crossbeam_channel::{Receiver, Sender, bounded, select};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select};
 use log::warn;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
@@ -528,7 +528,6 @@ impl FemtoLogger {
     /// # Arguments
     ///
     /// * `rx` - Channel receiver holding pending log records.
-    /// * `handlers` - Shared collection of handlers used to process records.
     fn drain_remaining_records(rx: &Receiver<QueuedRecord>) {
         while let Ok(job) = rx.try_recv() {
             Self::handle_log_record(job);
@@ -537,8 +536,9 @@ impl FemtoLogger {
 
     /// Main loop executed by the logger's worker thread.
     ///
-    /// Waits on either incoming log records or a shutdown signal using
-    /// `select!`. Each received record is forwarded to `handle_log_record`.
+    /// Checks for a shutdown signal before blocking, then waits for either
+    /// shutdown or incoming log records. Each received record is forwarded
+    /// to `handle_log_record`.
     /// When a shutdown signal arrives, any queued records are drained before
     /// the thread exits.
     ///
@@ -546,18 +546,24 @@ impl FemtoLogger {
     ///
     /// * `rx` - Channel receiver for new log records.
     /// * `shutdown_rx` - Channel receiver signaling shutdown.
-    /// * `handlers` - Shared collection of handlers for processing records.
     fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
         loop {
+            match shutdown_rx.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => {
+                    Self::drain_remaining_records(&rx);
+                    break;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
             select! {
+                recv(shutdown_rx) -> _ => {
+                    Self::drain_remaining_records(&rx);
+                    break;
+                },
                 recv(rx) -> rec => match rec {
                     Ok(job) => Self::handle_log_record(job),
                     Err(_) => break,
                 },
-                recv(shutdown_rx) -> _ => {
-                    Self::drain_remaining_records(&rx);
-                    break;
-                }
             }
         }
     }
