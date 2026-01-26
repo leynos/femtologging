@@ -291,4 +291,23 @@ mod tests {
         assert!(output.contains("ValueError: value error"));
         assert!(output.contains("TypeError: type error"));
     }
+
+    #[test]
+    fn format_deep_exception_chain_no_stack_overflow() {
+        // Build a 100-level cause chain and format it
+        let mut current = ExceptionPayload::new("BaseError", "root cause");
+        for i in 1..100 {
+            let mut wrapper = ExceptionPayload::new(format!("Error{i}"), format!("level {i}"));
+            wrapper.cause = Some(Box::new(current));
+            current = wrapper;
+        }
+
+        // This should not stack overflow
+        let output = format_exception_payload(&current);
+
+        // Verify output contains markers from different levels
+        assert!(output.contains("BaseError: root cause"));
+        assert!(output.contains("Error99: level 99"));
+        assert!(output.contains("The above exception was the direct cause"));
+    }
 }

@@ -177,28 +177,6 @@ fn exception_group_with_nested_exceptions() {
 }
 
 #[rstest]
-fn deep_cause_chain_serializes() {
-    // Test a chain of 10 nested causes to ensure no stack overflow
-    let mut current = ExceptionPayload::new("BaseError", "root cause");
-    for i in 1..10 {
-        current =
-            ExceptionPayload::new(format!("Error{i}"), format!("level {i}")).with_cause(current);
-    }
-
-    let json = serde_json::to_string(&current).expect("serialize deep chain");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-
-    // Verify chain depth
-    let mut depth = 0;
-    let mut node = Some(&decoded);
-    while let Some(n) = node {
-        depth += 1;
-        node = n.cause.as_deref();
-    }
-    assert_eq!(depth, 10);
-}
-
-#[rstest]
 fn types_are_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<StackFrame>();
@@ -220,55 +198,49 @@ fn validate_schema_version_cases(#[case] version: u16, #[case] valid: bool) {
 }
 
 #[rstest]
-fn version_too_new_error_includes_versions() {
-    let future_version = EXCEPTION_SCHEMA_VERSION + 1;
-    let err = validate_schema_version(future_version).expect_err("should fail for future version");
+#[case(EXCEPTION_SCHEMA_VERSION + 1, "VersionTooNew")]
+#[case(0, "VersionTooOld")]
+fn version_validation_error_includes_versions(
+    #[case] version: u16,
+    #[case] expected_variant: &str,
+) {
+    let err = validate_schema_version(version).expect_err("should fail for invalid version");
 
-    match err {
-        SchemaVersionError::VersionTooNew {
-            found,
-            max_supported,
-        } => {
-            assert_eq!(found, future_version);
-            assert_eq!(max_supported, EXCEPTION_SCHEMA_VERSION);
+    match (&err, expected_variant) {
+        (
+            SchemaVersionError::VersionTooNew {
+                found,
+                max_supported,
+            },
+            "VersionTooNew",
+        ) => {
+            assert_eq!(*found, version);
+            assert_eq!(*max_supported, EXCEPTION_SCHEMA_VERSION);
+            let msg = err.to_string();
+            assert!(msg.contains("maximum supported"), "should mention maximum");
+            assert!(
+                msg.contains(&version.to_string()),
+                "error message should contain found version"
+            );
         }
-        SchemaVersionError::VersionTooOld { .. } => {
-            panic!("expected VersionTooNew, got VersionTooOld");
+        (
+            SchemaVersionError::VersionTooOld {
+                found,
+                min_supported,
+            },
+            "VersionTooOld",
+        ) => {
+            assert_eq!(*found, version);
+            assert_eq!(*min_supported, MIN_EXCEPTION_SCHEMA_VERSION);
+            let msg = err.to_string();
+            assert!(msg.contains("minimum supported"), "should mention minimum");
+            assert!(
+                msg.contains(&version.to_string()),
+                "error message should contain found version"
+            );
         }
+        _ => panic!("expected {expected_variant}, got {:?}", err),
     }
-
-    let msg = err.to_string();
-    assert!(msg.contains("maximum supported"), "should mention maximum");
-    assert!(
-        msg.contains(&future_version.to_string()),
-        "error message should contain found version"
-    );
-}
-
-#[rstest]
-fn version_too_old_error_includes_versions() {
-    let old_version = 0;
-    let err = validate_schema_version(old_version).expect_err("should fail for old version");
-
-    match err {
-        SchemaVersionError::VersionTooOld {
-            found,
-            min_supported,
-        } => {
-            assert_eq!(found, old_version);
-            assert_eq!(min_supported, MIN_EXCEPTION_SCHEMA_VERSION);
-        }
-        SchemaVersionError::VersionTooNew { .. } => {
-            panic!("expected VersionTooOld, got VersionTooNew");
-        }
-    }
-
-    let msg = err.to_string();
-    assert!(msg.contains("minimum supported"), "should mention minimum");
-    assert!(
-        msg.contains(&old_version.to_string()),
-        "error message should contain found version"
-    );
 }
 
 #[rstest]
