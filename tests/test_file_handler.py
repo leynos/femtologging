@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from femtologging import FemtoFileHandler
+from femtologging import FemtoFileHandler, FileHandlerBuilder, OverflowPolicy
 
 FileHandlerFactory = cabc.Callable[
     [Path, int, int], typ.ContextManager[FemtoFileHandler]
@@ -171,23 +171,38 @@ def test_overflow_policy_block(tmp_path: Path) -> None:
 
 
 def test_overflow_policy_timeout(tmp_path: Path) -> None:
-    """Timeout policy honours the timeout.
-
-    The worker drains the queue faster than Python can fill it, so reliably
-    forcing a timeout would introduce flakiness. This smoke test exercises the
-    timeout parsing path.
-    """
+    """Timeout policy drops records once the queue is saturated."""
     path = tmp_path / "timeout.log"
-    with closing(
-        FemtoFileHandler(
-            str(path),
-            capacity=1,
-            flush_interval=10000,
-            policy="timeout:200",
-        )
-    ) as handler:
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def blocking_formatter(record: dict[str, object]) -> str:
+        if not worker_started.is_set():
+            worker_started.set()
+            release_worker.wait(timeout=1.0)
+        return f"{record['logger']} [{record['level']}] {record['message']}"
+
+    builder = (
+        FileHandlerBuilder(str(path))
+        .with_capacity(1)
+        .with_flush_record_interval(10000)
+        .with_overflow_policy(OverflowPolicy.timeout(200))
+        .with_formatter(blocking_formatter)
+    )
+    with closing(builder.build()) as handler:
         handler.handle("core", "INFO", "first")
-    assert path.read_text() == "core [INFO] first\n"
+        assert worker_started.wait(1.0), "worker never reached formatter"
+        try:
+            # Capacity=1 allows one queued record while the worker is busy.
+            handler.handle("core", "INFO", "second")
+            with pytest.raises(RuntimeError, match="timed out"):
+                handler.handle("core", "INFO", "third")
+        finally:
+            release_worker.set()
+    assert path.read_text().splitlines() == [
+        "core [INFO] first",
+        "core [INFO] second",
+    ]
 
 
 def test_overflow_policy_drop(tmp_path: Path) -> None:
