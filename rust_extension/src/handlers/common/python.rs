@@ -8,13 +8,34 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use std::num::NonZeroU64;
+
 use pyo3::{
     Bound,
     class::basic::CompareOp,
-    exceptions::{PyTypeError, PyValueError},
+    exceptions::{PyOverflowError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyString},
 };
+
+/// Convert a Python `u64` flush record interval to `NonZeroU64`.
+///
+/// Raises `ValueError` if the interval is zero, or `OverflowError` if the
+/// value exceeds `usize::MAX` on the current platform (since `HandlerConfig`
+/// stores flush intervals as `usize` internally).
+pub(crate) fn py_flush_record_interval_to_nonzero(
+    interval: u64,
+    field_name: &str,
+) -> PyResult<NonZeroU64> {
+    if interval > usize::MAX as u64 {
+        return Err(PyOverflowError::new_err(format!(
+            "{field_name} exceeds maximum value for this platform ({max})",
+            max = usize::MAX,
+        )));
+    }
+    NonZeroU64::new(interval)
+        .ok_or_else(|| PyValueError::new_err(format!("{field_name} must be greater than zero")))
+}
 
 use super::{CommonBuilder, FileLikeBuilderState, FormatterConfig};
 use crate::handlers::file::OverflowPolicy;
@@ -178,7 +199,7 @@ impl FileLikeBuilderState {
     pub fn extend_py_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         self.common.extend_py_dict(d)?;
         if let Some(flush) = self.flush_record_interval {
-            d.set_item("flush_record_interval", flush)?;
+            d.set_item("flush_record_interval", flush.get())?;
         }
         write_overflow_policy_fields(d, &self.overflow_policy)
     }

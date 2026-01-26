@@ -210,6 +210,7 @@ fn rotating_handler_respects_test_builder_defaults() {
 
 #[serial(rotating_fresh_failure)]
 #[test]
+#[serial]
 fn before_write_reports_rotation_outcome() -> io::Result<()> {
     let dir = tempdir()?;
     let path = dir.path().join("rotating.log");
@@ -245,6 +246,7 @@ fn before_write_reports_rotation_outcome() -> io::Result<()> {
 
 #[serial(rotating_fresh_failure)]
 #[test]
+#[serial]
 fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
     let dir = tempdir()?;
     let path = dir.path().join("rotating.log");
