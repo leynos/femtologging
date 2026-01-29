@@ -151,8 +151,13 @@ dedicated submodules following existing patterns in the codebase.
    submodule containing `PyOverflowPolicy` and Python helper methods.
 
 2. **handlers/rotating/python_bindings.rs**: New module containing
+<<<<<<< HEAD
    `HandlerOptions`, `#[pymethods]` for `FemtoRotatingFileHandler`, and test
    helper functions.
+=======
+   `HandlerOptions`,
+   `#[pymethods]` for `FemtoRotatingFileHandler`, and test helper functions.
+>>>>>>> 373937c (refactor(python feature): consolidate python cfg gating into dedicated submodules)
 
 3. **python_module.rs**: New consolidated module for Python class and function
    registration, replacing inline `add_python_bindings()` in `lib.rs`.
