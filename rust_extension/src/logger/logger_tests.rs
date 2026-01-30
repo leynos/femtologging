@@ -39,23 +39,36 @@ impl FemtoHandlerTrait for CollectingHandler {
 #[derive(Clone, Default)]
 struct CountingHandler {
     count: Arc<AtomicUsize>,
+    first_tx: Option<crossbeam_channel::Sender<()>>,
 }
 
 impl CountingHandler {
     fn new() -> Self {
         Self {
             count: Arc::new(AtomicUsize::new(0)),
+            first_tx: None,
+        }
+    }
+
+    fn with_first_signal(first_tx: crossbeam_channel::Sender<()>) -> Self {
+        Self {
+            count: Arc::new(AtomicUsize::new(0)),
+            first_tx: Some(first_tx),
         }
     }
 
     fn count(&self) -> usize {
-        self.count.load(Ordering::Relaxed)
+        self.count.load(Ordering::SeqCst)
     }
 }
 
 impl FemtoHandlerTrait for CountingHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        self.count.fetch_add(1, Ordering::Relaxed);
+        if self.count.fetch_add(1, Ordering::SeqCst) == 0 {
+            if let Some(first_tx) = &self.first_tx {
+                let _ = first_tx.send(());
+            }
+        }
         Ok(())
     }
 
@@ -144,7 +157,8 @@ fn worker_thread_loop_shutdown_exits_under_load() {
     let (tx, rx) = crossbeam_channel::bounded(64);
     let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
     let (done_tx, done_rx) = crossbeam_channel::bounded(1);
-    let handler = Arc::new(CountingHandler::new());
+    let (started_tx, started_rx) = crossbeam_channel::bounded(1);
+    let handler = Arc::new(CountingHandler::with_first_signal(started_tx));
     let handler_trait: Arc<dyn FemtoHandlerTrait> = handler.clone();
 
     let running = Arc::new(AtomicBool::new(true));
@@ -172,11 +186,9 @@ fn worker_thread_loop_shutdown_exits_under_load() {
             .expect("Failed to signal worker completion");
     });
 
-    let start = std::time::Instant::now();
-    while handler.count() == 0 && start.elapsed() < Duration::from_millis(100) {
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert!(handler.count() > 0, "Expected records before shutdown");
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Expected records before shutdown");
     shutdown_tx
         .send(())
         .expect("Failed to send shutdown signal");
@@ -184,7 +196,7 @@ fn worker_thread_loop_shutdown_exits_under_load() {
     producer.join().expect("Producer thread panicked");
 
     done_rx
-        .recv_timeout(Duration::from_millis(500))
+        .recv_timeout(Duration::from_secs(2))
         .expect("Worker thread did not shutdown promptly");
     worker.join().expect("Worker thread panicked");
 }

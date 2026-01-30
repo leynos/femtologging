@@ -534,6 +534,17 @@ impl FemtoLogger {
         }
     }
 
+    fn shutdown_and_drain(rx: &Receiver<QueuedRecord>) {
+        Self::drain_remaining_records(rx);
+    }
+
+    fn should_shutdown_now(shutdown_rx: &Receiver<()>) -> bool {
+        matches!(
+            shutdown_rx.try_recv(),
+            Ok(()) | Err(TryRecvError::Disconnected)
+        )
+    }
+
     /// Main loop executed by the logger's worker thread.
     ///
     /// Checks for a shutdown signal before blocking, then waits for either
@@ -548,16 +559,13 @@ impl FemtoLogger {
     /// * `shutdown_rx` - Channel receiver signaling shutdown.
     fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
         loop {
-            match shutdown_rx.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => {
-                    Self::drain_remaining_records(&rx);
-                    break;
-                }
-                Err(TryRecvError::Empty) => {}
+            if Self::should_shutdown_now(&shutdown_rx) {
+                Self::shutdown_and_drain(&rx);
+                break;
             }
             select! {
                 recv(shutdown_rx) -> _ => {
-                    Self::drain_remaining_records(&rx);
+                    Self::shutdown_and_drain(&rx);
                     break;
                 },
                 recv(rx) -> rec => match rec {
