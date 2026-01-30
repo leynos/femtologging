@@ -51,16 +51,23 @@ Observable outcomes:
 ## Risks
 
 - Risk: Moving code to submodules may break internal visibility (`pub(crate)`)
-  Severity: medium Likelihood: medium Mitigation: Use `pub(crate)` re-exports
-  and verify with `cargo check` after each move
+  - Severity: medium
+  - Likelihood: medium
+  - Mitigation: Use `pub(crate)` re-exports and verify with `cargo check` after
+    each move
 
 - Risk: Macros in `builder_macros.rs` generate code that assumes certain types
-  are in scope Severity: medium Likelihood: low Mitigation: Test macro
-  expansion with both feature sets after changes
+  are in scope
+  - Severity: medium
+  - Likelihood: low
+  - Mitigation: Test macro expansion with both feature sets after changes
 
 - Risk: Some handlers (`FemtoHandler`, `FemtoLogger`) are tightly coupled to
-  `#[pyclass]` Severity: low Likelihood: high Mitigation: Accept
-  `#[cfg_attr(feature = "python", pyclass)]` pattern as acceptable minimal noise
+  `#[pyclass]`
+  - Severity: low
+  - Likelihood: high
+  - Mitigation: Accept `#[cfg_attr(feature = "python", pyclass)]` pattern as
+    acceptable minimal noise
 
 ## Progress
 
