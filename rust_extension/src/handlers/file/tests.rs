@@ -7,6 +7,7 @@ use super::test_support::{install_test_logger, take_logged_messages};
 use super::*;
 use crate::handler::HandlerError;
 use log::Level;
+use rstest::rstest;
 use serial_test::serial;
 use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -285,6 +286,42 @@ fn femto_file_handler_invalid_file_path() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("missing").join("out.log");
     assert!(FemtoFileHandler::new(&path).is_err());
+}
+
+#[rstest]
+#[case::zero_capacity(0, 1, "capacity must be greater than zero", "zero capacity")]
+#[case::zero_flush_interval(
+    10,
+    0,
+    "flush_interval must be greater than zero",
+    "zero flush interval"
+)]
+fn femto_file_handler_rejects_zero_flush_interval(
+    #[case] capacity: usize,
+    #[case] flush_interval: usize,
+    #[case] message: &str,
+    #[case] label: &str,
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("out.log");
+    let cfg = HandlerConfig {
+        capacity,
+        flush_interval,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+
+    let result = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg);
+    assert!(result.is_err(), "{label} should be rejected");
+    let err = result
+        .err()
+        .expect("missing error for zero-value validation");
+
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(err.to_string(), message);
+    assert!(
+        !path.exists(),
+        "zero-value validation should avoid creating the log file",
+    );
 }
 
 #[test]

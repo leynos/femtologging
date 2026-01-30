@@ -74,8 +74,12 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
-fn open_log_file(path: &str) -> PyResult<File> {
-    use pyo3::exceptions::PyIOError;
+const CAPACITY_ZERO_MSG: &str = "capacity must be greater than zero";
+const FLUSH_INTERVAL_ZERO_MSG: &str = "flush_interval must be greater than zero";
+
+fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
+    let path_ref = path.as_ref();
+    let path_display = path_ref.display();
     #[expect(
         clippy::ineffective_open_options,
         reason = "Be explicit about write intent alongside append"
@@ -84,21 +88,39 @@ fn open_log_file(path: &str) -> PyResult<File> {
         .create(true)
         .write(true)
         .append(true)
-        .open(path)
-        .map_err(|e| PyIOError::new_err(format!("{path}: {e}")))
+        .open(path_ref)
+        .map_err(|e| io::Error::new(e.kind(), format!("{path_display}: {e}")))
+}
+
+fn validate_capacity_nonzero(capacity: usize) -> Result<(), &'static str> {
+    if capacity == 0 {
+        return Err(CAPACITY_ZERO_MSG);
+    }
+    Ok(())
+}
+
+/// Validate a possibly negative flush interval from FFI or other input-boundary
+/// sources and return a usable `usize` on success.
+fn validate_flush_interval_value(flush_interval: isize) -> Result<usize, &'static str> {
+    if flush_interval <= 0 {
+        return Err(FLUSH_INTERVAL_ZERO_MSG);
+    }
+    Ok(flush_interval as usize)
+}
+
+/// Validate a Rust-side non-negative flush interval that only needs a zero
+/// guard, mirroring `validate_capacity_nonzero` for internal callers.
+fn validate_flush_interval_nonzero(flush_interval: usize) -> Result<(), &'static str> {
+    if flush_interval == 0 {
+        return Err(FLUSH_INTERVAL_ZERO_MSG);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
     use pyo3::exceptions::PyValueError;
-    if capacity == 0 {
-        return Err(PyValueError::new_err("capacity must be greater than zero"));
-    }
-    if flush_interval <= 0 {
-        return Err(PyValueError::new_err(
-            "flush_interval must be greater than zero",
-        ));
-    }
-    Ok(flush_interval as usize)
+    validate_capacity_nonzero(capacity).map_err(PyValueError::new_err)?;
+    validate_flush_interval_value(flush_interval).map_err(PyValueError::new_err)
 }
 
 #[pymethods]
@@ -136,7 +158,8 @@ impl FemtoFileHandler {
             flush_interval,
             overflow_policy,
         };
-        let file = open_log_file(&path)?;
+        let file = open_log_file(&path)
+            .map_err(|err| pyo3::exceptions::PyIOError::new_err(err.to_string()))?;
         Ok(FemtoFileHandler::from_file(
             file,
             DefaultFormatter,
@@ -245,8 +268,8 @@ impl FemtoFileHandler {
 
     /// Create a handler using an explicit [`HandlerConfig`].
     ///
-    /// This allows callers to override the queue capacity, flush interval (> 0)
-    /// and overflow policy in a single place.
+    /// This allows callers to override the queue capacity (> 0), flush interval
+    /// (> 0), and overflow policy in a single place.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -256,21 +279,11 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
-        if config.flush_interval == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "flush_interval must be greater than zero",
-            ));
-        }
-        #[expect(
-            clippy::ineffective_open_options,
-            reason = "Be explicit about write intent alongside append"
-        )]
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(true)
-            .open(path)?;
+        validate_capacity_nonzero(config.capacity)
+            .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
+        validate_flush_interval_nonzero(config.flush_interval)
+            .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
+        let file = open_log_file(path)?;
         Ok(Self::from_file(file, formatter, config))
     }
 
