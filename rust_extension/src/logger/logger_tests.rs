@@ -18,11 +18,15 @@ struct HandlePtr(*const Mutex<Option<std::thread::JoinHandle<()>>>);
 
 impl HandlePtr {
     unsafe fn as_ref<'a>(self) -> &'a Mutex<Option<std::thread::JoinHandle<()>>> {
+        // SAFETY: Callers guarantee the pointee outlives this reference.
         unsafe { &*self.0 }
     }
 }
 
-// Safety: only used in tests to share a mutex pointer across threads.
+// SAFETY: The pointee is a `parking_lot::Mutex`, which is `Send + Sync` and
+// all access goes through `as_ref()` to obtain shared references that rely on
+// the mutex for interior mutability. Callers must also guarantee the pointee
+// outlives any use of `HandlePtr`.
 unsafe impl Send for HandlePtr {}
 unsafe impl Sync for HandlePtr {}
 
@@ -346,7 +350,7 @@ fn spawn_lock_attempt_worker(
         start_signal
             .recv()
             .expect("Failed to receive lock attempt signal");
-        // Safe because the logger outlives the worker, and the mutex guards access.
+        // SAFETY: The logger outlives the worker, and the mutex guards access.
         let handle_mutex = unsafe { handle_ptr.as_ref() };
         let start = Instant::now();
         let mut acquired = false;
@@ -369,7 +373,7 @@ fn spawn_lock_attempt_worker(
 fn wait_for_drop_to_acquire_lock(handle_ptr: HandlePtr, timeout: std::time::Duration) {
     use std::time::Instant;
 
-    // Safe because the logger outlives the drop thread and mutex guards access.
+    // SAFETY: The logger outlives the drop thread and mutex guards access.
     let handle_mutex = unsafe { handle_ptr.as_ref() };
     let probe_start = Instant::now();
     while probe_start.elapsed() < timeout {
@@ -388,20 +392,14 @@ fn drop_releases_handle_lock_before_join() {
     let logger = setup_logger_for_drop_test();
 
     let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
-    let handle_ptr_for_worker = handle_ptr;
-    let handle_ptr_for_probe = handle_ptr;
 
     let (start_lock_tx, start_lock_rx) = mpsc::channel();
     let (attempt_done_tx, attempt_done_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let (drop_started_tx, drop_started_rx) = mpsc::channel();
 
-    let worker_handle = spawn_lock_attempt_worker(
-        handle_ptr_for_worker,
-        start_lock_rx,
-        attempt_done_tx,
-        release_rx,
-    );
+    let worker_handle =
+        spawn_lock_attempt_worker(handle_ptr, start_lock_rx, attempt_done_tx, release_rx);
 
     *logger.handle.lock() = Some(worker_handle);
 
@@ -415,7 +413,7 @@ fn drop_releases_handle_lock_before_join() {
     drop_started_rx
         .recv()
         .expect("Failed to wait for drop start");
-    wait_for_drop_to_acquire_lock(handle_ptr_for_probe, Duration::from_millis(200));
+    wait_for_drop_to_acquire_lock(handle_ptr, Duration::from_millis(200));
 
     start_lock_tx
         .send(())
