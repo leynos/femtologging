@@ -216,7 +216,7 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
 mod tests {
     //! Unit tests for the `log` crate bridge.
 
-    use log::Log;
+    use log::{LevelFilter, Log};
 
     use super::*;
     use crate::handler::{FemtoHandlerTrait, HandlerError};
@@ -224,7 +224,7 @@ mod tests {
     use rstest::rstest;
     use serial_test::serial;
     use std::any::Any;
-    use std::sync::Arc;
+    use std::sync::{Arc, Once};
 
     #[rstest]
     #[case(log::Level::Trace, FemtoLevel::Trace)]
@@ -239,6 +239,13 @@ mod tests {
     #[derive(Clone, Default)]
     struct CollectingHandler {
         records: Arc<Mutex<Vec<FemtoLogRecord>>>,
+    }
+
+    fn ensure_log_max_level() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            log::set_max_level(LevelFilter::Trace);
+        });
     }
 
     impl CollectingHandler {
@@ -261,6 +268,7 @@ mod tests {
     #[rstest]
     #[serial]
     fn adapter_dispatches_records_to_target_logger() {
+        ensure_log_max_level();
         let adapter = FemtoLogAdapter;
 
         Python::with_gil(|py| {
@@ -304,6 +312,7 @@ mod tests {
     #[rstest]
     #[serial]
     fn adapter_normalises_rust_module_targets() {
+        ensure_log_max_level();
         let adapter = FemtoLogAdapter;
 
         Python::with_gil(|py| {
@@ -334,6 +343,7 @@ mod tests {
     #[rstest]
     #[serial]
     fn log_respects_logger_threshold() {
+        ensure_log_max_level();
         let adapter = FemtoLogAdapter;
 
         Python::with_gil(|py| {
