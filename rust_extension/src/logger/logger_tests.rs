@@ -149,7 +149,6 @@ fn worker_thread_loop_shutdown_exits_under_load() {
 
     let running = Arc::new(AtomicBool::new(true));
     let producer_running = Arc::clone(&running);
-    let producer_tx = tx.clone();
     let producer_handler = handler_trait.clone();
 
     let producer = std::thread::spawn(move || {
@@ -158,7 +157,7 @@ fn worker_thread_loop_shutdown_exits_under_load() {
                 record: FemtoLogRecord::new("core", FemtoLevel::Info, "load"),
                 handlers: vec![producer_handler.clone()],
             };
-            match producer_tx.try_send(record) {
+            match tx.try_send(record) {
                 Ok(()) => {}
                 Err(crossbeam_channel::TrySendError::Full(_)) => std::thread::yield_now(),
                 Err(crossbeam_channel::TrySendError::Disconnected(_)) => break,
