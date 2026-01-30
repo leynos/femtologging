@@ -6,23 +6,24 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 
 Status: COMPLETED
 
-Related: [Issue #298](https://github.com/leynos/femtologging/issues/298),
-[PR #286](https://github.com/leynos/femtologging/pull/286)
+Related:
+[Issue #298](https://github.com/leynos/femtologging/issues/298), [PR #286](https://github.com/leynos/femtologging/pull/286)
 
 ## Purpose / Big Picture
 
 Scattered `#[cfg(feature = "python")]` annotations across 27 files (~116
 occurrences) create a combinatorial testing problem and make refactors riskier.
 After this work, Python-specific code will be consolidated into dedicated
-submodules with module-level gating, reducing noise to ~40–50 annotations across
-~10 files. Schema modules remain pure; capture/integration modules are cleanly
-gated.
+submodules with module-level gating, reducing noise to ~40–50 annotations
+across ~10 files. Schema modules remain pure; capture/integration modules are
+cleanly gated.
 
 Observable outcomes:
 
 - `cargo build --no-default-features` succeeds cleanly (no Python dependency)
 - `make lint` and `make test` pass for both feature sets
-- Continuous Integration (CI) validates both `--no-default-features` and `--features python` builds
+- Continuous Integration (CI) validates both `--no-default-features` and
+  `--features python` builds
 
 ## Constraints
 
@@ -50,54 +51,52 @@ Observable outcomes:
 ## Risks
 
 - Risk: Moving code to submodules may break internal visibility (`pub(crate)`)
-  Severity: medium
-  Likelihood: medium
-  Mitigation: Use `pub(crate)` re-exports and verify with `cargo check` after
-  each move
+  Severity: medium Likelihood: medium Mitigation: Use `pub(crate)` re-exports
+  and verify with `cargo check` after each move
 
 - Risk: Macros in `builder_macros.rs` generate code that assumes certain types
-  are in scope
-  Severity: medium
-  Likelihood: low
-  Mitigation: Test macro expansion with both feature sets after changes
+  are in scope Severity: medium Likelihood: low Mitigation: Test macro
+  expansion with both feature sets after changes
 
 - Risk: Some handlers (`FemtoHandler`, `FemtoLogger`) are tightly coupled to
-  `#[pyclass]`
-  Severity: low
-  Likelihood: high
-  Mitigation: Accept `#[cfg_attr(feature = "python", pyclass)]` pattern as
-  acceptable minimal noise
+  `#[pyclass]` Severity: low Likelihood: high Mitigation: Accept
+  `#[cfg_attr(feature = "python", pyclass)]` pattern as acceptable minimal noise
 
 ## Progress
 
 - [x] Phase 1: Consolidate handler Python bindings
   - [x] Create `handlers/common/python.rs` for `PyOverflowPolicy`
   - [x] Create `handlers/rotating/python_bindings.rs` for `HandlerOptions`
-  - [~] Create `handlers/stream_builder/python_bindings.rs` (not needed — already well-structured)
-  - [~] Create `handlers/file_builder/python_bindings.rs` (not needed — already well-structured)
-  - [~] Create `handlers/rotating_builder/python_bindings.rs` (not needed — already well-structured)
+  - [~] Create `handlers/stream_builder/python_bindings.rs` (not needed —
+    already well-structured)
+  - [~] Create `handlers/file_builder/python_bindings.rs` (not needed — already
+    well-structured)
+  - [~] Create `handlers/rotating_builder/python_bindings.rs` (not needed —
+    already well-structured)
 - [x] Phase 2: Consolidate lib.rs Python exports
-  - [~] Create `python_exports.rs` for Python-only re-exports (merged into python_module.rs)
+  - [~] Create `python_exports.rs` for Python-only re-exports (merged into
+    python_module.rs)
   - [x] Move `add_python_bindings()` to dedicated module (`python_module.rs`)
   - [x] Clean up scattered `#[cfg]` in module declarations
 - [x] Phase 3: Update Makefile and CI
   - [x] Add `--features python` test to Makefile (lint and test targets)
   - [x] Verify CI workflows cover both feature sets (uses make lint/test)
 - [x] Phase 4: Final verification
-  - [x] Count remaining `#[cfg(feature = "python")]` annotations: 91 (down from 116)
+  - [x] Count remaining `#[cfg(feature = "python")]` annotations: 91 (down from
+        116)
   - [x] Verify `cargo build --no-default-features` succeeds
   - [x] Run full test suite with both feature sets
 
 ## Surprises & Discoveries
 
-- The `handle_record` method in `FemtoRotatingFileHandler` needed to be gated with
-  `#[cfg(feature = "python")]` as it's only used by Python bindings and triggered
-  a `dead_code` warning when building without Python feature.
+- The `handle_record` method in `FemtoRotatingFileHandler` needed to be gated
+  with `#[cfg(feature = "python")]` as it's only used by Python bindings and
+  triggered a `dead_code` warning when building without Python feature.
 
 - Several builder modules (stream_builder, file_builder, rotating_builder) were
-  already well-structured and didn't require the additional `python_bindings.rs`
-  submodules originally planned. The consolidation focused on the areas with
-  the highest annotation density.
+  already well-structured and didn't require the additional
+  `python_bindings.rs` submodules originally planned. The consolidation focused
+  on the areas with the highest annotation density.
 
 - The annotation count reduction (116 → 91) is less than originally targeted
   (~40-50) because many annotations are inherently required for PyO3 attribute
@@ -112,8 +111,8 @@ Observable outcomes:
 
 - Decision: Accept `#[cfg_attr(feature = "python", pyclass)]` for core types
   Rationale: `FemtoHandler` and `FemtoLogger` are fundamentally pyclasses;
-  extracting them would require major API restructuring
-  Date/Author: Planning phase
+  extracting them would require major API restructuring Date/Author: Planning
+  phase
 
 - Decision: Gate entire modules rather than individual functions where possible
   Rationale: Reduces cognitive load; makes feature boundaries obvious
@@ -131,21 +130,22 @@ dedicated submodules following existing patterns in the codebase.
 
 ### Metrics
 
-| Metric                          | Before | After | Target    |
-| ------------------------------- | ------ | ----- | --------- |
-| `#[cfg(feature = "python")]`    | 116    | 91    | <60       |
-| Files with Python annotations   | 27     | ~20   | ~10       |
-| `cargo build --no-default-features` | ✓ | ✓ | Must pass |
-| `make lint`                     | ✓      | ✓     | Must pass |
-| `make test`                     | ✓      | ✓     | Must pass |
+| Metric                              | Before | After | Target    |
+| ----------------------------------- | ------ | ----- | --------- |
+| `#[cfg(feature = "python")]`        | 116    | 91    | <60       |
+| Files with Python annotations       | 27     | ~20   | ~10       |
+| `cargo build --no-default-features` | ✓      | ✓     | Must pass |
+| `make lint`                         | ✓      | ✓     | Must pass |
+| `make test`                         | ✓      | ✓     | Must pass |
 
 ### Key Changes
 
 1. **handlers/common/**: Converted from single file to module with `python.rs`
    submodule containing `PyOverflowPolicy` and Python helper methods.
 
-2. **handlers/rotating/python_bindings.rs**: New module containing `HandlerOptions`,
-   `#[pymethods]` for `FemtoRotatingFileHandler`, and test helper functions.
+2. **handlers/rotating/python_bindings.rs**: New module containing
+   `HandlerOptions`, `#[pymethods]` for `FemtoRotatingFileHandler`, and test
+   helper functions.
 
 3. **python_module.rs**: New consolidated module for Python class and function
    registration, replacing inline `add_python_bindings()` in `lib.rs`.
@@ -202,18 +202,18 @@ The `python` feature is a bare flag that gates Python-specific code. The
 
 **Modules requiring refactoring** (scattered `#[cfg]` annotations):
 
-| File                            | Count | Issue                          |
-| ------------------------------- | ----- | ------------------------------ |
-| `lib.rs`                        | 24    | Module decls, re-exports mixed |
-| `handlers/rotating/mod.rs`      | 9     | `HandlerOptions`, pymethods    |
-| `handlers/common.rs`            | 8     | `PyOverflowPolicy`, helpers    |
-| `handlers/builder_macros.rs`    | 7     | Macro generates Python arm     |
-| `handlers/stream_builder.rs`    | 6     | AsPyDict, pymethods            |
-| `handlers/rotating_builder.rs`  | 5     | pymethods                      |
-| `handlers/file_builder.rs`      | 5     | pymethods                      |
-| `logger/mod.rs`                 | 4     | Inherently coupled             |
-| `filters/level_filter.rs`       | 4     | Python helpers                 |
-| `filters/name_filter.rs`        | 4     | Python helpers                 |
+| File                           | Count | Issue                          |
+| ------------------------------ | ----- | ------------------------------ |
+| `lib.rs`                       | 24    | Module decls, re-exports mixed |
+| `handlers/rotating/mod.rs`     | 9     | `HandlerOptions`, pymethods    |
+| `handlers/common.rs`           | 8     | `PyOverflowPolicy`, helpers    |
+| `handlers/builder_macros.rs`   | 7     | Macro generates Python arm     |
+| `handlers/stream_builder.rs`   | 6     | AsPyDict, pymethods            |
+| `handlers/rotating_builder.rs` | 5     | pymethods                      |
+| `handlers/file_builder.rs`     | 5     | pymethods                      |
+| `logger/mod.rs`                | 4     | Inherently coupled             |
+| `filters/level_filter.rs`      | 4     | Python helpers                 |
+| `filters/name_filter.rs`       | 4     | Python helpers                 |
 
 ### Current Testing
 
@@ -249,8 +249,8 @@ Move to `common/python.rs`:
 - `set_formatter_from_py()` method
 - `extend_py_dict()` methods
 
-The `common/mod.rs` retains pure Rust types (`FormatterConfig`, `CommonBuilder`,
-`FileLikeBuilderState`) and gates the Python module:
+The `common/mod.rs` retains pure Rust types (`FormatterConfig`,
+`CommonBuilder`, `FileLikeBuilderState`) and gates the Python module:
 
     #[cfg(feature = "python")]
     mod python;
@@ -282,17 +282,17 @@ Create directory structure and `python_bindings.rs`:
 
 Move Python-specific code (AsPyDict impl, pymethods block) to submodule.
 
-**Step B.4: Refactor `handlers/file_builder.rs`**
+#### Step B.4: Refactor `handlers/file_builder.rs`
 
 Same pattern as B.3.
 
-**Step B.5: Refactor `handlers/rotating_builder.rs`**
+#### Step B.5: Refactor `handlers/rotating_builder.rs`
 
 Same pattern as B.3.
 
 ### Stage C: Consolidate lib.rs
 
-**Step C.1: Create `python_exports.rs`**
+#### Step C.1: Create `python_exports.rs`
 
 Create `/root/repo/rust_extension/src/python_exports.rs` containing:
 
@@ -300,7 +300,7 @@ Create `/root/repo/rust_extension/src/python_exports.rs` containing:
 - Python-only re-exports (currently scattered with `#[cfg(feature = "python")]`)
 - `py_api` module (or move its contents)
 
-**Step C.2: Clean up lib.rs module declarations**
+#### Step C.2: Clean up lib.rs module declarations
 
 Group module declarations:
 
@@ -308,14 +308,14 @@ Group module declarations:
     mod config;
     pub mod exception_schema;
     mod filters;
-    // ... etc
+    // … etc
 
     // Python-only modules (gated)
     #[cfg(feature = "python")]
     mod file_config;
     #[cfg(feature = "python")]
     mod frame_filter_py;
-    // ... etc
+    // … etc
 
     // Consolidated Python exports
     #[cfg(feature = "python")]
@@ -325,7 +325,7 @@ Group module declarations:
 
 ### Stage D: Update Build and CI
 
-**Step D.1: Update Makefile**
+#### Step D.1: Update Makefile
 
 Add explicit `--features python` test:
 
@@ -341,7 +341,7 @@ Add explicit `--features python` test:
             --no-default-features --features log-compat
         uv run pytest -v
 
-**Step D.2: Update lint target**
+#### Step D.2: Update lint target
 
 Add `--features python` clippy check:
 
@@ -354,7 +354,7 @@ Add `--features python` clippy check:
         $(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) \
             --no-default-features --features log-compat -- -D warnings
 
-**Step D.3: Verify CI workflows**
+#### Step D.3: Verify CI workflows
 
 Check `/root/repo/.github/workflows/ci.yml` uses `make test` and `make lint`
 which will now cover all feature sets.
@@ -407,8 +407,8 @@ Expected transcript after completion:
 
 ## Idempotence and Recovery
 
-Each step is a file reorganization that can be reverted with `git checkout`.
-If a step breaks the build:
+Each step is a file reorganization that can be reverted with `git checkout`. If
+a step breaks the build:
 
 1. Run `git diff` to see changes
 2. Run `git checkout -- rust_extension/src/` to revert
@@ -427,7 +427,7 @@ From `/root/repo/rust_extension/src/filters/mod.rs`:
     mod py_helpers {
         use super::*;
         use pyo3::prelude::*;
-        // ... Python-specific code
+        // … Python-specific code
     }
     #[cfg(feature = "python")]
     pub use py_helpers::FilterBuildErrorPy;
