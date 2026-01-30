@@ -310,6 +310,30 @@ fn femto_file_handler_rejects_zero_capacity() {
 }
 
 #[test]
+fn femto_file_handler_rejects_zero_flush_interval() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("out.log");
+    let cfg = HandlerConfig {
+        capacity: 10,
+        flush_interval: 0,
+        overflow_policy: OverflowPolicy::Drop,
+    };
+
+    let result = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg);
+    assert!(result.is_err(), "zero flush interval should be rejected");
+    let err = result
+        .err()
+        .expect("missing error for zero flush interval");
+
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(err.to_string(), "flush_interval must be greater than zero");
+    assert!(
+        !path.exists(),
+        "zero flush interval should avoid creating the log file",
+    );
+}
+
+#[test]
 #[serial]
 fn femto_file_handler_queue_overflow_drop_policy() {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);

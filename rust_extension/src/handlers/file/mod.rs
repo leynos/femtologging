@@ -99,6 +99,8 @@ fn validate_capacity_nonzero(capacity: usize) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Validate a possibly negative flush interval from FFI or other input-boundary
+/// sources and return a usable `usize` on success.
 fn validate_flush_interval_value(flush_interval: isize) -> Result<usize, &'static str> {
     if flush_interval <= 0 {
         return Err(FLUSH_INTERVAL_ZERO_MSG);
@@ -106,6 +108,8 @@ fn validate_flush_interval_value(flush_interval: isize) -> Result<usize, &'stati
     Ok(flush_interval as usize)
 }
 
+/// Validate a Rust-side non-negative flush interval that only needs a zero
+/// guard, mirroring `validate_capacity_nonzero` for internal callers.
 fn validate_flush_interval_nonzero(flush_interval: usize) -> Result<(), &'static str> {
     if flush_interval == 0 {
         return Err(FLUSH_INTERVAL_ZERO_MSG);
