@@ -7,7 +7,7 @@ import errno
 import re
 import threading
 import typing as typ
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,14 @@ from femtologging import FemtoFileHandler, FileHandlerBuilder, OverflowPolicy
 FileHandlerFactory = cabc.Callable[
     [Path, int, int], typ.ContextManager[FemtoFileHandler]
 ]
+
+
+class FormatterRecord(typ.TypedDict):
+    """Structured payload for the blocking formatter."""
+
+    logger: str
+    level: str
+    message: str
 
 
 def test_file_handler_writes_to_file(
@@ -176,7 +184,16 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
     worker_started = threading.Event()
     release_worker = threading.Event()
 
-    def blocking_formatter(record: dict[str, object]) -> str:
+    @contextmanager
+    def release_worker_on_exit(
+        event: threading.Event,
+    ) -> cabc.Generator[None, None, None]:
+        try:
+            yield
+        finally:
+            event.set()
+
+    def blocking_formatter(record: FormatterRecord) -> str:
         if not worker_started.is_set():
             worker_started.set()
             if not release_worker.wait(timeout=10.0):
@@ -190,16 +207,13 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
         .with_overflow_policy(OverflowPolicy.timeout(200))
         .with_formatter(blocking_formatter)
     )
-    with closing(builder.build()) as handler:
-        try:
-            handler.handle("core", "INFO", "first")
-            assert worker_started.wait(10.0), "worker never reached formatter"
-            # Capacity=1 allows one queued record while the worker is busy.
-            handler.handle("core", "INFO", "second")
-            with pytest.raises(RuntimeError, match="timed out"):
-                handler.handle("core", "INFO", "third")
-        finally:
-            release_worker.set()
+    with release_worker_on_exit(release_worker), closing(builder.build()) as handler:
+        handler.handle("core", "INFO", "first")
+        assert worker_started.wait(10.0), "worker never reached formatter"
+        # Capacity=1 allows one queued record while the worker is busy.
+        handler.handle("core", "INFO", "second")
+        with pytest.raises(RuntimeError, match="timed out"):
+            handler.handle("core", "INFO", "third")
     assert path.read_text().splitlines() == [
         "core [INFO] first",
         "core [INFO] second",
