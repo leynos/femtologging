@@ -13,6 +13,19 @@ struct CollectingHandler {
     records: Arc<Mutex<Vec<FemtoLogRecord>>>,
 }
 
+#[derive(Clone, Copy)]
+struct HandlePtr(*const Mutex<Option<std::thread::JoinHandle<()>>>);
+
+impl HandlePtr {
+    unsafe fn as_ref<'a>(self) -> &'a Mutex<Option<std::thread::JoinHandle<()>>> {
+        unsafe { &*self.0 }
+    }
+}
+
+// Safety: only used in tests to share a mutex pointer across threads.
+unsafe impl Send for HandlePtr {}
+unsafe impl Sync for HandlePtr {}
+
 impl CollectingHandler {
     fn new() -> Self {
         Self {
@@ -306,6 +319,88 @@ fn drop_counter_increments_on_queue_overflow() {
 
     // Release the worker to allow cleanup
     release.wait();
+}
+
+#[test]
+fn drop_releases_handle_lock_before_join() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let mut logger = FemtoLogger::new("drop-lock".to_string());
+    if let Some(shutdown_tx) = logger.shutdown_tx.take() {
+        let _ = shutdown_tx.send(());
+    }
+    logger.tx.take();
+    let original_handle = { logger.handle.lock().take() };
+    if let Some(handle) = original_handle {
+        handle.join().expect("Initial worker thread panicked");
+    }
+
+    let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
+    let handle_ptr_for_worker = handle_ptr;
+    let handle_ptr_for_probe = handle_ptr;
+
+    let (start_lock_tx, start_lock_rx) = mpsc::channel();
+    let (attempt_done_tx, attempt_done_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (drop_started_tx, drop_started_rx) = mpsc::channel();
+
+    let worker_handle = std::thread::spawn(move || {
+        start_lock_rx
+            .recv()
+            .expect("Failed to receive lock attempt signal");
+        // Safe because the logger outlives the worker, and the mutex guards access.
+        let handle_mutex = unsafe { handle_ptr_for_worker.as_ref() };
+        let start = Instant::now();
+        let mut acquired = false;
+        while start.elapsed() < Duration::from_millis(200) {
+            if let Some(_guard) = handle_mutex.try_lock() {
+                acquired = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        attempt_done_tx
+            .send(acquired)
+            .expect("Failed to report lock result");
+        release_rx.recv().expect("Failed to receive release signal");
+    });
+
+    *logger.handle.lock() = Some(worker_handle);
+
+    let drop_thread = std::thread::spawn(move || {
+        drop_started_tx
+            .send(())
+            .expect("Failed to signal drop start");
+        drop(logger);
+    });
+
+    drop_started_rx
+        .recv()
+        .expect("Failed to wait for drop start");
+    // Safe because the logger outlives the drop thread and mutex guards access.
+    let handle_mutex = unsafe { handle_ptr_for_probe.as_ref() };
+    let probe_start = Instant::now();
+    while probe_start.elapsed() < Duration::from_millis(200) {
+        if handle_mutex.try_lock().is_none() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+
+    start_lock_tx
+        .send(())
+        .expect("Failed to start lock attempt");
+    let acquired = attempt_done_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive lock attempt result");
+    release_tx.send(()).expect("Failed to release worker");
+    drop_thread.join().expect("Drop thread panicked");
+
+    assert!(
+        acquired,
+        "expected drop to release handle mutex before joining"
+    );
 }
 
 // Python integration tests are in a separate module to respect the 400-line limit.

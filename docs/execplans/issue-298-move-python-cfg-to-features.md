@@ -7,7 +7,8 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 Status: COMPLETED
 
 Related:
-[Issue #298](https://github.com/leynos/femtologging/issues/298), [PR #286](https://github.com/leynos/femtologging/pull/286)
+[Issue #298](https://github.com/leynos/femtologging/issues/298),
+[PR #286](https://github.com/leynos/femtologging/pull/286)
 
 ## Purpose / Big Picture
 
@@ -137,6 +138,8 @@ dedicated submodules following existing patterns in the codebase.
 
 ### Metrics
 
+Metrics table: feature-gating annotation counts and build/test status.
+
 | Metric                              | Before | After | Target    |
 | ----------------------------------- | ------ | ----- | --------- |
 | `#[cfg(feature = "python")]`        | 116    | 91    | <60       |
@@ -151,13 +154,8 @@ dedicated submodules following existing patterns in the codebase.
    submodule containing `PyOverflowPolicy` and Python helper methods.
 
 2. **handlers/rotating/python_bindings.rs**: New module containing
-<<<<<<< HEAD
    `HandlerOptions`, `#[pymethods]` for `FemtoRotatingFileHandler`, and test
    helper functions.
-=======
-   `HandlerOptions`,
-   `#[pymethods]` for `FemtoRotatingFileHandler`, and test helper functions.
->>>>>>> 373937c (refactor(python feature): consolidate python cfg gating into dedicated submodules)
 
 3. **python_module.rs**: New consolidated module for Python class and function
    registration, replacing inline `add_python_bindings()` in `lib.rs`.
@@ -213,6 +211,8 @@ The `python` feature is a bare flag that gates Python-specific code. The
 - `formatter/mod.rs` — has `pub mod python;`
 
 **Modules requiring refactoring** (scattered `#[cfg]` annotations):
+
+Modules requiring refactoring table: `#[cfg]` annotation hotspots.
 
 | File                           | Count | Issue                          |
 | ------------------------------ | ----- | ------------------------------ |
