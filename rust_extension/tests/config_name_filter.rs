@@ -10,7 +10,7 @@ use serial_test::serial;
 
 /// A name filter should only allow records whose logger name matches the prefix.
 #[rstest]
-#[serial]
+#[serial(manager)]
 fn name_filter_blocks_non_matching_records() {
     Python::with_gil(|py| {
         manager::reset_manager();

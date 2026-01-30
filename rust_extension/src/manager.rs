@@ -137,7 +137,7 @@ mod tests {
         }
 
         #[test]
-        #[serial]
+        #[serial(manager)]
         fn flush_all_handlers_flushes_loggers_with_handlers() {
             Python::with_gil(|py| {
                 reset_manager();
@@ -163,7 +163,7 @@ mod tests {
         }
 
         #[test]
-        #[serial]
+        #[serial(manager)]
         fn flush_all_handlers_invokes_flush_once_per_registered_logger() {
             Python::with_gil(|py| {
                 reset_manager();

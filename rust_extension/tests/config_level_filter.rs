@@ -11,7 +11,7 @@ use serial_test::serial;
 /// Building a configuration with a level filter should suppress
 /// records above the maximum level.
 #[rstest]
-#[serial]
+#[serial(manager)]
 fn level_filter_blocks_records() {
     Python::with_gil(|py| {
         manager::reset_manager();
