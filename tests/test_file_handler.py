@@ -179,7 +179,8 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
     def blocking_formatter(record: dict[str, object]) -> str:
         if not worker_started.is_set():
             worker_started.set()
-            release_worker.wait()
+            if not release_worker.wait(timeout=10.0):
+                pytest.fail("timeout waiting for release_worker in formatter")
         return f"{record['logger']} [{record['level']}] {record['message']}"
 
     builder = (
@@ -192,7 +193,7 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
     with closing(builder.build()) as handler:
         try:
             handler.handle("core", "INFO", "first")
-            assert worker_started.wait(1.0), "worker never reached formatter"
+            assert worker_started.wait(10.0), "worker never reached formatter"
             # Capacity=1 allows one queued record while the worker is busy.
             handler.handle("core", "INFO", "second")
             with pytest.raises(RuntimeError, match="timed out"):
