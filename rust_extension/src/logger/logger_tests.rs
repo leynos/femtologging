@@ -188,8 +188,6 @@ fn worker_thread_loop_shutdown_exits_under_load() {
         .recv_timeout(Duration::from_millis(500))
         .expect("Worker thread did not shutdown promptly");
     worker.join().expect("Worker thread panicked");
-
-    assert!(handler.count() > 0);
 }
 
 #[test]

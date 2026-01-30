@@ -90,8 +90,7 @@ Observable outcomes:
 ## Surprises & Discoveries
 
 - The `handle_record` method in `FemtoRotatingFileHandler` needed to be gated
-  with
-  `#[cfg(feature = "python")]` as it's only used by Python bindings and
+  with `#[cfg(feature = "python")]` as it's only used by Python bindings and
   triggered a `dead_code` warning when building without Python feature.
 
 - Several builder modules (stream_builder, file_builder, rotating_builder) were
@@ -145,8 +144,8 @@ dedicated submodules following existing patterns in the codebase.
    submodule containing `PyOverflowPolicy` and Python helper methods.
 
 2. **handlers/rotating/python_bindings.rs**: New module containing
-   `HandlerOptions`,
-   `#[pymethods]` for `FemtoRotatingFileHandler`, and test helper functions.
+   `HandlerOptions`, `#[pymethods]` for `FemtoRotatingFileHandler`, and test
+   helper functions.
 
 3. **python_module.rs**: New consolidated module for Python class and function
    registration, replacing inline `add_python_bindings()` in `lib.rs`.
