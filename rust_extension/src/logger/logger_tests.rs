@@ -321,11 +321,7 @@ fn drop_counter_increments_on_queue_overflow() {
     release.wait();
 }
 
-#[test]
-fn drop_releases_handle_lock_before_join() {
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-
+fn setup_logger_for_drop_test() -> FemtoLogger {
     let mut logger = FemtoLogger::new("drop-lock".to_string());
     if let Some(shutdown_tx) = logger.shutdown_tx.take() {
         let _ = shutdown_tx.send(());
@@ -335,6 +331,61 @@ fn drop_releases_handle_lock_before_join() {
     if let Some(handle) = original_handle {
         handle.join().expect("Initial worker thread panicked");
     }
+    logger
+}
+
+fn spawn_lock_attempt_worker(
+    handle_ptr: HandlePtr,
+    start_signal: std::sync::mpsc::Receiver<()>,
+    result_tx: std::sync::mpsc::Sender<bool>,
+    release_signal: std::sync::mpsc::Receiver<()>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        use std::time::{Duration, Instant};
+
+        start_signal
+            .recv()
+            .expect("Failed to receive lock attempt signal");
+        // Safe because the logger outlives the worker, and the mutex guards access.
+        let handle_mutex = unsafe { handle_ptr.as_ref() };
+        let start = Instant::now();
+        let mut acquired = false;
+        while start.elapsed() < Duration::from_millis(200) {
+            if let Some(_guard) = handle_mutex.try_lock() {
+                acquired = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        result_tx
+            .send(acquired)
+            .expect("Failed to report lock result");
+        release_signal
+            .recv()
+            .expect("Failed to receive release signal");
+    })
+}
+
+fn wait_for_drop_to_acquire_lock(handle_ptr: HandlePtr, timeout: std::time::Duration) {
+    use std::time::Instant;
+
+    // Safe because the logger outlives the drop thread and mutex guards access.
+    let handle_mutex = unsafe { handle_ptr.as_ref() };
+    let probe_start = Instant::now();
+    while probe_start.elapsed() < timeout {
+        if handle_mutex.try_lock().is_none() {
+            return;
+        }
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn drop_releases_handle_lock_before_join() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let logger = setup_logger_for_drop_test();
 
     let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
     let handle_ptr_for_worker = handle_ptr;
@@ -345,26 +396,12 @@ fn drop_releases_handle_lock_before_join() {
     let (release_tx, release_rx) = mpsc::channel();
     let (drop_started_tx, drop_started_rx) = mpsc::channel();
 
-    let worker_handle = std::thread::spawn(move || {
-        start_lock_rx
-            .recv()
-            .expect("Failed to receive lock attempt signal");
-        // Safe because the logger outlives the worker, and the mutex guards access.
-        let handle_mutex = unsafe { handle_ptr_for_worker.as_ref() };
-        let start = Instant::now();
-        let mut acquired = false;
-        while start.elapsed() < Duration::from_millis(200) {
-            if let Some(_guard) = handle_mutex.try_lock() {
-                acquired = true;
-                break;
-            }
-            std::thread::yield_now();
-        }
-        attempt_done_tx
-            .send(acquired)
-            .expect("Failed to report lock result");
-        release_rx.recv().expect("Failed to receive release signal");
-    });
+    let worker_handle = spawn_lock_attempt_worker(
+        handle_ptr_for_worker,
+        start_lock_rx,
+        attempt_done_tx,
+        release_rx,
+    );
 
     *logger.handle.lock() = Some(worker_handle);
 
@@ -378,15 +415,7 @@ fn drop_releases_handle_lock_before_join() {
     drop_started_rx
         .recv()
         .expect("Failed to wait for drop start");
-    // Safe because the logger outlives the drop thread and mutex guards access.
-    let handle_mutex = unsafe { handle_ptr_for_probe.as_ref() };
-    let probe_start = Instant::now();
-    while probe_start.elapsed() < Duration::from_millis(200) {
-        if handle_mutex.try_lock().is_none() {
-            break;
-        }
-        std::thread::yield_now();
-    }
+    wait_for_drop_to_acquire_lock(handle_ptr_for_probe, Duration::from_millis(200));
 
     start_lock_tx
         .send(())
