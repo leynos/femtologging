@@ -377,11 +377,14 @@ fn wait_for_drop_to_acquire_lock(handle_ptr: HandlePtr, timeout: std::time::Dura
     let handle_mutex = unsafe { handle_ptr.as_ref() };
     let probe_start = Instant::now();
     while probe_start.elapsed() < timeout {
-        if handle_mutex.try_lock().is_none() {
-            return;
+        if let Some(guard) = handle_mutex.try_lock() {
+            if guard.is_none() {
+                return;
+            }
         }
         std::thread::yield_now();
     }
+    panic!("Timed out waiting for drop thread to take handle mutex");
 }
 
 #[test]
@@ -389,7 +392,7 @@ fn drop_releases_handle_lock_before_join() {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    let logger = setup_logger_for_drop_test();
+    let mut logger = Box::new(setup_logger_for_drop_test());
 
     let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
 
