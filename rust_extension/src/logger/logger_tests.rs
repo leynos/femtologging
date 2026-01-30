@@ -392,7 +392,7 @@ fn drop_releases_handle_lock_before_join() {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    let mut logger = Box::new(setup_logger_for_drop_test());
+    let logger = Box::new(setup_logger_for_drop_test());
 
     let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
 
