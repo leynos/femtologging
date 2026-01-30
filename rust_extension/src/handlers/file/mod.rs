@@ -74,6 +74,9 @@ pub struct FemtoFileHandler {
     ack_rx: Receiver<()>,
 }
 
+const CAPACITY_ZERO_MSG: &str = "capacity must be greater than zero";
+const FLUSH_INTERVAL_ZERO_MSG: &str = "flush_interval must be greater than zero";
+
 fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
     let path_ref = path.as_ref();
     let path_display = path_ref.display();
@@ -89,17 +92,31 @@ fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
         .map_err(|e| io::Error::new(e.kind(), format!("{path_display}: {e}")))
 }
 
-pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
-    use pyo3::exceptions::PyValueError;
+fn validate_capacity_nonzero(capacity: usize) -> Result<(), &'static str> {
     if capacity == 0 {
-        return Err(PyValueError::new_err("capacity must be greater than zero"));
+        return Err(CAPACITY_ZERO_MSG);
     }
+    Ok(())
+}
+
+fn validate_flush_interval_value(flush_interval: isize) -> Result<usize, &'static str> {
     if flush_interval <= 0 {
-        return Err(PyValueError::new_err(
-            "flush_interval must be greater than zero",
-        ));
+        return Err(FLUSH_INTERVAL_ZERO_MSG);
     }
     Ok(flush_interval as usize)
+}
+
+fn validate_flush_interval_nonzero(flush_interval: usize) -> Result<(), &'static str> {
+    if flush_interval == 0 {
+        return Err(FLUSH_INTERVAL_ZERO_MSG);
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
+    use pyo3::exceptions::PyValueError;
+    validate_capacity_nonzero(capacity).map_err(PyValueError::new_err)?;
+    validate_flush_interval_value(flush_interval).map_err(PyValueError::new_err)
 }
 
 #[pymethods]
@@ -258,18 +275,10 @@ impl FemtoFileHandler {
         P: AsRef<Path>,
         F: FemtoFormatter + Send + 'static,
     {
-        if config.capacity == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "capacity must be greater than zero",
-            ));
-        }
-        if config.flush_interval == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "flush_interval must be greater than zero",
-            ));
-        }
+        validate_capacity_nonzero(config.capacity)
+            .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
+        validate_flush_interval_nonzero(config.flush_interval)
+            .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
         let file = open_log_file(path)?;
         Ok(Self::from_file(file, formatter, config))
     }

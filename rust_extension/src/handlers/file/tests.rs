@@ -303,6 +303,10 @@ fn femto_file_handler_rejects_zero_capacity() {
 
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(err.to_string(), "capacity must be greater than zero");
+    assert!(
+        !path.exists(),
+        "zero-capacity validation should avoid creating the log file",
+    );
 }
 
 #[test]
