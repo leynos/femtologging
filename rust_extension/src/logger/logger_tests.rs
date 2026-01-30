@@ -43,22 +43,11 @@ struct CountingHandler {
 }
 
 impl CountingHandler {
-    fn new() -> Self {
-        Self {
-            count: Arc::new(AtomicUsize::new(0)),
-            first_tx: None,
-        }
-    }
-
     fn with_first_signal(first_tx: crossbeam_channel::Sender<()>) -> Self {
         Self {
             count: Arc::new(AtomicUsize::new(0)),
             first_tx: Some(first_tx),
         }
-    }
-
-    fn count(&self) -> usize {
-        self.count.load(Ordering::SeqCst)
     }
 }
 
