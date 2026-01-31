@@ -1,4 +1,4 @@
-# ADR 002: Introduce OpenTelemetry and Journald Handler Support in Femtologging
+# ADR 002: Introduce OpenTelemetry and journald handler support in femtologging
 
 ## Status
 
@@ -16,12 +16,9 @@ logging destinations:
 - **systemd Journald** for writing logs to the system journal on Linux.
 
 As of now, `FemtoLogger` only forwards logs as formatted strings, with any
-structured context either omitted or
-flattened([1](https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/rust_extension/src/logger.rs#L159-L166)
-)(
-[1](https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/rust_extension/src/logger.rs#L96-L104)).
- This means there is no built-in way to attach key–value data (e.g. span IDs,
-user identifiers) or propagate trace context alongside log messages. The
+structured context either omitted or flattened[^1][^2]. This means there is no
+built-in way to attach key–value data (e.g. span IDs, user identifiers) or
+propagate trace context alongside log messages. The
 absence of structured log record support and context propagation poses a design
 challenge: both OpenTelemetry and Journald thrive on structured, contextual
 data (e.g. OT log attributes, journald fields).
@@ -29,11 +26,11 @@ data (e.g. OT log attributes, journald fields).
 Multiple approaches have been proposed for each integration, leading to open
 questions:
 
-- **OpenTelemetry integration:** Should we implement it via a bespoke
+- **OpenTelemetry integration:** Should the implementation use a bespoke
   `FemtoOtelHandler` (directly using the OpenTelemetry SDK to send logs), or
   via a `tracing_subscriber::Layer` that bridges `femtologging` with the Rust
   `tracing` ecosystem (and thereby to OpenTelemetry)? These approaches differ
-  in complexity and how they align with our architecture.
+  in complexity and how they align with the architecture.
 
 - **Journald integration:** Should the Journald handler communicate via the
   journald socket (using the native journal protocol) or link against
@@ -44,8 +41,8 @@ questions:
 - **Timing and prerequisites:** Can either handler be meaningfully implemented
   *before* femtologging supports rich structured records and context
   propagation? In other words, is there value in adding them now (with only
-  message strings and basic metadata), or must we first enhance the core
-  logging data model?
+  message strings and basic metadata), or must the core logging data model
+  first be enhanced?
 
 These questions must be resolved in the context of femtologging’s design goals.
 The architecture document emphasizes using safe Rust and avoiding unnecessary
@@ -59,9 +56,9 @@ capabilities unless clear demand is shown. OpenTelemetry and Journald support
 are now emerging as clear needs for observability and deployment on Linux,
 respectively.
 
-In summary, we need an architectural decision that balances immediate
+In summary, an architectural decision is needed that balances immediate
 usefulness with long-term design coherence: enabling OpenTelemetry and Journald
-outputs in a way that fits femtologging’s architecture, acknowledging current
+outputs in a way that fits femtologging's architecture, acknowledging current
 limitations (no structured logging yet), and setting the stage for richer
 integration once those limitations are lifted.
 
@@ -74,34 +71,33 @@ integration once those limitations are lifted.
   pairs to journald when possible. In the short term, it will at least send the
   log message, level (mapped to a syslog/journald priority), and basic
   metadata. Using the journald socket avoids introducing new `unsafe` FFI
-  dependencies, in line with our safety stance, and is sufficient to preserve
+  dependencies, in line with the safety stance, and is sufficient to preserve
   structured data (the `tracing-journald` crate demonstrates a pure-Rust
-  approach that retains structured
-  fields([2](https://docs.rs/tracing-journald/latest/tracing_journald/#:~:text=Support%20for%20logging%20tracing%20events,to%20journald%2C%20preserving%20structured%20information))).
-   We will not use `libsystemd` unless future requirements (e.g. performance or
-  specific journald features) prove the socket approach inadequate, deferring
-  that consideration to a later date if needed.
+  approach that retains structured fields[^3]). `libsystemd` will not be used
+  unless future requirements (e.g. performance or specific journald features)
+  prove the socket approach inadequate, deferring that consideration to a later
+  date if needed.
 
 - **Provide OpenTelemetry log integration via a `tracing_subscriber::Layer`**
-  rather than an immediate bespoke handler. We will develop a
-  `FemtoTracingLayer` that allows femtologging to consume or emit `tracing`
-  events and spans, bridging our handlers with the broader Rust tracing
-  ecosystem. This decision leverages the existing OpenTelemetry integration in
-  the tracing ecosystem (through `tracing-opentelemetry`) as an interoperable
-  solution. In practice, applications that use Rust’s `tracing` (or instrument
-  Python code via OpenTelemetry’s Python SDK) can attach femtologging’s layer
-  alongside an OpenTelemetry subscriber, sending logs to both femtologging
-  handlers and an OT collector. This approach avoids duplicating complex OT
-  export logic in our code and fits our roadmap of ecosystem integration to
-  drive adoption. A custom `FemtoOtelHandler` (directly using the OpenTelemetry
-  SDK) is **not** chosen at this time; it will be revisited once femtologging
-  supports full structured records and trace context, since a bespoke handler
-  would add significant complexity yet still be limited without those features.
+  rather than an immediate bespoke handler. A `FemtoTracingLayer` will be
+  developed that allows femtologging to consume or emit `tracing` events and
+  spans, bridging the handlers with the broader Rust tracing ecosystem. This
+  decision leverages the existing OpenTelemetry integration in the tracing
+  ecosystem (through `tracing-opentelemetry`) as an interoperable solution. In
+  practice, applications that use Rust's `tracing` (or instrument Python code
+  via OpenTelemetry's Python SDK) can attach femtologging's layer alongside an
+  OpenTelemetry subscriber, sending logs to both femtologging handlers and an
+  OT collector. This approach avoids duplicating complex OT export logic and
+  fits the roadmap of ecosystem integration to drive adoption. A custom
+  `FemtoOtelHandler` (directly using the OpenTelemetry SDK) is **not** chosen
+  at this time; it will be revisited once femtologging supports full structured
+  records and trace context, since a bespoke handler would add significant
+  complexity yet still be limited without those features.
 
 - **Structured logging and context propagation are recognized as prerequisites
-  for full-featured integration,** but we will *not* block all progress on
-  these handlers until those capabilities land. Instead, we plan for a **phased
-  integration**:
+  for full-featured integration,** but all progress on these handlers will
+  *not* be blocked until those capabilities land. Instead, a **phased
+  integration** is planned:
 
 - In the **short term**, implement the Journald handler and tracing layer with
   the current log record structure (message + basic metadata). They will
@@ -128,7 +124,7 @@ integration once those limitations are lifted.
   `"otel-integration"` feature will enable the tracing subscriber layer and any
   OpenTelemetry dependencies. This keeps the default build lean and free of
   platform-specific code or heavy telemetry libraries unless explicitly
-  requested. We anticipate enabling the tracing layer feature by default
+  requested. The tracing layer feature is anticipated to be enabled by default
   (similar to how `log` compatibility is enabled by default) to encourage
   ecosystem uptake, whereas the Journald feature may remain opt-in or
   auto-enabled on Linux builds. In all cases, if the features are disabled, the
@@ -138,11 +134,11 @@ integration once those limitations are lifted.
   femtologging’s core principles. Each new handler will follow the
   producer–consumer model (dedicated thread per handler) so that logging to OT
   or Journald will not stall application threads. By using the journald socket
-  and Rust’s tracing APIs, we remain within safe, idiomatic Rust – avoiding the
-  need for any `unsafe` FFI calls to C libraries unless absolutely necessary.
-  This ensures we uphold compile-time safety and portability (the code will
-  compile and run on platforms without systemd by simply not enabling the
-  journald feature).
+  and Rust's tracing APIs, the implementation remains within safe, idiomatic
+  Rust – avoiding the need for any `unsafe` foreign function interface (FFI)
+  calls to C libraries unless absolutely necessary. This ensures compile-time
+  safety and portability are upheld (the code will compile and run on platforms
+  without systemd by simply not enabling the journald feature).
 
 ## Goals and Non-Goals
 
@@ -181,8 +177,8 @@ integration once those limitations are lifted.
   when femtologging introduces richer structured logging (key–value pairs in
   macros, context propagation), the handlers can seamlessly incorporate that
   data. For instance, plan how a trace ID or user-defined key in a log record
-  would map to a journald field or an OpenTelemetry log attribute, even if we
-  won’t implement that mapping until later. This foresight will prevent
+  would map to a journald field or an OpenTelemetry log attribute, even if that
+  mapping will not be implemented until later. This foresight will prevent
   throw-away work and ensure continuity from unstructured to structured logging
   support.
 
@@ -190,31 +186,32 @@ integration once those limitations are lifted.
 
 - **Implementing Full Distributed Tracing:** This ADR does *not* introduce
   capturing or emitting distributed trace spans itself – it is focused on logs.
-  While we consider trace *context* for correlating logs, setting up tracing
-  spans or metrics in an application is outside the logging framework’s scope
-  (those would be handled by the application or other libraries). Our concern
+  While trace *context* for correlating logs is considered, setting up tracing
+  spans or metrics in an application is outside the logging framework's scope
+  (those would be handled by the application or other libraries). The concern
   is only to carry and output trace identifiers in logs when available, not to
   manage traces.
 
-- **Supporting Every Platform’s Native Logger:** We are not addressing Windows
-  Event Log or generic syslog via UDP in this decision. The Journald handler is
+- **Supporting Every Platform's Native Logger:** Windows Event Log or generic
+  syslog via UDP are not addressed in this decision. The Journald handler is
   inherently Linux/systemd-specific. Other platform-specific logging
   integrations (e.g. Windows `EventLogHandler` or UNIX syslog protocol) are out
-  of scope here and can be decided separately if needed. We focus on Journald
-  due to its prevalence in modern Linux deployments and clear user demand,
-  whereas others will follow only if a strong need arises (respecting the 80/20
-  focus).
+  of scope here and can be decided separately if needed. The focus is on
+  Journald due to its prevalence in modern Linux deployments and clear user
+  demand, whereas others will follow only if a strong need arises (respecting
+  the 80/20 focus).
 
-- **Immediate Structured Logging Overhaul:** We will not in this ADR design the
-  full structured logging feature (that is already planned in the roadmap). We
-  acknowledge that the current handler implementations will be somewhat limited
-  until that feature is delivered. This ADR’s migration plan will defer certain
-  capabilities (like including arbitrary key–value data or span IDs in outputs)
-  to that future work, rather than try to solve it all now.
+- **Immediate Structured Logging Overhaul:** The full structured logging
+  feature will not be designed in this ADR (that is already planned in the
+  roadmap). It is acknowledged that the current handler implementations will be
+  somewhat limited until that feature is delivered. This ADR's migration plan
+  will defer certain capabilities (like including arbitrary key–value data or
+  span IDs in outputs) to that future work, rather than try to solve it all
+  now.
 
-- **Mandating New Dependencies Unconditionally:** We avoid any solution that
-  forces all users to depend on heavy external crates or system libraries. For
-  example, linking against `libsystemd` is not included in the plan, nor is
+- **Mandating New Dependencies Unconditionally:** Any solution that forces all
+  users to depend on heavy external crates or system libraries will be avoided.
+  For example, linking against `libsystemd` is not included in the plan, nor is
   making OpenTelemetry a required dependency for femtologging core. Any new
   dependencies introduced for these features will be optional and isolated
   behind feature flags, ensuring that users can opt out completely.
@@ -233,12 +230,12 @@ features.
   `"journald"` and `"tracing-bridge"` (name tentative). The Journald handler
   code will be compiled only when the `"journald"` feature is enabled (and on
   target_os = "linux"), and the tracing subscriber layer will be included with
-  the `"tracing-bridge"` feature. For Python packaging, we may add optional
-  extras or simply include these in the default build on supported platforms –
-  this detail will be decided based on whether we want them on by default.
-  Initially, we might enable `"tracing-bridge"` by default (since it has no
-  effect unless used, but aids integration), and leave `"journald"` off by
-  default to avoid issues on non-Linux platforms.
+  the `"tracing-bridge"` feature. For Python packaging, optional extras may be
+  added or these may simply be included in the default build on supported
+  platforms – this detail will be decided based on whether they should be
+  enabled by default. Initially, `"tracing-bridge"` might be enabled by default
+  (since it has no effect unless used, but aids integration), and `"journald"`
+  left off by default to avoid issues on non-Linux platforms.
 
 - **Scaffolding:** Set up stub classes and configuration hooks for
   `FemtoJournaldHandler` and the tracing layer. This includes:
@@ -272,9 +269,9 @@ features.
 metadata, using a safe pure-Rust approach.
 
 - **Socket Communication:** Implement the `FemtoJournaldHandler.handle()`
-  method to send log records to the journal via the UNIX socket. We will likely
-  use the *datagram* socket provided by journald
-  (`/run/systemd/journal/socket`) to send structured records. The handler’s
+  method to send log records to the journal via the UNIX socket. The
+  implementation will likely use the *datagram* socket provided by journald
+  (`/run/systemd/journal/socket`) to send structured records. The handler's
   thread will open this socket once and reuse it for all log writes. Each log
   record will be converted into the journald native format:
 
@@ -282,10 +279,10 @@ metadata, using a safe pure-Rust approach.
   etc., following syslog/journal conventions).
 
 - Construct the message payload. At minimum, include `PRIORITY=<N>` and
-  `MESSAGE=<formatted log message>`. We also include `LOGGER=<logger name>` and
-  perhaps `THREAD_NAME`/`THREAD_ID` if available from metadata. Source
-  file/line could be included as `CODE_FILE` and `CODE_LINE` (journald
-  recognizes these fields).
+  `MESSAGE=<formatted log message>`. The implementation also includes
+  `LOGGER=<logger name>` and perhaps `THREAD_NAME`/`THREAD_ID` if available
+  from metadata. Source file/line could be included as `CODE_FILE` and
+  `CODE_LINE` (journald recognizes these fields).
 
 - Write the payload as newline-separated `KEY=value` lines terminated by an
   extra newline (which is the journald framing for datagrams). This can be done
@@ -295,23 +292,23 @@ metadata, using a safe pure-Rust approach.
 - Handle errors gracefully: if the socket write fails (e.g. journald not
   running or buffer full), the handler should emit a one-time warning (perhaps
   via stderr or an internal metric) and then drop subsequent messages or
-  backoff. It must **not** block the producing threads – any such error
+  back off. It must **not** block the producing threads – any such error
   handling stays within the consumer thread.
 
 - **No libsystemd dependency:** Confirm that the above implementation works for
-  typical cases. We will rely on integration testing on a Linux environment
-  with journald: logs emitted via `FemtoJournaldHandler` should appear in
+  typical cases. Integration testing on a Linux environment with journald will
+  be relied upon: logs emitted via `FemtoJournaldHandler` should appear in
   `journalctl` with correct priority and message content. The pure socket
   method should cover this (as evidence, other Rust libraries successfully log
-  to journald without
-  FFI([2](https://docs.rs/tracing-journald/latest/tracing_journald/#:~:text=Support%20for%20logging%20tracing%20events,to%20journald%2C%20preserving%20structured%20information))).
+  to journald without FFI[^3]).
 
 - **Testing:** Write unit tests for the mapping logic (e.g. level to priority).
   Integration tests can be tricky (would require running on Linux with
-  journald); we might employ a conditional test that writes to
+  journald); a conditional test might be employed that writes to
   `/run/systemd/journal/socket` and then reads back via the journal API, or
-  simply verify that no errors occur. At minimum, manual testing in a Linux VM
-  or container will verify end-to-end behavior. We'll document any manual steps.
+  simply verifies that no errors occur. At minimum, manual testing in a Linux
+  virtual machine (VM) or container will verify end-to-end behaviour. Any
+  manual steps will be documented.
 
 - **Documentation and Examples:** Update user-facing docs to show how to use
   the Journald handler (e.g. in Python:
@@ -335,69 +332,66 @@ OpenTelemetry export via existing `tracing` layers, and also capturing
 
 - **Implement `FemtoTracingLayer`:** Using the scaffold from Phase 0, flesh out
   a `tracing_subscriber::Layer` implementation. This layer will be capable of
-  intercepting `tracing::Event`s and `tracing::Span`s. For our purposes, the
+  intercepting `tracing::Event`s and `tracing::Span`s. For this purpose, the
   layer will focus on events (which correspond to log records). Key steps:
 
 - In `on_event`, format or convert the `tracing::Event` into a
-  `FemtoLogRecord`. We can leverage the `tracing` metadata: the event’s
+  `FemtoLogRecord`. The `tracing` metadata can be leveraged: the event's
   message, level, target, file/line, and any key–value fields (via the `fields`
-  in the event). Since femtologging’s current API for logging from Rust is
-  through the `log::Log` trait (already
-  implemented([3](https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/docs/roadmap.md#L146-L155)
-  )(
-  [3](https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/docs/roadmap.md#L156-L164))),
-   one approach is to call our `FemtoLogAdapter.log()` internally. However, a
-  more direct construction of `FemtoLogRecord` might be done to include
-  structured fields: we can iterate over the event’s fields and insert them
-  into the `FemtoLogRecord.metadata.key_values` map (as strings) for future use.
+  in the event). Since femtologging's current API for logging from Rust is
+  through the `log::Log` trait (already implemented[^4][^5]), one approach is
+  to call `FemtoLogAdapter.log()` internally. However, a more direct
+  construction of `FemtoLogRecord` might be done to include structured fields:
+  the implementation can iterate over the event's fields and insert them into
+  the `FemtoLogRecord.metadata.key_values` map (as strings) for future use.
 
 - Dispatch the constructed `FemtoLogRecord` to the appropriate femtologging
-  logger/handlers. We might use the event’s target or explicitly require the
-  user to specify which logger to use (perhaps a global logger or mapping by
-  target name). A simple strategy is to send all tracing events to the root
-  logger or a special “tracing” logger in femtologging.
+  logger/handlers. The event's target might be used or the user might be
+  explicitly required to specify which logger to use (perhaps a global logger
+  or mapping by target name). A simple strategy is to send all tracing events
+  to the root logger or a special "tracing" logger in femtologging.
 
 - Ensure thread-safety and performance: this callback is invoked in the context
-  of the tracing event (possibly on an application thread). We must be careful
+  of the tracing event (possibly on an application thread). Care must be taken
   to minimize overhead. The layer should quickly enqueue the record to
-  femtologging’s channel (still respecting our design that the heavy lifting is
+  femtologging's channel (still respecting the design that the heavy lifting is
   done on consumer threads). This effectively means the tracing layer will act
   as a producer into the femtologging system.
 
-- In `on_span` callbacks, we may simply ignore spans or use them for contextual
-  info. (We might attach span metadata like trace IDs to log records, but since
-  femtologging doesn’t yet propagate context, a full span handling can be
+- In `on_span` callbacks, spans may simply be ignored or used for contextual
+  info. (Span metadata like trace IDs might be attached to log records, but
+  since femtologging doesn't yet propagate context, a full span handling can be
   minimal to start.)
 
 - **OpenTelemetry Export via Tracing:** Once the above layer is in place, users
-  can create a `tracing_subscriber::Registry` and add both our
+  can create a `tracing_subscriber::Registry` and add both the
   `FemtoTracingLayer` and an OpenTelemetry layer (from the
   `tracing-opentelemetry` crate) to it. This means any log event instrumented
   via `tracing` macros will simultaneously go to femtologging and to an
-  OpenTelemetry backend. We will provide documentation or examples
-  demonstrating this setup. For instance, if an application uses
-  `tracing::info!(key=value, "message")`, our layer will route it into
+  OpenTelemetry backend. Documentation or examples demonstrating this setup
+  will be provided. For instance, if an application uses
+  `tracing::info!(key=value, "message")`, the layer will route it into
   femtologging (so it can be handled by any configured femtologging handlers
   like file or journald), and the OpenTelemetry layer will convert it into an
   OT span event or log record for export. This achieves OT integration without
   femtologging itself having to implement the OT protocol.
 
-- **Backpressure and Filtering:** We need to be mindful of double logging or
-  infinite loops – e.g. if femtologging internally uses `log::warn!` and our
-  layer catches it. We will document that the tracing layer is intended to
-  capture events from the application, not logs emitted by femtologging itself
-  (which typically uses its own internal logger or the standard log for
-  warnings). We might add a filter in the layer to ignore events originating
-  from femtologging’s modules to avoid feedback loops.
+- **Backpressure and Filtering:** Care is needed to avoid double logging or
+  infinite loops – e.g. if femtologging internally uses `log::warn!` and the
+  layer catches it. Documentation will state that the tracing layer is intended
+  to capture events from the application, not logs emitted by femtologging
+  itself (which typically uses its own internal logger or the standard log for
+  warnings). A filter might be added in the layer to ignore events originating
+  from femtologging's modules to avoid feedback loops.
 
-- **Testing:** Create tests where we instrument a simple function with
-  `tracing` events, attach our layer, and verify that corresponding
-  `FemtoLogRecord`s arrive in a femtologging handler. We can use a simple
-  handler (maybe a vector-collecting handler) in tests to gather records. Also
-  test interoperability: attach a `tracing_subscriber::fmt` layer (which logs
-  to stdout) alongside ours to ensure no conflict, and if possible attach a
-  dummy OT layer (if we have the dev dependency for `tracing-opentelemetry`) to
-  ensure it composes correctly.
+- **Testing:** Create tests where a simple function is instrumented with
+  `tracing` events, the layer is attached, and corresponding `FemtoLogRecord`s
+  are verified to arrive in a femtologging handler. A simple handler (maybe a
+  vector-collecting handler) can be used in tests to gather records. Also test
+  interoperability: attach a `tracing_subscriber::fmt` layer (which logs to
+  stdout) alongside the femtologging layer to ensure no conflict, and if
+  possible attach a dummy OT layer (if the dev dependency for
+  `tracing-opentelemetry` is available) to ensure it composes correctly.
 
 - **Documentation:** Expand the user guide with a section “Using femtologging
   with tracing and OpenTelemetry”. Show how to enable the feature and
@@ -433,26 +427,26 @@ the final integration steps:
 - **Context Propagation:** Introduce a way to attach contextual data (like a
   trace ID or span ID) to log records. This might be via an explicit API or
   implicitly by reading from `tracing::Span` context when the
-  `FemtoTracingLayer` is active. For example, we might decide that if a
-  `tracing::Span` is current, our logging macros capture its trace ID into the
-  record metadata. Alternatively, a Python integration might allow setting a
-  “global context” that femtologging will include in each record. The exact
+  `FemtoTracingLayer` is active. For example, the decision might be made that
+  if a `tracing::Span` is current, the logging macros capture its trace ID into
+  the record metadata. Alternatively, a Python integration might allow setting
+  a "global context" that femtologging will include in each record. The exact
   mechanism will be designed in this phase, but the outcome should be that a
   `FemtoLogRecord` can carry a field like `trace_id`.
 
 - **Formatter and API adjustments:** Update `FemtoFormatter` implementations to
   optionally output structured data. Possibly provide a `StructuredFormatter`
   that formats key–values as JSON or key=value text. Ensure that handlers can
-  retrieve the raw record if they need to do custom output (our new handlers
+  retrieve the raw record if they need to do custom output (the new handlers
   will use this to avoid reformatting to string when sending to structured
   sinks).
 
 Phase 3 is largely an internal refactoring/improvement of femtologging. It lays
-the groundwork such that in Phase 4 we can make the OpenTelemetry and Journald
-handlers truly shine. It’s worth noting that Phase 3 corresponds to the
-roadmap’s advanced features and is expected to land in an upcoming minor
-release of femtologging (since it’s needed for many reasons beyond just
-OT/Journald integration).
+the groundwork such that in Phase 4 the OpenTelemetry and Journald handlers can
+truly shine. It's worth noting that Phase 3 corresponds to the roadmap's
+advanced features and is expected to land in an upcoming minor release of
+femtologging (since it's needed for many reasons beyond just OT/Journald
+integration).
 
 ### Phase 4 – Enhanced OpenTelemetry and Journald Integration (Structured)
 
@@ -464,7 +458,7 @@ logs and context, completing the integration.
   entry:
 
 - Each key–value pair in `record.metadata.key_values` can be sent as a separate
-  journald field. We will need to sanitize keys to conform to journald
+  journald field. Keys will need to be sanitized to conform to journald
   conventions (uppercase alphanumeric and underscores). For example,
   `user_id=42` might be sent as `USER_ID=42`. Custom fields should be prefixed
   or clearly delineated to avoid clashing with reserved journal fields.
@@ -474,15 +468,15 @@ logs and context, completing the integration.
   `SPAN_ID` if present in the context metadata (this assumes context
   propagation provided these).
 
-- With possibly many fields, ensure our formatting to the socket is correct
-  (each `KEY=value` as a separate line). We should also consider the message
-  size – journald has a limit on message datagram size (currently 8MiB, which
-  we won’t hit with a few fields, but worth noting).
+- With possibly many fields, ensure the formatting to the socket is correct
+  (each `KEY=value` as a separate line). The message size should also be
+  considered – journald has a limit on message datagram size (currently 8MiB,
+  which is unlikely to be hit with a few fields, but worth noting).
 
 - Testing: Once implemented, verify that structured fields appear in the
   journal. One can use `journalctl -o json` to see the fields, or
-  `journalctl -f` to see that our custom fields are present. We should test a
-  log with multiple key–values and see them in the output.
+  `journalctl -f` to see that the custom fields are present. A log with
+  multiple key–values should be tested and the output verified.
 
 - Performance: adding structured data is just string formatting, which on the
   consumer thread is acceptable. If a record has dozens of fields, the overhead
@@ -490,46 +484,47 @@ logs and context, completing the integration.
 
 - **Evaluating libsystemd Need:** At this stage, consider if using `libsystemd`
   (via the `systemd` crate or FFI) offers any advantage for journald logging.
-  For instance, libsystemd’s `sd_journal_send` can automatically capture the
+  For instance, libsystemd's `sd_journal_send` can automatically capture the
   code location if called via a macro, and might do batching internally.
-  However, if our Phase 4 implementation reliably sends all data and performs
-  well, we may conclude that sticking with the socket approach is sufficient.
-  We will document this evaluation in case stakeholders inquire why one method
-  was chosen. (Our leaning is to remain with the socket solution unless a clear
-  performance or correctness issue emerges, in line with avoiding unnecessary
-  `unsafe` code.)
+  However, if the Phase 4 implementation reliably sends all data and performs
+  well, the conclusion may be that sticking with the socket approach is
+  sufficient. This evaluation will be documented in case stakeholders inquire
+  why one method was chosen. (The preference is to remain with the socket
+  solution unless a clear performance or correctness issue emerges, in line
+  with avoiding unnecessary `unsafe` code.)
 
-- **OpenTelemetry Handler (if needed):** With structured logging in place, we
-  will decide whether to implement a dedicated `FemtoOtelHandler` that exports
-  log records via the OpenTelemetry Rust SDK. This could be valuable for
-  pure-Python users who are not using `tracing` but still want to send logs to
-  an OT collector. The handler would run in a background thread and
-  batch/process log records into OTLP export calls:
+- **OpenTelemetry Handler (if needed):** With structured logging in place, the
+  decision will be made whether to implement a dedicated `FemtoOtelHandler`
+  that exports log records via the OpenTelemetry Rust SDK. This could be
+  valuable for pure-Python users who are not using `tracing` but still want to
+  send logs to an OT collector. The handler would run in a background thread
+  and batch/process log records into OpenTelemetry Protocol (OTLP) export
+  calls:
 
-- Use the OpenTelemetry crate’s Logging API (if stable) or treat log records as
+- Use the OpenTelemetry crate's Logging API (if stable) or treat log records as
   span events on a dummy span. By Phase 4, the OpenTelemetry community may have
   solidified how logs are ingested (perhaps an official Rust log exporter
-  exists). We would leverage that instead of crafting our own OTLP marshaling
+  exists). That would be leveraged instead of crafting a custom OTLP marshaling
   from scratch.
 
 - If implementing, this handler would require configuration (endpoint,
   credentials, resource attributes for the service, etc.) likely via
-  environment or builder. We would make it an optional component behind an
+  environment or builder. It would be made an optional component behind an
   `"otel-handler"` feature to avoid forcing OT dependencies.
 
-- However, we will only pursue this if there is demand and if the tracing layer
-  approach is insufficient. It is possible that the tracing integration already
-  covers most needs (since an application can choose to use `tracing` for its
-  logging and achieve the same result). We will gauge user feedback at this
-  point. For this ADR, the decision is to **defer** a bespoke OpenTelemetry
-  handler until we have structured logging; we note it here as a potential
-  Phase 4 task, not a committed plan.
+- However, this will only be pursued if there is demand and if the tracing
+  layer approach is insufficient. It is possible that the tracing integration
+  already covers most needs (since an application can choose to use `tracing`
+  for its logging and achieve the same result). User feedback will be gauged at
+  this point. For this ADR, the decision is to **defer** a bespoke
+  OpenTelemetry handler until structured logging is available; it is noted here
+  as a potential Phase 4 task, not a committed plan.
 
 - **Trace Context in Tracing Layer:** Update `FemtoTracingLayer` to propagate
   span context into femtologging records. After Phase 3, femtologging will have
-  a means to accept a trace ID. We can modify our layer such that when it
+  a means to accept a trace ID. The layer can be modified such that when it
   creates a `FemtoLogRecord` from a tracing `Event`, it attaches the current
-  span’s trace ID (if any) into the record’s metadata (e.g. as
+  span's trace ID (if any) into the record's metadata (e.g. as
   `"trace_id": "<hex-id>"`). This way, if femtologging later sends the record
   to journald or to a file, that trace_id is present. In particular, if sending
   to OpenTelemetry via a direct handler, the trace_id can be included to
@@ -543,12 +538,12 @@ logs and context, completing the integration.
 - If using the tracing layer + OT subscriber, trace and log correlation is
   automatic (the OT subscriber will know the trace IDs for events).
 
-- If using our direct OT handler, it will include trace_id fields in OTLP
+- If using the direct OT handler, it will include trace_id fields in OTLP
   exports, achieving correlation on the backend.
 
-We will verify this by integration testing in a demo: e.g., log an event while
-a trace span is active and confirm in an OT backend (or in the exported JSON)
-that the log record has the same trace_id as the span.
+This will be verified by integration testing in a demo: e.g., log an event
+while a trace span is active and confirm in an OT backend (or in the exported
+JSON) that the log record has the same trace_id as the span.
 
 - **Documentation & Guides:** Finally, update documentation to reflect the
   mature state:
@@ -562,10 +557,10 @@ that the log record has the same trace_id as the span.
 - Clearly describe any limitations or configurations (for instance, performance
   considerations, how to size batching for OT export, etc.).
 
-Throughout these phases, we will use feature flags and possibly temporary
-environment toggles to introduce the features gradually. For example, we might
-mark the OpenTelemetry direct export as experimental even after Phase 4, to get
-feedback before committing to API stability.
+Throughout these phases, feature flags and possibly temporary environment
+toggles will be used to introduce the features gradually. For example, the
+OpenTelemetry direct export might be marked as experimental even after Phase 4,
+to get feedback before committing to API stability.
 
 ## Known Risks and Limitations
 
@@ -574,30 +569,30 @@ feedback before committing to API stability.
   not realize their full potential. Users leveraging them early will only get
   unstructured text logs. For Journald this is acceptable (it’s equivalent to
   how many apps use journald), but for OpenTelemetry it’s of limited use (logs
-  will lack trace correlation). We mitigate this by communicating clearly that
+  will lack trace correlation). This is mitigated by communicating clearly that
   these features are incremental. The risk is some may find the initial
-  offering underwhelming – we accept this trade-off to deliver iterative value
-  and gather feedback sooner.
+  offering underwhelming – this trade-off is accepted to deliver iterative
+  value and gather feedback sooner.
 
 - **Complexity and Maintenance:** Introducing a journald path and a tracing
   layer adds complexity to the codebase. The journald integration needs careful
   handling of OS-specific code and testing on Linux. The tracing layer involves
   interfacing with an external ecosystem (`tracing` crate) and must be kept
-  compatible as those libraries evolve. We address this by feature-gating and
+  compatible as those libraries evolve. This is addressed by feature-gating and
   by writing thorough tests. The maintenance burden is justified by the value
-  added, but we note that any breaking changes in the `tracing` or
-  `opentelemetry` crates may require us to update our integration layer
+  added, but it is noted that any breaking changes in the `tracing` or
+  `opentelemetry` crates may require the integration layer to be updated
   accordingly.
 
 - **Performance Overhead:** Writing to journald is typically fast (local UDS
   write), but journald itself can introduce latency under heavy load.
   Similarly, the tracing layer means every `tracing::event` triggers additional
   work (creating a FemtoLogRecord and channel send). If an application emits a
-  very high volume of tracing events, this could strain femtologging’s queues
-  or consumers. To mitigate, we will benchmark these code paths. The design
+  very high volume of tracing events, this could strain femtologging's queues
+  or consumers. To mitigate, these code paths will be benchmarked. The design
   already offloads work to the consumer threads and uses lock-free channels,
-  which aligns with our performance goals. We may need to tune channel sizes or
-  provide backpressure mechanisms (e.g. drop policy) specifically for these
+  which aligns with performance goals. Channel sizes may need to be tuned or
+  backpressure mechanisms (e.g. drop policy) provided specifically for these
   handlers if they become bottlenecks.
 
 - **Ordering and Duplication of Logs:** When using the tracing bridge, there is
@@ -605,35 +600,34 @@ feedback before committing to API stability.
   uses another subscriber. For example, if someone uses
   `tracing_subscriber::fmt` (to log to stdout) and femtologging simultaneously,
   the same event will be processed by both. This is generally intended, but
-  users should be aware to avoid double-logging inadvertently. Our
-  documentation will recommend using femtologging as the primary output and not
-  also adding a redundant `fmt` layer, or vice versa, unless that is explicitly
-  wanted.
+  users should be aware to avoid double-logging inadvertently. Documentation
+  will recommend using femtologging as the primary output and not also adding a
+  redundant `fmt` layer, or vice versa, unless that is explicitly wanted.
 
 - **Platform Constraints:** The Journald handler will only function on
   systemd-based Linux systems. On other OSes, it will be disabled at compile
-  time. If someone enables the feature on a non-Linux target, we will produce a
-  compile-time error or no-op stub. This is a conscious decision. We will
-  mention in the docs that on Windows or macOS, journald logging is not
+  time. If someone enables the feature on a non-Linux target, a compile-time
+  error or no-op stub will be produced. This is a conscious decision.
+  Documentation will mention that on Windows or macOS, journald logging is not
   available (and suggest alternative approaches, like logging to file or using
   syslog if needed for Unix without systemd).
 
 - **Future Evolution of Standards:** OpenTelemetry logging is still an evolving
   standard. There is a risk that the APIs or recommended integration patterns
   change. By leaning on the `tracing-opentelemetry` bridge (which is maintained
-  by OT community), we insulate ourselves from some of that churn. If we
-  implement a direct OTLP exporter, we will do so using the official SDK to
-  stay aligned with the standard. We also remain prepared to adapt if the OTLP
+  by OT community), the implementation is insulated from some of that churn. If
+  a direct OTLP exporter is implemented, it will be done using the official SDK
+  to stay aligned with the standard. Preparation remains to adapt if the OTLP
   log data model or configuration conventions change.
 
 - **Security Considerations:** Logging to external systems (especially
   OpenTelemetry) means potentially transmitting sensitive data (log contents,
-  contextual keys) over the network. Our design will ensure that enabling an OT
-  handler is an explicit action. We’ll advise users to consider what they log
-  (no PII in trace context keys unless needed, etc.). For journald, logs are
-  local but end up in a system store; again users should be mindful of what
+  contextual keys) over the network. The design will ensure that enabling an OT
+  handler is an explicit action. Users will be advised to consider what they
+  log (no PII in trace context keys unless needed, etc.). For journald, logs
+  are local but end up in a system store; again users should be mindful of what
   they log at high severity levels as those might be broadly visible in
-  syslogs. These concerns are not unique to our system but worth noting.
+  syslogs. These concerns are not unique to the system but worth noting.
 
 ## Architectural Rationale
 
@@ -641,34 +635,35 @@ The chosen approaches were guided by femtologging’s overarching architectural
 principles and the practical need to deliver features incrementally:
 
 - Using a dedicated thread per handler and non-blocking channels aligns with
-  our **producer-consumer model** for all handlers. Both the Journald and OT
-  handlers conform to this, ensuring we maintain high throughput and isolate
-  any slowness (e.g., if the journald daemon is slow or the OT exporter backs
-  up, only the handler’s thread is affected, not the logging callers).
+  the **producer-consumer model** for all handlers. Both the Journald and OT
+  handlers conform to this, ensuring high throughput is maintained and any
+  slowness is isolated (e.g., if the journald daemon is slow or the OT exporter
+  backs up, only the handler's thread is affected, not the logging callers).
 
-- Avoiding `libsystemd` FFI is consistent with our commitment to **avoid unsafe
+- Avoiding `libsystemd` FFI is consistent with the commitment to **avoid unsafe
   code and heavy platform-specific dependencies** without strong justification.
-  We determined that writing to the journald socket is sufficient for now; this
-  keeps the implementation in safe Rust and avoids potential deployment issues
-  (e.g. dealing with system library versions or linking errors).
+  It was determined that writing to the journald socket is sufficient for now;
+  this keeps the implementation in safe Rust and avoids potential deployment
+  issues (e.g. dealing with system library versions or linking errors).
 
 - Leveraging the **existing Rust ecosystem (tracing)** for OpenTelemetry
   integration is a strategic choice. It would have been an attractive “pure
   Rust” accomplishment to implement an OTLP exporter from scratch, but doing so
   duplicatively would violate the DRY principle and likely lag behind the
-  official SDK’s capabilities. By integrating with `tracing`, we both make
-  femtologging accessible to a wider community and gain OpenTelemetry support
+  official SDK's capabilities. By integrating with `tracing`, femtologging
+  becomes accessible to a wider community and gains OpenTelemetry support
   almost for free via `tracing-opentelemetry`. This design also future-proofs
   femtologging: if new `tracing` layers emerge (say for other backends or new
   telemetry standards), femtologging handlers can tap into them with minimal
   changes.
 
 - The phased approach addresses the tension between **short-term deliverables
-  and long-term completeness**. We explicitly acknowledge where interim
-  solutions are not perfect (e.g., no structured fields yet) and defer those
-  aspects until the core library is ready. This ensures that we do not shoehorn
-  half-baked structured logging logic into the handlers themselves. When Phase
-  3 lands, the handlers will naturally evolve, rather than requiring a redesign.
+  and long-term completeness**. It explicitly acknowledges where interim
+  solutions are not perfect (e.g., no structured fields yet) and defers those
+  aspects until the core library is ready. This ensures that half-baked
+  structured logging logic is not shoehorned into the handlers themselves. When
+  Phase 3 lands, the handlers will naturally evolve, rather than requiring a
+  redesign.
 
 - Finally, this decision aligns with the project’s goal to **match and exceed
   common logging functionality**. CPython’s logging module doesn’t natively
@@ -679,7 +674,8 @@ principles and the practical need to deliver features incrementally:
   all while maintaining the performance and safety promises that motivated the
   project in the first place.
 
-(
-[1](https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/rust_extension/src/logger.rs#L159-L166)
-)(
-[2](https://docs.rs/tracing-journald/latest/tracing_journald/#:~:text=Support%20for%20logging%20tracing%20events,to%20journald%2C%20preserving%20structured%20information))
+[^1]: <https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/rust_extension/src/logger.rs#L159-L166>
+[^2]: <https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/rust_extension/src/logger.rs#L96-L104>
+[^3]: <https://docs.rs/tracing-journald/latest/tracing_journald/#:~:text=Support%20for%20logging%20tracing%20events,to%20journald%2C%20preserving%20structured%20information>
+[^4]: <https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/docs/roadmap.md#L146-L155>
+[^5]: <https://github.com/leynos/femtologging/blob/f9a83c1e7f1cb6da4803ff56e8b0ab0967f31085/docs/roadmap.md#L156-L164>
