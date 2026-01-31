@@ -34,9 +34,9 @@ questions:
 
 - **Journald integration:** Should the Journald handler communicate via the
   journald socket (using the native journal protocol) or link against
-  `libsystemd` (through an FFI, e.g. using the `systemd` crate) to send
-  entries? This decision affects portability, safety, and the ease of including
-  structured fields.
+  `libsystemd` (through a foreign function interface (FFI), e.g. using the
+  `systemd` crate) to send entries? This decision affects portability, safety,
+  and the ease of including structured fields.
 
 - **Timing and prerequisites:** Can either handler be meaningfully implemented
   *before* femtologging supports rich structured records and context
@@ -135,10 +135,10 @@ integration once those limitations are lifted.
   producer–consumer model (dedicated thread per handler) so that logging to OT
   or Journald will not stall application threads. By using the journald socket
   and Rust's tracing APIs, the implementation remains within safe, idiomatic
-  Rust – avoiding the need for any `unsafe` foreign function interface (FFI)
-  calls to C libraries unless absolutely necessary. This ensures compile-time
-  safety and portability are upheld (the code will compile and run on platforms
-  without systemd by simply not enabling the journald feature).
+  Rust – avoiding the need for any `unsafe` FFI calls to C libraries unless
+  absolutely necessary. This ensures compile-time safety and portability are
+  upheld (the code will compile and run on platforms without systemd by simply
+  not enabling the journald feature).
 
 ## Goals and Non-Goals
 
