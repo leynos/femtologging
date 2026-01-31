@@ -71,7 +71,7 @@ def _apply_socket_args(
         return builder, transport_configured
     if len(args) == TCP_ARG_COUNT:
         host, port = args
-        _validate_host_port(hid, host, port, context="args")
+        _validate_host_port_args(hid, host, port)
         return builder.with_tcp(host, port), True
     if len(args) == 1:
         (path,) = args
@@ -230,16 +230,16 @@ def _validate_host_port_transport_kwargs(
     if transport_kw.host is None or transport_kw.port is None:
         msg = f"handler {hid!r} socket kwargs require both host and port"
         raise ValueError(msg)
-    _validate_host_port(hid, transport_kw.host, transport_kw.port, context="kwargs")
+    _validate_host_port_kwargs(hid, transport_kw.host, transport_kw.port)
     if transport_configured:
         msg = f"handler {hid!r} socket transport already configured via args"
         raise ValueError(msg)
 
 
-def _validate_host_port(
-    hid: str, host: object, port: object, *, context: str
+def _validate_host_port_types(
+    hid: str, host: object, port: object, context: str
 ) -> None:
-    """Validate host and port for socket handler.
+    """Validate host and port types for socket handler configuration.
 
     Parameters
     ----------
@@ -250,21 +250,31 @@ def _validate_host_port(
     port
         The port value to validate (must be int, not bool).
     context
-        Either "args" or "kwargs" to determine error message format.
+        Error message context describing the validation failure.
 
     """
-    if context == "args":
-        error_msg = f"handler {hid!r} socket args must be (host: str, port: int)"
-    else:
-        error_msg = (
-            f"handler {hid!r} socket kwargs host must be str and port must be int"
-        )
-
+    msg = f"handler {hid!r} {context}"
     if not isinstance(host, str):
-        raise TypeError(error_msg)
+        raise TypeError(msg)
     # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
-    if isinstance(port, bool) or not isinstance(port, int):
-        raise TypeError(error_msg)
+    if isinstance(port, bool):
+        raise TypeError(msg)
+    if not isinstance(port, int):
+        raise TypeError(msg)
+
+
+def _validate_host_port_args(hid: str, host: object, port: object) -> None:
+    """Validate host and port from positional arguments."""
+    _validate_host_port_types(
+        hid, host, port, context="socket args must be (host: str, port: int)"
+    )
+
+
+def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
+    """Validate host and port from keyword arguments."""
+    _validate_host_port_types(
+        hid, host, port, context="socket kwargs host must be str and port must be int"
+    )
 
 
 def _validate_unix_path(hid: str, path: object) -> None:
