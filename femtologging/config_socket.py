@@ -71,7 +71,7 @@ def _apply_socket_args(
         return builder, transport_configured
     if len(args) == TCP_ARG_COUNT:
         host, port = args
-        _validate_host_port_args(hid, host, port)
+        _validate_host_port(hid, host, port, context="args")
         return builder.with_tcp(host, port), True
     if len(args) == 1:
         (path,) = args
@@ -139,27 +139,24 @@ def _apply_backoff_to_builder(
     return builder.with_backoff(BackoffConfig(backoff_overrides))
 
 
+_UINT_OPTION_METHODS: typ.Final[dict[str, str]] = {
+    "capacity": "with_capacity",
+    "connect_timeout_ms": "with_connect_timeout_ms",
+    "write_timeout_ms": "with_write_timeout_ms",
+    "max_frame_size": "with_max_frame_size",
+}
+
+
 def _apply_socket_tuning_kwargs(
     hid: str,
     builder: SocketHandlerBuilder,
     kwargs: dict[str, object],
 ) -> SocketHandlerBuilder:
     """Apply tuning kwargs (capacity, timeouts, TLS, backoff) to the builder."""
-    capacity = _pop_socket_uint(hid, kwargs, "capacity")
-    if capacity is not None:
-        builder = builder.with_capacity(capacity)
-
-    connect_timeout = _pop_socket_uint(hid, kwargs, "connect_timeout_ms")
-    if connect_timeout is not None:
-        builder = builder.with_connect_timeout_ms(connect_timeout)
-
-    write_timeout = _pop_socket_uint(hid, kwargs, "write_timeout_ms")
-    if write_timeout is not None:
-        builder = builder.with_write_timeout_ms(write_timeout)
-
-    max_frame_size = _pop_socket_uint(hid, kwargs, "max_frame_size")
-    if max_frame_size is not None:
-        builder = builder.with_max_frame_size(max_frame_size)
+    for option_name, method_name in _UINT_OPTION_METHODS.items():
+        value = _pop_socket_uint(hid, kwargs, option_name)
+        if value is not None:
+            builder = getattr(builder, method_name)(value)
 
     tls_config = _pop_socket_tls_kwargs(hid, kwargs)
     if tls_config is not None:
@@ -233,38 +230,41 @@ def _validate_host_port_transport_kwargs(
     if transport_kw.host is None or transport_kw.port is None:
         msg = f"handler {hid!r} socket kwargs require both host and port"
         raise ValueError(msg)
-    _validate_host_port_kwargs(hid, transport_kw.host, transport_kw.port)
+    _validate_host_port(hid, transport_kw.host, transport_kw.port, context="kwargs")
     if transport_configured:
         msg = f"handler {hid!r} socket transport already configured via args"
         raise ValueError(msg)
 
 
-def _validate_host_port_args(hid: str, host: object, port: object) -> None:
-    """Validate host and port arguments for socket handler."""
-    if not isinstance(host, str):
-        msg = f"handler {hid!r} socket args must be (host: str, port: int)"
-        raise TypeError(msg)
-    # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
-    if isinstance(port, bool):
-        msg = f"handler {hid!r} socket args must be (host: str, port: int)"
-        raise TypeError(msg)
-    if not isinstance(port, int):
-        msg = f"handler {hid!r} socket args must be (host: str, port: int)"
-        raise TypeError(msg)
+def _validate_host_port(
+    hid: str, host: object, port: object, *, context: str
+) -> None:
+    """Validate host and port for socket handler.
 
+    Parameters
+    ----------
+    hid
+        Handler identifier for error messages.
+    host
+        The host value to validate (must be str).
+    port
+        The port value to validate (must be int, not bool).
+    context
+        Either "args" or "kwargs" to determine error message format.
 
-def _validate_host_port_kwargs(hid: str, host: object, port: object) -> None:
-    """Validate host and port keyword arguments for socket handler."""
+    """
+    if context == "args":
+        error_msg = f"handler {hid!r} socket args must be (host: str, port: int)"
+    else:
+        error_msg = (
+            f"handler {hid!r} socket kwargs host must be str and port must be int"
+        )
+
     if not isinstance(host, str):
-        msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
-        raise TypeError(msg)
+        raise TypeError(error_msg)
     # ``bool`` subclasses ``int`` so reject it explicitly before the integer check.
-    if isinstance(port, bool):
-        msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
-        raise TypeError(msg)
-    if not isinstance(port, int):
-        msg = f"handler {hid!r} socket kwargs host must be str and port must be int"
-        raise TypeError(msg)
+    if isinstance(port, bool) or not isinstance(port, int):
+        raise TypeError(error_msg)
 
 
 def _validate_unix_path(hid: str, path: object) -> None:

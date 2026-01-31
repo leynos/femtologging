@@ -15,7 +15,25 @@ import typing as typ
 from .config import _validate_mapping_type, _validate_string_keys
 
 Mapping = cabc.Mapping
+Final = typ.Final
 cast = typ.cast
+
+
+def _validate_type_or_none(
+    value: object, expected_type: type, hid: str, field: str
+) -> None:
+    """Validate that value is of expected_type or None.
+
+    Raises
+    ------
+    TypeError
+        If value is not None and not an instance of expected_type.
+
+    """
+    if value is not None and not isinstance(value, expected_type):
+        type_name = expected_type.__name__
+        msg = f"handler {hid!r} socket kwargs {field} must be a {type_name} or None"
+        raise TypeError(msg)
 
 
 def _pop_socket_tls_kwargs(
@@ -96,10 +114,8 @@ def _extract_tls_domain_from_mapping(
     if "domain" not in tls_mapping:
         return None
     domain = tls_mapping["domain"]
-    if domain is not None and not isinstance(domain, str):
-        msg = f"handler {hid!r} socket kwargs tls domain must be a string or None"
-        raise TypeError(msg)
-    return domain
+    _validate_type_or_none(domain, str, hid, "tls domain")
+    return cast("str | None", domain)
 
 
 def _extract_tls_insecure_from_mapping(
@@ -125,13 +141,19 @@ def _merge_tls_domain_kwarg(
     """Merge the tls_domain kwarg with existing domain from mapping."""
     if domain_kw is None:
         return domain, enabled
-    if not isinstance(domain_kw, str):
-        msg = f"handler {hid!r} socket kwargs tls_domain must be a string or None"
-        raise TypeError(msg)
-    if domain is not None and domain_kw != domain:
+    _validate_type_or_none(domain_kw, str, hid, "tls_domain")
+    domain_kw_str = cast("str", domain_kw)
+    if domain is not None and domain_kw_str != domain:
         msg = f"handler {hid!r} socket kwargs tls has conflicting domain values"
         raise ValueError(msg)
-    return domain_kw, True
+    return domain_kw_str, True
+
+
+def _validate_tls_insecure_type(hid: str, insecure_kw: object) -> None:
+    """Validate that insecure_kw is a bool."""
+    if not isinstance(insecure_kw, bool):
+        msg = f"handler {hid!r} socket kwargs tls_insecure must be a bool"
+        raise TypeError(msg)
 
 
 def _merge_tls_insecure_kwarg(
@@ -143,13 +165,12 @@ def _merge_tls_insecure_kwarg(
     """Merge the tls_insecure kwarg with existing insecure value from mapping."""
     if insecure_kw is None:
         return insecure_from_mapping if insecure_from_mapping is not None else False
-    if not isinstance(insecure_kw, bool):
-        msg = f"handler {hid!r} socket kwargs tls_insecure must be a bool"
-        raise TypeError(msg)
-    if insecure_from_mapping is not None and insecure_kw != insecure_from_mapping:
+    _validate_tls_insecure_type(hid, insecure_kw)
+    insecure_kw_bool = cast("bool", insecure_kw)
+    if insecure_from_mapping is not None and insecure_kw_bool != insecure_from_mapping:
         msg = f"handler {hid!r} socket kwargs tls has conflicting insecure values"
         raise ValueError(msg)
-    return insecure_kw
+    return insecure_kw_bool
 
 
 def _validate_tls_not_disabled(hid: str, tls_value: object) -> None:
@@ -215,6 +236,14 @@ def _extract_backoff_key(
     return _coerce_backoff_value(hid, key, mapping[key])
 
 
+_BACKOFF_ALIAS_MAP: Final[dict[str, str]] = {
+    "backoff_base_ms": "base_ms",
+    "backoff_cap_ms": "cap_ms",
+    "backoff_reset_after_ms": "reset_after_ms",
+    "backoff_deadline_ms": "deadline_ms",
+}
+
+
 def _merge_backoff_alias_values(
     hid: str,
     kwargs: dict[str, object],
@@ -222,18 +251,11 @@ def _merge_backoff_alias_values(
 ) -> dict[str, int | None]:
     """Merge backoff alias kwargs (backoff_base_ms, etc.) with mapping values."""
     merged = dict(overrides)
-    alias_map = {
-        "backoff_base_ms": "base_ms",
-        "backoff_cap_ms": "cap_ms",
-        "backoff_reset_after_ms": "reset_after_ms",
-        "backoff_deadline_ms": "deadline_ms",
-    }
-    for alias, target in alias_map.items():
+    for alias, target in _BACKOFF_ALIAS_MAP.items():
         present = alias in kwargs
         value = _extract_backoff_alias(hid, kwargs, alias)
         if present or value is not None:
-            existing = merged.get(target)
-            _check_backoff_conflict(hid, target, existing, value)
+            _check_backoff_conflict(hid, target, merged.get(target), value)
             merged[target] = value
     return merged
 
@@ -253,9 +275,8 @@ def _check_backoff_conflict(
     hid: str, target: str, existing: int | None, new: int | None
 ) -> None:
     """Raise ValueError if conflicting backoff values are detected."""
-    if existing is None or new is None:
-        return
-    if existing == new:
+    no_conflict = existing is None or new is None or existing == new
+    if no_conflict:
         return
     msg = f"handler {hid!r} socket kwargs backoff {target} conflict"
     raise ValueError(msg)
