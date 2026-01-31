@@ -3,6 +3,7 @@
 //! Access is guarded by a `parking_lot::RwLock` and must only occur while the
 //! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
 
+#[cfg(not(test))]
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -15,7 +16,44 @@ struct Manager {
     loggers: HashMap<String, Py<FemtoLogger>>,
 }
 
+#[cfg(not(test))]
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
+
+#[cfg(test)]
+thread_local! {
+    static MANAGER: RwLock<Manager> = RwLock::new(Manager::default());
+}
+
+#[cfg(any(feature = "python", feature = "log-compat"))]
+fn with_manager_read<T>(f: impl FnOnce(&Manager) -> T) -> T {
+    #[cfg(test)]
+    {
+        MANAGER.with(|mgr| {
+            let guard = mgr.read();
+            f(&guard)
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let guard = MANAGER.read();
+        f(&guard)
+    }
+}
+
+fn with_manager_write<T>(f: impl FnOnce(&mut Manager) -> T) -> T {
+    #[cfg(test)]
+    {
+        MANAGER.with(|mgr| {
+            let mut guard = mgr.write();
+            f(&mut guard)
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let mut guard = MANAGER.write();
+        f(&mut guard)
+    }
+}
 
 /// Return `true` when the provided name is not a valid logger identifier.
 ///
@@ -50,18 +88,19 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
         ));
     }
 
-    let mut mgr = MANAGER.write();
-    ensure_root_logger(py, &mut mgr)?;
+    with_manager_write(|mgr| {
+        ensure_root_logger(py, mgr)?;
 
-    match mgr.loggers.entry(name.to_string()) {
-        Entry::Occupied(o) => Ok(o.get().clone_ref(py)),
-        Entry::Vacant(v) => {
-            let parent_name = calculate_parent_name(name);
-            let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
-            v.insert(logger.clone_ref(py));
-            Ok(logger)
+        match mgr.loggers.entry(name.to_string()) {
+            Entry::Occupied(o) => Ok(o.get().clone_ref(py)),
+            Entry::Vacant(v) => {
+                let parent_name = calculate_parent_name(name);
+                let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
+                v.insert(logger.clone_ref(py));
+                Ok(logger)
+            }
         }
-    }
+    })
 }
 
 /// Disable existing loggers not mentioned in the provided keep list.
@@ -73,14 +112,15 @@ pub fn disable_existing_loggers(
     py: Python<'_>,
     keep_names: &std::collections::HashSet<String>,
 ) -> PyResult<()> {
-    let mgr = MANAGER.read();
-    for (name, logger) in &mgr.loggers {
-        if name != "root" && !keep_names.contains(name) {
-            let logger_ref = logger.borrow(py);
-            logger_ref.clear_handlers();
-            logger_ref.clear_filters();
+    with_manager_read(|mgr| {
+        for (name, logger) in &mgr.loggers {
+            if name != "root" && !keep_names.contains(name) {
+                let logger_ref = logger.borrow(py);
+                logger_ref.clear_handlers();
+                logger_ref.clear_filters();
+            }
         }
-    }
+    });
     Ok(())
 }
 
@@ -89,16 +129,18 @@ pub fn disable_existing_loggers(
 /// Intended for use by the Rust `log` crate bridge; failures are ignored.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
-    let mgr = MANAGER.read();
-    for logger in mgr.loggers.values() {
-        let _ = logger.borrow(py).flush_handlers();
-    }
+    with_manager_read(|mgr| {
+        for logger in mgr.loggers.values() {
+            let _ = logger.borrow(py).flush_handlers();
+        }
+    });
 }
 
 #[pyfunction]
 pub fn reset_manager() {
-    let mut mgr = MANAGER.write();
-    mgr.loggers.clear();
+    with_manager_write(|mgr| {
+        mgr.loggers.clear();
+    });
 }
 
 #[cfg(test)]
@@ -109,12 +151,10 @@ mod tests {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        use pyo3::Python;
-        use serial_test::serial;
-
-        use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
+        use super::super::{flush_all_handlers, get_logger, reset_manager, with_manager_read};
         use crate::handler::{FemtoHandlerTrait, HandlerError};
         use crate::log_record::FemtoLogRecord;
+        use pyo3::Python;
 
         #[derive(Clone)]
         struct FlushCountingHandler {
@@ -137,7 +177,6 @@ mod tests {
         }
 
         #[test]
-        #[serial(manager)]
         fn flush_all_handlers_flushes_loggers_with_handlers() {
             Python::with_gil(|py| {
                 reset_manager();
@@ -163,7 +202,6 @@ mod tests {
         }
 
         #[test]
-        #[serial(manager)]
         fn flush_all_handlers_invokes_flush_once_per_registered_logger() {
             Python::with_gil(|py| {
                 reset_manager();
@@ -177,13 +215,12 @@ mod tests {
                     flushes: flushes.clone(),
                 }) as Arc<dyn FemtoHandlerTrait>;
 
-                let loggers = {
-                    let mgr = MANAGER.read();
+                let loggers = with_manager_read(|mgr| {
                     mgr.loggers
                         .values()
                         .map(|logger| logger.clone_ref(py))
                         .collect::<Vec<_>>()
-                };
+                });
 
                 for logger in &loggers {
                     logger.borrow(py).add_handler(handler.clone());

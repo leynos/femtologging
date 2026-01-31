@@ -7,7 +7,6 @@ use crate::manager;
 use crate::{FemtoLevel, FemtoLogger, FileHandlerBuilder};
 use pyo3::{Py, Python};
 use rstest::rstest;
-use serial_test::serial;
 use std::fs;
 use tempfile::NamedTempFile;
 
@@ -29,7 +28,6 @@ fn flush_logger_and_assert(py: Python<'_>, logger: &Py<FemtoLogger>, name: &str)
 }
 
 #[rstest]
-#[serial(manager)]
 fn propagate_flag_applied(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let (root_handler, file) = new_root_file_handler();
@@ -58,7 +56,6 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
 }
 
 #[rstest]
-#[serial(manager)]
 fn record_propagates_to_root(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let (root_handler, file) = new_root_file_handler();
@@ -85,7 +82,6 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
 }
 
 #[rstest]
-#[serial(manager)]
 fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let (root_handler, file) = new_root_file_handler();

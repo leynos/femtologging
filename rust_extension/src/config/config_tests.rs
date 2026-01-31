@@ -9,7 +9,6 @@ use crate::manager;
 use crate::{FemtoLevel, StreamHandlerBuilder};
 use pyo3::Python;
 use rstest::{fixture, rstest};
-use serial_test::serial;
 use std::sync::Arc;
 
 fn builder_with_root(root: LoggerConfigBuilder) -> ConfigBuilder {
@@ -52,7 +51,6 @@ fn build_rejects_missing_root() {
 }
 
 #[rstest]
-#[serial(manager)]
 fn build_accepts_default_version(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let builder = ConfigBuilder::new().with_root_logger(root);
@@ -60,7 +58,6 @@ fn build_accepts_default_version(_gil_and_clean_manager: ()) {
 }
 
 #[rstest]
-#[serial(manager)]
 fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let handler = StreamHandlerBuilder::stderr();
@@ -100,7 +97,6 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
     },
     LoggerConfigBuilder::new().with_filters(["missing"]),
 )]
-#[serial(manager)]
 fn unknown_id_rejected(
     _gil_and_clean_manager: (),
     #[case] _kind: &str,
@@ -123,7 +119,6 @@ fn unknown_id_rejected(
 }
 
 #[rstest]
-#[serial(manager)]
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -151,7 +146,6 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
 }
 
 #[rstest]
-#[serial(manager)]
 fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
@@ -180,7 +174,6 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
     },
     LoggerConfigBuilder::new().with_filters(["missing1", "missing2"]),
 )]
-#[serial(manager)]
 fn multiple_unknown_ids_rejected(
     _gil_and_clean_manager: (),
     #[case] _kind: &str,
@@ -204,7 +197,6 @@ fn multiple_unknown_ids_rejected(
 // public constructors, so configurations cannot produce duplicate ID errors
 // through the supported API surface.
 #[rstest]
-#[serial(manager)]
 fn disable_existing_loggers_clears_unmentioned(
     _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
@@ -240,7 +232,6 @@ fn disable_existing_loggers_clears_unmentioned(
     case::parent(&["parent"]),
     case::grandparent(&["grandparent", "grandparent.parent"]),
 )]
-#[serial(manager)]
 fn disable_existing_loggers_keeps_ancestors(
     _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
@@ -277,7 +268,6 @@ fn disable_existing_loggers_keeps_ancestors(
 }
 
 #[rstest]
-#[serial(manager)]
 fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let builder = ConfigBuilder::new()
@@ -303,7 +293,6 @@ fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) 
 }
 
 #[rstest]
-#[serial(manager)]
 fn default_level_applies_to_child_loggers(_gil_and_clean_manager: ()) {
     Python::with_gil(|py| {
         let child_cfg = LoggerConfigBuilder::new().with_handlers(["console"]);

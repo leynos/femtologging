@@ -1,5 +1,6 @@
 //! Shared state for forcing rotating writer reopen failures during tests.
 
+#[cfg(not(test))]
 use once_cell::sync::Lazy;
 use std::sync::{
     Mutex,
@@ -93,7 +94,24 @@ impl FreshFailureState {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static FRESH_FAILURE_STATE: FreshFailureState = FreshFailureState::new();
+}
+
+#[cfg(not(test))]
 static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureState::new);
+
+fn with_fresh_failure_state<T>(f: impl FnOnce(&FreshFailureState) -> T) -> T {
+    #[cfg(test)]
+    {
+        FRESH_FAILURE_STATE.with(|state| f(state))
+    }
+    #[cfg(not(test))]
+    {
+        f(&FRESH_FAILURE_STATE)
+    }
+}
 
 /// Attempts to consume one forced fresh-file-open failure.
 ///
@@ -104,7 +122,7 @@ static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureStat
 ///
 /// `Some(reason)` if failures remain, `None` otherwise.
 pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
-    FRESH_FAILURE_STATE.take()
+    with_fresh_failure_state(|state| state.take())
 }
 
 /// Configures forced fresh-file-open failures for testing.
@@ -119,7 +137,7 @@ pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
 /// * `reason` - Failure message to surface.
 #[cfg(feature = "python")]
 pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) {
-    FRESH_FAILURE_STATE.set_forced(count, reason.into());
+    with_fresh_failure_state(|state| state.set_forced(count, reason.into()));
 }
 
 /// Clears forced fresh-file-open failures.
@@ -128,7 +146,7 @@ pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) 
 /// test cleanup.
 #[cfg(feature = "python")]
 pub(crate) fn clear_forced_fresh_failure() {
-    FRESH_FAILURE_STATE.clear_forced();
+    with_fresh_failure_state(|state| state.clear_forced());
 }
 
 /// Forces a single fresh-file-open failure for testing.
@@ -175,19 +193,22 @@ impl ForcedFreshFailureGuard {
     /// * `count` - Number of failures to force.
     /// * `reason` - Failure message to report.
     fn new(count: usize, reason: String) -> Self {
-        let previous_count = FRESH_FAILURE_STATE.remaining.swap(count, Ordering::SeqCst);
-        let mut guard = FRESH_FAILURE_STATE
-            .reason
-            .lock()
-            .expect("fresh failure reason mutex poisoned");
-        let previous_reason = guard.replace(reason);
-        let previous_owner = {
-            let mut owner_guard = FRESH_FAILURE_STATE
-                .owner
+        let (previous_count, previous_reason, previous_owner) = with_fresh_failure_state(|state| {
+            let previous_count = state.remaining.swap(count, Ordering::SeqCst);
+            let mut guard = state
+                .reason
                 .lock()
-                .expect("fresh failure owner mutex poisoned");
-            owner_guard.replace(thread::current().id())
-        };
+                .expect("fresh failure reason mutex poisoned");
+            let previous_reason = guard.replace(reason);
+            let previous_owner = {
+                let mut owner_guard = state
+                    .owner
+                    .lock()
+                    .expect("fresh failure owner mutex poisoned");
+                owner_guard.replace(thread::current().id())
+            };
+            (previous_count, previous_reason, previous_owner)
+        });
         Self {
             previous_count,
             previous_reason,
@@ -200,20 +221,20 @@ impl ForcedFreshFailureGuard {
 impl Drop for ForcedFreshFailureGuard {
     /// Restores the forced failure state captured when the guard was created.
     fn drop(&mut self) {
-        FRESH_FAILURE_STATE
-            .remaining
-            .store(self.previous_count, Ordering::SeqCst);
-        let mut guard = FRESH_FAILURE_STATE
-            .reason
-            .lock()
-            .expect("fresh failure reason mutex poisoned");
-        *guard = self.previous_reason.take();
-        {
-            let mut owner_guard = FRESH_FAILURE_STATE
-                .owner
+        with_fresh_failure_state(|state| {
+            state.remaining.store(self.previous_count, Ordering::SeqCst);
+            let mut guard = state
+                .reason
                 .lock()
-                .expect("fresh failure owner mutex poisoned");
-            *owner_guard = self.previous_owner;
-        }
+                .expect("fresh failure reason mutex poisoned");
+            *guard = self.previous_reason.take();
+            {
+                let mut owner_guard = state
+                    .owner
+                    .lock()
+                    .expect("fresh failure owner mutex poisoned");
+                *owner_guard = self.previous_owner;
+            }
+        });
     }
 }
