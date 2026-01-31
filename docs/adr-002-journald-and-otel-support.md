@@ -1,4 +1,4 @@
-# ADR 002: Introduce OpenTelemetry and journald handler support in femtologging
+# ADR 002: introduce OpenTelemetry and journald handler support in femtologging
 
 ## Status
 
@@ -27,10 +27,11 @@ Multiple approaches have been proposed for each integration, leading to open
 questions:
 
 - **OpenTelemetry integration:** Should the implementation use a bespoke
-  `FemtoOtelHandler` (directly using the OpenTelemetry SDK to send logs), or
-  via a `tracing_subscriber::Layer` that bridges `femtologging` with the Rust
-  `tracing` ecosystem (and thereby to OpenTelemetry)? These approaches differ
-  in complexity and how they align with the architecture.
+  `FemtoOtelHandler` (directly using the OpenTelemetry software development kit
+  (SDK) to send logs), or via a `tracing_subscriber::Layer` that bridges
+  `femtologging` with the Rust `tracing` ecosystem (and thereby to
+  OpenTelemetry)? These approaches differ in complexity and how they align with
+  the architecture.
 
 - **Journald integration:** Should the Journald handler communicate via the
   journald socket (using the native journal protocol) or link against
@@ -152,10 +153,10 @@ integration once those limitations are lifted.
 - **OpenTelemetry Compatibility:** Provide a pathway for femtologging logs to
   enter OpenTelemetry pipelines. This includes allowing femtologging to accept
   logs from code using the `tracing` crate (bridging `tracing` events into
-  femtologging’s handlers) and, eventually, exporting femtologging’s own logs
-  to an OTLP collector with full context. The design should align with
-  OpenTelemetry’s log data model and not preclude correlating logs with traces
-  (when trace context is available).
+  femtologging's handlers) and, eventually, exporting femtologging's own logs
+  to an OpenTelemetry Protocol (OTLP) collector with full context. The design
+  should align with OpenTelemetry's log data model and not preclude correlating
+  logs with traces (when trace context is available).
 
 - **Preserve Performance and Non-Blocking Architecture:** The addition of these
   handlers should not compromise the performance of the logging hot path.
@@ -469,7 +470,7 @@ logs and context, completing the integration.
 
 - With possibly many fields, ensure the formatting to the socket is correct
   (each `KEY=value` as a separate line). The message size should also be
-  considered – journald has a limit on message datagram size (currently 8MiB,
+  considered – journald has a limit on message datagram size (currently 8 MiB,
   which is unlikely to be hit with a few fields, but worth noting).
 
 - Testing: Once implemented, verify that structured fields appear in the
@@ -497,8 +498,7 @@ logs and context, completing the integration.
   that exports log records via the OpenTelemetry Rust SDK. This could be
   valuable for pure-Python users who are not using `tracing` but still want to
   send logs to an OT collector. The handler would run in a background thread
-  and batch/process log records into OpenTelemetry Protocol (OTLP) export
-  calls:
+  and batch/process log records into OTLP export calls:
 
 - Use the OpenTelemetry crate's Logging API (if stable) or treat log records as
   span events on a dummy span. By Phase 4, the OpenTelemetry community may have
@@ -534,7 +534,7 @@ logs and context, completing the integration.
   application that uses femtologging (in Python or Rust) and has instrumented
   traces can have all three signals unified:
 
-- If using the tracing layer + OT subscriber, trace and log correlation is
+- If using the tracing layer + OT subscriber, trace, and log correlation is
   automatic (the OT subscriber will know the trace IDs for events).
 
 - If using the direct OT handler, it will include trace_id fields in OTLP
