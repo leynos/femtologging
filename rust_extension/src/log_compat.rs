@@ -222,9 +222,20 @@ mod tests {
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use parking_lot::Mutex;
     use rstest::{fixture, rstest};
-    use serial_test::serial;
     use std::any::Any;
-    use std::sync::{Arc, Once};
+    use std::sync::{
+        Arc,
+        Once,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[fixture]
+    fn unique_logger_name() -> String {
+        let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("bridge.test.{suffix}")
+    }
 
     #[rstest]
     #[case(log::Level::Trace, FemtoLevel::Trace)]
@@ -267,20 +278,22 @@ mod tests {
     }
 
     #[rstest]
-    #[serial]
-    fn adapter_dispatches_records_to_target_logger(_log_max_level: ()) {
+    fn adapter_dispatches_records_to_target_logger(
+        _log_max_level: (),
+        unique_logger_name: String,
+    ) {
         let adapter = FemtoLogAdapter;
+        let logger_name = unique_logger_name;
 
         Python::with_gil(|py| {
-            manager::reset_manager();
-            let logger = manager::get_logger(py, "bridge.test").expect("logger created");
+            let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
             logger.borrow(py).add_handler(handler.clone());
 
             let record = log::Record::builder()
                 .args(format_args!("hello"))
                 .level(log::Level::Info)
-                .target("bridge.test")
+                .target(&logger_name)
                 .module_path(Some("bridge::test"))
                 .file(Some("lib.rs"))
                 .line(Some(42))
@@ -300,7 +313,7 @@ mod tests {
                 .collected();
             assert_eq!(records.len(), 1);
             let rec = &records[0];
-            assert_eq!(rec.logger(), "bridge.test");
+            assert_eq!(rec.logger(), logger_name.as_str());
             assert_eq!(rec.level_str(), "INFO");
             assert_eq!(rec.message(), "hello");
             assert_eq!(rec.metadata().module_path, "bridge::test");
@@ -310,20 +323,20 @@ mod tests {
     }
 
     #[rstest]
-    #[serial]
-    fn adapter_normalises_rust_module_targets(_log_max_level: ()) {
+    fn adapter_normalises_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
         let adapter = FemtoLogAdapter;
+        let logger_name = unique_logger_name;
+        let target = logger_name.replace('.', "::");
 
         Python::with_gil(|py| {
-            manager::reset_manager();
-            let logger = manager::get_logger(py, "bridge.mod").expect("logger created");
+            let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
             logger.borrow(py).add_handler(handler.clone());
 
             let record = log::Record::builder()
                 .args(format_args!("normalised"))
                 .level(log::Level::Info)
-                .target("bridge::mod")
+                .target(&target)
                 .build();
 
             adapter.log(&record);
@@ -335,18 +348,17 @@ mod tests {
                 .expect("handler downcast")
                 .collected();
             assert_eq!(records.len(), 1);
-            assert_eq!(records[0].logger(), "bridge.mod");
+            assert_eq!(records[0].logger(), logger_name.as_str());
         });
     }
 
     #[rstest]
-    #[serial]
-    fn log_respects_logger_threshold(_log_max_level: ()) {
+    fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
         let adapter = FemtoLogAdapter;
+        let logger_name = unique_logger_name;
 
         Python::with_gil(|py| {
-            manager::reset_manager();
-            let logger = manager::get_logger(py, "bridge.level").expect("logger created");
+            let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
             logger.borrow(py).add_handler(handler.clone());
             logger.borrow(py).set_level(FemtoLevel::Warn);
@@ -354,14 +366,14 @@ mod tests {
             let info_record = log::Record::builder()
                 .args(format_args!("info"))
                 .level(log::Level::Info)
-                .target("bridge.level")
+                .target(&logger_name)
                 .build();
             adapter.log(&info_record);
 
             let warn_record = log::Record::builder()
                 .args(format_args!("warn"))
                 .level(log::Level::Warn)
-                .target("bridge.level")
+                .target(&logger_name)
                 .build();
             adapter.log(&warn_record);
 
