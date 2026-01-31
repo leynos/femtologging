@@ -224,8 +224,7 @@ mod tests {
     use rstest::{fixture, rstest};
     use std::any::Any;
     use std::sync::{
-        Arc,
-        Once,
+        Arc, Once,
         atomic::{AtomicUsize, Ordering},
     };
 
@@ -278,10 +277,7 @@ mod tests {
     }
 
     #[rstest]
-    fn adapter_dispatches_records_to_target_logger(
-        _log_max_level: (),
-        unique_logger_name: String,
-    ) {
+    fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
 
