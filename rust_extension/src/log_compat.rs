@@ -232,8 +232,9 @@ mod tests {
 
     #[fixture]
     fn unique_logger_name() -> String {
+        let base = "bridge.test";
         let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
-        format!("bridge.test.{suffix}")
+        format!("{base}.{suffix}")
     }
 
     #[rstest]
