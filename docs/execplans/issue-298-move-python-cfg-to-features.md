@@ -7,7 +7,8 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 Status: COMPLETED
 
 Related:
-[Issue #298](https://github.com/leynos/femtologging/issues/298), [PR #286](https://github.com/leynos/femtologging/pull/286)
+[Issue #298](https://github.com/leynos/femtologging/issues/298),
+[PR #286](https://github.com/leynos/femtologging/pull/286)
 
 ## Purpose / Big Picture
 
@@ -137,6 +138,8 @@ dedicated submodules following existing patterns in the codebase.
 
 ### Metrics
 
+Metrics table: feature-gating annotation counts and build/test status.
+
 | Metric                              | Before | After | Target    |
 | ----------------------------------- | ------ | ----- | --------- |
 | `#[cfg(feature = "python")]`        | 116    | 91    | <60       |
@@ -208,6 +211,8 @@ The `python` feature is a bare flag that gates Python-specific code. The
 - `formatter/mod.rs` — has `pub mod python;`
 
 **Modules requiring refactoring** (scattered `#[cfg]` annotations):
+
+Modules requiring refactoring table: `#[cfg]` annotation hotspots.
 
 | File                           | Count | Issue                          |
 | ------------------------------ | ----- | ------------------------------ |

@@ -122,7 +122,9 @@ def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
     """Providing non-OverflowPolicy values raises ``TypeError``."""
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_missing.log"))
     with pytest.raises(TypeError):
-        builder.with_overflow_policy("timeout")
+        builder.with_overflow_policy(
+            typ.cast("OverflowPolicy", "timeout")  # intentional runtime type breach
+        )
 
 
 def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:

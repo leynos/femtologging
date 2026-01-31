@@ -207,7 +207,8 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
         .with_overflow_policy(OverflowPolicy.timeout(200))
         .with_formatter(blocking_formatter)
     )
-    with release_worker_on_exit(release_worker), closing(builder.build()) as handler:
+    # Release the worker before closing to avoid racing on the final flush.
+    with closing(builder.build()) as handler, release_worker_on_exit(release_worker):
         handler.handle("core", "INFO", "first")
         assert worker_started.wait(10.0), "worker never reached formatter"
         # Capacity=1 allows one queued record while the worker is busy.

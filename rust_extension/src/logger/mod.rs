@@ -589,6 +589,7 @@ impl Drop for FemtoLogger {
             let _ = shutdown_tx.send(());
         }
         self.tx.take();
+        // Drop the lock before joining the worker thread.
         let handle = { self.handle.lock().take() };
         if let Some(handle) = handle {
             Python::with_gil(|py| py.allow_threads(move || log_join_result(handle)));
