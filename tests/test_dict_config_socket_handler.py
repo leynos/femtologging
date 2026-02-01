@@ -11,6 +11,7 @@ import typing as typ
 import pytest
 
 import femtologging.config as config_module
+import femtologging.config_socket as config_socket_module
 from femtologging import (
     BackoffConfig,
     SocketHandlerBuilder,
@@ -139,7 +140,8 @@ def test_dict_config_socket_handler_backoff_legacy_kwargs(
             self.overrides = dict(overrides)
             return self
 
-    monkeypatch.setattr(config_module, "BackoffConfig", None)
+    monkeypatch.setattr(config_socket_module, "BackoffConfig", None)
+    monkeypatch.setattr(config_socket_module, "SocketHandlerBuilder", LegacyBuilder)
     monkeypatch.setattr(config_module, "SocketHandlerBuilder", LegacyBuilder)
     for handler_cls in socket_handler_classes:
         monkeypatch.setitem(
