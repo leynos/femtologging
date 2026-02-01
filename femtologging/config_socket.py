@@ -184,17 +184,27 @@ def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | Non
     return value
 
 
+def _validate_transport_flag_type(hid: str, transport_flag: object) -> None:
+    """Validate that transport flag is a string."""
+    if not isinstance(transport_flag, str):
+        msg = f"handler {hid!r} socket kwargs transport must be a string"
+        raise TypeError(msg)
+
+
+def _validate_transport_flag_value(hid: str, transport_flag: str) -> None:
+    """Validate that transport flag value is 'tcp' or 'unix'."""
+    if transport_flag.lower() not in {"tcp", "unix"}:
+        msg = f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
+        raise ValueError(msg)
+
+
 def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
     """Consume and validate the transport flag kwarg (documentation only)."""
     transport_flag = kwargs.pop("transport", None)
     if transport_flag is None:
         return
-    if not isinstance(transport_flag, str):
-        msg = f"handler {hid!r} socket kwargs transport must be a string"
-        raise TypeError(msg)
-    if transport_flag.lower() not in {"tcp", "unix"}:
-        msg = f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
-        raise ValueError(msg)
+    _validate_transport_flag_type(hid, transport_flag)
+    _validate_transport_flag_value(hid, transport_flag)
 
 
 def _apply_host_port_kwargs(
