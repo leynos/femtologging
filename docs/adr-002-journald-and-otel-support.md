@@ -121,7 +121,7 @@ integration once those limitations are lifted.
 - **Feature gating and platform considerations:** Both integrations will be
   introduced behind optional Cargo features to avoid impacting users who don't
   need them. For example, a `"journald"` feature will enable the Journald
-  handler (only available on Unix targets), and a `"tracing-bridge"` feature
+  handler (only available on Unix targets), and a `"tracing"` feature
   will enable the tracing subscriber layer and any OpenTelemetry dependencies.
   This keeps the default build lean and free of platform-specific code or heavy
   telemetry libraries unless explicitly requested. The tracing layer feature is
@@ -227,13 +227,13 @@ features.
 ### Phase 0 – Foundation and Feature Gating
 
 - **Define Cargo Features:** Introduce two new Cargo feature flags, e.g.
-  `"journald"` and `"tracing-bridge"` (name tentative). The Journald handler
+  `"journald"` and `"tracing"` (name fixed). The Journald handler
   code will be compiled only when the `"journald"` feature is enabled (and on
   target_os = "linux"), and the tracing subscriber layer will be included with
-  the `"tracing-bridge"` feature. For Python packaging, optional extras may be
+  the `"tracing"` feature. For Python packaging, optional extras may be
   added or these may simply be included in the default build on supported
   platforms – this detail will be decided based on whether they should be
-  enabled by default. Initially, `"tracing-bridge"` might be enabled by default
+  enabled by default. Initially, `"tracing"` might be enabled by default
   (since it has no effect unless used, but aids integration), and `"journald"`
   left off by default to avoid issues on non-Linux platforms.
 
