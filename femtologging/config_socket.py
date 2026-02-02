@@ -142,6 +142,16 @@ _UINT_OPTION_METHODS: typ.Final[dict[str, str]] = {
 }
 
 
+def _apply_backoff_to_builder(
+    builder: SocketHandlerBuilder,
+    backoff_overrides: dict[str, int | None],
+) -> SocketHandlerBuilder:
+    """Apply backoff configuration to the builder."""
+    if BackoffConfig is None:
+        return builder.with_backoff(**backoff_overrides)
+    return builder.with_backoff(BackoffConfig(backoff_overrides))
+
+
 def _apply_socket_tuning_kwargs(
     hid: str,
     builder: SocketHandlerBuilder,
@@ -150,8 +160,9 @@ def _apply_socket_tuning_kwargs(
     """Apply tuning kwargs (capacity, timeouts, TLS, backoff) to the builder."""
     for option_name, method_name in _UINT_OPTION_METHODS.items():
         value = _pop_socket_uint(hid, kwargs, option_name)
-        if value is not None:
-            builder = getattr(builder, method_name)(value)
+        if value is None:
+            continue
+        builder = getattr(builder, method_name)(value)
 
     tls_config = _pop_socket_tls_kwargs(hid, kwargs)
     if tls_config is not None:
@@ -160,10 +171,7 @@ def _apply_socket_tuning_kwargs(
 
     backoff_overrides = _pop_socket_backoff_kwargs(hid, kwargs)
     if backoff_overrides is not None:
-        if BackoffConfig is None:
-            builder = builder.with_backoff(**backoff_overrides)
-        else:
-            builder = builder.with_backoff(BackoffConfig(backoff_overrides))
+        builder = _apply_backoff_to_builder(builder, backoff_overrides)
 
     return builder
 
@@ -182,17 +190,27 @@ def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | Non
     return value
 
 
+def _validate_transport_flag_type(hid: str, transport_flag: object) -> None:
+    """Validate that transport flag is a string."""
+    if not isinstance(transport_flag, str):
+        msg = f"handler {hid!r} socket kwargs transport must be a string"
+        raise TypeError(msg)
+
+
+def _validate_transport_flag_value(hid: str, transport_flag: str) -> None:
+    """Validate that transport flag value is 'tcp' or 'unix'."""
+    if transport_flag.lower() not in {"tcp", "unix"}:
+        msg = f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
+        raise ValueError(msg)
+
+
 def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
     """Consume and validate the transport flag kwarg (documentation only)."""
     transport_flag = kwargs.pop("transport", None)
     if transport_flag is None:
         return
-    if not isinstance(transport_flag, str):
-        msg = f"handler {hid!r} socket kwargs transport must be a string"
-        raise TypeError(msg)
-    if transport_flag.lower() not in {"tcp", "unix"}:
-        msg = f"handler {hid!r} socket kwargs transport must be 'tcp' or 'unix'"
-        raise ValueError(msg)
+    _validate_transport_flag_type(hid, transport_flag)
+    _validate_transport_flag_value(hid, cast("str", transport_flag))
 
 
 def _apply_host_port_kwargs(
@@ -228,15 +246,15 @@ def _validate_host_port_transport_kwargs(
     if transport_kw.host is None or transport_kw.port is None:
         msg = f"handler {hid!r} socket kwargs require both host and port"
         raise ValueError(msg)
+    if transport_configured:
+        msg = f"handler {hid!r} socket transport already configured via args"
+        raise ValueError(msg)
     _validate_host_port(
         hid,
         transport_kw.host,
         transport_kw.port,
         context="socket kwargs host must be str and port must be int",
     )
-    if transport_configured:
-        msg = f"handler {hid!r} socket transport already configured via args"
-        raise ValueError(msg)
 
 
 def _validate_host_port(hid: str, host: object, port: object, *, context: str) -> None:
