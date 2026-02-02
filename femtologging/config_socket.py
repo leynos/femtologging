@@ -53,6 +53,9 @@ def _build_socket_handler_builder(
         kwargs_d,
         transport_configured=transport_configured,
     )
+    if not transport_configured:
+        msg = f"handler {hid!r} socket requires host/port or unix_path"
+        raise ValueError(msg)
     builder = _apply_socket_tuning_kwargs(hid, builder, kwargs_d)
     _consume_socket_transport_flag(hid, kwargs_d)
     _ensure_no_extra_socket_kwargs(hid, kwargs_d)
