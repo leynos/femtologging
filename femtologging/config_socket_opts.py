@@ -10,6 +10,7 @@ constructing socket handlers.
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import typing as typ
 
 from .config import _validate_mapping_type, _validate_string_keys
@@ -17,6 +18,15 @@ from .config import _validate_mapping_type, _validate_string_keys
 Mapping = cabc.Mapping
 Final = typ.Final
 cast = typ.cast
+
+
+@dataclasses.dataclass(slots=True)
+class _TlsMergedState:
+    """Merged TLS configuration state after parsing all sources."""
+
+    domain: str | None
+    insecure: bool
+    enabled: bool
 
 
 def _validate_type_or_none(
@@ -34,6 +44,28 @@ def _validate_type_or_none(
         type_name = expected_type.__name__
         msg = f"handler {hid!r} socket kwargs {field} must be a {type_name} or None"
         raise TypeError(msg)
+
+
+def _finalize_tls_config(
+    hid: str,
+    state: _TlsMergedState,
+    *,
+    insecure_kw: object | None,
+    tls_value: object,
+) -> tuple[str | None, bool] | None:
+    """Finalise TLS configuration after merging all sources.
+
+    Returns None if TLS is not enabled, otherwise returns (domain, insecure).
+    """
+    if insecure_kw is not None:
+        state.enabled = True
+
+    if not state.enabled:
+        return None
+
+    _validate_tls_not_disabled(hid, tls_value)
+
+    return state.domain, state.insecure
 
 
 def _pop_socket_tls_kwargs(
@@ -61,15 +93,10 @@ def _pop_socket_tls_kwargs(
         insecure_from_mapping=insecure,
         insecure_kw=insecure_kw,
     )
-    if insecure_kw is not None:
-        enabled = True
-
-    if not enabled:
-        return None
-
-    _validate_tls_not_disabled(hid, tls_value)
-
-    return domain, insecure
+    state = _TlsMergedState(domain=domain, insecure=insecure, enabled=enabled)
+    return _finalize_tls_config(
+        hid, state, insecure_kw=insecure_kw, tls_value=tls_value
+    )
 
 
 def _parse_tls_value(
