@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import dataclasses
+import types
 import typing as typ
 
 from .config import _validate_mapping_type, _validate_string_keys
@@ -28,14 +29,7 @@ class _TlsMergedState:
 def _validate_type_or_none(
     value: object, expected_type: type, hid: str, field: str
 ) -> None:
-    """Validate that value is of expected_type or None.
-
-    Raises
-    ------
-    TypeError
-        If value is not None and not an instance of expected_type.
-
-    """
+    """Validate that value is of expected_type or None."""
     if value is not None and not isinstance(value, expected_type):
         type_name = expected_type.__name__
         msg = f"handler {hid!r} socket kwargs {field} must be a {type_name} or None"
@@ -49,10 +43,7 @@ def _finalize_tls_config(
     insecure_kw: object | None,
     tls_value: object,
 ) -> tuple[str | None, bool] | None:
-    """Finalise TLS configuration after merging all sources.
-
-    Returns None if TLS is not enabled, otherwise returns (domain, insecure).
-    """
+    """Finalise TLS configuration after merging all sources."""
     if insecure_kw is not None:
         state.enabled = True
 
@@ -192,7 +183,7 @@ def _merge_tls_insecure_kwarg(
 
 
 def _validate_tls_not_disabled(hid: str, tls_value: object) -> None:
-    """Raise ValueError if TLS is disabled but TLS options were supplied."""
+    """Raise if TLS is disabled but TLS options were supplied."""
     if isinstance(tls_value, bool) and not tls_value:
         msg = (
             f"handler {hid!r} socket kwargs tls is disabled but TLS options were "
@@ -254,12 +245,12 @@ def _extract_backoff_key(
     return _coerce_backoff_value(hid, key, mapping[key])
 
 
-_BACKOFF_ALIAS_MAP: typ.Final[dict[str, str]] = {
+_BACKOFF_ALIAS_MAP: typ.Final[cabc.Mapping[str, str]] = types.MappingProxyType({
     "backoff_base_ms": "base_ms",
     "backoff_cap_ms": "cap_ms",
     "backoff_reset_after_ms": "reset_after_ms",
     "backoff_deadline_ms": "deadline_ms",
-}
+})
 
 
 def _merge_backoff_alias_values(
