@@ -149,13 +149,6 @@ def _merge_tls_domain_kwarg(
     return domain_kw_str, True
 
 
-def _validate_tls_insecure_type(hid: str, insecure_kw: object) -> None:
-    """Validate that insecure_kw is a bool."""
-    if not isinstance(insecure_kw, bool):
-        msg = f"handler {hid!r} socket kwargs tls_insecure must be a bool"
-        raise TypeError(msg)
-
-
 def _merge_tls_insecure_kwarg(
     hid: str,
     *,
@@ -165,8 +158,10 @@ def _merge_tls_insecure_kwarg(
     """Merge the tls_insecure kwarg with existing insecure value from mapping."""
     if insecure_kw is None:
         return insecure_from_mapping if insecure_from_mapping is not None else False
-    _validate_tls_insecure_type(hid, insecure_kw)
-    insecure_kw_bool = cast("bool", insecure_kw)
+    if not isinstance(insecure_kw, bool):
+        msg = f"handler {hid!r} socket kwargs tls_insecure must be a bool"
+        raise TypeError(msg)
+    insecure_kw_bool = insecure_kw
     if insecure_from_mapping is not None and insecure_kw_bool != insecure_from_mapping:
         msg = f"handler {hid!r} socket kwargs tls has conflicting insecure values"
         raise ValueError(msg)
