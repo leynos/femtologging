@@ -15,10 +15,6 @@ import typing as typ
 
 from .config import _validate_mapping_type, _validate_string_keys
 
-Mapping = cabc.Mapping
-Final = typ.Final
-cast = typ.cast
-
 
 @dataclasses.dataclass(slots=True)
 class _TlsMergedState:
@@ -103,9 +99,9 @@ def _parse_tls_value(
     hid: str, tls_value: object
 ) -> tuple[str | None, bool | None, bool]:
     """Parse the tls kwarg value and return (domain, insecure, enabled)."""
-    if isinstance(tls_value, Mapping):
+    if isinstance(tls_value, cabc.Mapping):
         domain, insecure = _parse_tls_mapping(
-            hid, cast("Mapping[object, object]", tls_value)
+            hid, typ.cast("cabc.Mapping[object, object]", tls_value)
         )
         return domain, insecure, True
     if isinstance(tls_value, bool):
@@ -117,7 +113,7 @@ def _parse_tls_value(
 
 
 def _parse_tls_mapping(
-    hid: str, tls_value: Mapping[object, object]
+    hid: str, tls_value: cabc.Mapping[object, object]
 ) -> tuple[str | None, bool | None]:
     """Parse a TLS mapping and return (domain, insecure)."""
     mapping = _validate_mapping_type(tls_value, f"handler {hid!r} socket kwargs tls")
@@ -135,18 +131,18 @@ def _parse_tls_mapping(
 
 
 def _extract_tls_domain_from_mapping(
-    hid: str, tls_mapping: Mapping[str, object]
+    hid: str, tls_mapping: cabc.Mapping[str, object]
 ) -> str | None:
     """Extract the domain field from a TLS mapping."""
     if "domain" not in tls_mapping:
         return None
     domain = tls_mapping["domain"]
     _validate_type_or_none(domain, str, hid, "tls domain")
-    return cast("str | None", domain)
+    return typ.cast("str | None", domain)
 
 
 def _extract_tls_insecure_from_mapping(
-    hid: str, tls_mapping: Mapping[str, object]
+    hid: str, tls_mapping: cabc.Mapping[str, object]
 ) -> bool | None:
     """Extract the insecure field from a TLS mapping."""
     if "insecure" not in tls_mapping:
@@ -169,7 +165,7 @@ def _merge_tls_domain_kwarg(
     if domain_kw is None:
         return domain, enabled
     _validate_type_or_none(domain_kw, str, hid, "tls_domain")
-    domain_kw_str = cast("str", domain_kw)
+    domain_kw_str = typ.cast("str", domain_kw)
     if domain is not None and domain_kw_str != domain:
         msg = f"handler {hid!r} socket kwargs tls has conflicting domain values"
         raise ValueError(msg)
@@ -252,13 +248,13 @@ def _extract_backoff_mapping_values(
 
 
 def _extract_backoff_key(
-    hid: str, key: str, mapping: Mapping[str, object]
+    hid: str, key: str, mapping: cabc.Mapping[str, object]
 ) -> int | None:
     """Extract a single backoff key from a mapping."""
     return _coerce_backoff_value(hid, key, mapping[key])
 
 
-_BACKOFF_ALIAS_MAP: Final[dict[str, str]] = {
+_BACKOFF_ALIAS_MAP: typ.Final[dict[str, str]] = {
     "backoff_base_ms": "base_ms",
     "backoff_cap_ms": "cap_ms",
     "backoff_reset_after_ms": "reset_after_ms",

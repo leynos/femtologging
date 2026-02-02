@@ -14,18 +14,13 @@ TLS and backoff configuration parsing is delegated to
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import dataclasses
 import typing as typ
 
 from . import _femtologging_rs as rust
 from .config_socket_opts import _pop_socket_backoff_kwargs, _pop_socket_tls_kwargs
 
-Mapping = cabc.Mapping
-Any = typ.Any
-cast = typ.cast
-
-rust = typ.cast("Any", rust)
+rust = typ.cast("typ.Any", rust)
 SocketHandlerBuilder = rust.SocketHandlerBuilder
 BackoffConfig = getattr(rust, "BackoffConfig", None)
 
@@ -123,6 +118,21 @@ class _TransportKwargs:
     unix_path: object | None
 
 
+def _apply_unix_path_kwarg(
+    hid: str,
+    builder: SocketHandlerBuilder,
+    unix_path: object,
+    *,
+    transport_configured: bool,
+) -> tuple[SocketHandlerBuilder, bool]:
+    """Apply unix_path kwarg to configure Unix socket transport."""
+    _validate_unix_path(hid, unix_path)
+    if transport_configured:
+        msg = f"handler {hid!r} socket transport already configured via args"
+        raise ValueError(msg)
+    return builder.with_unix_path(unix_path), True
+
+
 def _apply_socket_kwargs(
     hid: str,
     builder: SocketHandlerBuilder,
@@ -149,12 +159,12 @@ def _apply_socket_kwargs(
     )
 
     if transport_kw.unix_path is not None:
-        _validate_unix_path(hid, transport_kw.unix_path)
-        if transport_configured:
-            msg = f"handler {hid!r} socket transport already configured via args"
-            raise ValueError(msg)
-        builder = builder.with_unix_path(transport_kw.unix_path)
-        transport_configured = True
+        builder, transport_configured = _apply_unix_path_kwarg(
+            hid,
+            builder,
+            transport_kw.unix_path,
+            transport_configured=transport_configured,
+        )
 
     return builder, transport_configured
 
@@ -202,11 +212,31 @@ def _apply_socket_tuning_kwargs(
     return builder
 
 
-def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | None:
-    """Pop and validate a non-negative integer kwarg."""
-    if key not in kwargs:
-        return None
-    value = kwargs.pop(key)
+def _validate_socket_uint_value(hid: str, key: str, value: object) -> int:
+    """Validate that a socket kwarg value is a non-negative integer.
+
+    Parameters
+    ----------
+    hid
+        Handler identifier for error messages.
+    key
+        The kwarg key name for error messages.
+    value
+        The value to validate.
+
+    Returns
+    -------
+    int
+        The validated non-negative integer value.
+
+    Raises
+    ------
+    TypeError
+        If value is a bool or not an int.
+    ValueError
+        If value is negative.
+
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         msg = f"handler {hid!r} socket kwargs {key} must be an int"
         raise TypeError(msg)
@@ -214,6 +244,14 @@ def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | Non
         msg = f"handler {hid!r} socket kwargs {key} must be non-negative"
         raise ValueError(msg)
     return value
+
+
+def _pop_socket_uint(hid: str, kwargs: dict[str, object], key: str) -> int | None:
+    """Pop and validate a non-negative integer kwarg."""
+    if key not in kwargs:
+        return None
+    value = kwargs.pop(key)
+    return _validate_socket_uint_value(hid, key, value)
 
 
 def _validate_transport_flag_type(hid: str, transport_flag: object) -> None:
@@ -236,7 +274,7 @@ def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
     if transport_flag is None:
         return
     _validate_transport_flag_type(hid, transport_flag)
-    _validate_transport_flag_value(hid, cast("str", transport_flag))
+    _validate_transport_flag_value(hid, typ.cast("str", transport_flag))
 
 
 def _apply_host_port_kwargs(
@@ -254,8 +292,8 @@ def _apply_host_port_kwargs(
         transport_kw,
         transport_configured=transport_configured,
     )
-    host = cast("str", transport_kw.host)
-    port = cast("int", transport_kw.port)
+    host = typ.cast("str", transport_kw.host)
+    port = typ.cast("int", transport_kw.port)
     return builder.with_tcp(host, port), True
 
 
