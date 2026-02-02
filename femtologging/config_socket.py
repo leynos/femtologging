@@ -204,7 +204,7 @@ def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
     if transport_flag is None:
         return
     _validate_transport_flag_type(hid, transport_flag)
-    _validate_transport_flag_value(hid, transport_flag)
+    _validate_transport_flag_value(hid, cast("str", transport_flag))
 
 
 def _apply_host_port_kwargs(
