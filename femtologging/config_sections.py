@@ -11,7 +11,6 @@ The entry points are :func:`_process_formatters`, :func:`_process_handlers`,
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import typing as typ
 
 from .config import (
@@ -22,77 +21,68 @@ from .config import (
 )
 
 Mapping = cabc.Mapping
-Callable = cabc.Callable
 Any = typ.Any
 cast = typ.cast
 
 
-@dataclasses.dataclass(frozen=True)
-class SectionProcessor:
-    """Configuration for :func:`_process_config_section`."""
+def _iter_section_items(
+    config: Mapping[str, object],
+    section: str,
+    key_err_tmpl: str | None = None,
+) -> cabc.Iterator[tuple[str, Mapping[str, object]]]:
+    """Iterate over validated section items.
 
-    section: str
-    builder_method: str
-    build_func: Callable[[str, Mapping[str, object]], object]
-    err_tmpl: str | None = None
+    Parameters
+    ----------
+    config
+        The full dictConfig mapping.
+    section
+        The section name (e.g., "formatters", "handlers", "loggers").
+    key_err_tmpl
+        Optional error template for non-string keys. May contain {name} placeholder.
 
+    Yields
+    ------
+    tuple[str, Mapping[str, object]]
+        (id, config) pairs for each item in the section.
 
-def _process_config_section(
-    builder: Any, config: Mapping[str, object], processor: SectionProcessor
-) -> None:
-    """Process formatter, handler, and logger sections."""
-    mapping = cast(
-        "Mapping[object, object]",
-        _validate_section_mapping(config.get(processor.section, {}), processor.section),
-    )
-    method = getattr(builder, processor.builder_method)
+    """
+    raw = _validate_section_mapping(config.get(section, {}), section)
+    mapping = cast("Mapping[object, object]", raw)
+    base_err_tmpl = key_err_tmpl or f"{section[:-1]} ids must be strings"
+
     for key, cfg in mapping.items():
         if not isinstance(key, str):
-            if processor.err_tmpl is None:
-                msg = f"{processor.section[:-1]} ids must be strings"
-                raise TypeError(msg)
-            raise TypeError(processor.err_tmpl.format(name=repr(key)))
-        method(
+            raise TypeError(base_err_tmpl.format(name=repr(key)))
+        yield (
             key,
-            processor.build_func(
-                key,
-                _validate_section_mapping(cfg, f"{processor.section[:-1]} config"),
+            cast(
+                "Mapping[str, object]",
+                _validate_section_mapping(cfg, f"{section[:-1]} config"),
             ),
         )
 
 
 def _process_formatters(builder: Any, config: Mapping[str, object]) -> None:
     """Attach formatter builders to ``builder``."""
-    _process_config_section(
-        builder,
-        config,
-        SectionProcessor(
-            "formatters", "with_formatter", lambda fid, m: _build_formatter(m)
-        ),
-    )
+    for fid, fmt_cfg in _iter_section_items(config, "formatters"):
+        builder.with_formatter(fid, _build_formatter(fmt_cfg))
 
 
 def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
     """Attach handler builders to ``builder``."""
-    _process_config_section(
-        builder,
-        config,
-        SectionProcessor("handlers", "with_handler", _build_handler_from_dict),
-    )
+    for hid, handler_cfg in _iter_section_items(config, "handlers"):
+        builder.with_handler(hid, _build_handler_from_dict(hid, handler_cfg))
 
 
 def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
     """Attach logger configurations to ``builder``."""
-    _process_config_section(
-        builder,
+    for lname, logger_cfg in _iter_section_items(
         config,
-        SectionProcessor(
-            "loggers",
-            "with_logger",
-            _build_logger_from_dict,
-            err_tmpl="loggers section key {name} must be a string",
-        ),
-    )
+        "loggers",
+        key_err_tmpl="loggers section key {name} must be a string",
+    ):
+        builder.with_logger(lname, _build_logger_from_dict(lname, logger_cfg))
 
 
 def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
