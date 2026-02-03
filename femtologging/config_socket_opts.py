@@ -263,6 +263,10 @@ def _merge_backoff_alias_values(
     for alias, target in _BACKOFF_ALIAS_MAP.items():
         present = alias in kwargs
         value = _extract_backoff_alias(hid, kwargs, alias)
+        # Merge when: (1) alias key was explicitly provided (present=True), even
+        # if _extract_backoff_alias returns None (explicit None override), or
+        # (2) _extract_backoff_alias resolved a non-None value. Both conditions
+        # require _check_backoff_conflict validation before setting merged[target].
         if present or value is not None:
             _check_backoff_conflict(hid, target, merged.get(target), value)
             merged[target] = value
