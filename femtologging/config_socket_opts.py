@@ -24,12 +24,9 @@ class _TlsConfigParser:
 
     def parse(self, kwargs: dict[str, object]) -> tuple[str | None, bool] | None:
         """Extract and validate TLS configuration from kwargs."""
-        tls_value = kwargs.pop("tls", None)
-        domain_kw = kwargs.pop("tls_domain", None)
-        insecure_kw = kwargs.pop("tls_insecure", None)
+        tls_value, domain_kw, insecure_kw = self._pop_tls_kwargs(kwargs)
 
-        no_tls_config = tls_value is None and domain_kw is None
-        if no_tls_config and insecure_kw is None:
+        if self._is_tls_config_absent(tls_value, domain_kw, insecure_kw):
             return None
 
         domain, insecure, enabled = self._parse_tls_value(tls_value)
@@ -37,15 +34,44 @@ class _TlsConfigParser:
         insecure = self._merge_insecure_kwarg(
             insecure_from_mapping=insecure, insecure_kw=insecure_kw
         )
-
-        if insecure_kw is not None:
-            enabled = True
+        enabled = self._enable_for_insecure_kwarg(
+            enabled=enabled,
+            insecure_kw=insecure_kw,
+        )
 
         if not enabled:
             return None
 
         self._validate_not_disabled(tls_value)
         return domain, insecure
+
+    @staticmethod
+    def _pop_tls_kwargs(
+        kwargs: dict[str, object],
+    ) -> tuple[object | None, object | None, object | None]:
+        """Pop TLS-related kwargs from the configuration mapping."""
+        tls_value = kwargs.pop("tls", None)
+        domain_kw = kwargs.pop("tls_domain", None)
+        insecure_kw = kwargs.pop("tls_insecure", None)
+        return tls_value, domain_kw, insecure_kw
+
+    @staticmethod
+    def _is_tls_config_absent(
+        tls_value: object | None,
+        domain_kw: object | None,
+        insecure_kw: object | None,
+    ) -> bool:
+        """Return True if no TLS configuration was provided."""
+        return tls_value is None and domain_kw is None and insecure_kw is None
+
+    @staticmethod
+    def _enable_for_insecure_kwarg(
+        *, enabled: bool, insecure_kw: object | None
+    ) -> bool:
+        """Enable TLS when the insecure kwarg is supplied."""
+        if insecure_kw is None:
+            return enabled
+        return True
 
     def _parse_tls_value(
         self, tls_value: object
@@ -92,7 +118,7 @@ class _TlsConfigParser:
         if domain is not None and not isinstance(domain, str):
             msg = f"handler {self.hid!r} socket kwargs tls domain must be a str or None"
             raise TypeError(msg)
-        return typ.cast("str | None", domain)
+        return domain
 
     def _extract_insecure(self, mapping: cabc.Mapping[str, object]) -> bool | None:
         """Extract insecure field from TLS mapping."""
@@ -110,10 +136,10 @@ class _TlsConfigParser:
         """Merge the tls_domain kwarg with existing domain."""
         if domain_kw is None:
             return domain, enabled
-        if domain_kw is not None and not isinstance(domain_kw, str):
+        if not isinstance(domain_kw, str):
             msg = f"handler {self.hid!r} socket kwargs tls_domain must be a str or None"
             raise TypeError(msg)
-        domain_kw_str = typ.cast("str", domain_kw)
+        domain_kw_str = domain_kw
         if domain is not None and domain_kw_str != domain:
             msg = (
                 f"handler {self.hid!r} socket kwargs tls has conflicting domain values"
@@ -142,7 +168,7 @@ class _TlsConfigParser:
             raise ValueError(msg)
         return insecure_kw_bool
 
-    def _validate_not_disabled(self, tls_value: object) -> None:
+    def _validate_not_disabled(self, tls_value: object) -> bool:
         """Raise if TLS is disabled but TLS options were supplied."""
         if isinstance(tls_value, bool) and not tls_value:
             msg = (
@@ -150,6 +176,7 @@ class _TlsConfigParser:
                 "were supplied"
             )
             raise ValueError(msg)
+        return True
 
 
 def _pop_socket_tls_kwargs(

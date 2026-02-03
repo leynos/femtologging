@@ -325,9 +325,9 @@ def _build_formatter(fcfg: Mapping[str, object]) -> object:
     return fb
 
 
-def _validate_section_mapping(section: object, name: str) -> Mapping[str, object]:
+def _validate_section_mapping(section: object, name: str) -> Mapping[object, object]:
     """Ensure a configuration ``section`` is a mapping."""
-    return cast("Mapping[str, object]", _validate_mapping_type(section, name))
+    return _validate_mapping_type(section, name)
 
 
 def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
@@ -359,10 +359,10 @@ def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
 
     version = _validate_dict_config(config)
     builder = cast("Any", _create_config_builder(version, config))
-    config_sections._process_formatters(builder, config)
-    config_sections._process_handlers(builder, config)
-    config_sections._process_loggers(builder, config)
-    config_sections._process_root_logger(builder, config)
+    builder = config_sections._process_formatters(builder, config)
+    builder = config_sections._process_handlers(builder, config)
+    builder = config_sections._process_loggers(builder, config)
+    builder = config_sections._process_root_logger(builder, config)
     builder.build_and_init()
 
 

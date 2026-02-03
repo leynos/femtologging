@@ -73,11 +73,14 @@ def _apply_socket_args(
         _validate_host_port(
             hid, host, port, context="socket args must be (host: str, port: int)"
         )
-        return builder.with_tcp(host, port), True
+        host_str = typ.cast("str", host)
+        port_int = typ.cast("int", port)
+        return builder.with_tcp(host_str, port_int), True
     if len(args) == 1:
         (path,) = args
         _validate_unix_path(hid, path)
-        return builder.with_unix_path(path), True
+        path_str = typ.cast("str", path)
+        return builder.with_unix_path(path_str), True
     msg = (
         f"handler {hid!r} socket args must be either a {TCP_ARG_COUNT}-tuple "
         "of (host, port) or a single unix_path"
@@ -103,10 +106,11 @@ def _apply_unix_path_kwarg(
 ) -> tuple[SocketHandlerBuilder, bool]:
     """Apply unix_path kwarg to configure Unix socket transport."""
     _validate_unix_path(hid, unix_path)
+    path_str = typ.cast("str", unix_path)
     if transport_configured:
         msg = f"handler {hid!r} socket transport already configured via args"
         raise ValueError(msg)
-    return builder.with_unix_path(unix_path), True
+    return builder.with_unix_path(path_str), True
 
 
 def _apply_socket_kwargs(

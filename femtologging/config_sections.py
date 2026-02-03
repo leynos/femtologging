@@ -21,13 +21,28 @@ from .config import (
 )
 
 Mapping = cabc.Mapping
-Any = typ.Any
 cast = typ.cast
+
+
+class _ConfigBuilder(typ.Protocol):
+    """Protocol describing the builder interface used by ``dictConfig``."""
+
+    def with_formatter(self, fid: str, builder: object) -> typ.Self: ...
+
+    def with_handler(self, hid: str, builder: object) -> typ.Self: ...
+
+    def with_logger(self, lname: str, builder: object) -> typ.Self: ...
+
+    def with_root_logger(self, builder: object) -> typ.Self: ...
+
+    def build_and_init(self) -> None: ...
 
 
 def _iter_section_items(
     config: Mapping[str, object],
     section: str,
+    item_name: str,
+    *,
     key_err_tmpl: str | None = None,
 ) -> cabc.Iterator[tuple[str, Mapping[str, object]]]:
     """Iterate over validated section items.
@@ -38,6 +53,8 @@ def _iter_section_items(
         The full dictConfig mapping.
     section
         The section name (e.g., "formatters", "handlers", "loggers").
+    item_name
+        Singular item name used in error messages.
     key_err_tmpl
         Optional error template for non-string keys. May contain {name} placeholder.
 
@@ -47,9 +64,8 @@ def _iter_section_items(
         (id, config) pairs for each item in the section.
 
     """
-    raw = _validate_section_mapping(config.get(section, {}), section)
-    mapping = cast("Mapping[object, object]", raw)
-    base_err_tmpl = key_err_tmpl or f"{section[:-1]} ids must be strings"
+    mapping = _validate_section_mapping(config.get(section, {}), section)
+    base_err_tmpl = key_err_tmpl or f"{item_name} ids must be strings"
 
     for key, cfg in mapping.items():
         if not isinstance(key, str):
@@ -58,34 +74,54 @@ def _iter_section_items(
             key,
             cast(
                 "Mapping[str, object]",
-                _validate_section_mapping(cfg, f"{section[:-1]} config"),
+                _validate_section_mapping(cfg, f"{item_name} config"),
             ),
         )
 
 
-def _process_formatters(builder: Any, config: Mapping[str, object]) -> None:
+def _process_formatters(
+    builder: _ConfigBuilder, config: Mapping[str, object]
+) -> _ConfigBuilder:
     """Attach formatter builders to ``builder``."""
-    for fid, fmt_cfg in _iter_section_items(config, "formatters"):
-        builder.with_formatter(fid, _build_formatter(fmt_cfg))
+    for fid, fmt_cfg in _iter_section_items(
+        config,
+        "formatters",
+        "formatter",
+    ):
+        builder = builder.with_formatter(fid, _build_formatter(fmt_cfg))
+    return builder
 
 
-def _process_handlers(builder: Any, config: Mapping[str, object]) -> None:
+def _process_handlers(
+    builder: _ConfigBuilder, config: Mapping[str, object]
+) -> _ConfigBuilder:
     """Attach handler builders to ``builder``."""
-    for hid, handler_cfg in _iter_section_items(config, "handlers"):
-        builder.with_handler(hid, _build_handler_from_dict(hid, handler_cfg))
+    for hid, handler_cfg in _iter_section_items(
+        config,
+        "handlers",
+        "handler",
+    ):
+        builder = builder.with_handler(hid, _build_handler_from_dict(hid, handler_cfg))
+    return builder
 
 
-def _process_loggers(builder: Any, config: Mapping[str, object]) -> None:
+def _process_loggers(
+    builder: _ConfigBuilder, config: Mapping[str, object]
+) -> _ConfigBuilder:
     """Attach logger configurations to ``builder``."""
     for lname, logger_cfg in _iter_section_items(
         config,
         "loggers",
+        "logger",
         key_err_tmpl="loggers section key {name} must be a string",
     ):
-        builder.with_logger(lname, _build_logger_from_dict(lname, logger_cfg))
+        builder = builder.with_logger(lname, _build_logger_from_dict(lname, logger_cfg))
+    return builder
 
 
-def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
+def _process_root_logger(
+    builder: _ConfigBuilder, config: Mapping[str, object]
+) -> _ConfigBuilder:
     """Configure the root logger."""
     if "root" not in config:
         msg = "root logger configuration is required"
@@ -94,6 +130,6 @@ def _process_root_logger(builder: Any, config: Mapping[str, object]) -> None:
     if not isinstance(root, Mapping):
         msg = "root logger configuration must be a mapping"
         raise TypeError(msg)
-    builder.with_root_logger(
+    return builder.with_root_logger(
         _build_logger_from_dict("root", cast("Mapping[str, object]", root))
     )
