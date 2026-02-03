@@ -25,30 +25,6 @@ SocketHandlerBuilder = rust.SocketHandlerBuilder
 BackoffConfig = getattr(rust, "BackoffConfig", None)
 
 
-@dataclasses.dataclass(slots=True)
-class _FallbackBackoffConfig:
-    """Fallback backoff configuration when BackoffConfig is unavailable.
-
-    Provides the same shape as the Rust BackoffConfig for use with
-    SocketHandlerBuilder.with_backoff() when the native class is missing.
-    """
-
-    base_ms: int | None = None
-    cap_ms: int | None = None
-    reset_after_ms: int | None = None
-    deadline_ms: int | None = None
-
-    @classmethod
-    def from_overrides(cls, overrides: dict[str, int | None]) -> _FallbackBackoffConfig:
-        """Construct from a dictionary of override values."""
-        return cls(
-            base_ms=overrides.get("base_ms"),
-            cap_ms=overrides.get("cap_ms"),
-            reset_after_ms=overrides.get("reset_after_ms"),
-            deadline_ms=overrides.get("deadline_ms"),
-        )
-
-
 TCP_ARG_COUNT = 2
 
 
@@ -183,8 +159,7 @@ def _apply_backoff_to_builder(
 ) -> SocketHandlerBuilder:
     """Apply backoff configuration to the builder."""
     if BackoffConfig is None:
-        fallback = _FallbackBackoffConfig.from_overrides(backoff_overrides)
-        return builder.with_backoff(fallback)
+        return builder.with_backoff(**backoff_overrides)
     return builder.with_backoff(BackoffConfig(backoff_overrides))
 
 
