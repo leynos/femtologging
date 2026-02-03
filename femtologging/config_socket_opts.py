@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import dataclasses
+import types
 import typing as typ
 
 from .config import _validate_mapping_type, _validate_string_keys
@@ -22,9 +23,22 @@ class _TlsConfigParser:
 
     hid: str
 
+    def _validate_optional_string(self, value: object, field_name: str) -> str | None:
+        """Validate value is str or None, raising TypeError if not."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            msg = (
+                f"handler {self.hid!r} socket kwargs {field_name} must be a str or None"
+            )
+            raise TypeError(msg)
+        return typ.cast("str", value)
+
     def parse(self, kwargs: dict[str, object]) -> tuple[str | None, bool] | None:
         """Extract and validate TLS configuration from kwargs."""
-        tls_value, domain_kw, insecure_kw = self._pop_tls_kwargs(kwargs)
+        tls_value = kwargs.pop("tls", None)
+        domain_kw = kwargs.pop("tls_domain", None)
+        insecure_kw = kwargs.pop("tls_insecure", None)
 
         if self._is_tls_config_absent(tls_value, domain_kw, insecure_kw):
             return None
@@ -34,10 +48,9 @@ class _TlsConfigParser:
         insecure = self._merge_insecure_kwarg(
             insecure_from_mapping=insecure, insecure_kw=insecure_kw
         )
-        enabled = self._enable_for_insecure_kwarg(
-            enabled=enabled,
-            insecure_kw=insecure_kw,
-        )
+
+        if insecure_kw is not None:
+            enabled = True
 
         if not enabled:
             return None
@@ -46,32 +59,13 @@ class _TlsConfigParser:
         return domain, insecure
 
     @staticmethod
-    def _pop_tls_kwargs(
-        kwargs: dict[str, object],
-    ) -> tuple[object | None, object | None, object | None]:
-        """Pop TLS-related kwargs from the configuration mapping."""
-        tls_value = kwargs.pop("tls", None)
-        domain_kw = kwargs.pop("tls_domain", None)
-        insecure_kw = kwargs.pop("tls_insecure", None)
-        return tls_value, domain_kw, insecure_kw
-
-    @staticmethod
     def _is_tls_config_absent(
         tls_value: object | None,
         domain_kw: object | None,
         insecure_kw: object | None,
     ) -> bool:
         """Return True if no TLS configuration was provided."""
-        return tls_value is None and domain_kw is None and insecure_kw is None
-
-    @staticmethod
-    def _enable_for_insecure_kwarg(
-        *, enabled: bool, insecure_kw: object | None
-    ) -> bool:
-        """Enable TLS when the insecure kwarg is supplied."""
-        if insecure_kw is None:
-            return enabled
-        return True
+        return all(value is None for value in (tls_value, domain_kw, insecure_kw))
 
     def _parse_tls_value(
         self, tls_value: object
@@ -115,10 +109,7 @@ class _TlsConfigParser:
         if "domain" not in mapping:
             return None
         domain = mapping["domain"]
-        if domain is not None and not isinstance(domain, str):
-            msg = f"handler {self.hid!r} socket kwargs tls domain must be a str or None"
-            raise TypeError(msg)
-        return domain
+        return self._validate_optional_string(domain, "tls domain")
 
     def _extract_insecure(self, mapping: cabc.Mapping[str, object]) -> bool | None:
         """Extract insecure field from TLS mapping."""
@@ -136,10 +127,7 @@ class _TlsConfigParser:
         """Merge the tls_domain kwarg with existing domain."""
         if domain_kw is None:
             return domain, enabled
-        if not isinstance(domain_kw, str):
-            msg = f"handler {self.hid!r} socket kwargs tls_domain must be a str or None"
-            raise TypeError(msg)
-        domain_kw_str = domain_kw
+        domain_kw_str = self._validate_optional_string(domain_kw, "tls_domain")
         if domain is not None and domain_kw_str != domain:
             msg = (
                 f"handler {self.hid!r} socket kwargs tls has conflicting domain values"
@@ -156,19 +144,15 @@ class _TlsConfigParser:
         if not isinstance(insecure_kw, bool):
             msg = f"handler {self.hid!r} socket kwargs tls_insecure must be a bool"
             raise TypeError(msg)
-        insecure_kw_bool = insecure_kw
-        if (
-            insecure_from_mapping is not None
-            and insecure_kw_bool != insecure_from_mapping
-        ):
+        if insecure_from_mapping is not None and insecure_kw != insecure_from_mapping:
             msg = (
                 f"handler {self.hid!r} socket kwargs tls has conflicting insecure "
                 "values"
             )
             raise ValueError(msg)
-        return insecure_kw_bool
+        return insecure_kw
 
-    def _validate_not_disabled(self, tls_value: object) -> bool:
+    def _validate_not_disabled(self, tls_value: object) -> None:
         """Raise if TLS is disabled but TLS options were supplied."""
         if isinstance(tls_value, bool) and not tls_value:
             msg = (
@@ -176,7 +160,6 @@ class _TlsConfigParser:
                 "were supplied"
             )
             raise ValueError(msg)
-        return True
 
 
 def _pop_socket_tls_kwargs(
@@ -193,18 +176,18 @@ class _BackoffConfigParser:
 
     hid: str
 
-    _FIELDS: typ.ClassVar[set[str]] = {
+    _FIELDS: typ.ClassVar[frozenset[str]] = frozenset({
         "base_ms",
         "cap_ms",
         "reset_after_ms",
         "deadline_ms",
-    }
-    _ALIAS_MAP: typ.ClassVar[dict[str, str]] = {
+    })
+    _ALIAS_MAP: typ.ClassVar[cabc.Mapping[str, str]] = types.MappingProxyType({
         "backoff_base_ms": "base_ms",
         "backoff_cap_ms": "cap_ms",
         "backoff_reset_after_ms": "reset_after_ms",
         "backoff_deadline_ms": "deadline_ms",
-    }
+    })
 
     def parse(self, kwargs: dict[str, object]) -> dict[str, int | None] | None:
         """Extract and validate backoff configuration from kwargs."""
@@ -246,6 +229,7 @@ class _BackoffConfigParser:
         """Merge backoff alias kwargs with mapping values."""
         merged = dict(result)
         for alias, target in self._ALIAS_MAP.items():
+            # Only apply alias overrides when explicitly provided in kwargs.
             if alias not in kwargs:
                 continue
             value = self._coerce_value(alias, kwargs.pop(alias))

@@ -15,14 +15,28 @@ TLS and backoff configuration parsing is delegated to
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import typing as typ
 
 from . import _femtologging_rs as rust
 from .config_socket_opts import _pop_socket_backoff_kwargs, _pop_socket_tls_kwargs
 
-rust = typ.cast("typ.Any", rust)
-SocketHandlerBuilder = rust.SocketHandlerBuilder
-BackoffConfig = getattr(rust, "BackoffConfig", None)
+if typ.TYPE_CHECKING:
+    from ._femtologging_rs import BackoffConfig as _BackoffConfig
+    from ._femtologging_rs import SocketHandlerBuilder as _SocketHandlerBuilder
+else:
+    _BackoffConfig = object
+    _SocketHandlerBuilder = object
+
+
+class _RustBindings(typ.Protocol):
+    SocketHandlerBuilder: type[_SocketHandlerBuilder]
+    BackoffConfig: type[_BackoffConfig] | None
+
+
+rust_mod = typ.cast("_RustBindings", rust)
+SocketHandlerBuilder = rust_mod.SocketHandlerBuilder
+BackoffConfig = getattr(rust_mod, "BackoffConfig", None)
 
 
 TCP_ARG_COUNT = 2
@@ -30,7 +44,7 @@ TCP_ARG_COUNT = 2
 
 def _build_socket_handler_builder(
     hid: str, args: list[object], kwargs: dict[str, object]
-) -> SocketHandlerBuilder:
+) -> _SocketHandlerBuilder:
     """Construct a ``SocketHandlerBuilder`` using fluent transport methods."""
     builder = SocketHandlerBuilder()
     transport_configured = False
@@ -60,11 +74,11 @@ def _build_socket_handler_builder(
 
 def _apply_socket_args(
     hid: str,
-    builder: SocketHandlerBuilder,
+    builder: _SocketHandlerBuilder,
     args: tuple[object, ...],
     *,
     transport_configured: bool,
-) -> tuple[SocketHandlerBuilder, bool]:
+) -> tuple[_SocketHandlerBuilder, bool]:
     """Apply positional args to configure socket transport."""
     if not args:
         return builder, transport_configured
@@ -73,14 +87,14 @@ def _apply_socket_args(
         _validate_host_port(
             hid, host, port, context="socket args must be (host: str, port: int)"
         )
-        host_str = typ.cast("str", host)
-        port_int = typ.cast("int", port)
-        return builder.with_tcp(host_str, port_int), True
+        return (
+            builder.with_tcp(typ.cast("str", host), typ.cast("int", port)),
+            True,
+        )
     if len(args) == 1:
         (path,) = args
         _validate_unix_path(hid, path)
-        path_str = typ.cast("str", path)
-        return builder.with_unix_path(path_str), True
+        return builder.with_unix_path(typ.cast("str", path)), True
     msg = (
         f"handler {hid!r} socket args must be either a {TCP_ARG_COUNT}-tuple "
         "of (host, port) or a single unix_path"
@@ -99,27 +113,26 @@ class _TransportKwargs:
 
 def _apply_unix_path_kwarg(
     hid: str,
-    builder: SocketHandlerBuilder,
+    builder: _SocketHandlerBuilder,
     unix_path: object,
     *,
     transport_configured: bool,
-) -> tuple[SocketHandlerBuilder, bool]:
+) -> tuple[_SocketHandlerBuilder, bool]:
     """Apply unix_path kwarg to configure Unix socket transport."""
     _validate_unix_path(hid, unix_path)
-    path_str = typ.cast("str", unix_path)
     if transport_configured:
         msg = f"handler {hid!r} socket transport already configured via args"
         raise ValueError(msg)
-    return builder.with_unix_path(path_str), True
+    return builder.with_unix_path(typ.cast("str", unix_path)), True
 
 
 def _apply_socket_kwargs(
     hid: str,
-    builder: SocketHandlerBuilder,
+    builder: _SocketHandlerBuilder,
     kwargs: dict[str, object],
     *,
     transport_configured: bool,
-) -> tuple[SocketHandlerBuilder, bool]:
+) -> tuple[_SocketHandlerBuilder, bool]:
     """Apply keyword args to configure socket transport."""
     unix_kw = kwargs.pop("unix_path", None)
     if unix_kw is None:
@@ -158,20 +171,39 @@ _UINT_OPTION_METHODS: typ.Final[dict[str, str]] = {
 
 
 def _apply_backoff_to_builder(
-    builder: SocketHandlerBuilder,
+    builder: _SocketHandlerBuilder,
     backoff_overrides: dict[str, int | None],
-) -> SocketHandlerBuilder:
+) -> _SocketHandlerBuilder:
     """Apply backoff configuration to the builder."""
     if BackoffConfig is None:
-        return builder.with_backoff(**backoff_overrides)
+        if not _supports_backoff_kwargs(builder):
+            msg = "socket backoff requires BackoffConfig"
+            raise TypeError(msg)
+        builder_any = typ.cast("typ.Any", builder)
+        return builder_any.with_backoff(**backoff_overrides)
     return builder.with_backoff(BackoffConfig(backoff_overrides))
+
+
+def _supports_backoff_kwargs(builder: object) -> bool:
+    """Return True when ``builder.with_backoff`` accepts keyword overrides."""
+    with_backoff = getattr(builder, "with_backoff", None)
+    if with_backoff is None:
+        return False
+    try:
+        signature = inspect.signature(with_backoff)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
 
 
 def _apply_socket_tuning_kwargs(
     hid: str,
-    builder: SocketHandlerBuilder,
+    builder: _SocketHandlerBuilder,
     kwargs: dict[str, object],
-) -> SocketHandlerBuilder:
+) -> _SocketHandlerBuilder:
     """Apply tuning kwargs (capacity, timeouts, TLS, backoff) to the builder."""
     for option_name, method_name in _UINT_OPTION_METHODS.items():
         value = _pop_socket_uint(hid, kwargs, option_name)
@@ -250,19 +282,18 @@ def _validate_transport_flag_value(hid: str, transport_flag: str) -> None:
 def _consume_socket_transport_flag(hid: str, kwargs: dict[str, object]) -> None:
     """Consume and validate the transport flag kwarg (documentation only)."""
     transport_flag = kwargs.pop("transport", None)
-    if transport_flag is None:
-        return
-    _validate_transport_flag_type(hid, transport_flag)
-    _validate_transport_flag_value(hid, typ.cast("str", transport_flag))
+    if transport_flag is not None:
+        _validate_transport_flag_type(hid, transport_flag)
+        _validate_transport_flag_value(hid, typ.cast("str", transport_flag))
 
 
 def _apply_host_port_kwargs(
     hid: str,
-    builder: SocketHandlerBuilder,
+    builder: _SocketHandlerBuilder,
     transport_kw: _TransportKwargs,
     *,
     transport_configured: bool,
-) -> tuple[SocketHandlerBuilder, bool]:
+) -> tuple[_SocketHandlerBuilder, bool]:
     """Apply host/port kwargs to configure TCP transport."""
     if transport_kw.host is None and transport_kw.port is None:
         return builder, transport_configured
@@ -283,14 +314,14 @@ def _validate_host_port_transport_kwargs(
     transport_configured: bool,
 ) -> None:
     """Validate host/port kwargs for TCP transport configuration."""
+    if transport_configured:
+        msg = f"handler {hid!r} socket transport already configured via args"
+        raise ValueError(msg)
     if transport_kw.unix_path is not None:
         msg = f"handler {hid!r} socket kwargs must not mix host/port with unix_path"
         raise ValueError(msg)
     if transport_kw.host is None or transport_kw.port is None:
         msg = f"handler {hid!r} socket kwargs require both host and port"
-        raise ValueError(msg)
-    if transport_configured:
-        msg = f"handler {hid!r} socket transport already configured via args"
         raise ValueError(msg)
     _validate_host_port(
         hid,
