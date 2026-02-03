@@ -206,3 +206,5 @@ target/
 
 # Crush agentic coding tool
 .crush/
+
+bin/act

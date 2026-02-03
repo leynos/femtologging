@@ -6,6 +6,7 @@ import collections.abc as cabc
 import errno
 import re
 import threading
+import time
 import typing as typ
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -25,6 +26,23 @@ class FormatterRecord(typ.TypedDict):
     logger: str
     level: str
     message: str
+
+
+def _read_lines_with_retry(
+    path: Path, expected: list[str], *, timeout: float = 1.0
+) -> list[str]:
+    """Read lines, retrying briefly to allow async flush to complete."""
+
+    def read_lines() -> list[str]:
+        return path.read_text().splitlines() if path.exists() else []
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        lines = read_lines()
+        if lines == expected:
+            return lines
+        time.sleep(0.01)
+    return read_lines()
 
 
 def test_file_handler_writes_to_file(
@@ -215,10 +233,12 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
         handler.handle("core", "INFO", "second")
         with pytest.raises(RuntimeError, match="timed out"):
             handler.handle("core", "INFO", "third")
-    assert path.read_text().splitlines() == [
+    expected = [
         "core [INFO] first",
         "core [INFO] second",
-    ], "expected timeout policy to drop the third record"
+    ]
+    lines = _read_lines_with_retry(path, expected)
+    assert lines == expected, "expected timeout policy to drop the third record"
 
 
 def test_overflow_policy_drop(tmp_path: Path) -> None:
