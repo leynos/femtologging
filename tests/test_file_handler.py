@@ -32,13 +32,17 @@ def _read_lines_with_retry(
     path: Path, expected: list[str], *, timeout: float = 1.0
 ) -> list[str]:
     """Read lines, retrying briefly to allow async flush to complete."""
+
+    def read_lines() -> list[str]:
+        return path.read_text().splitlines() if path.exists() else []
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        lines = path.read_text().splitlines() if path.exists() else []
+        lines = read_lines()
         if lines == expected:
             return lines
         time.sleep(0.01)
-    return path.read_text().splitlines() if path.exists() else []
+    return read_lines()
 
 
 def test_file_handler_writes_to_file(

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import types
 import typing as typ
 
 from . import _femtologging_rs as rust
@@ -162,12 +163,12 @@ def _apply_socket_kwargs(
     return builder, transport_configured
 
 
-_UINT_OPTION_METHODS: typ.Final[dict[str, str]] = {
+_UINT_OPTION_METHODS: typ.Final[typ.Mapping[str, str]] = types.MappingProxyType({
     "capacity": "with_capacity",
     "connect_timeout_ms": "with_connect_timeout_ms",
     "write_timeout_ms": "with_write_timeout_ms",
     "max_frame_size": "with_max_frame_size",
-}
+})
 
 
 def _apply_backoff_to_builder(
@@ -179,6 +180,7 @@ def _apply_backoff_to_builder(
         if not _supports_backoff_kwargs(builder):
             msg = "socket backoff requires BackoffConfig"
             raise TypeError(msg)
+        # Intentional Any cast: runtime signature check guards kwargs support.
         builder_any = typ.cast("typ.Any", builder)
         return builder_any.with_backoff(**backoff_overrides)
     return builder.with_backoff(BackoffConfig(backoff_overrides))
@@ -224,30 +226,7 @@ def _apply_socket_tuning_kwargs(
 
 
 def _validate_socket_uint_value(hid: str, key: str, value: object) -> int:
-    """Validate that a socket kwarg value is a non-negative integer.
-
-    Parameters
-    ----------
-    hid
-        Handler identifier for error messages.
-    key
-        The kwarg key name for error messages.
-    value
-        The value to validate.
-
-    Returns
-    -------
-    int
-        The validated non-negative integer value.
-
-    Raises
-    ------
-    TypeError
-        If value is a bool or not an int.
-    ValueError
-        If value is negative.
-
-    """
+    """Validate that a socket kwarg value is a non-negative int."""
     if isinstance(value, bool) or not isinstance(value, int):
         msg = f"handler {hid!r} socket kwargs {key} must be an int"
         raise TypeError(msg)
@@ -332,20 +311,7 @@ def _validate_host_port_transport_kwargs(
 
 
 def _validate_host_port(hid: str, host: object, port: object, *, context: str) -> None:
-    """Validate host and port types for socket handler configuration.
-
-    Parameters
-    ----------
-    hid
-        Handler identifier for error messages.
-    host
-        The host value to validate (must be str).
-    port
-        The port value to validate (must be int, not bool).
-    context
-        Error message context describing the validation failure.
-
-    """
+    """Validate host and port types for socket handler configuration."""
     msg = f"handler {hid!r} {context}"
     if not isinstance(host, str):
         raise TypeError(msg)
