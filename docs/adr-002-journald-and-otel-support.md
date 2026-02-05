@@ -18,10 +18,10 @@ logging destinations:
 As of now, `FemtoLogger` only forwards logs as formatted strings, with any
 structured context either omitted or flattened[^1][^2]. This means there is no
 built-in way to attach key–value data (e.g. span IDs, user identifiers) or
-propagate trace context alongside log messages. The
-absence of structured log record support and context propagation poses a design
-challenge: both OpenTelemetry and Journald thrive on structured, contextual
-data (e.g. OT log attributes, journald fields).
+propagate trace context alongside log messages. The absence of structured log
+record support and context propagation poses a design challenge: both
+OpenTelemetry and Journald thrive on structured, contextual data (e.g. OT log
+attributes, journald fields).
 
 Multiple approaches have been proposed for each integration, leading to open
 questions:
@@ -121,9 +121,9 @@ integration once those limitations are lifted.
 - **Feature gating and platform considerations:** Both integrations will be
   introduced behind optional Cargo features to avoid impacting users who don't
   need them. For example, a `"journald"` feature will enable the Journald
-  handler (only available on Unix targets), and a `"tracing"` feature
-  will enable the tracing subscriber layer and any OpenTelemetry dependencies.
-  This keeps the default build lean and free of platform-specific code or heavy
+  handler (only available on Unix targets), and a `"tracing"` feature will
+  enable the tracing subscriber layer and any OpenTelemetry dependencies. This
+  keeps the default build lean and free of platform-specific code or heavy
   telemetry libraries unless explicitly requested. The tracing layer feature is
   anticipated to be enabled by default (similar to how `log` compatibility is
   enabled by default) to encourage ecosystem uptake, whereas the Journald
@@ -206,8 +206,7 @@ integration once those limitations are lifted.
   roadmap). It is acknowledged that the current handler implementations will be
   somewhat limited until that feature is delivered. This ADR's migration plan
   will defer certain capabilities (like including arbitrary key–value data or
-  span IDs in outputs) to that future work, rather than try to solve it all
-  now.
+  span IDs in outputs) to that future work, rather than try to solve it all now.
 
 - **Mandating New Dependencies Unconditionally:** Any solution that forces all
   users to depend on heavy external crates or system libraries will be avoided.
@@ -227,15 +226,15 @@ features.
 ### Phase 0 – Foundation and Feature Gating
 
 - **Define Cargo Features:** Introduce two new Cargo feature flags, e.g.
-  `"journald"` and `"tracing"` (name fixed). The Journald handler
-  code will be compiled only when the `"journald"` feature is enabled (and on
-  target_os = "linux"), and the tracing subscriber layer will be included with
-  the `"tracing"` feature. For Python packaging, optional extras may be
-  added or these may simply be included in the default build on supported
-  platforms – this detail will be decided based on whether they should be
-  enabled by default. Initially, `"tracing"` might be enabled by default
-  (since it has no effect unless used, but aids integration), and `"journald"`
-  left off by default to avoid issues on non-Linux platforms.
+  `"journald"` and `"tracing"` (name fixed). The Journald handler code will be
+  compiled only when the `"journald"` feature is enabled (and on target_os =
+  "linux"), and the tracing subscriber layer will be included with the
+  `"tracing"` feature. For Python packaging, optional extras may be added or
+  these may simply be included in the default build on supported platforms –
+  this detail will be decided based on whether they should be enabled by
+  default. Initially, `"tracing"` might be enabled by default (since it has no
+  effect unless used, but aids integration), and `"journald"` left off by
+  default to avoid issues on non-Linux platforms.
 
 - **Scaffolding:** Set up stub classes and configuration hooks for
   `FemtoJournaldHandler` and the tracing layer. This includes:
@@ -291,9 +290,9 @@ metadata, using a safe pure-Rust approach.
 
 - Handle errors gracefully: if the socket write fails (e.g. journald not
   running or buffer full), the handler should emit a one-time warning (perhaps
-  via stderr or an internal metric) and then drop subsequent messages or
-  back off. It must **not** block the producing threads – any such error
-  handling stays within the consumer thread.
+  via stderr or an internal metric) and then drop subsequent messages or back
+  off. It must **not** block the producing threads – any such error handling
+  stays within the consumer thread.
 
 - **No libsystemd dependency:** Confirm that the above implementation works for
   typical cases. Integration testing on a Linux environment with journald will

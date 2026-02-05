@@ -45,5 +45,7 @@ jobs:
           source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
           cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
-          cargo test --manifest-path rust_extension/Cargo.toml -- --ignored
+          cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --ignored
+          cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features python -- --ignored
+          cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --ignored
           pytest -q
