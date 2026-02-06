@@ -495,3 +495,41 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     assert handler.handle_record_calls[0]["message"] == "test message"
     # handle() should NOT be called because dispatch path was frozen to handle_record
     assert handler.handle_calls == []
+
+
+def test_exc_info_no_deprecation_warning() -> None:
+    """Exception capture must not trigger DeprecationWarning.
+
+    Python 3.13 deprecated ``TracebackException.exc_type`` in favour of
+    ``exc_type_qualname`` / ``exc_type_module``. Verify that our capture
+    path avoids the deprecated attribute and emits no warnings.
+    """
+    import warnings
+
+    logger = FemtoLogger("core")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+
+        # exc_info=True with an active exception
+        try:
+            _raise_exception(ValueError, "deprecation check")
+        except ValueError:
+            output = logger.log("ERROR", "caught", exc_info=True)
+        assert output is not None
+        assert "ValueError" in output
+
+        # exc_info with an exception instance directly
+        exc = RuntimeError("instance check")
+        output = logger.log("ERROR", "caught", exc_info=exc)
+        assert output is not None
+        assert "RuntimeError" in output
+
+        # exc_info with a 3-tuple
+        try:
+            _raise_exception(KeyError, "tuple check")
+        except KeyError as e:
+            exc_info = (KeyError, e, e.__traceback__)
+        output = logger.log("ERROR", "caught", exc_info=exc_info)
+        assert output is not None
+        assert "KeyError" in output
