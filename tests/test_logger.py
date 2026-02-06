@@ -533,3 +533,14 @@ def test_exc_info_no_deprecation_warning() -> None:
         output = logger.log("ERROR", "caught", exc_info=exc_info)
         assert output is not None
         assert "KeyError" in output
+
+        # exc_info with a custom exception from a non-builtin module
+        import types
+
+        mod = types.ModuleType("custom_mod")
+        custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
+        mod.CustomError = custom_cls  # type: ignore[attr-defined]
+        exc = custom_cls("module check")
+        output = logger.log("ERROR", "caught", exc_info=exc)
+        assert output is not None
+        assert "custom_mod.CustomError" in output
