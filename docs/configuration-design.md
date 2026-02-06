@@ -178,7 +178,7 @@ pub struct FileHandlerBuilder {
     formatter: Option<FormatterConfig>,
     filters: Vec<String>,
     capacity: Option<usize>,
-    flush_record_interval: Option<usize>, // records
+    flush_after_records: Option<NonZeroU64>, // records
 }
 
 impl FileHandlerBuilder {
@@ -220,7 +220,7 @@ impl FileHandlerBuilder {
     /// Sets how often the worker thread flushes the file. Measured in
     /// records and must be greater than zero so periodic flushing always
     /// occurs.
-    pub fn with_flush_record_interval(mut self, interval: NonZeroU64) -> Self { /* ... */ }
+    pub fn with_flush_after_records(mut self, interval: NonZeroU64) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for FileHandlerBuilder { /* ... */ }
@@ -233,7 +233,7 @@ pub struct StreamHandlerBuilder {
     formatter: Option<FormatterConfig>,
     filters: Vec<String>,
     capacity: Option<usize>,
-    flush_timeout_ms: Option<NonZeroU64>, // milliseconds
+    flush_after_ms: Option<NonZeroU64>, // milliseconds
 }
 
 impl StreamHandlerBuilder {
@@ -272,15 +272,15 @@ impl StreamHandlerBuilder {
     pub fn with_capacity(mut self, capacity: usize) -> Self { /* ... */ }
 
     /// Sets the flush timeout in milliseconds. Must be greater than zero.
-    pub fn with_flush_timeout_ms(mut self, timeout_ms: NonZeroU64) -> Self { /* ... */ }
+    pub fn with_flush_after_ms(mut self, timeout_ms: NonZeroU64) -> Self { /* ... */ }
 }
 
 impl HandlerBuilderTrait for StreamHandlerBuilder { /* ... */ }
 
 ```
 
-The file builder uses a `flush_record_interval` measured in records, while the
-stream builder's `flush_timeout_ms` is a duration in milliseconds. These
+The file builder uses `flush_after_records` measured in records, while the
+stream builder's `flush_after_ms` is a duration in milliseconds. These
 semantics intentionally differ: file handlers flush after a set number of
 records, whereas stream handlers flush after a period of inactivity. Their
 dictionary representations mirror these names to avoid ambiguity.
@@ -289,7 +289,8 @@ Both builders now accept `NonZeroU64` in Rust, enforcing the non-zero
 constraint at the type level. Python receives `u64` and validates inputs,
 raising ``ValueError`` for zero values and ``OverflowError`` for negative
 values or values exceeding the unsigned 64-bit range. This type unification
-(Issue #168) ensures consistent error handling while preserving the distinct
+(Issue #168) and method rename (Issue #238) ensure consistent error handling
+and a unified `with_flush_after_*` naming pattern while preserving the distinct
 flush semantics described above.
 
 #### 1.1.1 Filters
@@ -387,7 +388,7 @@ class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
     def mode(self, mode: str) -> "FileHandlerBuilder": ...
     def encoding(self, encoding: str) -> "FileHandlerBuilder": ...
-    def with_flush_record_interval(self, interval: int) -> "FileHandlerBuilder": ...
+    def with_flush_after_records(self, interval: int) -> "FileHandlerBuilder": ...
 
 class StreamHandlerBuilder(HandlerBuilder):
     @classmethod

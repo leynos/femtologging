@@ -221,7 +221,7 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
     builder = (
         FileHandlerBuilder(str(path))
         .with_capacity(1)
-        .with_flush_record_interval(10000)
+        .with_flush_after_records(10000)
         .with_overflow_policy(OverflowPolicy.timeout(200))
         .with_formatter(blocking_formatter)
     )

@@ -18,12 +18,12 @@ use pyo3::{
     types::{PyDict, PyString},
 };
 
-/// Convert a Python `u64` flush record interval to `NonZeroU64`.
+/// Convert a Python `u64` flush-after-records threshold to `NonZeroU64`.
 ///
-/// Raises `ValueError` if the interval is zero, or `OverflowError` if the
+/// Raises `ValueError` if the value is zero, or `OverflowError` if the
 /// value exceeds `usize::MAX` on the current platform (since `HandlerConfig`
 /// stores flush intervals as `usize` internally).
-pub(crate) fn py_flush_record_interval_to_nonzero(
+pub(crate) fn py_flush_after_records_to_nonzero(
     interval: u64,
     field_name: &str,
 ) -> PyResult<NonZeroU64> {
@@ -168,8 +168,8 @@ impl CommonBuilder {
         if let Some(cap) = self.capacity {
             d.set_item("capacity", cap.get())?;
         }
-        if let Some(ms) = self.flush_timeout_ms {
-            d.set_item("flush_timeout_ms", ms.get())?;
+        if let Some(ms) = self.flush_after_ms {
+            d.set_item("flush_after_ms", ms.get())?;
         }
         if let Some(fmt) = &self.formatter {
             match fmt {
@@ -198,8 +198,8 @@ impl FileLikeBuilderState {
     /// Extend a Python dictionary with shared file builder fields.
     pub fn extend_py_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         self.common.extend_py_dict(d)?;
-        if let Some(flush) = self.flush_record_interval {
-            d.set_item("flush_record_interval", flush.get())?;
+        if let Some(flush) = self.flush_after_records {
+            d.set_item("flush_after_records", flush.get())?;
         }
         write_overflow_policy_fields(d, &self.overflow_policy)
     }
