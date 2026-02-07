@@ -177,6 +177,8 @@ impl FemtoRotatingFileHandler {
             /// Flush any queued log records.
             pub fn flush(&self) -> bool;
             /// Close the handler, waiting for the worker thread to shut down.
+            ///
+            /// This method is idempotent and safe to call multiple times.
             pub fn close(&mut self);
         }
     }

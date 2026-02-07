@@ -322,6 +322,10 @@ impl FemtoFileHandler {
         self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
     }
 
+    /// Close the handler and wait for the worker to stop.
+    ///
+    /// This method is idempotent. Calling it multiple times is safe; only the
+    /// first call performs shutdown work.
     pub fn close(&mut self) {
         self.tx.take();
         if let Some(handle) = self.handle.take() {

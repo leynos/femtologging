@@ -111,7 +111,8 @@ your process exits.
   - `"block"` blocks the caller until the worker makes room.
   - `"timeout:N"` blocks for `N` milliseconds before giving up.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
-  Always close the handler when the application shuts down.
+  Always close the handler when the application shuts down. `close()` is
+  idempotent and safe to call multiple times.
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Formatter identifiers other than `"default"` are not
@@ -130,6 +131,8 @@ your process exits.
   `backup_count`, and truncates the live file. If opening a fresh file fails
   the implementation falls back to appending to the existing file and logs the
   reason.
+- `handler.close()` follows the same contract as `FemtoFileHandler`: it is
+  idempotent and safe to call multiple times.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 
