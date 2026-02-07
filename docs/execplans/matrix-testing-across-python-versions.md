@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: DRAFT (awaiting approval before implementation)
+Status: COMPLETE (implemented; local validation complete)
 
 ## Purpose / big picture
 
@@ -67,10 +67,12 @@ without blocking merges.
 - [x] (2026-02-06 16:29Z) Confirmed project has no `PLANS.md`.
 - [x] (2026-02-06 16:29Z) Verified matrix `continue-on-error` pattern and
       `setup-python` pre-release support from GitHub docs.
-- [ ] Edit `.github/workflows/ci.yml` to add Python-version matrix and
-      permitted-failure lane.
-- [ ] Update `docs/dev-workflow.md` with CI matrix policy.
-- [ ] Validate workflow syntax and run local gates.
+- [x] (2026-02-07 01:30Z) Edited `.github/workflows/ci.yml` to add the
+      Python-version matrix and the permitted-failure lane.
+- [x] (2026-02-07 01:31Z) Updated `docs/dev-workflow.md` with CI matrix policy.
+- [x] (2026-02-07 01:46Z) Ran local gates:
+      `make fmt`, `make markdownlint`, `make nixie`, `make check-fmt`,
+      `make lint`, `make typecheck`, and `make test`.
 - [ ] Push branch and verify PR check behaviour across all matrix lanes.
 
 ## Surprises & discoveries
@@ -102,9 +104,10 @@ without blocking merges.
 
 ## Outcomes & retrospective
 
-Draft complete. No implementation performed yet. Once implemented, success is:
-required lanes (`3.12`, `3.13`, `3.14`) must pass type checking and tests, and
-`3.15` failures must be visible but non-blocking.
+Implemented in repository with local validation complete. Required and
+experimental matrix definitions are now configured in CI, and docs were
+updated to match. External verification of PR check behaviour is still pending
+until branch push and GitHub run execution.
 
 ## Context and orientation
 
@@ -301,3 +304,7 @@ References used for design choices:
 
 Revision note (2026-02-06): initial draft created from current repository state
 and official GitHub Actions references. No implementation has started.
+
+Revision note (2026-02-07): implemented matrix testing in
+`.github/workflows/ci.yml`, updated `docs/dev-workflow.md`, and completed local
+validation gates.
