@@ -326,6 +326,12 @@ impl FemtoFileHandler {
     ///
     /// This method is idempotent. Calling it multiple times is safe; only the
     /// first call performs shutdown work.
+    ///
+    /// Threading
+    /// ---------
+    /// The method requires `&mut self`, so callers must ensure exclusive access
+    /// when invoking it. Concurrent calls from multiple threads must be
+    /// synchronized externally (for example, with a `Mutex`).
     pub fn close(&mut self) {
         self.tx.take();
         if let Some(handle) = self.handle.take() {
