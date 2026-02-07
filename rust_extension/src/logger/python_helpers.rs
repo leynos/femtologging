@@ -19,7 +19,7 @@ use pyo3::types::PyBool;
 #[cfg(feature = "python")]
 pub fn should_capture_exc_info(exc_info: &Bound<'_, PyAny>) -> PyResult<bool> {
     // Handle boolean False explicitly
-    if let Ok(b) = exc_info.downcast::<PyBool>() {
+    if let Ok(b) = exc_info.cast::<PyBool>() {
         return Ok(b.is_true());
     }
     // None means no capture

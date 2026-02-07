@@ -147,7 +147,7 @@ impl HTTPHandlerBuilder {
     }
 
     #[pyo3(name = "as_dict")]
-    fn py_as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn py_as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         self.extend_dict(&dict)?;
         Ok(dict.into())
@@ -160,7 +160,7 @@ impl HTTPHandlerBuilder {
 }
 
 impl AsPyDict for HTTPHandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let d = PyDict::new(py);
         self.extend_dict(&d)?;
         dict_into_py(d, py)
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn builder_requires_url() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder = pyo3::Py::new(py, HTTPHandlerBuilder::new())
                 .expect("Py::new should succeed in test");
             let builder_ref = builder.borrow(py);
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn builder_with_url_succeeds() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder = HTTPHandlerBuilder::new().with_url("http://localhost:8080/log");
             let d = PyDict::new(py);
             builder
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn builder_with_json_format() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder = HTTPHandlerBuilder::new()
                 .with_url("http://localhost:8080/log")
                 .with_json_format();
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn builder_with_basic_auth() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder = HTTPHandlerBuilder::new()
                 .with_url("http://localhost:8080/log")
                 .with_basic_auth("user", "pass");

@@ -23,7 +23,7 @@ use crate::handlers::builder_macros::builder_methods;
 use crate::macros::{AsPyDict, dict_into_py};
 
 /// Builder for constructing [`FemtoRotatingFileHandler`] instances.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct RotatingFileHandlerBuilder {
     path: String,
@@ -245,7 +245,7 @@ builder_methods! {
             }
 
             /// Return a dictionary describing the builder configuration.
-            fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+            fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
                 self.as_pydict(py)
             }
 
@@ -260,7 +260,7 @@ builder_methods! {
 
 #[cfg(feature = "python")]
 impl AsPyDict for RotatingFileHandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let d = pyo3::types::PyDict::new(py);
         self.fill_pydict(&d)?;
         dict_into_py(d, py)

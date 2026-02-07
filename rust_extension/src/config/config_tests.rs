@@ -62,7 +62,7 @@ fn build_accepts_default_version(_gil_and_clean_manager: ()) {
 #[rstest]
 #[serial]
 fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let handler = StreamHandlerBuilder::stderr();
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["h"]);
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -125,7 +125,7 @@ fn unknown_id_rejected(
 #[rstest]
 #[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
         let builder = ConfigBuilder::new()
@@ -209,7 +209,7 @@ fn disable_existing_loggers_clears_unmentioned(
     _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
         let builder = builder
@@ -246,7 +246,7 @@ fn disable_existing_loggers_keeps_ancestors(
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     ancestor_names: &[&str],
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let (mut builder, root) = base_logger_builder;
         for name in ancestor_names {
             builder = builder.with_logger(*name, LoggerConfigBuilder::new().with_handlers(["h"]));
@@ -279,7 +279,7 @@ fn disable_existing_loggers_keeps_ancestors(
 #[rstest]
 #[serial]
 fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let builder = ConfigBuilder::new()
             .with_handler("stderr", StreamHandlerBuilder::stderr())
             .with_default_level(FemtoLevel::Warn)
@@ -305,7 +305,7 @@ fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) 
 #[rstest]
 #[serial]
 fn default_level_applies_to_child_loggers(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let child_cfg = LoggerConfigBuilder::new().with_handlers(["console"]);
         let builder = ConfigBuilder::new()
             .with_handler("console", StreamHandlerBuilder::stderr())

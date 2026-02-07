@@ -176,7 +176,7 @@ impl PyHandler {
 #[cfg(feature = "python")]
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             if self.has_handle_record {
                 return self.call_handle_record(py, &record);
             }
@@ -205,7 +205,7 @@ impl PyHandler {
 #[cfg(not(feature = "python"))]
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             self.obj
                 .call_method1(
                     py,

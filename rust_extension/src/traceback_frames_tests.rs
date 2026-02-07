@@ -12,7 +12,7 @@ use crate::traceback_frames::extract_frames_from_stack_summary;
 
 #[test]
 fn frame_with_all_optional_fields_present() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let frame = MockFrameBuilder::new("test.py", 42, "test_function")
             .end_lineno(45)
             .colno(4)
@@ -54,7 +54,7 @@ fn frame_with_missing_optional_fields(
     #[case] end_colno: Option<u32>,
     #[case] line: Option<&str>,
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let mut builder = MockFrameBuilder::new("module.py", 10, "my_func");
         if let Some(v) = end_lineno {
             builder = builder.end_lineno(v);
@@ -103,7 +103,7 @@ fn frame_missing_required_field_returns_error(
     #[case] missing: MissingField,
     #[case] expected_error_substr: &str,
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let dict = PyDict::new(py);
         match missing {
             MissingField::Filename => {
@@ -132,7 +132,7 @@ fn frame_missing_required_field_returns_error(
 
 #[test]
 fn frame_with_wrong_type_lineno_returns_error() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let dict = PyDict::new(py);
         dict.set_item("filename", "test.py")
             .expect("set filename should succeed");
@@ -191,7 +191,7 @@ fn extract_locals_handles_mixed_entries(
     #[case] expected: Option<&[(&str, &str)]>,
     #[case] description: &str,
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let locals_dict = PyDict::new(py);
         populate_locals_dict_from_entries(&locals_dict, entries);
         assert_locals_extraction_result(&locals_dict, expected, description);
@@ -200,7 +200,7 @@ fn extract_locals_handles_mixed_entries(
 
 #[test]
 fn extract_frames_from_stack_summary_converts_list() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let frame1 = MockFrameBuilder::new("a.py", 1, "func_a").build(py);
         let frame2 = MockFrameBuilder::new("b.py", 2, "func_b").build(py);
 
@@ -219,7 +219,7 @@ fn extract_frames_from_stack_summary_converts_list() {
 
 #[test]
 fn extract_frames_from_stack_summary_empty_list() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let list = PyList::empty(py);
 
         let frames =
@@ -231,7 +231,7 @@ fn extract_frames_from_stack_summary_empty_list() {
 
 #[test]
 fn extract_frames_from_stack_summary_not_a_list_returns_error() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let dict = PyDict::new(py);
 
         let result = extract_frames_from_stack_summary(dict.as_any());
@@ -258,7 +258,7 @@ fn extract_locals_with_skip_reasons_returns_partial(
     #[case] scenario: SkipScenario,
     #[case] expected: Option<(&str, &str)>,
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let locals_dict = PyDict::new(py);
 
         // Add a valid entry only for scenarios that expect one

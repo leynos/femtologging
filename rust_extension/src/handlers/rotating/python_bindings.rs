@@ -40,7 +40,7 @@ pub const ROTATION_VALIDATION_MSG: &str =
 /// assert_eq!(options.max_bytes, 1024);
 /// assert_eq!(options.backup_count, 3);
 /// ```
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct HandlerOptions {
     #[pyo3(get, set)]

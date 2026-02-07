@@ -6,7 +6,7 @@ use pyo3::{Bound, prelude::*};
 use std::convert::identity;
 
 impl AsPyDict for HandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match self {
             Self::Stream(b) => b.as_pydict(py),
             Self::File(b) => b.as_pydict(py),

@@ -150,7 +150,7 @@ mod py_api {
     ///
     /// ```rust,ignore
     /// # use pyo3::Python;
-    /// Python::with_gil(|py| {
+    /// Python::attach(|py| {
     ///     let first = crate::get_logger(py, "example").unwrap();
     ///     let second = crate::get_logger(py, "example").unwrap();
     ///     assert!(first.as_ref(py).is(second.as_ref(py)));
@@ -170,7 +170,7 @@ mod py_api {
     ///
     /// ```rust,ignore
     /// # use pyo3::Python;
-    /// Python::with_gil(|py| {
+    /// Python::attach(|py| {
     ///     let before = crate::get_logger(py, "example").unwrap();
     ///     crate::reset_manager_py();
     ///     let after = crate::get_logger(py, "example").unwrap();
@@ -200,7 +200,7 @@ use py_api::{get_logger, reset_manager_py};
 ///
 /// ```rust,ignore
 /// # use pyo3::{types::PyModule, Python};
-/// Python::with_gil(|py| {
+/// Python::attach(|py| {
 ///     let module = PyModule::new(py, "_femtologging_rs").unwrap();
 ///     crate::_femtologging_rs(&module).unwrap();
 ///     assert!(module.hasattr("FemtoLogger").unwrap());

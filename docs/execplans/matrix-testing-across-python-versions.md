@@ -105,9 +105,9 @@ without blocking merges.
 ## Outcomes & retrospective
 
 Implemented in repository with local validation complete. Required and
-experimental matrix definitions are now configured in CI, and docs were
-updated to match. External verification of PR check behaviour is still pending
-until branch push and GitHub run execution.
+experimental matrix definitions are now configured in CI, and docs were updated
+to match. External verification of PR check behaviour is still pending until
+branch push and GitHub run execution.
 
 ## Context and orientation
 

@@ -13,7 +13,7 @@ use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_
 fn frame_with_wrong_type_optional_field_degrades_to_none() {
     // Optional fields with wrong types should degrade to None, not error.
     // This tests the graceful degradation behaviour of get_optional_attr.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let dict = PyDict::new(py);
         dict.set_item("filename", "test.py")
             .expect("set filename should succeed");
@@ -45,7 +45,7 @@ fn frame_with_wrong_type_optional_field_degrades_to_none() {
 #[test]
 fn frame_with_explicit_none_optional_fields_degrades_to_none() {
     // Optional fields explicitly set to Python None should become Rust None.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let dict = PyDict::new(py);
         dict.set_item("filename", "test.py")
             .expect("set filename should succeed");
@@ -83,7 +83,7 @@ fn frame_with_explicit_none_optional_fields_degrades_to_none() {
 #[test]
 fn extract_locals_with_unrepr_able_value_skips_entry() {
     // Values that raise on repr() should be skipped, preserving other entries.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Create a class whose __repr__ raises an exception
         let code = c"
 class UnreprAble:
@@ -128,7 +128,7 @@ unrepr_obj = UnreprAble()
 fn extract_locals_with_non_mapping_locals_degrades_gracefully() {
     // A locals attribute that is not a mapping (list instead of dict)
     // should degrade gracefully to None, not error.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let frame_dict = PyDict::new(py);
         frame_dict
             .set_item("filename", "test.py")
@@ -160,7 +160,7 @@ fn extract_locals_with_non_mapping_locals_degrades_gracefully() {
 fn extract_locals_with_non_string_keys_degrades_gracefully() {
     // A locals mapping that uses non-string keys should degrade gracefully,
     // skipping entries with invalid keys rather than erroring.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let locals_dict = PyDict::new(py);
         // Add entries with non-string keys (integers)
         locals_dict

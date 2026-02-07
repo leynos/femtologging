@@ -1,7 +1,7 @@
 # Rust Extension
 
 This project includes a small Rust extension built with
-[PyO3](https://pyo3.rs/) (currently `^0.25.1`). Initially, it exposed only a
+[PyO3](https://pyo3.rs/) (currently `^0.28.0`). Initially, it exposed only a
 trivial `hello()` function and the `FemtoLogger` class. It has since grown to
 provide the core handler implementations as well:
 

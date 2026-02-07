@@ -93,7 +93,7 @@ fn assert_chained_exception_structure(
 fn capture_exception_without_notes_returns_empty_notes() {
     // Standard exceptions without __notes__ should return empty notes vector.
     // This tests the get_optional_attr degradation path for missing attributes.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exc = create_value_error(py, "test error");
 
         // Do not assert CPython internals/version-specific defaults for __notes__.
@@ -113,7 +113,7 @@ fn capture_exception_without_notes_returns_empty_notes() {
 #[rstest]
 fn capture_exception_with_empty_args_tuple() {
     // Exception with empty args tuple should produce empty args_repr.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // BaseException() with no arguments has args = ()
         let exc = create_base_exception(py);
 
@@ -134,7 +134,7 @@ fn capture_exception_with_empty_args_tuple() {
 fn capture_exception_chained_cause_has_empty_notes_and_args() {
     // Chained exceptions (where we only have TracebackException, not the instance)
     // should have empty notes and args_repr because those require the original instance.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Skip test if Python version doesn't support add_note()
         if !supports_add_note(py) {
             // On Python < 3.11, run a simpler version without add_note()
@@ -189,7 +189,7 @@ except ValueError as e:
 fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
     // Exceptions with a non-iterable __notes__ attribute should degrade gracefully.
     // This tests the type-mismatch degradation path for __notes__.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exc = create_value_error(py, "test error");
 
         // Set a malformed, non-iterable __notes__ value (integer instead of list)
@@ -216,7 +216,7 @@ fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
     // be captured without failing, degrading notes content as needed.
     // Per ADR "partial extraction of collections" rule: non-string entries are
     // dropped/ignored but valid strings are preserved.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exc = create_value_error(py, "test error");
 
         // Create a list with mixed types: valid string, integer, bytes, None
@@ -254,7 +254,7 @@ notes_list = ['valid note', 42, b'bytes note', None]
 fn capture_exception_with_failing_repr_in_args_degrades_gracefully() {
     // When an exception's args tuple contains objects whose __repr__ raises,
     // those elements should be skipped and only valid repr strings preserved.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Create a class with a __repr__ that raises
         let code = c"
 class BadRepr:

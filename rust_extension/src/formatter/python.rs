@@ -24,7 +24,7 @@ struct PythonFormatter {
 impl PythonFormatter {
     fn try_new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
         let description = fq_py_type(obj);
-        if let Ok(s) = obj.downcast::<PyString>() {
+        if let Ok(s) = obj.cast::<PyString>() {
             let msg = format!(
                 "formatter must be callable or provide a callable format() method (got string: {s})",
             );
@@ -52,7 +52,7 @@ impl PythonFormatter {
     }
 
     fn call(&self, record: &FemtoLogRecord) -> PyResult<String> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let payload = record_to_dict(py, record)?;
             let callable = {
                 let guard = self.callable.lock().map_err(|_| {
@@ -72,7 +72,7 @@ impl PythonFormatter {
 ///
 /// This function is used by both the Python formatter adapter and the
 /// `handle_record` hook for Python handlers.
-pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObject> {
+pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("logger", record.logger())?;
     dict.set_item("level", record.level_str())?;
@@ -114,7 +114,7 @@ pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<PyObj
 }
 
 /// Convert a `StackFrame` to a Python dict.
-fn stack_frame_to_py(py: Python<'_>, frame: &StackFrame) -> PyResult<PyObject> {
+fn stack_frame_to_py(py: Python<'_>, frame: &StackFrame) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("filename", &frame.filename)?;
     dict.set_item("lineno", frame.lineno)?;
@@ -144,7 +144,7 @@ fn stack_frame_to_py(py: Python<'_>, frame: &StackFrame) -> PyResult<PyObject> {
 }
 
 /// Convert a `StackTracePayload` to a Python dict.
-fn stack_payload_to_py(py: Python<'_>, payload: &StackTracePayload) -> PyResult<PyObject> {
+fn stack_payload_to_py(py: Python<'_>, payload: &StackTracePayload) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("schema_version", payload.schema_version)?;
 
@@ -158,7 +158,7 @@ fn stack_payload_to_py(py: Python<'_>, payload: &StackTracePayload) -> PyResult<
 }
 
 /// Convert a `&[String]` to a Python list.
-fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyResult<PyObject> {
+fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for s in strings {
         list.append(s)?;
@@ -167,7 +167,7 @@ fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyResult<PyObject
 }
 
 /// Convert a `&[StackFrame]` to a Python list of dicts.
-fn frames_to_pylist(py: Python<'_>, frames: &[StackFrame]) -> PyResult<PyObject> {
+fn frames_to_pylist(py: Python<'_>, frames: &[StackFrame]) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for frame in frames {
         list.append(stack_frame_to_py(py, frame)?)?;
@@ -176,7 +176,7 @@ fn frames_to_pylist(py: Python<'_>, frames: &[StackFrame]) -> PyResult<PyObject>
 }
 
 /// Convert a `&[ExceptionPayload]` to a Python list of dicts.
-fn exceptions_to_pylist(py: Python<'_>, exceptions: &[ExceptionPayload]) -> PyResult<PyObject> {
+fn exceptions_to_pylist(py: Python<'_>, exceptions: &[ExceptionPayload]) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for exc in exceptions {
         list.append(exception_payload_to_py(py, exc)?)?;
@@ -226,7 +226,7 @@ fn set_optional_exception_items(
 }
 
 /// Convert an `ExceptionPayload` to a Python dict.
-fn exception_payload_to_py(py: Python<'_>, payload: &ExceptionPayload) -> PyResult<PyObject> {
+fn exception_payload_to_py(py: Python<'_>, payload: &ExceptionPayload) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("schema_version", payload.schema_version)?;
     dict.set_item("type_name", &payload.type_name)?;
@@ -241,7 +241,7 @@ impl FemtoFormatter for PythonFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
         match self.call(record) {
             Ok(result) => result,
-            Err(err) => Python::with_gil(|py| {
+            Err(err) => Python::attach(|py| {
                 err.print(py);
                 format!("<formatter error in {}>", self.description)
             }),

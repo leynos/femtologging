@@ -1,7 +1,7 @@
 //! Python bindings for configuration builders.
 
 use pyo3::{
-    Bound,
+    Borrowed,
     exceptions::{PyKeyError, PyRuntimeError, PyValueError},
     prelude::*,
 };
@@ -19,7 +19,7 @@ impl From<ConfigError> for PyErr {
         match err {
             ConfigError::UnknownIds(ids) => {
                 use pyo3::types::PyTuple;
-                Python::with_gil(|py| match PyTuple::new(py, ids) {
+                Python::attach(|py| match PyTuple::new(py, ids) {
                     Ok(tup) => PyErr::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
                     Err(cause) => {
                         let key_err = PyErr::new::<PyKeyError, _>("unknown handler identifiers");
@@ -34,8 +34,10 @@ impl From<ConfigError> for PyErr {
     }
 }
 
-impl<'py> FromPyObject<'py> for HandlerBuilder {
-    fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for HandlerBuilder {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
         if let Ok(b) = obj.extract::<StreamHandlerBuilder>() {
             Ok(b.into())
         } else if let Ok(b) = obj.extract::<FileHandlerBuilder>() {
@@ -45,7 +47,7 @@ impl<'py> FromPyObject<'py> for HandlerBuilder {
         } else if let Ok(b) = obj.extract::<SocketHandlerBuilder>() {
             Ok(b.into())
         } else {
-            let fq = fq_py_type(obj);
+            let fq = fq_py_type(&obj.to_owned());
             Err(pyo3::exceptions::PyTypeError::new_err(format!(
                 "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, or SocketHandlerBuilder (got Python type: {fq})"
             )))

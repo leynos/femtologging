@@ -139,7 +139,7 @@ mod tests {
         #[test]
         #[serial]
         fn flush_all_handlers_flushes_loggers_with_handlers() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 reset_manager();
 
                 let flushes = Arc::new(AtomicUsize::new(0));
@@ -165,7 +165,7 @@ mod tests {
         #[test]
         #[serial]
         fn flush_all_handlers_invokes_flush_once_per_registered_logger() {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 reset_manager();
 
                 // Populate the manager with multiple loggers (including parents).

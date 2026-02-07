@@ -33,7 +33,7 @@ schema = _schema_builder.as_dict()
 
 static PY_APIS: Lazy<PythonApis> = Lazy::new(|| {
     pyo3::prepare_freethreaded_python();
-    Python::with_gil(|py| PythonApis::new(py))
+    Python::attach(|py| PythonApis::new(py))
 });
 
 struct PythonApis {
@@ -168,7 +168,7 @@ fn config_benchmarks(c: &mut Criterion) {
 
     group.bench_function("basicConfig_stream_stdout", |b| {
         b.iter(|| {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 apis.reset(py);
                 apis.run_basic_config(py);
             });
@@ -177,7 +177,7 @@ fn config_benchmarks(c: &mut Criterion) {
 
     group.bench_function("dictConfig_round_trip", |b| {
         b.iter(|| {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 apis.reset(py);
                 apis.run_dict_config(py);
             });

@@ -108,7 +108,7 @@ mod tests {
     fn registers_bindings() {
         // The module should expose builder types and the build error when the
         // `python` feature is enabled.
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = PyModule::new(py, "test").expect("failed to create test module");
             add_python_bindings(&module).expect("failed to add python bindings");
             for name in [
@@ -128,7 +128,7 @@ mod tests {
                 let attr = module
                     .getattr(name)
                     .expect("expected attribute not found on module");
-                attr.downcast::<PyType>()
+                attr.cast::<PyType>()
                     .expect("attribute is not a Python type");
             }
         });
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn module_registers_rotating_classes() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module =
                 PyModule::new(py, "_femtologging_rs").expect("failed to create test module");
             register_python_classes(&module).expect("failed to register python classes");
@@ -144,7 +144,7 @@ mod tests {
                 let attr = module
                     .getattr(name)
                     .expect("expected attribute not found on module");
-                attr.downcast::<PyType>()
+                attr.cast::<PyType>()
                     .expect("attribute is not a Python type");
             }
             let message = module

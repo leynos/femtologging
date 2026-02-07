@@ -31,7 +31,7 @@ fn flush_logger_and_assert(py: Python<'_>, logger: &Py<FemtoLogger>, name: &str)
 #[rstest]
 #[serial]
 fn propagate_flag_applied(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler();
         let root = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
@@ -60,7 +60,7 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
 #[rstest]
 #[serial]
 fn record_propagates_to_root(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler();
         let root = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
@@ -87,7 +87,7 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
 #[rstest]
 #[serial]
 fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler();
         let root = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)

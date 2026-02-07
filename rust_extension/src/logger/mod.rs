@@ -196,7 +196,7 @@ impl FemtoLogger {
     /// Attach a handler implemented in Python or Rust.
     #[pyo3(name = "add_handler", text_signature = "(self, handler)")]
     pub fn py_add_handler(&self, handler: Py<PyAny>) -> PyResult<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let obj = handler.bind(py);
             validate_handler(obj)?;
             let py_handler = PyHandler::new(py, handler);
@@ -208,7 +208,7 @@ impl FemtoLogger {
     /// Remove a handler that was previously attached via `add_handler`.
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut handlers = self.handlers.write();
             let matches_handler = |h: &Arc<dyn FemtoHandlerTrait>| {
                 h.as_any()
@@ -357,7 +357,7 @@ impl FemtoLogger {
         let Some(parent_name) = &self.parent else {
             return;
         };
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             if let Ok(parent) = manager::get_logger(py, parent_name) {
                 parent.borrow(py).dispatch_to_handlers(record);
             }
@@ -592,7 +592,7 @@ impl Drop for FemtoLogger {
         // Drop the lock before joining the worker thread.
         let handle = { self.handle.lock().take() };
         if let Some(handle) = handle {
-            Python::with_gil(|py| py.allow_threads(move || log_join_result(handle)));
+            Python::attach(|py| py.detach(move || log_join_result(handle)));
         }
     }
 }

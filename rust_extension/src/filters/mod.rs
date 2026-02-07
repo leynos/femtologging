@@ -83,7 +83,7 @@ mod py_helpers {
     use super::*;
     use crate::macros::AsPyDict;
     use crate::python::fq_py_type;
-    use pyo3::{create_exception, exceptions::PyTypeError, prelude::*};
+    use pyo3::{Borrowed, create_exception, exceptions::PyTypeError, prelude::*};
 
     create_exception!(
         _femtologging_rs,
@@ -98,7 +98,7 @@ mod py_helpers {
     }
 
     impl AsPyDict for FilterBuilder {
-        fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
             match self {
                 Self::Level(b) => b.as_pydict(py),
                 Self::Name(b) => b.as_pydict(py),
@@ -106,19 +106,19 @@ mod py_helpers {
         }
     }
 
-    impl<'py> FromPyObject<'py> for FilterBuilder {
-        fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
-            match LevelFilterBuilder::extract_bound(obj) {
-                Ok(b) => return Ok(FilterBuilder::Level(b)),
-                Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
-                Err(e) => return Err(e),
+    impl<'a, 'py> FromPyObject<'a, 'py> for FilterBuilder {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(builder) = obj.extract::<LevelFilterBuilder>() {
+                return Ok(FilterBuilder::Level(builder));
             }
-            match NameFilterBuilder::extract_bound(obj) {
-                Ok(b) => return Ok(FilterBuilder::Name(b)),
-                Err(e) if e.is_instance_of::<PyTypeError>(obj.py()) => {}
-                Err(e) => return Err(e),
+
+            if let Ok(builder) = obj.extract::<NameFilterBuilder>() {
+                return Ok(FilterBuilder::Name(builder));
             }
-            let fq = fq_py_type(obj);
+
+            let fq = fq_py_type(&obj.to_owned());
             Err(PyTypeError::new_err(format!(
                 "builder must be LevelFilterBuilder or NameFilterBuilder (got Python type: {fq})",
             )))

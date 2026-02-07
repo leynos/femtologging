@@ -32,7 +32,7 @@ impl ConfigBuilder {
             |id, source| ConfigError::FilterBuild { id, source },
         )?;
 
-        Python::with_gil(|py| -> Result<_, ConfigError> {
+        Python::attach(|py| -> Result<_, ConfigError> {
             // Handle disable_existing_loggers if requested
             if self.disable_existing_loggers() {
                 let mut keep_names: HashSet<String> = self

@@ -4,6 +4,7 @@
 //! converting between strings and numeric representations so loggers can
 //! efficiently filter records.
 
+use pyo3::Borrowed;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::fmt;
@@ -118,8 +119,10 @@ impl TryFrom<u8> for FemtoLevel {
     }
 }
 
-impl<'source> FromPyObject<'source> for FemtoLevel {
-    fn extract_bound(obj: &Bound<'source, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for FemtoLevel {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let s: &str = obj.extract()?;
         match s.parse() {
             Ok(level) => Ok(level),

@@ -46,7 +46,7 @@ impl StreamTarget {
 }
 
 /// Builder for constructing [`FemtoStreamHandler`] instances.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct StreamHandlerBuilder {
     target: StreamTarget,
@@ -193,7 +193,7 @@ builder_methods! {
             }
 
             /// Return a dictionary describing the builder configuration.
-            fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+            fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
                 self.as_pydict(py)
             }
 
@@ -208,7 +208,7 @@ builder_methods! {
 
 #[cfg(feature = "python")]
 impl AsPyDict for StreamHandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         use pyo3::types::PyDict;
         let d = PyDict::new(py);
         d.set_item("target", self.target.as_str())?;
@@ -347,7 +347,7 @@ mod tests {
     fn python_rejects_zero_flush_after_ms() {
         use pyo3::types::PyAnyMethods;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder = pyo3::Py::new(py, StreamHandlerBuilder::stderr())
                 .expect("Py::new must create a stream builder");
             let err = builder

@@ -129,7 +129,7 @@ pub enum ConfigError {
 }
 
 /// Builder for formatter definitions.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct FormatterBuilder {
     format: Option<String>,
@@ -166,7 +166,7 @@ impl FormatterBuilder {
 }
 
 /// Builder for logger configuration.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerConfigBuilder {
     level: Option<FemtoLevel>,
@@ -237,7 +237,7 @@ impl LoggerConfigBuilder {
 }
 
 /// Builder for the overall configuration.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
     version: u8,

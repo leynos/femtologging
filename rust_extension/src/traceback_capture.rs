@@ -35,7 +35,7 @@ pub fn capture_exception(
     exc_info: &Bound<'_, PyAny>,
 ) -> PyResult<Option<ExceptionPayload>> {
     // Handle exc_info=True: use sys.exc_info()
-    if let Ok(b) = exc_info.downcast::<PyBool>() {
+    if let Ok(b) = exc_info.cast::<PyBool>() {
         if b.is_true() {
             return capture_from_sys_exc_info(py);
         }
@@ -44,7 +44,7 @@ pub fn capture_exception(
     }
 
     // Handle 3-tuple (type, value, traceback)
-    if let Ok(tuple) = exc_info.downcast::<PyTuple>()
+    if let Ok(tuple) = exc_info.cast::<PyTuple>()
         && tuple.len() == 3
     {
         let exc_value = tuple.get_item(1)?;
@@ -90,7 +90,7 @@ pub fn capture_stack(py: Python<'_>) -> PyResult<StackTracePayload> {
 fn capture_from_sys_exc_info(py: Python<'_>) -> PyResult<Option<ExceptionPayload>> {
     let sys = py.import("sys")?;
     let exc_info = sys.call_method0("exc_info")?;
-    let tuple = exc_info.downcast::<PyTuple>()?;
+    let tuple = exc_info.cast::<PyTuple>()?;
 
     // exc_info returns (type, value, traceback), all None if no exception
     let exc_value = tuple.get_item(1)?;
@@ -275,7 +275,7 @@ fn format_exception_message(tb_exc: &Bound<'_, PyAny>) -> PyResult<String> {
         return Ok(String::new());
     }
     // _str can be a tuple or a string
-    if let Ok(tuple) = msg.downcast::<PyTuple>() {
+    if let Ok(tuple) = msg.cast::<PyTuple>() {
         // For exceptions with multiple args, _str is a tuple
         let parts: Vec<String> = tuple
             .iter()
@@ -300,7 +300,7 @@ fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    let args_tuple = match args.downcast::<PyTuple>() {
+    let args_tuple = match args.cast::<PyTuple>() {
         Ok(t) => t,
         Err(_) => return Ok(Vec::new()),
     };
@@ -326,7 +326,7 @@ fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     let mut result = Vec::with_capacity(notes_list.len());
     for item in notes_list.iter() {
         // Only include actual string objects; skip non-strings per ADR
-        if let Ok(s) = item.downcast::<PyString>()
+        if let Ok(s) = item.cast::<PyString>()
             && let Ok(extracted) = s.extract::<String>()
         {
             result.push(extracted);
@@ -364,7 +364,7 @@ fn extract_exception_group(
         _ => return Ok(Vec::new()),
     };
 
-    let exceptions_list = exceptions_attr.downcast::<PyList>()?;
+    let exceptions_list = exceptions_attr.cast::<PyList>()?;
     let mut result = Vec::with_capacity(exceptions_list.len());
 
     for nested_tb_exc in exceptions_list.iter() {

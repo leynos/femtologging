@@ -25,7 +25,7 @@ impl FemtoFilter for NameFilter {
 }
 
 /// Builder for [`NameFilter`].
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct NameFilterBuilder {
     prefix: Option<String>,
