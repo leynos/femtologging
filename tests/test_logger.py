@@ -498,18 +498,21 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
 
 
 def test_exc_info_no_deprecation_warning() -> None:
-    """Exception capture must not trigger DeprecationWarning.
+    """Exception capture must not trigger exc_type DeprecationWarning.
 
     Python 3.13 deprecated ``TracebackException.exc_type`` in favour of
     ``exc_type_qualname`` / ``exc_type_module``. Verify that our capture
-    path avoids the deprecated attribute and emits no warnings.
+    path avoids the deprecated attribute. We record all warnings and then
+    assert none match the specific ``exc_type`` deprecation, so unrelated
+    DeprecationWarnings from third-party code cannot cause false failures.
     """
+    import types
     import warnings
 
     logger = FemtoLogger("core")
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
 
         # exc_info=True with an active exception
         try:
@@ -535,8 +538,6 @@ def test_exc_info_no_deprecation_warning() -> None:
         assert "KeyError" in output
 
         # exc_info with a custom exception from a non-builtin module
-        import types
-
         mod = types.ModuleType("custom_mod")
         custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
         mod.CustomError = custom_cls  # type: ignore[attr-defined]
@@ -544,3 +545,8 @@ def test_exc_info_no_deprecation_warning() -> None:
         output = logger.log("ERROR", "caught", exc_info=exc)
         assert output is not None
         assert "custom_mod.CustomError" in output
+
+    exc_type_warnings = [w for w in caught if "exc_type" in str(w.message)]
+    assert exc_type_warnings == [], (
+        f"exc_type deprecation warnings emitted: {exc_type_warnings}"
+    )
