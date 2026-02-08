@@ -119,7 +119,8 @@ ______________________________________________________________________
 
 ## Search-and-replace recipe
 
-The following commands apply the required renames mechanically:
+The following commands apply the required renames mechanically. They assume GNU
+sed; on macOS replace `sed -i` with `sed -i ''`.
 
 ```bash
 # Method calls

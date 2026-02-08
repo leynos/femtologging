@@ -16,7 +16,7 @@ Feature: Handler builders
     When I set file capacity 0
     Then building the file handler fails
 
-  Scenario: invalid file handler flush interval
+  Scenario: invalid file handler flush after records
     Given a FileHandlerBuilder for path "test.log"
     Then setting flush after records 0 fails
 

@@ -396,6 +396,7 @@ class StreamHandlerBuilder(HandlerBuilder):
     @classmethod
     def stderr(cls) -> "StreamHandlerBuilder": ...
     def stream_target(self, target: str) -> "StreamHandlerBuilder": ... # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
+    def with_flush_after_ms(self, flush_ms: int) -> "StreamHandlerBuilder": ...
 
 # New
 class BackoffConfig:

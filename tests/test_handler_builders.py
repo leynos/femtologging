@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import typing as typ
 
 import pytest
@@ -116,6 +117,14 @@ def test_file_builder_zero_flush_after_records(tmp_path: Path) -> None:
         ValueError, match="flush_after_records must be greater than zero"
     ):
         builder.with_flush_after_records(0)
+
+
+def test_file_builder_flush_after_records_overflow(tmp_path: Path) -> None:
+    """Values larger than u64 max must raise OverflowError."""
+    too_large = sys.maxsize * 2 + 2
+    builder = FileHandlerBuilder(str(tmp_path / "overflow_flush_interval.log"))
+    with pytest.raises(OverflowError):
+        builder.with_flush_after_records(too_large)
 
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:

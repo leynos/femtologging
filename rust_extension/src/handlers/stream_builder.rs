@@ -144,11 +144,11 @@ builder_methods! {
                 rust_name: with_flush_after_ms,
                 py_fn: py_with_flush_after_ms,
                 py_name: "with_flush_after_ms",
-                py_text_signature: "(self, timeout_ms)",
-                rust_args: (timeout_ms: NonZeroU64),
-                py_args: (timeout_ms: u64),
+                py_text_signature: "(self, flush_ms)",
+                rust_args: (flush_ms: NonZeroU64),
+                py_args: (flush_ms: u64),
                 py_prelude: {
-                    let timeout_ms = NonZeroU64::new(timeout_ms).ok_or_else(|| {
+                    let flush_ms = NonZeroU64::new(flush_ms).ok_or_else(|| {
                         pyo3::exceptions::PyValueError::new_err(
                             "flush_after_ms must be greater than zero",
                         )
@@ -156,7 +156,7 @@ builder_methods! {
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.flush_after_ms = Some(timeout_ms);
+                    builder.common.flush_after_ms = Some(flush_ms);
                 }
             }
         }
