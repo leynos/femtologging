@@ -497,7 +497,9 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     assert handler.handle_calls == []
 
 
-def test_exc_info_no_deprecation_warning() -> None:
+def test_exc_info_no_deprecation_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Exception capture must not trigger exc_type DeprecationWarning.
 
     Python 3.13 deprecated ``TracebackException.exc_type`` in favour of
@@ -540,20 +542,15 @@ def test_exc_info_no_deprecation_warning() -> None:
 
         # exc_info with a custom exception from a non-builtin module
         mod = types.ModuleType("custom_mod")
-        sys.modules["custom_mod"] = mod
-        try:
-            custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
-            mod.CustomError = custom_cls  # type: ignore[attr-defined]
-            exc = custom_cls("module check")
-            output = logger.log("ERROR", "caught", exc_info=exc)
-            assert output is not None, (
-                "exc_info with custom module should produce output"
-            )
-            assert "custom_mod.CustomError" in output, (
-                f"expected 'custom_mod.CustomError' in output: {output}"
-            )
-        finally:
-            del sys.modules["custom_mod"]
+        monkeypatch.setitem(sys.modules, "custom_mod", mod)
+        custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
+        mod.CustomError = custom_cls  # type: ignore[attr-defined]
+        exc = custom_cls("module check")
+        output = logger.log("ERROR", "caught", exc_info=exc)
+        assert output is not None, "exc_info with custom module should produce output"
+        assert "custom_mod.CustomError" in output, (
+            f"expected 'custom_mod.CustomError' in output: {output}"
+        )
 
     exc_type_warnings = [w for w in caught if "exc_type" in str(w.message)]
     assert exc_type_warnings == [], (
