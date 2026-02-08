@@ -185,7 +185,12 @@ fn extract_exception_type_info(tb_exc: &Bound<'_, PyAny>) -> PyResult<(String, O
     // Python 3.13+: use exc_type_qualname / exc_type_module to avoid
     // the DeprecationWarning triggered by accessing exc_type.
     if let Ok(qualname) = tb_exc.getattr("exc_type_qualname") {
-        let type_name: String = qualname.extract()?;
+        let qualname_str: String = qualname.extract()?;
+        // Extract simple name from qualified name (e.g., "Outer.InnerError" → "InnerError")
+        let type_name = qualname_str
+            .rsplit_once('.')
+            .map(|(_, name)| name.to_string())
+            .unwrap_or(qualname_str);
         let module = normalize_module(get_optional_attr::<String>(tb_exc, "exc_type_module"));
         return Ok((type_name, module));
     }
