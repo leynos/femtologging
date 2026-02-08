@@ -99,7 +99,7 @@ impl StreamHandlerBuilder {
             self.common
                 .flush_after_ms
                 .map(NonZeroU64::get)
-                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
+                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_AFTER_MS),
         )
     }
 

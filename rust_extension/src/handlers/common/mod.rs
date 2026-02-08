@@ -86,7 +86,7 @@ pub struct CommonBuilder {
 }
 
 impl CommonBuilder {
-    pub(crate) const DEFAULT_FLUSH_TIMEOUT_MS: u64 = 1_000;
+    pub(crate) const DEFAULT_FLUSH_AFTER_MS: u64 = 1_000;
 
     /// Update the bounded channel capacity in place.
     ///
