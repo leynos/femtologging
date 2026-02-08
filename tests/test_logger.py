@@ -506,6 +506,7 @@ def test_exc_info_no_deprecation_warning() -> None:
     assert none match the specific ``exc_type`` deprecation, so unrelated
     DeprecationWarnings from third-party code cannot cause false failures.
     """
+    import sys
     import types
     import warnings
 
@@ -519,14 +520,14 @@ def test_exc_info_no_deprecation_warning() -> None:
             _raise_exception(ValueError, "deprecation check")
         except ValueError:
             output = logger.log("ERROR", "caught", exc_info=True)
-        assert output is not None
-        assert "ValueError" in output
+        assert output is not None, "exc_info=True should produce output"
+        assert "ValueError" in output, f"expected 'ValueError' in output: {output}"
 
         # exc_info with an exception instance directly
         exc = RuntimeError("instance check")
         output = logger.log("ERROR", "caught", exc_info=exc)
-        assert output is not None
-        assert "RuntimeError" in output
+        assert output is not None, "exc_info with instance should produce output"
+        assert "RuntimeError" in output, f"expected 'RuntimeError' in output: {output}"
 
         # exc_info with a 3-tuple
         try:
@@ -534,17 +535,25 @@ def test_exc_info_no_deprecation_warning() -> None:
         except KeyError as e:
             exc_info = (KeyError, e, e.__traceback__)
         output = logger.log("ERROR", "caught", exc_info=exc_info)
-        assert output is not None
-        assert "KeyError" in output
+        assert output is not None, "exc_info with 3-tuple should produce output"
+        assert "KeyError" in output, f"expected 'KeyError' in output: {output}"
 
         # exc_info with a custom exception from a non-builtin module
         mod = types.ModuleType("custom_mod")
-        custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
-        mod.CustomError = custom_cls  # type: ignore[attr-defined]
-        exc = custom_cls("module check")
-        output = logger.log("ERROR", "caught", exc_info=exc)
-        assert output is not None
-        assert "custom_mod.CustomError" in output
+        sys.modules["custom_mod"] = mod
+        try:
+            custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
+            mod.CustomError = custom_cls  # type: ignore[attr-defined]
+            exc = custom_cls("module check")
+            output = logger.log("ERROR", "caught", exc_info=exc)
+            assert output is not None, (
+                "exc_info with custom module should produce output"
+            )
+            assert "custom_mod.CustomError" in output, (
+                f"expected 'custom_mod.CustomError' in output: {output}"
+            )
+        finally:
+            del sys.modules["custom_mod"]
 
     exc_type_warnings = [w for w in caught if "exc_type" in str(w.message)]
     assert exc_type_warnings == [], (
