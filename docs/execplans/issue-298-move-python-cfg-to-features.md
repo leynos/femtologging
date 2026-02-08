@@ -7,8 +7,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 Status: COMPLETED
 
 Related:
-[Issue #298](https://github.com/leynos/femtologging/issues/298),
-[PR #286](https://github.com/leynos/femtologging/pull/286)
+[Issue #298](https://github.com/leynos/femtologging/issues/298), [PR #286](https://github.com/leynos/femtologging/pull/286)
 
 ## Purpose / Big Picture
 
