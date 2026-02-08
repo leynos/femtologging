@@ -111,7 +111,12 @@ your process exits.
   - `"block"` blocks the caller until the worker makes room.
   - `"timeout:N"` blocks for `N` milliseconds before giving up.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
-  Always close the handler when the application shuts down.
+  Always close the handler when the application shuts down. `close()` is
+  idempotent and safe to call multiple times; only the first call performs
+  shutdown work.
+- In Rust, `close()` requires exclusive mutable access (`&mut self`). If the
+  handler is shared across threads, synchronize close calls externally (for
+  example with a mutex) instead of invoking `close()` concurrently.
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Formatter identifiers other than `"default"` are not
@@ -130,6 +135,9 @@ your process exits.
   `backup_count`, and truncates the live file. If opening a fresh file fails
   the implementation falls back to appending to the existing file and logs the
   reason.
+- `handler.close()` follows the same contract as `FemtoFileHandler`: it is
+  idempotent, only the first call performs shutdown work, and concurrent close
+  calls must be synchronized by the caller.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 
