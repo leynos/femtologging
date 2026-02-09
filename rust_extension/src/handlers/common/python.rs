@@ -23,18 +23,16 @@ use pyo3::{
 /// Raises `ValueError` if the value is zero, or `OverflowError` if the
 /// value exceeds `usize::MAX` on the current platform (since `HandlerConfig`
 /// stores flush intervals as `usize` internally).
-pub(crate) fn py_flush_after_records_to_nonzero(
-    interval: u64,
-    field_name: &str,
-) -> PyResult<NonZeroU64> {
+pub(crate) fn py_flush_after_records_to_nonzero(interval: u64) -> PyResult<NonZeroU64> {
+    const FIELD: &str = "flush_after_records";
     if interval > usize::MAX as u64 {
         return Err(PyOverflowError::new_err(format!(
-            "{field_name} exceeds maximum value for this platform ({max})",
+            "{FIELD} exceeds maximum value for this platform ({max})",
             max = usize::MAX,
         )));
     }
     NonZeroU64::new(interval)
-        .ok_or_else(|| PyValueError::new_err(format!("{field_name} must be greater than zero")))
+        .ok_or_else(|| PyValueError::new_err(format!("{FIELD} must be greater than zero")))
 }
 
 use super::{CommonBuilder, FileLikeBuilderState, FormatterConfig};

@@ -94,10 +94,8 @@ builder_methods! {
                 rust_args: (interval: NonZeroU64),
                 py_args: (interval: u64),
                 py_prelude: {
-                    let interval = py_flush_after_records_to_nonzero(
-                        interval,
-                        "flush_after_records",
-                    )?;
+                    let interval =
+                        py_flush_after_records_to_nonzero(interval)?;
                 },
                 self_ident: builder,
                 body: {
