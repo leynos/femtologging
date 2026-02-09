@@ -1,6 +1,6 @@
 //! Builder for [`FemtoHTTPHandler`](crate::http_handler::FemtoHTTPHandler).
 //!
-//! Exposes URL configuration, authentication, timeouts, serialisation format,
+//! Exposes URL configuration, authentication, timeouts, serialization format,
 //! and exponential backoff parameters. The builder mirrors configuration
 //! concepts described in the design documents to keep the Python and Rust
 //! APIs aligned.
@@ -31,7 +31,7 @@ macro_rules! option_setter {
 }
 
 /// Builder for constructing [`FemtoHTTPHandler`] instances.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct HTTPHandlerBuilder {
     url: Option<String>,
@@ -127,13 +127,13 @@ impl HTTPHandlerBuilder {
         self
     }
 
-    /// Enable JSON serialisation format instead of URL-encoded.
+    /// Enable JSON serialization format instead of URL-encoded.
     pub fn with_json_format(mut self) -> Self {
         self.format = SerializationFormat::Json;
         self
     }
 
-    /// Limit serialised output to the specified fields.
+    /// Limit serialized output to the specified fields.
     pub fn with_record_fields(mut self, fields: Vec<String>) -> Self {
         self.record_fields = Some(fields);
         self

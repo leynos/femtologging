@@ -172,7 +172,7 @@ impl SocketHandlerBuilder {
     }
 
     #[pyo3(name = "as_dict")]
-    fn py_as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn py_as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         self.extend_dict(&dict)?;
         Ok(dict.into())
@@ -185,7 +185,7 @@ impl SocketHandlerBuilder {
 }
 
 impl AsPyDict for SocketHandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let d = PyDict::new(py);
         self.extend_dict(&d)?;
         dict_into_py(d, py)
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn backoff_config_new_defaults_when_config_is_none() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let overrides = BackoffOverrides::py_new(None).expect("construct default overrides");
             let expected = BackoffOverrides::default();
             assert_backoff_overrides(&overrides, &expected);
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn backoff_config_new_accepts_missing_keys() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let d = PyDict::new(py);
             d.set_item("base_ms", 50_u64)
                 .expect("set_item should succeed in test");
@@ -304,7 +304,7 @@ mod tests {
     #[case::unknown_key(BackoffErrorKind::UnknownKey)]
     #[case::invalid_type(BackoffErrorKind::InvalidType)]
     fn backoff_config_new_rejects_errors(#[case] kind: BackoffErrorKind) {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let d = PyDict::new(py);
             kind.setup_dict(&d);
             let err = BackoffOverrides::py_new(Some(d))
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn backoff_config_new_treats_explicit_none_as_missing() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let d = PyDict::new(py);
             d.set_item("base_ms", py.None())
                 .expect("set_item should succeed in test");
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn with_backoff_stores_overrides_on_builder() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder = pyo3::Py::new(py, SocketHandlerBuilder::new())
                 .expect("Py::new should succeed in test");
             let expected =
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn with_backoff_from_pydict_round_trips_into_builder_dict() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let d = PyDict::new(py);
             d.set_item("base_ms", 5_u64)
                 .expect("set_item should succeed in test");

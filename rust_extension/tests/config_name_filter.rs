@@ -12,7 +12,7 @@ use serial_test::serial;
 #[rstest]
 #[serial]
 fn name_filter_blocks_non_matching_records() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         manager::reset_manager();
         let filter = NameFilterBuilder::new().with_prefix("allowed");
         let builder = ConfigBuilder::new()

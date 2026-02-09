@@ -12,7 +12,7 @@ use crate::traceback_capture::{capture_exception, capture_stack};
 
 #[rstest]
 fn capture_exception_with_true_no_active_exception() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let true_val = PyBool::new(py, true);
         let result = capture_exception(py, true_val.as_any())
             .expect("capture_exception should not fail with True");
@@ -22,7 +22,7 @@ fn capture_exception_with_true_no_active_exception() {
 
 #[rstest]
 fn capture_exception_with_false_returns_none() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let false_val = PyBool::new(py, false);
         let result = capture_exception(py, false_val.as_any())
             .expect("capture_exception should not fail with False");
@@ -32,7 +32,7 @@ fn capture_exception_with_false_returns_none() {
 
 #[rstest]
 fn capture_exception_with_instance() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Create an exception instance
         let exc = py
             .import("builtins")
@@ -55,7 +55,7 @@ fn capture_exception_with_instance() {
 
 #[rstest]
 fn capture_exception_with_tuple() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Create a 3-tuple (type, value, traceback)
         let exc_type = py
             .import("builtins")
@@ -84,7 +84,7 @@ fn capture_exception_with_tuple() {
 
 #[rstest]
 fn capture_exception_with_none_value_tuple() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // 3-tuple with None value means no exception
         let none = py.None();
         let tuple = PyTuple::new(py, &[none.bind(py), none.bind(py), none.bind(py)])
@@ -98,7 +98,7 @@ fn capture_exception_with_none_value_tuple() {
 
 #[rstest]
 fn capture_exception_tuple_preserves_explicit_traceback() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Raise an exception to get a real traceback, then clear __traceback__
         // but pass the traceback explicitly in the tuple - frames should be preserved
         let code = c"
@@ -177,7 +177,7 @@ except ValueError as e:
 
 #[rstest]
 fn capture_exception_invalid_type_raises_error() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let code = c"42";
         let invalid = py
             .eval(code, None, None)
@@ -189,7 +189,7 @@ fn capture_exception_invalid_type_raises_error() {
 
 #[rstest]
 fn capture_exception_with_chained_cause() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let code =
             c"try:\n    raise IOError('read failed')\nexcept IOError as e:\n    raise RuntimeError('operation failed') from e\n";
 
@@ -216,7 +216,7 @@ fn capture_exception_with_chained_cause() {
 
 #[rstest]
 fn capture_stack_returns_frames() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let payload = capture_stack(py).expect("capture_stack should succeed");
         assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
         assert!(!payload.frames.is_empty(), "Stack should have frames");
@@ -230,7 +230,7 @@ fn capture_stack_returns_frames() {
 
 #[rstest]
 fn capture_exception_with_notes() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         // Create an exception with notes (Python 3.11+)
         let code = c"e = ValueError('test'); e.add_note('Note 1'); e.add_note('Note 2')";
         let globals = PyDict::new(py);
@@ -253,7 +253,7 @@ fn capture_exception_with_notes() {
 
 #[rstest]
 fn capture_exception_args_repr() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exc = py
             .import("builtins")
             .expect("builtins module should exist")
@@ -275,7 +275,7 @@ fn capture_exception_args_repr() {
 #[rstest]
 fn capture_exception_builtin_has_no_module() {
     // Built-in exceptions should have module=None because "builtins" is filtered.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exc = py
             .import("builtins")
             .expect("builtins module should exist")
@@ -302,7 +302,7 @@ fn capture_exception_main_module_preserves_module() {
     // Exceptions from __main__ should retain their module value. Only
     // "builtins" is filtered; "__main__" is meaningful metadata for
     // user-defined exceptions in scripts and entry points.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let code = c"exc = type('MainError', (Exception,), {'__module__': '__main__'})('test')";
         let globals = PyDict::new(py);
         py.run(code, Some(&globals), None)
@@ -329,7 +329,7 @@ fn capture_exception_main_module_preserves_module() {
 #[rstest]
 fn capture_exception_custom_module_has_module() {
     // Exceptions from non-builtin modules should include the module name.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let code = c"
 import types, sys
 

@@ -64,7 +64,7 @@ fn write_overflow_policy_fields(d: &Bound<'_, PyDict>, policy: &OverflowPolicy) 
 
 /// Python wrapper for [`OverflowPolicy`] providing factory methods and Python
 /// protocol implementations.
-#[pyclass(name = "OverflowPolicy")]
+#[pyclass(from_py_object, name = "OverflowPolicy")]
 #[derive(Clone)]
 pub struct PyOverflowPolicy {
     pub(crate) inner: OverflowPolicy,
@@ -130,7 +130,7 @@ impl CommonBuilder {
     /// Set the formatter from a Python object (string identifier or callable).
     pub fn set_formatter_from_py(&mut self, formatter: &Bound<'_, PyAny>) -> PyResult<()> {
         // Try string identifier first
-        if let Ok(py_str) = formatter.downcast::<PyString>() {
+        if let Ok(py_str) = formatter.cast::<PyString>() {
             self.set_formatter(py_str.to_str()?.to_owned());
             return Ok(());
         }

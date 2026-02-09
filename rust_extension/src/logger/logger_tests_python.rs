@@ -101,7 +101,7 @@ fn should_capture_exc_info_cases(
     #[case] expected: ExpectedCapture,
     #[case] description: &str,
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let result = match input {
             ExcInfoInput::True => {
                 let true_val = PyBool::new(py, true);
@@ -151,7 +151,7 @@ fn should_capture_exc_info_cases(
 
 #[test]
 fn py_log_basic_message() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
             .py_log(py, FemtoLevel::Info, "hello", None, None)
@@ -162,7 +162,7 @@ fn py_log_basic_message() {
 
 #[test]
 fn py_log_filtered_by_level() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         logger.set_level(FemtoLevel::Error);
         let result = logger
@@ -206,7 +206,7 @@ fn py_log_exc_info_variation_cases(
     #[case] stack_info: Option<bool>,
     #[case] expected: &str,
 ) {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let exc_info: Option<pyo3::Bound<'_, pyo3::PyAny>> = match &input {
             PyLogExcInfoInput::BoolFalse => Some(PyBool::new(py, false).to_owned().into_any()),
@@ -238,7 +238,7 @@ fn py_log_exc_info_variation_cases(
 
 #[test]
 fn py_log_with_stack_info_false() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
             .py_log(py, FemtoLevel::Info, "no stack", None, Some(false))
@@ -249,7 +249,7 @@ fn py_log_with_stack_info_false() {
 
 #[test]
 fn py_log_with_stack_info_true() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
             .py_log(py, FemtoLevel::Info, "with stack", None, Some(true))

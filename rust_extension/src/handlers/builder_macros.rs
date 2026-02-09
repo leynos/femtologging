@@ -603,7 +603,7 @@ mod tests {
     #[cfg(feature = "python")]
     use pyo3::prelude::*;
 
-    #[cfg_attr(feature = "python", pyo3::pyclass)]
+    #[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
     #[derive(Clone, Debug, Default)]
     struct DummyBuilder {
         value: usize,
@@ -686,7 +686,7 @@ mod tests {
     fn python_methods_are_callable() {
         use pyo3::types::PyAnyMethods;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let obj = pyo3::Py::new(py, DummyBuilder::default())
                 .expect("Py::new must create DummyBuilder");
             let any = obj.bind(py).as_any();
@@ -704,7 +704,7 @@ mod tests {
     #[cfg(feature = "python")]
     #[test]
     fn python_text_signatures_match_arguments() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let builder_type = py.get_type::<DummyBuilder>();
             let value_sig: String = builder_type
                 .getattr("with_value")
@@ -735,7 +735,7 @@ mod tests {
         });
     }
 
-    #[cfg_attr(feature = "python", pyo3::pyclass)]
+    #[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
     #[derive(Clone, Debug, Default)]
     struct CapacityDummy {
         capacity: Option<usize>,
@@ -783,7 +783,7 @@ mod tests {
     fn capacity_clause_generates_python_method() {
         use pyo3::types::PyAnyMethods;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let obj = pyo3::Py::new(py, CapacityDummy::default())
                 .expect("Py::new must create CapacityDummy");
             let any = obj.bind(py).as_any();

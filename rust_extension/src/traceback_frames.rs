@@ -20,7 +20,7 @@ use crate::exception_schema::StackFrame;
 /// - The attribute exists but cannot be extracted to type `T`
 pub(crate) fn get_optional_attr<'py, T>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<T>
 where
-    T: FromPyObject<'py>,
+    T: for<'a> FromPyObject<'a, 'py>,
 {
     obj.getattr(attr)
         .ok()
@@ -56,7 +56,7 @@ pub(crate) fn extract_frames_from_tb_exception(
 pub(crate) fn extract_frames_from_stack_summary(
     stack_summary: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<StackFrame>> {
-    let list = stack_summary.downcast::<PyList>()?;
+    let list = stack_summary.cast::<PyList>()?;
     let mut frames = Vec::with_capacity(list.len());
 
     for frame_summary in list.iter() {
@@ -127,7 +127,7 @@ pub(crate) fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<S
     if locals_attr.is_none() {
         return None;
     }
-    let dict = locals_attr.downcast::<PyDict>().ok()?;
+    let dict = locals_attr.cast::<PyDict>().ok()?;
     let total_entries = dict.len();
     let mut map = BTreeMap::new();
     let mut skip_counts = LocalsSkipCounts::default();

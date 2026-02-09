@@ -96,7 +96,7 @@ impl log::Log for FemtoLogAdapter {
             return;
         }
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let Some((logger_name, logger)) = resolve_logger(py, record.target()) else {
                 return;
             };
@@ -125,7 +125,7 @@ impl log::Log for FemtoLogAdapter {
     }
 
     fn flush(&self) {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             manager::flush_all_handlers(py);
         });
     }
@@ -282,7 +282,7 @@ mod tests {
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
             logger.borrow(py).add_handler(handler.clone());
@@ -325,7 +325,7 @@ mod tests {
         let logger_name = unique_logger_name;
         let target = logger_name.replace('.', "::");
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
             logger.borrow(py).add_handler(handler.clone());
@@ -354,7 +354,7 @@ mod tests {
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
             logger.borrow(py).add_handler(handler.clone());

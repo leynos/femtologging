@@ -13,7 +13,7 @@ use serial_test::serial;
 #[rstest]
 #[serial]
 fn level_filter_blocks_records() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         manager::reset_manager();
         let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Info);
         let logger_cfg = LoggerConfigBuilder::new().with_filters(["f"]);

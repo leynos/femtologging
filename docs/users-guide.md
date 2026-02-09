@@ -434,6 +434,21 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - `reset_manager()` is a destructive operation intended for tests. Do not call
   it while other threads might still hold references to existing loggers.
 
+## Journald and OpenTelemetry roadmap notes
+
+- Journald support is planned as a Linux/systemd-specific integration and will
+  be unavailable on Windows and macOS. For non-systemd Unix systems, use
+  `FemtoStreamHandler`, `FemtoFileHandler`, or `FemtoSocketHandler` to ship
+  records to syslog-compatible or other central collectors.
+- Sending logs to Journald or OpenTelemetry is always an explicit action.
+  Enabling the relevant feature/build option alone is not enough; you must
+  configure the matching handler/layer in your application.
+- Treat log forwarding as sensitive-data egress. Scrub message text and any
+  contextual keys before sending records to external observability systems.
+- Before the structured logging work in Phase 3 is complete, the planned
+  Journald/OpenTelemetry path is limited to message text and basic metadata
+  (logger name and level), not rich key-value fields or trace correlation.
+
 Keep an eye on the roadmap in `docs/` for upcoming additions (formatter
 resolution, richer dictConfig support, timed rotation) and update your
 configuration once those features land. For now, the patterns above reflect the

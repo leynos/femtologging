@@ -17,10 +17,10 @@ use std::collections::BTreeMap;
 /// Convert a configuration builder into a Python dictionary.
 pub trait AsPyDict {
     /// Return the builder's state as a Python dictionary.
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject>;
+    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>>;
 }
 
-/// Convert a [`PyDict`] bound to the current GIL into a [`PyObject`].
+/// Convert a [`PyDict`] bound to the current GIL into a [`Py<PyAny>`].
 ///
 /// # Example
 ///
@@ -35,7 +35,7 @@ pub trait AsPyDict {
 ///     Ok(())
 /// }
 /// ```
-pub(crate) fn dict_into_py(dict: Bound<'_, PyDict>, py: Python<'_>) -> PyResult<PyObject> {
+pub(crate) fn dict_into_py(dict: Bound<'_, PyDict>, py: Python<'_>) -> PyResult<Py<PyAny>> {
     dict.into_py_any(py)
 }
 
@@ -128,7 +128,7 @@ where
 macro_rules! impl_as_pydict {
     ($ty:ty { $( $setter:ident $field:ident => $key:expr ),* $(,)? }) => {
         impl AsPyDict for $ty {
-            fn as_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+            fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
                 let d = pyo3::types::PyDict::new(py);
                 $(crate::macros::$setter(py, &d, $key, &self.$field)?;)*
                 crate::macros::dict_into_py(d, py)
@@ -161,7 +161,7 @@ macro_rules! py_setters {
 
             $($($extra)*)*
 
-            fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+            fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
                 self.as_pydict(py)
             }
         }

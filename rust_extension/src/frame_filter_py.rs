@@ -31,7 +31,7 @@ struct FilterOptions<'a> {
 /// of silently dropping the value.
 fn extract_optional<'py, T>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<T>>
 where
-    T: pyo3::FromPyObject<'py>,
+    T: for<'a> pyo3::FromPyObject<'a, 'py>,
 {
     match dict.get_item(key)? {
         Some(v) if v.is_none() => Ok(None),
@@ -115,13 +115,13 @@ fn extract_frames(payload: &Bound<'_, PyDict>) -> PyResult<Vec<StackFrame>> {
     };
 
     let list = frames_list
-        .downcast::<PyList>()
+        .cast::<PyList>()
         .map_err(|_| PyTypeError::new_err("'frames' must be a list"))?;
 
     let mut frames = Vec::with_capacity(list.len());
     for item in list.iter() {
         let dict = item
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyTypeError::new_err("each frame must be a dict"))?;
         frames.push(dict_to_stack_frame(dict)?);
     }
@@ -174,7 +174,7 @@ fn filter_stack_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let frames = extract_frames(payload)?;
     let had_frames_key = payload.contains("frames")?;
     let filtered = apply_filters(frames, opts);
@@ -206,7 +206,7 @@ fn filter_exception_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let frames = extract_frames(payload)?;
     let had_frames_key = payload.contains("frames")?;
     let filtered = apply_filters(frames, opts);
@@ -229,24 +229,32 @@ fn filter_exception_payload(
 
     // Recursively filter cause
     if let Some(cause) = payload.get_item("cause")? {
-        let cause_dict = cause.downcast::<PyDict>()?;
+        let cause_dict = cause
+            .cast::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("'cause' must be a dict"))?;
         let filtered_cause = filter_exception_payload(py, cause_dict, opts)?;
         result.set_item("cause", filtered_cause)?;
     }
 
     // Recursively filter context
     if let Some(context) = payload.get_item("context")? {
-        let context_dict = context.downcast::<PyDict>()?;
+        let context_dict = context
+            .cast::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("'context' must be a dict"))?;
         let filtered_context = filter_exception_payload(py, context_dict, opts)?;
         result.set_item("context", filtered_context)?;
     }
 
     // Recursively filter exception group members
     if let Some(exceptions) = payload.get_item("exceptions")? {
-        let exceptions_list = exceptions.downcast::<PyList>()?;
+        let exceptions_list = exceptions
+            .cast::<PyList>()
+            .map_err(|_| PyTypeError::new_err("'exceptions' must be a list"))?;
         let filtered_list = PyList::empty(py);
         for exc in exceptions_list.iter() {
-            let exc_dict = exc.downcast::<PyDict>()?;
+            let exc_dict = exc
+                .cast::<PyDict>()
+                .map_err(|_| PyTypeError::new_err("each exception must be a dict"))?;
             let filtered_exc = filter_exception_payload(py, exc_dict, opts)?;
             filtered_list.append(filtered_exc)?;
         }
@@ -306,7 +314,7 @@ pub fn filter_frames(
     exclude_functions: Option<Vec<String>>,
     max_depth: Option<usize>,
     exclude_logging: bool,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let opts = FilterOptions {
         exclude_filenames: exclude_filenames.as_deref(),
         exclude_functions: exclude_functions.as_deref(),

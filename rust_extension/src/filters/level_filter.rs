@@ -19,7 +19,7 @@ impl FemtoFilter for LevelFilter {
 }
 
 /// Builder for [`LevelFilter`].
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LevelFilterBuilder {
     max_level: Option<FemtoLevel>,

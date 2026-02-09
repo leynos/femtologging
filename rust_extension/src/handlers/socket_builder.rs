@@ -44,7 +44,7 @@ struct TlsConfig {
 ///
 /// Refer to the module-level documentation and the design documents for the
 /// full semantics of each backoff phase.
-#[cfg_attr(feature = "python", pyclass(name = "BackoffConfig"))]
+#[cfg_attr(feature = "python", pyclass(from_py_object, name = "BackoffConfig"))]
 #[derive(Clone, Debug, Default)]
 pub struct BackoffOverrides {
     base_ms: Option<u64>,
@@ -153,7 +153,7 @@ macro_rules! option_setter {
 }
 
 /// Builder for constructing [`FemtoSocketHandler`] instances.
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct SocketHandlerBuilder {
     capacity: Option<usize>,

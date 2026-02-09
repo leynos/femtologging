@@ -11,12 +11,63 @@
 //! and [`capture_stack`] for `stack_info=True` support.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyTuple};
 
 use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackTracePayload};
-use crate::traceback_frames::{
-    extract_frames_from_stack_summary, extract_frames_from_tb_exception, get_optional_attr,
-};
+use crate::traceback_frames::extract_frames_from_stack_summary;
+
+mod traceback_payload;
+use self::traceback_payload::build_payload_from_traceback_exception;
+
+enum ExcInfoKind {
+    BoolTrue,
+    BoolFalse,
+    Tuple(Py<PyTuple>),
+    Exception,
+}
+
+fn is_py_bool_true(exc_info: &Bound<'_, PyAny>) -> bool {
+    exc_info
+        .cast::<PyBool>()
+        .is_ok_and(|bool_value| bool_value.is_true())
+}
+
+fn is_py_bool_false(exc_info: &Bound<'_, PyAny>) -> bool {
+    exc_info
+        .cast::<PyBool>()
+        .is_ok_and(|bool_value| !bool_value.is_true())
+}
+
+fn extract_exc_tuple(exc_info: &Bound<'_, PyAny>) -> Option<Py<PyTuple>> {
+    let tuple = exc_info.cast::<PyTuple>().ok()?;
+    if tuple.len() == 3 {
+        Some(tuple.clone().unbind())
+    } else {
+        None
+    }
+}
+
+fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<ExcInfoKind> {
+    if is_py_bool_true(exc_info) {
+        return Ok(ExcInfoKind::BoolTrue);
+    }
+
+    if is_py_bool_false(exc_info) {
+        return Ok(ExcInfoKind::BoolFalse);
+    }
+
+    if let Some(tuple) = extract_exc_tuple(exc_info) {
+        return Ok(ExcInfoKind::Tuple(tuple));
+    }
+
+    if is_exception_instance(py, exc_info)? {
+        return Ok(ExcInfoKind::Exception);
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "exc_info must be True, an exception instance, or a 3-tuple (type, value, traceback)",
+    ))
+}
 
 /// Capture exception information from Python `exc_info` argument.
 ///
@@ -34,35 +85,12 @@ pub fn capture_exception(
     py: Python<'_>,
     exc_info: &Bound<'_, PyAny>,
 ) -> PyResult<Option<ExceptionPayload>> {
-    // Handle exc_info=True: use sys.exc_info()
-    if let Ok(b) = exc_info.downcast::<PyBool>() {
-        if b.is_true() {
-            return capture_from_sys_exc_info(py);
-        }
-        // exc_info=False means no exception
-        return Ok(None);
+    match classify_exc_info(py, exc_info)? {
+        ExcInfoKind::BoolTrue => capture_from_sys_exc_info(py),
+        ExcInfoKind::BoolFalse => Ok(None),
+        ExcInfoKind::Tuple(tuple) => capture_from_exception_tuple(py, tuple.bind(py)),
+        ExcInfoKind::Exception => capture_from_exception_instance(py, exc_info),
     }
-
-    // Handle 3-tuple (type, value, traceback)
-    if let Ok(tuple) = exc_info.downcast::<PyTuple>()
-        && tuple.len() == 3
-    {
-        let exc_value = tuple.get_item(1)?;
-        if exc_value.is_none() {
-            return Ok(None);
-        }
-        return capture_from_exception_tuple(py, tuple);
-    }
-
-    // Handle exception instance directly
-    if is_exception_instance(py, exc_info)? {
-        return capture_from_exception_instance(py, exc_info);
-    }
-
-    // Invalid exc_info format
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "exc_info must be True, an exception instance, or a 3-tuple (type, value, traceback)",
-    ))
 }
 
 /// Capture the current call stack for `stack_info=True`.
@@ -90,7 +118,7 @@ pub fn capture_stack(py: Python<'_>) -> PyResult<StackTracePayload> {
 fn capture_from_sys_exc_info(py: Python<'_>) -> PyResult<Option<ExceptionPayload>> {
     let sys = py.import("sys")?;
     let exc_info = sys.call_method0("exc_info")?;
-    let tuple = exc_info.downcast::<PyTuple>()?;
+    let tuple = exc_info.cast::<PyTuple>()?;
 
     // exc_info returns (type, value, traceback), all None if no exception
     let exc_value = tuple.get_item(1)?;
@@ -162,219 +190,6 @@ fn build_exception_payload(
     };
 
     build_payload_from_traceback_exception(py, &tb_exc, Some(exc_value))
-}
-
-/// Normalize the module value for an exception type.
-///
-/// Built-in exceptions report `"builtins"` as their module, which is not
-/// useful for display or grouping. This function returns `None` for that
-/// sentinel value and passes all other module strings through unchanged.
-fn normalize_module(raw: Option<String>) -> Option<String> {
-    raw.filter(|m| m != "builtins")
-}
-
-/// Extract exception type name and module from a `TracebackException`.
-///
-/// Python 3.13 deprecated the `exc_type` attribute and replaced it with
-/// `exc_type_qualname` and `exc_type_module`. This function uses the new
-/// attributes when available and falls back to `exc_type` on older versions.
-///
-/// Returns `(type_name, module)` where `module` is `None` for built-in
-/// exceptions.
-fn extract_exception_type_info(tb_exc: &Bound<'_, PyAny>) -> PyResult<(String, Option<String>)> {
-    // Python 3.13+: use exc_type_qualname / exc_type_module to avoid
-    // the DeprecationWarning triggered by accessing exc_type.
-    if let Ok(qualname) = tb_exc.getattr("exc_type_qualname") {
-        let qualname_str: String = qualname.extract()?;
-        // Extract simple name from qualified name (e.g., "Outer.InnerError" → "InnerError")
-        let type_name = qualname_str
-            .rsplit_once('.')
-            .map(|(_, name)| name.to_string())
-            .unwrap_or(qualname_str);
-        let module = normalize_module(get_optional_attr::<String>(tb_exc, "exc_type_module"));
-        return Ok((type_name, module));
-    }
-
-    // Python ≤3.12 fallback: read the class object directly.
-    let exc_type = tb_exc.getattr("exc_type")?;
-    let type_name: String = exc_type.getattr("__name__")?.extract()?;
-    let module = normalize_module(
-        exc_type
-            .getattr("__module__")
-            .ok()
-            .and_then(|m| m.extract().ok()),
-    );
-    Ok((type_name, module))
-}
-
-/// Build payload from a `TracebackException` object.
-///
-/// The `exc_value` parameter is the original exception instance. It's optional
-/// because for chained exceptions we may not have direct access to the exception
-/// instance (only the TracebackException).
-fn build_payload_from_traceback_exception(
-    py: Python<'_>,
-    tb_exc: &Bound<'_, PyAny>,
-    exc_value: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<ExceptionPayload>> {
-    let (type_name, module) = extract_exception_type_info(tb_exc)?;
-
-    // Extract message
-    let message = format_exception_message(tb_exc)?;
-
-    // Extract args_repr from original exception
-    let args_repr = if let Some(exc) = exc_value {
-        extract_args_repr_from_exc(exc)?
-    } else {
-        Vec::new()
-    };
-
-    // Extract notes from original exception (__notes__ attribute, Python 3.11+)
-    let notes = if let Some(exc) = exc_value {
-        extract_notes_from_exc(exc)?
-    } else {
-        Vec::new()
-    };
-
-    // Extract stack frames
-    let frames = extract_frames_from_tb_exception(tb_exc)?;
-
-    // Handle exception chaining
-    let cause = extract_chained_exception(py, tb_exc, "__cause__")?;
-    let context = extract_chained_exception(py, tb_exc, "__context__")?;
-
-    // Check suppress_context
-    let suppress_context: bool = tb_exc
-        .getattr("__suppress_context__")
-        .and_then(|v| v.extract())
-        .unwrap_or(false);
-
-    // Handle ExceptionGroup (Python 3.11+)
-    let exceptions = extract_exception_group(py, tb_exc)?;
-
-    Ok(Some(ExceptionPayload {
-        schema_version: EXCEPTION_SCHEMA_VERSION,
-        type_name,
-        module,
-        message,
-        args_repr,
-        notes,
-        frames,
-        cause: cause.map(Box::new),
-        context: context.map(Box::new),
-        suppress_context,
-        exceptions,
-    }))
-}
-
-/// Format the exception message from a TracebackException.
-fn format_exception_message(tb_exc: &Bound<'_, PyAny>) -> PyResult<String> {
-    // _str is the formatted exception message
-    let msg = tb_exc.getattr("_str")?;
-    if msg.is_none() {
-        return Ok(String::new());
-    }
-    // _str can be a tuple or a string
-    if let Ok(tuple) = msg.downcast::<PyTuple>() {
-        // For exceptions with multiple args, _str is a tuple
-        let parts: Vec<String> = tuple
-            .iter()
-            .filter_map(|item| item.str().ok())
-            .filter_map(|s| s.extract().ok())
-            .collect();
-        return Ok(parts.join(", "));
-    }
-    msg.str()?.extract()
-}
-
-/// Extract args as string representations from the exception instance.
-///
-/// Per the ADR "partial extraction of collections" rule, individual elements
-/// whose `repr()` fails are skipped. Valid representations are preserved.
-fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
-    let args = match exc.getattr("args") {
-        Ok(a) => a,
-        Err(_) => return Ok(Vec::new()),
-    };
-    if args.is_none() {
-        return Ok(Vec::new());
-    }
-
-    let args_tuple = match args.downcast::<PyTuple>() {
-        Ok(t) => t,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let mut result = Vec::with_capacity(args_tuple.len());
-    for arg in args_tuple.iter() {
-        // Skip elements whose repr() fails per ADR partial extraction rule
-        if let Ok(repr_str) = arg.repr().and_then(|r| r.extract::<String>()) {
-            result.push(repr_str);
-        }
-    }
-    Ok(result)
-}
-
-/// Extract exception notes from the exception instance (__notes__).
-///
-/// Per the ADR "partial extraction of collections" rule, individual elements
-/// that are not strings are skipped. Only actual Python `str` objects are
-/// included in the result; non-strings are silently ignored.
-fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
-    let Some(notes_list): Option<Bound<'_, PyList>> = get_optional_attr(exc, "__notes__") else {
-        return Ok(Vec::new());
-    };
-    let mut result = Vec::with_capacity(notes_list.len());
-    for item in notes_list.iter() {
-        // Only include actual string objects; skip non-strings per ADR
-        if let Ok(s) = item.downcast::<PyString>()
-            && let Ok(extracted) = s.extract::<String>()
-        {
-            result.push(extracted);
-        }
-    }
-    Ok(result)
-}
-
-/// Extract a chained exception (__cause__ or __context__).
-fn extract_chained_exception(
-    py: Python<'_>,
-    tb_exc: &Bound<'_, PyAny>,
-    attr_name: &str,
-) -> PyResult<Option<ExceptionPayload>> {
-    let chained = match tb_exc.getattr(attr_name) {
-        Ok(c) if !c.is_none() => c,
-        _ => return Ok(None),
-    };
-
-    // chained is itself a TracebackException
-    // We don't have direct access to the chained exception instance here
-    build_payload_from_traceback_exception(py, &chained, None)?
-        .map(Ok)
-        .transpose()
-}
-
-/// Extract nested exceptions from an ExceptionGroup.
-fn extract_exception_group(
-    py: Python<'_>,
-    tb_exc: &Bound<'_, PyAny>,
-) -> PyResult<Vec<ExceptionPayload>> {
-    // Check if this is an ExceptionGroup by looking for 'exceptions' attribute
-    let exceptions_attr = match tb_exc.getattr("exceptions") {
-        Ok(e) if !e.is_none() => e,
-        _ => return Ok(Vec::new()),
-    };
-
-    let exceptions_list = exceptions_attr.downcast::<PyList>()?;
-    let mut result = Vec::with_capacity(exceptions_list.len());
-
-    for nested_tb_exc in exceptions_list.iter() {
-        // We don't have direct access to the nested exception instances here
-        if let Some(payload) = build_payload_from_traceback_exception(py, &nested_tb_exc, None)? {
-            result.push(payload);
-        }
-    }
-
-    Ok(result)
 }
 
 /// Check if an object is an exception instance.

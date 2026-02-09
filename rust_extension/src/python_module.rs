@@ -103,16 +103,26 @@ mod tests {
         Python,
         types::{PyModule, PyType},
     };
+    use rstest::{fixture, rstest};
 
-    #[test]
-    fn registers_bindings() {
-        // The module should expose builder types and the build error when the
-        // `python` feature is enabled.
-        Python::with_gil(|py| {
-            let module = PyModule::new(py, "test").expect("failed to create test module");
-            add_python_bindings(&module).expect("failed to add python bindings");
-            for name in [
+    type RegisterFn = for<'py> fn(&Bound<'py, PyModule>) -> PyResult<()>;
+
+    #[derive(Clone, Copy)]
+    struct ModuleRegistrationCase {
+        module_name: &'static str,
+        register_fn: RegisterFn,
+        type_names: &'static [&'static str],
+        expected_rotation_validation_msg: Option<&'static str>,
+    }
+
+    #[fixture]
+    fn bindings_registration_case() -> ModuleRegistrationCase {
+        ModuleRegistrationCase {
+            module_name: "test",
+            register_fn: add_python_bindings,
+            type_names: &[
                 "StreamHandlerBuilder",
+                "SocketHandlerBuilder",
                 "OverflowPolicy",
                 "FileHandlerBuilder",
                 "HTTPHandlerBuilder",
@@ -123,35 +133,49 @@ mod tests {
                 "ConfigBuilder",
                 "LoggerConfigBuilder",
                 "FormatterBuilder",
-            ] {
-                // Ensure each registration exists and is a Python type.
-                let attr = module
-                    .getattr(name)
-                    .expect("expected attribute not found on module");
-                attr.downcast::<PyType>()
-                    .expect("attribute is not a Python type");
-            }
-        });
+            ],
+            expected_rotation_validation_msg: None,
+        }
     }
 
-    #[test]
-    fn module_registers_rotating_classes() {
-        Python::with_gil(|py| {
+    #[fixture]
+    fn rotating_registration_case() -> ModuleRegistrationCase {
+        ModuleRegistrationCase {
+            module_name: "_femtologging_rs",
+            register_fn: register_python_classes,
+            type_names: &[
+                "FemtoSocketHandler",
+                "FemtoHTTPHandler",
+                "FemtoRotatingFileHandler",
+                "HandlerOptions",
+                "BackoffConfig",
+            ],
+            expected_rotation_validation_msg: Some(ROTATION_VALIDATION_MSG),
+        }
+    }
+
+    #[rstest]
+    #[case::bindings(bindings_registration_case())]
+    #[case::rotating(rotating_registration_case())]
+    fn module_registers_expected_bindings(#[case] case_data: ModuleRegistrationCase) {
+        Python::attach(|py| {
             let module =
-                PyModule::new(py, "_femtologging_rs").expect("failed to create test module");
-            register_python_classes(&module).expect("failed to register python classes");
-            for name in ["FemtoRotatingFileHandler", "HandlerOptions"] {
+                PyModule::new(py, case_data.module_name).expect("failed to create test module");
+            (case_data.register_fn)(&module).expect("failed to register python bindings");
+            for name in case_data.type_names {
                 let attr = module
                     .getattr(name)
                     .expect("expected attribute not found on module");
-                attr.downcast::<PyType>()
+                attr.cast::<PyType>()
                     .expect("attribute is not a Python type");
             }
-            let message = module
-                .getattr("ROTATION_VALIDATION_MSG")
-                .expect("ROTATION_VALIDATION_MSG not found");
-            let value: &str = message.extract().expect("failed to extract message as str");
-            assert_eq!(value, ROTATION_VALIDATION_MSG);
+            if let Some(expected_message) = case_data.expected_rotation_validation_msg {
+                let message = module
+                    .getattr("ROTATION_VALIDATION_MSG")
+                    .expect("ROTATION_VALIDATION_MSG not found");
+                let value: &str = message.extract().expect("failed to extract message as str");
+                assert_eq!(value, expected_message);
+            }
         });
     }
 }

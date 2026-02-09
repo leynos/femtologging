@@ -19,7 +19,9 @@ implementation:
 
 - **PyO3** provides bindings so the Rust library can be imported from Python. It
   replaces the C++ extension used by picologging. The project now targets
-  `pyo3` version `^0.25.1` to ensure compatibility with Python 3.14.
+  `pyo3` version `^0.28.0` to support Python 3.12-3.15 in the CI matrix and to
+  adopt API improvements from 0.26-0.28, including `Python::attach` replacing
+  `Python::with_gil` and `Py<PyAny>` replacing `PyObject`.
 - **crossbeam-channel** (v0.5.15) is recommended as the baseline synchronous
   multi-producer, single-consumer queue for handler threads. Alternatives like
   `flume` or `tokio::sync::mpsc` may be benchmarked later. Version 0.5.15

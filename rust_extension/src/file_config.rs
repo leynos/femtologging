@@ -178,7 +178,7 @@ level = INFO
 
     #[rstest]
     fn decode_rejects_unknown_encoding() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let err = decode_contents(py, b"data", Some("does-not-exist"))
                 .expect_err("expected lookup failure");
             assert!(err.is_instance_of::<PyLookupError>(py));
@@ -195,7 +195,7 @@ level = INFO
         )
         .expect("write ini contents");
         let path = file.path().display().to_string();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let sections = parse_ini_file(py, &path, None).expect("should parse");
             assert_eq!(sections.len(), 2);
         });
@@ -205,7 +205,7 @@ level = INFO
     fn parse_ini_file_rejects_empty_file() {
         let file = NamedTempFile::new().expect("create temp ini file");
         let path = file.path().display().to_string();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let err = parse_ini_file(py, &path, None).expect_err("empty files must fail");
             assert!(err.is_instance_of::<PyRuntimeError>(py));
         });
@@ -223,7 +223,7 @@ level = INFO
         )
         .expect("write cp1252 ini contents");
         let path = file.path().display().to_string();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let locale = py.import("locale").expect("import locale module");
             let original = locale
                 .getattr("getpreferredencoding")
@@ -251,7 +251,7 @@ level = INFO
 
     #[rstest]
     fn decode_contents_handles_latin1() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let bytes = b"caf\xE9";
             let decoded = decode_contents(py, bytes, Some("latin1")).expect("latin1 decode");
             assert_eq!(decoded, "caf\u{e9}");
@@ -260,12 +260,12 @@ level = INFO
 
     #[rstest]
     fn decode_utf8_reports_error_span() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let bytes = b"Hello\xFF\xFE";
             let err = decode_utf8(py, bytes).expect_err("invalid utf-8 must fail");
             let value = err
                 .value(py)
-                .downcast::<PyUnicodeDecodeError>()
+                .cast::<PyUnicodeDecodeError>()
                 .expect("unicode decode error");
             let start: isize = value
                 .getattr("start")

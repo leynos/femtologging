@@ -35,7 +35,7 @@ mod tests {
     #[test]
     #[serial]
     fn returns_builtin_name_without_module() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let list = PyList::empty(py);
             let name = fq_py_type(list.as_any());
             assert_eq!(name, "list");
@@ -45,7 +45,7 @@ mod tests {
     #[test]
     #[serial]
     fn returns_user_defined_fq_name() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let code = CString::new("class Foo: pass\n").expect("valid Python code");
             let filename = CString::new("mymod.py").expect("valid filename");
             let module_name = CString::new("mymod").expect("valid module name");
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     #[serial]
     fn falls_back_when_attrs_missing() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let code = CString::new(concat!(
                 "class Meta(type):\n",
                 "    def __getattribute__(cls, name):\n",
