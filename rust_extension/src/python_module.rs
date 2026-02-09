@@ -122,6 +122,7 @@ mod tests {
             register_fn: add_python_bindings,
             type_names: &[
                 "StreamHandlerBuilder",
+                "SocketHandlerBuilder",
                 "OverflowPolicy",
                 "FileHandlerBuilder",
                 "HTTPHandlerBuilder",
