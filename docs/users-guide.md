@@ -98,7 +98,7 @@ your process exits.
   buffered writes and returns `True` on success. `handler.close()` shuts down
   the worker thread and should be called before process exit.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
-  provides `.with_capacity(n)`, `.with_flush_timeout_ms(ms)`, and
+  provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id)` fluent methods before calling `.build()`.
 
 ### FemtoFileHandler

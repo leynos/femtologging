@@ -9,7 +9,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use pyo3::prelude::*;
 
 #[cfg(feature = "python")]
-use super::common::{PyOverflowPolicy, py_flush_record_interval_to_nonzero};
+use super::common::{PyOverflowPolicy, py_flush_after_records_to_nonzero};
 use super::{
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
@@ -139,22 +139,20 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the periodic flush interval measured in records.\n\n# Validation\n\nThe interval must be greater than zero (`NonZeroU64`).\n\n# Platform-specific behaviour\n\nOn 32-bit platforms where `usize::MAX < u64::MAX`, values exceeding `usize::MAX` are clamped silently at build time. Python callers receive an `OverflowError` instead (validated at the API boundary).",
-                rust_name: with_flush_record_interval,
-                py_fn: py_with_flush_record_interval,
-                py_name: "with_flush_record_interval",
+                doc: "Set the flush threshold measured in records.\n\n# Validation\n\nThe threshold must be greater than zero (`NonZeroU64`).\n\n# Platform-specific behaviour\n\nOn 32-bit platforms where `usize::MAX < u64::MAX`, values exceeding `usize::MAX` are clamped silently at build time. Python callers receive an `OverflowError` instead (validated at the API boundary).",
+                rust_name: with_flush_after_records,
+                py_fn: py_with_flush_after_records,
+                py_name: "with_flush_after_records",
                 py_text_signature: "(self, interval)",
                 rust_args: (interval: NonZeroU64),
                 py_args: (interval: u64),
                 py_prelude: {
-                    let interval = py_flush_record_interval_to_nonzero(
-                        interval,
-                        "flush_record_interval",
-                    )?;
+                    let interval =
+                        py_flush_after_records_to_nonzero(interval)?;
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.set_flush_record_interval(interval);
+                    builder.common.set_flush_after_records(interval);
                 }
             }
             method {
@@ -334,7 +332,7 @@ mod tests {
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(32)
-            .with_flush_record_interval(NonZeroU64::new(2).expect("2 is non-zero"))
+            .with_flush_after_records(NonZeroU64::new(2).expect("2 is non-zero"))
             .with_max_bytes(1024)
             .with_backup_count(3);
         let mut handler = builder

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import typing as typ
 
 import pytest
@@ -51,71 +52,79 @@ def test_stream_builder_negative_capacity(
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_negative_flush_timeout(
+def test_stream_builder_negative_flush_after_ms(
     ctor: typ.Callable[[], StreamHandlerBuilder],
 ) -> None:
     """Negative flush timeouts must raise."""
     builder = ctor()
     with pytest.raises(OverflowError):
-        builder.with_flush_timeout_ms(-1)
+        builder.with_flush_after_ms(-1)
 
 
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_zero_flush_timeout(
+def test_stream_builder_zero_flush_after_ms(
     ctor: typ.Callable[[], StreamHandlerBuilder],
 ) -> None:
     """Zero flush timeout is invalid."""
     builder = ctor()
-    with pytest.raises(ValueError, match="flush_timeout_ms must be greater than zero"):
-        builder.with_flush_timeout_ms(0)
+    with pytest.raises(ValueError, match="flush_after_ms must be greater than zero"):
+        builder.with_flush_after_ms(0)
 
 
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
-def test_stream_builder_large_flush_timeout(
+def test_stream_builder_large_flush_after_ms(
     ctor: typ.Callable[[], StreamHandlerBuilder],
 ) -> None:
     """Very large flush timeouts should round-trip in as_dict."""
-    builder = ctor().with_flush_timeout_ms(1_000_000_000)
+    builder = ctor().with_flush_after_ms(1_000_000_000)
     data = builder.as_dict()
     ctor_name = getattr(ctor, "__name__", repr(ctor))
-    assert data["flush_timeout_ms"] == 1_000_000_000, (
+    assert data["flush_after_ms"] == 1_000_000_000, (
         "Stream handler builder flush timeout mismatch: "
         f"ctor={ctor_name} builder={builder!r} "
-        f"expected=1_000_000_000 actual={data['flush_timeout_ms']} "
+        f"expected=1_000_000_000 actual={data['flush_after_ms']} "
         f"data={data}"
     )
 
 
-def test_file_builder_negative_flush_record_interval(tmp_path: Path) -> None:
+def test_file_builder_negative_flush_after_records(tmp_path: Path) -> None:
     """Negative flush record intervals must be rejected."""
     builder = FileHandlerBuilder(str(tmp_path / "negative_flush_interval.log"))
     with pytest.raises(OverflowError):
-        builder.with_flush_record_interval(-1)
+        builder.with_flush_after_records(-1)
 
 
-def test_file_builder_large_flush_record_interval(tmp_path: Path) -> None:
+def test_file_builder_large_flush_after_records(tmp_path: Path) -> None:
     """Large flush intervals should be preserved in configuration."""
     builder = FileHandlerBuilder(str(tmp_path / "large_flush_interval.log"))
-    builder = builder.with_flush_record_interval(1_000_000_000)
+    builder = builder.with_flush_after_records(1_000_000_000)
     data = builder.as_dict()
-    assert data["flush_record_interval"] == 1_000_000_000, (
+    assert data["flush_after_records"] == 1_000_000_000, (
         "File handler builder flush interval mismatch: "
         f"builder={builder!r} expected=1_000_000_000 "
-        f"actual={data['flush_record_interval']} data={data}"
+        f"actual={data['flush_after_records']} data={data}"
     )
 
 
-def test_file_builder_zero_flush_record_interval(tmp_path: Path) -> None:
+def test_file_builder_zero_flush_after_records(tmp_path: Path) -> None:
     """Zero flush record intervals are invalid."""
     builder = FileHandlerBuilder(str(tmp_path / "zero_flush_interval.log"))
     with pytest.raises(
-        ValueError, match="flush_record_interval must be greater than zero"
+        ValueError, match="flush_after_records must be greater than zero"
     ):
-        builder.with_flush_record_interval(0)
+        builder.with_flush_after_records(0)
+
+
+def test_file_builder_flush_after_records_overflow(tmp_path: Path) -> None:
+    """Values larger than u64 max must raise OverflowError."""
+    too_large = sys.maxsize * 2 + 2
+    builder = FileHandlerBuilder(str(tmp_path / "overflow_flush_interval.log"))
+    with pytest.raises(OverflowError):
+        builder.with_flush_after_records(too_large)
 
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
@@ -222,22 +231,22 @@ class TestFlushApiConsistency:
         # Exercise wide-range handling with a value that fits in u64
         large_value = 2**63 - 1
 
-        # FileHandlerBuilder.with_flush_record_interval accepts u64
+        # FileHandlerBuilder.with_flush_after_records accepts u64
         file_builder = FileHandlerBuilder(str(tmp_path / "large.log"))
-        file_builder = file_builder.with_flush_record_interval(large_value)
+        file_builder = file_builder.with_flush_after_records(large_value)
         data = file_builder.as_dict()
-        assert data["flush_record_interval"] == large_value, (
-            f"expected flush_record_interval {large_value} for FileHandlerBuilder, "
-            f"got {data['flush_record_interval']}"
+        assert data["flush_after_records"] == large_value, (
+            f"expected flush_after_records {large_value} for FileHandlerBuilder, "
+            f"got {data['flush_after_records']}"
         )
 
-        # StreamHandlerBuilder.with_flush_timeout_ms accepts u64
+        # StreamHandlerBuilder.with_flush_after_ms accepts u64
         stream_builder = StreamHandlerBuilder.stderr()
-        stream_builder = stream_builder.with_flush_timeout_ms(large_value)
+        stream_builder = stream_builder.with_flush_after_ms(large_value)
         data = stream_builder.as_dict()
-        assert data["flush_timeout_ms"] == large_value, (
-            f"expected flush_timeout_ms {large_value} for StreamHandlerBuilder, "
-            f"got {data['flush_timeout_ms']}"
+        assert data["flush_after_ms"] == large_value, (
+            f"expected flush_after_ms {large_value} for StreamHandlerBuilder, "
+            f"got {data['flush_after_ms']}"
         )
 
     @staticmethod
@@ -247,10 +256,10 @@ class TestFlushApiConsistency:
         stream_builder = StreamHandlerBuilder.stderr()
 
         with pytest.raises(ValueError, match="must be greater than zero"):
-            file_builder.with_flush_record_interval(0)
+            file_builder.with_flush_after_records(0)
 
         with pytest.raises(ValueError, match="must be greater than zero"):
-            stream_builder.with_flush_timeout_ms(0)
+            stream_builder.with_flush_after_ms(0)
 
     @staticmethod
     def test_rotating_builder_inherits_file_builder_flush_type(tmp_path: Path) -> None:
@@ -258,26 +267,26 @@ class TestFlushApiConsistency:
         large_value = 2**62
 
         rotating_builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating.log"))
-        rotating_builder = rotating_builder.with_flush_record_interval(large_value)
+        rotating_builder = rotating_builder.with_flush_after_records(large_value)
         data = rotating_builder.as_dict()
-        assert data["flush_record_interval"] == large_value, (
-            f"expected flush_record_interval {large_value} for "
-            f"RotatingFileHandlerBuilder, got {data['flush_record_interval']}"
+        assert data["flush_after_records"] == large_value, (
+            f"expected flush_after_records {large_value} for "
+            f"RotatingFileHandlerBuilder, got {data['flush_after_records']}"
         )
 
     @staticmethod
-    def test_rotating_builder_zero_flush_interval_rejected(tmp_path: Path) -> None:
+    def test_rotating_builder_zero_flush_after_records_rejected(tmp_path: Path) -> None:
         """RotatingFileHandlerBuilder rejects zero flush interval with ValueError."""
         rotating_builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating.log"))
         with pytest.raises(ValueError, match="must be greater than zero"):
-            rotating_builder.with_flush_record_interval(0)
+            rotating_builder.with_flush_after_records(0)
 
     @staticmethod
     def test_rotating_builder_negative_raises_overflow(tmp_path: Path) -> None:
         """Negative flush intervals raise OverflowError (PyO3 u64 extraction)."""
         builder = RotatingFileHandlerBuilder(str(tmp_path / "negative.log"))
         with pytest.raises(OverflowError):
-            builder.with_flush_record_interval(-1)
+            builder.with_flush_after_records(-1)
 
     @staticmethod
     @pytest.mark.parametrize("interval", [1, 100, 1_000_000, 2**30])
@@ -286,9 +295,9 @@ class TestFlushApiConsistency:
     ) -> None:
         """Valid non-zero intervals are preserved through as_dict()."""
         builder = FileHandlerBuilder(str(tmp_path / f"interval_{interval}.log"))
-        builder = builder.with_flush_record_interval(interval)
+        builder = builder.with_flush_after_records(interval)
         data = builder.as_dict()
-        assert data["flush_record_interval"] == interval, (
-            f"expected flush_record_interval {interval} for FileHandlerBuilder, "
-            f"got {data['flush_record_interval']}"
+        assert data["flush_after_records"] == interval, (
+            f"expected flush_after_records {interval} for FileHandlerBuilder, "
+            f"got {data['flush_after_records']}"
         )

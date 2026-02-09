@@ -2,7 +2,7 @@
 //!
 //! Allows configuration of stream based handlers writing to `stdout` or
 //! `stderr`. The builder exposes basic tuning for channel capacity and
-//! a millisecond-based flush timeout. `py_new` defaults to `stderr`
+//! a millisecond-based flush threshold. `py_new` defaults to `stderr`
 //! to mirror Python's `logging.StreamHandler`.
 
 use std::{
@@ -83,10 +83,10 @@ impl StreamHandlerBuilder {
         self.common.is_capacity_valid()
     }
 
-    fn is_flush_timeout_valid(&self) -> Result<(), HandlerBuildError> {
+    fn is_flush_after_ms_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
-            "flush_timeout_ms",
-            self.common.flush_timeout_ms.map(NonZeroU64::get),
+            "flush_after_ms",
+            self.common.flush_after_ms.map(NonZeroU64::get),
         )
     }
 
@@ -94,12 +94,12 @@ impl StreamHandlerBuilder {
         self.common.capacity.map(|c| c.get()).unwrap_or(1024)
     }
 
-    fn resolved_flush_timeout(&self) -> Duration {
+    fn resolved_flush_after(&self) -> Duration {
         Duration::from_millis(
             self.common
-                .flush_timeout_ms
+                .flush_after_ms
                 .map(NonZeroU64::get)
-                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_TIMEOUT_MS),
+                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_AFTER_MS),
         )
     }
 
@@ -119,13 +119,13 @@ impl StreamHandlerBuilder {
         F: FemtoFormatter + Send + 'static,
     {
         let capacity = self.resolved_capacity();
-        let timeout = self.resolved_flush_timeout();
-        FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, timeout)
+        let flush_after = self.resolved_flush_after();
+        FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, flush_after)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
-        self.is_flush_timeout_valid()?;
+        self.is_flush_after_ms_valid()?;
         Ok(())
     }
 }
@@ -140,23 +140,23 @@ builder_methods! {
         };
         methods {
             method {
-                doc: "Set the flush timeout in milliseconds.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide a timeout greater than zero.",
-                rust_name: with_flush_timeout_ms,
-                py_fn: py_with_flush_timeout_ms,
-                py_name: "with_flush_timeout_ms",
-                py_text_signature: "(self, timeout_ms)",
-                rust_args: (timeout_ms: NonZeroU64),
-                py_args: (timeout_ms: u64),
+                doc: "Set the flush threshold in milliseconds.\n\n# Validation\n\nAccepts a `NonZeroU64` so both Rust and Python callers must provide a value greater than zero.",
+                rust_name: with_flush_after_ms,
+                py_fn: py_with_flush_after_ms,
+                py_name: "with_flush_after_ms",
+                py_text_signature: "(self, flush_ms)",
+                rust_args: (flush_ms: NonZeroU64),
+                py_args: (flush_ms: u64),
                 py_prelude: {
-                    let timeout_ms = NonZeroU64::new(timeout_ms).ok_or_else(|| {
+                    let flush_ms = NonZeroU64::new(flush_ms).ok_or_else(|| {
                         pyo3::exceptions::PyValueError::new_err(
-                            "flush_timeout_ms must be greater than zero",
+                            "flush_after_ms must be greater than zero",
                         )
                     })?;
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.flush_timeout_ms = Some(timeout_ms);
+                    builder.common.flush_after_ms = Some(flush_ms);
                 }
             }
         }
@@ -344,7 +344,7 @@ mod tests {
 
     #[cfg(feature = "python")]
     #[test]
-    fn python_rejects_zero_flush_timeout() {
+    fn python_rejects_zero_flush_after_ms() {
         use pyo3::types::PyAnyMethods;
 
         Python::with_gil(|py| {
@@ -352,8 +352,8 @@ mod tests {
                 .expect("Py::new must create a stream builder");
             let err = builder
                 .bind(py)
-                .call_method1("with_flush_timeout_ms", (0,))
-                .expect_err("with_flush_timeout_ms must reject zero");
+                .call_method1("with_flush_after_ms", (0,))
+                .expect_err("with_flush_after_ms must reject zero");
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
     }

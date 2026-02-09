@@ -2,7 +2,7 @@ Feature: Handler builders
   Scenario: build file handler builder
     Given a FileHandlerBuilder for path "test.log"
     When I set file capacity 10
-    And I set flush record interval 2
+    And I set flush after records 2
     And I set file formatter "default"
     Then the file handler builder matches snapshot
 
@@ -16,14 +16,14 @@ Feature: Handler builders
     When I set file capacity 0
     Then building the file handler fails
 
-  Scenario: invalid file handler flush interval
+  Scenario: invalid file handler flush after records
     Given a FileHandlerBuilder for path "test.log"
-    Then setting flush record interval 0 fails
+    Then setting flush after records 0 fails
 
   Scenario: build rotating file handler builder
     Given a RotatingFileHandlerBuilder for path "test.log"
     When I set file capacity 10
-    And I set flush record interval 2
+    And I set flush after records 2
     And I set max bytes 1024
     And I set backup count 5
     And I set file formatter "default"
@@ -32,7 +32,7 @@ Feature: Handler builders
   Scenario: dictConfig rotating file handler builder
     Given a dictConfig RotatingFileHandlerBuilder for path "test.log"
     When I set file capacity 10
-    And I set flush record interval 2
+    And I set flush after records 2
     And I set max bytes 1024
     And I set backup count 5
     And I set file formatter "default"
@@ -83,19 +83,19 @@ Feature: Handler builders
     When I set stream capacity 0
     Then building the stream handler fails
 
-  Scenario: invalid stream handler flush timeout
+  Scenario: invalid stream handler flush after ms
     Given a StreamHandlerBuilder targeting stdout
-    Then setting stream flush timeout 0 fails
+    Then setting stream flush after ms 0 fails
 
-  Scenario: build stream handler builder with flush timeout
+  Scenario: build stream handler builder with flush after ms
     Given a StreamHandlerBuilder targeting stdout
-    When I set stream flush timeout 250
+    When I set stream flush after ms 250
     And I set stream formatter "default"
     Then the stream handler builder matches snapshot
 
-  Scenario: invalid stream handler negative flush timeout
+  Scenario: invalid stream handler negative flush after ms
     Given a StreamHandlerBuilder targeting stdout
-    Then setting stream flush timeout -1 fails
+    Then setting stream flush after ms -1 fails
 
   Scenario: build socket handler builder for tcp
     Given a SocketHandlerBuilder for host "127.0.0.1" port 9020

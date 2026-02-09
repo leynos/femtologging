@@ -143,11 +143,11 @@ def when_set_socket_capacity(
     return socket_builder.with_capacity(capacity)
 
 
-@when(parsers.parse("I set stream flush timeout {timeout:d}"))
-def when_set_stream_flush_timeout(
+@when(parsers.parse("I set stream flush after ms {timeout:d}"))
+def when_set_stream_flush_after_ms(
     stream_builder: StreamHandlerBuilder, timeout: int
 ) -> StreamHandlerBuilder:
-    return stream_builder.with_flush_timeout_ms(timeout)
+    return stream_builder.with_flush_after_ms(timeout)
 
 
 @when(
@@ -190,11 +190,11 @@ def when_set_socket_tls_domain(
     return socket_builder.with_tls(domain, insecure=False)
 
 
-@when(parsers.parse("I set flush record interval {interval:d}"))
-def when_set_flush_record_interval(
+@when(parsers.parse("I set flush after records {interval:d}"))
+def when_set_flush_after_records(
     file_builder: FileBuilder, interval: int
 ) -> FileBuilder:
-    return file_builder.with_flush_record_interval(interval)
+    return file_builder.with_flush_after_records(interval)
 
 
 @when("I set overflow policy to timeout with 500ms")
@@ -337,22 +337,22 @@ def then_socket_builder_fails(
         socket_builder.build()
 
 
-@then(parsers.parse("setting stream flush timeout {timeout:d} fails"))
-def then_setting_stream_flush_timeout_fails(
+@then(parsers.parse("setting stream flush after ms {timeout:d} fails"))
+def then_setting_stream_flush_after_ms_fails(
     stream_builder: StreamHandlerBuilder, timeout: int
 ) -> None:
     exc = ValueError if timeout == 0 else OverflowError
     with pytest.raises(exc):
-        stream_builder.with_flush_timeout_ms(timeout)
+        stream_builder.with_flush_after_ms(timeout)
 
 
-@then(parsers.parse("setting flush record interval {interval:d} fails"))
-def then_setting_flush_record_interval_fails(
+@then(parsers.parse("setting flush after records {interval:d} fails"))
+def then_setting_flush_after_records_fails(
     file_builder: FileBuilder, interval: int
 ) -> None:
     exc = ValueError if interval == 0 else OverflowError
     with pytest.raises(exc):
-        file_builder.with_flush_record_interval(interval)
+        file_builder.with_flush_after_records(interval)
 
 
 # --- HTTP Handler Steps ---

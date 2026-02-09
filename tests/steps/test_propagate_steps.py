@@ -68,7 +68,7 @@ def given_file_handler(
 ) -> PropagateContext:
     """Create a file handler writing to a temporary file."""
     path = tmp_path / f"{hid}.log"
-    builder = FileHandlerBuilder(str(path)).with_flush_record_interval(1)
+    builder = FileHandlerBuilder(str(path)).with_flush_after_records(1)
     propagate_ctx.handlers[hid] = HandlerContext(builder=builder, path=path)
     propagate_ctx.config_builder.with_handler(hid, builder)
     return propagate_ctx
