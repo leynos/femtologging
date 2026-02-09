@@ -25,19 +25,38 @@ enum ExcInfoKind {
     Exception,
 }
 
+fn is_py_bool_true(exc_info: &Bound<'_, PyAny>) -> bool {
+    exc_info
+        .cast::<PyBool>()
+        .is_ok_and(|bool_value| bool_value.is_true())
+}
+
+fn is_py_bool_false(exc_info: &Bound<'_, PyAny>) -> bool {
+    exc_info
+        .cast::<PyBool>()
+        .is_ok_and(|bool_value| !bool_value.is_true())
+}
+
+fn extract_exc_tuple(exc_info: &Bound<'_, PyAny>) -> Option<Py<PyTuple>> {
+    let tuple = exc_info.cast::<PyTuple>().ok()?;
+    if tuple.len() == 3 {
+        Some(tuple.clone().unbind())
+    } else {
+        None
+    }
+}
+
 fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<ExcInfoKind> {
-    if let Ok(bool_value) = exc_info.cast::<PyBool>() {
-        return Ok(if bool_value.is_true() {
-            ExcInfoKind::BoolTrue
-        } else {
-            ExcInfoKind::BoolFalse
-        });
+    if is_py_bool_true(exc_info) {
+        return Ok(ExcInfoKind::BoolTrue);
     }
 
-    if let Ok(tuple) = exc_info.cast::<PyTuple>()
-        && tuple.len() == 3
-    {
-        return Ok(ExcInfoKind::Tuple(tuple.clone().unbind()));
+    if is_py_bool_false(exc_info) {
+        return Ok(ExcInfoKind::BoolFalse);
+    }
+
+    if let Some(tuple) = extract_exc_tuple(exc_info) {
+        return Ok(ExcInfoKind::Tuple(tuple));
     }
 
     if is_exception_instance(py, exc_info)? {

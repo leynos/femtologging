@@ -143,7 +143,13 @@ mod tests {
         ModuleRegistrationCase {
             module_name: "_femtologging_rs",
             register_fn: register_python_classes,
-            type_names: &["FemtoRotatingFileHandler", "HandlerOptions"],
+            type_names: &[
+                "FemtoSocketHandler",
+                "FemtoHTTPHandler",
+                "FemtoRotatingFileHandler",
+                "HandlerOptions",
+                "BackoffConfig",
+            ],
             expected_rotation_validation_msg: Some(ROTATION_VALIDATION_MSG),
         }
     }

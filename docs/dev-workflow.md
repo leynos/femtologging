@@ -44,7 +44,7 @@ across Python and Rust code.
 Pull-request CI uses a Python-version matrix in `.github/workflows/ci.yml`:
 
 - Required lanes: Python `3.12`, `3.13`, and `3.14`.
-- Early-warning lane: Python `3.15` pre-release as an allowed failure.
+- Early warning lane: Python `3.15` pre-release as an allowed failure.
 
 All lanes run the same gates: `make check-fmt`, `make lint`, `make typecheck`,
 and `make test`.

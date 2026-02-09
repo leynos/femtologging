@@ -302,8 +302,8 @@ References used for design choices:
   - `make test`
 
 Revision note (2026-02-06): initial draft created from current repository state
-and official GitHub Actions references. No implementation has started.
+and official GitHub Actions references.
 
-Revision note (2026-02-07): implemented matrix testing in
+Revision update (2026-02-07): implemented matrix testing in
 `.github/workflows/ci.yml`, updated `docs/dev-workflow.md`, and completed local
 validation gates.
