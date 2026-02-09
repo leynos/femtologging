@@ -20,11 +20,10 @@ without blocking merges.
 
 ## Constraints
 
-- Modify only CI and documentation files for this task:
-  - `.github/workflows/ci.yml`
-  - `docs/dev-workflow.md` (if CI behaviour description changes)
-- Do not change library/runtime code under `femtologging/`, `rust_extension/`,
-  or `tests/`.
+- Original implementation scope for this ExecPlan was CI and documentation
+  only (`.github/workflows/ci.yml` and `docs/dev-workflow.md`).
+- Current branch scope is broader and also includes the PyO3 0.28 migration
+  with Rust binding/test updates under `rust_extension/`.
 - Keep existing quality gates present in CI (`make check-fmt`, `make lint`,
   `make typecheck`, `make test`) unless explicitly replaced with equivalent
   coverage.
