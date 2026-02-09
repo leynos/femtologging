@@ -18,6 +18,37 @@ use crate::traceback_frames::{
     extract_frames_from_stack_summary, extract_frames_from_tb_exception, get_optional_attr,
 };
 
+enum ExcInfoKind {
+    BoolTrue,
+    BoolFalse,
+    Tuple(Py<PyTuple>),
+    Exception,
+}
+
+fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<ExcInfoKind> {
+    if let Ok(bool_value) = exc_info.cast::<PyBool>() {
+        return Ok(if bool_value.is_true() {
+            ExcInfoKind::BoolTrue
+        } else {
+            ExcInfoKind::BoolFalse
+        });
+    }
+
+    if let Ok(tuple) = exc_info.cast::<PyTuple>()
+        && tuple.len() == 3
+    {
+        return Ok(ExcInfoKind::Tuple(tuple.clone().unbind()));
+    }
+
+    if is_exception_instance(py, exc_info)? {
+        return Ok(ExcInfoKind::Exception);
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "exc_info must be True, an exception instance, or a 3-tuple (type, value, traceback)",
+    ))
+}
+
 /// Capture exception information from Python `exc_info` argument.
 ///
 /// Handles the various forms of `exc_info` accepted by Python's logging:
@@ -34,35 +65,12 @@ pub fn capture_exception(
     py: Python<'_>,
     exc_info: &Bound<'_, PyAny>,
 ) -> PyResult<Option<ExceptionPayload>> {
-    // Handle exc_info=True: use sys.exc_info()
-    if let Ok(b) = exc_info.cast::<PyBool>() {
-        if b.is_true() {
-            return capture_from_sys_exc_info(py);
-        }
-        // exc_info=False means no exception
-        return Ok(None);
+    match classify_exc_info(py, exc_info)? {
+        ExcInfoKind::BoolTrue => capture_from_sys_exc_info(py),
+        ExcInfoKind::BoolFalse => Ok(None),
+        ExcInfoKind::Tuple(tuple) => capture_from_exception_tuple(py, tuple.bind(py)),
+        ExcInfoKind::Exception => capture_from_exception_instance(py, exc_info),
     }
-
-    // Handle 3-tuple (type, value, traceback)
-    if let Ok(tuple) = exc_info.cast::<PyTuple>()
-        && tuple.len() == 3
-    {
-        let exc_value = tuple.get_item(1)?;
-        if exc_value.is_none() {
-            return Ok(None);
-        }
-        return capture_from_exception_tuple(py, tuple);
-    }
-
-    // Handle exception instance directly
-    if is_exception_instance(py, exc_info)? {
-        return capture_from_exception_instance(py, exc_info);
-    }
-
-    // Invalid exc_info format
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "exc_info must be True, an exception instance, or a 3-tuple (type, value, traceback)",
-    ))
 }
 
 /// Capture the current call stack for `stack_info=True`.

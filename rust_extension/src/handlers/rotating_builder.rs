@@ -316,7 +316,7 @@ mod tests {
 
     #[rstest]
     fn build_rotating_file_handler_defaults() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned());
         let mut handler = builder
@@ -328,7 +328,7 @@ mod tests {
 
     #[rstest]
     fn build_rotating_file_handler_with_limits() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_capacity(32)
@@ -344,7 +344,7 @@ mod tests {
 
     #[rstest]
     fn build_rotating_file_handler_with_custom_formatter() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_formatter(SuffixFormatter)
