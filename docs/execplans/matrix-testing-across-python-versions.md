@@ -183,7 +183,7 @@ Go/no-go:
 Update `docs/dev-workflow.md` with a short CI section:
 
 - Required compatibility lanes: `3.12`, `3.13`, `3.14`
-- Early-warning lane: `3.15` pre-release, non-blocking
+- Early warning lane: `3.15` pre-release, non-blocking
 - Note why pre-release lane is allowed failure
 
 Go/no-go:
