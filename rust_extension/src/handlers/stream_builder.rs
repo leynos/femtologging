@@ -119,8 +119,8 @@ impl StreamHandlerBuilder {
         F: FemtoFormatter + Send + 'static,
     {
         let capacity = self.resolved_capacity();
-        let timeout = self.resolved_flush_after();
-        FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, timeout)
+        let flush_after = self.resolved_flush_after();
+        FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, flush_after)
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
