@@ -495,3 +495,64 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     assert handler.handle_record_calls[0]["message"] == "test message"
     # handle() should NOT be called because dispatch path was frozen to handle_record
     assert handler.handle_calls == []
+
+
+def test_exc_info_no_deprecation_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exception capture must not trigger exc_type DeprecationWarning.
+
+    Python 3.13 deprecated ``TracebackException.exc_type`` in favour of
+    ``exc_type_qualname`` / ``exc_type_module``. Verify that our capture
+    path avoids the deprecated attribute. We record all warnings and then
+    assert none match the specific ``exc_type`` deprecation, so unrelated
+    DeprecationWarnings from third-party code cannot cause false failures.
+    """
+    import sys
+    import types
+    import warnings
+
+    logger = FemtoLogger("core")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+
+        # exc_info=True with an active exception
+        try:
+            _raise_exception(ValueError, "deprecation check")
+        except ValueError:
+            output = logger.log("ERROR", "caught", exc_info=True)
+        assert output is not None, "exc_info=True should produce output"
+        assert "ValueError" in output, f"expected 'ValueError' in output: {output}"
+
+        # exc_info with an exception instance directly
+        exc = RuntimeError("instance check")
+        output = logger.log("ERROR", "caught", exc_info=exc)
+        assert output is not None, "exc_info with instance should produce output"
+        assert "RuntimeError" in output, f"expected 'RuntimeError' in output: {output}"
+
+        # exc_info with a 3-tuple
+        try:
+            _raise_exception(KeyError, "tuple check")
+        except KeyError as e:
+            exc_info = (KeyError, e, e.__traceback__)
+        output = logger.log("ERROR", "caught", exc_info=exc_info)
+        assert output is not None, "exc_info with 3-tuple should produce output"
+        assert "KeyError" in output, f"expected 'KeyError' in output: {output}"
+
+        # exc_info with a custom exception from a non-builtin module
+        mod = types.ModuleType("custom_mod")
+        monkeypatch.setitem(sys.modules, "custom_mod", mod)
+        custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
+        mod.CustomError = custom_cls  # type: ignore[attr-defined]
+        exc = custom_cls("module check")
+        output = logger.log("ERROR", "caught", exc_info=exc)
+        assert output is not None, "exc_info with custom module should produce output"
+        assert "custom_mod.CustomError" in output, (
+            f"expected 'custom_mod.CustomError' in output: {output}"
+        )
+
+    exc_type_warnings = [w for w in caught if "exc_type" in str(w.message)]
+    assert exc_type_warnings == [], (
+        f"exc_type deprecation warnings emitted: {exc_type_warnings}"
+    )

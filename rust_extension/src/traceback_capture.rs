@@ -164,6 +164,49 @@ fn build_exception_payload(
     build_payload_from_traceback_exception(py, &tb_exc, Some(exc_value))
 }
 
+/// Normalize the module value for an exception type.
+///
+/// Built-in exceptions report `"builtins"` as their module, which is not
+/// useful for display or grouping. This function returns `None` for that
+/// sentinel value and passes all other module strings through unchanged.
+fn normalize_module(raw: Option<String>) -> Option<String> {
+    raw.filter(|m| m != "builtins")
+}
+
+/// Extract exception type name and module from a `TracebackException`.
+///
+/// Python 3.13 deprecated the `exc_type` attribute and replaced it with
+/// `exc_type_qualname` and `exc_type_module`. This function uses the new
+/// attributes when available and falls back to `exc_type` on older versions.
+///
+/// Returns `(type_name, module)` where `module` is `None` for built-in
+/// exceptions.
+fn extract_exception_type_info(tb_exc: &Bound<'_, PyAny>) -> PyResult<(String, Option<String>)> {
+    // Python 3.13+: use exc_type_qualname / exc_type_module to avoid
+    // the DeprecationWarning triggered by accessing exc_type.
+    if let Ok(qualname) = tb_exc.getattr("exc_type_qualname") {
+        let qualname_str: String = qualname.extract()?;
+        // Extract simple name from qualified name (e.g., "Outer.InnerError" → "InnerError")
+        let type_name = qualname_str
+            .rsplit_once('.')
+            .map(|(_, name)| name.to_string())
+            .unwrap_or(qualname_str);
+        let module = normalize_module(get_optional_attr::<String>(tb_exc, "exc_type_module"));
+        return Ok((type_name, module));
+    }
+
+    // Python ≤3.12 fallback: read the class object directly.
+    let exc_type = tb_exc.getattr("exc_type")?;
+    let type_name: String = exc_type.getattr("__name__")?.extract()?;
+    let module = normalize_module(
+        exc_type
+            .getattr("__module__")
+            .ok()
+            .and_then(|m| m.extract().ok()),
+    );
+    Ok((type_name, module))
+}
+
 /// Build payload from a `TracebackException` object.
 ///
 /// The `exc_value` parameter is the original exception instance. It's optional
@@ -174,16 +217,7 @@ fn build_payload_from_traceback_exception(
     tb_exc: &Bound<'_, PyAny>,
     exc_value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Option<ExceptionPayload>> {
-    // Extract exception type name
-    let exc_type = tb_exc.getattr("exc_type")?;
-    let type_name: String = exc_type.getattr("__name__")?.extract()?;
-
-    // Extract module (None for builtins)
-    let module: Option<String> = exc_type
-        .getattr("__module__")
-        .ok()
-        .and_then(|m| m.extract().ok())
-        .filter(|m: &String| m != "builtins");
+    let (type_name, module) = extract_exception_type_info(tb_exc)?;
 
     // Extract message
     let message = format_exception_message(tb_exc)?;
