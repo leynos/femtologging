@@ -124,11 +124,6 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FemtoLevel {
 
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let s: &str = obj.extract()?;
-        match s.parse() {
-            Ok(level) => Ok(level),
-            Err(_) => Err(PyErr::new::<PyValueError, _>(format!(
-                "invalid log level: {s}"
-            ))),
-        }
+        FemtoLevel::parse_py(s)
     }
 }

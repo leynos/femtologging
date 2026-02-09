@@ -118,17 +118,25 @@ integration once those limitations are lifted.
   they can be upgraded when the core library’s structured logging improvements
   (scheduled as part of Phase 3) are in place.
 
-- **Feature gating and platform considerations:** Both integrations will be
-  introduced behind optional Cargo features to avoid impacting users who don't
-  need them. For example, a `"journald"` feature will enable the Journald
-  handler (only available on Unix targets), and a `"tracing"` feature will
-  enable the tracing subscriber layer and any OpenTelemetry dependencies. This
-  keeps the default build lean and free of platform-specific code or heavy
-  telemetry libraries unless explicitly requested. The tracing layer feature is
-  anticipated to be enabled by default (similar to how `log` compatibility is
-  enabled by default) to encourage ecosystem uptake, whereas the Journald
-  feature may remain opt-in or auto-enabled on Linux builds. In all cases, if
-  the features are disabled, the new handlers add zero overhead.
+- **Feature gating and platform considerations:** Both integrations are
+  explicit opt-in paths. The `"journald"` feature enables the Journald handler
+  only on Linux systems running systemd; it is unavailable on Windows and
+  macOS, and non-systemd Unix users should use stream/file/socket handlers
+  instead. The OpenTelemetry path is also explicit: users must opt in to the
+  relevant tracing/OT feature and configure the matching layer or exporter.
+  This keeps default builds lean and avoids platform-specific or telemetry
+  dependencies unless requested. If these features are disabled, the new
+  handlers add zero overhead.
+
+- **Security and data-governance note:** Enabling Journald or OpenTelemetry
+  outputs may send records beyond the immediate process boundary. Users must
+  treat message text and contextual keys as potentially sensitive and configure
+  redaction/allow-listing policies as needed.
+
+- **Interim payload limitation before Phase 3:** Until structured logging work
+  lands, Journald and OpenTelemetry integrations emit only message text and
+  basic metadata (for example level and logger name). Rich key-value fields and
+  robust trace correlation are deferred to the Phase 3/4 milestones.
 
 - **Consistency with architectural principles:** The chosen solutions maintain
   femtologging’s core principles. Each new handler will follow the

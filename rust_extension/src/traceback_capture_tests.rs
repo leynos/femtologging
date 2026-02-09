@@ -275,7 +275,7 @@ fn capture_exception_args_repr() {
 #[rstest]
 fn capture_exception_builtin_has_no_module() {
     // Built-in exceptions should have module=None because "builtins" is filtered.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let exc = py
             .import("builtins")
             .expect("builtins module should exist")
@@ -302,7 +302,7 @@ fn capture_exception_main_module_preserves_module() {
     // Exceptions from __main__ should retain their module value. Only
     // "builtins" is filtered; "__main__" is meaningful metadata for
     // user-defined exceptions in scripts and entry points.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let code = c"exc = type('MainError', (Exception,), {'__module__': '__main__'})('test')";
         let globals = PyDict::new(py);
         py.run(code, Some(&globals), None)
@@ -329,7 +329,7 @@ fn capture_exception_main_module_preserves_module() {
 #[rstest]
 fn capture_exception_custom_module_has_module() {
     // Exceptions from non-builtin modules should include the module name.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let code = c"
 import types, sys
 

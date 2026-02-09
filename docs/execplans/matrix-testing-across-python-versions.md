@@ -1,4 +1,4 @@
-# Add Python-Version CI Matrix With 3.15a Allowed Failure
+# Add Python-Version Continuous Integration (CI) Matrix With 3.15a Allowed Failure
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
@@ -39,7 +39,7 @@ without blocking merges.
 - Workflow growth: if `ci.yml` net change exceeds 140 lines, stop and escalate
   with a simpler alternative.
 - Runtime: if CI duration for required lanes (`3.12`/`3.13`/`3.14`) exceeds
-  35 minutes median for 3 consecutive runs, escalate with optimisation options.
+  35 minutes median for 3 consecutive runs, escalate with optimization options.
 - Tooling: if `actions/setup-python` cannot resolve `3.15` pre-release with
   `allow-prereleases` enabled, stop and escalate with fallback choices.
 - Ambiguity: if branch protection expectations conflict with allowed-failure
@@ -49,7 +49,7 @@ without blocking merges.
 
 - Risk: matrix multiplies runtime and cache contention.
   Severity: medium Likelihood: medium Mitigation: keep `fail-fast: false` for
-  visibility; include Python version in cache keys where applicable; optimise
+  visibility; include Python version in cache keys where applicable; optimize
   in follow-up only if needed.
 
 - Risk: 3.15 pre-release resolver behaviour may change over time.
@@ -250,7 +250,7 @@ Quality criteria:
 - Editing `ci.yml` and `docs/dev-workflow.md` is idempotent and safe to rerun.
 - If workflow config is invalid, revert only the latest CI/doc changes and
   reapply incrementally.
-- If 3.15 setup fails due unavailable pre-release builds, keep lane
+- If 3.15 setup fails due to unavailable pre-release builds, keep lane
   non-blocking and escalate with alternatives (`3.15-dev` pin or temporary
   disable) rather than changing required lanes.
 

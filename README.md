@@ -65,6 +65,21 @@ log.remove_handler(collector)
 `FemtoStreamHandler` and `FemtoFileHandler` are available for basic output.
 Each runs its I/O in a separate thread, so logging calls return immediately.
 
+## Journald and OpenTelemetry status
+
+Planned Journald and OpenTelemetry integrations are explicit opt-in features.
+No application sends records to Journald or OpenTelemetry unless you enable the
+relevant feature and configure the corresponding handler/layer yourself.
+
+- Journald support is Linux/systemd-specific and is unavailable on Windows and
+  macOS. On non-systemd Unix environments, use stream/file/socket handlers (or
+  route logs to a local syslog/collector endpoint).
+- Treat external observability sinks as potentially sensitive destinations:
+  review message text and contextual keys before forwarding logs.
+- Until the structured logging milestones in Phase 3 land, planned Journald and
+  OpenTelemetry outputs are limited to message text plus basic metadata (for
+  example logger name and level).
+
 ## Development
 
 The [`Makefile`](./Makefile) defines tasks for formatting, linting, type

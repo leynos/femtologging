@@ -229,24 +229,32 @@ fn filter_exception_payload(
 
     // Recursively filter cause
     if let Some(cause) = payload.get_item("cause")? {
-        let cause_dict = cause.cast::<PyDict>()?;
+        let cause_dict = cause
+            .cast::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("'cause' must be a dict"))?;
         let filtered_cause = filter_exception_payload(py, cause_dict, opts)?;
         result.set_item("cause", filtered_cause)?;
     }
 
     // Recursively filter context
     if let Some(context) = payload.get_item("context")? {
-        let context_dict = context.cast::<PyDict>()?;
+        let context_dict = context
+            .cast::<PyDict>()
+            .map_err(|_| PyTypeError::new_err("'context' must be a dict"))?;
         let filtered_context = filter_exception_payload(py, context_dict, opts)?;
         result.set_item("context", filtered_context)?;
     }
 
     // Recursively filter exception group members
     if let Some(exceptions) = payload.get_item("exceptions")? {
-        let exceptions_list = exceptions.cast::<PyList>()?;
+        let exceptions_list = exceptions
+            .cast::<PyList>()
+            .map_err(|_| PyTypeError::new_err("'exceptions' must be a list"))?;
         let filtered_list = PyList::empty(py);
         for exc in exceptions_list.iter() {
-            let exc_dict = exc.cast::<PyDict>()?;
+            let exc_dict = exc
+                .cast::<PyDict>()
+                .map_err(|_| PyTypeError::new_err("each exception must be a dict"))?;
             let filtered_exc = filter_exception_payload(py, exc_dict, opts)?;
             filtered_list.append(filtered_exc)?;
         }
