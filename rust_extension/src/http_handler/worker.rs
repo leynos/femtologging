@@ -98,9 +98,7 @@ impl Worker {
             Ok(p) => p,
             Err(err) => {
                 warn!("FemtoHTTPHandler serialization error: {err}");
-                warn_drops(&self.warner, |count| {
-                    warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
-                });
+                self.warn_serialization_drops();
                 return;
             }
         };
@@ -125,22 +123,20 @@ impl Worker {
                     return;
                 }
                 Ok(ResponseClass::Retryable) => {
-                    if !self.sleep_and_should_retry("server returned retryable status", now) {
-                        return;
+                    match self.sleep_and_should_retry("server returned retryable status", now) {
+                        true => continue,
+                        false => return,
                     }
                 }
                 Ok(ResponseClass::Permanent) => {
                     warn!("FemtoHTTPHandler received permanent error (4xx), dropping record");
-                    warn_drops(&self.warner, |count| {
-                        warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
-                    });
+                    self.warn_permanent_drops();
                     return;
                 }
-                Err(err) => {
-                    if !self.sleep_and_should_retry(&err, now) {
-                        return;
-                    }
-                }
+                Err(err) => match self.sleep_and_should_retry(&err, now) {
+                    true => continue,
+                    false => return,
+                },
             }
         }
     }
@@ -220,6 +216,18 @@ impl Worker {
         };
         thread::sleep(delay);
         true
+    }
+
+    fn warn_serialization_drops(&self) {
+        warn_drops(&self.warner, |count| {
+            warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
+        });
+    }
+
+    fn warn_permanent_drops(&self) {
+        warn_drops(&self.warner, |count| {
+            warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
+        });
     }
 
     /// Handles a flush command by immediately acknowledging completion.

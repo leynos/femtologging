@@ -5,6 +5,11 @@
 //! records and flush commands over a bounded channel so the producer never
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
+#![allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
+)]
+
 use std::{
     io::{self, Write},
     thread::{self, JoinHandle},
@@ -133,6 +138,10 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates Python-facing wrappers with explicit method signatures"
+)]
 #[pymethods]
 impl FemtoStreamHandler {
     #[new]

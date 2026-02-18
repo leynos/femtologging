@@ -123,6 +123,10 @@ fn hello() -> &'static str {
     "hello from Rust"
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
+)]
 mod py_api {
     //! Python-facing helper functions that bridge to the Rust manager.
 
@@ -156,6 +160,10 @@ mod py_api {
     ///     assert!(first.as_ref(py).is(second.as_ref(py)));
     /// });
     /// ```
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "PyO3 expands function wrappers with Python-call compatibility arguments"
+    )]
     #[pyfunction]
     pub(crate) fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
         manager_get_logger(py, name)

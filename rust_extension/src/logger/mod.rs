@@ -2,6 +2,10 @@
 //!
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
+#![allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
+)]
 
 mod py_handler;
 mod python_helpers;
@@ -86,6 +90,10 @@ pub struct FemtoLogger {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates Python-exposed wrappers and signature shims with many parameters"
+)]
 #[pymethods]
 impl FemtoLogger {
     /// Create a new logger with the given name.

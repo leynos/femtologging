@@ -12,6 +12,11 @@
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
+#![allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
+)]
+
 mod config;
 pub(crate) mod policy;
 mod worker;
@@ -123,6 +128,10 @@ pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResul
     validate_flush_interval_value(flush_interval).map_err(PyValueError::new_err)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates Python-facing wrappers that must preserve constructor parameters"
+)]
 #[pymethods]
 impl FemtoFileHandler {
     /// Create a file handler writing to `path`.
