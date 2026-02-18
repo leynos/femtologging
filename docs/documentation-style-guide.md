@@ -286,6 +286,18 @@ YYYY-MM-DD.
 - <Driver 1>
 - <Driver 2>
 
+## Requirements
+
+### Functional requirements
+
+- <Functional requirement 1>
+- <Functional requirement 2>
+
+### Technical requirements
+
+- <Technical requirement 1>
+- <Technical requirement 2>
+
 ## Options considered
 
 ### Option A: <Name>
@@ -305,6 +317,20 @@ _Table 1: Comparison of options._
 ## Decision outcome / proposed direction
 
 <State the chosen or recommended approach and summarize the rationale.>
+
+## Goals and non-goals
+
+- Goals:
+  - <Goal 1>
+  - <Goal 2>
+- Non-goals:
+  - <Non-goal 1>
+  - <Non-goal 2>
+
+## Migration plan
+
+<Use numbered phases with clear goals and deliverables where phased
+implementation is required.>
 
 ## Known risks and limitations
 
