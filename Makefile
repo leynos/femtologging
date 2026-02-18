@@ -57,7 +57,7 @@ lint: ## Run linters
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
 
 markdownlint: ## Lint Markdown files
-	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT)
+	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT) --
 
 nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)
