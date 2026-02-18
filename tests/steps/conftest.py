@@ -36,7 +36,15 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
         output,
     )
     # Replace line numbers
-    return re.sub(r", line \d+,", ", line <N>,", result)
+    result = re.sub(r", line \d+,", ", line <N>,", result)
+    # Pytest can render this lambda call with extra keyword arguments depending
+    # on Python/pytest versions. Keep only the stable prefix for snapshots.
+    return re.sub(
+        r"(^\s*lambda: runtest_hook\(item=item, \*\*kwds\),).*$",
+        r"\1",
+        result,
+        flags=re.MULTILINE,
+    )
 
 
 @given("the logging system is reset")
