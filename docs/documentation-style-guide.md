@@ -41,7 +41,8 @@ consistent for developers.
 
 ## Markdown rules
 
-- Follow [markdownlint](https://github.com/DavidAnson/markdownlint)
+- Follow
+  [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2)
   recommendations[^1].
 - Provide code blocks and lists using standard Markdown syntax.
 - Always provide a language identifier for fenced code blocks; use `plaintext`
