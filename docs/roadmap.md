@@ -3,7 +3,7 @@
 This roadmap consolidates the previous implementation and configuration
 roadmaps into one execution plan. Tasks are grouped by strategic phase,
 workstream, and measurable execution units, with citations to design sources
-for each task.
+where applicable.
 
 ## 1. Foundation and core runtime
 
@@ -197,7 +197,7 @@ for each task.
   process `tracing` spans and events. See
   [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
    and
-  [ADR 002 phase 2](./adr-002-journald-and-otel-support.md#phase-2--tracing-layer-for-opentelemetry-and-more).
+  [Architectural Decision Record (ADR) 002 phase 2](./adr-002-journald-and-otel-support.md#phase-2--tracing-layer-for-opentelemetry-and-more).
 
 ### 3.4. Python exception payloads and macro ergonomics
 
