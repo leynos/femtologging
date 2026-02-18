@@ -1,7 +1,8 @@
 # Documentation style guide
 
-This guide outlines conventions for authoring documentation for df12 software.
-Apply these rules to keep the documentation clear and consistent for developers.
+This guide outlines conventions for authoring documentation for software by
+df12 Productions. Apply these rules to keep the documentation clear and
+consistent for developers.
 
 ## Spelling
 
