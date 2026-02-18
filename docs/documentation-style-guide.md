@@ -304,7 +304,7 @@ _Table 1: Comparison of options._
 
 ## Decision outcome / proposed direction
 
-<State the chosen or recommended approach and summarise the rationale.>
+<State the chosen or recommended approach and summarize the rationale.>
 
 ## Known risks and limitations
 
