@@ -172,7 +172,7 @@ navigability:
   - Phases: 1, 2, 3, …
   - Steps: 1.1, 1.2, 1.3, …
   - Headline tasks: 1.1.1, 1.1.2, 1.1.3, …
-- **Checkboxes:** Precede task and sub-task items with a GitHub-Flavoured
+- **Checkboxes:** Precede task and sub-task items with a GitHub Flavored
   Markdown (GFM) checkbox (`[ ]`) to track completion status.
 - **Dependencies:** Note non-linear dependencies explicitly. Where a task
   depends on another task outside its immediate sequence, cite the dependency
@@ -199,13 +199,13 @@ navigability:
 
 ### 1.2. Authentication
 
-- [ ] 1.2.1. Implement role-based access control. Requires 1.1.1.
+- [ ] 1.2.1. Implement role-based access control (RBAC). Requires 1.1.1.
   - [ ] Define role hierarchy. See design-doc.md §4.3.
   - [ ] Add RBAC middleware to API endpoints.
   - [ ] Write integration tests for permission boundaries.
 ```
 
-## Architectural Decision Records (ADRs)
+## Architectural decision records (ADRs)
 
 Use ADRs to document significant architectural and design decisions. ADRs
 capture the context, options considered, and rationale behind decisions,
@@ -271,7 +271,7 @@ Include these sections as appropriate to the decision's complexity:
 
 ## Status
 
-Proposed.
+<Proposed | Accepted | Superseded | Deprecated>.
 
 ## Date
 
