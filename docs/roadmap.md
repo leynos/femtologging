@@ -1,258 +1,268 @@
 # Roadmap: Port picologging to Rust/PyO3
 
-<!-- markdownlint-disable-next-line MD013 MD039 --> The design document in
-[`socket handler design document`][socket-doc] outlines a phased approach for
-building `femtologging`. The high‑level goal is to re‑implement picologging in
-Rust with strong compile‑time safety and a multithreaded handler model. The
-steps below summarize the actionable items from that design.
+This roadmap consolidates the previous implementation and configuration
+roadmaps into one execution plan. Tasks are grouped by strategic phase,
+workstream, and measurable execution units, with citations to design sources
+for each task.
 
-## Initial Setup Tasks
+## 1. Foundation and core runtime
 
-- [x] Review picologging codebase and isolate core logging features
-- [x] Evaluate dependencies and identify Rust equivalents
-- [x] Design Rust crate layout and expose PyO3 bindings
-- [x] Implement basic logger in Rust with matching Python API
-- [x] Integrate Rust extension into Python packaging workflow
-- [ ] Port formatting and handler components to Rust
-- [x] Add thread-safety guarantees (`Send`/`Sync`) for threaded components
-- [ ] Expand concurrency features (e.g., batching, back-pressure, shutdown
-  semantics)
-- [ ] Benchmark against picologging and optimize hot paths
-- [ ] Provide unit and integration tests for all features
-- [ ] Set up continuous integration for Rust and Python tests
-- [ ] Write migration guide for existing picologging users
-- [ ] Publish femtologging package and update documentation
+### 1.1. Baseline architecture and packaging
 
-## Phase 1 – Core Functionality & Minimum Viable Product
+- [x] 1.1.1. Review picologging codebase and isolate core logging features. See
+  [design §1](./rust-multithreaded-logging-framework-for-python-design.md#1-introduction).
+- [x] 1.1.2. Evaluate dependencies and identify Rust equivalents. See
+  [dependency analysis](./dependency-analysis.md) and
+  [design §5](./rust-multithreaded-logging-framework-for-python-design.md#5-optimizing-for-performance).
+- [x] 1.1.3. Design Rust crate layout and expose PyO3 bindings. See
+  [design §3.1](./rust-multithreaded-logging-framework-for-python-design.md#31-key-components)
+   and [rust extension](./rust-extension.md).
+- [x] 1.1.4. Implement a basic logger in Rust with a matching Python API. See
+  [design §3.1](./rust-multithreaded-logging-framework-for-python-design.md#31-key-components)
+   and
+  [design §6.1](./rust-multithreaded-logging-framework-for-python-design.md#61-balancing-api-familiarity-with-rust-idioms).
+- [x] 1.1.5. Integrate the Rust extension into the Python packaging workflow.
+  See [dev workflow](./dev-workflow.md#commands).
 
-- [ ] Define the `FemtoLogRecord` structure and implement core `FemtoLogger`
-  logic, including efficient level checking and logging macros.
-  - [x] Expand `FemtoLogRecord` with timestamp and source location. Thread info
-    and structured key‑values are stored on each record.
-  - [x] Add a `FemtoLevel` enum and per‑logger level checks.
+### 1.2. Logger model and thread-safe dispatch
+
+- [ ] 1.2.1. Finalize `FemtoLogRecord` and core `FemtoLogger` behaviour. See
+  [design §3.3](./rust-multithreaded-logging-framework-for-python-design.md#33-femtologrecord-structure)
+   and
+  [design §4.3](./rust-multithreaded-logging-framework-for-python-design.md#43-macros-for-ergonomic-and-safe-logging).
+  - [x] Expand `FemtoLogRecord` with timestamp, source location, thread info,
+    and structured key-values.
+  - [x] Add `FemtoLevel` enum and per-logger level checks.
   - [ ] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
     source location.
   - [x] Route records to all configured handlers.
   - [x] Support attaching multiple handlers to a single logger.
-  - [x] Allow a handler instance to be shared by multiple loggers safely.
-- [x] Build a `Manager` registry, so `get_logger(name)` returns existing loggers
-  and establishes parent relationships based on dotted names.
-- [x] Implement `propagate` behaviour, so loggers inherit configuration from
-  their parents up to the root logger.
-- [x] Implement the `FemtoFormatter` trait with a default formatter.
-- [x] Select and integrate an MPSC channel for producer‑consumer queues.
-- [x] Create `FemtoStreamHandler` and `FemtoFileHandler`, each running in a
-  dedicated consumer thread.
-- [x] Provide a programmatic configuration API using the builder pattern.
-- [ ] Add compile‑time log level filtering via Cargo features.
-- [x] Ensure all components satisfy `Send`/`Sync` requirements.
-- [x] Establish a basic test suite covering unit and integration tests.
+  - [x] Allow one handler instance to be shared by multiple loggers safely.
+- [x] 1.2.2. Build a `Manager` registry so `get_logger(name)` reuses existing
+  loggers and establishes dotted-name parent relationships. See
+  [design §3.1](./rust-multithreaded-logging-framework-for-python-design.md#31-key-components)
+   and
+  [configuration design §6](./configuration-design.md#6-logger-propagation).
+- [x] 1.2.3. Implement `propagate` behaviour from child loggers to the root
+  logger. See
+  [configuration design §6.1](./configuration-design.md#61-propagation-semantics).
+- [x] 1.2.4. Select and integrate an MPSC channel for producer-consumer queues.
+  See
+  [design §5.3](./rust-multithreaded-logging-framework-for-python-design.md#53-impact-of-mpsc-channel-choice-on-throughput-and-latency).
+- [x] 1.2.5. Ensure all threaded components satisfy `Send`/`Sync` requirements.
+  See
+  [design §4.2](./rust-multithreaded-logging-framework-for-python-design.md#42-send-and-sync-traits-for-thread-safety).
 
-## Phase 2 – Expanded Handlers & Core Features
+### 1.3. Configuration builders and Python parity
 
-- [x] Implement `femtologging.basicConfig()` translating to the builder API
-  (see [configuration design](./configuration-design.md#basicconfig) and
-  [example](../examples/basic_config.py)).
-- [x] Implement `femtologging.dictConfig()` translating to the builder API.
-- [ ] Implement `FemtoRotatingFileHandler` and `FemtoTimedRotatingFileHandler`
-  with their respective rotation logic.
-  - `FemtoRotatingFileHandler`:
-    - [x] Expose `max_bytes` and `backup_count` options in Rust builders and
-      Python wrappers.
-    - [x] Check file size in the worker thread and trigger rotation without
-      blocking producers.
-      - [x] Define the predicate as UTF-8 byte measurement:
-        `current_file_len + buffered_bytes + next_record_bytes > max_bytes` (do
-        not flush solely to measure).
-    - [x] Implement rotation algorithm that cascades file renames from highest
-      to lowest index before opening a new file.
-    - [x] Provide a filename strategy producing `<path>.<n>` sequences starting
-      at `1` and capping at `backup_count`, pruning anything beyond that cap.
-    - [x] Add builder and Python tests verifying size-based rollover.
-      - [x] Cover boundaries: exactly `max_bytes`, one byte over, and an
-        individual record larger than `max_bytes`.
-      - [x] Verify records containing multi-byte UTF-8 characters trigger
-        rotation based on byte length, not character count.
-      - [x] Verify `backup_count == 0` truncates base file with no backups.
-      - [x] Verify lowering `backup_count` prunes excess backups on the next
-        rollover.
-      - [x] Verify cascade renames run highest→lowest and never overwrite
-        existing files.
-      - [x] Close-and-rename behaviour passes on Windows (no renaming of open
-        files).
-      - [x] Assert rotation happens on the worker thread and producers remain
-        non-blocking under load.
-- [x] Add `FemtoSocketHandler` with serialization (e.g. MessagePack or CBOR) and
-  reconnection handling.
-  - [x] Finalize the transport surface by supporting TCP and Unix domain socket
-    addresses through the builder API and Python bindings, matching the
-    configuration patterns described in
-    [`configuration-design.md`](./configuration-design.md). Model the transport
-    as an enum such as `Tcp { host, port, tls } | Unix { path }`, validate
-    mutual exclusivity in the builder, split connect and write timeouts, and
-    document IPv4 and IPv6 host support alongside TLS options.
-  - [x] Implement a consumer-thread event loop that acquires sockets and
-    serializes `FemtoLogRecord` values with `serde` (MessagePack or CBOR as
-    identified in Section 3.4 of the [`socket handler design`][socket-doc].
-    - [x] Frame each payload with a 4-byte big-endian length prefix, enforce a
-      configurable maximum frame size (default 1 MiB), and handle partial
-      writes or `EAGAIN` by buffering or dropping with metrics without blocking
-      producers. Assert parity with Python's `logging.handlers.SocketHandler`
-      framing rules.
-  - [x] Add reconnection logic that respects exponential backoff and honours
-    the multithreading and GIL-handling constraints captured in
-    [`multithreading-in-pyo3.md`](./multithreading-in-pyo3.md), ensuring the
-    GIL is not held across blocking network calls. Define parameters for
-    `backoff_base`, `backoff_cap`, full jitter calculation, reset-after-success
-    handling, and a maximum retry deadline, and require socket timeouts plus
-    cooperative cancellation on shutdown. Ship concrete defaults of a
-    `backoff_base` of 100 ms, a `backoff_cap` of 10 s, full jitter spanning
-    `0..=current_interval`, reset-after-success triggered after 30 s of healthy
-    writes, and a maximum retry deadline of 2 minutes before surfacing a
-    handler error. Document where the builder methods and Python configuration
-    knobs override each value.
-  - [x] Provide error mapping that translates socket and serialization failures
-    into Rust error enums and exported Python exceptions, following the
-    guidance in the [`socket handler design document`][socket-doc].
-  - [x] Extend the builder and Python configuration interfaces with
-    `SocketHandlerBuilder`, including validation routines, documentation, and
-    doctests kept dry per
-    [`rust-doctest-dry-guide.md`](./rust-doctest-dry-guide.md).
-  - [x] Write integration tests in Rust and Python using `rstest` fixtures (see
-    [`rust-testing-with-rstest-fixtures.md`][rstest-doc]) to validate
-    serialization framing, reconnection behaviour, IPv6/TLS error handling, and
-    configuration round-tripping. Include parity tests against Python's
-    `SocketHandler` covering frame handling, TLS handshake/verification
-    failures, backoff jitter distribution, and `dictConfig`/`basicConfig`
-    round-trips.
-  - [x] When the above tasks are complete, mark `FemtoSocketHandler` as done in
-    this roadmap and propagate the status to the configuration roadmap.
+- [x] 1.3.1. Implement `ConfigBuilder`, `LoggerConfigBuilder`, and
+  `FormatterBuilder` in Rust. See
+  [configuration design §1.1](./configuration-design.md#11-rust-builder-api-design).
+- [x] 1.3.2. Implement `FileHandlerBuilder` and `StreamHandlerBuilder` in Rust,
+  including `HandlerBuilderTrait` build semantics. See
+  [configuration design §1.3](./configuration-design.md#13-implemented-handler-builders).
+- [x] 1.3.3. Enable multiple handler IDs per logger and `Arc`-shared handler
+  instances. See
+  [configuration design §1.1](./configuration-design.md#11-rust-builder-api-design)
+   and
+  [configuration design §6](./configuration-design.md#6-logger-propagation).
+- [x] 1.3.4. Expose parity Python builders (`ConfigBuilder`,
+  `LoggerConfigBuilder`, `FormatterBuilder`, `FileHandlerBuilder`, and
+  `StreamHandlerBuilder`) via PyO3. See
+  [configuration design §1.2](./configuration-design.md#12-python-builder-api-design-congruent-with-rust-and-python-schemas).
+- [x] 1.3.5. Establish a baseline Rust and Python test suite for builder flows,
+  including integration coverage. See
+  [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage)
+   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
-[socket-doc]: ./rust-multithreaded-logging-framework-for-python-design.md
-[rstest-doc]: ./rust-testing-with-rstest-fixtures.md
+## 2. Handler and transport expansion
 
-- [x] Define the `FemtoFilter` trait and implement common filter
-  types.[^1]
-- [x] Support dynamic log level updates at runtime using atomic variables.
-  - [x] Store each logger's threshold in an `AtomicU8` to enable lock‑free
-    reads and writes across producer and consumer threads.
-  - [x] Provide `FemtoLogger::set_level()` and expose
-    `FemtoLogger.set_level()` in Python, so configuration APIs can adjust
-    levels dynamically.
-  - [x] Ensure log filtering consults the atomic level before formatting and
-    dispatch, so dropped records never reach handlers.
-  - [x] Cover runtime updates with Rust unit tests and Python integration
-    tests (using `rstest` fixtures where appropriate), including invalid level
-    rejection.
-  - [x] Document runtime level semantics and the Python surface area in
-    `rust-extension.md` and the configuration design notes.
-- [x] Implement the `log::Log` trait for compatibility with the `log` crate.
-  - [x] Create `FemtoLogAdapter` implementing `log::Log` in a dedicated module
-    (e.g., `rust_extension/src/log_compat.rs`).
-  - [x] Implement level mapping between `log::Level` and `FemtoLevel`:
-    - `Trace` → `Trace`
-    - `Debug` → `Debug`
-    - `Info` → `Info`
-    - `Warn` → `Warn`
-    - `Error` → `Error` (Note: `log` crate has no `Critical` level)
-  - [x] Implement `Log::enabled()` to check the effective level for the target
-    logger via `Manager::get_logger()`.
-  - [x] Implement `Log::log()` to convert `log::Record` to a `FemtoLogRecord`
-    and dispatch through the target logger:
-    - Map `record.target()` (module path) to logger name via hierarchical
-      lookup.
-    - Populate `FemtoLogRecord` metadata from `record.module_path()`,
-      `record.file()`, `record.line()`, and `record.args()`.
-  - [x] Implement `Log::flush()` to flush all registered handlers via
-    `Manager::flush_all_handlers()`. This is a best-effort operation: each
-    handler's buffer is flushed with a configurable timeout, individual
-    failures are logged internally, and records still in MPSC transit are not
-    awaited.
-  - [x] Provide a `setup_rust_logging()` function callable from Python that
-    calls `log::set_logger()` and `log::set_max_level()`.
-    - Follow GIL safety patterns in `docs/multithreading-in-pyo3.md` (section
-      on releasing the GIL).
-    - GIL acquisition failures block until the GIL is available (standard PyO3
-      behaviour). Python exceptions during `log()` or `flush()` are swallowed
-      so that logging does not disrupt application flow; failures are tracked
-      via handler metrics.
-  - [x] Expose this via a Cargo feature flag (`features = ["log-compat"]`) to
-    make the integration optional. This is a **Rust-side feature only**; it is
-    not surfaced through Python packaging extras. The default distribution
-    enables `log-compat`. Users building from source can disable it via
-    `--no-default-features` for a smaller binary.
-  - [x] Add Rust unit tests validating:
-    - `log::info!()` macros route to femtologging handlers.
-    - Level filtering works correctly across the bridge.
-    - Target-based logger resolution follows hierarchical rules.
-    - GIL is not held across blocking calls in `setup_rust_logging()`.
-    - Concurrent access from Rust and Python logging paths is safe.
-  - [x] Add Python integration tests demonstrating unified logging from both
-    Python and Rust code paths.
-  - [x] Document the feature in `docs/rust-extension.md` and API docstrings.
-  - [ ] Create migration notes explaining how to enable the `log-compat`
-    feature and invoke `setup_rust_logging()` early during application
-    initialization.
-  - [x] Document that enabling the `log::Log` bridge installs a global Rust
-    logger (exclusive) and the implications for existing logging
-    configurations.
-- [x] Add structured exception and stack payloads for Python `exc_info` and
-  `stack_info` (see [ADR 001](./adr-001-python-exception-logging.md)).
-  - [x] Define a versioned schema for exception and stack payloads captured
-    from Python `traceback` data (frames, locals, code context, and cause
-    chains).
-  - [x] Extend `FemtoLogger.log` to accept keyword-only `exc_info` and
-    `stack_info`, capturing structured payloads on the producer thread.
-  - [x] Extend `FemtoLogRecord` and formatter adapters to carry the structured
-    payload and render both string and structured outputs.
-  - [x] Add a `handle_record(record: Mapping)` hook for Python handlers that
-    need direct access to structured payloads.
-  - [x] Add unit and integration tests covering payload capture, formatting,
-    and Python handler interoperability, and update
-    `docs/users-guide.md` accordingly.
-- [x] Expand test coverage and start benchmarking.
+### 2.1. Formatter and handler port completion
 
-## Phase 3 – Advanced Features & Ecosystem Integration
+- [x] 2.1.1. Port formatter and core handler components to Rust
+      (`FemtoFormatter`,
+  `FemtoStreamHandler`, and `FemtoFileHandler`). See
+  [formatters and handlers port](./formatters-and-handlers-rust-port.md) and
+  [design §3.4](./rust-multithreaded-logging-framework-for-python-design.md#34-handler-implementation-strategy).
+- [ ] 2.1.2. Complete rotating-handler coverage by adding
+  `FemtoTimedRotatingFileHandler`. See
+  [design §3.4](./rust-multithreaded-logging-framework-for-python-design.md#34-handler-implementation-strategy)
+   and
+  [design §6.3.1](./rust-multithreaded-logging-framework-for-python-design.md#631-rotating-file-handler-configuration-decisions).
+- [x] 2.1.3. Implement `FemtoRotatingFileHandler` with non-blocking,
+  worker-thread rotation semantics. See
+  [design §6.3.1](./rust-multithreaded-logging-framework-for-python-design.md#631-rotating-file-handler-configuration-decisions)
+   and
+  [configuration design §1.3](./configuration-design.md#13-implemented-handler-builders).
+  - [x] Expose `max_bytes` and `backup_count` in Rust builders and Python
+    wrappers.
+  - [x] Trigger rotation from the worker thread using UTF-8 byte accounting.
+  - [x] Implement highest-to-lowest cascade renames with backup pruning.
+  - [x] Add boundary tests for exact limit, overflow by one byte, and oversized
+    single records.
+  - [x] Verify multi-byte UTF-8 rotation checks are byte-based.
+  - [x] Verify `backup_count == 0` truncates the base file without backups.
+  - [x] Verify lowering `backup_count` prunes excess backups on next rollover.
+  - [x] Verify Windows-safe close-and-rename behaviour.
+  - [x] Assert producer non-blocking behaviour under load.
 
-- [x] Implement `FemtoHTTPHandler` for sending logs over HTTP.
-  - [x] Resolve open design questions documented in the
-    [`FemtoHTTPHandler Design`][http-design] section of the design document
-    (serialization format, HTTP client library, retry semantics,
-    `mapLogRecord` equivalent).
-  - [x] Implement HTTP transport configuration supporting URL, method
-    (GET/POST), HTTPS, authentication (Basic, Bearer, or custom headers),
-    and timeouts (`connect_timeout`, `write_timeout`) through the builder
-    API and Python bindings, following the architecture in [http-design].
-  - [x] Implement a consumer-thread event loop following the
-    `FemtoSocketHandler` pattern, with HTTP request dispatch and payload
-    preparation per the resolved `mapLogRecord` design.
-  - [x] Add retry logic reusing `BackoffPolicy` from `FemtoSocketHandler`,
-    classifying HTTP status codes per the design document, and honouring the
-    GIL-handling constraints in
-    [`multithreading-in-pyo3.md`](./multithreading-in-pyo3.md).
-  - [x] Extend the builder and Python configuration interfaces with
-    `HTTPHandlerBuilder`, including `dictConfig`/`basicConfig` integration
-    and doctests kept dry per
-    [`rust-doctest-dry-guide.md`](./rust-doctest-dry-guide.md).
-  - [x] Write integration tests using `rstest` fixtures (see
-    [`rust-testing-with-rstest-fixtures.md`][rstest-doc]), including CPython
-    `logging.HTTPHandler` parity tests.
-  - [x] Mark complete and propagate status to configuration roadmap.
+### 2.2. Network handlers
 
-[http-design]:
-./rust-multithreaded-logging-framework-for-python-design.md#femtohttphandler-design
+- [x] 2.2.1. Deliver `FemtoSocketHandler` with framed serialization and robust
+  reconnection behaviour. See
+  [socket design update](./rust-multithreaded-logging-framework-for-python-design.md#femtosockethandler-implementation-update)
+   and [multithreading in PyO3](./multithreading-in-pyo3.md).
+  - [x] Support TCP and Unix domain socket transports with builder and Python
+    configuration parity.
+  - [x] Serialize records with length-prefixed MessagePack/CBOR framing and
+    enforce configurable frame limits.
+  - [x] Implement backoff with jitter, retry deadline controls, and cancellation
+    on shutdown.
+  - [x] Map socket and serialization failures to Rust error enums and exported
+    Python exceptions.
+  - [x] Add `SocketHandlerBuilder` with validation and doctest coverage.
+  - [x] Add Rust and Python integration tests, including CPython
+    `SocketHandler` parity checks.
+- [x] 2.2.2. Deliver `FemtoHTTPHandler` and `HTTPHandlerBuilder` with retry and
+  parity-driven integration testing. See
+  [HTTP design](./rust-multithreaded-logging-framework-for-python-design.md#femtohttphandler-design)
+   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
-- [ ] Provide a `tracing_subscriber::Layer` so femtologging handlers can process
-  `tracing` spans and events.
-- [ ] Add file‑based configuration support (TOML or YAML via `serde`).
-- [ ] Improve structured logging in macros to make context propagation easier.
-- [ ] Investigate runtime reconfiguration of handlers and filters.
-- [ ] Explore batching optimizations in consumer threads.
+### 2.3. Concurrency controls and lifecycle
 
-These phases will lead to a robust Rust implementation that matches the
-performance goals of picologging while leveraging Rust's safety guarantees.
-Development should start with Phase 1 to deliver a minimal, testable product
-and iterate from there.
+- [x] 2.3.1. Implement back-pressure controls via bounded queues and overflow
+  policies. See
+  [formatters and handlers port](./formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+   and
+  [design §5.1](./rust-multithreaded-logging-framework-for-python-design.md#51-minimizing-overhead-at-the-log-call-site-the-hot-path).
+- [x] 2.3.2. Implement graceful shutdown semantics for logger and handler worker
+  threads. See
+  [configuration design §3](./configuration-design.md#3-runtime-reconfiguration)
+   and
+  [logging sequence diagrams](./logging-sequence-diagrams.md#5-shutdown--orderly-shutdown-at-process-exit).
+- [ ] 2.3.3. Explore batching optimizations in consumer threads. See
+  [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads)
+   and
+  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap).
 
-[^1]: Completed in PR [#198](https://github.com/leynos/femtologging/pull/198)
-      on 6 September 2025.
+## 3. Configuration, compatibility, and ecosystem integration
+
+### 3.1. Backwards-compatible configuration APIs
+
+- [x] 3.1.1. Implement `femtologging.basicConfig()` as a translation to the
+  builder API. See
+  [configuration design §2.1](./configuration-design.md#21-basicconfig).
+- [x] 3.1.2. Implement `femtologging.dictConfig()` with schema parsing,
+  constructor argument handling, ordered section processing, and validation for
+  unsupported features. See
+  [configuration design §2.2](./configuration-design.md#22-dictconfig).
+- [x] 3.1.3. Implement `femtologging.fileConfig()` by parsing INI content in
+  Rust, converting to a `dictConfig`-compatible structure in Python, and
+  delegating application through `dictConfig()`. See
+  [configuration design §2.3](./configuration-design.md#23-fileconfig).
+- [ ] 3.1.4. Add file-based configuration support for TOML or YAML via `serde`
+  as a follow-on configuration format. See
+  [design §7.3](./rust-multithreaded-logging-framework-for-python-design.md#73-integration-with-application-configuration).
+
+### 3.2. Runtime controls and structured filtering
+
+- [x] 3.2.1. Define `FemtoFilter` and common filter implementations
+  (`LevelFilter`, `NameFilter`) with builder integration. See
+  [configuration design §1.1.1](./configuration-design.md#111-filters).
+- [x] 3.2.2. Support dynamic log-level updates with atomic storage and expose
+  `set_level()` in Python. See
+  [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
+- [ ] 3.2.3. Implement compile-time log-level filtering via Cargo features. See
+  [design §5.1](./rust-multithreaded-logging-framework-for-python-design.md#51-minimizing-overhead-at-the-log-call-site-the-hot-path)
+   and
+  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap).
+- [ ] 3.2.4. Extend runtime reconfiguration to support richer handler and filter
+  mutation workflows beyond level changes. See
+  [design §7.2](./rust-multithreaded-logging-framework-for-python-design.md#72-dynamic-reconfiguration)
+   and
+  [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
+
+### 3.3. Rust ecosystem integration
+
+- [x] 3.3.1. Implement `log::Log` compatibility with level mapping,
+  target-to-logger routing, flush bridging, feature gating, and Rust/Python
+  integration tests. See
+  [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
+   and
+  [design §6.4.1](./rust-multithreaded-logging-framework-for-python-design.md#641-implementation-strategy-for-loglog).
+- [x] 3.3.2. Provide migration notes for `log-compat`, including when and how to
+  call `setup_rust_logging()` during start-up. See
+  [rust extension](./rust-extension.md#rust-log-crate-bridge).
+- [ ] 3.3.3. Provide a `tracing_subscriber::Layer` so femtologging handlers can
+  process `tracing` spans and events. See
+  [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
+   and
+  [ADR 002 phase 2](./adr-002-journald-and-otel-support.md#phase-2--tracing-layer-for-opentelemetry-and-more).
+
+### 3.4. Python exception payloads and macro ergonomics
+
+- [x] 3.4.1. Add structured exception and stack payloads for `exc_info` and
+  `stack_info`, including schema versioning and Python handler
+  interoperability. See
+  [ADR 001 decision](./adr-001-python-exception-logging.md#decision) and
+  [ADR 001 schema versioning](./adr-001-python-exception-logging.md#schema-versioning).
+- [ ] 3.4.2. Improve structured logging in macros to simplify context
+  propagation. See
+  [design §6.2](./rust-multithreaded-logging-framework-for-python-design.md#62-logging-macros-the-primary-user-interface)
+   and
+  [design §8.3](./rust-multithreaded-logging-framework-for-python-design.md#83-exploring-advanced-asynchronous-capabilities).
+
+## 4. Verification, performance, and release readiness
+
+### 4.1. Testing and benchmarking
+
+- [x] 4.1.1. Establish baseline unit and integration testing across Rust and
+  Python paths. See
+  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
+   and
+  [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
+- [x] 4.1.2. Expand test coverage and start benchmarking for configuration and
+  handler paths. See
+  [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage)
+   and
+  [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach).
+- [ ] 4.1.3. Benchmark directly against picologging and optimize hot paths based
+  on measured bottlenecks. See
+  [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach)
+   and
+  [design §5](./rust-multithreaded-logging-framework-for-python-design.md#5-optimizing-for-performance).
+- [ ] 4.1.4. Provide unit and integration tests for all remaining roadmap
+  features as they land (including timed rotation, tracing, and format-level
+  compile-time filtering). See
+  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
+   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+
+### 4.2. Delivery and adoption
+
+- [x] 4.2.1. Set up continuous integration to run Rust and Python quality gates.
+  See [dev workflow §commands](./dev-workflow.md#commands) and
+  [dev workflow §CI matrix](./dev-workflow.md#ci-compatibility-matrix).
+- [ ] 4.2.2. Produce migration guidance for existing picologging adopters,
+  including API parity limits and operational differences. See
+  [design §6.1](./rust-multithreaded-logging-framework-for-python-design.md#61-balancing-api-familiarity-with-rust-idioms)
+   and
+  [design §9.2](./rust-multithreaded-logging-framework-for-python-design.md#92-alignment-with-user-requirements).
+- [ ] 4.2.3. Publish the femtologging package and complete user-facing
+  documentation updates for shipped capabilities. See
+  [design §9.3](./rust-multithreaded-logging-framework-for-python-design.md#93-call-to-actionnext-steps)
+  and [users guide](./users-guide.md).
+
+## 5. Roadmap consolidation checks
+
+### 5.1. Migration and deduplication validation
+
+- [x] 5.1.1. Migrate tasks from both legacy roadmap documents into this single
+  roadmap. See [roadmap style](./documentation-style-guide.md#roadmap-task-writing-guidelines).
+- [x] 5.1.2. Merge duplicate tasks across legacy documents into one canonical
+  task list (for example, compile-time filtering, dynamic reconfiguration, and
+  tracing integration). See
+  [roadmap formatting](./documentation-style-guide.md#roadmap-formatting-conventions).
+- [x] 5.1.3. Re-evaluate historical outstanding tasks against current codebase
+  state and mark completed work as done. See
+  [dev workflow §commands](./dev-workflow.md#commands) and
+  [rust extension](./rust-extension.md#rust-log-crate-bridge).

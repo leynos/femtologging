@@ -4,7 +4,7 @@ tools nixie test typecheck
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
 BUILD_JOBS ?=
-MDLINT ?= markdownlint
+MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 
