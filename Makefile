@@ -7,6 +7,7 @@ BUILD_JOBS ?=
 MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
+TEST_THREADS ?= 1
 
 all: release ## Build the release artifact
 
@@ -30,6 +31,7 @@ endef
 
 tools:
 	$(call ensure_tool,mdformat-all)
+	$(call ensure_tool,$(MDLINT))
 	$(call ensure_tool,$(CARGO))
 	$(call ensure_tool,rustfmt)
 	$(call ensure_tool,uv)
@@ -66,9 +68,9 @@ test: build ## Run tests
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
 	# Test baseline without optional features, then with python, then with log-compat bridge.
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat
+	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
+	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)
+	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- --test-threads=$(TEST_THREADS)
 	uv run pytest -v
 
 typecheck: build ## Static type analysis

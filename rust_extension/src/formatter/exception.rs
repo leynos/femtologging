@@ -44,34 +44,45 @@ impl ExceptionFormat for StackFrame {
             self.filename, self.lineno, self.function
         );
 
-        if let Some(ref source) = self.source_line {
-            let trimmed = source.trim_start();
-            let trimmed_end = trimmed.trim_end();
-            if !trimmed_end.is_empty() {
-                output.push_str(&format!("    {}\n", trimmed_end));
+        let Some(source) = self.source_line.as_ref() else {
+            return output;
+        };
+        let trimmed = source.trim_start();
+        let trimmed_end = trimmed.trim_end();
+        if trimmed_end.is_empty() {
+            return output;
+        }
 
-                // Add column indicators if available (Python 3.11+)
-                // Adjust for leading whitespace that was trimmed
-                if let (Some(colno), Some(end_colno)) = (self.colno, self.end_colno) {
-                    // Calculate how many leading chars were trimmed
-                    let leading_trimmed = source.len() - trimmed.len();
-                    // Adjust column positions (colno/end_colno are 1-indexed)
-                    let col_start =
-                        (colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
-                    let col_end =
-                        (end_colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
-                    let underline_len = col_end.saturating_sub(col_start).max(1);
-                    output.push_str(&format!(
-                        "    {}{}\n",
-                        " ".repeat(col_start),
-                        "^".repeat(underline_len)
-                    ));
-                }
-            }
+        output.push_str(&format!("    {}\n", trimmed_end));
+        if let Some(underline) = build_column_underline(source, trimmed, self.colno, self.end_colno)
+        {
+            output.push_str(&underline);
         }
 
         output
     }
+}
+
+/// Build an underline line for Python 3.11+ column-aware tracebacks.
+fn build_column_underline(
+    source: &str,
+    trimmed_source: &str,
+    colno: Option<u32>,
+    end_colno: Option<u32>,
+) -> Option<String> {
+    let (colno, end_colno) = colno.zip(end_colno)?;
+
+    // Account for indentation removed by `trim_start`.
+    let leading_trimmed = source.len() - trimmed_source.len();
+    let col_start = (colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+    let col_end = (end_colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+    let underline_len = col_end.saturating_sub(col_start).max(1);
+
+    Some(format!(
+        "    {}{}\n",
+        " ".repeat(col_start),
+        "^".repeat(underline_len)
+    ))
 }
 
 impl ExceptionFormat for StackTracePayload {

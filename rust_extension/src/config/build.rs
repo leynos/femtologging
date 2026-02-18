@@ -41,14 +41,7 @@ impl ConfigBuilder {
                     .cloned()
                     .chain(std::iter::once("root".to_string()))
                     .collect();
-                // Include ancestors of each kept logger (e.g., "a.b.c" keeps "a.b" and "a").
-                for name in self.logger_builders().keys() {
-                    let mut cur = name.as_str();
-                    while let Some((parent, _)) = cur.rsplit_once('.') {
-                        keep_names.insert(parent.to_string());
-                        cur = parent;
-                    }
-                }
+                self.extend_keep_names_with_ancestors(&mut keep_names);
                 manager::disable_existing_loggers(py, &keep_names)
                     .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
             }
@@ -66,6 +59,22 @@ impl ConfigBuilder {
             Ok(())
         })?;
         Ok(())
+    }
+
+    /// Include ancestors of each configured logger (e.g., `a.b.c` keeps `a.b`
+    /// and `a`) in the keep set used by `disable_existing_loggers`.
+    fn extend_keep_names_with_ancestors(&self, keep_names: &mut HashSet<String>) {
+        for name in self.logger_builders().keys() {
+            Self::insert_logger_ancestors(name, keep_names);
+        }
+    }
+
+    fn insert_logger_ancestors(name: &str, keep_names: &mut HashSet<String>) {
+        let mut cur = name;
+        while let Some((parent, _)) = cur.rsplit_once('.') {
+            keep_names.insert(parent.to_string());
+            cur = parent;
+        }
     }
 
     fn build_map<B, O, E, F, G>(

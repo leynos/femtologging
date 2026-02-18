@@ -32,7 +32,7 @@ class _TlsConfigParser:
                 f"handler {self.hid!r} socket kwargs {field_name} must be a str or None"
             )
             raise TypeError(msg)
-        return typ.cast("str", value)
+        return value
 
     def parse(self, kwargs: dict[str, object]) -> tuple[str | None, bool] | None:
         """Extract and validate TLS configuration from kwargs."""

@@ -49,4 +49,6 @@ def poll_file_for_text(path: Path, expected: str, timeout: float = 1.0) -> str:
             if expected in contents:
                 return contents
         time.sleep(_POLL_INTERVAL_SECONDS)
-    pytest.fail(f"log file did not contain '{expected}' within {timeout}s")
+    message = f"log file did not contain '{expected}' within {timeout}s"
+    pytest.fail(message)
+    raise AssertionError(message)

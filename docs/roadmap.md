@@ -46,8 +46,8 @@ for each task.
 - [x] 1.2.3. Implement `propagate` behaviour from child loggers to the root
   logger. See
   [configuration design §6.1](./configuration-design.md#61-propagation-semantics).
-- [x] 1.2.4. Select and integrate an MPSC channel for producer-consumer queues.
-  See
+- [x] 1.2.4. Select and integrate a multi-producer, single-consumer (MPSC)
+  channel for producer-consumer queues. See
   [design §5.3](./rust-multithreaded-logging-framework-for-python-design.md#53-impact-of-mpsc-channel-choice-on-throughput-and-latency).
 - [x] 1.2.5. Ensure all threaded components satisfy `Send`/`Sync` requirements.
   See
@@ -250,14 +250,15 @@ for each task.
 - [ ] 4.2.3. Publish the femtologging package and complete user-facing
   documentation updates for shipped capabilities. See
   [design §9.3](./rust-multithreaded-logging-framework-for-python-design.md#93-call-to-actionnext-steps)
-  and [users guide](./users-guide.md).
+   and [users guide](./users-guide.md).
 
 ## 5. Roadmap consolidation checks
 
 ### 5.1. Migration and deduplication validation
 
 - [x] 5.1.1. Migrate tasks from both legacy roadmap documents into this single
-  roadmap. See [roadmap style](./documentation-style-guide.md#roadmap-task-writing-guidelines).
+  roadmap. See
+  [roadmap style](./documentation-style-guide.md#roadmap-task-writing-guidelines).
 - [x] 5.1.2. Merge duplicate tasks across legacy documents into one canonical
   task list (for example, compile-time filtering, dynamic reconfiguration, and
   tracing integration). See
