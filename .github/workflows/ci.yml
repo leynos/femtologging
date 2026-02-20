@@ -71,3 +71,5 @@ jobs:
           output-path: coverage.xml
           format: cobertura
           cargo-manifest: rust_extension/Cargo.toml
+          with-default-features: false
+          features: python
