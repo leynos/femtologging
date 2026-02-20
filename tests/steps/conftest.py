@@ -13,6 +13,12 @@ if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 
+_PYTEST_RUNTEST_HOOK_LINE_PATTERN: re.Pattern[str] = re.compile(
+    r"^(?P<indent>\s*)(?P<prefix>(?:lambda:\s*)?runtest_hook)\(.*\),.*$",
+    flags=re.MULTILINE,
+)
+
+
 def normalise_traceback_output(output: str | None, placeholder: str = "<file>") -> str:
     """Normalise traceback output for snapshot comparison.
 
@@ -36,7 +42,13 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
         output,
     )
     # Replace line numbers
-    return re.sub(r", line \d+,", ", line <N>,", result)
+    result = re.sub(r", line \d+,", ", line <N>,", result)
+    # Pytest can render runtest_hook lines with variable args/kwargs across
+    # versions. Canonicalize the full call to a stable placeholder.
+    return _PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
+        r"\g<indent>\g<prefix>(...),",
+        result,
+    )
 
 
 @given("the logging system is reset")

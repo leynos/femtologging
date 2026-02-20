@@ -44,7 +44,7 @@
     File "<file>", line <N>, in from_call
       result: TResult | None = func()
     File "<file>", line <N>, in <lambda>
-      lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+      lambda: runtest_hook(...),
     File "<file>", line <N>, in __call__
       return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
     File "<file>", line <N>, in _hookexec
