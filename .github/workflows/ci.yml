@@ -68,13 +68,9 @@ jobs:
         run: make lint
       - name: Typecheck
         run: make typecheck
-      - name: Prepare temporary Rust workspace for coverage detection
-        run: |
-          if [ ! -f Cargo.toml ]; then
-            printf '[workspace]\nmembers = ["rust_extension"]\nresolver = "2"\n' > Cargo.toml
-          fi
       - name: Test and measure coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@aebb3f5b831102e2a10ef909c83d7d50ea86c332
+        uses: leynos/shared-actions/.github/actions/generate-coverage@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
         with:
           output-path: coverage.xml
           format: cobertura
+          cargo-manifest: rust_extension/Cargo.toml
