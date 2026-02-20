@@ -28,7 +28,7 @@ class TestTracebackNormalisation:
         expected = (
             "Stack (most recent call last):\n"
             '  File "<file>", line <N>, in <lambda>\n'
-            "    lambda: runtest_hook(item=item, **kwds),\n"
+            "    lambda: runtest_hook(...),\n"
         )
 
         assert normalise_traceback_output(output) == expected, (
@@ -49,10 +49,10 @@ class TestTracebackNormalisation:
         expected = (
             "Stack (most recent call last):\n"
             '  File "<file>", line <N>, in <lambda>\n'
-            "    lambda: runtest_hook( item=item, stage=stage, retry=retry ),\n"
+            "    lambda: runtest_hook(...),\n"
         )
 
         assert normalise_traceback_output(output) == expected, (
             f"{class_name}: normalise_traceback_output should retain a stable "
-            "runtest_hook call prefix across spacing and keyword changes"
+            "runtest_hook placeholder across spacing and keyword changes"
         )

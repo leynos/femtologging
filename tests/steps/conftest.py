@@ -13,8 +13,8 @@ if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 
-PYTEST_RUNTEST_HOOK_PREFIX_PATTERN = re.compile(
-    r"^(?P<prefix>\s*(?:lambda:\s*)?runtest_hook\(\s*.*?\s*\)\s*,).*$",
+PYTEST_RUNTEST_HOOK_LINE_PATTERN = re.compile(
+    r"^(?P<indent>\s*)(?P<prefix>(?:lambda:\s*)?runtest_hook)\(.*\),.*$",
     flags=re.MULTILINE,
 )
 
@@ -43,9 +43,12 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
     )
     # Replace line numbers
     result = re.sub(r", line \d+,", ", line <N>,", result)
-    # Pytest can render runtest_hook lines with variable keyword names and
-    # spacing across versions. Keep only the stable call prefix.
-    return PYTEST_RUNTEST_HOOK_PREFIX_PATTERN.sub(r"\g<prefix>", result)
+    # Pytest can render runtest_hook lines with variable args/kwargs across
+    # versions. Canonicalize the full call to a stable placeholder.
+    return PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
+        r"\g<indent>\g<prefix>(...),",
+        result,
+    )
 
 
 @given("the logging system is reset")
