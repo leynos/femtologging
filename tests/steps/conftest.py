@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 import re
 import typing as typ
+from pathlib import PurePath
 
 from pytest_bdd import given, parsers, then
 
@@ -22,12 +24,20 @@ _TRACEBACK_FRAME_PATTERN: re.Pattern[str] = re.compile(
     r'^(?P<indent>\s*)File "(?P<file>[^"]+)", line (?P<line>[^,]+), '
     r"in (?P<func>.+)$",
 )
-_LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset({
-    "_run_module_as_main",
-    "_run_code",
-    "run_module",
-    "_run_module_code",
-})
+
+
+class LauncherFrameFunc(enum.StrEnum):
+    """Function names emitted by Python launcher traceback frames."""
+
+    RUN_MODULE_AS_MAIN = "_run_module_as_main"
+    RUN_CODE = "_run_code"
+    RUN_MODULE = "run_module"
+    RUN_MODULE_CODE = "_run_module_code"
+
+
+_LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset(
+    member.value for member in LauncherFrameFunc
+)
 _SYSTEM_EXIT_PYTEST_LINE = "raise SystemExit(pytest.console_main())"
 _SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
 _RUNPY_INVOCATION_SNIPPET = "runpy.run_module("
@@ -49,12 +59,18 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
 
     Replaces file paths and line numbers with stable placeholders.
 
-    Args:
-        output: The traceback output string to normalise, or None.
-        placeholder: The placeholder to use for file paths (default: "<file>").
+    Parameters
+    ----------
+    output : str | None
+        The traceback output string to normalise, or ``None``.
+    placeholder : str
+        The placeholder used for file paths. Defaults to ``"<file>"``.
 
-    Returns:
-        Normalised output string, or empty string if output is None.
+    Returns
+    -------
+    str
+        Normalised output string, or an empty string when ``output`` is
+        ``None``.
 
     """
     if output is None:
@@ -145,8 +161,9 @@ def _normalise_frame_code_line(code_line: str) -> str:
 
 def _is_runpy_launcher_path(frame_file: str) -> bool:
     """Return whether a traceback frame comes from runpy launcher internals."""
-    normalised = frame_file.replace("\\", "/")
-    return normalised == "<frozen runpy>" or normalised.endswith("/runpy.py")
+    if frame_file == "<frozen runpy>":
+        return True
+    return PurePath(frame_file).name == "runpy.py"
 
 
 def _should_drop_launcher_frame(

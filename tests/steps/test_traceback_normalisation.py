@@ -18,7 +18,14 @@ class TestTracebackNormalization:
     """Grouped tests for traceback normalization behavior."""
 
     def test_normalize_traceback_output_strips_pytest_lambda_kwargs(self) -> None:
-        """Normalize pytest lambda frames to a stable snapshot-friendly form."""
+        """Normalize pytest lambda frames to a stable snapshot-friendly form.
+
+        Returns
+        -------
+        None
+            Asserts pytest lambda kwargs are normalized for stable snapshots.
+
+        """
         class_name = self.__class__.__name__
         output = (
             "Stack (most recent call last):\n"
@@ -38,7 +45,14 @@ class TestTracebackNormalization:
         )
 
     def test_normalize_traceback_output_relaxes_runtest_hook_signature(self) -> None:
-        """Handle spacing and kwarg-name changes in runtest_hook renderings."""
+        """Handle spacing and kwarg-name changes in runtest_hook renderings.
+
+        Returns
+        -------
+        None
+            Asserts runtest hook signatures normalize to a single stable form.
+
+        """
         class_name = self.__class__.__name__
         output = (
             "Stack (most recent call last):\n"
@@ -136,7 +150,14 @@ class TestTracebackNormalization:
     def test_normalize_traceback_output_keeps_non_launcher_run_module_frame(
         self,
     ) -> None:
-        """Keep user-defined run_module frames outside stdlib launcher code."""
+        """Keep user-defined run_module frames outside stdlib launcher code.
+
+        Returns
+        -------
+        None
+            Asserts application ``run_module`` frames are retained.
+
+        """
         class_name = self.__class__.__name__
         output = (
             "Stack (most recent call last):\n"
