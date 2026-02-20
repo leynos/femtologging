@@ -59,12 +59,21 @@ jobs:
         run: |
           uv tool install ruff
           uv tool install ty
+      - name: Install lxml build dependencies (experimental)
+        if: matrix.experimental
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxml2-dev libxslt1-dev
       - name: Check format
         run: make check-fmt
       - name: Lint
         run: make lint
       - name: Typecheck
         run: make typecheck
+      - name: Test Rust (no default features)
+        run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
+      - name: Test Rust (log-compat feature)
+        run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
       - name: Test and measure coverage
         uses: leynos/shared-actions/.github/actions/generate-coverage@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
         with:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import typing as typ
 
@@ -32,10 +33,12 @@ _SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
 _RUNPY_INVOCATION_SNIPPET = "runpy.run_module("
 
 
-class _FrameInfo(typ.NamedTuple):
+@dataclasses.dataclass(slots=True, frozen=True)
+class _FrameInfo:
     """Parsed traceback frame plus optional source line."""
 
     frame_line: str
+    frame_file: str
     frame_func: str
     code_line: str
     next_index: int
@@ -57,21 +60,22 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
     if output is None:
         return ""
 
+    result = _normalise_launcher_frames(output)
+
     # Replace file paths with placeholder
     result = re.sub(
         r'File "[^"]+"',
         f'File "{placeholder}"',
-        output,
+        result,
     )
     # Replace line numbers
     result = re.sub(r", line \d+,", ", line <N>,", result)
     # Pytest can render runtest_hook lines with variable args/kwargs across
     # versions. Canonicalize the full call to a stable placeholder.
-    result = _PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
+    return _PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
         r"\g<indent>\g<prefix>(...),",
         result,
     )
-    return _normalise_launcher_frames(result)
 
 
 def _normalise_launcher_frames(output: str) -> str:
@@ -88,7 +92,11 @@ def _normalise_launcher_frames(output: str) -> str:
             continue
 
         index = frame.next_index
-        if _should_drop_launcher_frame(frame.frame_func, frame.code_line):
+        if _should_drop_launcher_frame(
+            frame.frame_file,
+            frame.frame_func,
+            frame.code_line,
+        ):
             continue
 
         normalised_lines.append(frame.frame_line)
@@ -121,6 +129,7 @@ def _parse_frame(lines: list[str], index: int) -> _FrameInfo | None:
 
     return _FrameInfo(
         frame_line=frame_line,
+        frame_file=frame_match.group("file"),
         frame_func=frame_match.group("func"),
         code_line=code_line,
         next_index=next_index,
@@ -134,10 +143,21 @@ def _normalise_frame_code_line(code_line: str) -> str:
     return f"    {code_line}"
 
 
-def _should_drop_launcher_frame(frame_func: str, code_line: str) -> bool:
+def _is_runpy_launcher_path(frame_file: str) -> bool:
+    """Return whether a traceback frame comes from runpy launcher internals."""
+    normalised = frame_file.replace("\\", "/")
+    return normalised == "<frozen runpy>" or normalised.endswith("/runpy.py")
+
+
+def _should_drop_launcher_frame(
+    frame_file: str,
+    frame_func: str,
+    code_line: str,
+) -> bool:
     """Return whether a traceback frame is launcher noise."""
+    in_launcher_runtime = _is_runpy_launcher_path(frame_file)
     return (
-        frame_func in _LAUNCHER_FRAME_FUNCS
+        (in_launcher_runtime and frame_func in _LAUNCHER_FRAME_FUNCS)
         or (frame_func == "<module>" and code_line == _SYSTEM_EXIT_MAIN_LINE)
         or (frame_func == "main" and _RUNPY_INVOCATION_SNIPPET in code_line)
     )
