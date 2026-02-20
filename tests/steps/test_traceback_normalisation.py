@@ -34,5 +34,25 @@ class TestTracebackNormalisation:
         assert normalise_traceback_output(output) == expected, (
             f"{class_name}: normalise_traceback_output should strip pytest "
             "lambda kwargs and "
-            "normalize file/line markers"
+            "normalise file/line markers"
+        )
+
+    def test_normalise_traceback_output_relaxes_runtest_hook_signature(self) -> None:
+        """Handle spacing and kwarg-name changes in runtest_hook renderings."""
+        class_name = self.__class__.__name__
+        output = (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/run.py", line 9, in <lambda>\n'
+            "    lambda: runtest_hook( item=item, stage=stage, retry=retry ), "
+            "when=phase, reroute=reroute\n"
+        )
+        expected = (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <lambda>\n'
+            "    lambda: runtest_hook( item=item, stage=stage, retry=retry ),\n"
+        )
+
+        assert normalise_traceback_output(output) == expected, (
+            f"{class_name}: normalise_traceback_output should retain a stable "
+            "runtest_hook call prefix across spacing and keyword changes"
         )
