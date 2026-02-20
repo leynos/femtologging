@@ -13,7 +13,7 @@ if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 
-PYTEST_RUNTEST_HOOK_LINE_PATTERN = re.compile(
+_PYTEST_RUNTEST_HOOK_LINE_PATTERN: re.Pattern[str] = re.compile(
     r"^(?P<indent>\s*)(?P<prefix>(?:lambda:\s*)?runtest_hook)\(.*\),.*$",
     flags=re.MULTILINE,
 )
@@ -45,7 +45,7 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
     result = re.sub(r", line \d+,", ", line <N>,", result)
     # Pytest can render runtest_hook lines with variable args/kwargs across
     # versions. Canonicalize the full call to a stable placeholder.
-    return PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
+    return _PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
         r"\g<indent>\g<prefix>(...),",
         result,
     )
