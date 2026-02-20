@@ -17,6 +17,28 @@ _PYTEST_RUNTEST_HOOK_LINE_PATTERN: re.Pattern[str] = re.compile(
     r"^(?P<indent>\s*)(?P<prefix>(?:lambda:\s*)?runtest_hook)\(.*\),.*$",
     flags=re.MULTILINE,
 )
+_TRACEBACK_FRAME_PATTERN: re.Pattern[str] = re.compile(
+    r'^(?P<indent>\s*)File "(?P<file>[^"]+)", line (?P<line>[^,]+), '
+    r"in (?P<func>.+)$",
+)
+_LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset({
+    "_run_module_as_main",
+    "_run_code",
+    "run_module",
+    "_run_module_code",
+})
+_SYSTEM_EXIT_PYTEST_LINE = "raise SystemExit(pytest.console_main())"
+_SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
+_RUNPY_INVOCATION_SNIPPET = "runpy.run_module("
+
+
+class _FrameInfo(typ.NamedTuple):
+    """Parsed traceback frame plus optional source line."""
+
+    frame_line: str
+    frame_func: str
+    code_line: str
+    next_index: int
 
 
 def normalise_traceback_output(output: str | None, placeholder: str = "<file>") -> str:
@@ -45,9 +67,79 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
     result = re.sub(r", line \d+,", ", line <N>,", result)
     # Pytest can render runtest_hook lines with variable args/kwargs across
     # versions. Canonicalize the full call to a stable placeholder.
-    return _PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
+    result = _PYTEST_RUNTEST_HOOK_LINE_PATTERN.sub(
         r"\g<indent>\g<prefix>(...),",
         result,
+    )
+    return _normalise_launcher_frames(result)
+
+
+def _normalise_launcher_frames(output: str) -> str:
+    """Remove interpreter launcher frames and normalise entrypoint calls."""
+    lines = output.splitlines()
+    normalised_lines: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        frame = _parse_frame(lines, index)
+        if frame is None:
+            normalised_lines.append(lines[index])
+            index += 1
+            continue
+
+        index = frame.next_index
+        if _should_drop_launcher_frame(frame.frame_func, frame.code_line):
+            continue
+
+        normalised_lines.append(frame.frame_line)
+        if frame.code_line:
+            normalised_lines.append(_normalise_frame_code_line(frame.code_line))
+
+    rebuilt = "\n".join(normalised_lines)
+    if output.endswith("\n"):
+        return f"{rebuilt}\n"
+    return rebuilt
+
+
+def _parse_frame(lines: list[str], index: int) -> _FrameInfo | None:
+    """Return parsed frame information when the line starts a traceback frame."""
+    frame_line = lines[index]
+    frame_match = _TRACEBACK_FRAME_PATTERN.match(frame_line)
+    if frame_match is None:
+        return None
+
+    code_line = ""
+    next_index = index + 1
+    if next_index < len(lines):
+        candidate = lines[next_index]
+        if (
+            candidate.startswith("    ")
+            and _TRACEBACK_FRAME_PATTERN.match(candidate) is None
+        ):
+            code_line = candidate.strip()
+            next_index += 1
+
+    return _FrameInfo(
+        frame_line=frame_line,
+        frame_func=frame_match.group("func"),
+        code_line=code_line,
+        next_index=next_index,
+    )
+
+
+def _normalise_frame_code_line(code_line: str) -> str:
+    """Normalise volatile traceback source lines to stable output."""
+    if code_line == _SYSTEM_EXIT_PYTEST_LINE:
+        return "    sys.exit(console_main())"
+    return f"    {code_line}"
+
+
+def _should_drop_launcher_frame(frame_func: str, code_line: str) -> bool:
+    """Return whether a traceback frame is launcher noise."""
+    return (
+        frame_func in _LAUNCHER_FRAME_FUNCS
+        or (frame_func == "<module>" and code_line == _SYSTEM_EXIT_MAIN_LINE)
+        or (frame_func == "main" and _RUNPY_INVOCATION_SNIPPET in code_line)
     )
 
 
