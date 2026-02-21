@@ -39,10 +39,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.experimental }}
       - name: Install rust
-        uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a
-        with:
-          override: true
-          components: rustfmt, clippy
+        uses: leynos/shared-actions/.github/actions/setup-rust@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
       - name: Cache ~/.cargo and target/
         uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0
       - name: Cache cargo registry
@@ -62,11 +59,26 @@ jobs:
         run: |
           uv tool install ruff
           uv tool install ty
+      - name: Install lxml build dependencies (experimental)
+        if: matrix.experimental
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxml2-dev libxslt1-dev
       - name: Check format
         run: make check-fmt
       - name: Lint
         run: make lint
       - name: Typecheck
         run: make typecheck
-      - name: Test
-        run: make test
+      - name: Test Rust (no default features)
+        run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
+      - name: Test Rust (log-compat feature)
+        run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
+      - name: Test and measure coverage
+        uses: leynos/shared-actions/.github/actions/generate-coverage@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
+        with:
+          output-path: coverage.xml
+          format: cobertura
+          cargo-manifest: rust_extension/Cargo.toml
+          with-default-features: false
+          features: python
