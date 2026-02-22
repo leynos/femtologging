@@ -246,16 +246,18 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger.
     ///
-    /// Waits for the internal worker to drain queued records, then flushes
-    /// every attached handler.
+    /// First waits up to 2 seconds for the internal worker thread to drain
+    /// its queue, then calls ``flush()`` on every attached handler (each
+    /// handler applies its own timeout).
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker and all handlers acknowledge the flush
-    ///     within their respective timeouts.
-    ///     ``False`` when the worker cannot be reached or any handler flush
-    ///     fails or times out.
+    ///     ``True`` when the worker drains in time and every handler flush
+    ///     succeeds.
+    ///     ``False`` when the worker queue cannot be drained (channel
+    ///     closed or timeout exceeded) or any handler flush returns
+    ///     ``False``.
     ///
     /// Examples
     /// --------
