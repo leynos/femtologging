@@ -534,10 +534,37 @@ impl FemtoLogger {
         }
     }
 
+    /// Finalize the worker thread by draining any remaining queued
+    /// records.
+    ///
+    /// Acts as the shutdown entry point for the worker loop. The
+    /// drain step ensures that records already enqueued at the moment
+    /// shutdown was signalled are not silently lost.
+    ///
+    /// # Arguments
+    ///
+    /// * `rx` - Channel receiver holding pending log records.
     fn shutdown_and_drain(rx: &Receiver<QueuedRecord>) {
         Self::drain_remaining_records(rx);
     }
 
+    /// Perform a non-blocking check for a pending shutdown signal.
+    ///
+    /// This is the Phase 1 check in the two-phase shutdown pattern
+    /// used by [`worker_thread_loop`]. It uses `try_recv` rather
+    /// than a blocking receive so the worker can detect a shutdown
+    /// request that arrived while the previous `select!` iteration
+    /// was busy processing a log record. Without this check, a
+    /// continuously saturated record channel could delay shutdown
+    /// recognition indefinitely.
+    ///
+    /// Returns `true` when the shutdown channel carries a message or
+    /// has been disconnected.
+    ///
+    /// # Arguments
+    ///
+    /// * `shutdown_rx` - Channel receiver carrying the shutdown
+    ///   signal.
     fn should_shutdown_now(shutdown_rx: &Receiver<()>) -> bool {
         matches!(
             shutdown_rx.try_recv(),
@@ -547,22 +574,46 @@ impl FemtoLogger {
 
     /// Main loop executed by the logger's worker thread.
     ///
-    /// Checks for a shutdown signal before blocking, then waits for either
-    /// shutdown or incoming log records. Each received record is forwarded
-    /// to `handle_log_record`.
-    /// When a shutdown signal arrives, any queued records are drained before
-    /// the thread exits.
+    /// Uses a two-phase shutdown pattern to guarantee prompt shutdown
+    /// even under sustained high-throughput logging:
+    ///
+    /// - **Phase 1** ([`should_shutdown_now`]): A non-blocking
+    ///   `try_recv` on the shutdown channel, executed at the top of
+    ///   every iteration *before* the blocking `select!`. This
+    ///   provides a deterministic opportunity to observe a shutdown
+    ///   signal that arrived while the previous iteration was
+    ///   servicing a log record.
+    ///
+    /// - **Phase 2** (`select!`): A blocking wait on both the
+    ///   shutdown and record channels. Although `crossbeam`'s
+    ///   `select!` uses random selection when multiple channels are
+    ///   ready, a continuously saturated record channel could still
+    ///   cause the shutdown branch to lose repeated coin-flips,
+    ///   delaying exit. Phase 1 eliminates this probabilistic delay
+    ///   by guaranteeing that every loop iteration checks for
+    ///   shutdown deterministically.
+    ///
+    /// When either phase detects a shutdown signal, all remaining
+    /// queued records are drained before the thread exits so that no
+    /// log messages are silently lost.
     ///
     /// # Arguments
     ///
-    /// * `rx` - Channel receiver for new log records.
-    /// * `shutdown_rx` - Channel receiver signaling shutdown.
+    /// * `rx` - Channel receiver for incoming log records.
+    /// * `shutdown_rx` - Channel receiver carrying the shutdown
+    ///   signal, sent by [`FemtoLogger::drop`].
     fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
         loop {
+            // Phase 1: non-blocking check prevents shutdown starvation
+            // when the record channel is continuously saturated.
             if Self::should_shutdown_now(&shutdown_rx) {
                 Self::shutdown_and_drain(&rx);
                 break;
             }
+            // Phase 2: block until either a shutdown signal or a new
+            // record arrives.  Under heavy load the random selection
+            // in select! may repeatedly favour the record branch, so
+            // Phase 1 above provides the deterministic guarantee.
             select! {
                 recv(shutdown_rx) -> _ => {
                     Self::shutdown_and_drain(&rx);
