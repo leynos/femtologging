@@ -433,6 +433,10 @@ fn drop_releases_handle_lock_before_join() {
     );
 }
 
+// Two-phase shutdown tests are in a separate module to respect the 400-line limit.
+#[path = "logger_tests_shutdown.rs"]
+mod logger_tests_shutdown;
+
 // Python integration tests are in a separate module to respect the 400-line limit.
 #[cfg(feature = "python")]
 #[path = "logger_tests_python.rs"]
