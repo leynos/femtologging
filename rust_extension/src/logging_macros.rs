@@ -134,73 +134,84 @@ mod tests {
         }
     }
 
-    #[rstest]
-    fn debug_macro_dispatches_at_debug_level() {
-        let logger = FemtoLogger::new("macro.test".into());
-        logger.set_level(crate::FemtoLevel::Debug);
+    /// Create a logger with the given name and an attached `CollectingHandler`.
+    ///
+    /// When `level` is `Some`, the logger's threshold is set explicitly;
+    /// otherwise the default (INFO) is kept.
+    fn setup_logger_with_handler(
+        name: &str,
+        level: Option<crate::FemtoLevel>,
+    ) -> (FemtoLogger, Arc<CollectingHandler>) {
+        let logger = FemtoLogger::new(name.into());
+        if let Some(lvl) = level {
+            logger.set_level(lvl);
+        }
         let handler = Arc::new(CollectingHandler::default());
         logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        (logger, handler)
+    }
+
+    /// Assert that `handler` collected exactly one record with the expected
+    /// level string and message.
+    fn assert_single_record(
+        handler: &CollectingHandler,
+        expected_level: &str,
+        expected_message: &str,
+    ) {
+        let records = handler.collected();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].level_str(), expected_level);
+        assert_eq!(records[0].message(), expected_message);
+    }
+
+    #[rstest]
+    fn debug_macro_dispatches_at_debug_level() {
+        let (logger, handler) =
+            setup_logger_with_handler("macro.test", Some(crate::FemtoLevel::Debug));
 
         let result = femtolog_debug!(logger, "debug message");
         assert!(result.is_some());
         assert!(logger.flush_handlers());
 
-        let records = handler.collected();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].level_str(), "DEBUG");
-        assert_eq!(records[0].message(), "debug message");
+        assert_single_record(&handler, "DEBUG", "debug message");
     }
 
     #[rstest]
     fn info_macro_dispatches_at_info_level() {
-        let logger = FemtoLogger::new("macro.test".into());
-        let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = setup_logger_with_handler("macro.test", None);
 
         let result = femtolog_info!(logger, "info message");
         assert!(result.is_some());
         assert!(logger.flush_handlers());
 
-        let records = handler.collected();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].level_str(), "INFO");
+        assert_single_record(&handler, "INFO", "info message");
     }
 
     #[rstest]
     fn warn_macro_dispatches_at_warn_level() {
-        let logger = FemtoLogger::new("macro.test".into());
-        let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = setup_logger_with_handler("macro.test", None);
 
         let result = femtolog_warn!(logger, "warn message");
         assert!(result.is_some());
         assert!(logger.flush_handlers());
 
-        let records = handler.collected();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].level_str(), "WARN");
+        assert_single_record(&handler, "WARN", "warn message");
     }
 
     #[rstest]
     fn error_macro_dispatches_at_error_level() {
-        let logger = FemtoLogger::new("macro.test".into());
-        let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = setup_logger_with_handler("macro.test", None);
 
         let result = femtolog_error!(logger, "error message");
         assert!(result.is_some());
         assert!(logger.flush_handlers());
 
-        let records = handler.collected();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].level_str(), "ERROR");
+        assert_single_record(&handler, "ERROR", "error message");
     }
 
     #[rstest]
     fn macro_captures_source_location() {
-        let logger = FemtoLogger::new("macro.test".into());
-        let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = setup_logger_with_handler("macro.test", None);
 
         let _result = femtolog_info!(logger, "located");
         assert!(logger.flush_handlers());
@@ -223,7 +234,7 @@ mod tests {
 
     #[rstest]
     fn below_threshold_returns_none() {
-        let logger = FemtoLogger::new("macro.test".into());
+        let (logger, _handler) = setup_logger_with_handler("macro.test", None);
         // Default level is INFO, so DEBUG should be filtered out
         let result = femtolog_debug!(logger, "should be filtered");
         assert!(result.is_none());
