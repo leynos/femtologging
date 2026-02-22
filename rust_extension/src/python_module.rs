@@ -78,6 +78,13 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
         crate::frame_filter_py::get_logging_infrastructure_patterns,
         m
     )?)?;
+
+    // Module-level convenience logging functions
+    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_debug, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_info, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_warn, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_error, m)?)?;
+
     Ok(())
 }
 

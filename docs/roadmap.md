@@ -33,7 +33,7 @@ where applicable.
   - [x] Expand `FemtoLogRecord` with timestamp, source location, thread info,
     and structured key-values.
   - [x] Add `FemtoLevel` enum and per-logger level checks.
-  - [ ] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
+  - [x] Provide `debug!`, `info!`, `warn!`, and `error!` macros that capture
     source location.
   - [x] Route records to all configured handlers.
   - [x] Support attaching multiple handlers to a single logger.

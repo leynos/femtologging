@@ -225,6 +225,22 @@ get_logger: _Any
 reset_manager_py: _Any
 setup_rust_logging: Callable[[], None]
 
+def debug(message: str, /, *, name: str | None = ...) -> str | None:
+    """Log a message at DEBUG level via the root logger (or named logger)."""
+    ...
+
+def info(message: str, /, *, name: str | None = ...) -> str | None:
+    """Log a message at INFO level via the root logger (or named logger)."""
+    ...
+
+def warn(message: str, /, *, name: str | None = ...) -> str | None:
+    """Log a message at WARN level via the root logger (or named logger)."""
+    ...
+
+def error(message: str, /, *, name: str | None = ...) -> str | None:
+    """Log a message at ERROR level via the root logger (or named logger)."""
+    ...
+
 def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> None: ...
 def parse_ini_file(
     path: str, encoding: str | None = ...
