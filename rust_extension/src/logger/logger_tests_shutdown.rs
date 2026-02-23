@@ -5,6 +5,7 @@
 //! and complete record processing.
 
 use super::*;
+use rstest::{fixture, rstest};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -13,54 +14,68 @@ use std::time::Duration;
 // should_shutdown_now
 // ------------------------------------------------------------------
 
-#[test]
-fn should_shutdown_now_returns_true_on_sent_message() {
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    tx.send(()).expect("Failed to send shutdown signal");
-    assert!(FemtoLogger::should_shutdown_now(&rx));
+/// Channel state variants exercised by the parametrized shutdown
+/// detection test.
+enum ShutdownState {
+    /// A shutdown message has been sent on the channel.
+    MessageSent,
+    /// The sender has been dropped, disconnecting the channel.
+    Disconnected,
+    /// The channel is open but empty.
+    Empty,
 }
 
-#[test]
-fn should_shutdown_now_returns_true_on_disconnected_channel() {
+#[rstest(
+    state,
+    expected,
+    case::message_sent(ShutdownState::MessageSent, true),
+    case::disconnected(ShutdownState::Disconnected, true),
+    case::empty(ShutdownState::Empty, false)
+)]
+fn should_shutdown_now_cases(state: ShutdownState, expected: bool) {
     let (tx, rx) = crossbeam_channel::bounded::<()>(1);
-    drop(tx);
-    assert!(FemtoLogger::should_shutdown_now(&rx));
-}
-
-#[test]
-fn should_shutdown_now_returns_false_when_empty() {
-    let (_tx, rx) = crossbeam_channel::bounded::<()>(1);
-    assert!(!FemtoLogger::should_shutdown_now(&rx));
+    match state {
+        ShutdownState::MessageSent => {
+            tx.send(()).expect("Failed to send shutdown signal");
+        }
+        ShutdownState::Disconnected => drop(tx),
+        ShutdownState::Empty => { /* keep tx alive, channel stays open */ }
+    }
+    assert_eq!(FemtoLogger::should_shutdown_now(&rx), expected);
 }
 
 // ------------------------------------------------------------------
 // shutdown_and_drain
 // ------------------------------------------------------------------
 
-#[test]
-fn shutdown_and_drain_processes_all_records_in_order() {
+#[fixture]
+fn collecting_handler() -> Arc<CollectingHandler> {
+    Arc::new(CollectingHandler::new())
+}
+
+#[rstest]
+fn shutdown_and_drain_processes_all_records_in_order(collecting_handler: Arc<CollectingHandler>) {
     let (tx, rx) = crossbeam_channel::bounded(8);
-    let handler = Arc::new(CollectingHandler::new());
 
     for i in 0..5 {
         tx.send(QueuedRecord {
             record: FemtoLogRecord::new("core", FemtoLevel::Info, &format!("msg-{i}")),
-            handlers: vec![handler.clone() as Arc<dyn FemtoHandlerTrait>],
+            handlers: vec![collecting_handler.clone() as Arc<dyn FemtoHandlerTrait>],
         })
         .expect("Failed to enqueue record");
     }
 
     FemtoLogger::shutdown_and_drain(&rx);
 
-    let collected = handler.collected();
+    let collected = collecting_handler.collected();
     let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
     assert_eq!(msgs, vec!["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"]);
 }
 
-#[test]
-fn shutdown_and_drain_leaves_channel_empty() {
+#[rstest]
+fn shutdown_and_drain_leaves_channel_empty(collecting_handler: Arc<CollectingHandler>) {
     let (tx, rx) = crossbeam_channel::bounded(4);
-    let handler = Arc::new(CollectingHandler::new()) as Arc<dyn FemtoHandlerTrait>;
+    let handler: Arc<dyn FemtoHandlerTrait> = collecting_handler as Arc<dyn FemtoHandlerTrait>;
 
     tx.send(QueuedRecord {
         record: FemtoLogRecord::new("core", FemtoLevel::Info, "a"),
