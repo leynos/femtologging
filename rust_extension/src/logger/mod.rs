@@ -253,6 +253,24 @@ impl FemtoLogger {
     }
 
     /// Flush all handlers attached to this logger.
+    ///
+    /// First waits up to 2 seconds for the internal worker thread to drain
+    /// its queue, then calls ``flush()`` on every attached handler (each
+    /// handler applies its own timeout).
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` when the worker drains in time and every handler flush
+    ///     succeeds.
+    ///     ``False`` when the worker queue cannot be drained (channel
+    ///     closed or timeout exceeded) or any handler flush returns
+    ///     ``False``.
+    ///
+    /// Examples
+    /// --------
+    /// >>> logger.flush_handlers()
+    /// True
     #[pyo3(text_signature = "(self)")]
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()

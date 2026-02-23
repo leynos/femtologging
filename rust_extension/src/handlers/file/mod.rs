@@ -189,14 +189,16 @@ impl FemtoFileHandler {
     /// Flush queued log records to the underlying file without closing the
     /// handler.
     ///
+    /// Uses a fixed 1-second timeout.
+    ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker acknowledges the flush command within the
-    ///     1-second timeout.
-    ///     ``False`` when the handler has already been closed, the command
-    ///     cannot be delivered to the worker, or the worker fails to
-    ///     acknowledge before the timeout elapses.
+    ///     ``True`` when the worker acknowledges the flush within the
+    ///     timeout.
+    ///     ``False`` when the handler has already been closed, the
+    ///     internal channel to the worker has been dropped, or the worker
+    ///     does not acknowledge before the timeout elapses.
     ///
     /// Examples
     /// --------

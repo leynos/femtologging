@@ -75,7 +75,24 @@ class FemtoLogger:
     def clear_handlers(self) -> None: ...
     def clear_filters(self) -> None: ...
     def get_dropped(self) -> int: ...
-    def flush_handlers(self) -> bool: ...
+    def flush_handlers(self) -> bool:
+        """Flush all handlers attached to this logger.
+
+        First waits up to 2 seconds for the internal worker thread to
+        drain its queue, then calls ``flush()`` on every attached
+        handler (each handler applies its own timeout).
+
+        Returns
+        -------
+        bool
+            ``True`` when the worker drains in time and every handler
+            flush succeeds.
+            ``False`` when the worker queue cannot be drained (channel
+            closed or timeout exceeded) or any handler flush returns
+            ``False``.
+
+        """
+        ...
 
 FemtoHandler: _Any
 FemtoStreamHandler: _Any
@@ -123,7 +140,22 @@ class FemtoRotatingFileHandler:
     @property
     def backup_count(self) -> int: ...
     def handle(self, logger: str, level: LevelArg, message: str) -> None: ...
-    def flush(self) -> bool: ...
+    def flush(self) -> bool:
+        """Flush queued log records to disk without closing the handler.
+
+        Uses a fixed 1-second timeout.
+
+        Returns
+        -------
+        bool
+            ``True`` when the worker acknowledges the flush within
+            the timeout.
+            ``False`` when the handler has already been closed, the
+            internal channel to the worker has been dropped, or the
+            worker does not acknowledge before the timeout elapses.
+
+        """
+        ...
     def close(self) -> None: ...
 
 class RotatingFileHandlerBuilder:
