@@ -133,6 +133,13 @@ fn worker_thread_loop_shutdown_exits_under_load() {
         .recv_timeout(Duration::from_secs(2))
         .expect("Worker thread did not shutdown promptly");
     worker.join().expect("Worker thread panicked");
+
+    // Confirm the handler actually processed records (the sustained
+    // traffic should have driven the count well above zero).
+    assert!(
+        handler.count.load(Ordering::SeqCst) > 0,
+        "expected at least one record to be processed"
+    );
 }
 
 #[test]

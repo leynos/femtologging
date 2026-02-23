@@ -1,14 +1,11 @@
 //! Two-phase shutdown tests for the FemtoLogger worker loop.
 //!
 //! Exercises `should_shutdown_now`, `shutdown_and_drain`, and the
-//! `worker_thread_loop` under sustained load to verify prompt exit
-//! and complete record processing.
+//! `worker_thread_loop` drain-on-shutdown guarantee.
 
 use super::*;
 use rstest::{fixture, rstest};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 // ------------------------------------------------------------------
 // should_shutdown_now
@@ -139,68 +136,4 @@ fn worker_loop_drains_all_queued_records_on_shutdown() {
     let msgs: Vec<String> = collected.iter().map(|r| r.message().to_owned()).collect();
     let expected: Vec<String> = (0..record_count).map(|i| i.to_string()).collect();
     assert_eq!(msgs, expected, "records must be drained in FIFO order");
-}
-
-#[test]
-fn worker_loop_exits_promptly_under_sustained_traffic() {
-    use std::sync::atomic::AtomicBool;
-
-    let (tx, rx) = crossbeam_channel::bounded(64);
-    let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
-    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
-    let (started_tx, started_rx) = crossbeam_channel::bounded(1);
-    let handler = Arc::new(CountingHandler::with_first_signal(started_tx));
-    let handler_trait: Arc<dyn FemtoHandlerTrait> = handler.clone();
-
-    let running = Arc::new(AtomicBool::new(true));
-    let producer_running = Arc::clone(&running);
-    let producer_handler = handler_trait.clone();
-
-    let producer = std::thread::spawn(move || {
-        while producer_running.load(Ordering::Relaxed) {
-            let record = QueuedRecord {
-                record: FemtoLogRecord::new("core", FemtoLevel::Info, "load"),
-                handlers: vec![producer_handler.clone()],
-            };
-            match tx.try_send(record) {
-                Ok(()) => {}
-                Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    std::thread::yield_now();
-                }
-                Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                    break;
-                }
-            }
-        }
-    });
-
-    let worker = std::thread::spawn(move || {
-        FemtoLogger::worker_thread_loop(rx, shutdown_rx);
-        done_tx
-            .send(())
-            .expect("Failed to signal worker completion");
-    });
-
-    // Wait until the worker has consumed at least one record.
-    started_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("Worker did not start processing records");
-
-    shutdown_tx
-        .send(())
-        .expect("Failed to send shutdown signal");
-    running.store(false, Ordering::Relaxed);
-    producer.join().expect("Producer thread panicked");
-
-    done_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("Worker did not exit within 2 s of shutdown signal");
-    worker.join().expect("Worker thread panicked");
-
-    // Confirm the handler actually processed records (the sustained
-    // traffic should have driven the count well above zero).
-    assert!(
-        handler.count.load(Ordering::SeqCst) > 0,
-        "expected at least one record to be processed"
-    );
 }
