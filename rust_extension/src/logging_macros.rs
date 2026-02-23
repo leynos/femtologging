@@ -172,46 +172,29 @@ mod tests {
         assert_eq!(records[0].message(), expected_message);
     }
 
-    /// Helper macro that dispatches to the correct `femtolog_*` macro based
-    /// on a level identifier.  This allows a single parameterised test to
-    /// exercise all four public macros without code duplication.
-    macro_rules! dispatch_macro {
-        ($logger:expr, Debug, $msg:expr) => {
-            femtolog_debug!($logger, $msg)
+    #[rstest]
+    #[case::debug(crate::FemtoLevel::Debug, "DEBUG", "debug message")]
+    #[case::info(crate::FemtoLevel::Info, "INFO", "info message")]
+    #[case::warn(crate::FemtoLevel::Warn, "WARN", "warn message")]
+    #[case::error(crate::FemtoLevel::Error, "ERROR", "error message")]
+    fn macro_dispatches_at_level(
+        logger_with_handler: (FemtoLogger, Arc<CollectingHandler>),
+        #[case] level: crate::FemtoLevel,
+        #[case] expected_level_str: &str,
+        #[case] message: &str,
+    ) {
+        let (logger, handler) = logger_with_handler;
+        let result = match level {
+            crate::FemtoLevel::Debug => femtolog_debug!(logger, message),
+            crate::FemtoLevel::Info => femtolog_info!(logger, message),
+            crate::FemtoLevel::Warn => femtolog_warn!(logger, message),
+            crate::FemtoLevel::Error => femtolog_error!(logger, message),
+            _ => unreachable!("only debug/info/warn/error are tested"),
         };
-        ($logger:expr, Info, $msg:expr) => {
-            femtolog_info!($logger, $msg)
-        };
-        ($logger:expr, Warn, $msg:expr) => {
-            femtolog_warn!($logger, $msg)
-        };
-        ($logger:expr, Error, $msg:expr) => {
-            femtolog_error!($logger, $msg)
-        };
+        assert!(result.is_some());
+        assert!(logger.flush_handlers());
+        assert_single_record(&handler, expected_level_str, message);
     }
-
-    /// Macro that generates parameterised test cases for each log level.
-    ///
-    /// Each invocation emits a `#[rstest]` test function that dispatches the
-    /// given macro, asserts the result is `Some`, flushes the handler, and
-    /// checks the collected record's level and message.
-    macro_rules! macro_dispatch_test {
-        ($name:ident, $level_id:ident, $expected_level:expr, $message:expr) => {
-            #[rstest]
-            fn $name(logger_with_handler: (FemtoLogger, Arc<CollectingHandler>)) {
-                let (logger, handler) = logger_with_handler;
-                let result = dispatch_macro!(logger, $level_id, $message);
-                assert!(result.is_some());
-                assert!(logger.flush_handlers());
-                assert_single_record(&handler, $expected_level, $message);
-            }
-        };
-    }
-
-    macro_dispatch_test!(debug_macro_dispatches, Debug, "DEBUG", "debug message");
-    macro_dispatch_test!(info_macro_dispatches, Info, "INFO", "info message");
-    macro_dispatch_test!(warn_macro_dispatches, Warn, "WARN", "warn message");
-    macro_dispatch_test!(error_macro_dispatches, Error, "ERROR", "error message");
 
     #[rstest]
     fn macro_captures_source_location(logger_with_handler: (FemtoLogger, Arc<CollectingHandler>)) {
