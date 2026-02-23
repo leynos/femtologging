@@ -94,7 +94,7 @@ BDD/snapshot tests exercising both APIs.
 - [x] Add type stubs to `femtologging/_femtologging_rs.pyi`.
 - [x] Write Rust unit tests for macros (6 tests).
 - [x] Write Rust unit tests for convenience functions (7 tests).
-- [x] Write Python BDD feature file and step definitions (7 scenarios).
+- [x] Write Python Behaviour-Driven Development (BDD) feature file and step definitions (7 scenarios).
 - [x] Write snapshot tests for formatted output (1 syrupy snapshot).
 - [x] Update `docs/roadmap.md` to mark the macros item as done.
 - [x] Run all quality gates and fix any issues.
@@ -109,7 +109,7 @@ BDD/snapshot tests exercising both APIs.
   in Rust unit tests via `CollectingHandler` rather than in the Python BDD
   tests, where only the formatted string is observable.
 - `cargo test --features python` runs extremely slowly (60+ seconds per test)
-  due to GIL contention when many tests use `Python::attach`. This is a
+  due to Global Interpreter Lock (GIL) contention when many tests use `Python::attach`. This is a
   pre-existing issue, not introduced by this change. Running targeted tests
   (e.g., `-- convenience_functions::tests`) completes in milliseconds.
 - The frame depth for `sys._getframe` works as 1 (not 2) because Rust
@@ -170,7 +170,7 @@ Files created (7):
 - `tests/steps/test_logging_macros_steps.py` (step definitions)
 - `tests/steps/__snapshots__/test_logging_macros_steps.ambr` (syrupy snapshot)
 
-Files modified (5):
+Files modified (6):
 
 - `rust_extension/src/logger/mod.rs` — added `log_with_metadata()`
 - `rust_extension/src/lib.rs` — added module declarations

@@ -3,7 +3,7 @@
 //! Provides `debug`, `info`, `warn`, and `error` functions that mirror
 //! Python's `logging.debug()`, `logging.info()`, etc. Each function uses the
 //! root logger by default and captures the Python caller's source location
-//! (filename, line number, function name) into the log record's metadata.
+//! (filename, line number, module name) into the log record's metadata.
 
 use pyo3::prelude::*;
 
@@ -17,15 +17,15 @@ const DEFAULT_LOGGER_NAME: &str = "root";
 /// Extract the Python caller's source location from the call stack.
 ///
 /// Calls `sys._getframe(depth)` to retrieve the caller's frame, then
-/// reads `f_code.co_filename`, `f_lineno`, and `f_code.co_name`.
+/// reads `f_code.co_filename`, `f_lineno`, and `f_globals['__name__']`.
 /// Falls back to empty strings and zero line number if frame
 /// inspection fails (e.g., on non-CPython interpreters).
 fn capture_python_caller(py: Python<'_>, depth: i32) -> RecordMetadata {
-    let (filename, lineno, funcname) =
+    let (filename, lineno, module_name) =
         extract_frame_info(py, depth).unwrap_or_else(|_| (String::new(), 0, String::new()));
 
     RecordMetadata {
-        module_path: funcname,
+        module_path: module_name,
         filename,
         line_number: lineno,
         ..Default::default()
@@ -33,14 +33,23 @@ fn capture_python_caller(py: Python<'_>, depth: i32) -> RecordMetadata {
 }
 
 /// Attempt to extract frame info from the Python call stack.
+///
+/// Returns a tuple of `(filename, line_number, module_name)`.
+/// The module name is read from `frame.f_globals['__name__']`; if the
+/// key is absent (e.g., in embedded contexts) it falls back to an
+/// empty string rather than aborting the entire extraction.
 fn extract_frame_info(py: Python<'_>, depth: i32) -> PyResult<(String, u32, String)> {
     let sys = py.import("sys")?;
     let frame = sys.call_method1("_getframe", (depth,))?;
     let code = frame.getattr("f_code")?;
     let filename: String = code.getattr("co_filename")?.extract()?;
     let lineno: u32 = frame.getattr("f_lineno")?.extract()?;
-    let funcname: String = code.getattr("co_name")?.extract()?;
-    Ok((filename, lineno, funcname))
+    let module_name: String = frame
+        .getattr("f_globals")?
+        .get_item("__name__")
+        .and_then(|v| v.extract())
+        .unwrap_or_default();
+    Ok((filename, lineno, module_name))
 }
 
 /// Shared implementation for all convenience logging functions.
@@ -55,12 +64,8 @@ fn log_at_level(
 ) -> PyResult<Option<String>> {
     let logger_name = name.unwrap_or(DEFAULT_LOGGER_NAME);
     let logger = manager::get_logger(py, logger_name)?;
-    // depth 2: _getframe(0) = extract_frame_info,
-    //          _getframe(1) = log_at_level / capture_python_caller,
-    //          _getframe(2) = py_debug/py_info/py_warn/py_error (the pyfunction),
-    // but since _getframe is called from extract_frame_info (Rust, not Python),
-    // the Python frame stack only sees: [Python caller] -> [pyfunction].
-    // So depth 1 gives us the Python caller's frame.
+    // Rust functions are transparent in the Python frame stack, so
+    // _getframe(0) = the pyfunction, _getframe(1) = the Python caller.
     let metadata = capture_python_caller(py, 1);
     Ok(logger
         .borrow(py)

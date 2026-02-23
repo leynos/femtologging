@@ -103,6 +103,8 @@ def _flush_and_sync_stderr(
     logger.flush_handlers()
     handler.flush()
     with contextlib.suppress(OSError):
+        sys.stderr.flush()
+    with contextlib.suppress(OSError):
         os.fsync(sys.stderr.fileno())
 
 
