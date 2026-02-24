@@ -13,6 +13,7 @@ from femtologging import FemtoLogger, StdlibHandlerAdapter
 from femtologging.adapter import (
     TRACE_LEVEL_NUM,
     FemtoRecord,
+    _ensure_trace_level,
     _make_log_record,
     _stdlib_levelno,
 )
@@ -99,10 +100,31 @@ class TestStdlibHandlerAdapterConstruction:
 
     @staticmethod
     def test_wraps_stdlib_handler() -> None:
-        """Adapter should accept a logging.Handler instance."""
-        handler = logging.StreamHandler(io.StringIO())
+        """Adapter should forward records to the wrapped stdlib handler."""
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(logging.Formatter("%(message)s"))
         adapter = StdlibHandlerAdapter(handler)
-        assert adapter._handler is handler
+
+        adapter.handle_record(
+            {"logger": "test", "level": "INFO", "message": "wrapped-ok"},
+        )
+        handler.flush()
+
+        output = stream.getvalue()
+        assert "wrapped-ok" in output, (
+            f"wrapped handler did not receive the record: {output!r}"
+        )
+
+    @staticmethod
+    def test_trace_level_registered_on_init() -> None:
+        """TRACE level should be registered with stdlib logging after adapter init."""
+        _ensure_trace_level()
+        assert logging.getLevelName(TRACE_LEVEL_NUM) == "TRACE", (
+            f"TRACE level not registered: "
+            f"getLevelName({TRACE_LEVEL_NUM}) = "
+            f"{logging.getLevelName(TRACE_LEVEL_NUM)!r}"
+        )
 
     @staticmethod
     def test_rejects_non_handler() -> None:
@@ -170,8 +192,15 @@ class TestHandleRecordDispatch:
             logger_level=case.logger_level,
             handler_level=case.handler_level,
         )
-        assert case.expected_level in output
-        assert case.message in output
+        assert case.expected_level in output, (
+            f"expected level {case.expected_level!r} not found in output "
+            f"for logger='app', level={case.level!r}, message={case.message!r}: "
+            f"{output!r}"
+        )
+        assert case.message in output, (
+            f"expected message {case.message!r} not found in output "
+            f"for logger='app', level={case.level!r}: {output!r}"
+        )
 
 
 class TestExceptionForwarding:
@@ -322,20 +351,41 @@ class TestLogRecordAttributes:
         assert len(emitted) == 1
         record = emitted[0]
 
+        ctx = f"logger={logger_name!r}, level={level!r}, message={message!r}"
         if "name" in check_attrs:
-            assert record.name == check_attrs["name"]
+            assert record.name == check_attrs["name"], (
+                f"record.name mismatch ({ctx}): "
+                f"got {record.name!r}, expected {check_attrs['name']!r}"
+            )
         if "levelno" in check_attrs:
-            assert record.levelno == check_attrs["levelno"]
+            assert record.levelno == check_attrs["levelno"], (
+                f"record.levelno mismatch ({ctx}): "
+                f"got {record.levelno!r}, expected {check_attrs['levelno']!r}"
+            )
         if "levelname" in check_attrs:
-            assert record.levelname == check_attrs["levelname"]
+            assert record.levelname == check_attrs["levelname"], (
+                f"record.levelname mismatch ({ctx}): "
+                f"got {record.levelname!r}, expected {check_attrs['levelname']!r}"
+            )
         if "message" in check_attrs:
-            assert record.getMessage() == check_attrs["message"]
+            assert record.getMessage() == check_attrs["message"], (
+                f"record message mismatch ({ctx}): "
+                f"got {record.getMessage()!r}, expected {check_attrs['message']!r}"
+            )
         if "created_type" in check_attrs:
             expected_type = check_attrs["created_type"]
-            assert isinstance(expected_type, type)
-            assert isinstance(record.created, expected_type)
+            assert isinstance(expected_type, type), (
+                f"created_type check_attr must be a type ({ctx})"
+            )
+            assert isinstance(record.created, expected_type), (
+                f"record.created type mismatch ({ctx}): "
+                f"got {type(record.created).__name__}, "
+                f"expected {expected_type.__name__}"
+            )
         if "created_positive" in check_attrs:
-            assert record.created > 0
+            assert record.created > 0, (
+                f"record.created not positive ({ctx}): got {record.created}"
+            )
 
     @staticmethod
     def test_msecs_consistent_with_created() -> None:
@@ -347,6 +397,20 @@ class TestLogRecordAttributes:
         assert record.created == timestamp
         expected_msecs = (timestamp - int(timestamp)) * 1000.0
         assert record.msecs == pytest.approx(expected_msecs)
+
+    @staticmethod
+    def test_relative_created_consistent_with_created() -> None:
+        """Relative-created should be recomputed when timestamp is overridden."""
+        timestamp = 1700000000.456
+        record = _make_log_record(
+            {"metadata": {"timestamp": timestamp}},
+        )
+        start_time: float = getattr(logging, "_startTime", 0.0)
+        expected = (timestamp - start_time) * 1000.0
+        assert record.relativeCreated == pytest.approx(expected), (
+            f"relativeCreated mismatch: got {record.relativeCreated}, "
+            f"expected {expected}"
+        )
 
 
 class TestLevelFallback:

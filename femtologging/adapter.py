@@ -9,6 +9,7 @@ Femtologging dispatches to handlers via ``handle_record(record)`` where
 from __future__ import annotations
 
 import logging
+import time
 import typing as typ
 import warnings
 
@@ -64,7 +65,16 @@ class FemtoRecord(typ.TypedDict, total=False):
 # -- Femtologging level (0-5) -> stdlib level (5-50) ---------------------
 
 TRACE_LEVEL_NUM = 5
-logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
+_trace_registered = False
+
+
+def _ensure_trace_level() -> None:
+    """Register the TRACE level name with stdlib logging if not already done."""
+    global _trace_registered
+    if not _trace_registered:
+        logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
+        _trace_registered = True
+
 
 _FEMTO_TO_STDLIB_LEVEL: dict[int, int] = {
     0: TRACE_LEVEL_NUM,  # TRACE  -> TRACE
@@ -265,6 +275,7 @@ class StdlibHandlerAdapter:
         if not isinstance(handler, logging.Handler):
             msg = f"expected a logging.Handler instance, got {type(handler).__name__}"
             raise TypeError(msg)
+        _ensure_trace_level()
         self._handler = handler
 
     # -- femtologging handler protocol ------------------------------------
@@ -348,6 +359,10 @@ def _make_log_record(record: FemtoRecord) -> logging.LogRecord:
     if isinstance(timestamp, (int, float)):
         log_record.created = float(timestamp)
         log_record.msecs = (log_record.created - int(log_record.created)) * 1000.0
+        # logging._startTime is set at logging import; use getattr for
+        # type-checker compatibility with the private attribute.
+        start_time: float = getattr(logging, "_startTime", time.time())
+        log_record.relativeCreated = (log_record.created - start_time) * 1000.0
 
     _populate_thread_info(log_record, metadata)
 
