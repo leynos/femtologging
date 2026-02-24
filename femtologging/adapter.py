@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+import types
 import typing as typ
 import warnings
 
@@ -76,16 +77,16 @@ def _ensure_trace_level() -> None:
         _trace_registered = True
 
 
-_FEMTO_TO_STDLIB_LEVEL: dict[int, int] = {
+_FEMTO_TO_STDLIB_LEVEL: types.MappingProxyType[int, int] = types.MappingProxyType({
     0: TRACE_LEVEL_NUM,  # TRACE  -> TRACE
     1: 10,  # DEBUG  -> DEBUG
     2: 20,  # INFO   -> INFO
     3: 30,  # WARN   -> WARNING
     4: 40,  # ERROR  -> ERROR
     5: 50,  # CRITICAL -> CRITICAL
-}
+})
 
-_FEMTO_LEVEL_NAMES: dict[str, int] = {
+_FEMTO_LEVEL_NAMES: types.MappingProxyType[str, int] = types.MappingProxyType({
     "TRACE": TRACE_LEVEL_NUM,
     "DEBUG": logging.DEBUG,
     "INFO": logging.INFO,
@@ -93,7 +94,7 @@ _FEMTO_LEVEL_NAMES: dict[str, int] = {
     "WARNING": logging.WARNING,
     "ERROR": logging.ERROR,
     "CRITICAL": logging.CRITICAL,
-}
+})
 
 
 def _stdlib_levelno(record: FemtoRecord) -> int:
@@ -114,7 +115,7 @@ def _stdlib_levelno(record: FemtoRecord) -> int:
     return logging.WARNING
 
 
-def _format_frames(frames: list[Frame]) -> list[str]:
+def _format_frames(frames: list[Frame]) -> typ.Iterator[str]:
     """Render a list of stack frame dicts as human-readable text lines.
 
     Parameters
@@ -123,22 +124,20 @@ def _format_frames(frames: list[Frame]) -> list[str]:
         Frame dictionaries with ``filename``, ``lineno``, ``function``,
         and optionally ``source_line`` keys.
 
-    Returns
-    -------
-    list[str]
+    Yields
+    ------
+    str
         Lines describing each frame.
 
     """
-    lines: list[str] = []
     for frame in frames:
         filename = frame.get("filename", "<unknown>")
         lineno = frame.get("lineno", "?")
         function = frame.get("function", "<unknown>")
-        lines.append(f'  File "{filename}", line {lineno}, in {function}')
+        yield f'  File "{filename}", line {lineno}, in {function}'
         source = frame.get("source_line")
         if source:
-            lines.append(f"    {source}")
-    return lines
+            yield f"    {source}"
 
 
 def _format_exc_text(exc_info: ExcInfo) -> str:

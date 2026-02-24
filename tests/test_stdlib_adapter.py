@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import io
 import logging
 import typing as typ
@@ -13,7 +14,6 @@ from femtologging import FemtoLogger, StdlibHandlerAdapter
 from femtologging.adapter import (
     TRACE_LEVEL_NUM,
     FemtoRecord,
-    _ensure_trace_level,
     _make_log_record,
     _stdlib_levelno,
 )
@@ -119,7 +119,7 @@ class TestStdlibHandlerAdapterConstruction:
     @staticmethod
     def test_trace_level_registered_on_init() -> None:
         """TRACE level should be registered with stdlib logging after adapter init."""
-        _ensure_trace_level()
+        StdlibHandlerAdapter(logging.StreamHandler(io.StringIO()))
         assert logging.getLevelName(TRACE_LEVEL_NUM) == "TRACE", (
             f"TRACE level not registered: "
             f"getLevelName({TRACE_LEVEL_NUM}) = "
@@ -158,9 +158,11 @@ class TestHandleRecordDispatch:
             message="hello world",
             formatter=logging.Formatter("%(name)s %(levelname)s %(message)s"),
         )
-        assert "myapp" in output
-        assert "INFO" in output
-        assert "hello world" in output
+        assert "myapp" in output, f"expected source 'myapp' in output: {output!r}"
+        assert "INFO" in output, f"expected level 'INFO' in output: {output!r}"
+        assert "hello world" in output, (
+            f"expected message 'hello world' in output: {output!r}"
+        )
 
     @staticmethod
     @pytest.mark.parametrize(
@@ -226,8 +228,8 @@ class TestExceptionForwarding:
                 formatter=logging.Formatter("%(message)s\n%(exc_text)s"),
                 exc_info=True,
             )
-        assert "caught" in output
-        assert "ValueError" in output
+        assert "caught" in output, f"expected 'caught' in output: {output!r}"
+        assert "ValueError" in output, f"expected 'ValueError' in output: {output!r}"
 
     @staticmethod
     def test_stack_info_forwarded(
@@ -246,9 +248,11 @@ class TestExceptionForwarding:
             formatter=logging.Formatter("%(message)s"),
             stack_info=True,
         )
-        assert "trace" in output
+        assert "trace" in output, f"expected 'trace' in output: {output!r}"
         # stdlib Formatter appends stack_info after the message
-        assert "Stack (most recent call last)" in output
+        assert "Stack (most recent call last)" in output, (
+            f"expected stack trace header in output: {output!r}"
+        )
 
 
 class TestDelegation:
@@ -280,7 +284,7 @@ class TestDelegation:
 
         adapter = StdlibHandlerAdapter(SpyHandler())
         getattr(adapter, method_name)()
-        assert calls == [method_name]
+        assert calls == [method_name], f"expected [{method_name!r}], got {calls!r}"
 
 
 class TestHandleFallback:
@@ -290,7 +294,7 @@ class TestHandleFallback:
     def test_handle_is_callable() -> None:
         """The handle fallback must be callable for add_handler validation."""
         adapter = StdlibHandlerAdapter(logging.StreamHandler(io.StringIO()))
-        assert callable(adapter.handle)
+        assert callable(adapter.handle), "adapter.handle should be callable"
 
     @staticmethod
     def test_handle_emits_warning() -> None:
@@ -348,7 +352,7 @@ class TestLogRecordAttributes:
         logger.log(level, message)
         del logger
 
-        assert len(emitted) == 1
+        assert len(emitted) == 1, f"expected 1 emitted record, got {len(emitted)}"
         record = emitted[0]
 
         ctx = f"logger={logger_name!r}, level={level!r}, message={message!r}"
@@ -394,9 +398,35 @@ class TestLogRecordAttributes:
         record = _make_log_record(
             {"metadata": {"timestamp": timestamp}},
         )
-        assert record.created == timestamp
+        assert record.created == timestamp, (
+            f"record.created mismatch: got {record.created}, expected {timestamp}"
+        )
         expected_msecs = (timestamp - int(timestamp)) * 1000.0
-        assert record.msecs == pytest.approx(expected_msecs)
+        assert record.msecs == pytest.approx(expected_msecs), (
+            f"record.msecs mismatch: got {record.msecs}, expected {expected_msecs}"
+        )
+
+    @staticmethod
+    def test_asctime_uses_overridden_timestamp() -> None:
+        """Formatted asctime should reflect the overridden timestamp."""
+        # 2023-11-14 22:13:20.456 UTC
+        timestamp = 1700000000.456
+        record = _make_log_record(
+            {"metadata": {"timestamp": timestamp}},
+        )
+        formatter = logging.Formatter("%(asctime)s")
+        formatted = formatter.format(record)
+
+        expected_dt = dt.datetime.fromtimestamp(timestamp, tz=dt.UTC)
+        expected_prefix = expected_dt.strftime("%Y-%m-%d %H:%M:%S")
+        assert formatted.startswith(expected_prefix), (
+            f"asctime does not start with expected prefix: "
+            f"got {formatted!r}, expected prefix {expected_prefix!r}"
+        )
+        # The default asctime format appends ",456" for milliseconds
+        assert ",456" in formatted, (
+            f"asctime missing expected milliseconds ',456': {formatted!r}"
+        )
 
     @staticmethod
     def test_relative_created_consistent_with_created() -> None:
@@ -406,7 +436,7 @@ class TestLogRecordAttributes:
             {"metadata": {"timestamp": timestamp}},
         )
         start_time: float = getattr(logging, "_startTime", 0.0)
-        expected = (timestamp - start_time) * 1000.0
+        expected = (record.created - start_time) * 1000.0
         assert record.relativeCreated == pytest.approx(expected), (
             f"relativeCreated mismatch: got {record.relativeCreated}, "
             f"expected {expected}"
@@ -431,7 +461,9 @@ class TestLevelFallback:
         expected: int,
     ) -> None:
         """Unknown or missing level information should fall back to WARNING."""
-        assert _stdlib_levelno(record) == expected
+        assert _stdlib_levelno(record) == expected, (
+            f"expected {expected} for record {record!r}, got {_stdlib_levelno(record)}"
+        )
 
 
 class TestPublicExport:
@@ -442,12 +474,18 @@ class TestPublicExport:
         """StdlibHandlerAdapter should be importable from femtologging."""
         import femtologging
 
-        assert hasattr(femtologging, "StdlibHandlerAdapter")
-        assert femtologging.StdlibHandlerAdapter is StdlibHandlerAdapter
+        assert hasattr(femtologging, "StdlibHandlerAdapter"), (
+            "StdlibHandlerAdapter not found on femtologging module"
+        )
+        assert femtologging.StdlibHandlerAdapter is StdlibHandlerAdapter, (
+            "femtologging.StdlibHandlerAdapter is not the expected class"
+        )
 
     @staticmethod
     def test_in_all() -> None:
         """StdlibHandlerAdapter should be listed in __all__."""
         import femtologging
 
-        assert "StdlibHandlerAdapter" in femtologging.__all__
+        assert "StdlibHandlerAdapter" in femtologging.__all__, (
+            f"StdlibHandlerAdapter not in __all__: {femtologging.__all__!r}"
+        )
