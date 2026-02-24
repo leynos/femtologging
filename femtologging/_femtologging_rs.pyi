@@ -93,7 +93,7 @@ class FemtoLogger:
 
         """
         ...
-    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802
+    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802 — stdlib-compatible camelCase name; matches logging.Logger.isEnabledFor
         """Return whether a message at the given level would be processed.
 
         Parameters
@@ -159,12 +159,27 @@ class FemtoLogger:
     ) -> str | None:
         """Log a message at CRITICAL level."""
         ...
-    def exception(
+    def _exception_impl(
         self,
         message: str,
         /,
         *,
         exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Rust-level entry point for ``exception()`` (no default substitution).
+
+        Prefer the Python ``exception()`` wrapper installed by ``_compat``,
+        which defaults ``exc_info`` to ``True``.
+
+        """
+        ...
+    def exception(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = True,
         stack_info: bool = False,
     ) -> str | None:
         """Log a message at ERROR level with ``exc_info`` defaulting to ``True``.

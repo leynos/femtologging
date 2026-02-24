@@ -10,7 +10,6 @@
 
 use pyo3::PyAny;
 use pyo3::prelude::*;
-use pyo3::types::PyBool;
 
 use crate::level::FemtoLevel;
 
@@ -164,10 +163,13 @@ impl FemtoLogger {
         self.py_log(py, FemtoLevel::Critical, message, exc_info, stack_info)
     }
 
-    /// Log a message at ERROR level with ``exc_info`` defaulting to ``True``.
+    /// Log a message at ERROR level, forwarding ``exc_info`` as-is.
     ///
-    /// This mirrors Python's ``logging.Logger.exception()`` which behaves
-    /// like ``error()`` but automatically captures the active exception.
+    /// The Python-visible ``exception()`` method (with a default of
+    /// ``exc_info=True``) is installed by ``_compat.py`` to correctly
+    /// distinguish an omitted argument from an explicit ``None``.
+    /// This Rust-level entry point is exposed as ``_exception_impl``
+    /// and intentionally does **no** default substitution.
     ///
     /// # Examples
     ///
@@ -178,7 +180,7 @@ impl FemtoLogger {
     ///     logger.exception("risky_call failed")
     /// ```
     #[pyo3(
-        name = "exception",
+        name = "_exception_impl",
         signature = (message, /, *, exc_info=None, stack_info=false),
         text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
     )]
@@ -189,16 +191,6 @@ impl FemtoLogger {
         exc_info: Option<&Bound<'_, PyAny>>,
         stack_info: Option<bool>,
     ) -> PyResult<Option<String>> {
-        let effective_exc_info = exc_info.map_or_else(
-            || PyBool::new(py, true).to_owned().into_any(),
-            |v| v.to_owned(),
-        );
-        self.py_log(
-            py,
-            FemtoLevel::Error,
-            message,
-            Some(&effective_exc_info.as_borrowed()),
-            stack_info,
-        )
+        self.py_log(py, FemtoLevel::Error, message, exc_info, stack_info)
     }
 }

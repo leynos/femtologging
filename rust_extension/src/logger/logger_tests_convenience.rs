@@ -5,6 +5,26 @@ use pyo3::Python;
 use pyo3::types::PyBool;
 use rstest::rstest;
 
+/// Dispatch to the named convenience method on `FemtoLogger`.
+///
+/// Centralises the method-name-to-function mapping so parameterised
+/// tests avoid duplicating the five-way match.
+fn call_py_log_method(
+    logger: &FemtoLogger,
+    py: Python<'_>,
+    method_name: &str,
+    message: &str,
+) -> PyResult<Option<String>> {
+    match method_name {
+        "py_debug" => logger.py_debug(py, message, None, None),
+        "py_info" => logger.py_info(py, message, None, None),
+        "py_warning" => logger.py_warning(py, message, None, None),
+        "py_error" => logger.py_error(py, message, None, None),
+        "py_critical" => logger.py_critical(py, message, None, None),
+        _ => unreachable!("unknown convenience method: {method_name}"),
+    }
+}
+
 #[test]
 fn is_enabled_for_respects_logger_level() {
     let logger = FemtoLogger::new("test".to_string());
@@ -37,81 +57,71 @@ fn convenience_method_logs_at_correct_level(#[case] method_name: &str, #[case] e
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         logger.set_level(FemtoLevel::Trace);
-        let result = match method_name {
-            "py_debug" => logger.py_debug(py, "hello", None, None),
-            "py_info" => logger.py_info(py, "hello", None, None),
-            "py_warning" => logger.py_warning(py, "hello", None, None),
-            "py_error" => logger.py_error(py, "hello", None, None),
-            "py_critical" => logger.py_critical(py, "hello", None, None),
-            _ => unreachable!(),
-        }
-        .expect("convenience method should not fail");
+        let result = call_py_log_method(&logger, py, method_name, "hello")
+            .expect("convenience method should not fail");
         assert_eq!(result, Some(expected.to_string()));
     });
 }
 
-#[test]
-fn convenience_methods_respect_level_filtering() {
+#[rstest]
+#[case::debug("py_debug", false)]
+#[case::info("py_info", false)]
+#[case::warning("py_warning", false)]
+#[case::error("py_error", true)]
+#[case::critical("py_critical", true)]
+fn convenience_methods_respect_level_filtering(
+    #[case] method_name: &str,
+    #[case] should_emit: bool,
+) {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         logger.set_level(FemtoLevel::Error);
-
-        assert!(
-            logger
-                .py_debug(py, "filtered", None, None)
-                .expect("should not fail")
-                .is_none()
-        );
-        assert!(
-            logger
-                .py_info(py, "filtered", None, None)
-                .expect("should not fail")
-                .is_none()
-        );
-        assert!(
-            logger
-                .py_warning(py, "filtered", None, None)
-                .expect("should not fail")
-                .is_none()
-        );
-        assert!(
-            logger
-                .py_error(py, "emitted", None, None)
-                .expect("should not fail")
-                .is_some()
-        );
-        assert!(
-            logger
-                .py_critical(py, "emitted", None, None)
-                .expect("should not fail")
-                .is_some()
+        let result =
+            call_py_log_method(&logger, py, method_name, "filtered").expect("should not fail");
+        assert_eq!(
+            result.is_some(),
+            should_emit,
+            "{method_name} with level=Error should{}emit",
+            if should_emit { " " } else { " not " }
         );
     });
 }
 
 #[test]
-fn exception_without_exc_info_passes_true() {
-    // Verify that exception() with no explicit exc_info argument
-    // delegates to py_log with exc_info=True (a boolean True value).
-    // When no active exception exists, exc_info=True is a no-op,
-    // so the output is the plain formatted message at ERROR level.
+fn exception_impl_logs_at_error_level() {
+    // _exception_impl (the Rust entry point) passes exc_info through
+    // as-is.  The Python-side wrapper in _compat adds the True default.
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
             .py_exception(py, "no active exc", None, None)
-            .expect("exception() with no active exception should not fail");
+            .expect("_exception_impl with no exc_info should not fail");
         assert_eq!(result, Some("test [ERROR] no active exc".to_string()));
     });
 }
 
 #[test]
-fn exception_with_explicit_exc_info_false() {
+fn exception_impl_with_explicit_exc_info_false() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let false_val = PyBool::new(py, false).to_owned().into_any();
         let result = logger
             .py_exception(py, "no capture", Some(&false_val.as_borrowed()), None)
-            .expect("exception() with exc_info=False should not fail");
+            .expect("_exception_impl with exc_info=False should not fail");
         assert_eq!(result, Some("test [ERROR] no capture".to_string()));
+    });
+}
+
+#[test]
+fn exception_impl_with_explicit_exc_info_none_suppresses_capture() {
+    // Passing Python None for exc_info should suppress exception capture.
+    // should_capture_exc_info returns false for None.
+    Python::attach(|py| {
+        let logger = FemtoLogger::new("test".to_string());
+        let none_val = py.None().into_bound(py).into_any();
+        let result = logger
+            .py_exception(py, "none passed", Some(&none_val.as_borrowed()), None)
+            .expect("_exception_impl with exc_info=None should not fail");
+        assert_eq!(result, Some("test [ERROR] none passed".to_string()));
     });
 }

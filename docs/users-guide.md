@@ -72,8 +72,8 @@ your process exits.
   Each accepts a pre-formatted `message` string plus optional `exc_info` and
   `stack_info` keyword arguments, identical to `log()`. Unlike the stdlib,
   `*args` / `**kwargs` lazy formatting is not supported — build the final
-  message string before calling these methods.
-  `exception()` behaves like `error()` but defaults `exc_info` to `True`.
+  message string before calling these methods. `exception()` behaves like
+  `error()` but defaults `exc_info` to `True`.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info`
   for capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:

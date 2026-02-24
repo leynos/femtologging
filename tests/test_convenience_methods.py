@@ -1,4 +1,31 @@
-"""Tests for convenience logging methods, ``isEnabledFor``, and ``getLogger``."""
+"""Tests for convenience logging methods, ``isEnabledFor``, and ``getLogger``.
+
+Purpose
+-------
+Verify that the stdlib-compatible convenience API on ``FemtoLogger``
+behaves correctly: ``debug``, ``info``, ``warning``, ``error``,
+``critical``, ``exception``, ``isEnabledFor``, and the module-level
+``getLogger`` alias.
+
+Notes
+-----
+These tests exercise the Python-facing signatures exposed by PyO3.
+Each convenience method delegates to the internal ``log()`` machinery,
+so the tests focus on level tagging, filtering, ``exc_info`` /
+``stack_info`` passthrough, and the ``exception()`` auto-capture
+semantics rather than duplicating full logging-pipeline coverage.
+
+Examples
+--------
+>>> from femtologging import FemtoLogger, getLogger
+>>> logger = getLogger("example")
+>>> logger.set_level("DEBUG")
+>>> logger.isEnabledFor("INFO")
+True
+>>> logger.info("hello") is not None
+True
+
+"""
 
 from __future__ import annotations
 
@@ -86,7 +113,9 @@ def test_convenience_method_formats_correctly(method: str, expected_level: str) 
     logger = FemtoLogger("conv")
     logger.set_level("TRACE")
     result = getattr(logger, method)("hello")
-    assert result == f"conv [{expected_level}] hello"
+    assert result == f"conv [{expected_level}] hello", (
+        f"{method}() should format as 'conv [{expected_level}] hello', got {result!r}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -122,7 +151,7 @@ def test_convenience_method_with_exc_info() -> None:
     logger.set_level("TRACE")
     msg = "boom"
     try:
-        raise ValueError(msg)  # noqa: TRY301
+        raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.error("caught", exc_info=True)
     assert output is not None
@@ -147,7 +176,7 @@ def test_exception_captures_active_exception() -> None:
     logger = FemtoLogger("exc.auto")
     msg = "auto capture"
     try:
-        raise RuntimeError(msg)  # noqa: TRY301
+        raise RuntimeError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except RuntimeError:
         output = logger.exception("caught")
     assert output is not None
@@ -162,7 +191,7 @@ def test_exception_logs_at_error_level() -> None:
     logger.set_level("ERROR")
     msg = "level check"
     try:
-        raise ValueError(msg)  # noqa: TRY301
+        raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.exception("caught")
     assert output is not None
@@ -175,7 +204,7 @@ def test_exception_filtered_below_error() -> None:
     logger.set_level("CRITICAL")
     msg = "filtered"
     try:
-        raise ValueError(msg)  # noqa: TRY301
+        raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.exception("caught")
     assert output is None
@@ -184,7 +213,7 @@ def test_exception_filtered_below_error() -> None:
 def test_exception_with_no_active_exception() -> None:
     """``exception()`` with no active exception logs plain message."""
     logger = FemtoLogger("exc.none")
-    output = logger.exception("no error active")  # noqa: LOG004
+    output = logger.exception("no error active")  # noqa: LOG004 — testing exception() outside handler
     assert output is not None
     assert output == "exc.none [ERROR] no error active"
 
@@ -194,16 +223,27 @@ def test_exception_with_explicit_exc_info_false() -> None:
     logger = FemtoLogger("exc.false")
     msg = "suppressed"
     try:
-        raise ValueError(msg)  # noqa: TRY301
+        raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
-        output = logger.exception("caught", exc_info=False)  # noqa: LOG007
+        output = logger.exception("caught", exc_info=False)  # noqa: LOG007 — testing explicit False override
     assert output == "exc.false [ERROR] caught"
+
+
+def test_exception_with_explicit_exc_info_none() -> None:
+    """``exception(exc_info=None)`` should suppress capture like stdlib."""
+    logger = FemtoLogger("exc.explicit_none")
+    msg = "should not capture"
+    try:
+        raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
+    except ValueError:
+        output = logger.exception("caught", exc_info=None)  # noqa: LOG007 — testing explicit None override
+    assert output == "exc.explicit_none [ERROR] caught"
 
 
 def test_exception_with_exc_info_instance() -> None:
     """``exception()`` with an exception instance should capture it."""
     logger = FemtoLogger("exc.inst")
     exc = KeyError("specific")
-    output = logger.exception("caught", exc_info=exc)  # noqa: LOG004
+    output = logger.exception("caught", exc_info=exc)  # noqa: LOG004 — testing exception() outside handler
     assert output is not None
     assert "KeyError" in output
