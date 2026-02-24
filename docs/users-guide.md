@@ -41,9 +41,9 @@ your process exits.
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
   monitor pressure.
 - Record metadata tracks the logger name, level, message text, timestamps,
-  thread identity, and optional structured exception (`exc_info`) and
-  call-stack (`stack_info`) payloads. The Python API does not yet expose other
-  rich `LogRecord` attributes such as `extra` or the calling module.
+  thread identity, and optional structured exception (`exc_info`) and call
+  stack (`stack_info`) payloads. The Python API does not yet expose other rich
+  `LogRecord` attributes such as `extra` or the calling module.
 
 ## Working with loggers
 
@@ -91,7 +91,7 @@ your process exits.
   ```
 
 - There is no equivalent to `extra` or lazy formatting. Build the final
-  message string yourself before calling `log()`.
+  message string before calling `log()`.
 
 ### Managing handlers and custom sinks
 
