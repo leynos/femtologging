@@ -164,33 +164,26 @@ impl FemtoLogger {
         self.py_log(py, FemtoLevel::Critical, message, exc_info, stack_info)
     }
 
-    /// Log a message at ERROR level with ``exc_info`` defaulting to ``True``.
+    /// Low-level implementation of ``exception()`` for the Python wrapper.
     ///
-    /// When ``exc_info`` is omitted the method automatically captures the
-    /// active exception, matching ``logging.Logger.exception()`` semantics.
-    /// ``exc_info=False`` suppresses capture explicitly.
-    ///
-    /// PyO3 cannot express a ``True`` default for ``Option<&Bound<PyAny>>``,
-    /// so the defaulting is handled in the method body: Rust ``None`` (argument
-    /// omitted) is substituted with Python ``True`` before forwarding to
-    /// ``py_log``.  Because PyO3 also maps an explicit ``exc_info=None``
-    /// from Python to Rust ``None``, callers should use ``exc_info=False``
-    /// rather than ``exc_info=None`` to suppress capture.
+    /// When ``exc_info`` is omitted (Rust ``None``), the method substitutes
+    /// Python ``True`` to auto-capture the active exception.  A Python-level
+    /// wrapper in ``_compat.py`` uses a sentinel to distinguish an omitted
+    /// ``exc_info`` from an explicit ``None``, forwarding ``exc_info=True``
+    /// only when the argument was genuinely omitted.
     ///
     /// # Examples
     ///
     /// ```python
-    /// try:
-    ///     risky_call()
-    /// except Exception:
-    ///     logger.exception("risky_call failed")
+    /// # Called via the Python wrapper, not directly:
+    /// logger.exception("risky_call failed")
     /// ```
     #[pyo3(
-        name = "exception",
+        name = "_exception_impl",
         signature = (message, /, *, exc_info=None, stack_info=false),
         text_signature = "(self, message, /, *, exc_info=True, stack_info=False)"
     )]
-    pub fn py_exception(
+    pub fn py_exception_impl(
         &self,
         py: Python<'_>,
         message: &str,

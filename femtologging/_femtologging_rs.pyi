@@ -159,6 +159,21 @@ class FemtoLogger:
     ) -> str | None:
         """Log a message at CRITICAL level."""
         ...
+    def _exception_impl(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = True,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Low-level Rust implementation of ``exception()``.
+
+        Prefer the public ``exception()`` method, which correctly
+        distinguishes an omitted ``exc_info`` from an explicit ``None``.
+
+        """
+        ...
     def exception(
         self,
         message: str,
@@ -170,9 +185,8 @@ class FemtoLogger:
         """Log a message at ERROR level with ``exc_info`` defaulting to ``True``.
 
         Behaves like ``error()`` but automatically captures the active
-        exception when ``exc_info`` is not explicitly provided.  Use
-        ``exc_info=False`` to suppress capture; ``exc_info=None`` is
-        treated as omitted due to a PyO3 limitation.
+        exception when ``exc_info`` is not explicitly provided.  Pass
+        ``exc_info=False`` or ``exc_info=None`` to suppress capture.
 
         """
         ...

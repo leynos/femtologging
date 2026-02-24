@@ -267,25 +267,21 @@ def test_exception_with_explicit_exc_info_false(
     )
 
 
-def test_exception_with_explicit_exc_info_none_captures(
+def test_exception_with_explicit_exc_info_none_suppresses(
     active_exception: cabc.Callable[[str], typ.ContextManager[None]],
 ) -> None:
-    """``exception(exc_info=None)`` auto-captures (PyO3 limitation).
+    """``exception(exc_info=None)`` suppresses capture (stdlib semantics).
 
-    Unlike stdlib where ``None`` is falsy and suppresses capture, PyO3
-    cannot distinguish an omitted argument from an explicit ``None``.
-    Both map to Rust ``Option::None``, so the Rust method treats both as
-    "use the default" and auto-captures.  Use ``exc_info=False`` to
-    suppress capture explicitly.
-
-    The ``active_exception`` fixture does not propagate
-    ``sys.exc_info()`` to the caller (frame-scoped), so the auto-capture
-    finds no active exception and emits a plain message.
+    The Python wrapper distinguishes omitted ``exc_info`` from explicit
+    ``None`` using a sentinel.  Explicit ``None`` is falsy, so capture
+    is suppressed — matching ``logging.Logger.exception()`` behaviour.
     """
     logger = FemtoLogger("exc.explicit_none")
-    with active_exception("still captures"):
+    with active_exception("suppressed"):
         output = logger.exception("caught", exc_info=None)  # noqa: LOG004, LOG007  # TODO(#340): testing exc_info=None
-    assert output is not None, "exception(exc_info=None) should produce output"
+    assert output == "exc.explicit_none [ERROR] caught", (
+        f"exc_info=None should suppress capture, got {output!r}"
+    )
 
 
 def test_exception_with_exc_info_instance() -> None:

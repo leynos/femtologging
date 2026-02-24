@@ -95,7 +95,7 @@ fn exception_omitted_exc_info_defaults_to_true() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
-            .py_exception(py, "no active exc", None, None)
+            .py_exception_impl(py, "no active exc", None, None)
             .expect("exception() with omitted exc_info should not fail");
         assert_eq!(result, Some("test [ERROR] no active exc".to_string()));
     });
@@ -107,7 +107,7 @@ fn exception_with_explicit_exc_info_false() {
         let logger = FemtoLogger::new("test".to_string());
         let false_val = PyBool::new(py, false).to_owned().into_any();
         let result = logger
-            .py_exception(py, "no capture", Some(&false_val.as_borrowed()), None)
+            .py_exception_impl(py, "no capture", Some(&false_val.as_borrowed()), None)
             .expect("exception(exc_info=False) should not fail");
         assert_eq!(result, Some("test [ERROR] no capture".to_string()));
     });
@@ -123,7 +123,7 @@ fn exception_with_explicit_python_none_suppresses_capture() {
         let logger = FemtoLogger::new("test".to_string());
         let none_val = py.None().into_bound(py).into_any();
         let result = logger
-            .py_exception(py, "none passed", Some(&none_val.as_borrowed()), None)
+            .py_exception_impl(py, "none passed", Some(&none_val.as_borrowed()), None)
             .expect("exception(exc_info=<Python None>) should not fail");
         assert_eq!(result, Some("test [ERROR] none passed".to_string()));
     });
