@@ -255,7 +255,7 @@ logger = getLogger("app.module")
 
 ______________________________________________________________________
 
-## New: stdlib logging handler adapter
+## New: standard library (stdlib) logging handler adapter
 
 `StdlibHandlerAdapter` is a new Python class that wraps any `logging.Handler`
 subclass for use with femtologging.  It translates femtologging's

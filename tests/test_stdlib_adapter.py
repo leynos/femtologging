@@ -9,6 +9,7 @@ import typing as typ
 import pytest
 
 from femtologging import FemtoLogger, StdlibHandlerAdapter
+from femtologging.adapter import TRACE_LEVEL_NUM, _stdlib_levelno
 
 
 class _LevelCase(typ.NamedTuple):
@@ -172,8 +173,9 @@ class TestHandleRecordDispatch:
             _LevelCase("DEBUG", "DEBUG", "trace detail", "DEBUG", logging.DEBUG),
             _LevelCase("CRITICAL", "CRITICAL", "fatal"),
             _LevelCase("WARN", "WARNING", "caution"),
+            _LevelCase("TRACE", "TRACE", "lowest", "TRACE", TRACE_LEVEL_NUM),
         ],
-        ids=["error", "debug", "critical", "warn"],
+        ids=["error", "debug", "critical", "warn", "trace"],
     )
     def test_level_mapped(
         stream: io.StringIO,
@@ -287,11 +289,11 @@ class TestHandleFallback:
         assert callable(adapter.handle)
 
     @staticmethod
-    def test_handle_returns_none() -> None:
-        """The handle fallback should be a no-op returning None."""
+    def test_handle_emits_warning() -> None:
+        """Calling handle() directly should emit a RuntimeWarning."""
         adapter = StdlibHandlerAdapter(logging.StreamHandler(io.StringIO()))
-        result = adapter.handle("logger", "INFO", "msg")
-        assert result is None
+        with pytest.warns(RuntimeWarning, match=r"handle_record\(\) should be used"):
+            adapter.handle("logger", "INFO", "msg")
 
 
 class TestLogRecordAttributes:
@@ -359,6 +361,27 @@ class TestLogRecordAttributes:
             assert isinstance(record.created, expected_type)
         if "created_positive" in check_attrs:
             assert record.created > 0
+
+
+class TestLevelFallback:
+    """Verify _stdlib_levelno falls back to WARNING for unknown levels."""
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        ("record", "expected"),
+        [
+            ({"levelno": 99}, logging.WARNING),
+            ({"level": "FOO"}, logging.WARNING),
+            ({}, logging.WARNING),
+        ],
+        ids=["unknown_levelno", "unknown_name", "empty_record"],
+    )
+    def test_unknown_level_falls_back(
+        record: dict[str, object],
+        expected: int,
+    ) -> None:
+        """Unknown or missing level information should fall back to WARNING."""
+        assert _stdlib_levelno(record) == expected
 
 
 class TestPublicExport:

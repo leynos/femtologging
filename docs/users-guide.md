@@ -311,7 +311,7 @@ sequenceDiagram
 _Figure 2: Mutating the handler after registration does not change dispatch
 behaviour._
 
-### Using stdlib `logging.Handler` subclasses
+### Using standard library (stdlib) `logging.Handler` subclasses
 
 Python's standard library ships with a rich set of handler classes
 (`FileHandler`, `RotatingFileHandler`, `SMTPHandler`, `SysLogHandler`, etc.).
@@ -320,7 +320,8 @@ incompatible with femtologging's `handle_record(dict)` protocol.
 
 `StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
 subclass, translates femtologging record dicts into `logging.LogRecord`
-instances, and delegates to the wrapped handler's `emit()` method.
+instances, and delegates to the wrapped handler's `handle()` method so
+that handler-level filtering, attached filters, and I/O locking apply.
 
 ```python
 import logging
@@ -341,9 +342,14 @@ logger.log("INFO", "Application started")
 
 The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
 level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50).
+A custom `TRACE` level name is registered with stdlib's `logging` module so
+that formatters render it as `TRACE` rather than `Level 5`.
+
 Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
 and `timestamp` are forwarded to the `LogRecord` where matching attributes
-exist.
+exist.  Custom key-value pairs from `metadata.key_values` are propagated
+into the `LogRecord.__dict__`, making them available to stdlib formatters
+(e.g. `%(request_id)s`) and filters.
 
 **Limitations:**
 
@@ -353,7 +359,6 @@ exist.
 - `pathname`, `module`, `funcName`, `process`, `processName`, and
   `relativeCreated` are set to defaults because femtologging does not capture
   these values.
-- `flush()` and `close()` delegate to the wrapped handler.
 
 ## Configuration options
 

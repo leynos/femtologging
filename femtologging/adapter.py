@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import logging
 import typing as typ
+import warnings
 
 # -- Femtologging level (0-5) -> stdlib level (5-50) ---------------------
 
+TRACE_LEVEL_NUM = 5
+logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
+
 _FEMTO_TO_STDLIB_LEVEL: dict[int, int] = {
-    0: 5,  # TRACE  -> DEBUG (no stdlib TRACE; 5 is lowest defined slot)
+    0: TRACE_LEVEL_NUM,  # TRACE  -> TRACE
     1: 10,  # DEBUG  -> DEBUG
     2: 20,  # INFO   -> INFO
     3: 30,  # WARN   -> WARNING
@@ -23,7 +27,7 @@ _FEMTO_TO_STDLIB_LEVEL: dict[int, int] = {
 }
 
 _FEMTO_LEVEL_NAMES: dict[str, int] = {
-    "TRACE": 5,
+    "TRACE": TRACE_LEVEL_NUM,
     "DEBUG": logging.DEBUG,
     "INFO": logging.INFO,
     "WARN": logging.WARNING,
@@ -170,7 +174,8 @@ class StdlibHandlerAdapter:
     The adapter implements the ``handle_record`` interface expected by
     femtologging's handler pipeline.  When femtologging dispatches a
     record, the adapter constructs a ``logging.LogRecord`` and calls
-    the wrapped handler's ``emit()`` method.
+    the wrapped handler's ``handle()`` method so that handler-level
+    filtering, attached filters, and I/O locking are applied.
 
     Parameters
     ----------
@@ -222,12 +227,23 @@ class StdlibHandlerAdapter:
         ``StdlibHandlerAdapter`` always exposes ``handle_record``, so
         this method should never be called at runtime.  It exists solely
         to satisfy the ``add_handler()`` check for a callable ``handle``
-        attribute.
+        attribute.  A ``RuntimeWarning`` is emitted to surface
+        accidental use.
         """
-        return
+        warnings.warn(
+            "StdlibHandlerAdapter.handle() was called directly; "
+            "this is a no-op — handle_record() should be used instead",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     def handle_record(self, record: dict[str, typ.Any]) -> None:
-        """Translate a femtologging record dict and emit via the stdlib handler.
+        """Translate a femtologging record dict and dispatch via the stdlib handler.
+
+        The constructed ``LogRecord`` is passed through
+        ``self._handler.handle()`` rather than ``emit()`` directly, so
+        handler-level filtering, any attached ``logging.Filter``
+        instances, and the handler's I/O lock are all applied.
 
         Parameters
         ----------
@@ -237,7 +253,7 @@ class StdlibHandlerAdapter:
 
         """
         log_record = _make_log_record(record)
-        self._handler.emit(log_record)
+        self._handler.handle(log_record)
 
     # -- delegation -------------------------------------------------------
 
@@ -292,5 +308,13 @@ def _make_log_record(record: dict[str, typ.Any]) -> logging.LogRecord:
     stack_info = record.get("stack_info")
     if isinstance(stack_info, dict):
         log_record.stack_info = _format_stack_text(stack_info)
+
+    # Propagate custom key-value pairs so stdlib formatters/filters
+    # can reference them (e.g. ``%(request_id)s``).
+    key_values = metadata.get("key_values")
+    if isinstance(key_values, dict):
+        for key, value in key_values.items():
+            if isinstance(key, str):
+                log_record.__dict__[key] = value
 
     return log_record
