@@ -1,4 +1,15 @@
-"""BDD steps for module-level logging convenience function scenarios."""
+"""pytest-bdd step implementations for logging macro / convenience function scenarios.
+
+Scenarios are defined in ``tests/features/logging_macros.feature`` and exercise
+the module-level convenience functions (``info``, ``debug``, ``warn``,
+``error``) exposed by femtologging.
+
+The ``log_result`` fixture is a mutable ``dict`` (``{"value": ...}``) that
+shuttles data between steps.  ``@when`` steps overwrite it via
+``target_fixture="log_result"`` so the return value becomes the new fixture
+instance, and ``@then`` steps receive the same dict to run assertions against
+``log_result["value"]``.
+"""
 
 from __future__ import annotations
 
