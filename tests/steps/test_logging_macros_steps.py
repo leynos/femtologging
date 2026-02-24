@@ -35,6 +35,13 @@ if typ.TYPE_CHECKING:
 
     from syrupy import SnapshotAssertion
 
+
+class LogResultPayload(typ.TypedDict):
+    """Payload dict shuttled between ``@when`` and ``@then`` steps."""
+
+    value: str | None
+
+
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "logging_macros.feature"))
@@ -46,8 +53,11 @@ scenarios(str(FEATURES / "logging_macros.feature"))
 
 
 @pytest.fixture
-def log_result() -> dict[str, object]:
-    """Mutable container for passing log results between steps."""
+def log_result() -> LogResultPayload:
+    """Provide the initial log-result payload.
+
+    Replaced by ``@when`` steps via ``target_fixture``.
+    """
     return {"value": None}
 
 
@@ -87,7 +97,7 @@ _FUNC_MAP: cabc.Mapping[str, cabc.Callable[..., str | None]] = MappingProxyType(
     parsers.parse('I call {func} with message "{message}"'),
     target_fixture="log_result",
 )
-def call_convenience_func(func: str, message: str) -> dict[str, object]:
+def call_convenience_func(func: str, message: str) -> LogResultPayload:
     """Call a module-level convenience function and capture the result."""
     fn = _FUNC_MAP[func]
     return {"value": fn(message)}
@@ -99,7 +109,7 @@ def call_convenience_func(func: str, message: str) -> dict[str, object]:
 )
 def call_convenience_func_with_name(
     func: str, message: str, name: str
-) -> dict[str, object]:
+) -> LogResultPayload:
     """Call a module-level convenience function targeting a named logger."""
     fn = _FUNC_MAP[func]
     return {"value": fn(message, name=name)}
@@ -111,7 +121,7 @@ def call_convenience_func_with_name(
 
 
 @then("the result is not None")
-def result_is_not_none(log_result: dict[str, object]) -> None:
+def result_is_not_none(log_result: LogResultPayload) -> None:
     """Assert that the log result is not None (record was emitted)."""
     assert log_result["value"] is not None, (
         f"Expected non-None result, got {log_result['value']!r}"
@@ -119,7 +129,7 @@ def result_is_not_none(log_result: dict[str, object]) -> None:
 
 
 @then("the result is None")
-def result_is_none(log_result: dict[str, object]) -> None:
+def result_is_none(log_result: LogResultPayload) -> None:
     """Assert that the log result is None (record was suppressed)."""
     assert log_result["value"] is None, (
         f"Expected None result, got {log_result['value']!r}"
@@ -127,7 +137,7 @@ def result_is_none(log_result: dict[str, object]) -> None:
 
 
 @then(parsers.parse('the result contains "{text}"'))
-def result_contains(log_result: dict[str, object], text: str) -> None:
+def result_contains(log_result: LogResultPayload, text: str) -> None:
     """Assert that the formatted log output contains the specified text."""
     value = log_result["value"]
     assert value is not None, "Result is None, cannot check contents"
@@ -136,24 +146,24 @@ def result_contains(log_result: dict[str, object], text: str) -> None:
 
 @then("the info result matches snapshot")
 def info_result_matches_snapshot(
-    log_result: dict[str, object], snapshot: SnapshotAssertion
+    log_result: LogResultPayload, snapshot: SnapshotAssertion
 ) -> None:
     """Assert that the info result matches the stored snapshot.
 
-    Source location details (file path and line number) are normalised
+    Source location details (file path and line number) are normalized
     to stable placeholders before comparison so that the snapshot is
     reproducible regardless of the test runner's working directory.
     """
     value = log_result["value"]
     assert value is not None, "Result is None, cannot snapshot"
-    normalised = _normalise_source_location(str(value))
-    assert normalised == snapshot, (
-        f"Normalised output did not match snapshot: {normalised!r}"
+    normalized = _normalize_source_location(str(value))
+    assert normalized == snapshot, (
+        f"Normalized output did not match snapshot: {normalized!r}"
     )
 
 
 @then(parsers.parse('the result format is "{expected}"'))
-def result_format_is(log_result: dict[str, object], expected: str) -> None:
+def result_format_is(log_result: LogResultPayload, expected: str) -> None:
     """Assert the formatted output matches the expected string exactly."""
     value = log_result["value"]
     assert value is not None, "Result is None, cannot check format"
@@ -165,9 +175,10 @@ def result_format_is(log_result: dict[str, object], expected: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _normalise_source_location(output: str) -> str:
+def _normalize_source_location(output: str) -> str:
     """Replace file paths and line numbers with stable placeholders."""
-    # Normalise file paths (e.g., /foo/bar/baz.py -> <file>)
-    result = re.sub(r"[^\s:]+\.py", "<file>", output)
-    # Normalise line numbers (e.g., :42 -> :<N>)
+    # Normalize file paths (e.g., /foo/bar/baz.py or C:\foo\bar.py -> <file>)
+    # Optional drive letter, forward/back-slash separators, lookahead for :line
+    result = re.sub(r"(?:[A-Za-z]:)?[^\s:]+\.py(?=:\d+)", "<file>", output)
+    # Normalize line numbers (e.g., :42 -> :<N>)
     return re.sub(r":\d+", ":<N>", result)
