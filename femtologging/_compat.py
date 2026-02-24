@@ -50,9 +50,7 @@ def _exception_wrapper(
     ``exc_info=None`` as falsy — matching stdlib ``logging`` semantics.
     """
     if exc_info is _MISSING:
-        return self._exception_impl(
-            message, exc_info=True, stack_info=stack_info
-        )
+        return self._exception_impl(message, exc_info=True, stack_info=stack_info)
     return self._exception_impl(
         message, exc_info=typ.cast("typ.Any", exc_info), stack_info=stack_info
     )
