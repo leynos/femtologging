@@ -11,6 +11,16 @@ import pytest
 from femtologging import FemtoLogger, StdlibHandlerAdapter
 
 
+class _LevelCase(typ.NamedTuple):
+    """A single level-mapping test case."""
+
+    level: str
+    expected_level: str
+    message: str
+    logger_level: str | None = None
+    handler_level: int | None = None
+
+
 def _raise_value_error(msg: str = "test error") -> None:
     """Raise a ValueError for testing exc_info capture."""
     raise ValueError(msg)
@@ -55,6 +65,7 @@ def log_and_capture(
     logger_level: str | None = None,
     handler_level: int | None = None,
     stack_info: bool = False,
+    exc_info: bool = False,
 ) -> str:
     """Configure, log a single message, and return captured output.
 
@@ -80,6 +91,8 @@ def log_and_capture(
         Optional stdlib numeric level to set on *stdlib_handler*.
     stack_info
         If ``True``, capture the current call stack.
+    exc_info
+        If ``True``, capture the current exception.
 
     Returns
     -------
@@ -96,7 +109,7 @@ def log_and_capture(
     if logger_level is not None:
         logger.set_level(logger_level)
     logger.add_handler(adapter)
-    logger.log(level, message, stack_info=stack_info)
+    logger.log(level, message, stack_info=stack_info, exc_info=exc_info)
     del logger
 
     return stream.getvalue()
@@ -152,79 +165,36 @@ class TestHandleRecordDispatch:
         assert "hello world" in output
 
     @staticmethod
-    def test_error_level_mapped(
+    @pytest.mark.parametrize(
+        "case",
+        [
+            _LevelCase("ERROR", "ERROR", "failure"),
+            _LevelCase("DEBUG", "DEBUG", "trace detail", "DEBUG", logging.DEBUG),
+            _LevelCase("CRITICAL", "CRITICAL", "fatal"),
+            _LevelCase("WARN", "WARNING", "caution"),
+        ],
+        ids=["error", "debug", "critical", "warn"],
+    )
+    def test_level_mapped(
         stream: io.StringIO,
         stdlib_handler: logging.StreamHandler[io.StringIO],
         adapter: StdlibHandlerAdapter,
+        case: _LevelCase,
     ) -> None:
-        """ERROR level should be mapped to stdlib ERROR."""
+        """Each femtologging level should map to its stdlib equivalent."""
         output = log_and_capture(
             stream,
             stdlib_handler,
             adapter,
             logger_name="app",
-            level="ERROR",
-            message="failure",
-            formatter=logging.Formatter("%(levelname)s"),
-        )
-        assert "ERROR" in output
-
-    @staticmethod
-    def test_debug_level_mapped(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-    ) -> None:
-        """DEBUG level should be mapped to stdlib DEBUG."""
-        output = log_and_capture(
-            stream,
-            stdlib_handler,
-            adapter,
-            logger_name="app",
-            level="DEBUG",
-            message="trace detail",
+            level=case.level,
+            message=case.message,
             formatter=logging.Formatter("%(levelname)s %(message)s"),
-            logger_level="DEBUG",
-            handler_level=logging.DEBUG,
+            logger_level=case.logger_level,
+            handler_level=case.handler_level,
         )
-        assert "DEBUG" in output
-        assert "trace detail" in output
-
-    @staticmethod
-    def test_critical_level_mapped(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-    ) -> None:
-        """CRITICAL level should be mapped to stdlib CRITICAL."""
-        output = log_and_capture(
-            stream,
-            stdlib_handler,
-            adapter,
-            logger_name="app",
-            level="CRITICAL",
-            message="fatal",
-            formatter=logging.Formatter("%(levelname)s"),
-        )
-        assert "CRITICAL" in output
-
-    @staticmethod
-    def test_warn_level_mapped(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-    ) -> None:
-        """WARN level should be mapped to stdlib WARNING."""
-        output = log_and_capture(
-            stream,
-            stdlib_handler,
-            adapter,
-            logger_name="app",
-            level="WARN",
-            message="caution",
-            formatter=logging.Formatter("%(levelname)s"),
-        )
-        assert "WARNING" in output
+        assert case.expected_level in output
+        assert case.message in output
 
 
 class TestExceptionForwarding:
@@ -237,19 +207,19 @@ class TestExceptionForwarding:
         adapter: StdlibHandlerAdapter,
     ) -> None:
         """Exception payload should appear as exc_text on the LogRecord."""
-        stdlib_handler.setFormatter(logging.Formatter("%(message)s\n%(exc_text)s"))
-
-        logger = FemtoLogger("app")
-        logger.add_handler(adapter)
-
         try:
             _raise_value_error()
         except ValueError:
-            logger.log("ERROR", "caught", exc_info=True)
-
-        del logger
-
-        output = stream.getvalue()
+            output = log_and_capture(
+                stream,
+                stdlib_handler,
+                adapter,
+                logger_name="app",
+                level="ERROR",
+                message="caught",
+                formatter=logging.Formatter("%(message)s\n%(exc_text)s"),
+                exc_info=True,
+            )
         assert "caught" in output
         assert "ValueError" in output
 
@@ -279,8 +249,13 @@ class TestDelegation:
     """Verify flush() and close() delegate to the wrapped handler."""
 
     @staticmethod
-    def test_flush_delegates() -> None:
-        """flush() should call the wrapped handler's flush()."""
+    @pytest.mark.parametrize(
+        "method_name",
+        ["flush", "close"],
+        ids=["flush", "close"],
+    )
+    def test_delegation(method_name: str) -> None:
+        """flush() and close() should delegate to the wrapped handler."""
         calls: list[str] = []
 
         class SpyHandler(logging.Handler):
@@ -292,28 +267,14 @@ class TestDelegation:
             def flush(self) -> None:
                 calls.append("flush")
 
-        adapter = StdlibHandlerAdapter(SpyHandler())
-        adapter.flush()
-        assert calls == ["flush"]
-
-    @staticmethod
-    def test_close_delegates() -> None:
-        """close() should call the wrapped handler's close()."""
-        calls: list[str] = []
-
-        class SpyHandler(logging.Handler):
-            @typ.override
-            def emit(self, record: logging.LogRecord) -> None:
-                pass
-
             @typ.override
             def close(self) -> None:
                 calls.append("close")
                 super().close()
 
         adapter = StdlibHandlerAdapter(SpyHandler())
-        adapter.close()
-        assert calls == ["close"]
+        getattr(adapter, method_name)()
+        assert calls == [method_name]
 
 
 class TestHandleFallback:
@@ -337,8 +298,36 @@ class TestLogRecordAttributes:
     """Verify LogRecord attributes are populated from the femtologging record."""
 
     @staticmethod
-    def test_logger_name_on_record() -> None:
-        """The LogRecord name should match the femtologging logger name."""
+    @pytest.mark.parametrize(
+        ("logger_name", "level", "message", "check_attrs"),
+        [
+            (
+                "myapp.sub",
+                "INFO",
+                "test",
+                {
+                    "name": "myapp.sub",
+                    "levelno": logging.INFO,
+                    "levelname": "INFO",
+                    "message": "test",
+                },
+            ),
+            (
+                "app",
+                "INFO",
+                "stamped",
+                {"created_type": float, "created_positive": True},
+            ),
+        ],
+        ids=["logger_name", "timestamp"],
+    )
+    def test_record_attributes(
+        logger_name: str,
+        level: str,
+        message: str,
+        check_attrs: dict[str, object],
+    ) -> None:
+        """LogRecord attributes should be populated from the femtologging record."""
         emitted: list[logging.LogRecord] = []
 
         class CapturingHandler(logging.Handler):
@@ -348,38 +337,28 @@ class TestLogRecordAttributes:
 
         adapter = StdlibHandlerAdapter(CapturingHandler())
 
-        logger = FemtoLogger("myapp.sub")
+        logger = FemtoLogger(logger_name)
         logger.add_handler(adapter)
-        logger.log("INFO", "test")
+        logger.log(level, message)
         del logger
 
         assert len(emitted) == 1
-        assert emitted[0].name == "myapp.sub"
-        assert emitted[0].levelno == logging.INFO
-        assert emitted[0].levelname == "INFO"
-        assert emitted[0].getMessage() == "test"
+        record = emitted[0]
 
-    @staticmethod
-    def test_timestamp_populated() -> None:
-        """The LogRecord created field should reflect the record timestamp."""
-        emitted: list[logging.LogRecord] = []
-
-        class CapturingHandler(logging.Handler):
-            @typ.override
-            def emit(self, record: logging.LogRecord) -> None:
-                emitted.append(record)
-
-        adapter = StdlibHandlerAdapter(CapturingHandler())
-
-        logger = FemtoLogger("app")
-        logger.add_handler(adapter)
-        logger.log("INFO", "stamped")
-        del logger
-
-        assert len(emitted) == 1
-        # Timestamp should be a positive float (UNIX epoch seconds).
-        assert isinstance(emitted[0].created, float)
-        assert emitted[0].created > 0
+        if "name" in check_attrs:
+            assert record.name == check_attrs["name"]
+        if "levelno" in check_attrs:
+            assert record.levelno == check_attrs["levelno"]
+        if "levelname" in check_attrs:
+            assert record.levelname == check_attrs["levelname"]
+        if "message" in check_attrs:
+            assert record.getMessage() == check_attrs["message"]
+        if "created_type" in check_attrs:
+            expected_type = check_attrs["created_type"]
+            assert isinstance(expected_type, type)
+            assert isinstance(record.created, expected_type)
+        if "created_positive" in check_attrs:
+            assert record.created > 0
 
 
 class TestPublicExport:

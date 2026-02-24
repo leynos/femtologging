@@ -314,7 +314,7 @@ behaviour._
 ### Using stdlib `logging.Handler` subclasses
 
 Python's standard library ships with a rich set of handler classes
-(`FileHandler`, `RotatingFileHandler`, `SMTPHandler`, `SysLogHandler`, etc.).  
+(`FileHandler`, `RotatingFileHandler`, `SMTPHandler`, `SysLogHandler`, etc.).
 These handlers implement the stdlib `emit(LogRecord)` interface, which is
 incompatible with femtologging's `handle_record(dict)` protocol.
 
@@ -340,7 +340,7 @@ logger.log("INFO", "Application started")
 ```
 
 The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
-level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50).  
+level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50).
 Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
 and `timestamp` are forwarded to the `LogRecord` where matching attributes
 exist.
