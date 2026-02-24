@@ -117,7 +117,12 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log a message at DEBUG level."""
+        """Log a message at DEBUG level.
+
+        Convenience wrapper around ``log()`` with a fixed level.
+        See ``log()`` for parameter and return documentation.
+
+        """
         ...
     def info(
         self,
@@ -127,7 +132,12 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log a message at INFO level."""
+        """Log a message at INFO level.
+
+        Convenience wrapper around ``log()`` with a fixed level.
+        See ``log()`` for parameter and return documentation.
+
+        """
         ...
     def warning(
         self,
@@ -137,7 +147,12 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log a message at WARNING level."""
+        """Log a message at WARNING level.
+
+        Convenience wrapper around ``log()`` with a fixed level.
+        See ``log()`` for parameter and return documentation.
+
+        """
         ...
     def error(
         self,
@@ -147,7 +162,12 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log a message at ERROR level."""
+        """Log a message at ERROR level.
+
+        Convenience wrapper around ``log()`` with a fixed level.
+        See ``log()`` for parameter and return documentation.
+
+        """
         ...
     def critical(
         self,
@@ -157,7 +177,12 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log a message at CRITICAL level."""
+        """Log a message at CRITICAL level.
+
+        Convenience wrapper around ``log()`` with a fixed level.
+        See ``log()`` for parameter and return documentation.
+
+        """
         ...
     def _exception_impl(
         self,
