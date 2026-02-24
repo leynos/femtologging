@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import typing as typ
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -61,12 +62,12 @@ def given_named_logger(name: str, level: str) -> str:
 # When steps
 # ---------------------------------------------------------------------------
 
-_FUNC_MAP = {
+_FUNC_MAP: typ.Mapping[str, typ.Callable[..., str | None]] = MappingProxyType({
     "info": info,
     "debug": debug,
     "warn": warn,
     "error": error,
-}
+})
 
 
 @when(
@@ -76,8 +77,7 @@ _FUNC_MAP = {
 def call_convenience_func(func: str, message: str) -> dict[str, object]:
     """Call a module-level convenience function and capture the result."""
     fn = _FUNC_MAP[func]
-    result = fn(message)
-    return {"value": result}
+    return {"value": fn(message)}
 
 
 @when(
@@ -89,8 +89,7 @@ def call_convenience_func_with_name(
 ) -> dict[str, object]:
     """Call a module-level convenience function targeting a named logger."""
     fn = _FUNC_MAP[func]
-    result = fn(message, name=name)
-    return {"value": result}
+    return {"value": fn(message, name=name)}
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +134,9 @@ def info_result_matches_snapshot(
     value = log_result["value"]
     assert value is not None, "Result is None, cannot snapshot"
     normalised = _normalise_source_location(str(value))
-    assert normalised == snapshot
+    assert normalised == snapshot, (
+        f"Normalised output did not match snapshot: {normalised!r}"
+    )
 
 
 @then(parsers.parse('the result format is "{expected}"'))
