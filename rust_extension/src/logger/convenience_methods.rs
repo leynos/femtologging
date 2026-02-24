@@ -1,9 +1,12 @@
-//! Convenience logging methods matching Python's standard logging API.
+//! Convenience logging methods for stdlib-style usage.
 //!
 //! This module adds `isEnabledFor`, `debug`, `info`, `warning`, `error`,
 //! `critical`, and `exception` to [`FemtoLogger`] via a separate
 //! `#[pymethods]` impl block, keeping the main `mod.rs` within the
 //! repository's 400-line file limit.
+//!
+//! Unlike the stdlib, these methods accept a pre-formatted `message`
+//! string rather than `*args` / `**kwargs` lazy formatting.
 
 use pyo3::PyAny;
 use pyo3::prelude::*;
@@ -13,10 +16,6 @@ use crate::level::FemtoLevel;
 
 use super::FemtoLogger;
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
 #[pymethods]
 impl FemtoLogger {
     /// Return whether a message at the given level would be processed.
@@ -52,7 +51,7 @@ impl FemtoLogger {
     /// # Examples
     ///
     /// ```python
-    /// logger.debug("cache hit for key=%s", key)
+    /// logger.debug(f"cache hit for {key}")
     /// ```
     #[pyo3(
         name = "debug",
@@ -76,7 +75,7 @@ impl FemtoLogger {
     /// # Examples
     ///
     /// ```python
-    /// logger.info("server started on port %d", port)
+    /// logger.info(f"server started on port {port}")
     /// ```
     #[pyo3(
         name = "info",
@@ -100,7 +99,7 @@ impl FemtoLogger {
     /// # Examples
     ///
     /// ```python
-    /// logger.warning("disk usage above 90%%")
+    /// logger.warning("disk usage above 90%")
     /// ```
     #[pyo3(
         name = "warning",

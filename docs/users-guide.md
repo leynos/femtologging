@@ -66,10 +66,13 @@ your process exits.
   (default format is `"{logger} [LEVEL] message"`), or `None` when the record
   is filtered out. This differs from `logging.Logger.log()`, which always
   returns `None`.
-- Convenience methods `logger.debug()`, `logger.info()`, `logger.warning()`,
-  `logger.error()`, `logger.critical()`, and `logger.exception()` are available
-  and match the signatures of their stdlib counterparts. Each accepts an
-  optional `exc_info` and `stack_info` keyword argument, identical to `log()`.
+- Convenience methods `logger.debug(message)`, `logger.info(message)`,
+  `logger.warning(message)`, `logger.error(message)`,
+  `logger.critical(message)`, and `logger.exception(message)` are available.
+  Each accepts a pre-formatted `message` string plus optional `exc_info` and
+  `stack_info` keyword arguments, identical to `log()`. Unlike the stdlib,
+  `*args` / `**kwargs` lazy formatting is not supported — build the final
+  message string before calling these methods.
   `exception()` behaves like `error()` but defaults `exc_info` to `True`.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info`
   for capturing exception tracebacks and call stacks alongside the log message.

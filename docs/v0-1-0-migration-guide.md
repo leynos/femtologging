@@ -216,13 +216,15 @@ The following new methods are available on `FemtoLogger` in v0.1.0:
 ### Convenience logging methods
 
 `debug()`, `info()`, `warning()`, `error()`, `critical()`, and `exception()`
-are now available as direct methods on `FemtoLogger`. Each accepts the same
-`exc_info` and `stack_info` keyword arguments as `log()`.
+are now available as direct methods on `FemtoLogger`. Each accepts a
+pre-formatted `message` string plus optional `exc_info` and `stack_info`
+keyword arguments, identical to `log()`. Unlike the stdlib, `*args` /
+`**kwargs` lazy formatting is not supported.
 
 ```python
 logger = get_logger("app")
 logger.info("server started")
-logger.warning("disk usage above 90%%")
+logger.warning("disk usage above 90%")
 
 try:
     risky_call()
