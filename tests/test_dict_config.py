@@ -276,11 +276,17 @@ def test_dict_config_filter_missing_filter_id_raises() -> None:
             r"filter 'f' has unsupported keys",
             ValueError,
         ),
+        (
+            {"level": "INFO", "name": "ns"},
+            r"filter 'f' must contain 'level' or 'name', not both",
+            ValueError,
+        ),
     ],
     ids=[
         "level-type",
         "name-type",
         "unsupported-keys",
+        "both-level-and-name",
     ],
 )
 def test_dict_config_filter_validation_errors(
@@ -309,6 +315,54 @@ def test_dict_config_logger_filters_type_validation() -> None:
         "root": {"level": "DEBUG"},
     }
     with pytest.raises(TypeError, match="logger filters must be a list"):
+        dictConfig(cfg)
+
+
+def test_dict_config_logger_filters_non_string_items() -> None:
+    """Logger filters containing non-string items should raise."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"lvl": {"level": "INFO"}},
+        "loggers": {"app": {"filters": ["lvl", 123]}},
+        "root": {"level": "DEBUG"},
+    }
+    with pytest.raises(TypeError, match="logger filters must be a list"):
+        dictConfig(cfg)
+
+
+def test_dict_config_root_filters_non_string_items() -> None:
+    """Root logger filters containing non-string items should raise."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"lvl": {"level": "INFO"}},
+        "root": {"level": "DEBUG", "filters": [123]},
+    }
+    with pytest.raises(TypeError, match="logger filters must be a list"):
+        dictConfig(cfg)
+
+
+def test_dict_config_root_missing_filter_id_raises() -> None:
+    """Root logger referencing a non-existent filter ID should raise."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "root": {"level": "DEBUG", "filters": ["nonexistent"]},
+    }
+    with pytest.raises(KeyError, match="nonexistent"):
+        dictConfig(cfg)
+
+
+def test_dict_config_filter_value_not_a_mapping() -> None:
+    """A filter whose config value is not a mapping should raise."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"f": "not-a-mapping"},
+        "root": {},
+    }
+    with pytest.raises(TypeError, match="filter config must be a mapping"):
         dictConfig(cfg)
 
 

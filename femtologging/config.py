@@ -5,7 +5,8 @@ This module implements :func:`dictConfig`, a restricted variant of
 and incremental configuration are unsupported.
 
 Top-level ``filters`` and logger-level ``filters`` lists are supported.
-Filter type is inferred from configuration keys: ``level`` creates a
+Each filter must contain exactly one of ``level`` or ``name``; supplying
+both is rejected as ambiguous. ``level`` creates a
 :class:`LevelFilterBuilder`, ``name`` creates a :class:`NameFilterBuilder`.
 
 Example:
@@ -210,11 +211,14 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
 
 
 def _validate_filter_config_keys(fid: str, data: Mapping[str, object]) -> None:
-    """Ensure ``data`` uses only recognised filter keys."""
+    """Ensure ``data`` contains exactly one of ``level`` or ``name``."""
     allowed = {"level", "name"}
     present = allowed & set(data.keys())
     if not present:
         msg = f"filter {fid!r} must contain a 'level' or 'name' key"
+        raise ValueError(msg)
+    if len(present) > 1:
+        msg = f"filter {fid!r} must contain 'level' or 'name', not both"
         raise ValueError(msg)
     unknown = set(data.keys()) - allowed
     if unknown:
@@ -225,8 +229,8 @@ def _validate_filter_config_keys(fid: str, data: Mapping[str, object]) -> None:
 def _build_filter_from_dict(fid: str, data: Mapping[str, object]) -> object:
     """Create a filter builder from ``dictConfig`` filter data.
 
-    Filter type is inferred from the keys present: ``level`` creates a
-    :class:`LevelFilterBuilder`, ``name`` creates a :class:`NameFilterBuilder`.
+    Each filter must contain exactly one of ``level`` or ``name``.
+    Supplying both is rejected as ambiguous.
     """
     _validate_filter_config_keys(fid, data)
     if "level" in data:

@@ -352,11 +352,12 @@ builder.build_and_init()
   builder API (`host`, `port`, `unix_path`, `capacity`, `connect_timeout_ms`,
   `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
   `backoff_*` aliases).
-- Top-level `filters` sections are supported. Filter type is inferred
-  from the keys present in each filter mapping: `level` creates a
-  `LevelFilterBuilder` (via `with_max_level`), `name` creates a
-  `NameFilterBuilder` (via `with_prefix`). Loggers and the root logger
-  accept a `filters` list of filter IDs.
+- Top-level `filters` sections are supported. Each filter mapping must
+  contain exactly one of `level` or `name`; supplying both is rejected
+  as ambiguous. `level` creates a `LevelFilterBuilder` (via
+  `with_max_level`), `name` creates a `NameFilterBuilder` (via
+  `with_prefix`). Loggers and the root logger accept a `filters` list
+  of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
   handler `level`, handler `filters`, and handler formatters. Although
   the schema accepts a `formatters` section, referencing a formatter
@@ -413,7 +414,7 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.
-- The `dictConfig` schema lacks incremental updates, filters, handler levels,
+- The `dictConfig` schema lacks incremental updates, handler levels,
   and formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
