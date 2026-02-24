@@ -88,40 +88,43 @@ fn convenience_methods_respect_level_filtering(
 }
 
 #[test]
-fn exception_impl_logs_at_error_level() {
-    // _exception_impl (the Rust entry point) passes exc_info through
-    // as-is.  The Python-side wrapper in _compat adds the True default.
+fn exception_omitted_exc_info_defaults_to_true() {
+    // Omitted exc_info (Rust None) should default to auto-capture (True).
+    // With no active Python exception the output is a plain ERROR message
+    // (capture finds nothing to attach).
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
             .py_exception(py, "no active exc", None, None)
-            .expect("_exception_impl with no exc_info should not fail");
+            .expect("exception() with omitted exc_info should not fail");
         assert_eq!(result, Some("test [ERROR] no active exc".to_string()));
     });
 }
 
 #[test]
-fn exception_impl_with_explicit_exc_info_false() {
+fn exception_with_explicit_exc_info_false() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let false_val = PyBool::new(py, false).to_owned().into_any();
         let result = logger
             .py_exception(py, "no capture", Some(&false_val.as_borrowed()), None)
-            .expect("_exception_impl with exc_info=False should not fail");
+            .expect("exception(exc_info=False) should not fail");
         assert_eq!(result, Some("test [ERROR] no capture".to_string()));
     });
 }
 
 #[test]
-fn exception_impl_with_explicit_exc_info_none_suppresses_capture() {
-    // Passing Python None for exc_info should suppress exception capture.
-    // should_capture_exc_info returns false for None.
+fn exception_with_explicit_python_none_suppresses_capture() {
+    // Passing an actual Python None bound object for exc_info (as opposed
+    // to Rust None meaning "omitted") should suppress exception capture.
+    // This path is only reachable from Rust tests — in Python, PyO3 maps
+    // both omitted and explicit None to Rust None.
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let none_val = py.None().into_bound(py).into_any();
         let result = logger
             .py_exception(py, "none passed", Some(&none_val.as_borrowed()), None)
-            .expect("_exception_impl with exc_info=None should not fail");
+            .expect("exception(exc_info=<Python None>) should not fail");
         assert_eq!(result, Some("test [ERROR] none passed".to_string()));
     });
 }

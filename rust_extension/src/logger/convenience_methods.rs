@@ -10,6 +10,7 @@
 
 use pyo3::PyAny;
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 
 use crate::level::FemtoLevel;
 
@@ -163,13 +164,18 @@ impl FemtoLogger {
         self.py_log(py, FemtoLevel::Critical, message, exc_info, stack_info)
     }
 
-    /// Log a message at ERROR level, forwarding ``exc_info`` as-is.
+    /// Log a message at ERROR level with ``exc_info`` defaulting to ``True``.
     ///
-    /// The Python-visible ``exception()`` method (with a default of
-    /// ``exc_info=True``) is installed by ``_compat.py`` to correctly
-    /// distinguish an omitted argument from an explicit ``None``.
-    /// This Rust-level entry point is exposed as ``_exception_impl``
-    /// and intentionally does **no** default substitution.
+    /// When ``exc_info`` is omitted the method automatically captures the
+    /// active exception, matching ``logging.Logger.exception()`` semantics.
+    /// ``exc_info=False`` suppresses capture explicitly.
+    ///
+    /// PyO3 cannot express a ``True`` default for ``Option<&Bound<PyAny>>``,
+    /// so the defaulting is handled in the method body: Rust ``None`` (argument
+    /// omitted) is substituted with Python ``True`` before forwarding to
+    /// ``py_log``.  Because PyO3 also maps an explicit ``exc_info=None``
+    /// from Python to Rust ``None``, callers should use ``exc_info=False``
+    /// rather than ``exc_info=None`` to suppress capture.
     ///
     /// # Examples
     ///
@@ -180,9 +186,9 @@ impl FemtoLogger {
     ///     logger.exception("risky_call failed")
     /// ```
     #[pyo3(
-        name = "_exception_impl",
+        name = "exception",
         signature = (message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
+        text_signature = "(self, message, /, *, exc_info=True, stack_info=False)"
     )]
     pub fn py_exception(
         &self,
@@ -191,6 +197,21 @@ impl FemtoLogger {
         exc_info: Option<&Bound<'_, PyAny>>,
         stack_info: Option<bool>,
     ) -> PyResult<Option<String>> {
-        self.py_log(py, FemtoLevel::Error, message, exc_info, stack_info)
+        // Omitted exc_info (Rust None) → default to Python True (auto-capture).
+        // Note: PyO3 maps both omitted and explicit exc_info=None from Python to
+        // Rust None, so callers should use exc_info=False to suppress capture.
+        match exc_info {
+            None => {
+                let py_true = PyBool::new(py, true);
+                self.py_log(
+                    py,
+                    FemtoLevel::Error,
+                    message,
+                    Some(py_true.as_any()),
+                    stack_info,
+                )
+            }
+            Some(val) => self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info),
+        }
     }
 }
