@@ -29,7 +29,12 @@ pub mod rate_limited_warner;
 #[cfg(not(feature = "test-util"))]
 mod rate_limited_warner;
 
+// Logging macros (always compiled for Rust callers)
+mod logging_macros;
+
 // Python-only modules
+#[cfg(feature = "python")]
+mod convenience_functions;
 #[cfg(feature = "python")]
 mod file_config;
 #[cfg(feature = "python")]

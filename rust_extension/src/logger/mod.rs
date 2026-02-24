@@ -25,7 +25,7 @@ use crate::traceback_capture;
 use crate::{
     formatter::{DefaultFormatter, SharedFormatter},
     level::FemtoLevel,
-    log_record::FemtoLogRecord,
+    log_record::{FemtoLogRecord, RecordMetadata},
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select};
 use log::warn;
@@ -311,6 +311,37 @@ impl FemtoLogger {
     /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
     pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
         let record = FemtoLogRecord::new(&self.name, level, message);
+        self.log_record(record)
+    }
+
+    /// Log a message with explicit source location metadata.
+    ///
+    /// Used by the [`femtolog_info!`] family of macros and the Python
+    /// convenience functions to attach caller-captured source information
+    /// (filename, line number, module path) to the record before filtering
+    /// and dispatch.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use femtologging_rs::{FemtoLevel, FemtoLogger, RecordMetadata};
+    ///
+    /// let logger = FemtoLogger::new("example".into());
+    /// let metadata = RecordMetadata {
+    ///     filename: "main.rs".into(),
+    ///     line_number: 42,
+    ///     module_path: "example".into(),
+    ///     ..Default::default()
+    /// };
+    /// logger.log_with_metadata(FemtoLevel::Info, "hello", metadata);
+    /// ```
+    pub fn log_with_metadata(
+        &self,
+        level: FemtoLevel,
+        message: &str,
+        metadata: RecordMetadata,
+    ) -> Option<String> {
+        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
         self.log_record(record)
     }
 

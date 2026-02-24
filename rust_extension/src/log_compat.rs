@@ -232,10 +232,9 @@ mod tests {
     use log::{LevelFilter, Log};
 
     use super::*;
-    use crate::handler::{FemtoHandlerTrait, HandlerError};
-    use parking_lot::Mutex;
+    use crate::handler::FemtoHandlerTrait;
+    use crate::test_utils::collecting_handler::CollectingHandler;
     use rstest::{fixture, rstest};
-    use std::any::Any;
     use std::sync::{
         Arc, Once,
         atomic::{AtomicUsize, Ordering},
@@ -260,34 +259,12 @@ mod tests {
         assert_eq!(FemtoLevel::from(level), expected);
     }
 
-    #[derive(Clone, Default)]
-    struct CollectingHandler {
-        records: Arc<Mutex<Vec<FemtoLogRecord>>>,
-    }
-
     #[fixture]
     fn log_max_level() {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
             log::set_max_level(LevelFilter::Trace);
         });
-    }
-
-    impl CollectingHandler {
-        fn collected(&self) -> Vec<FemtoLogRecord> {
-            self.records.lock().clone()
-        }
-    }
-
-    impl FemtoHandlerTrait for CollectingHandler {
-        fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-            self.records.lock().push(record);
-            Ok(())
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
     }
 
     #[rstest]

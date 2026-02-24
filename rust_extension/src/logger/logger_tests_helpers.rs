@@ -1,7 +1,9 @@
 //! Shared test helpers for logger unit tests.
 //!
 //! Provides reusable handler implementations used across the logger
-//! test modules.
+//! test modules.  `CollectingHandler` is re-exported from the
+//! crate-wide `test_utils` module; logger-specific helpers
+//! (`HandlePtr`, `CountingHandler`) are defined here.
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
@@ -10,10 +12,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[derive(Clone, Default)]
-pub(super) struct CollectingHandler {
-    pub(super) records: Arc<Mutex<Vec<FemtoLogRecord>>>,
-}
+pub(super) use crate::test_utils::collecting_handler::CollectingHandler;
 
 #[derive(Clone, Copy)]
 pub(super) struct HandlePtr(pub(super) *const Mutex<Option<std::thread::JoinHandle<()>>>);
@@ -31,29 +30,6 @@ impl HandlePtr {
 // outlives any use of `HandlePtr`.
 unsafe impl Send for HandlePtr {}
 unsafe impl Sync for HandlePtr {}
-
-impl CollectingHandler {
-    pub(super) fn new() -> Self {
-        Self {
-            records: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub(super) fn collected(&self) -> Vec<FemtoLogRecord> {
-        self.records.lock().clone()
-    }
-}
-
-impl FemtoHandlerTrait for CollectingHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        self.records.lock().push(record);
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 #[derive(Clone, Default)]
 pub(super) struct CountingHandler {

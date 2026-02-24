@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses as dc
+import os
 import subprocess  # noqa: S404 - FIXME: required to test fresh-process global logger semantics.
 import sys
 import time
@@ -13,6 +15,7 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import (
+    FemtoLogger,
     FemtoStreamHandler,
     StreamHandlerBuilder,
     get_logger,
@@ -85,6 +88,26 @@ class RustLogParams:
     target: str
 
 
+def _flush_and_sync_stderr(
+    logger: FemtoLogger,
+    handler: FemtoStreamHandler,
+) -> None:
+    """Flush the logger and handler queues and sync stderr to the OS.
+
+    Best-effort: drains enqueued records so that the file descriptor
+    contains all output before the caller captures it.  Return values
+    are intentionally ignored because the Rust log-bridge path may
+    dispatch records through a different internal channel from the one
+    the Python-side logger exposes.
+    """
+    logger.flush_handlers()
+    handler.flush()
+    with contextlib.suppress(OSError):
+        sys.stderr.flush()
+    with contextlib.suppress(OSError):
+        os.fsync(sys.stderr.fileno())
+
+
 def when_emit_rust_log(
     handler_ctx: tuple[FemtoStreamHandler, str],
     capfd: pytest.CaptureFixture[str],
@@ -92,10 +115,10 @@ def when_emit_rust_log(
 ) -> list[str]:
     """Emit a Rust-side log record and capture stderr output."""
     capfd.readouterr()
-    _handler, logger_name = handler_ctx
+    handler, logger_name = handler_ctx
     rust._emit_rust_log(log_params.level, log_params.message, log_params.target)
     logger = get_logger(logger_name)
-    logger.flush_handlers()
+    _flush_and_sync_stderr(logger, handler)
 
     prefix = f"{logger_name} [{log_params.level.upper()}] "
     deadline = time.monotonic() + 2.0

@@ -1,0 +1,4 @@
+# serializer version: 1
+# name: test_info_output_matches_snapshot
+  'root [INFO] snapshot test'
+# ---
