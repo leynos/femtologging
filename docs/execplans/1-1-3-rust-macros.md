@@ -1,12 +1,12 @@
 # Add logging macros and Python convenience functions with source location capture
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+`Risks`, `Progress`, `Surprises & discoveries`, `Decision log`, and
+`Outcomes & retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
-## Purpose / Big Picture
+## Purpose / big picture
 
 The femtologging roadmap (Phase 1) requires "`debug!`, `info!`, `warn!`, and
 `error!` macros that capture source location." After this work, two audiences
@@ -46,7 +46,7 @@ BDD/snapshot tests exercising both APIs.
 - Source files must not exceed 400 lines.
 - en-GB-oxendict spelling in comments and documentation.
 
-## Tolerances (Exception Triggers)
+## Tolerances (exception triggers)
 
 - **Scope**: if implementation requires changes to more than 15 files (net),
   stop and escalate.
@@ -99,7 +99,7 @@ BDD/snapshot tests exercising both APIs.
 - [x] Update `docs/roadmap.md` to mark the macros item as done.
 - [x] Run all quality gates and fix any issues.
 
-## Surprises & Discoveries
+## Surprises & discoveries
 
 - `log_with_metadata` needed to be `pub` rather than `pub(crate)` because
   `#[macro_export]` macros are accessible by downstream crates, and
@@ -117,7 +117,7 @@ BDD/snapshot tests exercising both APIs.
   only sees `[Python caller] -> [pyfunction]`, so depth 1 from the
   `#[pyfunction]` gives the Python caller's frame.
 
-## Decision Log
+## Decision log
 
 - Decision: Use prefixed Rust macros (`femtolog_debug!`, etc.) rather than
   bare `debug!`, `info!`, etc.
@@ -150,7 +150,7 @@ BDD/snapshot tests exercising both APIs.
     risk dead-code warnings.
   - Date/Author: Planning phase.
 
-## Outcomes & Retrospective
+## Outcomes & retrospective
 
 All quality gates pass:
 
@@ -180,7 +180,7 @@ Files modified (6):
 - `femtologging/_femtologging_rs.pyi` — added type stubs
 - `docs/roadmap.md` — marked macros item as done
 
-## Context and Orientation
+## Context and orientation
 
 The femtologging project is a high-performance Python logging library
 implemented in Rust via PyO3. The Rust extension crate lives at
@@ -220,9 +220,9 @@ Build and test commands:
     make lint           # Clippy + ruff (3 feature combos)
     make test           # Full test suite (3 Rust feature combos + pytest)
 
-## Plan of Work
+## Plan of work
 
-### Stage A: Scaffolding — Rust Macros Module
+### Stage A: Scaffolding — Rust macros module
 
 Create `rust_extension/src/logging_macros.rs` containing four macros:
 `femtolog_debug!`, `femtolog_info!`, `femtolog_warn!`, `femtolog_error!`.
@@ -252,7 +252,7 @@ Register the module in `lib.rs`:
 Validation: `cargo test --manifest-path rust_extension/Cargo.toml
 --no-default-features` compiles and existing tests pass.
 
-### Stage B: Scaffolding — Python Convenience Functions
+### Stage B: Scaffolding — Python convenience functions
 
 Create `rust_extension/src/convenience_functions.rs` (gated on
 `#[cfg(feature = "python")]`) containing:
@@ -260,7 +260,9 @@ Create `rust_extension/src/convenience_functions.rs` (gated on
 - A shared helper `log_at_level(py, level, message, name)` that:
   1. Resolves the logger via `manager::get_logger(py, name)`.
   2. Calls `sys._getframe(1)` to get the Python caller's frame.
-  3. Extracts `f_code.co_filename`, `f_lineno`, `f_code.co_name`.
+  3. Extracts `f_code.co_filename`, `f_lineno`, and
+     `module = frame.f_globals['__name__']` (note: `f_code.co_name` is the
+     function name, not the module path).
   4. Builds `RecordMetadata` with the extracted source location.
   5. Calls `logger.borrow(py).log_with_metadata(level, message, metadata)`.
   6. Returns `Option<String>`.
@@ -288,7 +290,7 @@ Validation: `make build` succeeds and
 `uv run python -c "import femtologging; print(femtologging.info('hello'))"`
 produces output.
 
-### Stage C: Rust Unit Tests
+### Stage C: Rust unit tests
 
 Add `#[cfg(test)]` blocks or separate test files for:
 
@@ -310,7 +312,7 @@ Use `rstest` fixtures following existing patterns in `log_compat.rs`:
 
 Validation: `make test` passes with new tests visible in output.
 
-### Stage D: Python BDD and Snapshot Tests
+### Stage D: Python BDD and snapshot tests
 
 Create `tests/features/logging_macros.feature` with scenarios:
 
@@ -326,7 +328,7 @@ Create `tests/steps/test_logging_macros_steps.py` with step definitions.
 Validation: `uv run pytest tests/steps/test_logging_macros_steps.py -v`
 passes.
 
-### Stage E: Documentation and Roadmap
+### Stage E: Documentation and roadmap
 
 Mark the roadmap checkbox in `docs/roadmap.md`:
 
@@ -335,7 +337,7 @@ Mark the roadmap checkbox in `docs/roadmap.md`:
 
 Update the ExecPlan progress and outcomes sections.
 
-### Stage F: Quality Gates
+### Stage F: Quality gates
 
 Run all quality gates:
 
@@ -347,9 +349,9 @@ Run all quality gates:
 
 Fix any failures. Repeat until all pass.
 
-## Concrete Steps
+## Concrete steps
 
-All commands run from `/home/user/project`.
+All commands run from the repository root.
 
 **After each stage, verify:**
 
@@ -357,7 +359,7 @@ All commands run from `/home/user/project`.
     make lint 2>&1 | tee /tmp/lint.log
     make test 2>&1 | tee /tmp/test.log
 
-## Validation and Acceptance
+## Validation and acceptance
 
 Quality criteria:
 
@@ -378,12 +380,12 @@ Quality method:
     make lint 2>&1 | tee /tmp/lint.log && echo "LINT PASSED"
     make test 2>&1 | tee /tmp/test.log && echo "TEST PASSED"
 
-## Idempotence and Recovery
+## Idempotence and recovery
 
 Each stage produces file additions or edits that can be reverted with
 `git checkout`. No destructive or irreversible operations are involved.
 
-## Artifacts and Notes
+## Artefacts and notes
 
 **Existing pattern for source location capture** (from `log_compat.rs`):
 
@@ -404,9 +406,13 @@ Each stage produces file additions or edits that can be reverted with
     let code = frame.getattr("f_code")?;
     let filename: String = code.getattr("co_filename")?.extract()?;
     let lineno: u32 = frame.getattr("f_lineno")?.extract()?;
-    let funcname: String = code.getattr("co_name")?.extract()?;
+    // module name from f_globals['__name__'] (co_name is the function name)
+    let module: String = frame.getattr("f_globals")?
+        .get_item("__name__")
+        .and_then(|v| v.extract())
+        .unwrap_or_default();
 
-## Interfaces and Dependencies
+## Interfaces and dependencies
 
 No new external dependencies. Internal interfaces:
 

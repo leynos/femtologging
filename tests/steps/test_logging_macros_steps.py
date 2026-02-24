@@ -20,6 +20,8 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from syrupy import SnapshotAssertion
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -62,7 +64,7 @@ def given_named_logger(name: str, level: str) -> str:
 # When steps
 # ---------------------------------------------------------------------------
 
-_FUNC_MAP: typ.Mapping[str, typ.Callable[..., str | None]] = MappingProxyType({
+_FUNC_MAP: cabc.Mapping[str, cabc.Callable[..., str | None]] = MappingProxyType({
     "info": info,
     "debug": debug,
     "warn": warn,
@@ -157,4 +159,4 @@ def _normalise_source_location(output: str) -> str:
     # Normalise file paths (e.g., /foo/bar/baz.py -> <file>)
     result = re.sub(r"[^\s:]+\.py", "<file>", output)
     # Normalise line numbers (e.g., :42 -> :<N>)
-    return re.sub(r":(\d+)", ":<N>", result)
+    return re.sub(r":\d+", ":<N>", result)
