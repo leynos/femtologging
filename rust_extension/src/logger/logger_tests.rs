@@ -275,3 +275,8 @@ mod logger_tests_shutdown;
 #[cfg(feature = "python")]
 #[path = "logger_tests_python.rs"]
 mod logger_tests_python;
+
+// Convenience method tests (isEnabledFor, debug, info, etc.)
+#[cfg(feature = "python")]
+#[path = "logger_tests_convenience.rs"]
+mod logger_tests_convenience;

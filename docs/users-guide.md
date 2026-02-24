@@ -66,8 +66,11 @@ your process exits.
   (default format is `"{logger} [LEVEL] message"`), or `None` when the record
   is filtered out. This differs from `logging.Logger.log()`, which always
   returns `None`.
-- Convenience methods (`logger.info`, `logger.warning`, and so on) are not
-  implemented yet; call `log()` directly or wrap it in a helper.
+- Convenience methods `logger.debug()`, `logger.info()`, `logger.warning()`,
+  `logger.error()`, `logger.critical()`, and `logger.exception()` are available
+  and match the signatures of their stdlib counterparts. Each accepts an
+  optional `exc_info` and `stack_info` keyword argument, identical to `log()`.
+  `exception()` behaves like `error()` but defaults `exc_info` to `True`.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info`
   for capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:
@@ -90,6 +93,11 @@ your process exits.
   logger.log("DEBUG", "checkpoint reached", stack_info=True)
   ```
 
+- `logger.isEnabledFor(level)` returns `True` when the logger would process a
+  record at the given level. Use it for expensive message construction that
+  should be skipped when the level is filtered out.
+- `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
+  compatibility with code written against `logging.getLogger`.
 - There is no equivalent to `extra` or lazy formatting. Build the final
   message string before calling `log()`.
 
@@ -429,11 +437,12 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 
 ## Deviations from stdlib logging
 
-- No shorthand methods (`info`, `debug`, `warning`, …) or `LoggerAdapter`.
-- `log()` returns the formatted string instead of `None`, and there is no
-  `Logger.isEnabledFor()` helper.
-- Records lack `extra` and calling-module introspection. `exc_info` and
-  `stack_info` are supported as keyword-only arguments to `log()`.
+- No `LoggerAdapter`.
+- `log()` and the convenience methods (`debug`, `info`, `warning`, `error`,
+  `critical`, `exception`) return the formatted string instead of `None`.
+- Records lack `extra`, lazy formatting, and calling-module introspection.
+  `exc_info` and `stack_info` are supported as keyword-only arguments to
+  `log()` and the convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.

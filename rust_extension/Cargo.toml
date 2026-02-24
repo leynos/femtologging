@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 delegate = "0.13.4"
-pyo3 = { version = "0.28.0", default-features = false, features = ["macros", "auto-initialize"] }
+pyo3 = { version = "0.28.0", default-features = false, features = ["macros", "auto-initialize", "multiple-pymethods"] }
 crossbeam-channel = "0.5.15"
 log = "0.4"
 once_cell = "1"

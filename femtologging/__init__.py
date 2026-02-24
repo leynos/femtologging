@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from . import _femtologging_rs as rust
 from ._basic_config import BasicConfig, basicConfig
+from ._compat import (
+    getLogger as getLogger,
+)
 from ._femtologging_rs import (
     EXCEPTION_SCHEMA_VERSION,
     ROTATION_VALIDATION_MSG,
@@ -87,6 +90,7 @@ __all__ = [
     "error",
     "fileConfig",
     "filter_frames",
+    "getLogger",
     "get_logger",
     "get_logging_infrastructure_patterns",
     "hello",

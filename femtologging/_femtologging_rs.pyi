@@ -93,6 +93,87 @@ class FemtoLogger:
 
         """
         ...
+    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802
+        """Return whether a message at the given level would be processed.
+
+        Parameters
+        ----------
+        level
+            The log level to test (e.g., "INFO", "DEBUG").
+
+        Returns
+        -------
+        bool
+            ``True`` when the logger's effective level would allow a
+            record at the given level through.
+
+        """
+        ...
+    def debug(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at DEBUG level."""
+        ...
+    def info(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at INFO level."""
+        ...
+    def warning(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at WARNING level."""
+        ...
+    def error(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at ERROR level."""
+        ...
+    def critical(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at CRITICAL level."""
+        ...
+    def exception(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log a message at ERROR level with ``exc_info`` defaulting to ``True``.
+
+        Behaves like ``error()`` but automatically captures the active
+        exception when ``exc_info`` is not explicitly provided.
+
+        """
+        ...
 
 FemtoHandler: _Any
 FemtoStreamHandler: _Any
