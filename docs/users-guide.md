@@ -426,7 +426,7 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - `log()` returns the formatted string instead of `None`, and there is no
   `Logger.isEnabledFor()` helper.
 - Records lack `extra` and calling-module introspection. `exc_info` and
-  `stack_info` are supported as keyword arguments to `log()`.
+  `stack_info` are supported as keyword-only arguments to `log()`.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.
