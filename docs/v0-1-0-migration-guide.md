@@ -181,8 +181,8 @@ Table: Rust module file renames
 | `http_handler`   | `serialise.rs` | `serialize.rs` |
 | `socket_handler` | `serialise.rs` | `serialize.rs` |
 
-These modules are `pub(crate)` and not re-exported, so this change does not
-affect Python consumers or users of the public Rust API.
+These modules are private (`mod serialize`, not `pub mod`) and not re-exported,
+so this change does not affect Python consumers or users of the public Rust API.
 
 ### Documentation and docstring changes
 
@@ -198,10 +198,11 @@ All doc comments and user-facing strings now use `-ize` / `-ization` forms:
 
 ### Impact
 
-This change is **non-breaking** for all public Python and Rust APIs. The
-renamed functions (`serialize_url_encoded`, `serialize_json` in
+The spelling-standardization renames are **non-breaking**. The renamed
+functions (`serialize_url_encoded`, `serialize_json` in
 `http_handler/serialize.rs` and `serialize_record` in
 `socket_handler/serialize.rs`) are `pub` within their respective modules, but
 the `serialize` modules themselves are private (`mod serialize`, not
 `pub mod`), so these symbols are not accessible to downstream crates. No
-user-facing method signatures, class names, or parameter names were altered.
+user-facing method signatures, class names, or parameter names were altered by
+this change.

@@ -57,11 +57,19 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
     }
 }
 
+fn is_unknown_logger_error(py: Python<'_>, err: &PyErr) -> bool {
+    err.is_instance_of::<pyo3::exceptions::PyKeyError>(py)
+}
+
+fn is_invalid_logger_error(py: Python<'_>, err: &PyErr) -> bool {
+    err.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+}
+
 /// Classify a logger resolution error for diagnostic logging.
 fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
-    if err.is_instance_of::<pyo3::exceptions::PyKeyError>(py) {
+    if is_unknown_logger_error(py, err) {
         "unknown logger target"
-    } else if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
+    } else if is_invalid_logger_error(py, err) {
         "invalid logger target"
     } else {
         "unexpected error resolving logger"
