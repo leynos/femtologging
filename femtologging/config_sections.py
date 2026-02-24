@@ -1,10 +1,12 @@
 """Configuration section processing for femtologging.dictConfig.
 
-This module handles the processing of formatters, handlers, loggers,
-and root logger sections in ``dictConfig``-style configuration dictionaries.
+This module handles the processing of filters, formatters, handlers,
+loggers, and root logger sections in ``dictConfig``-style configuration
+dictionaries.
 
-The entry points are :func:`_process_formatters`, :func:`_process_handlers`,
-:func:`_process_loggers`, and :func:`_process_root_logger`, called from
+The entry points are :func:`_process_filters`, :func:`_process_formatters`,
+:func:`_process_handlers`, :func:`_process_loggers`, and
+:func:`_process_root_logger`, called from
 :func:`femtologging.config.dictConfig`.
 """
 
@@ -14,37 +16,25 @@ import collections.abc as cabc
 import typing as typ
 
 from .config import (
+    _build_filter_from_dict,
     _build_formatter,
     _build_handler_from_dict,
     _build_logger_from_dict,
     _validate_section_mapping,
+    _validate_string_keys,
 )
 
-Mapping = cabc.Mapping
-cast = typ.cast
-
-
-class _ConfigBuilder(typ.Protocol):
-    """Protocol describing the builder interface used by ``dictConfig``."""
-
-    def with_formatter(self, fid: str, builder: object) -> typ.Self: ...
-
-    def with_handler(self, hid: str, builder: object) -> typ.Self: ...
-
-    def with_logger(self, lname: str, builder: object) -> typ.Self: ...
-
-    def with_root_logger(self, builder: object) -> typ.Self: ...
-
-    def build_and_init(self) -> None: ...
+if typ.TYPE_CHECKING:
+    from .config_protocol import _ConfigBuilder
 
 
 def _iter_section_items(
-    config: Mapping[str, object],
+    config: cabc.Mapping[str, object],
     section: str,
     item_name: str,
     *,
     key_err_tmpl: str | None = None,
-) -> cabc.Iterator[tuple[str, Mapping[str, object]]]:
+) -> cabc.Iterator[tuple[str, cabc.Mapping[str, object]]]:
     """Iterate over validated section items.
 
     Parameters
@@ -60,7 +50,7 @@ def _iter_section_items(
 
     Yields
     ------
-    tuple[str, Mapping[str, object]]
+    tuple[str, cabc.Mapping[str, object]]
         (id, config) pairs for each item in the section.
 
     """
@@ -72,15 +62,28 @@ def _iter_section_items(
             raise TypeError(base_err_tmpl.format(name=repr(key)))
         yield (
             key,
-            cast(
-                "Mapping[str, object]",
+            _validate_string_keys(
                 _validate_section_mapping(cfg, f"{item_name} config"),
+                f"{item_name} config",
             ),
         )
 
 
+def _process_filters(
+    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
+) -> _ConfigBuilder:
+    """Attach filter builders to ``builder``."""
+    for fid, filter_cfg in _iter_section_items(
+        config,
+        "filters",
+        "filter",
+    ):
+        builder = builder.with_filter(fid, _build_filter_from_dict(fid, filter_cfg))
+    return builder
+
+
 def _process_formatters(
-    builder: _ConfigBuilder, config: Mapping[str, object]
+    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
 ) -> _ConfigBuilder:
     """Attach formatter builders to ``builder``."""
     for fid, fmt_cfg in _iter_section_items(
@@ -93,7 +96,7 @@ def _process_formatters(
 
 
 def _process_handlers(
-    builder: _ConfigBuilder, config: Mapping[str, object]
+    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
 ) -> _ConfigBuilder:
     """Attach handler builders to ``builder``."""
     for hid, handler_cfg in _iter_section_items(
@@ -106,7 +109,7 @@ def _process_handlers(
 
 
 def _process_loggers(
-    builder: _ConfigBuilder, config: Mapping[str, object]
+    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
 ) -> _ConfigBuilder:
     """Attach logger configurations to ``builder``."""
     for lname, logger_cfg in _iter_section_items(
@@ -120,16 +123,16 @@ def _process_loggers(
 
 
 def _process_root_logger(
-    builder: _ConfigBuilder, config: Mapping[str, object]
+    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
 ) -> _ConfigBuilder:
     """Configure the root logger."""
     if "root" not in config:
         msg = "root logger configuration is required"
         raise ValueError(msg)
     root = config["root"]
-    if not isinstance(root, Mapping):
+    if not isinstance(root, cabc.Mapping):
         msg = "root logger configuration must be a mapping"
         raise TypeError(msg)
     return builder.with_root_logger(
-        _build_logger_from_dict("root", cast("Mapping[str, object]", root))
+        _build_logger_from_dict("root", typ.cast("cabc.Mapping[str, object]", root))
     )
