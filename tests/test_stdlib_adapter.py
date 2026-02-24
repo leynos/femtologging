@@ -30,11 +30,6 @@ class _LevelCase:
     handler_level: int | None = None
 
 
-def _raise_value_error(msg: str = "test error") -> None:
-    """Raise a ValueError for testing exc_info capture."""
-    raise ValueError(msg)
-
-
 # -- Fixtures -------------------------------------------------------------
 
 
@@ -209,14 +204,20 @@ class TestExceptionForwarding:
     """Verify that exception information reaches the stdlib handler."""
 
     @staticmethod
+    def _raise_value_error(msg: str = "test error") -> None:
+        """Raise a ValueError for testing exc_info capture."""
+        raise ValueError(msg)
+
+    @staticmethod
     def test_exc_info_forwarded_as_text(
         stream: io.StringIO,
         stdlib_handler: logging.StreamHandler[io.StringIO],
         adapter: StdlibHandlerAdapter,
     ) -> None:
         """Exception payload should appear as exc_text on the LogRecord."""
+        output = ""
         try:
-            _raise_value_error()
+            TestExceptionForwarding._raise_value_error()
         except ValueError:
             output = log_and_capture(
                 stream,
@@ -329,7 +330,7 @@ class TestLogRecordAttributes:
                 {"created_type": float, "created_positive": True},
             ),
         ],
-        ids=["logger_name", "timestamp"],
+        ids=["logger_name", "default_timestamp"],
     )
     def test_record_attributes(
         logger_name: str,

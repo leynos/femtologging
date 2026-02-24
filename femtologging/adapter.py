@@ -9,10 +9,14 @@ Femtologging dispatches to handlers via ``handle_record(record)`` where
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import types
 import typing as typ
 import warnings
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 # -- Record schema TypedDicts ---------------------------------------------
 
@@ -67,14 +71,18 @@ class FemtoRecord(typ.TypedDict, total=False):
 
 TRACE_LEVEL_NUM = 5
 _trace_registered = False
+_trace_register_lock = threading.Lock()
 
 
 def _ensure_trace_level() -> None:
     """Register the TRACE level name with stdlib logging if not already done."""
     global _trace_registered
-    if not _trace_registered:
-        logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
-        _trace_registered = True
+    if _trace_registered:
+        return
+    with _trace_register_lock:
+        if not _trace_registered:
+            logging.addLevelName(TRACE_LEVEL_NUM, "TRACE")
+            _trace_registered = True
 
 
 _FEMTO_TO_STDLIB_LEVEL: types.MappingProxyType[int, int] = types.MappingProxyType({
@@ -115,7 +123,7 @@ def _stdlib_levelno(record: FemtoRecord) -> int:
     return logging.WARNING
 
 
-def _format_frames(frames: list[Frame]) -> typ.Iterator[str]:
+def _format_frames(frames: list[Frame]) -> cabc.Iterator[str]:
     """Render a list of stack frame dicts as human-readable text lines.
 
     Parameters
@@ -132,7 +140,7 @@ def _format_frames(frames: list[Frame]) -> typ.Iterator[str]:
     """
     for frame in frames:
         filename = frame.get("filename", "<unknown>")
-        lineno = frame.get("lineno", "?")
+        lineno = frame.get("lineno", 0)
         function = frame.get("function", "<unknown>")
         yield f'  File "{filename}", line {lineno}, in {function}'
         source = frame.get("source_line")
