@@ -165,15 +165,23 @@ def test_convenience_methods_respect_level(
         )
 
 
-def test_convenience_method_with_exc_info(
-    active_exception: cabc.Callable[[str], typ.ContextManager[None]],
-) -> None:
-    """Convenience methods should accept exc_info."""
+def test_convenience_method_with_exc_info() -> None:
+    """Convenience methods should accept and propagate exc_info.
+
+    Uses an inline ``try/except`` because ``sys.exc_info()`` is
+    frame-scoped and the ``active_exception`` fixture (a generator-based
+    context manager) runs in a separate frame.
+    """
     logger = FemtoLogger("exc")
     logger.set_level("TRACE")
-    with active_exception("boom"):
-        output = logger.error("caught", exc_info=True)  # noqa: LOG014  # TODO(#340): testing exc_info inside fixture
+    msg = "boom"
+    try:
+        raise TypeError(msg)  # noqa: TRY301  # deliberate re-raise to populate sys.exc_info
+    except TypeError:
+        output = logger.error("caught", exc_info=True)
     assert output is not None, "error(exc_info=True) should produce output"
+    assert "TypeError" in output, "output should contain the exception type"
+    assert "Traceback" in output, "output should contain traceback text"
 
 
 def test_convenience_method_with_stack_info() -> None:
