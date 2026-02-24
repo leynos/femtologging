@@ -34,11 +34,6 @@ True
 
 from __future__ import annotations
 
-import typing as typ
-
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
 import pytest
 
 from femtologging import FemtoLogger, get_logger, getLogger
@@ -176,7 +171,7 @@ def test_convenience_method_with_exc_info() -> None:
     logger.set_level("TRACE")
     msg = "boom"
     try:
-        raise TypeError(msg)  # noqa: TRY301  # deliberate re-raise to populate sys.exc_info
+        raise TypeError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
     except TypeError:
         output = logger.error("caught", exc_info=True)
     assert output is not None, "error(exc_info=True) should produce output"
@@ -198,15 +193,18 @@ def test_convenience_method_with_stack_info() -> None:
 # -- exception() --------------------------------------------------------------
 
 
-def test_exception_captures_active_exception(
-    active_exception: cabc.Callable[[str], typ.ContextManager[None]],
-) -> None:
+def test_exception_captures_active_exception() -> None:
     """``exception()`` should produce output with an active exception context."""
     logger = FemtoLogger("exc.auto")
-    with active_exception("auto capture"):
-        output = logger.exception("caught")  # noqa: LOG004  # TODO(#340): inside fixture-based handler
+    msg = "auto capture"
+    try:
+        raise ValueError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
+    except ValueError:
+        output = logger.exception("caught")
     assert output is not None, "exception() should produce output"
     assert "[ERROR]" in output, "output should contain [ERROR] level tag"
+    assert "ValueError" in output, "output should contain the exception type"
+    assert "Traceback" in output, "output should contain traceback text"
 
 
 def test_exception_auto_capture_traceback() -> None:
@@ -228,26 +226,28 @@ def test_exception_auto_capture_traceback() -> None:
     assert "Traceback" in output, "output should contain traceback text"
 
 
-def test_exception_logs_at_error_level(
-    active_exception: cabc.Callable[[str], typ.ContextManager[None]],
-) -> None:
+def test_exception_logs_at_error_level() -> None:
     """``exception()`` should log at ERROR level."""
     logger = FemtoLogger("exc.level")
     logger.set_level("ERROR")
-    with active_exception("level check"):
-        output = logger.exception("caught")  # noqa: LOG004  # TODO(#340): inside fixture-based handler
+    msg = "level check"
+    try:
+        raise ValueError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
+    except ValueError:
+        output = logger.exception("caught")
     assert output is not None, "exception() should produce output at ERROR level"
     assert "[ERROR]" in output, "output should contain [ERROR] level tag"
 
 
-def test_exception_filtered_below_error(
-    active_exception: cabc.Callable[[str], typ.ContextManager[None]],
-) -> None:
+def test_exception_filtered_below_error() -> None:
     """``exception()`` should be filtered when level > ERROR."""
     logger = FemtoLogger("exc.filter")
     logger.set_level("CRITICAL")
-    with active_exception("filtered"):
-        output = logger.exception("caught")  # noqa: LOG004  # TODO(#340): inside fixture-based handler
+    msg = "filtered"
+    try:
+        raise ValueError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
+    except ValueError:
+        output = logger.exception("caught")
     assert output is None, "exception() should be filtered when level is CRITICAL"
 
 
@@ -263,21 +263,21 @@ def test_exception_with_no_active_exception() -> None:
     )
 
 
-def test_exception_with_explicit_exc_info_false(
-    active_exception: cabc.Callable[[str], typ.ContextManager[None]],
-) -> None:
+def test_exception_with_explicit_exc_info_false() -> None:
     """``exception()`` with exc_info=False should not capture."""
     logger = FemtoLogger("exc.false")
-    with active_exception("suppressed"):
-        output = logger.exception("caught", exc_info=False)  # noqa: LOG004, LOG007  # TODO(#340): testing explicit False override
+    msg = "suppressed"
+    try:
+        raise ValueError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
+    except ValueError:
+        output = logger.exception("caught", exc_info=False)  # noqa: LOG007  # TODO(#340): testing explicit False override
     assert output == "exc.false [ERROR] caught", (
         f"exc_info=False should suppress capture, got {output!r}"
     )
+    assert "Traceback" not in (output or ""), "exc_info=False should suppress traceback"
 
 
-def test_exception_with_explicit_exc_info_none_suppresses(
-    active_exception: cabc.Callable[[str], typ.ContextManager[None]],
-) -> None:
+def test_exception_with_explicit_exc_info_none_suppresses() -> None:
     """``exception(exc_info=None)`` suppresses capture (stdlib semantics).
 
     The Python wrapper distinguishes omitted ``exc_info`` from explicit
@@ -285,11 +285,15 @@ def test_exception_with_explicit_exc_info_none_suppresses(
     is suppressed — matching ``logging.Logger.exception()`` behaviour.
     """
     logger = FemtoLogger("exc.explicit_none")
-    with active_exception("suppressed"):
-        output = logger.exception("caught", exc_info=None)  # noqa: LOG004, LOG007  # TODO(#340): testing exc_info=None
+    msg = "suppressed"
+    try:
+        raise ValueError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
+    except ValueError:
+        output = logger.exception("caught", exc_info=None)  # noqa: LOG007  # TODO(#340): testing exc_info=None
     assert output == "exc.explicit_none [ERROR] caught", (
         f"exc_info=None should suppress capture, got {output!r}"
     )
+    assert "Traceback" not in (output or ""), "exc_info=None should suppress traceback"
 
 
 def test_exception_with_exc_info_instance() -> None:

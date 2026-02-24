@@ -386,16 +386,14 @@ builder.build_and_init()
   `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
   `backoff_*` aliases).
 - Top-level `filters` sections are supported. Each filter mapping must
-  contain exactly one of `level` or `name`; supplying both is rejected
-  as ambiguous. `level` creates a `LevelFilterBuilder` (via
-  `with_max_level`), `name` creates a `NameFilterBuilder` (via
-  `with_prefix`). Loggers and the root logger accept a `filters` list
-  of filter IDs.
+  contain exactly one of `level` or `name`; supplying both is rejected as
+  ambiguous. `level` creates a `LevelFilterBuilder` (via `with_max_level`),
+  `name` creates a `NameFilterBuilder` (via `with_prefix`). Loggers and the
+  root logger accept a `filters` list of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
-  handler `level`, handler `filters`, and handler formatters. Although
-  the schema accepts a `formatters` section, referencing a formatter
-  from a handler currently results in
-  `ValueError("unknown formatter id")`.
+  handler `level`, handler `filters`, and handler formatters. Although the
+  schema accepts a `formatters` section, referencing a formatter from a handler
+  currently results in `ValueError("unknown formatter id")`.
 - A `root` section is mandatory. Named loggers support `level`,
   `handlers`, `filters`, and `propagate` (bool).
 
@@ -435,8 +433,8 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   yet implemented.
 - Filters are available through both `ConfigBuilder` and `dictConfig`.
   `fileConfig` does not yet support filter declarations. Handler-level
-  `filters` and `level` attributes remain unsupported, as these require
-  Rust infrastructure changes outside the current scope.
+  `filters` and `level` attributes remain unsupported, as these require Rust
+  infrastructure changes outside the current scope.
 
 ## Deviations from stdlib logging
 
@@ -450,8 +448,7 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.
 - The `dictConfig` schema lacks incremental updates, handler filters,
-  handler levels, and formatter attachment. `fileConfig` is likewise
-  cut down.
+  handler levels, and formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final

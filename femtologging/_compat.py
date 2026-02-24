@@ -51,9 +51,11 @@ def _exception_wrapper(
     """
     if exc_info is _MISSING:
         return self._exception_impl(message, exc_info=True, stack_info=stack_info)
-    return self._exception_impl(
-        message, exc_info=typ.cast("typ.Any", exc_info), stack_info=stack_info
-    )
+    # Normalize falsy exc_info (None, False, 0, …) to Python False so that
+    # PyO3 receives a concrete PyBool rather than Python None (which PyO3
+    # maps to Rust Option::None and would trigger the auto-capture default).
+    resolved = typ.cast("typ.Any", exc_info) if exc_info else False
+    return self._exception_impl(message, exc_info=resolved, stack_info=stack_info)
 
 
 FemtoLogger.exception = _exception_wrapper  # type: ignore[assignment,method-assign]

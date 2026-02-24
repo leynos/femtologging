@@ -16,6 +16,120 @@ use crate::level::FemtoLevel;
 
 use super::FemtoLogger;
 
+/// Generate a convenience logging method that delegates to `py_log` with a
+/// fixed level.
+///
+/// PyO3 does not allow macro invocations inside `#[pymethods]` blocks, so
+/// each call emits its own block (the `multiple-pymethods` Cargo feature is
+/// already enabled for exactly this reason).
+macro_rules! log_method {
+    ($fn_name:ident, $py_name:literal, $level:expr, $doc:expr) => {
+        #[pymethods]
+        impl FemtoLogger {
+            #[doc = $doc]
+            #[pyo3(
+                        name = $py_name,
+                        signature = (message, /, *, exc_info=None, stack_info=false),
+                        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
+                    )]
+            pub fn $fn_name(
+                &self,
+                py: Python<'_>,
+                message: &str,
+                exc_info: Option<&Bound<'_, PyAny>>,
+                stack_info: Option<bool>,
+            ) -> PyResult<Option<String>> {
+                self.py_log(py, $level, message, exc_info, stack_info)
+            }
+        }
+    };
+}
+
+log_method!(
+    py_debug,
+    "debug",
+    FemtoLevel::Debug,
+    concat!(
+        "Log a message at DEBUG level.\n",
+        "\n",
+        "Delegates to the internal logging machinery with a fixed level.\n",
+        "\n",
+        "# Examples\n",
+        "\n",
+        "```python\n",
+        "logger.debug(f\"cache hit for {key}\")\n",
+        "```"
+    )
+);
+
+log_method!(
+    py_info,
+    "info",
+    FemtoLevel::Info,
+    concat!(
+        "Log a message at INFO level.\n",
+        "\n",
+        "Delegates to the internal logging machinery with a fixed level.\n",
+        "\n",
+        "# Examples\n",
+        "\n",
+        "```python\n",
+        "logger.info(f\"server started on port {port}\")\n",
+        "```"
+    )
+);
+
+log_method!(
+    py_warning,
+    "warning",
+    FemtoLevel::Warn,
+    concat!(
+        "Log a message at WARN level.\n",
+        "\n",
+        "Delegates to the internal logging machinery with a fixed level.\n",
+        "\n",
+        "# Examples\n",
+        "\n",
+        "```python\n",
+        "logger.warning(\"disk usage above 90%\")\n",
+        "```"
+    )
+);
+
+log_method!(
+    py_error,
+    "error",
+    FemtoLevel::Error,
+    concat!(
+        "Log a message at ERROR level.\n",
+        "\n",
+        "Delegates to the internal logging machinery with a fixed level.\n",
+        "\n",
+        "# Examples\n",
+        "\n",
+        "```python\n",
+        "logger.error(\"connection refused\")\n",
+        "```"
+    )
+);
+
+log_method!(
+    py_critical,
+    "critical",
+    FemtoLevel::Critical,
+    concat!(
+        "Log a message at CRITICAL level.\n",
+        "\n",
+        "Delegates to the internal logging machinery with a fixed level.\n",
+        "\n",
+        "# Examples\n",
+        "\n",
+        "```python\n",
+        "logger.critical(\"out of memory, shutting down\")\n",
+        "```"
+    )
+);
+
 #[pymethods]
 impl FemtoLogger {
     /// Return whether a message at the given level would be processed.
@@ -42,126 +156,6 @@ impl FemtoLogger {
     #[pyo3(name = "isEnabledFor", text_signature = "(self, level)")]
     pub fn py_is_enabled_for(&self, level: FemtoLevel) -> bool {
         self.is_enabled_for(level)
-    }
-
-    /// Log a message at DEBUG level.
-    ///
-    /// Delegates to the internal logging machinery with a fixed level.
-    ///
-    /// # Examples
-    ///
-    /// ```python
-    /// logger.debug(f"cache hit for {key}")
-    /// ```
-    #[pyo3(
-        name = "debug",
-        signature = (message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
-    )]
-    pub fn py_debug(
-        &self,
-        py: Python<'_>,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
-    ) -> PyResult<Option<String>> {
-        self.py_log(py, FemtoLevel::Debug, message, exc_info, stack_info)
-    }
-
-    /// Log a message at INFO level.
-    ///
-    /// Delegates to the internal logging machinery with a fixed level.
-    ///
-    /// # Examples
-    ///
-    /// ```python
-    /// logger.info(f"server started on port {port}")
-    /// ```
-    #[pyo3(
-        name = "info",
-        signature = (message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
-    )]
-    pub fn py_info(
-        &self,
-        py: Python<'_>,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
-    ) -> PyResult<Option<String>> {
-        self.py_log(py, FemtoLevel::Info, message, exc_info, stack_info)
-    }
-
-    /// Log a message at WARN level.
-    ///
-    /// Delegates to the internal logging machinery with a fixed level.
-    ///
-    /// # Examples
-    ///
-    /// ```python
-    /// logger.warning("disk usage above 90%")
-    /// ```
-    #[pyo3(
-        name = "warning",
-        signature = (message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
-    )]
-    pub fn py_warning(
-        &self,
-        py: Python<'_>,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
-    ) -> PyResult<Option<String>> {
-        self.py_log(py, FemtoLevel::Warn, message, exc_info, stack_info)
-    }
-
-    /// Log a message at ERROR level.
-    ///
-    /// Delegates to the internal logging machinery with a fixed level.
-    ///
-    /// # Examples
-    ///
-    /// ```python
-    /// logger.error("connection refused")
-    /// ```
-    #[pyo3(
-        name = "error",
-        signature = (message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
-    )]
-    pub fn py_error(
-        &self,
-        py: Python<'_>,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
-    ) -> PyResult<Option<String>> {
-        self.py_log(py, FemtoLevel::Error, message, exc_info, stack_info)
-    }
-
-    /// Log a message at CRITICAL level.
-    ///
-    /// Delegates to the internal logging machinery with a fixed level.
-    ///
-    /// # Examples
-    ///
-    /// ```python
-    /// logger.critical("out of memory, shutting down")
-    /// ```
-    #[pyo3(
-        name = "critical",
-        signature = (message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
-    )]
-    pub fn py_critical(
-        &self,
-        py: Python<'_>,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
-    ) -> PyResult<Option<String>> {
-        self.py_log(py, FemtoLevel::Critical, message, exc_info, stack_info)
     }
 
     /// Low-level implementation of ``exception()`` for the Python wrapper.

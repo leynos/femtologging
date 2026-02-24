@@ -14,21 +14,20 @@ gain new capabilities:
 
 1. **Python users** can call `femtologging.info("hello")` (and `debug`,
    `warn`, `error`) without manually retrieving a logger. These module-level
-   functions use the root logger by default (matching Python's
-   `logging.info()` ergonomics) and accept an optional `name` keyword argument
-   to target a named logger. Each call automatically captures the Python
-   caller's filename, line number, and function name into the log record's
-   metadata.
+   functions use the root logger by default (matching Python's `logging.info()`
+   ergonomics) and accept an optional `name` keyword argument to target a named
+   logger. Each call automatically captures the Python caller's filename, line
+   number, and function name into the log record's metadata.
 
 2. **Rust callers** (within the extension crate or downstream) can use
-   `femtolog_info!("logger.name", "message")` (and `_debug`, `_warn`,
-   `_error`) macros that capture `file!()`, `line!()`, and `module_path!()`
-   at compile time and embed them in the `RecordMetadata`.
+   `femtolog_info!("logger.name", "message")` (and `_debug`, `_warn`, `_error`)
+   macros that capture `file!()`, `line!()`, and `module_path!()` at compile
+   time and embed them in the `RecordMetadata`.
 
-Observable success: after implementation, running `uv run python -c "import
-femtologging; femtologging.info('hello')"` produces formatted output through
-the root logger, and `make test` passes with new Rust unit tests and Python
-BDD/snapshot tests exercising both APIs.
+Observable success: after implementation, running
+`uv run python -c "import femtologging; femtologging.info('hello')"` produces
+formatted output through the root logger, and `make test` passes with new Rust
+unit tests and Python BDD/snapshot tests exercising both APIs.
 
 ## Constraints
 
@@ -94,7 +93,8 @@ BDD/snapshot tests exercising both APIs.
 - [x] Add type stubs to `femtologging/_femtologging_rs.pyi`.
 - [x] Write Rust unit tests for macros (6 tests).
 - [x] Write Rust unit tests for convenience functions (7 tests).
-- [x] Write Python Behaviour-Driven Development (BDD) feature file and step definitions (7 scenarios).
+- [x] Write Python Behaviour-Driven Development (BDD) feature file and step
+      definitions (7 scenarios).
 - [x] Write snapshot tests for formatted output (1 syrupy snapshot).
 - [x] Update `docs/roadmap.md` to mark the macros item as done.
 - [x] Run all quality gates and fix any issues.
@@ -109,9 +109,10 @@ BDD/snapshot tests exercising both APIs.
   in Rust unit tests via `CollectingHandler` rather than in the Python BDD
   tests, where only the formatted string is observable.
 - `cargo test --features python` runs extremely slowly (60+ seconds per test)
-  due to Global Interpreter Lock (GIL) contention when many tests use `Python::attach`. This is a
-  pre-existing issue, not introduced by this change. Running targeted tests
-  (e.g., `-- convenience_functions::tests`) completes in milliseconds.
+  due to Global Interpreter Lock (GIL) contention when many tests use
+  `Python::attach`. This is a pre-existing issue, not introduced by this
+  change. Running targeted tests (e.g., `-- convenience_functions::tests`)
+  completes in milliseconds.
 - The frame depth for `sys._getframe` works as 1 (not 2) because Rust
   functions are transparent in the Python frame stack. The Python frame stack
   only sees `[Python caller] -> [pyfunction]`, so depth 1 from the
@@ -249,8 +250,9 @@ Register the module in `lib.rs`:
 
     mod logging_macros;
 
-Validation: `cargo test --manifest-path rust_extension/Cargo.toml
---no-default-features` compiles and existing tests pass.
+Validation:
+`cargo test --manifest-path rust_extension/Cargo.toml --no-default-features`
+compiles and existing tests pass.
 
 ### Stage B: Scaffolding — Python convenience functions
 
@@ -272,10 +274,10 @@ Create `rust_extension/src/convenience_functions.rs` (gated on
 
 Python signatures:
 
-    def debug(message, /, *, name=None) -> str | None: ...
-    def info(message, /, *, name=None) -> str | None: ...
-    def warn(message, /, *, name=None) -> str | None: ...
-    def error(message, /, *, name=None) -> str | None: ...
+    def debug(message, /, *, name=None) -> str | None: …
+    def info(message, /, *, name=None) -> str | None: …
+    def warn(message, /, *, name=None) -> str | None: …
+    def error(message, /, *, name=None) -> str | None: …
 
 Register in `lib.rs`:
 
@@ -325,8 +327,7 @@ Create `tests/features/logging_macros.feature` with scenarios:
 
 Create `tests/steps/test_logging_macros_steps.py` with step definitions.
 
-Validation: `uv run pytest tests/steps/test_logging_macros_steps.py -v`
-passes.
+Validation: `uv run pytest tests/steps/test_logging_macros_steps.py -v` passes.
 
 ### Stage E: Documentation and roadmap
 

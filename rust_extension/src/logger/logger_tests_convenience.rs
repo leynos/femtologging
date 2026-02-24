@@ -7,7 +7,7 @@ use rstest::rstest;
 
 /// Dispatch to the named convenience method on `FemtoLogger`.
 ///
-/// Centralises the method-name-to-function mapping so parameterised
+/// Centralizes the method-name-to-function mapping so parameterised
 /// tests avoid duplicating the five-way match.
 fn call_py_log_method(
     logger: &FemtoLogger,
