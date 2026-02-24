@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import logging
 import typing as typ
@@ -17,7 +18,8 @@ from femtologging.adapter import (
 )
 
 
-class _LevelCase(typ.NamedTuple):
+@dataclasses.dataclass(frozen=True, slots=True)
+class _LevelCase:
     """A single level-mapping test case."""
 
     level: str
@@ -106,13 +108,13 @@ class TestStdlibHandlerAdapterConstruction:
     def test_rejects_non_handler() -> None:
         """Adapter should raise TypeError for non-Handler objects."""
         with pytest.raises(TypeError, match=r"expected a logging\.Handler"):
-            StdlibHandlerAdapter("not a handler")  # type: ignore[arg-type]
+            StdlibHandlerAdapter(typ.cast("logging.Handler", "not a handler"))
 
     @staticmethod
     def test_rejects_plain_object() -> None:
         """Adapter should raise TypeError for arbitrary objects."""
         with pytest.raises(TypeError, match=r"expected a logging\.Handler"):
-            StdlibHandlerAdapter(object())  # type: ignore[arg-type]
+            StdlibHandlerAdapter(typ.cast("logging.Handler", object()))
 
 
 class TestHandleRecordDispatch:
