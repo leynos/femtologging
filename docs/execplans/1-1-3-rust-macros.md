@@ -143,10 +143,11 @@ BDD/snapshot tests exercising both APIs.
 - Decision: Use `FemtoLogger.log_record()` (private, unconditional) rather
   than widening `dispatch_record` / `is_enabled_for`.
   - Rationale: `log_record` already performs level checking, filter checking,
-    formatting, and dispatch — exactly what we need. It is `fn` (private) but
-    we can add a `pub(crate)` method `log_with_metadata` that creates a record
-    from metadata and delegates to `log_record`. This avoids widening the
-    feature gate on `dispatch_record`, which would risk dead-code warnings.
+    formatting, and dispatch, which satisfies the requirements. It is `fn`
+    (private) but a `pub(crate)` method `log_with_metadata` can be added that
+    creates a record from metadata and delegates to `FemtoLogger.log_record`.
+    This avoids widening the feature gate on `dispatch_record`, which would
+    risk dead-code warnings.
   - Date/Author: Planning phase.
 
 ## Outcomes & Retrospective

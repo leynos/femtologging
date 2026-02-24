@@ -66,6 +66,9 @@ fn default_logger_is_root() {
         let records = handler.collected();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].logger(), "root");
+
+        root.borrow(py)
+            .remove_handler(&(handler.clone() as Arc<dyn FemtoHandlerTrait>));
     });
 }
 
