@@ -9,7 +9,12 @@ import typing as typ
 import pytest
 
 from femtologging import FemtoLogger, StdlibHandlerAdapter
-from femtologging.adapter import TRACE_LEVEL_NUM, _stdlib_levelno
+from femtologging.adapter import (
+    TRACE_LEVEL_NUM,
+    FemtoRecord,
+    _make_log_record,
+    _stdlib_levelno,
+)
 
 
 class _LevelCase(typ.NamedTuple):
@@ -68,39 +73,7 @@ def log_and_capture(
     stack_info: bool = False,
     exc_info: bool = False,
 ) -> str:
-    """Configure, log a single message, and return captured output.
-
-    Parameters
-    ----------
-    stream
-        The StringIO backing the stdlib handler.
-    stdlib_handler
-        The stdlib StreamHandler to configure.
-    adapter
-        The StdlibHandlerAdapter wrapping *stdlib_handler*.
-    logger_name
-        Name for the FemtoLogger.
-    level
-        Femtologging level string (e.g. ``"INFO"``).
-    message
-        Log message text.
-    formatter
-        Optional stdlib Formatter to apply to *stdlib_handler*.
-    logger_level
-        Optional femtologging level to set on the logger.
-    handler_level
-        Optional stdlib numeric level to set on *stdlib_handler*.
-    stack_info
-        If ``True``, capture the current call stack.
-    exc_info
-        If ``True``, capture the current exception.
-
-    Returns
-    -------
-    str
-        The captured output from *stream*.
-
-    """
+    """Configure, log a single message via *adapter*, and return captured output."""
     if formatter is not None:
         stdlib_handler.setFormatter(formatter)
     if handler_level is not None:
@@ -362,6 +335,17 @@ class TestLogRecordAttributes:
         if "created_positive" in check_attrs:
             assert record.created > 0
 
+    @staticmethod
+    def test_msecs_consistent_with_created() -> None:
+        """Milliseconds should be derived from created when timestamp is overridden."""
+        timestamp = 1700000000.456
+        record = _make_log_record(
+            {"metadata": {"timestamp": timestamp}},
+        )
+        assert record.created == timestamp
+        expected_msecs = (timestamp - int(timestamp)) * 1000.0
+        assert record.msecs == pytest.approx(expected_msecs)
+
 
 class TestLevelFallback:
     """Verify _stdlib_levelno falls back to WARNING for unknown levels."""
@@ -377,7 +361,7 @@ class TestLevelFallback:
         ids=["unknown_levelno", "unknown_name", "empty_record"],
     )
     def test_unknown_level_falls_back(
-        record: dict[str, object],
+        record: FemtoRecord,
         expected: int,
     ) -> None:
         """Unknown or missing level information should fall back to WARNING."""

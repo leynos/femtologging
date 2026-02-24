@@ -12,6 +12,55 @@ import logging
 import typing as typ
 import warnings
 
+# -- Record schema TypedDicts ---------------------------------------------
+
+
+class Frame(typ.TypedDict):
+    """A single stack frame in an exception or stack payload."""
+
+    filename: str
+    lineno: int
+    function: str
+    source_line: typ.NotRequired[str]
+
+
+class Metadata(typ.TypedDict, total=False):
+    """The ``metadata`` sub-dictionary of a femtologging record."""
+
+    filename: str
+    line_number: int
+    timestamp: float
+    thread_name: str
+    thread_id: int | str
+    key_values: dict[str, object]
+
+
+class ExcInfo(typ.TypedDict, total=False):
+    """The ``exc_info`` sub-dictionary of a femtologging record."""
+
+    type_name: str
+    message: str
+    frames: list[Frame]
+
+
+class StackInfo(typ.TypedDict, total=False):
+    """The ``stack_info`` sub-dictionary of a femtologging record."""
+
+    frames: list[Frame]
+
+
+class FemtoRecord(typ.TypedDict, total=False):
+    """Schema for the record dict passed to ``handle_record``."""
+
+    logger: str
+    level: str
+    levelno: int
+    message: str
+    metadata: Metadata
+    exc_info: ExcInfo
+    stack_info: StackInfo
+
+
 # -- Femtologging level (0-5) -> stdlib level (5-50) ---------------------
 
 TRACE_LEVEL_NUM = 5
@@ -37,7 +86,7 @@ _FEMTO_LEVEL_NAMES: dict[str, int] = {
 }
 
 
-def _stdlib_levelno(record: dict[str, typ.Any]) -> int:
+def _stdlib_levelno(record: FemtoRecord) -> int:
     """Derive the stdlib numeric level from a femtologging record.
 
     Tries the numeric ``levelno`` first, falling back to the string
@@ -55,7 +104,7 @@ def _stdlib_levelno(record: dict[str, typ.Any]) -> int:
     return logging.WARNING
 
 
-def _format_frames(frames: list[dict[str, typ.Any]]) -> list[str]:
+def _format_frames(frames: list[Frame]) -> list[str]:
     """Render a list of stack frame dicts as human-readable text lines.
 
     Parameters
@@ -82,7 +131,7 @@ def _format_frames(frames: list[dict[str, typ.Any]]) -> list[str]:
     return lines
 
 
-def _format_exc_text(exc_info: dict[str, typ.Any]) -> str:
+def _format_exc_text(exc_info: ExcInfo) -> str:
     """Render a femtologging exception payload as human-readable text.
 
     Parameters
@@ -115,7 +164,7 @@ def _format_exc_text(exc_info: dict[str, typ.Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_stack_text(stack_info: dict[str, typ.Any]) -> str:
+def _format_stack_text(stack_info: StackInfo) -> str:
     """Render a femtologging stack payload as human-readable text.
 
     Parameters
@@ -136,7 +185,7 @@ def _format_stack_text(stack_info: dict[str, typ.Any]) -> str:
 
 def _populate_thread_info(
     log_record: logging.LogRecord,
-    metadata: dict[str, typ.Any],
+    metadata: Metadata,
 ) -> None:
     """Set thread-related attributes on a LogRecord from metadata.
 
@@ -237,7 +286,7 @@ class StdlibHandlerAdapter:
             stacklevel=2,
         )
 
-    def handle_record(self, record: dict[str, typ.Any]) -> None:
+    def handle_record(self, record: FemtoRecord) -> None:
         """Translate a femtologging record dict and dispatch via the stdlib handler.
 
         The constructed ``LogRecord`` is passed through
@@ -266,7 +315,7 @@ class StdlibHandlerAdapter:
         self._handler.close()
 
 
-def _make_log_record(record: dict[str, typ.Any]) -> logging.LogRecord:
+def _make_log_record(record: FemtoRecord) -> logging.LogRecord:
     """Build a ``logging.LogRecord`` from a femtologging record dict.
 
     Parameters
@@ -281,7 +330,7 @@ def _make_log_record(record: dict[str, typ.Any]) -> logging.LogRecord:
         fields from the femtologging record.
 
     """
-    metadata: dict[str, typ.Any] = record.get("metadata", {})
+    metadata: Metadata = record.get("metadata", {})
 
     log_record = logging.LogRecord(
         name=record.get("logger", "femtologging"),
@@ -298,6 +347,7 @@ def _make_log_record(record: dict[str, typ.Any]) -> logging.LogRecord:
     timestamp = metadata.get("timestamp")
     if isinstance(timestamp, (int, float)):
         log_record.created = float(timestamp)
+        log_record.msecs = (log_record.created - int(log_record.created)) * 1000.0
 
     _populate_thread_info(log_record, metadata)
 
