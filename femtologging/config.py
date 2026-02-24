@@ -1,33 +1,22 @@
 """Configuration via logging-style dictionaries.
 
 This module implements :func:`dictConfig`, a restricted variant of
-``logging.config.dictConfig``. Only a subset of the standard schema is
-recognized: ``filters`` sections, handler ``level`` attributes, and
-incremental configuration are unsupported.
+``logging.config.dictConfig``. Handler ``level``, handler ``filters``,
+and incremental configuration are unsupported.
 
-String level parameters accept case-insensitive names: "TRACE", "DEBUG",
-"INFO", "WARN", "WARNING", "ERROR", and "CRITICAL". "WARN" and "WARNING"
-are equivalent.
+Top-level ``filters`` and logger-level ``filters`` lists are supported.
+Filter type is inferred from configuration keys: ``level`` creates a
+:class:`LevelFilterBuilder`, ``name`` creates a :class:`NameFilterBuilder`.
 
 Example:
 -------
 >>> dictConfig({
 ...     "version": 1,
+...     "filters": {"lvl": {"level": "INFO"}},
 ...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
+...     "loggers": {"app": {"filters": ["lvl"]}},
 ...     "root": {"level": "INFO", "handlers": ["h"]},
 ... })
-
-The ``dictConfig`` format does not support ``filters`` and will raise
-``ValueError`` if a ``filters`` section is provided. To attach filters, use the
-builder API:
-
-    cb = (
-        ConfigBuilder()
-        .with_filter("lvl", LevelFilterBuilder().with_max_level("INFO"))
-        .with_logger("core", LoggerConfigBuilder().with_filters(["lvl"]))
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-    )
-    cb.build_and_init()
 
 """
 
@@ -220,16 +209,49 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
     return builder
 
 
-def _validate_logger_handlers(handlers_obj: object) -> list[str]:
-    """Validate logger ``handlers`` list and return it."""
-    if not isinstance(handlers_obj, (list, tuple)):
-        msg = "logger handlers must be a list or tuple of strings"
+def _validate_filter_config_keys(fid: str, data: Mapping[str, object]) -> None:
+    """Ensure ``data`` uses only recognised filter keys."""
+    allowed = {"level", "name"}
+    present = allowed & set(data.keys())
+    if not present:
+        msg = f"filter {fid!r} must contain a 'level' or 'name' key"
+        raise ValueError(msg)
+    unknown = set(data.keys()) - allowed
+    if unknown:
+        msg = f"filter {fid!r} has unsupported keys: {sorted(unknown)!r}"
+        raise ValueError(msg)
+
+
+def _build_filter_from_dict(fid: str, data: Mapping[str, object]) -> object:
+    """Create a filter builder from ``dictConfig`` filter data.
+
+    Filter type is inferred from the keys present: ``level`` creates a
+    :class:`LevelFilterBuilder`, ``name`` creates a :class:`NameFilterBuilder`.
+    """
+    _validate_filter_config_keys(fid, data)
+    if "level" in data:
+        level = data["level"]
+        if not isinstance(level, str):
+            msg = f"filter {fid!r} level must be a string"
+            raise TypeError(msg)
+        return LevelFilterBuilder().with_max_level(level)
+    name = data["name"]
+    if not isinstance(name, str):
+        msg = f"filter {fid!r} name must be a string"
         raise TypeError(msg)
-    handlers_seq = cast("Sequence[object]", handlers_obj)
-    if not all(isinstance(h, str) for h in handlers_seq):
-        msg = "logger handlers must be a list or tuple of strings"
+    return NameFilterBuilder().with_prefix(name)
+
+
+def _validate_string_list(value: object, label: str) -> list[str]:
+    """Validate that ``value`` is a list or tuple of strings."""
+    if not isinstance(value, (list, tuple)):
+        msg = f"logger {label} must be a list or tuple of strings"
         raise TypeError(msg)
-    return list(cast("Sequence[str]", handlers_seq))
+    seq = cast("Sequence[object]", value)
+    if not all(isinstance(item, str) for item in seq):
+        msg = f"logger {label} must be a list or tuple of strings"
+        raise TypeError(msg)
+    return list(cast("Sequence[str]", seq))
 
 
 def _validate_logger_config_keys(name: str, data: Mapping[str, object]) -> None:
@@ -238,9 +260,6 @@ def _validate_logger_config_keys(name: str, data: Mapping[str, object]) -> None:
     unknown = set(data.keys()) - allowed
     if unknown:
         msg = f"logger {name!r} has unsupported keys: {sorted(unknown)!r}"
-        raise ValueError(msg)
-    if "filters" in data:
-        msg = "filters are not supported"
         raise ValueError(msg)
 
 
@@ -259,8 +278,11 @@ def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
     if "level" in data:
         builder = builder.with_level(data["level"])
     if "handlers" in data:
-        handlers = _validate_logger_handlers(data["handlers"])
+        handlers = _validate_string_list(data["handlers"], "handlers")
         builder = builder.with_handlers(handlers)
+    if "filters" in data:
+        filters = _validate_string_list(data["filters"], "filters")
+        builder = builder.with_filters(filters)
     if "propagate" in data:
         propagate = _validate_propagate_value(data["propagate"])
         builder = builder.with_propagate(propagate)
@@ -275,9 +297,6 @@ def _validate_dict_config(config: Mapping[str, object]) -> int:
     version = int(cast("int", config.get("version", 1)))
     if version != 1:
         msg = f"unsupported configuration version {version}"
-        raise ValueError(msg)
-    if "filters" in config:
-        msg = "filters are not supported"
         raise ValueError(msg)
     return version
 
@@ -336,21 +355,16 @@ def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
     Parameters
     ----------
     config : Mapping[str, object]
-        A dictionary compatible with :mod:`logging.config`. Supported keys are
-        ``version``, ``disable_existing_loggers``, ``formatters``, ``handlers``,
-        ``loggers``, and ``root``. Unsupported features (e.g., ``filters``,
-        handler ``level``) raise ``ValueError``.
-
-    Raises
-    ------
-    ValueError
-        If the configuration uses unsupported features or invalid schemas.
+        A dictionary compatible with :mod:`logging.config`. Unsupported
+        features (handler ``level``, handler ``filters``) raise ``ValueError``.
 
     Examples
     --------
     >>> dictConfig({
     ...     "version": 1,
+    ...     "filters": {"lvl": {"level": "INFO"}},
     ...     "handlers": {"h": {"class": "femtologging.StreamHandler"}},
+    ...     "loggers": {"app": {"filters": ["lvl"]}},
     ...     "root": {"level": "INFO", "handlers": ["h"]},
     ... })
 
@@ -359,6 +373,7 @@ def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
 
     version = _validate_dict_config(config)
     builder = cast("Any", _create_config_builder(version, config))
+    builder = config_sections._process_filters(builder, config)
     builder = config_sections._process_formatters(builder, config)
     builder = config_sections._process_handlers(builder, config)
     builder = config_sections._process_loggers(builder, config)

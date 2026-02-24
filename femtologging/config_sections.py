@@ -1,10 +1,12 @@
 """Configuration section processing for femtologging.dictConfig.
 
-This module handles the processing of formatters, handlers, loggers,
-and root logger sections in ``dictConfig``-style configuration dictionaries.
+This module handles the processing of filters, formatters, handlers,
+loggers, and root logger sections in ``dictConfig``-style configuration
+dictionaries.
 
-The entry points are :func:`_process_formatters`, :func:`_process_handlers`,
-:func:`_process_loggers`, and :func:`_process_root_logger`, called from
+The entry points are :func:`_process_filters`, :func:`_process_formatters`,
+:func:`_process_handlers`, :func:`_process_loggers`, and
+:func:`_process_root_logger`, called from
 :func:`femtologging.config.dictConfig`.
 """
 
@@ -14,6 +16,7 @@ import collections.abc as cabc
 import typing as typ
 
 from .config import (
+    _build_filter_from_dict,
     _build_formatter,
     _build_handler_from_dict,
     _build_logger_from_dict,
@@ -26,6 +29,8 @@ cast = typ.cast
 
 class _ConfigBuilder(typ.Protocol):
     """Protocol describing the builder interface used by ``dictConfig``."""
+
+    def with_filter(self, fid: str, builder: object) -> typ.Self: ...
 
     def with_formatter(self, fid: str, builder: object) -> typ.Self: ...
 
@@ -77,6 +82,19 @@ def _iter_section_items(
                 _validate_section_mapping(cfg, f"{item_name} config"),
             ),
         )
+
+
+def _process_filters(
+    builder: _ConfigBuilder, config: Mapping[str, object]
+) -> _ConfigBuilder:
+    """Attach filter builders to ``builder``."""
+    for fid, filter_cfg in _iter_section_items(
+        config,
+        "filters",
+        "filter",
+    ):
+        builder = builder.with_filter(fid, _build_filter_from_dict(fid, filter_cfg))
+    return builder
 
 
 def _process_formatters(

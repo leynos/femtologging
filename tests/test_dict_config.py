@@ -79,18 +79,6 @@ def test_dict_config_handler_validation_errors(
         dictConfig(cfg)
 
 
-def test_dict_config_logger_filters_presence() -> None:
-    """Logger filter entries must be rejected."""
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "loggers": {"a": {"filters": []}},
-        "root": {"handlers": []},
-    }
-    with pytest.raises(ValueError, match="filters are not supported"):
-        dictConfig(cfg)
-
-
 @pytest.mark.parametrize(
     ("config", "msg", "expected_exc"),
     [
@@ -109,7 +97,7 @@ def test_dict_config_logger_filters_presence() -> None:
         ),
         (
             {"version": 1, "filters": {"f": {}}, "root": {}},
-            r"filters.+not supported",
+            r"filter 'f' must contain a 'level' or 'name' key",
             ValueError,
         ),
         (
@@ -172,7 +160,7 @@ def test_dict_config_logger_filters_presence() -> None:
         "root-missing",
         "version-unsupported",
         "formatter-id-missing",
-        "filters-unsupported",
+        "filter-missing-keys",
         "disable-existing-loggers-type",
         "logger-id-type",
         "logger-handlers-type",
@@ -188,3 +176,150 @@ def test_dict_config_invalid_configs(
     reset_manager()
     with pytest.raises(expected_exc, match=msg):
         dictConfig(config)
+
+
+# -- Filter section tests --
+
+
+def test_dict_config_level_filter_suppresses_records() -> None:
+    """A level filter configured via dictConfig should suppress records."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"lvl": {"level": "INFO"}},
+        "loggers": {"app": {"filters": ["lvl"]}},
+        "root": {"level": "DEBUG"},
+    }
+    dictConfig(cfg)
+    logger = get_logger("app")
+    assert logger.log("INFO", "allowed") is not None
+    assert logger.log("ERROR", "suppressed") is None
+
+
+def test_dict_config_name_filter_suppresses_records() -> None:
+    """A name filter configured via dictConfig should suppress records."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"ns": {"name": "myapp"}},
+        "loggers": {"myapp": {"filters": ["ns"]}},
+        "root": {"level": "DEBUG"},
+    }
+    dictConfig(cfg)
+    matching = get_logger("myapp")
+    assert matching.log("INFO", "pass") is not None
+
+    non_matching = get_logger("other")
+    # "other" has no filters attached, so it should still emit.
+    assert non_matching.log("INFO", "also pass") is not None
+
+
+def test_dict_config_multiple_filters_on_logger() -> None:
+    """Multiple filters on one logger should all be applied."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {
+            "lvl": {"level": "INFO"},
+            "ns": {"name": "multi"},
+        },
+        "loggers": {"multi": {"filters": ["lvl", "ns"]}},
+        "root": {"level": "DEBUG"},
+    }
+    dictConfig(cfg)
+    logger = get_logger("multi")
+    assert logger.log("INFO", "pass both") is not None
+    assert logger.log("ERROR", "blocked by level") is None
+
+
+def test_dict_config_root_logger_with_filters() -> None:
+    """Filters should be attachable to the root logger."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"lvl": {"level": "INFO"}},
+        "root": {"level": "DEBUG", "filters": ["lvl"]},
+    }
+    dictConfig(cfg)
+    root = get_logger("root")
+    assert root.log("INFO", "allowed") is not None
+    assert root.log("ERROR", "blocked") is None
+
+
+def test_dict_config_filter_missing_filter_id_raises() -> None:
+    """Referencing a non-existent filter ID should raise."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "loggers": {"app": {"filters": ["nonexistent"]}},
+        "root": {"level": "DEBUG"},
+    }
+    with pytest.raises(KeyError, match="nonexistent"):
+        dictConfig(cfg)
+
+
+@pytest.mark.parametrize(
+    ("filter_cfg", "msg", "expected_exc"),
+    [
+        (
+            {"level": 42},
+            r"filter 'f' level must be a string",
+            TypeError,
+        ),
+        (
+            {"name": 42},
+            r"filter 'f' name must be a string",
+            TypeError,
+        ),
+        (
+            {"level": "INFO", "extra": True},
+            r"filter 'f' has unsupported keys",
+            ValueError,
+        ),
+    ],
+    ids=[
+        "level-type",
+        "name-type",
+        "unsupported-keys",
+    ],
+)
+def test_dict_config_filter_validation_errors(
+    filter_cfg: dict[str, object],
+    msg: str,
+    expected_exc: type[Exception],
+) -> None:
+    """Malformed filter configurations raise the expected exception."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"f": filter_cfg},
+        "root": {},
+    }
+    with pytest.raises(expected_exc, match=msg):
+        dictConfig(cfg)
+
+
+def test_dict_config_logger_filters_type_validation() -> None:
+    """Logger filters must be a list or tuple of strings."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {"lvl": {"level": "INFO"}},
+        "loggers": {"app": {"filters": "lvl"}},
+        "root": {"level": "DEBUG"},
+    }
+    with pytest.raises(TypeError, match="logger filters must be a list"):
+        dictConfig(cfg)
+
+
+def test_dict_config_empty_filters_section() -> None:
+    """An empty filters section should not cause errors."""
+    reset_manager()
+    cfg = {
+        "version": 1,
+        "filters": {},
+        "root": {"level": "DEBUG"},
+    }
+    dictConfig(cfg)
+    root = get_logger("root")
+    assert root.log("INFO", "emit") is not None

@@ -352,13 +352,18 @@ builder.build_and_init()
   builder API (`host`, `port`, `unix_path`, `capacity`, `connect_timeout_ms`,
   `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
   `backoff_*` aliases).
+- Top-level `filters` sections are supported. Filter type is inferred
+  from the keys present in each filter mapping: `level` creates a
+  `LevelFilterBuilder` (via `with_max_level`), `name` creates a
+  `NameFilterBuilder` (via `with_prefix`). Loggers and the root logger
+  accept a `filters` list of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
-  top-level `filters` sections, handler `level`, handler `filters`, and handler
-  formatters. Although the schema accepts a `formatters` section, referencing a
-  formatter from a handler currently results in
+  handler `level`, handler `filters`, and handler formatters. Although
+  the schema accepts a `formatters` section, referencing a formatter
+  from a handler currently results in
   `ValueError("unknown formatter id")`.
-- A `root` section is mandatory. Named loggers support `level`, `handlers`, and
-  `propagate` (bool).
+- A `root` section is mandatory. Named loggers support `level`,
+  `handlers`, `filters`, and `propagate` (bool).
 
 ### fileConfig (INI compatibility)
 
@@ -394,9 +399,10 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - Formatter identifiers are limited to `"default"` for now. Future releases
   will connect `FormatterBuilder` and handler formatter IDs, but this is not
   yet implemented.
-- Filters are only available through `ConfigBuilder`. `dictConfig` and
-  `fileConfig` deliberately reject filter declarations so the limited,
-  guaranteed-safe subset remains obvious.
+- Filters are available through both `ConfigBuilder` and `dictConfig`.
+  `fileConfig` does not yet support filter declarations. Handler-level
+  `filters` and `level` attributes remain unsupported, as these require
+  Rust infrastructure changes outside the current scope.
 
 ## Deviations from stdlib logging
 
