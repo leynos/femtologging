@@ -19,12 +19,13 @@ Examples
 >>> logger = getLogger("myapp.auth")
 >>> logger.info("user logged in") is not None
 True
+
 """
 
 from __future__ import annotations
 
 from ._femtologging_rs import get_logger
 
-getLogger = get_logger  # noqa: N816  # FIXME(#343): camelCase alias for stdlib compat
+getLogger = get_logger  # noqa: N816  # TODO(#343): camelCase alias for stdlib compat
 
 __all__ = ["getLogger"]

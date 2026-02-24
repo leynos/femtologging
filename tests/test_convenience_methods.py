@@ -34,8 +34,10 @@ True
 
 from __future__ import annotations
 
-import collections.abc as cabc
 import typing as typ
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 import pytest
 
@@ -170,7 +172,7 @@ def test_convenience_method_with_exc_info(
     logger = FemtoLogger("exc")
     logger.set_level("TRACE")
     with active_exception("boom"):
-        output = logger.error("caught", exc_info=True)
+        output = logger.error("caught", exc_info=True)  # noqa: LOG014  # TODO(#340): testing exc_info inside fixture
     assert output is not None, "error(exc_info=True) should produce output"
 
 
@@ -194,7 +196,7 @@ def test_exception_captures_active_exception(
     """``exception()`` should produce output with an active exception context."""
     logger = FemtoLogger("exc.auto")
     with active_exception("auto capture"):
-        output = logger.exception("caught")
+        output = logger.exception("caught")  # noqa: LOG004  # TODO(#340): inside fixture-based handler
     assert output is not None, "exception() should produce output"
     assert "[ERROR]" in output, "output should contain [ERROR] level tag"
 
@@ -209,7 +211,7 @@ def test_exception_auto_capture_traceback() -> None:
     logger = FemtoLogger("exc.tb")
     msg = "traceback check"
     try:
-        raise RuntimeError(msg)  # noqa: TRY301  # FIXME(#340): deliberate re-raise to populate sys.exc_info
+        raise RuntimeError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
     except RuntimeError:
         output = logger.exception("caught")
     assert output is not None, "exception() should produce output"
@@ -225,7 +227,7 @@ def test_exception_logs_at_error_level(
     logger = FemtoLogger("exc.level")
     logger.set_level("ERROR")
     with active_exception("level check"):
-        output = logger.exception("caught")
+        output = logger.exception("caught")  # noqa: LOG004  # TODO(#340): inside fixture-based handler
     assert output is not None, "exception() should produce output at ERROR level"
     assert "[ERROR]" in output, "output should contain [ERROR] level tag"
 
@@ -237,14 +239,14 @@ def test_exception_filtered_below_error(
     logger = FemtoLogger("exc.filter")
     logger.set_level("CRITICAL")
     with active_exception("filtered"):
-        output = logger.exception("caught")
+        output = logger.exception("caught")  # noqa: LOG004  # TODO(#340): inside fixture-based handler
     assert output is None, "exception() should be filtered when level is CRITICAL"
 
 
 def test_exception_with_no_active_exception() -> None:
     """``exception()`` with no active exception logs plain message."""
     logger = FemtoLogger("exc.none")
-    output = logger.exception("no error active")  # noqa: LOG004  # FIXME(#340): testing exception() outside handler
+    output = logger.exception("no error active")  # noqa: LOG004  # TODO(#340): testing exception() outside handler
     assert output is not None, (
         "exception() should produce output even without active exception"
     )
@@ -259,7 +261,7 @@ def test_exception_with_explicit_exc_info_false(
     """``exception()`` with exc_info=False should not capture."""
     logger = FemtoLogger("exc.false")
     with active_exception("suppressed"):
-        output = logger.exception("caught", exc_info=False)  # noqa: LOG007  # FIXME(#340): testing explicit False override
+        output = logger.exception("caught", exc_info=False)  # noqa: LOG004, LOG007  # TODO(#340): testing explicit False override
     assert output == "exc.false [ERROR] caught", (
         f"exc_info=False should suppress capture, got {output!r}"
     )
@@ -282,7 +284,7 @@ def test_exception_with_explicit_exc_info_none_captures(
     """
     logger = FemtoLogger("exc.explicit_none")
     with active_exception("still captures"):
-        output = logger.exception("caught", exc_info=None)  # noqa: LOG007  # FIXME(#340): testing exc_info=None
+        output = logger.exception("caught", exc_info=None)  # noqa: LOG004, LOG007  # TODO(#340): testing exc_info=None
     assert output is not None, "exception(exc_info=None) should produce output"
 
 
@@ -290,7 +292,7 @@ def test_exception_with_exc_info_instance() -> None:
     """``exception()`` with an exception instance should capture it."""
     logger = FemtoLogger("exc.inst")
     exc = KeyError("specific")
-    output = logger.exception("caught", exc_info=exc)  # noqa: LOG004  # FIXME(#340): testing exception() outside handler
+    output = logger.exception("caught", exc_info=exc)  # noqa: LOG004  # TODO(#340): testing exception() outside handler
     assert output is not None, "exception(exc_info=<instance>) should produce output"
     assert "KeyError" in output, "output should contain the exception type"
 
@@ -306,7 +308,7 @@ def test_error_with_exc_info_captures_traceback() -> None:
     logger.set_level("TRACE")
     msg = "boom"
     try:
-        raise ValueError(msg)  # noqa: TRY301  # FIXME(#340): deliberate re-raise to populate sys.exc_info
+        raise ValueError(msg)  # noqa: TRY301  # TODO(#340): deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.error("caught", exc_info=True)
     assert output is not None, "error(exc_info=True) should produce output"

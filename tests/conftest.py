@@ -83,12 +83,13 @@ def active_exception() -> cabc.Callable[[str], typ.ContextManager[None]]:
     >>> def test_example(active_exception):
     ...     with active_exception("boom"):
     ...         output = logger.exception("caught")
+
     """
 
     @contextmanager
     def _raise(message: str = "test error") -> cabc.Generator[None, None, None]:
         try:
-            raise ValueError(message)  # noqa: TRY301  # FIXME(#340): deliberate re-raise
+            raise ValueError(message)  # noqa: TRY301  # TODO(#340): deliberate re-raise
         except ValueError:
             yield
 

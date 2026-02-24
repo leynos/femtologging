@@ -93,7 +93,7 @@ class FemtoLogger:
 
         """
         ...
-    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802  # FIXME(#343): camelCase for stdlib compat
+    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802  # TODO(#343): camelCase for stdlib compat
         """Return whether a message at the given level would be processed.
 
         Parameters
