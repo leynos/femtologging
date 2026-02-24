@@ -7,7 +7,7 @@ use thiserror::Error;
 #[cfg(feature = "python")]
 use pyo3::prelude::pyclass;
 
-fn normalise_vec(ids: Vec<String>) -> Vec<String> {
+fn normalize_vec(ids: Vec<String>) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     ids.into_iter()
@@ -123,8 +123,8 @@ pub enum ConfigError {
         #[source]
         source: HandlerBuildError,
     },
-    /// Initialising a logger failed.
-    #[error("failed to initialise logger: {0}")]
+    /// Initializing a logger failed.
+    #[error("failed to initialize logger: {0}")]
     LoggerInit(String),
 }
 
@@ -194,24 +194,24 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier, replacing any existing filters.
-    /// IDs are deduplicated and order may be normalised; see [`normalise_vec`].
+    /// IDs are deduplicated and order may be normalized; see [`normalize_vec`].
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.filters = normalise_vec(filter_ids.into_iter().map(Into::into).collect());
+        self.filters = normalize_vec(filter_ids.into_iter().map(Into::into).collect());
         self
     }
 
     /// Set handlers by identifier, replacing any existing handlers.
-    /// IDs are deduplicated and order may be normalised; see [`normalise_vec`].
+    /// IDs are deduplicated and order may be normalized; see [`normalize_vec`].
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.handlers = normalise_vec(handler_ids.into_iter().map(Into::into).collect());
+        self.handlers = normalize_vec(handler_ids.into_iter().map(Into::into).collect());
         self
     }
 

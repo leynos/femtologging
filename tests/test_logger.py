@@ -83,7 +83,7 @@ class CollectingHandler:
     """Simple handler used to verify Python handler support."""
 
     def __init__(self) -> None:
-        """Initialise an empty record buffer."""
+        """Initialize an empty record buffer."""
         self.records: list[tuple[str, str, str]] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
@@ -295,7 +295,7 @@ class RecordCollectingHandler:
     """Handler that uses handle_record for structured access."""
 
     def __init__(self) -> None:
-        """Initialise an empty record buffer."""
+        """Initialize an empty record buffer."""
         self.records: list[dict[str, typ.Any]] = []
 
     @staticmethod
@@ -415,7 +415,7 @@ class MutableHandler:
     """Handler whose capabilities can be mutated after construction."""
 
     def __init__(self) -> None:
-        """Initialise an empty record buffer for both dispatch paths."""
+        """Initialize an empty record buffer for both dispatch paths."""
         self.handle_calls: list[tuple[str, str, str]] = []
         self.handle_record_calls: list[dict[str, typ.Any]] = []
 

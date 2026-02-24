@@ -1,7 +1,7 @@
 //! Python bindings for [`HTTPHandlerBuilder`].
 //!
 //! This module exposes Python APIs for constructing HTTP handlers with
-//! URL configuration, authentication, timeouts, and serialisation options.
+//! URL configuration, authentication, timeouts, and serialization options.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -196,7 +196,7 @@ mod tests {
             let d = PyDict::new(py);
             builder
                 .extend_dict(&d)
-                .expect("dict serialisation succeeds");
+                .expect("dict serialization succeeds");
 
             let url: String = d
                 .get_item("url")
@@ -217,7 +217,7 @@ mod tests {
             let d = PyDict::new(py);
             builder
                 .extend_dict(&d)
-                .expect("dict serialisation succeeds");
+                .expect("dict serialization succeeds");
 
             let format: String = d
                 .get_item("format")
@@ -238,7 +238,7 @@ mod tests {
             let d = PyDict::new(py);
             builder
                 .extend_dict(&d)
-                .expect("dict serialisation succeeds");
+                .expect("dict serialization succeeds");
 
             let auth_type: String = d
                 .get_item("auth_type")

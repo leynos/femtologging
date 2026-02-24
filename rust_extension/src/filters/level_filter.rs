@@ -33,7 +33,7 @@ impl LevelFilterBuilder {
 
     /// Set the maximum level allowed.
     ///
-    /// When called from Python, `level` may be a `FemtoLevel` instance or a recognised level string.
+    /// When called from Python, `level` may be a `FemtoLevel` instance or a recognized level string.
     pub fn with_max_level(mut self, level: FemtoLevel) -> Self {
         self.max_level = Some(level);
         self

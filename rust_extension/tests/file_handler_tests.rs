@@ -90,7 +90,7 @@ fn file_handler_writes_to_file() {
 }
 
 #[test]
-fn multiple_records_are_serialised() {
+fn multiple_records_are_serialized() {
     let output = with_temp_file_handler(10, |h| {
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Warn, "second"));

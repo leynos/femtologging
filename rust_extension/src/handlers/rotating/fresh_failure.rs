@@ -54,7 +54,7 @@ impl FreshFailureState {
     /// This method is safe to call concurrently with other `take()` calls.
     /// Calling the setup or teardown helpers while a take is in flight may yield
     /// inconsistent state (for example the counter being updated while the
-    /// stored reason is cleared). Test code must serialise setup and teardown
+    /// stored reason is cleared). Test code must serialize setup and teardown
     /// with respect to exercising the handler.
     fn take(&self) -> Option<String> {
         #[cfg(test)]

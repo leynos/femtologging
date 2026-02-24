@@ -60,8 +60,8 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
     _ = config_builder.with_root_logger(root)
 
 
-@given("the configuration is built and initialised")
-@then("the configuration is built and initialised")
+@given("the configuration is built and initialized")
+@then("the configuration is built and initialized")
 def configuration_is_built(config_builder: ConfigBuilder) -> None:
     """Build and apply the logging configuration."""
     config_builder.build_and_init()

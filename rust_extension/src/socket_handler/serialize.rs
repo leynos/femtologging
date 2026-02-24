@@ -1,4 +1,4 @@
-//! MessagePack serialisation helpers.
+//! MessagePack serialization helpers.
 
 use std::io;
 
@@ -45,11 +45,11 @@ impl<'a> From<&'a FemtoLogRecord> for SerializableRecord<'a> {
     }
 }
 
-/// Serialise a record into a MessagePack payload.
-pub fn serialise_record(record: &FemtoLogRecord) -> io::Result<Vec<u8>> {
+/// Serialize a record into a MessagePack payload.
+pub fn serialize_record(record: &FemtoLogRecord) -> io::Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(128);
-    let serialisable = SerializableRecord::from(record);
-    serialisable
+    let serializable = SerializableRecord::from(record);
+    serializable
         .serialize(&mut Serializer::new(&mut buf).with_struct_map())
         .map_err(io::Error::other)?;
     Ok(buf)

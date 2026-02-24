@@ -328,7 +328,7 @@ def _validate_unix_path(hid: str, path: object) -> None:
 
 
 def _ensure_no_extra_socket_kwargs(hid: str, kwargs: dict[str, object]) -> None:
-    """Raise ValueError if any unrecognised kwargs remain."""
+    """Raise ValueError if any unrecognized kwargs remain."""
     if kwargs:
         msg = f"handler {hid!r} has unsupported socket kwargs: {sorted(kwargs)!r}"
         raise ValueError(msg)

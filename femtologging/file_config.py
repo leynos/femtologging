@@ -41,7 +41,7 @@ def fileConfig(  # noqa: N802
     >>> fileConfig("tests/data/basic_file_config.ini")
 
     """
-    path_str = _normalise_path(fname)
+    path_str = _normalize_path(fname)
     sections = rust.parse_ini_file(path_str, encoding)
     config = _ini_to_dict_config(
         sections, defaults, disable_existing=disable_existing_loggers
@@ -226,10 +226,10 @@ def _split_csv(raw: str | None) -> list[str]:
     return [value.strip() for value in raw.split(",") if value.strip()]
 
 
-def _normalise_path(
+def _normalize_path(
     fname: str | bytes | PathLike[str] | PathLike[bytes],
 ) -> str:
-    """Return a normalised string path for ``pathlib`` and the Rust parser.
+    """Return a normalized string path for ``pathlib`` and the Rust parser.
 
     Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance and always
     returns a string suitable for downstream parsing.

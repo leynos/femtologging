@@ -25,7 +25,7 @@ pub(crate) enum ParseOverflowPolicyError {
     /// A timeout policy without inline value requires an external timeout.
     #[error("timeout_ms required for timeout policy")]
     MissingExternalTimeout,
-    /// Provided policy name is not recognised.
+    /// Provided policy name is not recognized.
     #[error("invalid overflow policy: '{policy}'. Valid options are: {VALID_POLICIES}")]
     UnknownPolicy { policy: String },
 }

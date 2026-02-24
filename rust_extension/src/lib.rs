@@ -193,7 +193,7 @@ mod py_api {
 
 use py_api::{get_logger, reset_manager_py};
 
-/// Initialise the `_femtologging_rs` Python extension module.
+/// Initialize the `_femtologging_rs` Python extension module.
 ///
 /// # Parameters
 ///

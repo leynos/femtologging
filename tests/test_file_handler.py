@@ -374,8 +374,8 @@ def test_default_constructor(tmp_path: Path) -> None:
     assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
 
 
-def test_policy_normalisation(tmp_path: Path) -> None:
-    """Policy strings are normalised for case and whitespace."""
+def test_policy_normalization(tmp_path: Path) -> None:
+    """Policy strings are normalized for case and whitespace."""
     path = tmp_path / "policy.log"
     with closing(FemtoFileHandler(str(path), policy=" Drop ")) as handler:
         handler.handle("core", "INFO", "msg")

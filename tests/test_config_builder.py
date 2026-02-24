@@ -102,7 +102,7 @@ def test_logger_config_builder_optional_fields_omitted() -> None:
     """Test that optional fields are omitted when not set."""
     logger = LoggerConfigBuilder().with_level("WARNING")
     config = logger.as_dict()
-    assert config["level"] == "WARN", "Level should be normalised to WARN"
+    assert config["level"] == "WARN", "Level should be normalized to WARN"
     assert "propagate" not in config, "Propagate should be omitted when not set"
     assert "filters" not in config, "Filters should be omitted when not set"
     assert "handlers" not in config, "Handlers should be omitted when not set"

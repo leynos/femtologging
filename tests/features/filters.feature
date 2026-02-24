@@ -6,7 +6,7 @@ Feature: Filters
     And I add logger "core" with handler "console" and filter "only_info"
     And I set root logger with level "DEBUG"
     Then the configuration matches snapshot
-    And the configuration is built and initialised
+    And the configuration is built and initialized
     And logger "core" emits "INFO"
     And logger "core" suppresses "ERROR"
 
@@ -18,7 +18,7 @@ Feature: Filters
     And I add logger "other" with handler "console" and filter "core_only"
     And I set root logger with level "DEBUG"
     Then the configuration matches snapshot
-    And the configuration is built and initialised
+    And the configuration is built and initialized
     And logger "core.child" emits "INFO"
     And logger "other" suppresses "INFO"
 

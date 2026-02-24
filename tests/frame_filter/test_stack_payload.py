@@ -124,7 +124,7 @@ def test_stack_preserves_schema_version() -> None:
 
 
 def test_stack_empty_frames() -> None:
-    """Empty frames list should omit frames key to match serialisation semantics."""
+    """Empty frames list should omit frames key to match serialization semantics."""
     payload: StackPayload = {"schema_version": 1, "frames": []}
 
     result = filter_frames(payload, exclude_logging=True)

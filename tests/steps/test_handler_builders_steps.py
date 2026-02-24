@@ -33,8 +33,8 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "handler_builders.feature"))
 
 
-def _normalise_builder_path(data: dict[str, object]) -> dict[str, object]:
-    """Return builder dict with path normalised to basename for snapshots."""
+def _normalize_builder_path(data: dict[str, object]) -> dict[str, object]:
+    """Return builder dict with path normalized to basename for snapshots."""
     path_value = str(data["path"])
     data["path"] = Path(path_value).name
     return data
@@ -232,7 +232,7 @@ def when_set_stream_formatter(
 def then_file_builder_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    data = _normalise_builder_path(file_builder.as_dict())
+    data = _normalize_builder_path(file_builder.as_dict())
     assert data == snapshot, "file builder dict must match snapshot"
     handler = file_builder.build()
     handler.close()
@@ -243,7 +243,7 @@ def then_rotating_file_builder_snapshot(
     file_builder: FileBuilder, snapshot: SnapshotAssertion
 ) -> None:
     rotating = _require_rotating_builder(file_builder)
-    data = _normalise_builder_path(rotating.as_dict())
+    data = _normalize_builder_path(rotating.as_dict())
     assert data == snapshot, "rotating file builder dict must match snapshot"
     handler = rotating.build()
     handler.close()
@@ -253,7 +253,7 @@ def then_rotating_file_builder_snapshot(
 def then_file_builder_timeout_snapshot(
     file_builder: FileHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    data = _normalise_builder_path(file_builder.as_dict())
+    data = _normalize_builder_path(file_builder.as_dict())
     assert data["overflow_policy"] == "timeout", "must record timeout policy"
     assert data["timeout_ms"] == 500, "must record configured timeout"
     assert data == snapshot, "snapshot must include timeout fields"

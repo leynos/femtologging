@@ -57,7 +57,7 @@ classDiagram
 use femtologging_rs::handlers::file::{FemtoFileHandler, HandlerConfig};
 ```
 
-The module initialiser `_femtologging_rs` delegates registration of
+The module initializer `_femtologging_rs` delegates registration of
 Python-specific builders and errors to
 [`add_python_bindings`](./add-python-bindings.md). This helper keeps
 conditional compilation concise by grouping Python-only items in one place. The

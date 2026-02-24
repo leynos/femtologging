@@ -236,7 +236,7 @@ mod tests {
             let d = PyDict::new(py);
             builder
                 .extend_dict(&d)
-                .expect("dict serialisation succeeds");
+                .expect("dict serialization succeeds");
 
             assert_backoff_dict_fields(&d, &expected);
         });
@@ -347,7 +347,7 @@ mod tests {
             let d = PyDict::new(py);
             builder_ref
                 .extend_dict(&d)
-                .expect("dict serialisation succeeds");
+                .expect("dict serialization succeeds");
             assert_backoff_dict_fields(&d, &expected);
         });
     }
@@ -367,7 +367,7 @@ mod tests {
             let out = PyDict::new(py);
             builder
                 .extend_dict(&out)
-                .expect("dict serialisation succeeds");
+                .expect("dict serialization succeeds");
 
             let expected = BackoffOverrides::from_options(Some(5), Some(25), None, None);
             assert_backoff_dict_fields(&out, &expected);

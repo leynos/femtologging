@@ -101,4 +101,4 @@ def when_log_threads(
 
 @then("the captured output matches snapshot")
 def then_output_snapshot(output: Sequence[str], snapshot: SnapshotAssertion) -> None:
-    assert output == snapshot, "normalised output does not match the snapshot"
+    assert output == snapshot, "normalized output does not match the snapshot"

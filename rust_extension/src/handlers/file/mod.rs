@@ -7,7 +7,7 @@
 //! Construct the handler with [`FemtoFileHandler::new`] for defaults,
 //! [`FemtoFileHandler::with_capacity`] to tune the queue size, or
 //! [`FemtoFileHandler::with_capacity_flush_policy`] for full control in Rust.
-//! Python callers customise these options via keyword arguments to
+//! Python callers customize these options via keyword arguments to
 //! `FemtoFileHandler`.
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every

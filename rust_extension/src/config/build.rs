@@ -13,7 +13,7 @@ use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogge
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
 impl ConfigBuilder {
-    /// Finalise the configuration and initialise loggers.
+    /// Finalize the configuration and initialize loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
         if self.version() != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version()));

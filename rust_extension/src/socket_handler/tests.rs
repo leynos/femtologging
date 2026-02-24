@@ -22,7 +22,7 @@ use crate::{
 use super::{
     backoff::BackoffState,
     config::BackoffPolicy,
-    serialise::{frame_payload, serialise_record},
+    serialize::{frame_payload, serialize_record},
     transport::{SocketTransport, TcpTransport, TlsOptions, connect_transport},
 };
 
@@ -204,9 +204,9 @@ fn frame_payload_prefixes_length() {
 }
 
 #[rstest]
-fn serialise_record_round_trips() {
+fn serialize_record_round_trips() {
     let record = FemtoLogRecord::new("logger", FemtoLevel::Info, "hello");
-    let payload = serialise_record(&record).expect("serialise record");
+    let payload = serialize_record(&record).expect("serialize record");
     let decoded: Payload = rmp_serde::from_slice(&payload).expect("decode payload");
     assert_eq!(decoded.logger, "logger");
     assert_eq!(decoded.level, "INFO");

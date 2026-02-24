@@ -253,7 +253,7 @@ impl StreamHandlerBuilder {
     ///
     /// Identifiers remain supported for backwards compatibility, but callers
     /// can hand in formatter instances (or Python callables through the
-    /// bindings) to customise output dynamically.
+    /// bindings) to customize output dynamically.
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -296,7 +296,7 @@ flush semantics described above.
 #### 1.1.1 Filters
 
 Filters implement the `FemtoFilter` trait and decide whether a `FemtoLogRecord`
-is processed. The builder currently recognises two concrete filter builders
+is processed. The builder currently recognizes two concrete filter builders
 with these semantics:
 
 - `LevelFilterBuilder` admits records whose level is less than or equal to
@@ -482,7 +482,7 @@ fluents so direct construction honours the same validation rules:
   zero. It feeds `with_capacity` on the file builders and the underlying queue
   limits on the Rust side.
 - `flush_interval` defaults to `1`. Positive values are validated by
-  `file::validate_params`, while passing `-1` normalises to the default
+  `file::validate_params`, while passing `-1` normalizes to the default
   interval to preserve the "flush on every record" behaviour without repeating
   the constant.
 - `policy` defaults to `"drop"`. The field accepts exactly `"drop"`,
@@ -504,7 +504,7 @@ adjusted after creation when tests need to manipulate individual thresholds.
 ### 1.4. Class diagram
 
 The relationships among the builder types and the `dictConfig` helper are
-summarised below:
+summarized below:
 
 ```mermaid
 classDiagram
@@ -599,7 +599,7 @@ sequenceDiagram
   FReg-->>RsCB: built_filters map
   RsCB->>Ld: apply_logger_config(filter_ids, built_filters)
   Ld->>LG: create logger and attach filters
-  RsCB-->>PyCB: initialised
+  RsCB-->>PyCB: initialized
   PyCB-->>PyApp: ready
 ```
 
@@ -1019,7 +1019,7 @@ returned items. The flow is outlined below:
 
 ```mermaid
 flowchart TD
-    A["Start collect_items"] --> B["Initialise seen, dup, items"]
+    A["Start collect_items"] --> B["Initialize seen, dup, items"]
     B --> C["For each id in ids"]
     C --> D{Is id in seen?}
     D -- Yes --> E["Record id in dup if first duplicate"]

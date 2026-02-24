@@ -208,9 +208,9 @@ def given_root_logger(config_builder: ConfigBuilder, level: str) -> None:
     config_builder.with_root_logger(root)
 
 
-@when("I build and initialise the configuration")
+@when("I build and initialize the configuration")
 def when_build_and_init(propagate_ctx: PropagateContext) -> None:
-    """Build and initialise the logging configuration."""
+    """Build and initialize the logging configuration."""
     propagate_ctx.config_builder.build_and_init()
 
 
