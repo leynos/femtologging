@@ -40,13 +40,13 @@ def test_get_logger_alias_returns_same_instance() -> None:
     """``getLogger`` and ``get_logger`` must return the same logger."""
     a = get_logger("alias.test")
     b = getLogger("alias.test")
-    assert a is b
+    assert a is b, "getLogger and get_logger should return the same instance"
 
 
 def test_get_logger_alias_is_callable() -> None:
     """``getLogger`` must be directly callable."""
     logger = getLogger("alias.callable")
-    assert isinstance(logger, FemtoLogger)
+    assert isinstance(logger, FemtoLogger), "getLogger should return a FemtoLogger"
 
 
 # -- isEnabledFor -------------------------------------------------------------
@@ -56,23 +56,29 @@ def test_is_enabled_for_at_same_level() -> None:
     """Logger should report enabled for its own level."""
     logger = FemtoLogger("enabled.same")
     logger.set_level("WARNING")
-    assert logger.isEnabledFor("WARNING")
+    assert logger.isEnabledFor("WARNING"), "should be enabled at own level"
 
 
 def test_is_enabled_for_above_level() -> None:
     """Logger should report enabled for levels above its threshold."""
     logger = FemtoLogger("enabled.above")
     logger.set_level("INFO")
-    assert logger.isEnabledFor("ERROR")
+    assert logger.isEnabledFor("ERROR"), "should be enabled for levels above threshold"
 
 
 def test_is_enabled_for_below_level() -> None:
     """Logger should report disabled for levels below its threshold."""
     logger = FemtoLogger("enabled.below")
     logger.set_level("ERROR")
-    assert not logger.isEnabledFor("DEBUG")
-    assert not logger.isEnabledFor("INFO")
-    assert not logger.isEnabledFor("WARN")
+    assert not logger.isEnabledFor("DEBUG"), (
+        "DEBUG should be disabled when level is ERROR"
+    )
+    assert not logger.isEnabledFor("INFO"), (
+        "INFO should be disabled when level is ERROR"
+    )
+    assert not logger.isEnabledFor("WARN"), (
+        "WARN should be disabled when level is ERROR"
+    )
 
 
 def test_is_enabled_for_all_level_boundaries() -> None:
@@ -140,9 +146,13 @@ def test_convenience_methods_respect_level(
     logger.set_level(level_threshold)
     result = getattr(logger, method)("test")
     if should_emit:
-        assert result is not None
+        assert result is not None, (
+            f"{method}() should emit at threshold {level_threshold}"
+        )
     else:
-        assert result is None
+        assert result is None, (
+            f"{method}() should be filtered at threshold {level_threshold}"
+        )
 
 
 def test_convenience_method_with_exc_info() -> None:
@@ -154,9 +164,9 @@ def test_convenience_method_with_exc_info() -> None:
         raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.error("caught", exc_info=True)
-    assert output is not None
-    assert "ValueError" in output
-    assert "Traceback" in output
+    assert output is not None, "error(exc_info=True) should produce output"
+    assert "ValueError" in output, "output should contain the exception type"
+    assert "Traceback" in output, "output should contain traceback text"
 
 
 def test_convenience_method_with_stack_info() -> None:
@@ -164,8 +174,10 @@ def test_convenience_method_with_stack_info() -> None:
     logger = FemtoLogger("stack")
     logger.set_level("TRACE")
     output = logger.info("check", stack_info=True)
-    assert output is not None
-    assert "Stack (most recent call last)" in output
+    assert output is not None, "info(stack_info=True) should produce output"
+    assert "Stack (most recent call last)" in output, (
+        "output should contain stack trace"
+    )
 
 
 # -- exception() --------------------------------------------------------------
@@ -179,10 +191,10 @@ def test_exception_captures_active_exception() -> None:
         raise RuntimeError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except RuntimeError:
         output = logger.exception("caught")
-    assert output is not None
-    assert "RuntimeError" in output
-    assert "auto capture" in output
-    assert "Traceback" in output
+    assert output is not None, "exception() should produce output"
+    assert "RuntimeError" in output, "output should contain RuntimeError"
+    assert "auto capture" in output, "output should contain exception message"
+    assert "Traceback" in output, "output should contain traceback text"
 
 
 def test_exception_logs_at_error_level() -> None:
@@ -194,8 +206,8 @@ def test_exception_logs_at_error_level() -> None:
         raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.exception("caught")
-    assert output is not None
-    assert "[ERROR]" in output
+    assert output is not None, "exception() should produce output at ERROR level"
+    assert "[ERROR]" in output, "output should contain [ERROR] level tag"
 
 
 def test_exception_filtered_below_error() -> None:
@@ -207,15 +219,19 @@ def test_exception_filtered_below_error() -> None:
         raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.exception("caught")
-    assert output is None
+    assert output is None, "exception() should be filtered when level is CRITICAL"
 
 
 def test_exception_with_no_active_exception() -> None:
     """``exception()`` with no active exception logs plain message."""
     logger = FemtoLogger("exc.none")
     output = logger.exception("no error active")  # noqa: LOG004 — testing exception() outside handler
-    assert output is not None
-    assert output == "exc.none [ERROR] no error active"
+    assert output is not None, (
+        "exception() should produce output even without active exception"
+    )
+    assert output == "exc.none [ERROR] no error active", (
+        f"expected plain message, got {output!r}"
+    )
 
 
 def test_exception_with_explicit_exc_info_false() -> None:
@@ -226,7 +242,9 @@ def test_exception_with_explicit_exc_info_false() -> None:
         raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.exception("caught", exc_info=False)  # noqa: LOG007 — testing explicit False override
-    assert output == "exc.false [ERROR] caught"
+    assert output == "exc.false [ERROR] caught", (
+        f"exc_info=False should suppress capture, got {output!r}"
+    )
 
 
 def test_exception_with_explicit_exc_info_none() -> None:
@@ -237,7 +255,9 @@ def test_exception_with_explicit_exc_info_none() -> None:
         raise ValueError(msg)  # noqa: TRY301 — deliberate re-raise to populate sys.exc_info
     except ValueError:
         output = logger.exception("caught", exc_info=None)  # noqa: LOG007 — testing explicit None override
-    assert output == "exc.explicit_none [ERROR] caught"
+    assert output == "exc.explicit_none [ERROR] caught", (
+        f"exc_info=None should suppress capture, got {output!r}"
+    )
 
 
 def test_exception_with_exc_info_instance() -> None:
@@ -245,5 +265,5 @@ def test_exception_with_exc_info_instance() -> None:
     logger = FemtoLogger("exc.inst")
     exc = KeyError("specific")
     output = logger.exception("caught", exc_info=exc)  # noqa: LOG004 — testing exception() outside handler
-    assert output is not None
-    assert "KeyError" in output
+    assert output is not None, "exception(exc_info=<instance>) should produce output"
+    assert "KeyError" in output, "output should contain the exception type"

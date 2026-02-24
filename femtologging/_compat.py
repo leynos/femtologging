@@ -33,9 +33,7 @@ def _exception_wrapper(
     ``exc_info=None`` is forwarded faithfully (suppressing capture),
     matching ``logging.Logger.exception()`` semantics.
     """
-    return self._exception_impl(
-        message, exc_info=exc_info, stack_info=stack_info
-    )
+    return self._exception_impl(message, exc_info=exc_info, stack_info=stack_info)
 
 
 FemtoLogger.exception = _exception_wrapper  # type: ignore[assignment]
