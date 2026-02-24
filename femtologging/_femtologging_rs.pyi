@@ -94,19 +94,7 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log *message* at DEBUG level.
-
-        Parameters
-        ----------
-        message : str  — The log message.
-        exc_info : ExcInfo, optional  — Exception info (see ``log()``).
-        stack_info : bool  — Capture the call stack when ``True``.
-
-        Returns
-        -------
-        str | None  — Formatted message, or ``None`` if filtered.
-
-        """
+        """Log *message* at DEBUG level.  See ``log()`` for parameters."""
         ...
     def info(
         self,
@@ -116,19 +104,7 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log *message* at INFO level.
-
-        Parameters
-        ----------
-        message : str  — The log message.
-        exc_info : ExcInfo, optional  — Exception info (see ``log()``).
-        stack_info : bool  — Capture the call stack when ``True``.
-
-        Returns
-        -------
-        str | None  — Formatted message, or ``None`` if filtered.
-
-        """
+        """Log *message* at INFO level.  See ``log()`` for parameters."""
         ...
     def warning(
         self,
@@ -138,19 +114,7 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log *message* at WARNING level.
-
-        Parameters
-        ----------
-        message : str  — The log message.
-        exc_info : ExcInfo, optional  — Exception info (see ``log()``).
-        stack_info : bool  — Capture the call stack when ``True``.
-
-        Returns
-        -------
-        str | None  — Formatted message, or ``None`` if filtered.
-
-        """
+        """Log *message* at WARNING level.  See ``log()`` for parameters."""
         ...
     def error(
         self,
@@ -160,19 +124,7 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log *message* at ERROR level.
-
-        Parameters
-        ----------
-        message : str  — The log message.
-        exc_info : ExcInfo, optional  — Exception info (see ``log()``).
-        stack_info : bool  — Capture the call stack when ``True``.
-
-        Returns
-        -------
-        str | None  — Formatted message, or ``None`` if filtered.
-
-        """
+        """Log *message* at ERROR level.  See ``log()`` for parameters."""
         ...
     def critical(
         self,
@@ -182,19 +134,7 @@ class FemtoLogger:
         exc_info: ExcInfo = None,
         stack_info: bool = False,
     ) -> str | None:
-        """Log *message* at CRITICAL level.
-
-        Parameters
-        ----------
-        message : str  — The log message.
-        exc_info : ExcInfo, optional  — Exception info (see ``log()``).
-        stack_info : bool  — Capture the call stack when ``True``.
-
-        Returns
-        -------
-        str | None  — Formatted message, or ``None`` if filtered.
-
-        """
+        """Log *message* at CRITICAL level.  See ``log()`` for parameters."""
         ...
     def _exception_impl(
         self,
@@ -223,18 +163,8 @@ class FemtoLogger:
         """Log *message* at ERROR with ``exc_info`` defaulting to ``True``.
 
         Automatically captures the active exception unless ``exc_info``
-        is explicitly set to ``False`` or ``None``.
-
-        Parameters
-        ----------
-        message : str  — The log message.
-        exc_info : ExcInfo  — Defaults to ``True`` (auto-capture).
-            Pass ``False`` / ``None`` to suppress.  See ``log()``.
-        stack_info : bool  — Capture the call stack when ``True``.
-
-        Returns
-        -------
-        str | None  — Formatted message, or ``None`` if filtered.
+        is explicitly set to ``False`` or ``None``.  See ``log()`` for
+        the full parameter reference.
 
         """
         ...
@@ -382,7 +312,6 @@ def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> N
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...
-
 def filter_frames(
     payload: Mapping[str, _Any],
     *,
@@ -391,21 +320,7 @@ def filter_frames(
     max_depth: int | None = ...,
     exclude_logging: bool = ...,
 ) -> dict[str, _Any]:
-    """Return a copy of *payload* with stack/exception frames filtered.
-
-    Parameters
-    ----------
-    payload : Mapping  — stack_info or exc_info dict from a log record.
-    exclude_filenames : list[str] | None  — Substring patterns to drop.
-    exclude_functions : list[str] | None  — Function-name patterns to drop.
-    max_depth : int | None  — Keep at most this many frames (most recent).
-    exclude_logging : bool  — Drop common logging infrastructure frames.
-
-    Returns
-    -------
-    dict  — New payload with frames filtered.
-
-    """
+    """Return *payload* with stack/exception frames filtered."""
     ...
 
 def get_logging_infrastructure_patterns() -> list[str]:
