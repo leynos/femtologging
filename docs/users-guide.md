@@ -414,8 +414,9 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.
-- The `dictConfig` schema lacks incremental updates, handler levels,
-  and formatter attachment. `fileConfig` is likewise cut down.
+- The `dictConfig` schema lacks incremental updates, handler filters,
+  handler levels, and formatter attachment. `fileConfig` is likewise
+  cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final

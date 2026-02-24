@@ -21,6 +21,7 @@ from .config import (
     _build_handler_from_dict,
     _build_logger_from_dict,
     _validate_section_mapping,
+    _validate_string_keys,
 )
 
 if typ.TYPE_CHECKING:
@@ -61,9 +62,9 @@ def _iter_section_items(
             raise TypeError(base_err_tmpl.format(name=repr(key)))
         yield (
             key,
-            typ.cast(
-                "cabc.Mapping[str, object]",
+            _validate_string_keys(
                 _validate_section_mapping(cfg, f"{item_name} config"),
+                f"{item_name} config",
             ),
         )
 

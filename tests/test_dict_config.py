@@ -271,7 +271,10 @@ def test_dict_config_name_filter_suppresses_records() -> None:
     cfg = {
         "version": 1,
         "filters": {"ns": {"name": "myapp"}},
-        "loggers": {"myapp": {"filters": ["ns"]}},
+        "loggers": {
+            "myapp": {"filters": ["ns"]},
+            "other": {"filters": ["ns"]},
+        },
         "root": {"level": "DEBUG"},
     }
     dictConfig(cfg)
@@ -279,8 +282,7 @@ def test_dict_config_name_filter_suppresses_records() -> None:
     assert matching.log("INFO", "pass") is not None
 
     non_matching = get_logger("other")
-    # "other" has no filters attached, so it should still emit.
-    assert non_matching.log("INFO", "also pass") is not None
+    assert non_matching.log("INFO", "blocked by name") is None
 
 
 def test_dict_config_multiple_filters_on_logger() -> None:

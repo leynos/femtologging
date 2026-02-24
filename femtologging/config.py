@@ -2,12 +2,9 @@
 
 This module implements :func:`dictConfig`, a restricted variant of
 ``logging.config.dictConfig``. Handler ``level``, handler ``filters``,
-and incremental configuration are unsupported.
-
-Top-level ``filters`` and logger-level ``filters`` lists are supported.
-Each filter must contain exactly one of ``level`` or ``name``; supplying
-both is rejected as ambiguous. ``level`` creates a
-:class:`LevelFilterBuilder`, ``name`` creates a :class:`NameFilterBuilder`.
+and incremental configuration are unsupported. Top-level ``filters``
+and logger-level ``filters`` lists are supported; each filter must
+contain exactly one of ``level`` or ``name``.
 
 Example:
 -------
@@ -37,6 +34,8 @@ Any = typ.Any
 Final = typ.Final
 cast = typ.cast
 
+# The Rust extension module is dynamically loaded; cast to Any so static
+# type checkers do not reject attribute access on the opaque module.
 rust = typ.cast("Any", rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
