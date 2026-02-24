@@ -311,6 +311,50 @@ sequenceDiagram
 _Figure 2: Mutating the handler after registration does not change dispatch
 behaviour._
 
+### Using stdlib `logging.Handler` subclasses
+
+Python's standard library ships with a rich set of handler classes
+(`FileHandler`, `RotatingFileHandler`, `SMTPHandler`, `SysLogHandler`, etc.).  
+These handlers implement the stdlib `emit(LogRecord)` interface, which is
+incompatible with femtologging's `handle_record(dict)` protocol.
+
+`StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
+subclass, translates femtologging record dicts into `logging.LogRecord`
+instances, and delegates to the wrapped handler's `emit()` method.
+
+```python
+import logging
+from femtologging import FemtoLogger, StdlibHandlerAdapter
+
+# Wrap a stdlib FileHandler for use with femtologging
+file_handler = logging.FileHandler("app.log")
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(name)s [%(levelname)s] %(message)s")
+)
+
+adapter = StdlibHandlerAdapter(file_handler)
+
+logger = FemtoLogger("myapp")
+logger.add_handler(adapter)
+logger.log("INFO", "Application started")
+```
+
+The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
+level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50).  
+Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
+and `timestamp` are forwarded to the `LogRecord` where matching attributes
+exist.
+
+**Limitations:**
+
+- `exc_info` is provided as pre-formatted text (`exc_text`), not as
+  the original `(type, value, traceback)` tuple.  Stdlib formatters that
+  inspect `record.exc_info` directly will not find a live traceback object.
+- `pathname`, `module`, `funcName`, `process`, `processName`, and
+  `relativeCreated` are set to defaults because femtologging does not capture
+  these values.
+- `flush()` and `close()` delegate to the wrapped handler.
+
 ## Configuration options
 
 ### basicConfig

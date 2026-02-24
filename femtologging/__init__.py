@@ -53,6 +53,7 @@ from ._rust_compat import (
 from ._rust_compat import (
     setup_rust_logging,
 )
+from .adapter import StdlibHandlerAdapter
 from .config import dictConfig
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
@@ -83,6 +84,7 @@ __all__ = [
     "OverflowPolicy",
     "RotatingFileHandlerBuilder",
     "SocketHandlerBuilder",
+    "StdlibHandlerAdapter",
     "StreamHandlerBuilder",
     "basicConfig",
     "debug",

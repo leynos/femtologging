@@ -252,3 +252,25 @@ from femtologging import getLogger
 
 logger = getLogger("app.module")
 ```
+
+______________________________________________________________________
+
+## New: stdlib logging handler adapter
+
+`StdlibHandlerAdapter` is a new Python class that wraps any `logging.Handler`
+subclass for use with femtologging.  It translates femtologging's
+`handle_record(dict)` dispatch into the stdlib `handle(LogRecord)` interface.
+
+```python
+import logging
+from femtologging import FemtoLogger, StdlibHandlerAdapter
+
+adapter = StdlibHandlerAdapter(logging.FileHandler("app.log"))
+
+logger = FemtoLogger("myapp")
+logger.add_handler(adapter)
+logger.log("INFO", "hello")
+```
+
+See the [users guide](users-guide.md#using-stdlib-logginghandler-subclasses)
+for details and limitations.
