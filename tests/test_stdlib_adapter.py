@@ -16,6 +16,95 @@ def _raise_value_error(msg: str = "test error") -> None:
     raise ValueError(msg)
 
 
+# -- Fixtures -------------------------------------------------------------
+
+
+@pytest.fixture
+def stream() -> io.StringIO:
+    """Return a fresh StringIO for capturing handler output."""
+    return io.StringIO()
+
+
+@pytest.fixture
+def stdlib_handler(stream: io.StringIO) -> logging.StreamHandler[io.StringIO]:
+    """Return a StreamHandler writing to *stream*."""
+    return logging.StreamHandler(stream)
+
+
+@pytest.fixture
+def adapter(
+    stdlib_handler: logging.StreamHandler[io.StringIO],
+) -> StdlibHandlerAdapter:
+    """Return a StdlibHandlerAdapter wrapping *stdlib_handler*."""
+    return StdlibHandlerAdapter(stdlib_handler)
+
+
+# -- Helpers --------------------------------------------------------------
+
+
+def log_and_capture(
+    stream: io.StringIO,
+    stdlib_handler: logging.StreamHandler[io.StringIO],
+    adapter: StdlibHandlerAdapter,
+    /,
+    *,
+    logger_name: str,
+    level: str,
+    message: str,
+    formatter: logging.Formatter | None = None,
+    logger_level: str | None = None,
+    handler_level: int | None = None,
+    stack_info: bool = False,
+) -> str:
+    """Configure, log a single message, and return captured output.
+
+    Parameters
+    ----------
+    stream
+        The StringIO backing the stdlib handler.
+    stdlib_handler
+        The stdlib StreamHandler to configure.
+    adapter
+        The StdlibHandlerAdapter wrapping *stdlib_handler*.
+    logger_name
+        Name for the FemtoLogger.
+    level
+        Femtologging level string (e.g. ``"INFO"``).
+    message
+        Log message text.
+    formatter
+        Optional stdlib Formatter to apply to *stdlib_handler*.
+    logger_level
+        Optional femtologging level to set on the logger.
+    handler_level
+        Optional stdlib numeric level to set on *stdlib_handler*.
+    stack_info
+        If ``True``, capture the current call stack.
+
+    Returns
+    -------
+    str
+        The captured output from *stream*.
+
+    """
+    if formatter is not None:
+        stdlib_handler.setFormatter(formatter)
+    if handler_level is not None:
+        stdlib_handler.setLevel(handler_level)
+
+    logger = FemtoLogger(logger_name)
+    if logger_level is not None:
+        logger.set_level(logger_level)
+    logger.add_handler(adapter)
+    logger.log(level, message, stack_info=stack_info)
+    del logger
+
+    return stream.getvalue()
+
+
+# -- Tests ----------------------------------------------------------------
+
+
 class TestStdlibHandlerAdapterConstruction:
     """Verify adapter construction validates the wrapped handler."""
 
@@ -43,90 +132,98 @@ class TestHandleRecordDispatch:
     """Verify that femtologging records are translated and emitted."""
 
     @staticmethod
-    def test_basic_message_emitted() -> None:
+    def test_basic_message_emitted(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """A simple log message should appear in the wrapped handler's output."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
-        stdlib_handler.setFormatter(
-            logging.Formatter("%(name)s %(levelname)s %(message)s")
+        output = log_and_capture(
+            stream,
+            stdlib_handler,
+            adapter,
+            logger_name="myapp",
+            level="INFO",
+            message="hello world",
+            formatter=logging.Formatter("%(name)s %(levelname)s %(message)s"),
         )
-        adapter = StdlibHandlerAdapter(stdlib_handler)
-
-        logger = FemtoLogger("myapp")
-        logger.add_handler(adapter)
-        logger.log("INFO", "hello world")
-        del logger
-
-        output = stream.getvalue()
         assert "myapp" in output
         assert "INFO" in output
         assert "hello world" in output
 
     @staticmethod
-    def test_error_level_mapped() -> None:
+    def test_error_level_mapped(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """ERROR level should be mapped to stdlib ERROR."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
-        stdlib_handler.setFormatter(logging.Formatter("%(levelname)s"))
-        adapter = StdlibHandlerAdapter(stdlib_handler)
-
-        logger = FemtoLogger("app")
-        logger.add_handler(adapter)
-        logger.log("ERROR", "failure")
-        del logger
-
-        output = stream.getvalue()
+        output = log_and_capture(
+            stream,
+            stdlib_handler,
+            adapter,
+            logger_name="app",
+            level="ERROR",
+            message="failure",
+            formatter=logging.Formatter("%(levelname)s"),
+        )
         assert "ERROR" in output
 
     @staticmethod
-    def test_debug_level_mapped() -> None:
+    def test_debug_level_mapped(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """DEBUG level should be mapped to stdlib DEBUG."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
-        stdlib_handler.setLevel(logging.DEBUG)
-        stdlib_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-        adapter = StdlibHandlerAdapter(stdlib_handler)
-
-        logger = FemtoLogger("app")
-        logger.set_level("DEBUG")
-        logger.add_handler(adapter)
-        logger.log("DEBUG", "trace detail")
-        del logger
-
-        output = stream.getvalue()
+        output = log_and_capture(
+            stream,
+            stdlib_handler,
+            adapter,
+            logger_name="app",
+            level="DEBUG",
+            message="trace detail",
+            formatter=logging.Formatter("%(levelname)s %(message)s"),
+            logger_level="DEBUG",
+            handler_level=logging.DEBUG,
+        )
         assert "DEBUG" in output
         assert "trace detail" in output
 
     @staticmethod
-    def test_critical_level_mapped() -> None:
+    def test_critical_level_mapped(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """CRITICAL level should be mapped to stdlib CRITICAL."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
-        stdlib_handler.setFormatter(logging.Formatter("%(levelname)s"))
-        adapter = StdlibHandlerAdapter(stdlib_handler)
-
-        logger = FemtoLogger("app")
-        logger.add_handler(adapter)
-        logger.log("CRITICAL", "fatal")
-        del logger
-
-        output = stream.getvalue()
+        output = log_and_capture(
+            stream,
+            stdlib_handler,
+            adapter,
+            logger_name="app",
+            level="CRITICAL",
+            message="fatal",
+            formatter=logging.Formatter("%(levelname)s"),
+        )
         assert "CRITICAL" in output
 
     @staticmethod
-    def test_warn_level_mapped() -> None:
+    def test_warn_level_mapped(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """WARN level should be mapped to stdlib WARNING."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
-        stdlib_handler.setFormatter(logging.Formatter("%(levelname)s"))
-        adapter = StdlibHandlerAdapter(stdlib_handler)
-
-        logger = FemtoLogger("app")
-        logger.add_handler(adapter)
-        logger.log("WARN", "caution")
-        del logger
-
-        output = stream.getvalue()
+        output = log_and_capture(
+            stream,
+            stdlib_handler,
+            adapter,
+            logger_name="app",
+            level="WARN",
+            message="caution",
+            formatter=logging.Formatter("%(levelname)s"),
+        )
         assert "WARNING" in output
 
 
@@ -134,12 +231,13 @@ class TestExceptionForwarding:
     """Verify that exception information reaches the stdlib handler."""
 
     @staticmethod
-    def test_exc_info_forwarded_as_text() -> None:
+    def test_exc_info_forwarded_as_text(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """Exception payload should appear as exc_text on the LogRecord."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
         stdlib_handler.setFormatter(logging.Formatter("%(message)s\n%(exc_text)s"))
-        adapter = StdlibHandlerAdapter(stdlib_handler)
 
         logger = FemtoLogger("app")
         logger.add_handler(adapter)
@@ -156,19 +254,22 @@ class TestExceptionForwarding:
         assert "ValueError" in output
 
     @staticmethod
-    def test_stack_info_forwarded() -> None:
+    def test_stack_info_forwarded(
+        stream: io.StringIO,
+        stdlib_handler: logging.StreamHandler[io.StringIO],
+        adapter: StdlibHandlerAdapter,
+    ) -> None:
         """Stack trace payload should appear as stack_info on the LogRecord."""
-        stream = io.StringIO()
-        stdlib_handler = logging.StreamHandler(stream)
-        stdlib_handler.setFormatter(logging.Formatter("%(message)s"))
-        adapter = StdlibHandlerAdapter(stdlib_handler)
-
-        logger = FemtoLogger("app")
-        logger.add_handler(adapter)
-        logger.log("INFO", "trace", stack_info=True)
-        del logger
-
-        output = stream.getvalue()
+        output = log_and_capture(
+            stream,
+            stdlib_handler,
+            adapter,
+            logger_name="app",
+            level="INFO",
+            message="trace",
+            formatter=logging.Formatter("%(message)s"),
+            stack_info=True,
+        )
         assert "trace" in output
         # stdlib Formatter appends stack_info after the message
         assert "Stack (most recent call last)" in output
