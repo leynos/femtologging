@@ -181,6 +181,75 @@ def test_dict_config_invalid_configs(
 # -- Filter section tests --
 
 
+@pytest.mark.parametrize(
+    ("config", "msg", "expected_exc"),
+    [
+        (
+            {
+                "version": 1,
+                "loggers": {"app": {"filters": ["nonexistent"]}},
+                "root": {"level": "DEBUG"},
+            },
+            r"nonexistent",
+            KeyError,
+        ),
+        (
+            {
+                "version": 1,
+                "root": {"level": "DEBUG", "filters": ["nonexistent"]},
+            },
+            r"nonexistent",
+            KeyError,
+        ),
+        (
+            {
+                "version": 1,
+                "filters": {"lvl": {"level": "INFO"}},
+                "loggers": {"app": {"filters": "lvl"}},
+                "root": {"level": "DEBUG"},
+            },
+            r"logger filters must be a list",
+            TypeError,
+        ),
+        (
+            {
+                "version": 1,
+                "filters": {"lvl": {"level": "INFO"}},
+                "loggers": {"app": {"filters": ["lvl", 123]}},
+                "root": {"level": "DEBUG"},
+            },
+            r"logger filters must be a list",
+            TypeError,
+        ),
+        (
+            {
+                "version": 1,
+                "filters": {"lvl": {"level": "INFO"}},
+                "root": {"level": "DEBUG", "filters": [123]},
+            },
+            r"logger filters must be a list",
+            TypeError,
+        ),
+    ],
+    ids=[
+        "logger-missing-filter-id",
+        "root-missing-filter-id",
+        "logger-filters-not-a-list",
+        "logger-filters-non-string-items",
+        "root-filters-non-string-items",
+    ],
+)
+def test_dict_config_filters_errors(
+    config: dict[str, object],
+    msg: str,
+    expected_exc: type[Exception],
+) -> None:
+    """Filter reference and type errors raise the expected exception."""
+    reset_manager()
+    with pytest.raises(expected_exc, match=msg):
+        dictConfig(config)
+
+
 def test_dict_config_level_filter_suppresses_records() -> None:
     """A level filter configured via dictConfig should suppress records."""
     reset_manager()
@@ -246,18 +315,6 @@ def test_dict_config_root_logger_with_filters() -> None:
     assert root.log("ERROR", "blocked") is None
 
 
-def test_dict_config_filter_missing_filter_id_raises() -> None:
-    """Referencing a non-existent filter ID should raise."""
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "loggers": {"app": {"filters": ["nonexistent"]}},
-        "root": {"level": "DEBUG"},
-    }
-    with pytest.raises(KeyError, match="nonexistent"):
-        dictConfig(cfg)
-
-
 @pytest.mark.parametrize(
     ("filter_cfg", "msg", "expected_exc"),
     [
@@ -302,55 +359,6 @@ def test_dict_config_filter_validation_errors(
         "root": {},
     }
     with pytest.raises(expected_exc, match=msg):
-        dictConfig(cfg)
-
-
-def test_dict_config_logger_filters_type_validation() -> None:
-    """Logger filters must be a list or tuple of strings."""
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "filters": {"lvl": {"level": "INFO"}},
-        "loggers": {"app": {"filters": "lvl"}},
-        "root": {"level": "DEBUG"},
-    }
-    with pytest.raises(TypeError, match="logger filters must be a list"):
-        dictConfig(cfg)
-
-
-def test_dict_config_logger_filters_non_string_items() -> None:
-    """Logger filters containing non-string items should raise."""
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "filters": {"lvl": {"level": "INFO"}},
-        "loggers": {"app": {"filters": ["lvl", 123]}},
-        "root": {"level": "DEBUG"},
-    }
-    with pytest.raises(TypeError, match="logger filters must be a list"):
-        dictConfig(cfg)
-
-
-def test_dict_config_root_filters_non_string_items() -> None:
-    """Root logger filters containing non-string items should raise."""
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "filters": {"lvl": {"level": "INFO"}},
-        "root": {"level": "DEBUG", "filters": [123]},
-    }
-    with pytest.raises(TypeError, match="logger filters must be a list"):
-        dictConfig(cfg)
-
-
-def test_dict_config_root_missing_filter_id_raises() -> None:
-    """Root logger referencing a non-existent filter ID should raise."""
-    reset_manager()
-    cfg = {
-        "version": 1,
-        "root": {"level": "DEBUG", "filters": ["nonexistent"]},
-    }
-    with pytest.raises(KeyError, match="nonexistent"):
         dictConfig(cfg)
 
 
