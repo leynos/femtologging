@@ -40,9 +40,10 @@ your process exits.
   rate-limited warnings and maintains drop counters
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
   monitor pressure.
-- Record metadata currently only tracks the logger name, level, message text,
-  timestamps, and thread identity. The Python API does not yet expose rich
-  `LogRecord` attributes such as the calling module or exception info.
+- Record metadata tracks the logger name, level, message text, timestamps,
+  thread identity, and optional structured exception (`exc_info`) and
+  call-stack (`stack_info`) payloads. The Python API does not yet expose other
+  rich `LogRecord` attributes such as `extra` or the calling module.
 
 ## Working with loggers
 
@@ -67,9 +68,30 @@ your process exits.
   returns `None`.
 - Convenience methods (`logger.info`, `logger.warning`, and so on) are not
   implemented yet; call `log()` directly or wrap it in a helper.
-- Currently, `FemtoLogger` sends only the text form of each record to handlers.
-  There is no equivalent to `extra`, `exc_info`, `stack_info`, or lazy
-  formatting. Build the final message string yourself before calling `log()`.
+- `log()` accepts the keyword-only arguments `exc_info` and `stack_info`
+  for capturing exception tracebacks and call stacks alongside the log message.
+  `exc_info` accepts any of the following forms:
+  - `True` — capture the current exception via `sys.exc_info()`.
+  - An exception instance — capture that exception's traceback.
+  - A `(type, value, traceback)` 3-tuple — use directly.
+  - `False` or `None` (default) — no capture.
+
+  `stack_info=True` appends the current call stack to the record. Both payloads
+  are rendered by the default formatter and are available as structured data to
+  `handle_record` handlers.
+
+  ```python
+  try:
+      db.execute(query)
+  except DatabaseError:
+      logger.log("ERROR", "query failed", exc_info=True)
+
+  # Capture just the call stack (no exception needed):
+  logger.log("DEBUG", "checkpoint reached", stack_info=True)
+  ```
+
+- There is no equivalent to `extra` or lazy formatting. Build the final
+  message string yourself before calling `log()`.
 
 ### Managing handlers and custom sinks
 
@@ -403,7 +425,8 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - No shorthand methods (`info`, `debug`, `warning`, …) or `LoggerAdapter`.
 - `log()` returns the formatted string instead of `None`, and there is no
   `Logger.isEnabledFor()` helper.
-- Records lack `extra`, `exc_info`, `stack_info`, and stack introspection.
+- Records lack `extra` and calling-module introspection. `exc_info` and
+  `stack_info` are supported as keyword arguments to `log()`.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.
