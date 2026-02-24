@@ -57,6 +57,12 @@ def log_result() -> LogResultPayload:
     """Provide the initial log-result payload.
 
     Replaced by ``@when`` steps via ``target_fixture``.
+
+    Returns
+    -------
+    LogResultPayload
+        Dict with ``"value"`` set to ``None``.
+
     """
     return {"value": None}
 
@@ -71,7 +77,22 @@ def log_result() -> LogResultPayload:
     target_fixture="named_logger_config",
 )
 def given_named_logger(name: str, level: str) -> str:
-    """Configure a named logger with the specified level."""
+    """Configure a named logger with the specified level.
+
+    Parameters
+    ----------
+    name : str
+        Logger name to register.
+    level : str
+        Logging threshold (e.g., ``"DEBUG"``, ``"INFO"``).
+
+    Returns
+    -------
+    str
+        The logger name, exposed as the ``named_logger_config``
+        fixture.
+
+    """
     builder = ConfigBuilder()
     root = LoggerConfigBuilder().with_level("DEBUG")
     builder.with_root_logger(root)
@@ -98,7 +119,21 @@ _FUNC_MAP: cabc.Mapping[str, cabc.Callable[..., str | None]] = MappingProxyType(
     target_fixture="log_result",
 )
 def call_convenience_func(func: str, message: str) -> LogResultPayload:
-    """Call a module-level convenience function and capture the result."""
+    """Call a module-level convenience function and capture the result.
+
+    Parameters
+    ----------
+    func : str
+        Key into ``_FUNC_MAP`` (e.g., ``"info"``, ``"debug"``).
+    message : str
+        Log message to emit.
+
+    Returns
+    -------
+    LogResultPayload
+        Dict with ``"value"`` set to the function's return value.
+
+    """
     fn = _FUNC_MAP[func]
     return {"value": fn(message)}
 
@@ -110,7 +145,23 @@ def call_convenience_func(func: str, message: str) -> LogResultPayload:
 def call_convenience_func_with_name(
     func: str, message: str, name: str
 ) -> LogResultPayload:
-    """Call a module-level convenience function targeting a named logger."""
+    """Call a module-level convenience function targeting a named logger.
+
+    Parameters
+    ----------
+    func : str
+        Key into ``_FUNC_MAP`` (e.g., ``"error"``).
+    message : str
+        Log message to emit.
+    name : str
+        Logger name passed as the ``name`` keyword argument.
+
+    Returns
+    -------
+    LogResultPayload
+        Dict with ``"value"`` set to the function's return value.
+
+    """
     fn = _FUNC_MAP[func]
     return {"value": fn(message, name=name)}
 
@@ -122,7 +173,14 @@ def call_convenience_func_with_name(
 
 @then("the result is not None")
 def result_is_not_none(log_result: LogResultPayload) -> None:
-    """Assert that the log result is not None (record was emitted)."""
+    """Assert that the log result is not None (record was emitted).
+
+    Parameters
+    ----------
+    log_result : LogResultPayload
+        Payload produced by a preceding ``@when`` step.
+
+    """
     assert log_result["value"] is not None, (
         f"Expected non-None result, got {log_result['value']!r}"
     )
@@ -130,7 +188,14 @@ def result_is_not_none(log_result: LogResultPayload) -> None:
 
 @then("the result is None")
 def result_is_none(log_result: LogResultPayload) -> None:
-    """Assert that the log result is None (record was suppressed)."""
+    """Assert that the log result is None (record was suppressed).
+
+    Parameters
+    ----------
+    log_result : LogResultPayload
+        Payload produced by a preceding ``@when`` step.
+
+    """
     assert log_result["value"] is None, (
         f"Expected None result, got {log_result['value']!r}"
     )
@@ -138,7 +203,16 @@ def result_is_none(log_result: LogResultPayload) -> None:
 
 @then(parsers.parse('the result contains "{text}"'))
 def result_contains(log_result: LogResultPayload, text: str) -> None:
-    """Assert that the formatted log output contains the specified text."""
+    """Assert that the formatted log output contains the specified text.
+
+    Parameters
+    ----------
+    log_result : LogResultPayload
+        Payload produced by a preceding ``@when`` step.
+    text : str
+        Substring expected in the formatted log output.
+
+    """
     value = log_result["value"]
     assert value is not None, "Result is None, cannot check contents"
     assert text in str(value), f"Expected '{text}' in '{value}'"
@@ -153,6 +227,14 @@ def info_result_matches_snapshot(
     Source location details (file path and line number) are normalized
     to stable placeholders before comparison so that the snapshot is
     reproducible regardless of the test runner's working directory.
+
+    Parameters
+    ----------
+    log_result : LogResultPayload
+        Payload produced by a preceding ``@when`` step.
+    snapshot : SnapshotAssertion
+        Syrupy snapshot to compare against.
+
     """
     value = log_result["value"]
     assert value is not None, "Result is None, cannot snapshot"
@@ -164,7 +246,16 @@ def info_result_matches_snapshot(
 
 @then(parsers.parse('the result format is "{expected}"'))
 def result_format_is(log_result: LogResultPayload, expected: str) -> None:
-    """Assert the formatted output matches the expected string exactly."""
+    """Assert the formatted output matches the expected string exactly.
+
+    Parameters
+    ----------
+    log_result : LogResultPayload
+        Payload produced by a preceding ``@when`` step.
+    expected : str
+        Exact string the formatted output must equal.
+
+    """
     value = log_result["value"]
     assert value is not None, "Result is None, cannot check format"
     assert str(value) == expected, f"Expected '{expected}', got '{value}'"
