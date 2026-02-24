@@ -198,7 +198,8 @@ entire frame or exception capture aborts with an error:
 missing, `None`, or the wrong type:
 
 - Stack frame: `end_lineno`, `colno`, `end_colno`, `line` (source line),
-  `locals`
+  `locals` (currently disabled; see
+  [Known risks and limitations](#known-risks-and-limitations))
 - Exception: `module`, `args`, `__notes__`, `__cause__`, `__context__`,
   `exceptions` (for `ExceptionGroup`)
 
@@ -221,7 +222,9 @@ rather than aborting the entire collection:
 
 - **`locals` dictionary:** Entries with non-string keys or values whose
   `repr()` fails are skipped. Valid entries are preserved. An empty result
-  becomes `None`.
+  becomes `None`. Note: locals capture is currently disabled (see
+  [Known risks and limitations](#known-risks-and-limitations)); these rules
+  apply only when it is enabled.
 - **`args_repr` list:** If `.args` is missing, `None`, or not a tuple, the
   result is an empty vector. Individual elements that fail `repr()` extraction
   are skipped.
@@ -250,6 +253,43 @@ This approach was chosen for several reasons:
    for diagnostics. If capturing exception details fails, the original error
    context is lost entirely. Graceful degradation ensures the log record is
    still emitted with whatever data was recoverable.
+
+## Known risks and limitations
+
+### Local variable capture is disabled
+
+The schema and extraction logic for local variables are fully implemented
+(`extract_locals_dict` in `traceback_frames.rs` and the `locals` field on
+`StackFrame`), but locals capture is currently disabled. The
+`TracebackException` constructor is called with `capture_locals=False`, so
+Python does not populate `.locals` on frame summaries and the extraction
+function always returns `None`.
+
+This is intentional. Enabling locals capture carries three concerns that have
+not yet been addressed:
+
+1. **Security — accidental credential leakage.** Local variables
+   frequently contain sensitive values such as API keys, database passwords,
+   authentication tokens, and personally identifiable information. Calling
+   `repr()` on these and serializing them into log output risks exposing
+   credentials to log aggregation systems, files, or third-party observability
+   pipelines.
+
+2. **Payload size.** Each frame's local variables are serialized as
+   string representations. In frames with large data structures, NumPy arrays,
+   or Django querysets, the `repr()` output can be arbitrarily large, inflating
+   log record sizes and increasing memory pressure on the crossbeam channel
+   queues.
+
+3. **Performance overhead.** `repr()` is called on every local
+   variable in every frame of the traceback. For deep call stacks or frames
+   with many locals, this adds non-trivial latency to the caller thread — the
+   exact path the library is designed to keep fast.
+
+The infrastructure to support locals capture remains in place so that a future
+release can enable it behind an opt-in configuration flag once a filtering or
+redaction mechanism has been designed to mitigate the security concern. No
+timeline is committed for this work.
 
 ## Consequences
 
