@@ -76,9 +76,9 @@ your process exits.
   - A `(type, value, traceback)` 3-tuple — use directly.
   - `False` or `None` (default) — no capture.
 
-  `stack_info=True` appends the current call stack to the record. Both payloads
-  are rendered by the default formatter and are available as structured data to
-  `handle_record` handlers.
+  `stack_info` is a boolean (`False` by default). When `True`, the current call
+  stack is appended to the record. Both payloads are rendered by the default
+  formatter and are available as structured data to `handle_record` handlers.
 
   ```python
   try:
@@ -435,7 +435,7 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
-  string yourself, or supply a callable formatter per handler.
+  string, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
 
