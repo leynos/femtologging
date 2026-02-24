@@ -4,7 +4,6 @@
 //! test modules.
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use parking_lot::Mutex;
 use std::any::Any;
