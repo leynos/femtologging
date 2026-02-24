@@ -211,7 +211,7 @@ package = true
    - `name`, `version` (mandatory per PEP 621)
    - `description`, `readme`, `requires-python`: provide clarity about the
      project and help tools like PyPI.
-   - `license`, `authors`, `keywords`, `classifiers`: standardised metadata,
+   - `license`, `authors`, `keywords`, `classifiers`: standardized metadata,
      which improves discoverability.
    - `dependencies`: runtime requirements, expressed in PEP 508 syntax.
 

@@ -574,6 +574,8 @@ classDiagram
     StreamHandlerBuilder --> "uses" FormatterBuilder
 ```
 
+**Figure 1.4:** Builder relationships and configuration flow.
+
 ### 1.5. Interaction sequences
 
 The configuration flow and runtime log path are illustrated below to show how

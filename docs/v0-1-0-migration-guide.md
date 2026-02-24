@@ -198,7 +198,10 @@ All doc comments and user-facing strings now use `-ize` / `-ization` forms:
 
 ### Impact
 
-This change is **non-breaking** for all public Python and Rust APIs. No
+This change is **non-breaking** for all public Python and Rust APIs. The
+renamed functions (`serialize_url_encoded`, `serialize_json` in
+`http_handler/serialize.rs` and `serialize_record` in
+`socket_handler/serialize.rs`) are `pub` within their respective modules, but
+the `serialize` modules themselves are private (`mod serialize`, not
+`pub mod`), so these symbols are not accessible to downstream crates. No
 user-facing method signatures, class names, or parameter names were altered.
-Only internal identifiers, module file names, and documentation text were
-updated.

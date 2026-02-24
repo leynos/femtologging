@@ -1069,7 +1069,7 @@ Femtologging already uses the `log` crate internally for diagnostics (e.g.,
 `log::warn!` in `logger.rs`, `socket_handler/worker.rs`, and
 `handlers/file/mod.rs`). A working test implementation exists at
 `handlers/file/test_support.rs:22-39`, demonstrating the pattern. This pattern
-will be generalised to create a reusable adapter that routes all `log` crate
+will be generalized to create a reusable adapter that routes all `log` crate
 records through femtologging's handler pipeline.
 
 **Value Proposition:**

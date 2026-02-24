@@ -57,18 +57,23 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
     }
 }
 
+/// Classify a logger resolution error for diagnostic logging.
+fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
+    if err.is_instance_of::<pyo3::exceptions::PyKeyError>(py) {
+        "unknown logger target"
+    } else if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
+        "invalid logger target"
+    } else {
+        "unexpected error resolving logger"
+    }
+}
+
 fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
     match manager::get_logger(py, normalized.as_ref()) {
         Ok(logger) => Some((normalized.into_owned(), logger)),
         Err(err) => {
-            let reason = if err.is_instance_of::<pyo3::exceptions::PyKeyError>(py) {
-                "unknown logger target"
-            } else if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
-                "invalid logger target"
-            } else {
-                "unexpected error resolving logger"
-            };
+            let reason = classify_logger_error(py, &err);
             log::warn!(
                 target: "femtologging.log_compat",
                 "femtologging: {reason} {:?} (normalized {:?}); falling back to root: {}",

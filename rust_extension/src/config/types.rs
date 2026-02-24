@@ -194,7 +194,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier, replacing any existing filters.
-    /// IDs are deduplicated and order may be normalized; see [`normalize_vec`].
+    /// IDs are deduplicated and order may be normalized; see `normalize_vec`.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -205,7 +205,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set handlers by identifier, replacing any existing handlers.
-    /// IDs are deduplicated and order may be normalized; see [`normalize_vec`].
+    /// IDs are deduplicated and order may be normalized; see `normalize_vec`.
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,

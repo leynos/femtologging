@@ -302,7 +302,6 @@ class RecordCollectingHandler:
     def handle(_logger: str, _level: str, _message: str) -> None:
         """Fallback handle method (required by FemtoLogger validation)."""
         # Should not be called when handle_record is present
-        return
 
     def handle_record(self, record: dict[str, typ.Any]) -> None:
         """Collect full records for later assertions."""
