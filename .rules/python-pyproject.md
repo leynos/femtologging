@@ -129,7 +129,7 @@ ______________________________________________________________________
 PEP 517/518 require a `[build-system]` table to tell tools how to build and
 install your project. A "modern" convention is to specify `setuptools>=61.0`
 (for editable installs without `setup.py`) or a lighter alternative like
-`flit_core`. Astral `uv` also recognises a `[tool.uv]` table for its own
+`flit_core`. Astral `uv` also recognizes a `[tool.uv]` table for its own
 configuration:
 
 ```toml
@@ -211,7 +211,7 @@ package = true
    - `name`, `version` (mandatory per PEP 621)
    - `description`, `readme`, `requires-python`: provide clarity about the
      project and help tools like PyPI.
-   - `license`, `authors`, `keywords`, `classifiers`: standardised metadata,
+   - `license`, `authors`, `keywords`, `classifiers`: standardized metadata,
      which improves discoverability.
    - `dependencies`: runtime requirements, expressed in PEP 508 syntax.
 

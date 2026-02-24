@@ -1,6 +1,6 @@
 //! Socket-based logging handler implementation.
 //!
-//! This module defines `FemtoSocketHandler`, a handler that serialises
+//! This module defines `FemtoSocketHandler`, a handler that serializes
 //! [`FemtoLogRecord`](crate::log_record::FemtoLogRecord) values into
 //! MessagePack frames and forwards them to a remote socket. The consumer thread
 //! maintains the underlying connection, transparently reconnects using
@@ -10,7 +10,7 @@
 pub(crate) mod backoff;
 mod config;
 mod handler;
-mod serialise;
+mod serialize;
 mod transport;
 mod worker;
 

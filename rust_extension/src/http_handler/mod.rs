@@ -1,14 +1,14 @@
 //! HTTP-based logging handler implementation.
 //!
-//! This module defines [`FemtoHTTPHandler`], a handler that serialises
+//! This module defines [`FemtoHTTPHandler`], a handler that serializes
 //! [`FemtoLogRecord`](crate::log_record::FemtoLogRecord) values and
 //! forwards them to an HTTP endpoint. The consumer thread maintains
 //! the underlying HTTP client, handles reconnection with exponential
 //! backoff, and supports configurable authentication and timeouts.
 //!
-//! # Serialisation Formats
+//! # Serialization Formats
 //!
-//! Two serialisation formats are supported:
+//! Two serialization formats are supported:
 //!
 //! - **URL-encoded** (default): Produces `application/x-www-form-urlencoded`
 //!   payloads matching CPython's `logging.HTTPHandler` format.
@@ -28,7 +28,7 @@ mod config;
 mod filtered;
 mod handler;
 mod record;
-mod serialise;
+mod serialize;
 mod url_encoding;
 mod worker;
 

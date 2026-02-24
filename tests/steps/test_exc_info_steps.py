@@ -10,7 +10,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoLogger
 
-from .conftest import normalise_traceback_output
+from .conftest import normalize_traceback_output
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
@@ -205,6 +205,6 @@ def output_matches_snapshot(
     logger_fixture: LoggerFixture, snapshot: SnapshotAssertion
 ) -> None:
     output = logger_fixture["output"]
-    # Normalise paths and line numbers for snapshot stability
-    normalised = normalise_traceback_output(output)
-    assert normalised == snapshot
+    # Normalize paths and line numbers for snapshot stability
+    normalized = normalize_traceback_output(output)
+    assert normalized == snapshot

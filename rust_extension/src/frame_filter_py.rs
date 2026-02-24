@@ -183,10 +183,10 @@ fn filter_stack_payload(
     let result = payload.copy()?;
 
     // Update frames only if the original had them, or always set if filtering produced frames
-    // Match the Rust serde behavior: skip_serializing_if = "Vec::is_empty"
+    // Match the Rust serde behaviour: skip_serializing_if = "Vec::is_empty"
     if had_frames_key {
         if filtered.is_empty() {
-            // Remove empty frames to match serialisation semantics
+            // Remove empty frames to match serialization semantics
             result.del_item("frames").ok();
         } else {
             result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
@@ -215,10 +215,10 @@ fn filter_exception_payload(
     let result = payload.copy()?;
 
     // Update frames only if the original had them
-    // Match the Rust serde behavior: skip_serializing_if = "Vec::is_empty"
+    // Match the Rust serde behaviour: skip_serializing_if = "Vec::is_empty"
     if had_frames_key {
         if filtered.is_empty() {
-            // Remove empty frames to match serialisation semantics
+            // Remove empty frames to match serialization semantics
             result.del_item("frames").ok();
         } else {
             result.set_item("frames", frames_to_py_list(py, &filtered)?)?;

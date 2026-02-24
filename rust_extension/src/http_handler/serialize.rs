@@ -28,7 +28,7 @@ fn emit_numeric_field(
     }
 }
 
-/// Emit a JSON-serialised optional field as URL-encoded key=value pair.
+/// Emit a JSON-serialized optional field as URL-encoded key=value pair.
 fn emit_json_field<T: Serialize>(
     pairs: &mut Vec<String>,
     key: &str,
@@ -104,14 +104,14 @@ fn emit_all_fields(
     Ok(())
 }
 
-/// Serialise a record to URL-encoded form data (CPython parity).
+/// Serialize a record to URL-encoded form data (CPython parity).
 ///
 /// This produces output compatible with `urllib.parse.urlencode(record.__dict__)`,
 /// using `+` for spaces as CPython's `urlencode` does by default.
 ///
 /// # Arguments
 ///
-/// * `record` - The log record to serialise.
+/// * `record` - The log record to serialize.
 /// * `fields` - Optional list of field names to include. If `None`, all fields
 ///   are included.
 ///
@@ -124,7 +124,7 @@ fn emit_all_fields(
 ///
 /// Returns an error if JSON serialization of `exc_info` or `stack_info`
 /// payloads fails.
-pub fn serialise_url_encoded(
+pub fn serialize_url_encoded(
     record: &FemtoLogRecord,
     fields: Option<&[String]>,
 ) -> io::Result<String> {
@@ -137,14 +137,14 @@ pub fn serialise_url_encoded(
     Ok(pairs.join("&"))
 }
 
-/// Serialise a record to JSON.
+/// Serialize a record to JSON.
 ///
 /// Uses zero-copy serialization where possible to avoid allocations.
 /// The `levelname` field is serialized directly from `&'static str`.
 ///
 /// # Arguments
 ///
-/// * `record` - The log record to serialise.
+/// * `record` - The log record to serialize.
 /// * `fields` - Optional list of field names to include. If `None`, all fields
 ///   are included.
 ///
@@ -156,7 +156,7 @@ pub fn serialise_url_encoded(
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-pub fn serialise_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io::Result<String> {
+pub fn serialize_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io::Result<String> {
     let serializable = HttpSerializableRecord::from(record);
 
     match fields {
@@ -194,7 +194,7 @@ mod tests {
 
     #[rstest]
     fn url_encoded_contains_expected_fields(test_record: FemtoLogRecord) {
-        let encoded = serialise_url_encoded(&test_record, None).expect("serialise");
+        let encoded = serialize_url_encoded(&test_record, None).expect("serialize");
         assert!(encoded.contains("name=test.logger"));
         assert!(encoded.contains("levelname=INFO"));
         assert!(encoded.contains("msg=Hello+World"));
@@ -203,7 +203,7 @@ mod tests {
 
     #[rstest]
     fn json_contains_expected_fields(test_record: FemtoLogRecord) {
-        let json = serialise_json(&test_record, None).expect("serialise");
+        let json = serialize_json(&test_record, None).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed["name"], "test.logger");
         assert_eq!(parsed["levelname"], "INFO");
@@ -214,7 +214,7 @@ mod tests {
     #[rstest]
     fn field_filter_limits_output(test_record: FemtoLogRecord) {
         let fields = vec!["name".into(), "msg".into()];
-        let json = serialise_json(&test_record, Some(&fields)).expect("serialise");
+        let json = serialize_json(&test_record, Some(&fields)).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed["name"], "test.logger");
         assert_eq!(parsed["msg"], "Hello World");

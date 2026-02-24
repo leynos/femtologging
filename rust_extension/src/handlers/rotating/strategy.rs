@@ -78,7 +78,7 @@ impl FileRotationStrategy {
         let capacity = writer.capacity();
         let original_file = self.swap_writer_with_temp(writer, capacity)?;
         let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
-        self.finalise_rotation(writer, original_file, capacity)
+        self.finalize_rotation(writer, original_file, capacity)
     }
 
     fn swap_writer_with_temp(
@@ -116,7 +116,7 @@ impl FileRotationStrategy {
         Ok(original_file)
     }
 
-    fn finalise_rotation(
+    fn finalize_rotation(
         &mut self,
         writer: &mut BufWriter<File>,
         original_file: File,

@@ -15,7 +15,7 @@ use crate::{
 use super::{
     backoff::BackoffState,
     config::SocketHandlerConfig,
-    serialise::{frame_payload, serialise_record},
+    serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
 };
 
@@ -66,10 +66,10 @@ impl Worker {
         let frame = match prepare_frame(&record, &self.config) {
             Ok(frame) => frame,
             Err(err) => {
-                warn!("FemtoSocketHandler serialisation error: {err}");
+                warn!("FemtoSocketHandler serialization error: {err}");
                 warn_drops(&self.warner, |count| {
                     warn!(
-                        "FemtoSocketHandler dropped {count} records due to serialisation failures"
+                        "FemtoSocketHandler dropped {count} records due to serialization failures"
                     );
                 });
                 return;
@@ -204,7 +204,7 @@ impl Worker {
 }
 
 fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::Result<Vec<u8>> {
-    serialise_record(record).and_then(|payload| {
+    serialize_record(record).and_then(|payload| {
         frame_payload(&payload, config.max_frame_size)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame too large"))
     })

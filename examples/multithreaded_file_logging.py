@@ -23,7 +23,7 @@ from femtologging import (
 
 
 def configure(logging_path: Path) -> None:
-    """Initialise femtologging with a file handler.
+    """Initialize femtologging with a file handler.
 
     Parameters
     ----------

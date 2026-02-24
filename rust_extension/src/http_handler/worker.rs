@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
-    serialise::{serialise_json, serialise_url_encoded},
+    serialize::{serialize_json, serialize_url_encoded},
 };
 
 /// Commands processed by the worker thread.
@@ -94,7 +94,7 @@ impl Worker {
     }
 
     fn handle_record_command(&mut self, record: FemtoLogRecord) {
-        let payload = match self.serialise_record(&record) {
+        let payload = match self.serialize_record(&record) {
             Ok(p) => p,
             Err(err) => {
                 warn!("FemtoHTTPHandler serialization error: {err}");
@@ -105,11 +105,11 @@ impl Worker {
         self.send_request(&payload);
     }
 
-    fn serialise_record(&self, record: &FemtoLogRecord) -> io::Result<String> {
+    fn serialize_record(&self, record: &FemtoLogRecord) -> io::Result<String> {
         let fields = self.config.record_fields.as_deref();
         match self.config.format {
-            SerializationFormat::UrlEncoded => serialise_url_encoded(record, fields),
-            SerializationFormat::Json => serialise_json(record, fields),
+            SerializationFormat::UrlEncoded => serialize_url_encoded(record, fields),
+            SerializationFormat::Json => serialize_json(record, fields),
         }
     }
 

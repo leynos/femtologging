@@ -11,7 +11,7 @@ Example:
 
 from __future__ import annotations
 
-from .conftest import normalise_traceback_output as normalize_traceback_output
+from .conftest import normalize_traceback_output
 
 
 class TestTracebackNormalization:

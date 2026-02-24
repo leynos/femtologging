@@ -54,29 +54,29 @@ class _FrameInfo:
     next_index: int
 
 
-def normalise_traceback_output(output: str | None, placeholder: str = "<file>") -> str:
-    """Normalise traceback output for snapshot comparison.
+def normalize_traceback_output(output: str | None, placeholder: str = "<file>") -> str:
+    """Normalize traceback output for snapshot comparison.
 
     Replaces file paths and line numbers with stable placeholders.
 
     Parameters
     ----------
     output : str | None
-        The traceback output string to normalise, or ``None``.
+        The traceback output string to normalize, or ``None``.
     placeholder : str
         The placeholder used for file paths. Defaults to ``"<file>"``.
 
     Returns
     -------
     str
-        Normalised output string, or an empty string when ``output`` is
+        Normalized output string, or an empty string when ``output`` is
         ``None``.
 
     """
     if output is None:
         return ""
 
-    result = _normalise_launcher_frames(output)
+    result = _normalize_launcher_frames(output)
 
     # Replace file paths with placeholder
     result = re.sub(
@@ -94,16 +94,16 @@ def normalise_traceback_output(output: str | None, placeholder: str = "<file>") 
     )
 
 
-def _normalise_launcher_frames(output: str) -> str:
-    """Remove interpreter launcher frames and normalise entrypoint calls."""
+def _normalize_launcher_frames(output: str) -> str:
+    """Remove interpreter launcher frames and normalize entrypoint calls."""
     lines = output.splitlines()
-    normalised_lines: list[str] = []
+    normalized_lines: list[str] = []
     index = 0
 
     while index < len(lines):
         frame = _parse_frame(lines, index)
         if frame is None:
-            normalised_lines.append(lines[index])
+            normalized_lines.append(lines[index])
             index += 1
             continue
 
@@ -115,11 +115,11 @@ def _normalise_launcher_frames(output: str) -> str:
         ):
             continue
 
-        normalised_lines.append(frame.frame_line)
+        normalized_lines.append(frame.frame_line)
         if frame.code_line:
-            normalised_lines.append(_normalise_frame_code_line(frame.code_line))
+            normalized_lines.append(_normalize_frame_code_line(frame.code_line))
 
-    rebuilt = "\n".join(normalised_lines)
+    rebuilt = "\n".join(normalized_lines)
     if output.endswith("\n"):
         return f"{rebuilt}\n"
     return rebuilt
@@ -152,8 +152,8 @@ def _parse_frame(lines: list[str], index: int) -> _FrameInfo | None:
     )
 
 
-def _normalise_frame_code_line(code_line: str) -> str:
-    """Normalise volatile traceback source lines to stable output."""
+def _normalize_frame_code_line(code_line: str) -> str:
+    """Normalize volatile traceback source lines to stable output."""
     if code_line == _SYSTEM_EXIT_PYTEST_LINE:
         return "    sys.exit(console_main())"
     return f"    {code_line}"

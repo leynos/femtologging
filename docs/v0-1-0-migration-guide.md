@@ -160,3 +160,49 @@ Table: Rust API renames
 Internal field names (`flush_after_ms`, `flush_after_records`) and setter
 methods (`set_flush_after_records`) have also changed but are `pub(crate)` and
 not part of the public API.
+
+______________________________________________________________________
+
+## Spelling standardization (-ise to -ize)
+
+All identifiers, documentation, and internal names have been standardized to
+use Oxford English Dictionary (-ize) spelling. This follows the project style
+guide (`en-GB-oxendict`).
+
+### Rust module renames
+
+Consumers of the Rust crate who use `mod` paths or `include!` macros
+referencing internal module files should note the following renames:
+
+Table: Rust module file renames
+
+| Parent module    | Old file       | New file       |
+| ---------------- | -------------- | -------------- |
+| `http_handler`   | `serialise.rs` | `serialize.rs` |
+| `socket_handler` | `serialise.rs` | `serialize.rs` |
+
+These modules are private (`mod serialize`, not `pub mod`) and not re-exported,
+so this change does not affect Python consumers or users of the public Rust API.
+
+### Documentation and docstring changes
+
+All doc comments and user-facing strings now use `-ize` / `-ization` forms:
+
+- `serialise` / `serialisation` → `serialize` / `serialization`
+- `normalise` / `normalisation` → `normalize` / `normalization`
+- `initialise` / `initialisation` → `initialize` / `initialization`
+- `finalise` → `finalize`
+- `customise` → `customize`
+- `maximise` → `maximize`
+- `recognise` → `recognize`
+
+### Impact
+
+The spelling-standardization renames are **non-breaking**. The renamed
+functions (`serialize_url_encoded`, `serialize_json` in
+`http_handler/serialize.rs` and `serialize_record` in
+`socket_handler/serialize.rs`) are `pub` within their respective modules, but
+the `serialize` modules themselves are private (`mod serialize`, not
+`pub mod`), so these symbols are not accessible to downstream crates. No
+user-facing method signatures, class names, or parameter names were altered by
+this change.

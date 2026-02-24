@@ -36,10 +36,10 @@ impl_as_pydict!(LoggerConfigBuilder {
 py_setters!(LoggerConfigBuilder {
     level: py_with_level => "with_level", FemtoLevel, Some, "Set the logger level, replacing any existing value.",
     propagate: py_with_propagate => "with_propagate", bool, Some, "Set propagation behaviour, replacing any existing value.",
-    filters: py_with_filters => "with_filters", Vec<String>, normalise_vec,
-        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.\nIDs are deduplicated and order may be normalised; see `normalise_vec`.",
-    handlers: py_with_handlers => "with_handlers", Vec<String>, normalise_vec,
-        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.\nIDs are deduplicated and order may be normalised; see `normalise_vec`.",
+    filters: py_with_filters => "with_filters", Vec<String>, normalize_vec,
+        "Set filters by identifier.\n\nThis replaces any existing filters with the provided list.\nIDs are deduplicated and order may be normalized; see `normalize_vec`.",
+    handlers: py_with_handlers => "with_handlers", Vec<String>, normalize_vec,
+        "Set handlers by identifier.\n\nThis replaces any existing handlers with the provided list.\nIDs are deduplicated and order may be normalized; see `normalize_vec`.",
 });
 
 impl_as_pydict!(ConfigBuilder {
@@ -115,7 +115,7 @@ py_setters!(ConfigBuilder {
         Ok(slf)
     }
 
-    /// Finalise configuration and initialise loggers.
+    /// Finalize configuration and initialize loggers.
     #[pyo3(name = "build_and_init", text_signature = "(self, /)")]
     fn py_build_and_init(&self) -> PyResult<()> {
         self.build_and_init().map_err(Into::into)

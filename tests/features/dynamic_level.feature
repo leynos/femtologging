@@ -7,7 +7,7 @@ Feature: Dynamic log level updates
     Given a ConfigBuilder
     And I add stream handler "console" targeting "stderr"
     And I set root logger with level "TRACE"
-    And the configuration is built and initialised
+    And the configuration is built and initialized
 
   Scenario: Level can be read after configuration
     Then logger "root" level is "TRACE"

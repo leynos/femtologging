@@ -77,7 +77,7 @@ impl FemtoLevel {
         match s.parse() {
             Ok(lvl) => lvl,
             Err(_) => {
-                eprintln!("Warning: unrecognised log level '{s}', defaulting to INFO");
+                eprintln!("Warning: unrecognized log level '{s}', defaulting to INFO");
                 Self::Info
             }
         }

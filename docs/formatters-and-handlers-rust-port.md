@@ -129,7 +129,7 @@ Legacy constructors have been removed:
 The timeout behaviour is configured via the policy string as ``"timeout:N"``,
 where ``N`` is the timeout in milliseconds and must be greater than zero.
 
-Customise capacity, flush behaviour or overflow policy via keyword arguments to
+Customize capacity, flush behaviour or overflow policy via keyword arguments to
 the constructor.
 
 The constructor enforces several invariants on the configuration:
@@ -194,7 +194,7 @@ drain pending records and stop the background thread explicitly. Dropping the
 handler still performs this cleanup if the methods aren't invoked.
 
 By default, the file handler flushes the underlying file after every record to
-maximise durability. To batch writes, pass a custom configuration via
+maximize durability. To batch writes, pass a custom configuration via
 `FemtoFileHandler::with_capacity_flush_policy()` (Rust) or set keyword
 arguments on ``FemtoFileHandler`` (Python). Setting ``flush_interval`` defers
 flushing until the specified number of records have been written. The value

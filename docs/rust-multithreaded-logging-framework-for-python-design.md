@@ -137,7 +137,7 @@ The primary components of the `femtologging` system include:
   bounds if they are to be processed in their original form by the consumer;
   otherwise, they may need to be pre-formatted into strings by the producer.
   For Python bindings, exception and stack data must be captured on the
-  producer thread and serialised into a Rust-owned, versioned payload so
+  producer thread and serialized into a Rust-owned, versioned payload so
   consumer threads never retain Python objects or frames.
 
 - `FemtoHandler` **Trait and Implementations:** A trait defining the contract
@@ -167,7 +167,7 @@ The logging process will follow these steps:
 3. `FemtoLogRecord` **Creation:** If the level check passes, a `FemtoLogRecord`
    is created on the producer thread, capturing the message, arguments, and
    contextual information. Any requested exception or stack payload is captured
-   and serialised at this stage.
+   and serialized at this stage.
 
 4. **Channel Send:** The `FemtoLogRecord` is sent through one or more MPSC
    channels to the consumer threads associated with the active handlers for
@@ -232,7 +232,7 @@ A `FemtoLogRecord` will contain at least the following fields:
 The exception and stack payloads are captured from Python 3.12+ `traceback`
 structures on the producer thread. Each frame should include filename, line
 number, end-line number, column offsets, function name, optional source line,
-and a serialised snapshot of local variables where available. Exception
+and a serialized snapshot of local variables where available. Exception
 payloads should encode chaining (`cause`, `context`, and `suppress_context`),
 `__notes__`, and exception groups.
 
@@ -371,7 +371,7 @@ CPython's `logging.handlers.HTTPHandler` provides the following interface:
 Key methods:
 
 - **`mapLogRecord(record)`** – Converts a `LogRecord` to a dictionary. The
-  default returns `record.__dict__`; subclasses override to customise payload.
+  default returns `record.__dict__`; subclasses override to customize payload.
 - **`emit(record)`** – Calls `mapLogRecord`, URL-encodes the result via
   `urllib.parse.urlencode`, and transmits via GET or POST.
 
@@ -1069,7 +1069,7 @@ Femtologging already uses the `log` crate internally for diagnostics (e.g.,
 `log::warn!` in `logger.rs`, `socket_handler/worker.rs`, and
 `handlers/file/mod.rs`). A working test implementation exists at
 `handlers/file/test_support.rs:22-39`, demonstrating the pattern. This pattern
-will be generalised to create a reusable adapter that routes all `log` crate
+will be generalized to create a reusable adapter that routes all `log` crate
 records through femtologging's handler pipeline.
 
 **Value Proposition:**
@@ -1105,9 +1105,9 @@ The `log::Record::target()` field typically contains the Rust module path
 hierarchical logger system via `Manager::get_logger()`, which creates parent
 loggers automatically based on dotted names.
 
-The implemented bridge normalises Rust-style `::` separators to `.` before
+The implemented bridge normalizes Rust-style `::` separators to `.` before
 resolving the logger, preserving femtologging's dotted hierarchy semantics. If
-a target is invalid after normalisation, the record is routed to the root
+a target is invalid after normalization, the record is routed to the root
 logger rather than panicking.
 
 **Conceptual Implementation:**
@@ -1290,7 +1290,7 @@ sequenceDiagram
         participant RustComponent
         RustComponent->>RustLog: log::info!("hello")
         RustLog->>FemtoLogCompat: log(record)
-        FemtoLogCompat->>Manager: get_logger(normalised_target)
+        FemtoLogCompat->>Manager: get_logger(normalized_target)
         Manager-->>FemtoLogCompat: FemtoLogger or root
         FemtoLogCompat->>FemtoLogger: is_enabled_for(level)
         FemtoLogger-->>FemtoLogCompat: bool
@@ -1313,16 +1313,16 @@ sequenceDiagram
     Manager-->>FemtoLogCompat: return
 ```
 
-**Initialisation Options:**
+**Initialization Options:**
 
-The logger must be set after femtologging's `Manager` is initialised. Options
+The logger must be set after femtologging's `Manager` is initialized. Options
 include:
 
-1. **Automatic** – Set during Python module initialisation (`#[pymodule]`)
+1. **Automatic** – Set during Python module initialization (`#[pymodule]`)
 2. **Explicit** – Expose `setup_rust_logging()` callable from Python
 3. **Feature-gated** – Control via an optional Cargo feature
 
-The recommended approach is explicit initialisation via a Python-callable
+The recommended approach is explicit initialization via a Python-callable
 function, giving applications control over when the bridge is activated.
 
 `setup_rust_logging()` is idempotent: once femtologging installs the global
@@ -1365,7 +1365,7 @@ The `log` crate permits only one global logger. Setting femtologging as the
 logger prevents simultaneous use of other Rust logging backends (e.g.,
 `env_logger`). This is acceptable since:
 
-- The Python application controls initialisation
+- The Python application controls initialization
 - Femtologging is the intentional backend for unified logging
 
 **Comparison with tracing::Layer (Phase 3):**

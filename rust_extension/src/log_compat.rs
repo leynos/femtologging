@@ -49,7 +49,7 @@ impl From<log::Level> for FemtoLevel {
     }
 }
 
-fn normalise_target(target: &str) -> Cow<'_, str> {
+fn normalize_target(target: &str) -> Cow<'_, str> {
     if target.contains("::") {
         Cow::Owned(target.replace("::", "."))
     } else {
@@ -57,23 +57,36 @@ fn normalise_target(target: &str) -> Cow<'_, str> {
     }
 }
 
+fn is_unknown_logger_error(py: Python<'_>, err: &PyErr) -> bool {
+    err.is_instance_of::<pyo3::exceptions::PyKeyError>(py)
+}
+
+fn is_invalid_logger_error(py: Python<'_>, err: &PyErr) -> bool {
+    err.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+}
+
+/// Classify a logger resolution error for diagnostic logging.
+fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
+    if is_unknown_logger_error(py, err) {
+        "unknown logger target"
+    } else if is_invalid_logger_error(py, err) {
+        "invalid logger target"
+    } else {
+        "unexpected error resolving logger"
+    }
+}
+
 fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
-    let normalised = normalise_target(target);
-    match manager::get_logger(py, normalised.as_ref()) {
-        Ok(logger) => Some((normalised.into_owned(), logger)),
+    let normalized = normalize_target(target);
+    match manager::get_logger(py, normalized.as_ref()) {
+        Ok(logger) => Some((normalized.into_owned(), logger)),
         Err(err) => {
-            let reason = if err.is_instance_of::<pyo3::exceptions::PyKeyError>(py) {
-                "unknown logger target"
-            } else if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
-                "invalid logger target"
-            } else {
-                "unexpected error resolving logger"
-            };
+            let reason = classify_logger_error(py, &err);
             log::warn!(
                 target: "femtologging.log_compat",
-                "femtologging: {reason} {:?} (normalised {:?}); falling back to root: {}",
+                "femtologging: {reason} {:?} (normalized {:?}); falling back to root: {}",
                 target,
-                normalised.as_ref(),
+                normalized.as_ref(),
                 err
             );
             let logger = manager::get_logger(py, "root").ok()?;
@@ -320,7 +333,7 @@ mod tests {
     }
 
     #[rstest]
-    fn adapter_normalises_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
+    fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
         let target = logger_name.replace('.', "::");
@@ -331,7 +344,7 @@ mod tests {
             logger.borrow(py).add_handler(handler.clone());
 
             let record = log::Record::builder()
-                .args(format_args!("normalised"))
+                .args(format_args!("normalized"))
                 .level(log::Level::Info)
                 .target(&target)
                 .build();

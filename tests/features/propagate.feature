@@ -9,7 +9,7 @@ Feature: Logger propagation behaviour
     Given a file handler "root_handler" writing to a temporary file
     And a ConfigBuilder with root logger using handler "root_handler" at level "INFO"
     And a child logger "child" at level "INFO" without handlers
-    When I build and initialise the configuration
+    When I build and initialize the configuration
     And I log "hello from child" at level "INFO" from logger "child"
     And I flush all loggers
     Then the root handler file contains "hello from child"
@@ -18,7 +18,7 @@ Feature: Logger propagation behaviour
     Given a file handler "root_handler" writing to a temporary file
     And a ConfigBuilder with root logger using handler "root_handler" at level "INFO"
     And a child logger "child" at level "INFO" without propagation
-    When I build and initialise the configuration
+    When I build and initialize the configuration
     And I log "hidden message" at level "INFO" from logger "child"
     And I flush all loggers
     Then the root handler file does not contain "hidden message"
@@ -27,7 +27,7 @@ Feature: Logger propagation behaviour
     Given a file handler "root_handler" writing to a temporary file
     And a ConfigBuilder with root logger using handler "root_handler" at level "INFO"
     And a child logger "child" at level "INFO" without handlers
-    When I build and initialise the configuration
+    When I build and initialize the configuration
     And I disable propagation on logger "child"
     And I log "before toggle" at level "INFO" from logger "child"
     And I flush all loggers
@@ -42,7 +42,7 @@ Feature: Logger propagation behaviour
     And a ConfigBuilder with root logger using handler "root_handler" at level "INFO"
     And an intermediate logger "parent" at level "INFO" without handlers
     And a leaf logger "parent.child" at level "INFO" without handlers
-    When I build and initialise the configuration
+    When I build and initialize the configuration
     And I log "deep message" at level "INFO" from logger "parent.child"
     And I flush all loggers
     Then the root handler file contains "deep message"
@@ -52,7 +52,7 @@ Feature: Logger propagation behaviour
     And a file handler "child_handler" writing to a temporary file
     And a ConfigBuilder with root logger using handler "root_handler" at level "INFO"
     And a child logger "child" at level "INFO" using handler "child_handler"
-    When I build and initialise the configuration
+    When I build and initialize the configuration
     And I log "dual handler message" at level "INFO" from logger "child"
     And I flush all loggers
     Then the root handler file contains "dual handler message"
