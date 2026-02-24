@@ -198,7 +198,7 @@ entire frame or exception capture aborts with an error:
 missing, `None`, or the wrong type:
 
 - Stack frame: `end_lineno`, `colno`, `end_colno`, `line` (source line),
-  `locals` (currently disabled; see
+  `locals` (disabled as of 0.1.0; see
   [Known risks and limitations](#known-risks-and-limitations))
 - Exception: `module`, `args`, `__notes__`, `__cause__`, `__context__`,
   `exceptions` (for `ExceptionGroup`)
@@ -222,7 +222,7 @@ rather than aborting the entire collection:
 
 - **`locals` dictionary:** Entries with non-string keys or values whose
   `repr()` fails are skipped. Valid entries are preserved. An empty result
-  becomes `None`. Note: locals capture is currently disabled (see
+  becomes `None`. Note: locals capture is disabled as of 0.1.0 (see
   [Known risks and limitations](#known-risks-and-limitations)); these rules
   apply only when it is enabled.
 - **`args_repr` list:** If `.args` is missing, `None`, or not a tuple, the
@@ -256,14 +256,16 @@ This approach was chosen for several reasons:
 
 ## Known risks and limitations
 
-### Local variable capture is disabled
+### Local variable capture is disabled (as of 0.1.0)
 
 The schema and extraction logic for local variables are fully implemented
 (`extract_locals_dict` in `traceback_frames.rs` and the `locals` field on
-`StackFrame`), but locals capture is currently disabled. The
+`StackFrame`), but locals capture is disabled as of version 0.1.0. The
 `TracebackException` constructor is called with `capture_locals=False`, so
 Python does not populate `.locals` on frame summaries and the extraction
-function always returns `None`.
+function always returns `None`. In practice this means the `locals` field is
+absent from serialized exception payloads, and Python formatters or handlers
+that inspect `exc_info` frames in the record dict will never see a `locals` key.
 
 This is intentional. Enabling locals capture carries three concerns that have
 not yet been addressed:
