@@ -240,8 +240,8 @@ class StdlibHandlerAdapter:
     The adapter implements the ``handle_record`` interface expected by
     femtologging's handler pipeline.  When femtologging dispatches a
     record, the adapter constructs a ``logging.LogRecord`` and calls
-    the wrapped handler's ``handle()`` method so that handler-level
-    filtering, attached filters, and I/O locking are applied.
+    the wrapped handler's ``handle()`` method so that attached filters
+    and I/O locking are applied.
 
     Parameters
     ----------
@@ -309,8 +309,8 @@ class StdlibHandlerAdapter:
 
         The constructed ``LogRecord`` is passed through
         ``self._handler.handle()`` rather than ``emit()`` directly, so
-        handler-level filtering, any attached ``logging.Filter``
-        instances, and the handler's I/O lock are all applied.
+        any attached ``logging.Filter`` instances and the handler's
+        I/O lock are all applied.
 
         Parameters
         ----------

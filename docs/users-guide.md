@@ -321,7 +321,7 @@ incompatible with femtologging's `handle_record(dict)` protocol.
 `StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
 subclass, translates femtologging record dicts into `logging.LogRecord`
 instances, and delegates to the wrapped handler's `handle()` method so that
-handler-level filtering, attached filters, and I/O locking apply.
+attached filters and I/O locking apply.
 
 ```python
 import logging
