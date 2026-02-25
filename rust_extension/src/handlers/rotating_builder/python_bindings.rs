@@ -58,12 +58,13 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(text_signature = "(self, capacity)")]
     fn py_with_capacity<'py>(
         mut slf: PyRefMut<'py, Self>,
-        capacity: usize,
+        capacity: Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        if capacity == 0 {
-            return Err(PyValueError::new_err("capacity must be greater than zero"));
-        }
-        slf.common.set_capacity(capacity);
+        let capacity = extract_positive_i128(capacity, "capacity")?;
+        let capacity = usize::try_from(capacity)
+            .map_err(|_| PyOverflowError::new_err("capacity exceeds the allowable range"))?;
+        let updated = slf.clone().with_capacity(capacity);
+        *slf = updated;
         Ok(slf)
     }
 
@@ -75,7 +76,8 @@ impl RotatingFileHandlerBuilder {
         interval: u64,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let interval = py_flush_after_records_to_nonzero(interval)?;
-        slf.common.set_flush_after_records(interval);
+        let updated = slf.clone().with_flush_after_records(interval);
+        *slf = updated;
         Ok(slf)
     }
 
@@ -89,8 +91,8 @@ impl RotatingFileHandlerBuilder {
         let max_bytes = extract_positive_i128(max_bytes, "max_bytes")?;
         let max_bytes = u64::try_from(max_bytes)
             .map_err(|_| PyOverflowError::new_err("max_bytes exceeds the allowable range"))?;
-        slf.max_bytes = NonZeroU64::new(max_bytes);
-        slf.max_bytes_set = true;
+        let updated = slf.clone().with_max_bytes(max_bytes);
+        *slf = updated;
         Ok(slf)
     }
 
@@ -104,8 +106,8 @@ impl RotatingFileHandlerBuilder {
         let backup_count = extract_positive_i128(backup_count, "backup_count")?;
         let backup_count = usize::try_from(backup_count)
             .map_err(|_| PyOverflowError::new_err("backup_count exceeds the allowable range"))?;
-        slf.backup_count = NonZeroUsize::new(backup_count);
-        slf.backup_count_set = true;
+        let updated = slf.clone().with_backup_count(backup_count);
+        *slf = updated;
         Ok(slf)
     }
 
