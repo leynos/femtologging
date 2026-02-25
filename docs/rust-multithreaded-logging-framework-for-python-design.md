@@ -150,8 +150,10 @@ The primary components of the `femtologging` system include:
   provided, but users can implement custom formatters.
 
 - `FemtoFilter` **Trait and Implementations:** A trait for providing
-  fine-grained control over which log records are processed by a logger or
-  handler.
+  fine-grained control over which log records are processed. The accepted
+  direction in [ADR 003](./adr-003-python-stdlib-filter-parity.md) is phased
+  parity for Python standard library callback filters on loggers and the root
+  logger, while preserving Rust-native filters for low-overhead cases.
 
 ### 3.2 The Producer-Consumer Data Flow
 
@@ -169,9 +171,16 @@ The logging process will follow these steps:
    contextual information. Any requested exception or stack payload is captured
    and serialized at this stage.
 
-4. **Channel Send:** The `FemtoLogRecord` is sent through one or more MPSC
-   channels to the consumer threads associated with the active handlers for
-   that logger. The choice of MPSC channel implementation is critical for
+4. **Filter Evaluation and Enrichment (Producer-Side):** The logger applies its
+   configured filters after the level check and before queueing. This includes
+   Rust-native filters and, per
+   [ADR 003](./adr-003-python-stdlib-filter-parity.md), phased support for
+   Python callback filters. Any filter-provided enrichment is persisted into
+   Rust-owned record metadata before asynchronous dispatch.
+
+5. **Channel Send:** The accepted `FemtoLogRecord` is sent through one or more
+   MPSC channels to the consumer threads associated with the active handlers
+   for that logger. The choice of MPSC channel implementation is critical for
    performance and will be discussed further. Implementations like `flume` or
    `thingbuf::mpsc` offer different trade-offs in terms of speed, blocking
    behaviour, and features.
@@ -180,14 +189,11 @@ The logging process will follow these steps:
    running count is available via `FemtoLogger.get_dropped()` for tests and
    dashboards, and a rate-limited warning surfaces the total periodically.
 
-5. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
+6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.
 
-6. **Filtering (Handler-Level):** The consumer thread may apply handler-specific
-   filters to the received record.
-
-7. **Formatting:** If the record passes filters, it is formatted into a string
-   using the handler's configured `FemtoFormatter`.
+7. **Formatting:** The record is formatted into a string using the handler's
+   configured `FemtoFormatter`.
 
 8. **Output:** The formatted string is written to the target destination (e.g.,
    file, socket, console) by the consumer thread.
@@ -834,17 +840,19 @@ batches rather than one by one.
 
 Dynamic filtering, while a desirable feature for operational flexibility, also
 has performance implications. If filters are complex or numerous, evaluating
-them on the hot path for every log call can add overhead. CPython's
+them on the hot path for every log call can add overhead. CPython's `logging`
+allows filters on both loggers and handlers. The current
+[ADR 003](./adr-003-python-stdlib-filter-parity.md) scope prioritizes logger
+and root filter parity first, including Python callback filters, while
+handler-level parity remains out of scope for that decision.
 
-`logging` allows filters on both loggers and handlers. If
-
-`femtologging` supports dynamically changing filters, the mechanism for
-accessing and evaluating the current filter set must be highly efficient (e.g.,
-using an `Arc<Vec<Box<dyn FemtoFilter + Send + Sync>>>` accessed via an atomic
-read or a `RwLock` for updates). The primary level check should always precede
-any filter evaluation to short-circuit as early as possible. For very common
-filter criteria, more advanced techniques like pre-calculated bitmasks or bloom
-filters might be considered, though this adds complexity.
+If `femtologging` supports dynamically changing filters, the mechanism for
+accessing and evaluating the current filter set must be highly efficient (for
+example, using an `Arc<Vec<Box<dyn FemtoFilter + Send + Sync>>>` accessed via
+an atomic read or a `RwLock` for updates). The primary level check should
+always precede any filter evaluation to short-circuit as early as possible. For
+very common filter criteria, more advanced techniques like pre-calculated
+bitmasks or bloom filters might be considered, though this adds complexity.
 
 ## 6. API Design and Developer Experience
 
@@ -978,6 +986,12 @@ potential future enhancement.
   languages without relearning the configuration model. The Python builder sits
   alongside helpers that replicate `basicConfig`, `dictConfig`, and
   `fileConfig`, but it remains the recommended approach for new applications.
+
+  Current `dictConfig` support accepts declarative filter definitions (for
+  example level and name forms). The accepted direction in
+  [ADR 003](./adr-003-python-stdlib-filter-parity.md) extends this with phased
+  support for standard library factory-based filter declarations (the `"()"`
+  form), while preserving existing declarative behaviour.
 
   ```python
   from femtologging import Config, FileHandler, Formatter
@@ -1431,8 +1445,10 @@ involves:
   `FemtoFormatter` instance (either a default or a custom one).
 
 - **Adding Filters:** `FemtoFilter` instances can be associated with specific
-  loggers or handlers to provide more granular control over log message
-  processing.
+  loggers (including the root logger) to provide granular control over log
+  message processing. Per [ADR 003](./adr-003-python-stdlib-filter-parity.md),
+  phased Python callback filter parity is targeted at logger and root filters;
+  handler-level stdlib parity is explicitly deferred.
 
 ### 7.2. Dynamic Reconfiguration
 
@@ -1584,6 +1600,10 @@ A phased approach will allow for iterative development and feedback:
     spans.
 
   - Introduce file-based configuration (e.g., using YAML or TOML and `serde`).
+
+  - Add phased Python stdlib filter parity for logger and root filters
+    (callback filters plus `dictConfig` factory forms) in line with
+    [ADR 003](./adr-003-python-stdlib-filter-parity.md).
 
   - Enhance structured logging capabilities in macros (e.g., more sophisticated
     value capture, easier context propagation).
