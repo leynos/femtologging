@@ -320,6 +320,15 @@ ADR 003 defines the accepted direction for Python standard library parity:
 logger and root filters will also support Python callback filters
 (`logging.Filter` objects or callables), evaluated on the producer path with
 record enrichment persisted into Rust-owned metadata before queueing.[^adr003]
+The ADR also defines the callback-enrichment persistence contract:
+
+- Enrichment keys must be strings and must not collide with stdlib
+  `LogRecord` attributes or femtologging-reserved metadata keys.
+- Enrichment values may only be `str`, `int`, `float`, `bool`, or `None`.
+  Non-string scalar values are stringified before persistence.
+- Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key, 1,024
+  UTF-8 bytes per value, and 16 KiB total serialized enrichment payload per
+  record.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
@@ -735,7 +744,14 @@ In the shipped implementation, top-level ``filters`` entries currently support
 the declarative ``{"level": ...}`` and ``{"name": ...}`` forms. ADR 003 adds
 the accepted direction to extend ``dictConfig`` filter parsing with stdlib
 factory support (`"()"`) while preserving the existing declarative
-forms.[^adr003]
+forms.[^adr003] The ADR defines the conflict rules for this mixed syntax:
+
+- If a filter entry uses `"()"`, it is treated as a factory entry and must not
+  include `level` or `name`.
+- If a filter entry omits `"()"`, it must include exactly one of `level` or
+  `name`.
+- Mixed or ambiguous forms are rejected with ``ValueError``. No precedence is
+  applied between factory and declarative keys.
 
 `incremental=True` is explicitly rejected. The implementation favours explicit
 errors for malformed structures, unknown handler classes, or other unsupported

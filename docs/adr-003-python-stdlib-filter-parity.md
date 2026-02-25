@@ -1,4 +1,4 @@
-# ADR 003: Python stdlib filter parity support
+# Architectural decision record (ADR) 003: Python standard library filter parity
 
 ## Status
 
@@ -22,10 +22,10 @@ records via a filter. A representative example is the Falcon correlation ID
 middleware design, which expects a contextual `logging.Filter` to set
 `correlation_id` and `user_id` on each record before formatting.[^1]
 
-An architectural decision is needed to define how parity with Python stdlib
-filter behaviour should be implemented without violating femtologging's core
-constraints around asynchronous dispatch, thread safety, and predictable
-performance.
+An architectural decision is needed to define how parity with Python standard
+library (stdlib) filter behaviour should be implemented without violating
+femtologging's core constraints around asynchronous dispatch, thread safety,
+and predictable performance.
 
 ## Decision drivers
 
@@ -101,14 +101,28 @@ The chosen direction includes:
 
 - A Python-backed filter adapter that accepts either:
   - objects exposing `filter(record)`, or
-  - callables that take one record argument and return truthy/falsey values.
+  - callables that take one record argument and return truthy/falsy values.
 - A mutable record view for callback execution that mirrors stdlib expectations
   for record attribute enrichment.
 - Serialization of accepted enrichment fields into record metadata so Python
   formatters and handlers can read them later without Python object sharing
   across threads.
+- Explicit enrichment persistence constraints:
+  - keys must be strings and must not collide with stdlib `LogRecord`
+    attributes or femtologging-reserved metadata keys;
+  - values may be `str`, `int`, `float`, `bool`, or `None` only, with
+    non-string scalar values converted to strings before persistence;
+  - enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
+    1,024 UTF-8 bytes per value, and 16 KiB total serialized enrichment payload
+    per record.
 - `dictConfig` support for stdlib-style filter factories (`"()"`) alongside
   existing `level` and `name` forms.
+- `dictConfig` conflict handling semantics:
+  - entries using `"()"` are factory-mode entries and must not include `level`
+    or `name`;
+  - entries without `"()"` must include exactly one of `level` or `name`;
+  - mixed or ambiguous forms are rejected with `ValueError` (no precedence
+    ordering is applied).
 
 ## Goals and non-goals
 
@@ -136,7 +150,8 @@ record enrichment persistence to Rust-owned metadata.
 ### Phase 2: configuration parity expansion
 
 Extend `dictConfig` filter parsing to support stdlib factory forms (`"()"`) and
-document expected compatibility behaviour.
+document expected compatibility behaviour, including the mixed-form rejection
+rules defined in this ADR.
 
 ### Phase 3: conformance and hardening
 
@@ -149,7 +164,8 @@ safety, error semantics, and performance regression coverage.
   using Python filters.
 - Partial stdlib parity may still leave behavioural differences for rare
   `logging` edge cases.
-- Record enrichment must remain bounded to avoid untracked payload growth.
+- Enrichment bound enforcement can reject callback-produced fields when limits
+  are exceeded.
 
 ## Architectural rationale
 
