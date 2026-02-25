@@ -5,11 +5,6 @@
 
 use std::num::{NonZeroU64, NonZeroUsize};
 
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
-
-#[cfg(feature = "python")]
-use super::common::{PyOverflowPolicy, py_flush_after_records_to_nonzero};
 use super::{
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
@@ -18,12 +13,8 @@ use super::{
 };
 use crate::formatter::{DefaultFormatter, FemtoFormatter};
 
-use crate::handlers::builder_macros::builder_methods;
-#[cfg(feature = "python")]
-use crate::macros::{AsPyDict, dict_into_py};
-
 /// Builder for constructing [`FemtoRotatingFileHandler`] instances.
-#[cfg_attr(feature = "python", pyclass(from_py_object))]
+#[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct RotatingFileHandlerBuilder {
     path: String,
@@ -59,6 +50,47 @@ impl RotatingFileHandlerBuilder {
         F: IntoFormatterConfig,
     {
         self.common.set_formatter(formatter);
+        self
+    }
+
+    /// Set the bounded channel capacity.
+    ///
+    /// # Validation
+    ///
+    /// The capacity must be greater than zero; invalid values cause `build` to
+    /// error.
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.common.set_capacity(capacity);
+        self
+    }
+
+    /// Set the flush threshold measured in records.
+    ///
+    /// # Validation
+    ///
+    /// The threshold must be greater than zero (`NonZeroU64`).
+    ///
+    /// # Platform-specific behaviour
+    ///
+    /// On 32-bit platforms where `usize::MAX < u64::MAX`, values exceeding
+    /// `usize::MAX` are clamped silently at build time. Python callers receive
+    /// an `OverflowError` instead (validated at the API boundary).
+    pub fn with_flush_after_records(mut self, interval: NonZeroU64) -> Self {
+        self.common.set_flush_after_records(interval);
+        self
+    }
+
+    /// Set the maximum number of bytes before rotation occurs.
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_bytes = NonZeroU64::new(max_bytes);
+        self.max_bytes_set = true;
+        self
+    }
+
+    /// Set how many backup files to retain during rotation.
+    pub fn with_backup_count(mut self, backup_count: usize) -> Self {
+        self.backup_count = NonZeroUsize::new(backup_count);
+        self.backup_count_set = true;
         self
     }
 
@@ -115,157 +147,7 @@ impl RotatingFileHandlerBuilder {
 }
 
 #[cfg(feature = "python")]
-impl RotatingFileHandlerBuilder {
-    /// Populate a Python dictionary with the builder's fields.
-    fn fill_pydict(&self, d: &pyo3::Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
-        d.set_item("path", &self.path)?;
-        self.common.extend_py_dict(d)?;
-        d.set_item("max_bytes", self.max_bytes.map_or(0, NonZeroU64::get))?;
-        d.set_item(
-            "backup_count",
-            self.backup_count.map_or(0, NonZeroUsize::get),
-        )?;
-        Ok(())
-    }
-}
-
-builder_methods! {
-    impl RotatingFileHandlerBuilder {
-        capacity {
-            self_ident = builder,
-            setter = |builder_ref, capacity| {
-                builder_ref.common.set_capacity(capacity);
-            }
-        };
-        methods {
-            method {
-                doc: "Set the flush threshold measured in records.\n\n# Validation\n\nThe threshold must be greater than zero (`NonZeroU64`).\n\n# Platform-specific behaviour\n\nOn 32-bit platforms where `usize::MAX < u64::MAX`, values exceeding `usize::MAX` are clamped silently at build time. Python callers receive an `OverflowError` instead (validated at the API boundary).",
-                rust_name: with_flush_after_records,
-                py_fn: py_with_flush_after_records,
-                py_name: "with_flush_after_records",
-                py_text_signature: "(self, interval)",
-                rust_args: (interval: NonZeroU64),
-                py_args: (interval: u64),
-                py_prelude: {
-                    let interval =
-                        py_flush_after_records_to_nonzero(interval)?;
-                },
-                self_ident: builder,
-                body: {
-                    builder.common.set_flush_after_records(interval);
-                }
-            }
-            method {
-                doc: "Set the maximum number of bytes before rotation occurs.",
-                rust_name: with_max_bytes,
-                py_fn: py_with_max_bytes,
-                py_name: "with_max_bytes",
-                py_text_signature: "(self, max_bytes)",
-                rust_args: (max_bytes: u64),
-                py_args: (max_bytes: pyo3::Bound<'py, pyo3::types::PyAny>),
-                py_prelude: {
-                    use pyo3::exceptions::{PyOverflowError, PyValueError};
-
-                    let max_bytes = max_bytes.extract::<i128>()?;
-                    if max_bytes < 0 {
-                        return Err(PyValueError::new_err(
-                            "max_bytes must be greater than zero",
-                        ));
-                    }
-                    if max_bytes == 0 {
-                        return Err(PyValueError::new_err(
-                            "max_bytes must be greater than zero",
-                        ));
-                    }
-                    let max_bytes = u64::try_from(max_bytes)
-                        .map_err(|_| PyOverflowError::new_err(
-                            "max_bytes exceeds the allowable range",
-                        ))?;
-                },
-                self_ident: builder,
-                body: {
-                    builder.max_bytes = NonZeroU64::new(max_bytes);
-                    builder.max_bytes_set = true;
-                }
-            }
-            method {
-                doc: "Set how many backup files to retain during rotation.",
-                rust_name: with_backup_count,
-                py_fn: py_with_backup_count,
-                py_name: "with_backup_count",
-                py_text_signature: "(self, backup_count)",
-                rust_args: (backup_count: usize),
-                py_args: (backup_count: pyo3::Bound<'py, pyo3::types::PyAny>),
-                py_prelude: {
-                    use pyo3::exceptions::{PyOverflowError, PyValueError};
-
-                    let backup_count = backup_count.extract::<i128>()?;
-                    if backup_count <= 0 {
-                        return Err(PyValueError::new_err(
-                            "backup_count must be greater than zero",
-                        ));
-                    }
-                    let backup_count = usize::try_from(backup_count)
-                        .map_err(|_| PyOverflowError::new_err(
-                            "backup_count exceeds the allowable range",
-                        ))?;
-                },
-                self_ident: builder,
-                body: {
-                    builder.backup_count = NonZeroUsize::new(backup_count);
-                    builder.backup_count_set = true;
-                }
-            }
-        }
-        extra_py_methods {
-            /// Create a new `RotatingFileHandlerBuilder`.
-            #[new]
-            fn py_new(path: String) -> Self {
-                Self::new(path)
-            }
-
-            #[pyo3(name = "with_overflow_policy")]
-            fn py_with_overflow_policy<'py>(
-                mut slf: PyRefMut<'py, Self>,
-                policy: PyOverflowPolicy,
-            ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_overflow_policy(policy.inner);
-                Ok(slf)
-            }
-
-            #[pyo3(name = "with_formatter")]
-            #[pyo3(signature = (formatter))]
-            #[pyo3(text_signature = "(self, formatter)")]
-            fn py_with_formatter<'py>(
-                mut slf: PyRefMut<'py, Self>,
-                formatter: Bound<'py, PyAny>,
-            ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_formatter_from_py(&formatter)?;
-                Ok(slf)
-            }
-
-            /// Return a dictionary describing the builder configuration.
-            fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-                self.as_pydict(py)
-            }
-
-            /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
-            /// failure.
-            fn build(&self) -> PyResult<FemtoRotatingFileHandler> {
-                <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
-            }
-        }
-    }
-}
-
-#[cfg(feature = "python")]
-impl AsPyDict for RotatingFileHandlerBuilder {
-    fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let d = pyo3::types::PyDict::new(py);
-        self.fill_pydict(&d)?;
-        dict_into_py(d, py)
-    }
-}
+mod python_bindings;
 
 impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
     type Handler = FemtoRotatingFileHandler;
