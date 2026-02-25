@@ -181,6 +181,29 @@ where applicable.
   [design §7.2](./rust-multithreaded-logging-framework-for-python-design.md#72-dynamic-reconfiguration)
    and
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
+- [ ] 3.2.5. Deliver Python standard library filter parity for logger and root
+  filters. See
+  [ADR 003 decision outcome](./adr-003-python-stdlib-filter-parity.md#decision-outcome--proposed-direction)
+   and [configuration design §1.1.1](./configuration-design.md#111-filters).
+- [ ] 3.2.5.1. Implement and verify producer-path callback filters:
+  execute Python callback filters on the producer path and persist accepted
+  enrichments in Rust-owned metadata. Completion criteria: unit tests confirm
+  accepted enrichment persistence on records that pass filtering. See
+  [ADR 003 phase 1](./adr-003-python-stdlib-filter-parity.md#phase-1-producer-path-callback-filter-support)
+   and [configuration design §1.1.1](./configuration-design.md#111-filters).
+- [ ] 3.2.5.2. Implement `dictConfig` filter factory parsing for `"()"` with
+  ADR 003 conflict rejection semantics for mixed declarative/factory forms.
+  Completion criteria: parser tests cover accepted factory declarations and
+  rejected mixed or ambiguous forms. See
+  [ADR 003 phase 2](./adr-003-python-stdlib-filter-parity.md#phase-2-configuration-parity-expansion)
+   and [configuration design §2.2](./configuration-design.md#22-dictconfig).
+- [ ] 3.2.5.3. Add integration and concurrency tests for contextvar enrichment
+  propagation and thread/async safety. Completion criteria: CI remains green
+  with reproducible tests that prove propagation under concurrent and async
+  execution paths. See
+  [ADR 003 phase 3](./adr-003-python-stdlib-filter-parity.md#phase-3-conformance-and-hardening)
+   and
+  [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
 
 ### 3.3. Rust ecosystem integration
 

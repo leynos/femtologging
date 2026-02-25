@@ -18,6 +18,12 @@ libraries. Use the links below to explore each topic.
 
 - [adr-001-python-exception-logging.md](./adr-001-python-exception-logging.md)
   - Proposes support for `exc_info` and `stack_info` in the Python logging API.
+- [adr-002-journald-and-otel-support.md](./adr-002-journald-and-otel-support.md)
+  - Records the phased design for Journald support and OpenTelemetry
+    integration via `tracing`.
+- [adr-003-python-stdlib-filter-parity.md](./adr-003-python-stdlib-filter-parity.md)
+  - Records the decision to add phased parity for Python stdlib callback
+    filters.
 
 ## Logging Architecture
 
