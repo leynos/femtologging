@@ -7,6 +7,7 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
+mod convenience_methods;
 mod py_handler;
 mod python_helpers;
 
@@ -346,7 +347,6 @@ impl FemtoLogger {
     }
 
     /// Return whether `level` is enabled for this logger.
-    #[cfg(feature = "log-compat")]
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
         u8::from(level) >= self.level.load(Ordering::Relaxed)
     }

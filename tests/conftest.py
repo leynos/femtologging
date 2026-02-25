@@ -60,6 +60,42 @@ def file_handler_factory() -> FileHandlerFactory:
     return factory
 
 
+@pytest.fixture
+def active_exception() -> cabc.Callable[[str], typ.ContextManager[None]]:
+    """Return a context manager that establishes an active exception.
+
+    The returned callable accepts a message and yields inside a
+    ``try/except`` block so that ``sys.exc_info()`` is populated for
+    the duration of the ``with`` block.
+
+    .. note::
+
+        Because ``@contextmanager`` creates a generator frame,
+        ``sys.exc_info()`` is scoped to that frame and is **not**
+        visible to the ``with``-body in the calling test.  Tests that
+        need the exception visible to ``sys.exc_info()`` in their own
+        frame must still use an inline ``try/except``.  This fixture
+        is useful for tests where an active handler context is
+        required but the captured traceback content is not asserted.
+
+    Examples
+    --------
+    >>> def test_example(active_exception):
+    ...     with active_exception("boom"):
+    ...         output = logger.exception("caught")
+
+    """
+
+    @contextmanager
+    def _raise(message: str = "test error") -> cabc.Generator[None, None, None]:
+        try:
+            raise ValueError(message)  # noqa: TRY301  # TODO(#340): deliberate re-raise
+        except ValueError:
+            yield
+
+    return _raise
+
+
 @pytest.fixture(autouse=True)
 def _clean_logging_manager() -> cabc.Generator[None, None, None]:
     """Reset global logger manager before and after each test."""

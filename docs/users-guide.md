@@ -66,8 +66,14 @@ your process exits.
   (default format is `"{logger} [LEVEL] message"`), or `None` when the record
   is filtered out. This differs from `logging.Logger.log()`, which always
   returns `None`.
-- Convenience methods (`logger.info`, `logger.warning`, and so on) are not
-  implemented yet; call `log()` directly or wrap it in a helper.
+- Convenience methods `logger.debug(message)`, `logger.info(message)`,
+  `logger.warning(message)`, `logger.error(message)`,
+  `logger.critical(message)`, and `logger.exception(message)` are available.
+  Each accepts a pre-formatted `message` string plus optional `exc_info` and
+  `stack_info` keyword arguments, identical to `log()`. Unlike the stdlib,
+  `*args` / `**kwargs` lazy formatting is not supported — build the final
+  message string before calling these methods. `exception()` behaves like
+  `error()` but defaults `exc_info` to `True`.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info`
   for capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:
@@ -90,6 +96,11 @@ your process exits.
   logger.log("DEBUG", "checkpoint reached", stack_info=True)
   ```
 
+- `logger.isEnabledFor(level)` returns `True` when the logger would process a
+  record at the given level. Use it for expensive message construction that
+  should be skipped when the level is filtered out.
+- `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
+  compatibility with code written against `logging.getLogger`.
 - There is no equivalent to `extra` or lazy formatting. Build the final
   message string before calling `log()`.
 
@@ -375,16 +386,14 @@ builder.build_and_init()
   `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
   `backoff_*` aliases).
 - Top-level `filters` sections are supported. Each filter mapping must
-  contain exactly one of `level` or `name`; supplying both is rejected
-  as ambiguous. `level` creates a `LevelFilterBuilder` (via
-  `with_max_level`), `name` creates a `NameFilterBuilder` (via
-  `with_prefix`). Loggers and the root logger accept a `filters` list
-  of filter IDs.
+  contain exactly one of `level` or `name`; supplying both is rejected as
+  ambiguous. `level` creates a `LevelFilterBuilder` (via `with_max_level`),
+  `name` creates a `NameFilterBuilder` (via `with_prefix`). Loggers and the
+  root logger accept a `filters` list of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
-  handler `level`, handler `filters`, and handler formatters. Although
-  the schema accepts a `formatters` section, referencing a formatter
-  from a handler currently results in
-  `ValueError("unknown formatter id")`.
+  handler `level`, handler `filters`, and handler formatters. Although the
+  schema accepts a `formatters` section, referencing a formatter from a handler
+  currently results in `ValueError("unknown formatter id")`.
 - A `root` section is mandatory. Named loggers support `level`,
   `handlers`, `filters`, and `propagate` (bool).
 
@@ -424,22 +433,22 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   yet implemented.
 - Filters are available through both `ConfigBuilder` and `dictConfig`.
   `fileConfig` does not yet support filter declarations. Handler-level
-  `filters` and `level` attributes remain unsupported, as these require
-  Rust infrastructure changes outside the current scope.
+  `filters` and `level` attributes remain unsupported, as these require Rust
+  infrastructure changes outside the current scope.
 
 ## Deviations from stdlib logging
 
-- No shorthand methods (`info`, `debug`, `warning`, …) or `LoggerAdapter`.
-- `log()` returns the formatted string instead of `None`, and there is no
-  `Logger.isEnabledFor()` helper.
-- Records lack `extra` and calling-module introspection. `exc_info` and
-  `stack_info` are supported as keyword-only arguments to `log()`.
+- No `LoggerAdapter`.
+- `log()` and the convenience methods (`debug`, `info`, `warning`, `error`,
+  `critical`, `exception`) return the formatted string instead of `None`.
+- Records lack `extra`, lazy formatting, and calling-module introspection.
+  `exc_info` and `stack_info` are supported as keyword-only arguments to
+  `log()` and the convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads, so Python `logging.Handler` subclasses
   cannot be reused.
 - The `dictConfig` schema lacks incremental updates, handler filters,
-  handler levels, and formatter attachment. `fileConfig` is likewise
-  cut down.
+  handler levels, and formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final

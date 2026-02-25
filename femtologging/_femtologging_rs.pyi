@@ -16,7 +16,6 @@ FemtoLevel: _Any
 LevelName = Literal["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"]
 LevelArg = Union[LevelName, FemtoLevel]
 
-# Type alias for exc_info parameter
 ExcInfo = Union[
     bool,
     BaseException,
@@ -76,20 +75,96 @@ class FemtoLogger:
     def clear_filters(self) -> None: ...
     def get_dropped(self) -> int: ...
     def flush_handlers(self) -> bool:
-        """Flush all handlers attached to this logger.
+        """Flush all handlers, returning ``True`` on success.
 
-        First waits up to 2 seconds for the internal worker thread to
-        drain its queue, then calls ``flush()`` on every attached
-        handler (each handler applies its own timeout).
+        Waits up to 2 s for the worker to drain, then calls
+        ``flush()`` on every handler.  Returns ``False`` when the
+        drain times out or any handler flush fails.
 
-        Returns
-        -------
-        bool
-            ``True`` when the worker drains in time and every handler
-            flush succeeds.
-            ``False`` when the worker queue cannot be drained (channel
-            closed or timeout exceeded) or any handler flush returns
-            ``False``.
+        """
+        ...
+    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802  # TODO(#343): camelCase for stdlib compat
+        """Return ``True`` if *level* would pass the effective level filter."""
+        ...
+    def debug(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log *message* at DEBUG level.  See ``log()`` for parameters."""
+        ...
+    def info(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log *message* at INFO level.  See ``log()`` for parameters."""
+        ...
+    def warning(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log *message* at WARNING level.  See ``log()`` for parameters."""
+        ...
+    def error(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log *message* at ERROR level.  See ``log()`` for parameters."""
+        ...
+    def critical(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = None,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log *message* at CRITICAL level.  See ``log()`` for parameters."""
+        ...
+    def _exception_impl(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = True,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Low-level Rust backend for ``exception()``.
+
+        Callers should use ``exception()`` instead.
+
+        """
+        ...
+    # NOTE: exception() is monkey-patched by _compat.py at import time.
+    # Stub declared here so type-checkers see it on the class.
+    def exception(
+        self,
+        message: str,
+        /,
+        *,
+        exc_info: ExcInfo = True,
+        stack_info: bool = False,
+    ) -> str | None:
+        """Log *message* at ERROR with ``exc_info`` defaulting to ``True``.
+
+        Automatically captures the active exception unless ``exc_info``
+        is explicitly set to ``False`` or ``None``.  See ``log()`` for
+        the full parameter reference.
 
         """
         ...
@@ -141,18 +216,10 @@ class FemtoRotatingFileHandler:
     def backup_count(self) -> int: ...
     def handle(self, logger: str, level: LevelArg, message: str) -> None: ...
     def flush(self) -> bool:
-        """Flush queued log records to disk without closing the handler.
+        """Flush queued records to disk (1 s timeout).
 
-        Uses a fixed 1-second timeout.
-
-        Returns
-        -------
-        bool
-            ``True`` when the worker acknowledges the flush within
-            the timeout.
-            ``False`` when the handler has already been closed, the
-            internal channel to the worker has been dropped, or the
-            worker does not acknowledge before the timeout elapses.
+        Returns ``True`` on success, ``False`` when closed or
+        timed out.
 
         """
         ...
@@ -245,8 +312,6 @@ def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> N
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...
-
-# Frame filtering functions
 def filter_frames(
     payload: Mapping[str, _Any],
     *,
@@ -255,39 +320,9 @@ def filter_frames(
     max_depth: int | None = ...,
     exclude_logging: bool = ...,
 ) -> dict[str, _Any]:
-    """Filter frames from a stack_info or exc_info payload.
-
-    Parameters
-    ----------
-    payload
-        The stack_info or exc_info dict from a log record.
-    exclude_filenames
-        Filename patterns to exclude (substring matching).
-    exclude_functions
-        Function name patterns to exclude (substring matching).
-    max_depth
-        Maximum number of frames to retain (keeps most recent).
-    exclude_logging
-        If True, exclude common logging infrastructure frames
-        (femtologging, logging module internals).
-
-    Returns
-    -------
-    dict
-        A new payload dict with frames filtered.
-
-    """
+    """Return *payload* with stack/exception frames filtered."""
     ...
 
 def get_logging_infrastructure_patterns() -> list[str]:
-    """Return the list of filename patterns used by exclude_logging.
-
-    This is useful for inspecting or extending the default patterns.
-
-    Returns
-    -------
-    list[str]
-        The default logging infrastructure filename patterns.
-
-    """
+    """Return filename patterns used by *exclude_logging*."""
     ...

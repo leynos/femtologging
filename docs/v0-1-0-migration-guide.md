@@ -206,3 +206,49 @@ the `serialize` modules themselves are private (`mod serialize`, not
 `pub mod`), so these symbols are not accessible to downstream crates. No
 user-facing method signatures, class names, or parameter names were altered by
 this change.
+
+______________________________________________________________________
+
+## New API additions
+
+The following new methods are available on `FemtoLogger` in v0.1.0:
+
+### Convenience logging methods
+
+`debug()`, `info()`, `warning()`, `error()`, `critical()`, and `exception()`
+are now available as direct methods on `FemtoLogger`. Each accepts a
+pre-formatted `message` string plus optional `exc_info` and `stack_info`
+keyword arguments, identical to `log()`. Unlike the stdlib, `*args` /
+`**kwargs` lazy formatting is not supported.
+
+```python
+logger = get_logger("app")
+logger.info("server started")
+logger.warning("disk usage above 90%")
+
+try:
+    risky_call()
+except Exception:
+    logger.exception("risky_call failed")
+```
+
+`exception()` behaves like `error()` but defaults `exc_info` to `True`,
+automatically capturing the active exception.
+
+### `isEnabledFor`
+
+```python
+if logger.isEnabledFor("DEBUG"):
+    logger.debug(f"expensive computation: {compute()}")
+```
+
+### `getLogger` alias
+
+`getLogger` is available as a module-level alias for `get_logger`, matching the
+standard library naming convention:
+
+```python
+from femtologging import getLogger
+
+logger = getLogger("app.module")
+```
