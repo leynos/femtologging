@@ -55,7 +55,7 @@ and predictable performance.
 
 - Execute Python filter callbacks on the producer thread before queueing.
 - Avoid retaining Python objects across queue boundaries.
-- Keep worker-thread dispatch independent from Python callbacks.
+- Keep worker-thread dispatch independent of Python callbacks.
 - Provide deterministic error handling for callback failures.
 - Preserve current handler-level filter constraints unless explicitly added in a
   separate decision.
