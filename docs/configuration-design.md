@@ -296,8 +296,9 @@ flush semantics described above.
 #### 1.1.1 Filters
 
 Filters implement the `FemtoFilter` trait and decide whether a `FemtoLogRecord`
-is processed. The builder currently recognizes two concrete filter builders
-with these semantics:
+is processed.
+
+The current implementation recognizes two concrete Rust-backed filter builders:
 
 - `LevelFilterBuilder` admits records whose level is less than or equal to
   `max_level` (inclusive). This acts after any per-logger level gating.
@@ -305,8 +306,8 @@ with these semantics:
   prefix. Filters are registered via `ConfigBuilder.with_filter()` and
   referenced by loggers through `LoggerConfigBuilder.with_filters()`.
 
-`ConfigBuilder` attempts to extract known builders in order, so adding a new
-filter requires updating this extraction logic.
+`ConfigBuilder` currently extracts known filter builders in order, so adding a
+new Rust builder variant requires updating this extraction logic.
 
 Filters run only after the logger has accepted the record based on its level.
 Records failing the logger's level check are dropped before any filter runs, so
@@ -315,6 +316,11 @@ a logger replaces its filter set: `apply_logger_config` clears any existing
 filters only after all filter IDs validate, replacing them with the newly
 specified set.
 
+ADR 003 defines the accepted direction for Python standard library parity:
+logger and root filters will also support Python callback filters
+(`logging.Filter` objects or callables), evaluated on the producer path with
+record enrichment persisted into Rust-owned metadata before queueing.[^adr003]
+
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
 The Python API will mirror the Rust builder's semantics, providing a familiar
@@ -322,10 +328,13 @@ and idiomatic Python interface. This will involve exposing builder classes and
 methods via `PyO3` bindings. Type hints will be used for clarity.
 
 `FilterBuilder` refers to the filter types described in §1.1.1
-[Filters](#111-filters). The module exposes two constructors:
+[Filters](#111-filters). The module currently exposes two constructors:
 
 - `LevelFilterBuilder(max_level: Union[str, FemtoLevel])`.
 - `NameFilterBuilder(prefix: str)`.
+
+ADR 003 extends this API direction by adding Python callback filter parity for
+logger and root filters in a phased rollout.[^adr003]
 
 String level parameters accept case-insensitive names: `TRACE`, `DEBUG`,
 `INFO`, `WARN`, `WARNING`, `ERROR`, and `CRITICAL`. `WARN` and `WARNING` are
@@ -716,10 +725,17 @@ components in a fixed order to honour dependencies:
      ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
      ``filters`` settings are currently unsupported and produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
-   ``LoggerConfigBuilder`` with optional ``level``, ``handlers`` and
-   ``propagate`` settings. Logger ``filters`` are not yet supported and trigger
-   ``ValueError``.
+   ``LoggerConfigBuilder`` with optional ``level``, ``handlers``, ``filters``,
+   and ``propagate`` settings. Logger and root ``filters`` values are lists of
+   filter identifiers that reference entries declared in the top-level
+   ``filters`` section.
 6. Finally, the **root** logger configuration is applied.
+
+In the shipped implementation, top-level ``filters`` entries currently support
+the declarative ``{"level": ...}`` and ``{"name": ...}`` forms. ADR 003 adds
+the accepted direction to extend ``dictConfig`` filter parsing with stdlib
+factory support (`"()"`) while preserving the existing declarative
+forms.[^adr003]
 
 `incremental=True` is explicitly rejected. The implementation favours explicit
 errors for malformed structures, unknown handler classes, or other unsupported
@@ -1036,3 +1052,5 @@ flowchart TD
     K -- No --> L["Return dup_err(dup)"]
     K -- Yes --> M["Return items"]
 ```
+
+[^adr003]: [ADR 003: Python stdlib filter parity support](./adr-003-python-stdlib-filter-parity.md)

@@ -181,6 +181,11 @@ where applicable.
   [design §7.2](./rust-multithreaded-logging-framework-for-python-design.md#72-dynamic-reconfiguration)
    and
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
+- [ ] 3.2.5. Add Python standard library filter parity for logger and root
+  filters, including callback filter support and `dictConfig` factory parsing.
+  See
+  [ADR 003 decision outcome](./adr-003-python-stdlib-filter-parity.md#decision-outcome--proposed-direction)
+   and [configuration design §1.1.1](./configuration-design.md#111-filters).
 
 ### 3.3. Rust ecosystem integration
 
