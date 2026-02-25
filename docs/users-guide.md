@@ -311,6 +311,55 @@ sequenceDiagram
 _Figure 2: Mutating the handler after registration does not change dispatch
 behaviour._
 
+### Using standard library (stdlib) `logging.Handler` subclasses
+
+Python's standard library ships with a rich set of handler classes
+(`FileHandler`, `RotatingFileHandler`, `SMTPHandler`, `SysLogHandler`, etc.).
+These handlers implement the stdlib `emit(LogRecord)` interface, which is
+incompatible with femtologging's `handle_record(dict)` protocol.
+
+`StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
+subclass, translates femtologging record dicts into `logging.LogRecord`
+instances, and delegates to the wrapped handler's `handle()` method so that
+attached filters and I/O locking apply.
+
+```python
+import logging
+from femtologging import FemtoLogger, StdlibHandlerAdapter
+
+# Wrap a stdlib FileHandler for use with femtologging
+file_handler = logging.FileHandler("app.log")
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(name)s [%(levelname)s] %(message)s")
+)
+
+adapter = StdlibHandlerAdapter(file_handler)
+
+logger = FemtoLogger("myapp")
+logger.add_handler(adapter)
+logger.log("INFO", "Application started")
+```
+
+The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
+level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50). A
+custom `TRACE` level name is registered with stdlib's `logging` module so that
+formatters render it as `TRACE` rather than `Level 5`.
+
+Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
+and `timestamp` are forwarded to the `LogRecord` where matching attributes
+exist.  Custom key-value pairs from `metadata.key_values` are propagated into
+the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
+`%(request_id)s`) and filters.
+
+**Limitations:**
+
+- `exc_info` is provided as pre-formatted text (`exc_text`), not as
+  the original `(type, value, traceback)` tuple.  Stdlib formatters that
+  inspect `record.exc_info` directly will not find a live traceback object.
+- `pathname` and `funcName` are set to defaults because femtologging does not
+  capture these values.  `relativeCreated` is recomputed from
+  `metadata.timestamp` when present, so elapsed-time values can be accurate.
+
 ## Configuration options
 
 ### basicConfig
@@ -445,8 +494,10 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   `exc_info` and `stack_info` are supported as keyword-only arguments to
   `log()` and the convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
-  and run on dedicated worker threads, so Python `logging.Handler` subclasses
-  cannot be reused.
+  and run on dedicated worker threads.  Existing stdlib `logging.Handler`
+  subclasses can be reused via
+  [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
+   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
 - The `dictConfig` schema lacks incremental updates, handler filters,
   handler levels, and formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
