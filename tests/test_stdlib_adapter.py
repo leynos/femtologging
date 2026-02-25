@@ -6,6 +6,7 @@ import dataclasses
 import datetime as dt
 import io
 import logging
+import time
 import typing as typ
 
 import pytest
@@ -14,8 +15,6 @@ from femtologging import FemtoLogger, StdlibHandlerAdapter
 from femtologging.adapter import (
     TRACE_LEVEL_NUM,
     FemtoRecord,
-    _make_log_record,
-    _stdlib_levelno,
 )
 
 
@@ -54,6 +53,19 @@ def adapter(
 
 
 # -- Helpers --------------------------------------------------------------
+
+
+class CapturingHandler(logging.Handler):
+    """Handler that captures emitted LogRecords for test inspection."""
+
+    def __init__(self) -> None:
+        """Initialise with an empty records list."""
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    @typ.override
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
 def log_and_capture(
@@ -339,22 +351,18 @@ class TestLogRecordAttributes:
         check_attrs: dict[str, object],
     ) -> None:
         """LogRecord attributes should be populated from the femtologging record."""
-        emitted: list[logging.LogRecord] = []
-
-        class CapturingHandler(logging.Handler):
-            @typ.override
-            def emit(self, record: logging.LogRecord) -> None:
-                emitted.append(record)
-
-        adapter = StdlibHandlerAdapter(CapturingHandler())
+        capturing = CapturingHandler()
+        adapter = StdlibHandlerAdapter(capturing)
 
         logger = FemtoLogger(logger_name)
         logger.add_handler(adapter)
         logger.log(level, message)
         del logger
 
-        assert len(emitted) == 1, f"expected 1 emitted record, got {len(emitted)}"
-        record = emitted[0]
+        assert len(capturing.records) == 1, (
+            f"expected 1 emitted record, got {len(capturing.records)}"
+        )
+        record = capturing.records[0]
 
         ctx = f"logger={logger_name!r}, level={level!r}, message={message!r}"
         if "name" in check_attrs:
@@ -393,12 +401,22 @@ class TestLogRecordAttributes:
             )
 
     @staticmethod
+    def _emit_with_timestamp(timestamp: float) -> logging.LogRecord:
+        """Emit a record with a specific timestamp through the public API."""
+        capturing = CapturingHandler()
+        adapter = StdlibHandlerAdapter(capturing)
+        femto_record: FemtoRecord = {"metadata": {"timestamp": timestamp}}
+        adapter.handle_record(femto_record)
+        assert len(capturing.records) == 1, (
+            f"expected 1 emitted record, got {len(capturing.records)}"
+        )
+        return capturing.records[0]
+
+    @staticmethod
     def test_msecs_consistent_with_created() -> None:
         """Milliseconds should be derived from created when timestamp is overridden."""
         timestamp = 1700000000.456
-        record = _make_log_record(
-            {"metadata": {"timestamp": timestamp}},
-        )
+        record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
         assert record.created == timestamp, (
             f"record.created mismatch: got {record.created}, expected {timestamp}"
         )
@@ -412,9 +430,7 @@ class TestLogRecordAttributes:
         """Formatted asctime should reflect the overridden timestamp."""
         # 2023-11-14 22:13:20.456 UTC
         timestamp = 1700000000.456
-        record = _make_log_record(
-            {"metadata": {"timestamp": timestamp}},
-        )
+        record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
         formatter = logging.Formatter("%(asctime)s")
         formatted = formatter.format(record)
 
@@ -433,10 +449,8 @@ class TestLogRecordAttributes:
     def test_relative_created_consistent_with_created() -> None:
         """Relative-created should be recomputed when timestamp is overridden."""
         timestamp = 1700000000.456
-        record = _make_log_record(
-            {"metadata": {"timestamp": timestamp}},
-        )
-        start_time: float = getattr(logging, "_startTime", 0.0)
+        record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
+        start_time: float = getattr(logging, "_startTime", time.time())
         expected = (record.created - start_time) * 1000.0
         assert record.relativeCreated == pytest.approx(expected), (
             f"relativeCreated mismatch: got {record.relativeCreated}, "
@@ -445,11 +459,11 @@ class TestLogRecordAttributes:
 
 
 class TestLevelFallback:
-    """Verify _stdlib_levelno falls back to WARNING for unknown levels."""
+    """Verify the adapter falls back to WARNING for unknown levels."""
 
     @staticmethod
     @pytest.mark.parametrize(
-        ("record", "expected"),
+        ("femto_record", "expected"),
         [
             ({"levelno": 99}, logging.WARNING),
             ({"level": "FOO"}, logging.WARNING),
@@ -458,12 +472,19 @@ class TestLevelFallback:
         ids=["unknown_levelno", "unknown_name", "empty_record"],
     )
     def test_unknown_level_falls_back(
-        record: FemtoRecord,
+        femto_record: FemtoRecord,
         expected: int,
     ) -> None:
         """Unknown or missing level information should fall back to WARNING."""
-        assert _stdlib_levelno(record) == expected, (
-            f"expected {expected} for record {record!r}, got {_stdlib_levelno(record)}"
+        capturing = CapturingHandler()
+        adapter = StdlibHandlerAdapter(capturing)
+        adapter.handle_record(femto_record)
+        assert len(capturing.records) == 1, (
+            f"expected 1 emitted record, got {len(capturing.records)}"
+        )
+        actual = capturing.records[0].levelno
+        assert actual == expected, (
+            f"expected levelno {expected} for record {femto_record!r}, got {actual}"
         )
 
 

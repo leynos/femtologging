@@ -348,7 +348,7 @@ def _make_log_record(record: FemtoRecord) -> logging.LogRecord:
         fields from the femtologging record.
 
     """
-    metadata: Metadata = record.get("metadata", {})
+    metadata: Metadata = typ.cast("Metadata", record.get("metadata", {}))
 
     log_record = logging.LogRecord(
         name=record.get("logger", "femtologging"),

@@ -320,8 +320,8 @@ incompatible with femtologging's `handle_record(dict)` protocol.
 
 `StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
 subclass, translates femtologging record dicts into `logging.LogRecord`
-instances, and delegates to the wrapped handler's `handle()` method so
-that handler-level filtering, attached filters, and I/O locking apply.
+instances, and delegates to the wrapped handler's `handle()` method so that
+handler-level filtering, attached filters, and I/O locking apply.
 
 ```python
 import logging
@@ -341,15 +341,15 @@ logger.log("INFO", "Application started")
 ```
 
 The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
-level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50).
-A custom `TRACE` level name is registered with stdlib's `logging` module so
-that formatters render it as `TRACE` rather than `Level 5`.
+level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50). A
+custom `TRACE` level name is registered with stdlib's `logging` module so that
+formatters render it as `TRACE` rather than `Level 5`.
 
 Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
 and `timestamp` are forwarded to the `LogRecord` where matching attributes
-exist.  Custom key-value pairs from `metadata.key_values` are propagated
-into the `LogRecord.__dict__`, making them available to stdlib formatters
-(e.g. `%(request_id)s`) and filters.
+exist.  Custom key-value pairs from `metadata.key_values` are propagated into
+the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
+`%(request_id)s`) and filters.
 
 **Limitations:**
 
