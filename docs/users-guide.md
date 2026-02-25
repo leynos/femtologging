@@ -125,7 +125,7 @@ Rust-side validation returns stable variants from `SchemaVersionError`:
 Use these variants to choose explicit behaviour when versions mismatch:
 
 ```rust
-use femtologging::{
+use femtologging_rs::{
     ExceptionPayload, SchemaVersionError, SchemaVersioned,
 };
 
@@ -169,7 +169,7 @@ fn process_payload(json: &str) -> Result<(), SchemaVersionError> {
 }
 ```
 
-If you consume payloads in Python from external sources, compare
+When consuming payloads in Python from external sources, compare
 `payload["schema_version"]` with `femtologging.EXCEPTION_SCHEMA_VERSION` and
 apply the same policy: reject too-old payloads, and explicitly degrade or
 reject too-new payloads.
