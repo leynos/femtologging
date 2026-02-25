@@ -85,3 +85,8 @@ relevant feature and configure the corresponding handler/layer yourself.
 The [`Makefile`](./Makefile) defines tasks for formatting, linting, type
 checking and tests. See [`docs/dev-workflow.md`](docs/dev-workflow.md) for
 details.
+
+For structured exception and stack payload compatibility rules (including
+schema version mismatch handling), see the
+[`Exception schema versioning`](docs/users-guide.md#exception-schema-versioning)
+ section in the user guide.

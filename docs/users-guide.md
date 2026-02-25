@@ -104,6 +104,80 @@ your process exits.
 - There is no equivalent to `extra` or lazy formatting. Build the final
   message string before calling `log()`.
 
+### Exception schema versioning
+
+Structured `exc_info` and `stack_info` payloads carry a `schema_version` field.
+This allows the payload schema to evolve without silent breakage.
+
+- `EXCEPTION_SCHEMA_VERSION` is the current version exposed by the Python API.
+- Rust consumers accept versions in the inclusive range
+  `MIN_EXCEPTION_SCHEMA_VERSION..=EXCEPTION_SCHEMA_VERSION`.
+- Backward compatibility is guaranteed within that range. Missing optional
+  fields default safely during deserialization.
+- Forward compatibility is not guaranteed. A payload from a newer producer may
+  deserialize, but explicit validation is required before processing.
+
+Rust-side validation returns stable variants from `SchemaVersionError`:
+
+- `VersionTooNew { found, max_supported }`
+- `VersionTooOld { found, min_supported }`
+
+Use these variants to choose explicit behaviour when versions mismatch:
+
+```rust
+use femtologging_rs::{
+    ExceptionPayload, SchemaVersionError, SchemaVersioned,
+};
+
+fn process_payload(json: &str) -> Result<(), SchemaVersionError> {
+    let payload: ExceptionPayload =
+        serde_json::from_str(json).expect("valid JSON");
+    match payload.validate_version() {
+        Ok(()) => {
+            // Normal processing path.
+            Ok(())
+        }
+        Err(SchemaVersionError::VersionTooNew {
+            found,
+            max_supported,
+        }) => {
+            // Degrade safely: keep raw payload and skip schema-dependent logic.
+            eprintln!(
+                "payload schema {} is newer than supported {}",
+                found, max_supported
+            );
+            Err(SchemaVersionError::VersionTooNew {
+                found,
+                max_supported,
+            })
+        }
+        Err(SchemaVersionError::VersionTooOld {
+            found,
+            min_supported,
+        }) => {
+            // Reject unsupported historical payloads explicitly.
+            eprintln!(
+                "payload schema {} is older than minimum {}",
+                found, min_supported
+            );
+            Err(SchemaVersionError::VersionTooOld {
+                found,
+                min_supported,
+            })
+        }
+    }
+}
+```
+
+When consuming payloads in Python from external sources, compare
+`payload["schema_version"]` with `femtologging.EXCEPTION_SCHEMA_VERSION` and
+apply the same policy: reject too-old payloads, and explicitly degrade or
+reject too-new payloads.
+
+Increment the schema version only for breaking changes (required field
+additions, removals, renamed fields, or semantic/type changes). Adding optional
+fields with safe defaults does not require a version bump.
+
 ### Managing handlers and custom sinks
 
 - The built-in handlers implement the Rust-side `FemtoHandlerTrait`. Python
