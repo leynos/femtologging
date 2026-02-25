@@ -189,14 +189,8 @@ impl FemtoLogger {
         // Rust None, so callers should use exc_info=False to suppress capture.
         match exc_info {
             None => {
-                let py_true = PyBool::new(py, true);
-                self.py_log(
-                    py,
-                    FemtoLevel::Error,
-                    message,
-                    Some(py_true.as_any()),
-                    stack_info,
-                )
+                let py_true = PyBool::new(py, true).to_owned().into_any();
+                self.py_log(py, FemtoLevel::Error, message, Some(&py_true), stack_info)
             }
             Some(val) => self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info),
         }
