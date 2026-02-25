@@ -356,9 +356,9 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 - `exc_info` is provided as pre-formatted text (`exc_text`), not as
   the original `(type, value, traceback)` tuple.  Stdlib formatters that
   inspect `record.exc_info` directly will not find a live traceback object.
-- `pathname`, `module`, `funcName`, `process`, `processName`, and
-  `relativeCreated` are set to defaults because femtologging does not capture
-  these values.
+- `pathname` and `funcName` are set to defaults because femtologging does not
+  capture these values.  `relativeCreated` is recomputed from
+  `metadata.timestamp` when present, so elapsed-time values can be accurate.
 
 ## Configuration options
 
@@ -494,8 +494,10 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   `exc_info` and `stack_info` are supported as keyword-only arguments to
   `log()` and the convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
-  and run on dedicated worker threads, so Python `logging.Handler` subclasses
-  cannot be reused.
+  and run on dedicated worker threads.  Existing stdlib `logging.Handler`
+  subclasses can be reused via
+  [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
+   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
 - The `dictConfig` schema lacks incremental updates, handler filters,
   handler levels, and formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
