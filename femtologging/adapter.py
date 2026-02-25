@@ -382,11 +382,12 @@ def _make_log_record(record: FemtoRecord) -> logging.LogRecord:
         log_record.stack_info = _format_stack_text(stack_info)
 
     # Propagate custom key-value pairs so stdlib formatters/filters
-    # can reference them (e.g. ``%(request_id)s``).
+    # can reference them (e.g. ``%(request_id)s``).  Skip keys that
+    # already exist on the LogRecord to avoid overwriting core attrs.
     key_values = metadata.get("key_values")
     if isinstance(key_values, dict):
         for key, value in key_values.items():
-            if isinstance(key, str):
+            if isinstance(key, str) and key not in log_record.__dict__:
                 log_record.__dict__[key] = value
 
     return log_record
