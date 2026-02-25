@@ -45,8 +45,7 @@ Feature: Handler builders
 
   Scenario: invalid rotating file handler capacity
     Given a RotatingFileHandlerBuilder for path "test.log"
-    When I set file capacity 0
-    Then building the rotating file handler fails with "capacity must be greater than zero"
+    Then setting rotating file capacity 0 fails with "capacity must be greater than zero"
 
   Scenario: invalid rotating file handler zero max bytes
     Given a RotatingFileHandlerBuilder for path "test.log"

@@ -60,6 +60,9 @@ impl RotatingFileHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         capacity: usize,
     ) -> PyResult<PyRefMut<'py, Self>> {
+        if capacity == 0 {
+            return Err(PyValueError::new_err("capacity must be greater than zero"));
+        }
         slf.common.set_capacity(capacity);
         Ok(slf)
     }
