@@ -150,18 +150,23 @@ macro_rules! builder_methods {
         }
     };
 
-    (@process_methods
+    // Expand a `capacity_method` clause into a full `method` definition.
+    //
+    // The capacity clause is a shorthand for injecting a `with_capacity`
+    // builder setter. This helper centralizes the transformation so that
+    // `@process_methods` can dispatch without embedding capacity-specific
+    // knowledge (doc string, method names, text signature, argument types).
+    //
+    // Input:  `capacity_method { self_ident = <ident>, setter = |a, b| { … } }`
+    // Output: equivalent `method { … }` block forwarded to `@process_methods`
+    (@expand_capacity_method
         $builder:ident,
         [$($rust_methods:tt)*],
         [$($py_methods:tt)*],
-        [
-            capacity_method {
-                self_ident = $self_ident:ident,
-                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
-            }
-            $($rest:tt)*
-        ],
-        $( ($($extra_py_methods:tt)*) )?
+        self_ident = $self_ident:ident,
+        setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* },
+        remaining = [ $($rest:tt)* ],
+        $( extra_py_methods = ($($extra_py_methods:tt)*) )?
     ) => {
         builder_methods!(
             @process_methods
@@ -170,7 +175,12 @@ macro_rules! builder_methods {
             [$($py_methods)*],
             [
                 method {
-                    doc: "Set the bounded channel capacity.\n\n# Validation\n\nThe capacity must be greater than zero; invalid values cause `build` to error.",
+                    doc: concat!(
+                        "Set the bounded channel capacity.\n\n",
+                        "# Validation\n\n",
+                        "The capacity must be greater than zero; ",
+                        "invalid values cause `build` to error.",
+                    ),
                     rust_name: with_capacity,
                     py_fn: py_with_capacity,
                     py_name: "with_capacity",
@@ -186,6 +196,31 @@ macro_rules! builder_methods {
                 $($rest)*
             ],
             $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            capacity_method {
+                self_ident = $self_ident:ident,
+                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
+            }
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        builder_methods!(
+            @expand_capacity_method
+            $builder,
+            [$($rust_methods)*],
+            [$($py_methods)*],
+            self_ident = $self_ident,
+            setter = |$setter_self, $setter_arg| { $($setter_body)* },
+            remaining = [ $($rest)* ],
+            $( extra_py_methods = ($($extra_py_methods)*) )?
         );
     };
 
