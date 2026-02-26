@@ -1,11 +1,11 @@
-//! Python bindings for [`FemtoRotatingFileHandler`] and [`HandlerOptions`].
+//! Python bindings for rotating handler APIs.
 //!
 //! This module exposes Python APIs for constructing rotating file handlers with
 //! configurable capacity, flush interval, overflow policy, and rotation thresholds.
 
 use pyo3::prelude::*;
 
-use super::{FemtoRotatingFileHandler, RotationConfig, fresh_failure};
+use super::{FemtoRotatingFileHandler as CoreRotatingFileHandler, RotationConfig, fresh_failure};
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
@@ -17,6 +17,22 @@ use crate::{
 /// Error message describing how to configure rotation thresholds.
 pub const ROTATION_VALIDATION_MSG: &str =
     "both max_bytes and backup_count must be > 0 to enable rotation; set both to 0 to disable";
+
+/// Python wrapper for the rotating file handler core type.
+///
+/// The wrapper keeps PyO3 attributes out of the core module whilst preserving
+/// the existing Python class name.
+#[pyclass(name = "FemtoRotatingFileHandler")]
+pub struct PyRotatingFileHandler {
+    inner: CoreRotatingFileHandler,
+}
+
+impl PyRotatingFileHandler {
+    /// Wrap a core rotating file handler for Python exposure.
+    pub(crate) fn from_core(inner: CoreRotatingFileHandler) -> Self {
+        Self { inner }
+    }
+}
 
 /// Python options bundling queue and rotation configuration for rotating
 /// file handlers during instantiation.
@@ -60,7 +76,7 @@ impl HandlerOptions {
     /// Validate and convert options into handler and rotation configurations.
     ///
     /// This centralizes validation logic so that both `HandlerOptions::new` and
-    /// `FemtoRotatingFileHandler::py_new` use the same rules.
+    /// `PyRotatingFileHandler::py_new` use the same rules.
     fn to_configs(&self) -> PyResult<(HandlerConfig, RotationConfig)> {
         if (self.max_bytes == 0) != (self.backup_count == 0) {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -139,7 +155,7 @@ impl Default for HandlerOptions {
 }
 
 #[pymethods]
-impl FemtoRotatingFileHandler {
+impl PyRotatingFileHandler {
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
@@ -147,26 +163,33 @@ impl FemtoRotatingFileHandler {
         let opts = options.unwrap_or_default();
         let (handler_cfg, rotation) = opts.to_configs()?;
 
-        Self::with_capacity_flush_policy(&path, DefaultFormatter, handler_cfg, rotation)
-            .map_err(|err| pyo3::exceptions::PyIOError::new_err(format!("{path}: {err}")))
+        CoreRotatingFileHandler::with_capacity_flush_policy(
+            &path,
+            DefaultFormatter,
+            handler_cfg,
+            rotation,
+        )
+        .map(Self::from_core)
+        .map_err(|err| pyo3::exceptions::PyIOError::new_err(format!("{path}: {err}")))
     }
 
     /// Expose the configured maximum number of bytes before rotation.
     #[getter]
     fn max_bytes(&self) -> u64 {
-        self.rotation_limits().0
+        self.inner.rotation_limits().0
     }
 
     /// Expose the configured backup count.
     #[getter]
     fn backup_count(&self) -> usize {
-        self.rotation_limits().1
+        self.inner.rotation_limits().1
     }
 
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = FemtoLevel::parse_py(level)?;
-        self.handle(FemtoLogRecord::new(logger, parsed_level, message))
+        self.inner
+            .handle(FemtoLogRecord::new(logger, parsed_level, message))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
@@ -193,12 +216,12 @@ impl FemtoRotatingFileHandler {
     /// False
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
-        self.flush()
+        self.inner.flush()
     }
 
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
-        self.close();
+        self.inner.close();
     }
 }
 

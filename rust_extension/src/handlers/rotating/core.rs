@@ -70,7 +70,6 @@ impl Default for RotationConfig {
 ///
 /// The handler currently delegates all I/O to [`FemtoFileHandler`], recording
 /// rotation thresholds so later work can implement the rollover behaviour.
-#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct FemtoRotatingFileHandler {
     inner: FemtoFileHandler,
     max_bytes: u64,

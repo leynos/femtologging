@@ -7,15 +7,14 @@
 use pyo3::{Bound, PyResult, prelude::*, wrap_pyfunction};
 
 use crate::{
-    ConfigBuilder, FemtoHTTPHandler, FemtoRotatingFileHandler, FemtoSocketHandler,
-    FileHandlerBuilder, FilterBuildErrorPy, FormatterBuilder, HTTPHandlerBuilder,
-    LevelFilterBuilder, LoggerConfigBuilder, NameFilterBuilder, RotatingFileHandlerBuilder,
-    SocketHandlerBuilder, StreamHandlerBuilder,
+    ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
+    FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
+    NameFilterBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
-            HandlerOptions, ROTATION_VALIDATION_MSG, clear_rotating_fresh_failure_for_test,
-            force_rotating_fresh_failure_for_test,
+            HandlerOptions, PyRotatingFileHandler, ROTATION_VALIDATION_MSG,
+            clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
         },
         socket_builder::BackoffOverrides,
     },
@@ -61,7 +60,7 @@ pub(crate) fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
 pub(crate) fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoSocketHandler>()?;
     m.add_class::<FemtoHTTPHandler>()?;
-    m.add_class::<FemtoRotatingFileHandler>()?;
+    m.add_class::<PyRotatingFileHandler>()?;
     m.add_class::<HandlerOptions>()?;
     m.add_class::<BackoffOverrides>()?;
     m.add("ROTATION_VALIDATION_MSG", ROTATION_VALIDATION_MSG)?;
