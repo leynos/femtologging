@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use super::{FemtoRotatingFileHandler, RotationConfig, fresh_failure};
 use crate::{
     formatter::DefaultFormatter,
+    handler::FemtoHandlerTrait,
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
@@ -165,7 +166,7 @@ impl FemtoRotatingFileHandler {
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = FemtoLevel::parse_py(level)?;
-        self.handle_record(FemtoLogRecord::new(logger, parsed_level, message))
+        self.handle(FemtoLogRecord::new(logger, parsed_level, message))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 

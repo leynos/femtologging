@@ -227,6 +227,12 @@ sender signals the consumer to finish once the queue is drained.
 `FemtoRotatingFileHandler` mirrors Python's `RotatingFileHandler` and rotates
 when the log file exceeds a configured `max_bytes`.
 
+The implementation is split by concern in
+`rust_extension/src/handlers/rotating/`: `core.rs` contains the pure Rust
+`FemtoRotatingFileHandler` and `RotationConfig` logic, `python.rs` contains
+`HandlerOptions` plus `#[pyclass]`/`#[pymethods]` glue, and `mod.rs` wires
+feature-gated exports.
+
 By default `max_bytes` and `backup_count` are `0`. A `max_bytes` of `0`
 disables rotation entirely. A `backup_count` of `0` retains no history, so a
 rollover truncates the base file and stops. These defaults are consistent
