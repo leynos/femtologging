@@ -25,7 +25,13 @@ use crate::{
 /// Grouping the limits together keeps the handler constructor concise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RotationConfig {
+    /// Maximum file size in bytes before rollover is triggered.
+    ///
+    /// Set to `0` to disable rotation.
     pub max_bytes: u64,
+    /// Number of rotated backup files to retain.
+    ///
+    /// Set to `0` to keep no backups.
     pub backup_count: usize,
 }
 
