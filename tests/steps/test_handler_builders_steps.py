@@ -274,6 +274,18 @@ def then_rotating_file_builder_fails(file_builder: FileBuilder, message: str) ->
         rotating.build()
 
 
+@then(
+    parsers.parse('setting rotating file capacity {capacity:d} fails with "{message}"')
+)
+def then_setting_rotating_capacity_fails(
+    file_builder: FileBuilder, capacity: int, message: str
+) -> None:
+    """Verify invalid rotating capacity raises ValueError."""
+    rotating = _require_rotating_builder(file_builder)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        rotating.with_capacity(capacity)
+
+
 @then(parsers.parse('setting max bytes {max_bytes:d} fails with "{message}"'))
 def then_setting_max_bytes_fails(
     file_builder: FileBuilder, max_bytes: int, message: str
