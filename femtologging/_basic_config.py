@@ -78,6 +78,11 @@ def basicConfig(  # noqa: N802
     handlers : cabc.Iterable[FemtoHandler], optional
         Pre-constructed handlers to attach.
 
+    Notes
+    -----
+        ``format`` and ``datefmt`` are intentionally unsupported until formatter
+        customisation is implemented.
+
     Examples
     --------
         Using a dataclass::
@@ -88,11 +93,6 @@ def basicConfig(  # noqa: N802
         Using individual parameters::
 
             basicConfig(level="INFO")
-
-    Notes
-    -----
-        ``format`` and ``datefmt`` are intentionally unsupported until formatter
-        customisation is implemented.
 
     """
     allowed = {"level", "filename", "stream", "force", "handlers"}
