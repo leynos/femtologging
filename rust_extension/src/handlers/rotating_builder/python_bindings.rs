@@ -17,7 +17,7 @@ use crate::{
     handlers::{
         HandlerBuilderTrait,
         common::{PyOverflowPolicy, py_flush_after_records_to_nonzero},
-        rotating::FemtoRotatingFileHandler,
+        rotating::PyRotatingFileHandler,
     },
     macros::{AsPyDict, dict_into_py},
 };
@@ -153,8 +153,10 @@ impl RotatingFileHandlerBuilder {
 
     /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
     /// failure.
-    fn build(&self) -> PyResult<FemtoRotatingFileHandler> {
-        <Self as HandlerBuilderTrait>::build_inner(self).map_err(PyErr::from)
+    fn build(&self) -> PyResult<PyRotatingFileHandler> {
+        <Self as HandlerBuilderTrait>::build_inner(self)
+            .map(PyRotatingFileHandler::from_core)
+            .map_err(PyErr::from)
     }
 }
 

@@ -1,9 +1,9 @@
 //! Behavioural tests for the rotating strategy.
 
-use super::super::*;
 use crate::formatter::DefaultFormatter;
+use crate::handler::FemtoHandlerTrait;
 use crate::handlers::file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig};
-use crate::handlers::rotating::strategy::RotationOutcome;
+use crate::handlers::rotating::strategy::{FileRotationStrategy, RotationOutcome};
 use crate::handlers::rotating::{
     FemtoRotatingFileHandler, RotationConfig, force_fresh_failure_once_for_test,
 };

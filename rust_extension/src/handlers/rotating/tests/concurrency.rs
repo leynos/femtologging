@@ -1,9 +1,12 @@
 //! Concurrency-focused tests for the rotating handler.
 
-use super::super::*;
 use crate::formatter::DefaultFormatter;
-use crate::handler::HandlerError;
-use crate::handlers::file::{BuilderOptions, HandlerConfig, OverflowPolicy, RotationStrategy};
+use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handlers::file::{
+    BuilderOptions, FemtoFileHandler, HandlerConfig, OverflowPolicy, RotationStrategy,
+};
+use crate::handlers::rotating::FemtoRotatingFileHandler;
+use crate::handlers::rotating::strategy::FileRotationStrategy;
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use std::fs::{File, OpenOptions};
