@@ -80,8 +80,8 @@ def basicConfig(  # noqa: N802
 
     Notes
     -----
-        ``format`` and ``datefmt`` are intentionally unsupported until formatter
-        customisation is implemented.
+    ``format`` and ``datefmt`` are intentionally unsupported until formatter
+    customisation is implemented.
 
     Examples
     --------
