@@ -74,8 +74,10 @@ impl Default for RotationConfig {
 
 /// File handler variant configured for size-based rotation.
 ///
-/// The handler currently delegates all I/O to [`FemtoFileHandler`], recording
-/// rotation thresholds so later work can implement the rollover behaviour.
+/// For file-backed handlers, this wrapper wires [`FileRotationStrategy`] into
+/// [`FemtoFileHandler`] so rollover executes on the worker thread. The wrapper
+/// owns rotation thresholds and delegates queueing, flushing, and shutdown to
+/// [`FemtoFileHandler`].
 pub struct FemtoRotatingFileHandler {
     inner: FemtoFileHandler,
     max_bytes: u64,
@@ -140,18 +142,19 @@ impl FemtoRotatingFileHandler {
         ))
     }
 
-    /// Build a handler for tests using the in-memory writer helper.
-    pub fn with_writer_for_test<W, F>(
-        config: TestConfig<W, F>,
-        max_bytes: u64,
-        backup_count: usize,
-    ) -> Self
+    /// Build a handler for tests using the generic writer helper.
+    ///
+    /// This delegates to [`FemtoFileHandler::with_writer_for_test`], which
+    /// accepts arbitrary writers and therefore does not attach
+    /// [`FileRotationStrategy`]. Rotation is disabled for this constructor.
+    pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
         W: std::io::Write + std::io::Seek + Send + 'static,
         F: FemtoFormatter + Send + 'static,
     {
         let inner = FemtoFileHandler::with_writer_for_test(config);
-        Self::new_with_rotation_limits(inner, max_bytes, backup_count)
+        let disabled = RotationConfig::disabled();
+        Self::new_with_rotation_limits(inner, disabled.max_bytes, disabled.backup_count)
     }
 
     delegate! {
