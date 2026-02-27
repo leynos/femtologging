@@ -123,22 +123,31 @@ impl FemtoRotatingFileHandler {
             .append(true)
             .open(path_ref)?;
         let writer = BufWriter::new(file);
-        let handler = if rotation_config.max_bytes == 0 {
-            let options = BuilderOptions::<BufWriter<File>>::new(NoRotation, None);
-            FemtoFileHandler::build_from_worker(writer, formatter, config, options)
-        } else {
-            let rotation = FileRotationStrategy::new(
-                path_ref.to_path_buf(),
-                rotation_config.max_bytes,
-                rotation_config.backup_count,
-            );
-            let options = BuilderOptions::<BufWriter<File>, _>::new(rotation, None);
-            FemtoFileHandler::build_from_worker(writer, formatter, config, options)
-        };
+        let (handler, effective_max_bytes, effective_backup_count) =
+            if rotation_config.max_bytes == 0 {
+                let options = BuilderOptions::<BufWriter<File>>::new(NoRotation, None);
+                (
+                    FemtoFileHandler::build_from_worker(writer, formatter, config, options),
+                    0,
+                    0,
+                )
+            } else {
+                let rotation = FileRotationStrategy::new(
+                    path_ref.to_path_buf(),
+                    rotation_config.max_bytes,
+                    rotation_config.backup_count,
+                );
+                let options = BuilderOptions::<BufWriter<File>, _>::new(rotation, None);
+                (
+                    FemtoFileHandler::build_from_worker(writer, formatter, config, options),
+                    rotation_config.max_bytes,
+                    rotation_config.backup_count,
+                )
+            };
         Ok(Self::new_with_rotation_limits(
             handler,
-            rotation_config.max_bytes,
-            rotation_config.backup_count,
+            effective_max_bytes,
+            effective_backup_count,
         ))
     }
 
