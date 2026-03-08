@@ -22,17 +22,9 @@ Table: Builder method renames
 ### Before
 
 ```python
-stream = (
-    StreamHandlerBuilder.stderr()
-    .with_flush_timeout_ms(500)
-    .build()
-)
+stream = StreamHandlerBuilder.stderr().with_flush_timeout_ms(500).build()
 
-file = (
-    FileHandlerBuilder("app.log")
-    .with_flush_record_interval(10)
-    .build()
-)
+file = FileHandlerBuilder("app.log").with_flush_record_interval(10).build()
 
 rotating = (
     RotatingFileHandlerBuilder("app.log")
@@ -46,17 +38,9 @@ rotating = (
 ### After
 
 ```python
-stream = (
-    StreamHandlerBuilder.stderr()
-    .with_flush_after_ms(500)
-    .build()
-)
+stream = StreamHandlerBuilder.stderr().with_flush_after_ms(500).build()
 
-file = (
-    FileHandlerBuilder("app.log")
-    .with_flush_after_records(10)
-    .build()
-)
+file = FileHandlerBuilder("app.log").with_flush_after_records(10).build()
 
 rotating = (
     RotatingFileHandlerBuilder("app.log")
