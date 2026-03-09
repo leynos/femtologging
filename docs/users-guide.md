@@ -621,3 +621,24 @@ Keep an eye on the roadmap in `docs/` for upcoming additions (formatter
 resolution, richer dictConfig support, timed rotation) and update your
 configuration once those features land. For now, the patterns above reflect the
 current, tested surface area of femtologging.
+
+## Scoped structured context
+
+Use `log_context(...)` to add structured key-values to every record emitted on
+the current thread while the context is active:
+
+```python
+import femtologging
+
+logger = femtologging.get_logger("service")
+with femtologging.log_context(request_id=42, user="alice"):
+    logger.info("request accepted")
+```
+
+Behavioural guarantees:
+
+- Context values are merged on the producer thread before queueing.
+- Inline structured fields emitted by Rust macros override outer context keys.
+- Context values must be `str`, `int`, `float`, `bool`, or `None`.
+- Key-value limits match the enrichment contract documented in
+  `docs/configuration-design.md`.

@@ -92,6 +92,14 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_info, m)?)?;
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_warn, m)?)?;
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_error, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::convenience_functions::py_push_log_context,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::convenience_functions::py_pop_log_context,
+        m
+    )?)?;
 
     Ok(())
 }
