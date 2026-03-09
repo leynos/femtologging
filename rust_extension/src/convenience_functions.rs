@@ -6,8 +6,11 @@
 //! (filename, line number, module name) into the log record's metadata.
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use pyo3::{PyAny, exceptions::PyTypeError, exceptions::PyValueError};
 
 use crate::level::FemtoLevel;
+use crate::log_context;
 use crate::log_record::RecordMetadata;
 use crate::manager;
 
@@ -70,6 +73,51 @@ fn log_at_level(
     Ok(logger
         .borrow(py)
         .log_with_metadata(level, message, metadata))
+}
+
+fn extract_context_dict(
+    context: &Bound<'_, PyAny>,
+) -> PyResult<std::collections::BTreeMap<String, String>> {
+    let dict = context.cast::<PyDict>().map_err(|_| {
+        PyTypeError::new_err("context must be a dict[str, str|int|float|bool|None]")
+    })?;
+    let mut result = std::collections::BTreeMap::new();
+    for (raw_key, raw_value) in dict.iter() {
+        let key = raw_key
+            .extract::<String>()
+            .map_err(|_| PyTypeError::new_err("context keys must be strings"))?;
+        let value = if raw_value.is_none() {
+            String::from("None")
+        } else if let Ok(v) = raw_value.extract::<bool>() {
+            v.to_string()
+        } else if let Ok(v) = raw_value.extract::<i128>() {
+            v.to_string()
+        } else if let Ok(v) = raw_value.extract::<f64>() {
+            v.to_string()
+        } else if let Ok(v) = raw_value.extract::<String>() {
+            v
+        } else {
+            return Err(PyTypeError::new_err(
+                "context values must be str, int, float, bool, or None",
+            ));
+        };
+        result.insert(key, value);
+    }
+    Ok(result)
+}
+
+/// Push a structured logging context frame for the current thread.
+#[pyfunction(name = "_push_log_context", signature = (context), text_signature = "(context)")]
+pub(crate) fn py_push_log_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
+    let context_map = extract_context_dict(context)?;
+    log_context::push_log_context_map(context_map)
+        .map_err(|err| PyValueError::new_err(err.to_string()))
+}
+
+/// Pop the latest structured logging context frame for the current thread.
+#[pyfunction(name = "_pop_log_context", text_signature = "()")]
+pub(crate) fn py_pop_log_context() -> PyResult<()> {
+    log_context::pop_log_context().map_err(|err| PyValueError::new_err(err.to_string()))
 }
 
 /// Log a message at DEBUG level.

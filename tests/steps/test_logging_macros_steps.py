@@ -14,6 +14,7 @@ instance, and ``@then`` steps receive the same dict to run assertions against
 from __future__ import annotations
 
 import re
+import time
 import typing as typ
 from pathlib import Path
 from types import MappingProxyType
@@ -26,7 +27,9 @@ from femtologging import (
     LoggerConfigBuilder,
     debug,
     error,
+    get_logger,
     info,
+    log_context,
     warn,
 )
 
@@ -38,6 +41,18 @@ if typ.TYPE_CHECKING:
 
 class LogResultPayload(typ.TypedDict):
     """Payload dict shuttled between ``@when`` and ``@then`` steps."""
+
+    value: str | None
+
+
+class MetadataPayload(typ.TypedDict):
+    """Structured metadata captured from ``handle_record`` callbacks."""
+
+    value: dict[str, str]
+
+
+class ErrorPayload(typ.TypedDict):
+    """Error payload captured for unhappy-path assertions."""
 
     value: str | None
 
@@ -64,6 +79,18 @@ def log_result() -> LogResultPayload:
         Dict with ``"value"`` set to ``None``.
 
     """
+    return {"value": None}
+
+
+@pytest.fixture
+def metadata_payload() -> MetadataPayload:
+    """Provide structured metadata storage for context scenarios."""
+    return {"value": {}}
+
+
+@pytest.fixture
+def context_error() -> ErrorPayload:
+    """Provide context error storage for unhappy-path scenarios."""
     return {"value": None}
 
 
@@ -102,6 +129,15 @@ def given_named_logger(name: str, level: str) -> str:
     return name
 
 
+@given(parsers.parse('a record-collecting logger named "{name}" with level "{level}"'))
+def given_record_collecting_logger(name: str, level: str) -> None:
+    """Configure a named logger used by context metadata scenarios."""
+    builder = ConfigBuilder()
+    builder.with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+    builder.with_logger(name, LoggerConfigBuilder().with_level(level))
+    builder.build_and_init()
+
+
 # ---------------------------------------------------------------------------
 # When steps
 # ---------------------------------------------------------------------------
@@ -113,9 +149,43 @@ _FUNC_MAP: cabc.Mapping[str, cabc.Callable[..., str | None]] = MappingProxyType(
     "error": error,
 })
 
+_CALL_WITH_CONTEXT_PATTERN = (
+    r'I call (?P<func>\w+) with message "(?P<message>[^"]+)" and name '
+    r'"(?P<name>[^"]+)" inside context (?P<context>.+)'
+)
+_CALL_WITH_NAME_PATTERN = (
+    r'^I call (?P<func>\w+) with message "(?P<message>[^"]+)" and name '
+    r'"(?P<name>[^"]+)"$'
+)
+_CALL_WITH_MESSAGE_PATTERN = r'^I call (?P<func>\w+) with message "(?P<message>[^"]+)"$'
+_CALL_WITH_NESTED_CONTEXT_PATTERN = (
+    r'I call (?P<func>\w+) with message "(?P<message>[^"]+)" and name '
+    r'"(?P<name>[^"]+)" inside nested context (?P<contexts>.+)'
+)
+_EXPECT_KEY_VALUES_PATTERN = (
+    r"the latest record metadata key_values contain (?P<pairs>.+)"
+)
+
+
+class RecordCollector:
+    """Collect full records passed to ``handle_record`` callbacks."""
+
+    def __init__(self) -> None:
+        """Initialize collector state for one scenario."""
+        self.records: list[dict[str, typ.Any]] = []
+        self.last_message = ""
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        """Accept classic handler calls while retaining last message."""
+        self.last_message = f"{logger}:{level}:{message}"
+
+    def handle_record(self, record: dict[str, typ.Any]) -> None:
+        """Capture full record payloads for metadata assertions."""
+        self.records.append(record)
+
 
 @when(
-    parsers.parse('I call {func} with message "{message}"'),
+    parsers.re(_CALL_WITH_MESSAGE_PATTERN),
     target_fixture="log_result",
 )
 def call_convenience_func(func: str, message: str) -> LogResultPayload:
@@ -139,7 +209,7 @@ def call_convenience_func(func: str, message: str) -> LogResultPayload:
 
 
 @when(
-    parsers.parse('I call {func} with message "{message}" and name "{name}"'),
+    parsers.re(_CALL_WITH_NAME_PATTERN),
     target_fixture="log_result",
 )
 def call_convenience_func_with_name(
@@ -164,6 +234,70 @@ def call_convenience_func_with_name(
     """
     fn = _FUNC_MAP[func]
     return {"value": fn(message, name=name)}
+
+
+@when(
+    parsers.re(_CALL_WITH_CONTEXT_PATTERN),
+    target_fixture="metadata_payload",
+)
+def call_with_context_and_capture_metadata(
+    func: str,
+    message: str,
+    name: str,
+    context: str,
+) -> MetadataPayload:
+    """Emit a log call inside ``log_context`` and capture key-values."""
+    context_map = _parse_pairs(context)
+    fn = _FUNC_MAP[func]
+    latest = _capture_latest_key_values(
+        logger_name=name,
+        fn=fn,
+        message=message,
+        context=context_map,
+    )
+    return {"value": latest}
+
+
+@when(
+    parsers.re(_CALL_WITH_NESTED_CONTEXT_PATTERN),
+    target_fixture="metadata_payload",
+)
+def call_with_nested_context_and_capture_metadata(
+    func: str,
+    message: str,
+    name: str,
+    contexts: str,
+) -> MetadataPayload:
+    """Emit one log call with nested contexts and capture key-values."""
+    outer, inner = _split_nested_contexts(contexts)
+    outer_map = _parse_pairs(outer)
+    inner_map = _parse_pairs(inner)
+    logger = get_logger(name)
+    collector = RecordCollector()
+    logger.add_handler(collector)
+    fn = _FUNC_MAP[func]
+    with log_context(**outer_map), log_context(**inner_map):
+        fn(message, name=name)
+    for _ in range(20):
+        if collector.records:
+            break
+        logger.flush_handlers()
+        time.sleep(0.01)
+    assert collector.records, "expected at least one captured record"
+    latest = collector.records[-1]["metadata"]["key_values"]
+    return {"value": {str(k): str(v) for k, v in latest.items()}}
+
+
+@when("I push log context with an invalid nested value", target_fixture="context_error")
+def push_invalid_context_value() -> ErrorPayload:
+    """Capture error text when pushing unsupported context value types."""
+    message: str | None = None
+    try:
+        with log_context(bad={"nested": "dict"}):
+            pass
+    except TypeError as exc:
+        message = str(exc)
+    return {"value": message}
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +395,33 @@ def result_format_is(log_result: LogResultPayload, expected: str) -> None:
     assert str(value) == expected, f"Expected '{expected}', got '{value}'"
 
 
+@then(parsers.re(_EXPECT_KEY_VALUES_PATTERN))
+def key_values_contain_expected_pairs(
+    metadata_payload: MetadataPayload, pairs: str
+) -> None:
+    """Assert captured metadata includes expected key-values."""
+    expected = _parse_pairs(pairs)
+    key_values = metadata_payload["value"]
+    for key, value in expected.items():
+        assert key_values.get(key) == value, f"missing {key}={value}"
+
+
+@then(parsers.parse('a context error is raised containing "{text}"'))
+def context_error_contains(context_error: ErrorPayload, text: str) -> None:
+    """Assert invalid context operations report deterministic errors."""
+    value = context_error["value"]
+    assert value is not None, "expected context error, got none"
+    assert text in value, f"expected {text!r} in {value!r}"
+
+
+@then("the latest record metadata key_values match snapshot")
+def key_values_match_snapshot(
+    metadata_payload: MetadataPayload, snapshot: SnapshotAssertion
+) -> None:
+    """Assert metadata key-values for context scenarios match the snapshot."""
+    assert metadata_payload["value"] == snapshot
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -273,3 +434,41 @@ def _normalize_source_location(output: str) -> str:
     result = re.sub(r"(?:[A-Za-z]:)?[^\s:]+\.py(?=:\d+)", "<file>", output)
     # Normalize line numbers (e.g., :42 -> :<N>)
     return re.sub(r":\d+", ":<N>", result)
+
+
+def _parse_pairs(text: str) -> dict[str, str]:
+    """Parse ``"key"="value"`` pairs joined by ``and``."""
+    pattern = re.compile(r'"([^"]+)"="([^"]*)"')
+    pairs = dict(pattern.findall(text))
+    assert pairs, f"expected at least one key-value pair in {text!r}"
+    return pairs
+
+
+def _split_nested_contexts(text: str) -> tuple[str, str]:
+    """Split ``outer then inner`` context expressions."""
+    outer, sep, inner = text.partition(" then ")
+    assert sep, f"expected nested context separator in {text!r}"
+    return outer, inner
+
+
+def _capture_latest_key_values(
+    *,
+    logger_name: str,
+    fn: cabc.Callable[..., str | None],
+    message: str,
+    context: dict[str, str],
+) -> dict[str, str]:
+    """Emit a record and return captured metadata key-values."""
+    logger = get_logger(logger_name)
+    collector = RecordCollector()
+    logger.add_handler(collector)
+    with log_context(**context):
+        fn(message, name=logger_name)
+    for _ in range(20):
+        if collector.records:
+            break
+        logger.flush_handlers()
+        time.sleep(0.01)
+    assert collector.records, "expected at least one captured record"
+    latest = collector.records[-1]["metadata"]["key_values"]
+    return {str(k): str(v) for k, v in latest.items()}
