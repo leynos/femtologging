@@ -162,6 +162,7 @@ Returns the default patterns used to identify logging infrastructure frames.
 ```python
 from femtologging import filter_frames
 
+
 class MyHandler:
     def handle_record(self, record: dict) -> None:
         if exc := record.get("exc_info"):

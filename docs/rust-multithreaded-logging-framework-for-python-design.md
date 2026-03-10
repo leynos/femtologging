@@ -1009,13 +1009,16 @@ potential future enhancement.
   ```python
   from femtologging import Config, FileHandler, Formatter
 
+
   def setup_logging() -> None:
       (
-          Config.builder()
+          Config
+          .builder()
           .default_level("INFO")
           .add_handler(
               "file_handler_1",
-              FileHandler.builder()
+              FileHandler
+              .builder()
               .path("application.log")
               .formatter(Formatter("%(message)s"))
               .level("DEBUG")
