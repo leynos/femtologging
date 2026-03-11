@@ -6,7 +6,7 @@
 //! (filename, line number, module name) into the log record's metadata.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyInt};
 use pyo3::{PyAny, exceptions::PyTypeError, exceptions::PyValueError};
 
 use crate::level::FemtoLevel;
@@ -86,24 +86,31 @@ fn extract_context_dict(
         let key = raw_key
             .extract::<String>()
             .map_err(|_| PyTypeError::new_err("context keys must be strings"))?;
-        let value = if raw_value.is_none() {
-            String::from("None")
-        } else if let Ok(v) = raw_value.extract::<bool>() {
-            v.to_string()
-        } else if let Ok(v) = raw_value.extract::<i128>() {
-            v.to_string()
-        } else if let Ok(v) = raw_value.extract::<f64>() {
-            v.to_string()
-        } else if let Ok(v) = raw_value.extract::<String>() {
-            v
-        } else {
-            return Err(PyTypeError::new_err(
-                "context values must be str, int, float, bool, or None",
-            ));
-        };
+        let value = extract_context_value(&raw_value)?;
         result.insert(key, value);
     }
     Ok(result)
+}
+
+fn extract_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
+    if raw_value.is_none() {
+        return Ok(String::from("None"));
+    }
+    if let Ok(v) = raw_value.extract::<bool>() {
+        return Ok(v.to_string());
+    }
+    if raw_value.is_instance_of::<PyInt>() {
+        return Ok(raw_value.str()?.to_str()?.to_owned());
+    }
+    if let Ok(v) = raw_value.extract::<f64>() {
+        return Ok(v.to_string());
+    }
+    if let Ok(v) = raw_value.extract::<String>() {
+        return Ok(v);
+    }
+    Err(PyTypeError::new_err(
+        "context values must be str, int, float, bool, or None",
+    ))
 }
 
 /// Push a structured logging context frame for the current thread.

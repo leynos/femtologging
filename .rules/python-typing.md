@@ -70,6 +70,9 @@ import typing
 
 
 class Builder:
+    def __init__(self) -> None:
+        self.values: list[int] = []
+
     def add(self, value: int) -> typing.Self:
         self.values.append(value)
         return self
@@ -107,12 +110,12 @@ checkers.
 import typing
 
 
-def is_str_list(val: list[object]) -> typing.TypeIs[list[str]]:
+def is_str_list(val: typing.Sequence[object]) -> typing.TypeIs[typing.Sequence[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 
 Unlike `isinstance`, this informs the type checker that `val` is now
-`list[str]`.
+`Sequence[str]`.
 
 ## Defaults for TypeVars (PEP 696)
 
@@ -120,13 +123,18 @@ Allow generic classes/functions to fall back to default types when no specific
 type is provided.
 
 ```python
+import typing
+
+
 T = typing.TypeVar("T", default=int)
 
 
 class Box[T]:
-    def __init__(self, value: T | None = None):
-        # Fallback to the TypeVar default (int in this example)
-        self.value: T = value if value is not None else int()  # type: ignore[arg-type]
+    def __init__(self, value: T):
+        self.value = value
+
+
+default_box: Box = Box(0)
 ```
 
 This makes APIs more ergonomic while retaining type safety.

@@ -922,8 +922,9 @@ approach:
 The logging macros are central to the developer experience. As outlined in
 section 4.3, they will support:
 
-- Log levels (e.g., `trace!`, `debug!`, `info!`, `warn!`, `error!`,
-  `critical!`).
+- Log levels (e.g., `debug!`, `info!`, `warn!`, `error!`; `trace!` and
+  `critical!` remain planned but are not part of the current shipped macro
+  surface).
 
 - Automatic capture of source code location (`file!`, `line!`, `module_path!`).
 
@@ -1731,10 +1732,11 @@ their consumer logic (which is a robust and simple model), future versions of
 ecosystem. This is particularly relevant for applications already built around
 an async runtime like Tokio or `async-std`.
 
-The currently implemented scoped context propagation is runtime-agnostic:
-context capture and merge occur on the producer thread before queueing, so
-records remain Rust-owned and safe to dispatch regardless of whether consumers
-run on dedicated threads or future async executors.
+The currently implemented scoped context propagation is thread-local and based
+on OS-thread execution. Context capture and merge occur on the producer thread
+before queueing, which ensures records are Rust-owned and safe to dispatch
+across dedicated worker threads. Async task propagation across executors
+requires additional task-local bridging or explicit context passing.
 
 - **Async MPSC Channels:** Utilize MPSC channel implementations that are
   designed for async contexts, such as `tokio::sync::mpsc`, `flume`'s async
