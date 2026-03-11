@@ -20,207 +20,75 @@
 //!
 //! [`RecordMetadata`]: crate::log_record::RecordMetadata
 
-/// Log a message at `DEBUG` level, capturing the call site's source location.
-///
-/// Accepts either a plain string, `format!`-style arguments, or structured
-/// key-values:
-/// `femtolog_debug!(logger, "msg"; request_id = 42)`.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let logger = FemtoLogger::new("app".into());
-/// femtolog_debug!(logger, "entering request handler");
-/// femtolog_debug!(logger, "request id = {}", request_id);
-/// ```
+/// Internal helper that routes call forms to message/fmt implementations.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __femtolog_at_level {
+    ($logger:expr, $level:expr, $message:expr; $($key:ident = $value:expr),+ $(,)?) => {
+        $crate::__femtolog_impl_message!(
+            $logger,
+            $level,
+            $message,
+            $crate::__femtolog_kv_map!($($key = $value),+)
+        )
+    };
+    ($logger:expr, $level:expr, $fmt:expr, $($arg:tt)+ ; $($key:ident = $value:expr),+ $(,)?) => {
+        $crate::__femtolog_impl_fmt!(
+            $logger,
+            $level,
+            $fmt,
+            $crate::__femtolog_kv_map!($($key = $value),+),
+            $($arg)+
+        )
+    };
+    ($logger:expr, $level:expr, $message:expr) => {
+        $crate::__femtolog_impl_message!(
+            $logger,
+            $level,
+            $message,
+            ::std::collections::BTreeMap::new()
+        )
+    };
+    ($logger:expr, $level:expr, $fmt:expr, $($arg:tt)+) => {
+        $crate::__femtolog_impl_fmt!(
+            $logger,
+            $level,
+            $fmt,
+            ::std::collections::BTreeMap::new(),
+            $($arg)+
+        )
+    };
+}
+
+// Log a message at `DEBUG` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_debug {
-    ($logger:expr, $message:expr; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Debug,
-            $message,
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+ ; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Debug,
-            $fmt,
-            [$($arg)+],
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $message:expr) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Debug,
-            $message,
-            ::std::collections::BTreeMap::new()
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Debug,
-            $fmt,
-            [$($arg)+],
-            ::std::collections::BTreeMap::new()
-        )
+    ($logger:expr, $($rest:tt)+) => {
+        $crate::__femtolog_at_level!($logger, $crate::FemtoLevel::Debug, $($rest)+)
     };
 }
 
-/// Log a message at `INFO` level, capturing the call site's source location.
-///
-/// Accepts either a plain string, `format!`-style arguments, or structured
-/// key-values:
-/// `femtolog_info!(logger, "msg"; request_id = 42)`.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let logger = FemtoLogger::new("app".into());
-/// femtolog_info!(logger, "server started");
-/// femtolog_info!(logger, "listening on port {}", port);
-/// ```
+// Log a message at `INFO` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_info {
-    ($logger:expr, $message:expr; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Info,
-            $message,
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+ ; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Info,
-            $fmt,
-            [$($arg)+],
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $message:expr) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Info,
-            $message,
-            ::std::collections::BTreeMap::new()
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Info,
-            $fmt,
-            [$($arg)+],
-            ::std::collections::BTreeMap::new()
-        )
+    ($logger:expr, $($rest:tt)+) => {
+        $crate::__femtolog_at_level!($logger, $crate::FemtoLevel::Info, $($rest)+)
     };
 }
 
-/// Log a message at `WARN` level, capturing the call site's source location.
-///
-/// Accepts either a plain string, `format!`-style arguments, or structured
-/// key-values:
-/// `femtolog_warn!(logger, "msg"; request_id = 42)`.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let logger = FemtoLogger::new("app".into());
-/// femtolog_warn!(logger, "disk space running low");
-/// femtolog_warn!(logger, "{}% disk used", usage);
-/// ```
+// Log a message at `WARN` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_warn {
-    ($logger:expr, $message:expr; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Warn,
-            $message,
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+ ; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Warn,
-            $fmt,
-            [$($arg)+],
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $message:expr) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Warn,
-            $message,
-            ::std::collections::BTreeMap::new()
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Warn,
-            $fmt,
-            [$($arg)+],
-            ::std::collections::BTreeMap::new()
-        )
+    ($logger:expr, $($rest:tt)+) => {
+        $crate::__femtolog_at_level!($logger, $crate::FemtoLevel::Warn, $($rest)+)
     };
 }
 
-/// Log a message at `ERROR` level, capturing the call site's source location.
-///
-/// Accepts either a plain string, `format!`-style arguments, or structured
-/// key-values:
-/// `femtolog_error!(logger, "msg"; request_id = 42)`.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let logger = FemtoLogger::new("app".into());
-/// femtolog_error!(logger, "failed to open database");
-/// femtolog_error!(logger, "connection to {} lost", host);
-/// ```
+// Log a message at `ERROR` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_error {
-    ($logger:expr, $message:expr; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Error,
-            $message,
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+ ; $($key:ident = $value:expr),+ $(,)?) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Error,
-            $fmt,
-            [$($arg)+],
-            $crate::__femtolog_kv_map!($($key = $value),+)
-        )
-    };
-    ($logger:expr, $message:expr) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Error,
-            $message,
-            ::std::collections::BTreeMap::new()
-        )
-    };
-    ($logger:expr, $fmt:expr, $($arg:tt)+) => {
-        $crate::__femtolog_impl!(
-            $logger,
-            $crate::FemtoLevel::Error,
-            $fmt,
-            [$($arg)+],
-            ::std::collections::BTreeMap::new()
-        )
+    ($logger:expr, $($rest:tt)+) => {
+        $crate::__femtolog_at_level!($logger, $crate::FemtoLevel::Error, $($rest)+)
     };
 }
 
@@ -240,18 +108,10 @@ macro_rules! __femtolog_kv_map {
     }};
 }
 
-/// Internal implementation macro — not part of the public API.
-///
-/// Captures `file!()`, `line!()`, and `module_path!()` at the expansion site
-/// (which is the caller's site because the public macros delegate here via
-/// `$crate`). Constructs a [`RecordMetadata`] and calls
-/// [`FemtoLogger::log_with_metadata`].
-///
-/// The first arm handles a pre-formed message string; the second accepts
-/// `format!`-style arguments.
+/// Internal implementation macro for non-formatted messages.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __femtolog_impl {
+macro_rules! __femtolog_impl_message {
     ($logger:expr, $level:expr, $message:expr, $key_values:expr) => {{
         let metadata = $crate::RecordMetadata {
             module_path: ::std::string::String::from(::std::module_path!()),
@@ -262,7 +122,13 @@ macro_rules! __femtolog_impl {
         };
         $logger.log_with_metadata($level, $message, metadata)
     }};
-    ($logger:expr, $level:expr, $fmt:expr, [$($arg:tt)+], $key_values:expr) => {{
+}
+
+/// Internal implementation macro for `format!`-style messages.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __femtolog_impl_fmt {
+    ($logger:expr, $level:expr, $fmt:expr, $key_values:expr, $($arg:tt)+) => {{
         let metadata = $crate::RecordMetadata {
             module_path: ::std::string::String::from(::std::module_path!()),
             filename: ::std::string::String::from(::std::file!()),

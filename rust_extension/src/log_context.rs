@@ -171,11 +171,15 @@ mod tests {
     //! Unit tests for scoped context propagation helpers.
 
     use super::*;
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
+
+    #[fixture]
+    fn isolated_context() {
+        clear_log_context_for_test();
+    }
 
     #[rstest]
-    fn context_push_pop_round_trip() {
-        clear_log_context_for_test();
+    fn context_push_pop_round_trip(_isolated_context: ()) {
         push_log_context_map(BTreeMap::from([("request_id".into(), "123".into())]))
             .expect("context push should succeed");
         let merged = merge_context_values(&BTreeMap::new()).expect("merge should succeed");
@@ -184,8 +188,7 @@ mod tests {
     }
 
     #[rstest]
-    fn nested_context_overrides_outer_keys() {
-        clear_log_context_for_test();
+    fn nested_context_overrides_outer_keys(_isolated_context: ()) {
         push_log_context_map(BTreeMap::from([("user".into(), "outer".into())]))
             .expect("outer context should push");
         push_log_context_map(BTreeMap::from([("user".into(), "inner".into())]))
@@ -197,8 +200,7 @@ mod tests {
     }
 
     #[rstest]
-    fn explicit_values_override_context() {
-        clear_log_context_for_test();
+    fn explicit_values_override_context(_isolated_context: ()) {
         push_log_context_map(BTreeMap::from([("request_id".into(), "ctx".into())]))
             .expect("context should push");
         let explicit = BTreeMap::from([("request_id".into(), "inline".into())]);
@@ -208,15 +210,13 @@ mod tests {
     }
 
     #[rstest]
-    fn pop_on_empty_stack_errors() {
-        clear_log_context_for_test();
+    fn pop_on_empty_stack_errors(_isolated_context: ()) {
         let err = pop_log_context().expect_err("empty pop should fail");
         assert_eq!(err, LogContextError::EmptyContextStack);
     }
 
     #[rstest]
-    fn reject_key_too_long() {
-        clear_log_context_for_test();
+    fn reject_key_too_long(_isolated_context: ()) {
         let long_key = "k".repeat(MAX_KEY_BYTES + 1);
         let err = push_log_context_map(BTreeMap::from([(long_key.clone(), "v".into())]))
             .expect_err("long key should fail");
@@ -228,5 +228,52 @@ mod tests {
                 max: MAX_KEY_BYTES,
             }
         );
+    }
+
+    #[rstest]
+    fn reject_too_many_keys(_isolated_context: ()) {
+        let context = (0..=MAX_CONTEXT_KEYS)
+            .map(|index| (format!("k{index}"), String::from("v")))
+            .collect::<BTreeMap<_, _>>();
+        let err = push_log_context_map(context).expect_err("too many keys should fail");
+        assert_eq!(
+            err,
+            LogContextError::TooManyKeys {
+                count: MAX_CONTEXT_KEYS + 1,
+                max: MAX_CONTEXT_KEYS,
+            }
+        );
+    }
+
+    #[rstest]
+    fn reject_value_too_long(_isolated_context: ()) {
+        let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
+        let err = push_log_context_map(BTreeMap::from([(String::from("ok"), long_value)]))
+            .expect_err("long value should fail");
+        assert_eq!(
+            err,
+            LogContextError::ValueTooLong {
+                key: String::from("ok"),
+                len: MAX_VALUE_BYTES + 1,
+                max: MAX_VALUE_BYTES,
+            }
+        );
+    }
+
+    #[rstest]
+    fn reject_total_bytes_exceeded(_isolated_context: ()) {
+        let value_len = 300usize;
+        let mut context = BTreeMap::new();
+        for index in 0..60usize {
+            context.insert(format!("k{index:02}"), "x".repeat(value_len));
+        }
+        let err = push_log_context_map(context).expect_err("total bytes limit should fail");
+        assert!(matches!(
+            err,
+            LogContextError::TotalBytesExceeded {
+                total,
+                max: MAX_TOTAL_BYTES
+            } if total > MAX_TOTAL_BYTES
+        ));
     }
 }

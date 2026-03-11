@@ -26,7 +26,8 @@ After this work:
 Observable success: structured fields and propagated context appear in
 `record.metadata.key_values` for accepted records, validation failures surface
 as explicit Python/Rust errors, and `make check-fmt`, `make typecheck`,
-`make lint`, and `make test` all pass.
+`make lint`, `make test`, `make fmt`, `make markdownlint`, and `make nixie` all
+pass.
 
 ## Constraints
 
@@ -273,6 +274,9 @@ Working directory: `/home/user/project`
    set -o pipefail && make typecheck | tee /tmp/3-4-2-typecheck.log
    set -o pipefail && make lint | tee /tmp/3-4-2-lint.log
    set -o pipefail && make test | tee /tmp/3-4-2-test.log
+   set -o pipefail && make fmt | tee /tmp/3-4-2-fmt.log
+   set -o pipefail && make markdownlint | tee /tmp/3-4-2-markdownlint.log
+   set -o pipefail && make nixie | tee /tmp/3-4-2-nixie.log
    ```
 
 Expected success markers:
@@ -281,6 +285,9 @@ Expected success markers:
 - `make typecheck`: exits 0.
 - `make lint`: exits 0 with no clippy warnings.
 - `make test`: exits 0 with Rust and Python suites passing.
+- `make fmt`: exits 0.
+- `make markdownlint`: exits 0.
+- `make nixie`: exits 0.
 
 ## Validation and Acceptance
 
@@ -353,5 +360,5 @@ No new dependencies are allowed; use existing stdlib/Rust/PyO3 facilities.
 ## Revision Note
 
 Initial draft created for roadmap item 3.4.2 planning based on
-`docs/roadmap.md`, `docs/configuration-roadmap.md`, and design sections §6.2
-and §8.3. Remaining sections are ready to be updated during implementation.
+`docs/roadmap.md`, `docs/configuration-design.md`, and design sections §6.2 and
+§8.3. Remaining sections are ready to be updated during implementation.

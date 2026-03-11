@@ -16,6 +16,7 @@ mod runtime_mutation;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
@@ -153,8 +154,23 @@ impl FemtoLogger {
         exc_info: Option<&Bound<'_, PyAny>>,
         stack_info: Option<bool>,
     ) -> PyResult<Option<String>> {
-        // Create base record
-        let mut record = FemtoLogRecord::new(&self.name, level, message);
+        let explicit_key_values = BTreeMap::new();
+        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
+            Ok(key_values) => key_values,
+            Err(err) => {
+                warn!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                return Ok(None);
+            }
+        };
+        let mut record = FemtoLogRecord::with_metadata(
+            &self.name,
+            level,
+            message,
+            RecordMetadata {
+                key_values: merged_key_values,
+                ..Default::default()
+            },
+        );
 
         // Capture exception payload if exc_info is provided and truthy
         #[cfg(feature = "python")]

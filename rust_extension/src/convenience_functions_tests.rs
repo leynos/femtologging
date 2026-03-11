@@ -3,9 +3,11 @@
 use super::*;
 use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
+use crate::log_record::RecordMetadata;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use pyo3::types::PyDict;
 use rstest::{fixture, rstest};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -157,6 +159,40 @@ fn context_rejects_invalid_value_type() {
                 .contains("context values must be str, int, float, bool, or None"),
             "unexpected error: {err}"
         );
+        log_context::clear_log_context_for_test();
+    });
+}
+
+#[rstest]
+fn invalid_merged_context_drops_record(unique_logger_name: String) {
+    Python::attach(|py| {
+        let logger =
+            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
+        let handler = Arc::new(CollectingHandler::default());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+
+        let mut invalid_key_values = BTreeMap::new();
+        invalid_key_values.insert(String::from("oversize"), "x".repeat(1_025));
+        let metadata = RecordMetadata {
+            key_values: invalid_key_values,
+            ..Default::default()
+        };
+        let result = logger
+            .borrow(py)
+            .log_with_metadata(FemtoLevel::Info, "should drop", metadata);
+
+        assert!(
+            result.is_none(),
+            "invalid merged context should drop record"
+        );
+        assert!(logger.borrow(py).flush_handlers());
+        assert!(
+            handler.collected().is_empty(),
+            "no records should be emitted when context merge fails"
+        );
+
         log_context::clear_log_context_for_test();
     });
 }

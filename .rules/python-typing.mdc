@@ -95,11 +95,11 @@ Use `TypeIs[T]` to define custom runtime type guards that narrow types in type c
 ```python
 import typing
 
-def is_str_list(val: list[object]) -> typing.TypeIs[list[str]]:
+def is_str_list(val: typing.Sequence[object]) -> typing.TypeIs[typing.Sequence[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 
-Unlike `isinstance`, this informs the type checker that `val` is now `list[str]`.
+Unlike `isinstance`, this informs the type checker that `val` is now `Sequence[str]`.
 
 #### Defaults for TypeVars (PEP 696)
 
@@ -109,8 +109,10 @@ Allow generic classes/functions to fall back to default types when no specific t
 T = typing.TypeVar("T", default=int)
 
 class Box[T]:
-    def __init__(self, value: T = T()):
+    def __init__(self, value: T):
         self.value = value
+
+default_box: Box = Box(0)
 ```
 
 This makes APIs more ergonomic while retaining type safety.

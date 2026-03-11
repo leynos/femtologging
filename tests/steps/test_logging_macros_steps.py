@@ -57,6 +57,25 @@ class ErrorPayload(typ.TypedDict):
     value: str | None
 
 
+class RecordMetadataPayload(typ.TypedDict):
+    """Subset of record metadata used in these behavioural assertions."""
+
+    key_values: dict[str, object]
+
+
+class CapturedRecordPayload(typ.TypedDict):
+    """Subset of captured record payloads consumed by helper assertions."""
+
+    metadata: RecordMetadataPayload
+
+
+class FlushableLogger(typ.Protocol):
+    """Structural type for logger objects that expose ``flush_handlers``."""
+
+    def flush_handlers(self) -> bool:
+        """Flush pending records and return whether the flush succeeded."""
+
+
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "logging_macros.feature"))
@@ -172,14 +191,13 @@ class RecordCollector:
 
     def __init__(self) -> None:
         """Initialize collector state for one scenario."""
-        self.records: list[dict[str, typ.Any]] = []
-        self.last_message = ""
+        self.records: list[CapturedRecordPayload] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
-        """Accept classic handler calls while retaining last message."""
-        self.last_message = f"{logger}:{level}:{message}"
+        """Accept classic handler calls for compatibility with logger handlers."""
+        _ = (self.records, logger, level, message)
 
-    def handle_record(self, record: dict[str, typ.Any]) -> None:
+    def handle_record(self, record: CapturedRecordPayload) -> None:
         """Capture full record payloads for metadata assertions."""
         self.records.append(record)
 
@@ -278,13 +296,7 @@ def call_with_nested_context_and_capture_metadata(
     fn = _FUNC_MAP[func]
     with log_context(**outer_map), log_context(**inner_map):
         fn(message, name=name)
-    for _ in range(20):
-        if collector.records:
-            break
-        logger.flush_handlers()
-        time.sleep(0.01)
-    assert collector.records, "expected at least one captured record"
-    latest = collector.records[-1]["metadata"]["key_values"]
+    latest = _wait_for_latest_key_values(logger, collector)
     return {"value": {str(k): str(v) for k, v in latest.items()}}
 
 
@@ -464,11 +476,22 @@ def _capture_latest_key_values(
     logger.add_handler(collector)
     with log_context(**context):
         fn(message, name=logger_name)
-    for _ in range(20):
+    latest = _wait_for_latest_key_values(logger, collector)
+    return {str(k): str(v) for k, v in latest.items()}
+
+
+def _wait_for_latest_key_values(
+    logger: FlushableLogger,
+    collector: RecordCollector,
+    *,
+    attempts: int = 20,
+    interval_s: float = 0.01,
+) -> dict[str, object]:
+    """Wait for a captured record and return its latest key-values payload."""
+    for _ in range(attempts):
         if collector.records:
             break
         logger.flush_handlers()
-        time.sleep(0.01)
+        time.sleep(interval_s)
     assert collector.records, "expected at least one captured record"
-    latest = collector.records[-1]["metadata"]["key_values"]
-    return {str(k): str(v) for k, v in latest.items()}
+    return collector.records[-1]["metadata"]["key_values"]
