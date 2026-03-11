@@ -11,6 +11,7 @@ use crate::{
     FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
     LoggerMutationBuilder, NameFilterBuilder, RotatingFileHandlerBuilder, RuntimeConfigBuilder,
     SocketHandlerBuilder, StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
@@ -18,6 +19,10 @@ use crate::{
             clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
         },
         socket_builder::BackoffOverrides,
+        timed_rotating::{
+            PyTimedRotatingFileHandler, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions,
+            clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+        },
     },
 };
 
@@ -45,6 +50,10 @@ pub(crate) fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "RotatingFileHandlerBuilder",
             py.get_type::<RotatingFileHandlerBuilder>(),
         ),
+        (
+            "TimedRotatingFileHandlerBuilder",
+            py.get_type::<TimedRotatingFileHandlerBuilder>(),
+        ),
         ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
         ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
         ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
@@ -70,9 +79,15 @@ pub(crate) fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoSocketHandler>()?;
     m.add_class::<FemtoHTTPHandler>()?;
     m.add_class::<PyRotatingFileHandler>()?;
+    m.add_class::<PyTimedRotatingFileHandler>()?;
     m.add_class::<HandlerOptions>()?;
+    m.add_class::<TimedHandlerOptions>()?;
     m.add_class::<BackoffOverrides>()?;
     m.add("ROTATION_VALIDATION_MSG", ROTATION_VALIDATION_MSG)?;
+    m.add(
+        "TIMED_ROTATION_VALIDATION_MSG",
+        TIMED_ROTATION_VALIDATION_MSG,
+    )?;
     Ok(())
 }
 
@@ -81,6 +96,11 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
     m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
     m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        clear_timed_rotation_test_times_for_test,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::frame_filter_py::get_logging_infrastructure_patterns,
@@ -142,6 +162,7 @@ mod tests {
                 "FileHandlerBuilder",
                 "HTTPHandlerBuilder",
                 "RotatingFileHandlerBuilder",
+                "TimedRotatingFileHandlerBuilder",
                 "LevelFilterBuilder",
                 "NameFilterBuilder",
                 "FilterBuildError",
@@ -164,7 +185,9 @@ mod tests {
                 "FemtoSocketHandler",
                 "FemtoHTTPHandler",
                 "FemtoRotatingFileHandler",
+                "FemtoTimedRotatingFileHandler",
                 "HandlerOptions",
+                "TimedHandlerOptions",
                 "BackoffConfig",
             ],
             expected_rotation_validation_msg: Some(ROTATION_VALIDATION_MSG),

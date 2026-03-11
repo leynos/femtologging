@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections
 `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
 proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 ## Purpose / big picture
 
@@ -138,14 +138,14 @@ The design sources that constrain this plan are:
   test patterns.
 - [x] 2026-03-08: Wrote this draft ExecPlan in
   `docs/execplans/2-1-2-complete-rotating-handler-coverage.md`.
-- [ ] Add a pure timed-rotation schedule component with deterministic tests.
-- [ ] Implement the Rust timed rotating handler core and worker-thread rollover
+- [x] Add a pure timed-rotation schedule component with deterministic tests.
+- [x] Implement the Rust timed rotating handler core and worker-thread rollover
   path.
-- [ ] Add the timed rotating builder and Python bindings.
-- [ ] Wire the handler into package exports, stubs, and `dictConfig`.
-- [ ] Add Rust `rstest` coverage, Python `pytest` unit coverage, BDD scenarios,
+- [x] Add the timed rotating builder and Python bindings.
+- [x] Wire the handler into package exports, stubs, and `dictConfig`.
+- [x] Add Rust `rstest` coverage, Python `pytest` unit coverage, BDD scenarios,
   and syrupy snapshots.
-- [ ] Update design/configuration docs and mark roadmap item `2.1.2` done.
+- [x] Update design/configuration docs and mark roadmap item `2.1.2` done.
 - [ ] Run and pass all quality gates.
 
 ## Surprises & Discoveries
@@ -163,6 +163,9 @@ The design sources that constrain this plan are:
 - The existing size-based rotating handler already shows the preferred shape
   for this work: split core logic from Python bindings and keep behaviour tests
   deterministic through test support hooks rather than sleeps.
+- The injected timed test clock must be configured before constructing the
+  handler, because schedule initialization consumes the first timestamp to
+  compute the initial rollover deadline.
 
 ## Decision Log
 
@@ -443,11 +446,12 @@ specific revisions to it.
 
 ## Outcomes & Retrospective
 
-This section remains intentionally incomplete until implementation finishes.
-When the work is done, replace this note with:
-
-- what shipped,
-- which risks materialised,
-- what changed from the draft,
-- exact gate results, and
-- any lessons worth carrying into later handler work.
+- Added `FemtoTimedRotatingFileHandler`, `TimedHandlerOptions`, and
+  `TimedRotatingFileHandlerBuilder` across Rust core, Python bindings, exports,
+  and type stubs.
+- Added deterministic schedule and retention coverage in Rust plus Python unit,
+  dictConfig, pytest-bdd, and syrupy snapshot tests using an injected test
+  clock instead of wall-clock sleeps.
+- Wired timed rotating handlers into `ConfigBuilder` and `dictConfig`, then
+  updated roadmap and user-facing configuration docs to describe the shipped
+  behaviour.

@@ -16,6 +16,12 @@ _clear_rotating_fresh_failure = getattr(
     rust, "clear_rotating_fresh_failure_for_test", None
 )
 _runtime_attachment_state = getattr(rust, "runtime_attachment_state_for_test", None)
+_set_timed_rotation_test_times = getattr(
+    rust, "set_timed_rotation_test_times_for_test", None
+)
+_clear_timed_rotation_test_times = getattr(
+    rust, "clear_timed_rotation_test_times_for_test", None
+)
 _setup_rust_logging = getattr(rust, "setup_rust_logging", None)
 
 if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
@@ -40,6 +46,30 @@ else:
         raise RuntimeError(msg)
 
     def _clear_rotating_fresh_failure_for_test() -> None:
+        return
+
+
+if callable(_set_timed_rotation_test_times) and callable(
+    _clear_timed_rotation_test_times
+):
+    _set_timed_rotation_test_times_for_test = typ.cast(
+        "cabc.Callable[[list[int]], None]",
+        _set_timed_rotation_test_times,
+    )
+    _clear_timed_rotation_test_times_for_test = typ.cast(
+        "cabc.Callable[[], None]",
+        _clear_timed_rotation_test_times,
+    )
+else:
+
+    def _set_timed_rotation_test_times_for_test(epoch_millis: list[int]) -> None:
+        msg = (
+            "timed rotation test clock requires the extension built with the "
+            "'python' feature"
+        )
+        raise RuntimeError(msg)
+
+    def _clear_timed_rotation_test_times_for_test() -> None:
         return
 
 

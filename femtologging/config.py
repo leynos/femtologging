@@ -45,6 +45,7 @@ SocketHandlerBuilder = rust.SocketHandlerBuilder
 BackoffConfig = getattr(rust, "BackoffConfig", None)
 FileHandlerBuilder = rust.FileHandlerBuilder
 RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
+TimedRotatingFileHandlerBuilder = rust.TimedRotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
 LoggerConfigBuilder = rust.LoggerConfigBuilder
 FormatterBuilder = rust.FormatterBuilder
@@ -64,6 +65,10 @@ _HANDLER_CLASS_MAP: typ.Final[dict[str, object]] = {
     "logging.RotatingFileHandler": RotatingFileHandlerBuilder,
     "femtologging.RotatingFileHandler": RotatingFileHandlerBuilder,
     "femtologging.FemtoRotatingFileHandler": RotatingFileHandlerBuilder,
+    "logging.handlers.TimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
+    "logging.TimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
+    "femtologging.TimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
+    "femtologging.FemtoTimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
 }
 
 

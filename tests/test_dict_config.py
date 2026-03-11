@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import typing as typ
 
 import pytest
 
 from femtologging import (
+    _clear_timed_rotation_test_times_for_test,
+    _set_timed_rotation_test_times_for_test,
     dictConfig,
     get_logger,
     reset_manager,
@@ -36,6 +39,36 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     logger = get_logger("root")
     logger.log("INFO", "file")
     poll_file_for_text(path, "file", timeout=1.0)
+
+
+def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
+    """DictConfig should construct a timed rotating handler via class mapping."""
+    path = tmp_path / "timed.log"
+    _set_timed_rotation_test_times_for_test([
+        int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
+        int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
+        int(dt.datetime(2026, 3, 12, 0, 0, 2, tzinfo=dt.UTC).timestamp() * 1000),
+    ])
+    try:
+        cfg = {
+            "version": 1,
+            "handlers": {
+                "f": {
+                    "class": "logging.handlers.TimedRotatingFileHandler",
+                    "args": [str(path), "S", 1, 1, True],
+                }
+            },
+            "root": {"level": "INFO", "handlers": ["f"]},
+        }
+        dictConfig(cfg)
+        logger = get_logger("root")
+        logger.log("INFO", "first")
+        logger.log("INFO", "second")
+        poll_file_for_text(path, "second", timeout=1.0)
+        rotated = path.with_name(f"{path.name}.2026-03-12_00-00-01")
+        poll_file_for_text(rotated, "first", timeout=1.0)
+    finally:
+        _clear_timed_rotation_test_times_for_test()
 
 
 @pytest.mark.parametrize(
