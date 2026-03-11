@@ -252,9 +252,9 @@ and a `level` property getter. These operations are thread-safe:
 from femtologging import FemtoLogger
 
 logger = FemtoLogger("app")
-logger.set_level("ERROR")    # Only ERROR and above will be logged
-print(logger.level)          # "ERROR"
-logger.set_level("DEBUG")    # Now DEBUG and above
+logger.set_level("ERROR")  # Only ERROR and above will be logged
+print(logger.level)  # "ERROR"
+logger.set_level("DEBUG")  # Now DEBUG and above
 ```
 
 ### Rust API
