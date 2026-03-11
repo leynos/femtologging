@@ -477,24 +477,26 @@ class SocketHandlerBuilder(HandlerBuilder):
 ### 1.3. Implemented handler builders
 
 The initial implementation provides `FileHandlerBuilder`,
-`RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
-the existing handler types. `FileHandlerBuilder` supports capacity and flush
-interval, while `RotatingFileHandlerBuilder` layers on `max_bytes` and
-`backup_count` rotation thresholds. Rotation is opt-in: both limits must be
-provided with positive values. Passing zero or negative integers raises a
-`ValueError` immediately because the PyO3 bindings reject invalid unsigned
-inputs, keeping misconfigurations obvious. When thresholds are omitted the
-handler stores `(0, 0)`, disabling rotation entirely. Mismatched pairs continue
-to raise configuration errors so invalid rollover settings fail fast. The
-`StreamHandlerBuilder` configures the stream target and capacity. All builders
-expose `build()` methods returning ready‑to‑use handlers. Advanced options such
-as file encoding or custom writers are deferred until the corresponding handler
-features are ported from picologging. The Rust implementation stores the
-configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
-the rotation algorithm without changing the builder API. Internally, a shared
-`FileLikeBuilderState` keeps the queue configuration logic in one place for
-both file-based builders, reducing duplication and ensuring validation stays
-consistent.
+`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`, and
+`StreamHandlerBuilder` as thin wrappers over the existing handler types.
+`FileHandlerBuilder` supports capacity and flush interval,
+`RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
+thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
+`backup_count`, `utc`, and `at_time`. Rotation is opt-in for the size-based
+builder: both limits must be provided with positive values. Passing zero or
+negative integers raises a `ValueError` immediately because the PyO3 bindings
+reject invalid unsigned inputs, keeping misconfigurations obvious. When size
+thresholds are omitted the handler stores `(0, 0)`, disabling rotation
+entirely. Mismatched pairs continue to raise configuration errors so invalid
+rollover settings fail fast. The `StreamHandlerBuilder` configures the stream
+target and capacity. All builders expose `build()` methods returning
+ready‑to‑use handlers. Advanced options such as file encoding or custom writers
+are deferred until the corresponding handler features are ported from
+picologging. The Rust implementation stores the configured thresholds on
+`FemtoRotatingFileHandler` so later work can wire in the rotation algorithm
+without changing the builder API. Internally, a shared `FileLikeBuilderState`
+keeps the queue configuration logic in one place for both file-based builders,
+reducing duplication and ensuring validation stays consistent.
 
 `SocketHandlerBuilder` follows the same fluent approach but focuses on
 transport concerns rather than file metadata. Callers select either a TCP
@@ -763,12 +765,18 @@ components in a fixed order to honour dependencies:
    - ``"logging.handlers.RotatingFileHandler"``,
      ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
      and ``"femtologging.FemtoRotatingFileHandler"`` →
-     ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
-     ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
-     structures or as strings, which are safely evaluated with
-     ``ast.literal_eval``. For stream handlers, ``ext://sys.stdout`` and
-     ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
-     ``filters`` settings are currently unsupported and produce ``ValueError``.
+     ``RotatingFileHandlerBuilder``
+   - ``"logging.handlers.TimedRotatingFileHandler"``,
+     ``"logging.TimedRotatingFileHandler"``,
+     ``"femtologging.TimedRotatingFileHandler"``, and
+     ``"femtologging.FemtoTimedRotatingFileHandler"`` →
+     ``TimedRotatingFileHandlerBuilder``
+     Unsupported handler classes raise ``ValueError``. ``args`` and ``kwargs``
+     may be provided either as native structures or as strings, which are
+     safely evaluated with ``ast.literal_eval``. For stream handlers,
+     ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted targets.
+     Handler ``level`` and ``filters`` settings are currently unsupported and
+     produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers``, ``filters``,
    and ``propagate`` settings. Logger and root ``filters`` values are lists of

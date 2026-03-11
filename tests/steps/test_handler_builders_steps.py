@@ -5,6 +5,7 @@ Covers file, rotating, stream, socket, and HTTP handler builders.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import typing as typ
 from pathlib import Path
@@ -21,12 +22,15 @@ from femtologging import (
     RotatingFileHandlerBuilder,
     SocketHandlerBuilder,
     StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
 )
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
 
-FileBuilder = FileHandlerBuilder | RotatingFileHandlerBuilder
+FileBuilder = (
+    FileHandlerBuilder | RotatingFileHandlerBuilder | TimedRotatingFileHandlerBuilder
+)
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -56,6 +60,17 @@ def _fail_rotating_builder_requirement(builder: FileBuilder) -> typ.NoReturn:
     raise AssertionError(msg)
 
 
+def _require_timed_builder(builder: FileBuilder) -> TimedRotatingFileHandlerBuilder:
+    """Validate that a file builder targets timed rotation operations."""
+    if not isinstance(builder, TimedRotatingFileHandlerBuilder):
+        msg = (
+            "timed builder step requires TimedRotatingFileHandlerBuilder, "
+            f"got {type(builder).__name__}"
+        )
+        raise TypeError(msg)
+    return builder
+
+
 def _build_flush_close(builder: HTTPHandlerBuilder) -> None:
     """Build, flush, and close a handler from a builder."""
     handler = builder.build()
@@ -79,6 +94,17 @@ def given_rotating_file_builder(tmp_path: Path) -> RotatingFileHandlerBuilder:
 
 
 @given(
+    'a TimedRotatingFileHandlerBuilder for path "test.log"',
+    target_fixture="file_builder",
+)
+def given_timed_rotating_file_builder(
+    tmp_path: Path,
+) -> TimedRotatingFileHandlerBuilder:
+    path = tmp_path / "test.log"
+    return TimedRotatingFileHandlerBuilder(str(path))
+
+
+@given(
     'a dictConfig RotatingFileHandlerBuilder for path "test.log"',
     target_fixture="file_builder",
 )
@@ -97,6 +123,24 @@ def given_dictconfig_rotating_file_builder(
         },
     )
     return _require_rotating_builder(builder)
+
+
+@given(
+    'a dictConfig TimedRotatingFileHandlerBuilder for path "test.log"',
+    target_fixture="file_builder",
+)
+def given_dictconfig_timed_rotating_file_builder(
+    tmp_path: Path,
+) -> TimedRotatingFileHandlerBuilder:
+    path = tmp_path / "test.log"
+    builder = config_module._build_handler_from_dict(
+        "h",
+        {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "args": [str(path)],
+        },
+    )
+    return _require_timed_builder(builder)
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")
@@ -221,6 +265,46 @@ def when_set_backup_count(file_builder: FileBuilder, backup_count: int) -> FileB
     return rotating.with_backup_count(backup_count)
 
 
+@when(parsers.parse('I set timed rotation when "{when_value}"'))
+def when_set_timed_rotation_when(
+    file_builder: FileBuilder, when_value: str
+) -> FileBuilder:
+    timed = _require_timed_builder(file_builder)
+    return timed.with_when(when_value)
+
+
+@when(parsers.parse("I set timed rotation interval {interval:d}"))
+def when_set_timed_rotation_interval(
+    file_builder: FileBuilder, interval: int
+) -> FileBuilder:
+    timed = _require_timed_builder(file_builder)
+    return timed.with_interval(interval)
+
+
+@when(parsers.parse("I set timed rotation backup count {backup_count:d}"))
+def when_set_timed_rotation_backup_count(
+    file_builder: FileBuilder, backup_count: int
+) -> FileBuilder:
+    timed = _require_timed_builder(file_builder)
+    return timed.with_backup_count(backup_count)
+
+
+@when("I enable timed rotation UTC mode")
+def when_enable_timed_rotation_utc(file_builder: FileBuilder) -> FileBuilder:
+    timed = _require_timed_builder(file_builder)
+    use_utc = True
+    return timed.with_utc(use_utc)
+
+
+@when(parsers.parse('I set timed rotation at time "{time_value}"'))
+def when_set_timed_rotation_at_time(
+    file_builder: FileBuilder, time_value: str
+) -> FileBuilder:
+    timed = _require_timed_builder(file_builder)
+    hours, minutes, seconds = [int(part) for part in time_value.split(":")]
+    return timed.with_at_time(dt.time(hours, minutes, seconds))
+
+
 @when(parsers.parse('I set stream formatter "{formatter_id}"'))
 def when_set_stream_formatter(
     stream_builder: StreamHandlerBuilder, formatter_id: str
@@ -246,6 +330,17 @@ def then_rotating_file_builder_snapshot(
     data = _normalize_builder_path(rotating.as_dict())
     assert data == snapshot, "rotating file builder dict must match snapshot"
     handler = rotating.build()
+    handler.close()
+
+
+@then("the timed rotating file handler builder matches snapshot")
+def then_timed_rotating_file_builder_snapshot(
+    file_builder: FileBuilder, snapshot: SnapshotAssertion
+) -> None:
+    timed = _require_timed_builder(file_builder)
+    data = _normalize_builder_path(timed.as_dict())
+    assert data == snapshot, "timed rotating builder dict must match snapshot"
+    handler = timed.build()
     handler.close()
 
 
@@ -302,6 +397,31 @@ def then_setting_backup_count_fails(
     rotating = _require_rotating_builder(file_builder)
     with pytest.raises(ValueError, match=re.escape(message)):
         rotating.with_backup_count(backup_count)
+
+
+@then(
+    parsers.parse('setting timed rotation when "{when_value}" fails with "{message}"')
+)
+def then_setting_timed_rotation_when_fails(
+    file_builder: FileBuilder, when_value: str, message: str
+) -> None:
+    timed = _require_timed_builder(file_builder)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        timed.with_when(when_value)
+
+
+@then(
+    parsers.parse(
+        'setting timed rotation at time "{time_value}" fails with "{message}"'
+    )
+)
+def then_setting_timed_rotation_at_time_fails(
+    file_builder: FileBuilder, time_value: str, message: str
+) -> None:
+    timed = _require_timed_builder(file_builder)
+    hours, minutes, seconds = [int(part) for part in time_value.split(":")]
+    with pytest.raises(ValueError, match=re.escape(message)):
+        timed.with_at_time(dt.time(hours, minutes, seconds))
 
 
 @then(parsers.parse('setting zero rotation thresholds fails with "{message}"'))

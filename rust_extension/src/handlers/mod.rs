@@ -24,6 +24,8 @@ pub mod socket_builder;
 pub mod stream_builder;
 #[cfg(test)]
 pub mod test_helpers;
+pub mod timed_rotating;
+pub mod timed_rotating_builder;
 
 pub use file_builder::FileHandlerBuilder;
 pub use formatter_id::FormatterId;
@@ -34,6 +36,10 @@ pub use rotating::HandlerOptions;
 pub use rotating_builder::RotatingFileHandlerBuilder;
 pub use socket_builder::SocketHandlerBuilder;
 pub use stream_builder::StreamHandlerBuilder;
+pub use timed_rotating::FemtoTimedRotatingFileHandler;
+#[cfg(feature = "python")]
+pub use timed_rotating::{TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};
+pub use timed_rotating_builder::TimedRotatingFileHandlerBuilder;
 
 // Define module-level Python exceptions for explicit handling on the Python side.
 create_exception!(

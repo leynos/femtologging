@@ -20,7 +20,7 @@ use crate::{
     handler::FemtoHandlerTrait,
     handlers::{
         FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, RotatingFileHandlerBuilder,
-        SocketHandlerBuilder, StreamHandlerBuilder,
+        SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
     },
     level::FemtoLevel,
 };
@@ -34,6 +34,8 @@ pub enum HandlerBuilder {
     File(FileHandlerBuilder),
     /// Build a [`FemtoRotatingFileHandler`].
     Rotating(RotatingFileHandlerBuilder),
+    /// Build a [`FemtoTimedRotatingFileHandler`].
+    TimedRotating(TimedRotatingFileHandlerBuilder),
     /// Build a [`FemtoSocketHandler`].
     Socket(SocketHandlerBuilder),
 }
@@ -51,6 +53,10 @@ impl HandlerBuilder {
                 .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
             Self::Rotating(b) => {
                 <RotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
+                    .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
+            }
+            Self::TimedRotating(b) => {
+                <TimedRotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
                     .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
             }
             Self::Socket(b) => <SocketHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
@@ -74,6 +80,12 @@ impl From<FileHandlerBuilder> for HandlerBuilder {
 impl From<RotatingFileHandlerBuilder> for HandlerBuilder {
     fn from(value: RotatingFileHandlerBuilder) -> Self {
         Self::Rotating(value)
+    }
+}
+
+impl From<TimedRotatingFileHandlerBuilder> for HandlerBuilder {
+    fn from(value: TimedRotatingFileHandlerBuilder) -> Self {
+        Self::TimedRotating(value)
     }
 }
 
