@@ -17,8 +17,10 @@ Feature: Timed rotating file handler rotation
       | timestamp           |
       | 2026-03-11T23:59:59 |
       | 2026-03-11T23:59:59 |
+      | 2026-03-11T23:59:59 |
       | 2026-03-12T00:00:01 |
-    And a timed rotating handler with when "MIDNIGHT" interval 1 backup count 1 utc enabled at time "00:00:00"
+    And a timed rotating handler with when "MIDNIGHT" interval 1 backup count 1 utc enabled
+    And the handler at_time is "00:00:00"
     When I log timed record "first message" at level "INFO" for logger "rotate"
     And I log timed record "second message" at level "INFO" for logger "rotate"
     And I close the timed rotating handler

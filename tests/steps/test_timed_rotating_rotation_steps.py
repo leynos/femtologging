@@ -33,6 +33,7 @@ class TimedRotatingContext:
 
     handler: FemtoTimedRotatingFileHandler
     path: Path
+    spec: TimedRotationSpec
     closed: bool = False
 
 
@@ -63,7 +64,7 @@ def timed_rotating_context_factory(
             at_time=spec.at_time,
         )
         handler = FemtoTimedRotatingFileHandler(str(path), options=options)
-        ctx = TimedRotatingContext(handler=handler, path=path)
+        ctx = TimedRotatingContext(handler=handler, path=path, spec=spec)
         contexts.append(ctx)
         return ctx
 
@@ -111,38 +112,29 @@ def given_timed_rotating_handler(
     )
 
 
-@given(
-    parsers.parse(
-        'a timed rotating handler with when "{when_value}" interval {interval:d} '
-        'backup count {backup_count:d} utc enabled at time "{time_value}"'
-    ),
-    target_fixture="timed_ctx",
-)
-def given_timed_rotating_handler_with_at_time(  # noqa: PLR0917 - pytest-bdd injects step values
-    timed_rotating_context_factory: cabc.Callable[
-        [TimedRotationSpec], TimedRotatingContext
-    ],
-    when_value: str,
-    interval: int,
-    backup_count: int,
-    time_value: str,
-) -> TimedRotatingContext:
-    return timed_rotating_context_factory(
-        TimedRotationSpec(
-            when=when_value,
-            interval=interval,
-            backup_count=backup_count,
-            use_utc=True,
-            at_time=_parse_time(time_value),
-        )
-    )
-
-
 @given("timed rotation test times:", target_fixture="timed_rotation_test_times")
 def given_timed_rotation_test_times(datatable: list[list[str]]) -> list[int]:
     timestamps = [_epoch_millis(row[0]) for row in datatable[1:]]
     _set_timed_rotation_test_times_for_test(timestamps)
     return timestamps
+
+
+@given(
+    parsers.parse('the handler at_time is "{time_value}"'),
+    target_fixture="timed_ctx",
+)
+def given_handler_at_time(
+    timed_rotating_context_factory: cabc.Callable[
+        [TimedRotationSpec], TimedRotatingContext
+    ],
+    timed_ctx: TimedRotatingContext,
+    time_value: str,
+) -> TimedRotatingContext:
+    timed_ctx.handler.close()
+    timed_ctx.closed = True
+    return timed_rotating_context_factory(
+        dataclasses.replace(timed_ctx.spec, at_time=_parse_time(time_value))
+    )
 
 
 @when(
