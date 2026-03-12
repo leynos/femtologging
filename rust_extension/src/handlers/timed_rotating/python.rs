@@ -11,7 +11,7 @@ use pyo3::{
 };
 
 use super::{
-    FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler,
+    FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler, TimedRotationConfig,
     clock::{clear_injected_times_for_test, set_injected_times_for_test},
     schedule::{TimedRotationSchedule, TimedRotationWhen},
 };
@@ -165,8 +165,10 @@ impl PyTimedRotatingFileHandler {
             &path,
             DefaultFormatter,
             config,
-            schedule,
-            backup_count,
+            TimedRotationConfig {
+                schedule,
+                backup_count,
+            },
         )
         .map(Self::from_core)
         .map_err(|err| PyIOError::new_err(format!("{path}: {err}")))

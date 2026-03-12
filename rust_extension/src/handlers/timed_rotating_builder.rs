@@ -10,7 +10,10 @@ use super::{
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{HandlerConfig, OverflowPolicy},
-    timed_rotating::{FemtoTimedRotatingFileHandler, TimedRotationSchedule, TimedRotationWhen},
+    timed_rotating::{
+        FemtoTimedRotatingFileHandler, TimedRotationConfig, TimedRotationSchedule,
+        TimedRotationWhen,
+    },
 };
 use crate::formatter::{DefaultFormatter, FemtoFormatter};
 
@@ -148,8 +151,10 @@ impl TimedRotatingFileHandlerBuilder {
             &self.path,
             formatter,
             cfg,
-            schedule,
-            self.backup_count,
+            TimedRotationConfig {
+                schedule,
+                backup_count: self.backup_count,
+            },
         )
         .map_err(Into::into)
     }

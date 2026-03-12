@@ -200,6 +200,12 @@ fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
     value.starts_with(prefix.as_ref())
 }
 
+/// Bundles timed-rotation parameters passed to the handler constructor.
+pub(crate) struct TimedRotationConfig {
+    pub(crate) schedule: TimedRotationSchedule,
+    pub(crate) backup_count: usize,
+}
+
 /// File handler variant configured for timed rotation.
 pub struct FemtoTimedRotatingFileHandler {
     inner: FemtoFileHandler,
@@ -237,12 +243,11 @@ impl FemtoTimedRotatingFileHandler {
     }
 
     /// Build a timed rotating handler with the supplied configuration.
-    pub fn with_capacity_flush_policy<P, F>(
+    pub(crate) fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
         config: HandlerConfig,
-        schedule: TimedRotationSchedule,
-        backup_count: usize,
+        rotation: TimedRotationConfig,
     ) -> io::Result<Self>
     where
         P: AsRef<Path>,
@@ -254,11 +259,18 @@ impl FemtoTimedRotatingFileHandler {
             .append(true)
             .open(path_ref)?;
         let writer = BufWriter::new(file);
-        let rotation =
-            TimedFileRotationStrategy::new(path_ref.to_path_buf(), schedule.clone(), backup_count);
-        let options = BuilderOptions::<BufWriter<File>, _>::new(rotation, None);
+        let rotation_strategy = TimedFileRotationStrategy::new(
+            path_ref.to_path_buf(),
+            rotation.schedule.clone(),
+            rotation.backup_count,
+        );
+        let options = BuilderOptions::<BufWriter<File>, _>::new(rotation_strategy, None);
         let handler = FemtoFileHandler::build_from_worker(writer, formatter, config, options);
-        Ok(Self::new_with_schedule(handler, schedule, backup_count))
+        Ok(Self::new_with_schedule(
+            handler,
+            rotation.schedule,
+            rotation.backup_count,
+        ))
     }
 
     delegate! {
@@ -331,8 +343,10 @@ mod tests {
             &path,
             DefaultFormatter,
             config,
-            schedule,
-            1,
+            TimedRotationConfig {
+                schedule,
+                backup_count: 1,
+            },
         )
         .expect("timed handler must build");
         handler

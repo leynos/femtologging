@@ -8,6 +8,7 @@ mod core;
 mod schedule;
 
 pub use core::FemtoTimedRotatingFileHandler;
+pub(crate) use core::TimedRotationConfig;
 pub use schedule::{TimedRotationSchedule, TimedRotationWhen};
 
 #[cfg(feature = "python")]

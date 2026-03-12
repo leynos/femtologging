@@ -112,21 +112,37 @@ impl TimedRotationSchedule {
     }
 
     /// Return the configured cadence.
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(dead_code, reason = "python-only getter")
+    )]
     pub const fn when(&self) -> TimedRotationWhen {
         self.when
     }
 
     /// Return the configured interval.
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(dead_code, reason = "python-only getter")
+    )]
     pub const fn interval(&self) -> u32 {
         self.interval
     }
 
     /// Return whether UTC scheduling is enabled.
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(dead_code, reason = "python-only getter")
+    )]
     pub const fn use_utc(&self) -> bool {
         self.use_utc
     }
 
     /// Return the optional time-of-day trigger.
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(dead_code, reason = "python-only getter")
+    )]
     pub const fn at_time(&self) -> Option<NaiveTime> {
         self.at_time
     }
