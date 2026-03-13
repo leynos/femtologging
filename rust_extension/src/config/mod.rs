@@ -4,8 +4,16 @@
 mod build;
 #[cfg(feature = "python")]
 mod py;
+#[cfg(feature = "python")]
+mod runtime_mutation;
 mod types;
 
+#[cfg_attr(
+    not(feature = "python"),
+    expect(unused_imports, reason = "public re-exports for Python-enabled builds")
+)]
+#[cfg(feature = "python")]
+pub use runtime_mutation::{LoggerMutationBuilder, RuntimeConfigBuilder};
 #[cfg_attr(
     not(feature = "python"),
     expect(unused_imports, reason = "public re-exports for external consumers")
@@ -17,5 +25,7 @@ pub use types::{ConfigBuilder, ConfigError, FormatterBuilder, LoggerConfigBuilde
 mod config_tests;
 #[cfg(all(test, feature = "python"))]
 mod propagate_tests;
+#[cfg(all(test, feature = "python"))]
+mod runtime_mutation_tests;
 #[cfg(all(test, feature = "python"))]
 mod test_utils;

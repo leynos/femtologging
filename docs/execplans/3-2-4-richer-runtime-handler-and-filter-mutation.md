@@ -1,10 +1,11 @@
 # Deliver richer runtime handler and filter mutation workflows
 
-This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+This Execution Plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
+proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 ## Purpose / big picture
 
@@ -97,9 +98,9 @@ being appended to those files.
 - Do not introduce new external Rust or Python dependencies.
 - Preserve existing `ConfigBuilder.build_and_init()` semantics for bootstrap
   configuration.
-- Avoid storing Python objects or any GIL-bound state in worker threads. The
-  feature must remain compatible with the guidance in
-  `docs/multithreading-in-pyo3.md`.
+- Avoid storing Python objects or any Global Interpreter Lock (GIL)-bound
+  state in worker threads. The feature must remain compatible with the guidance
+  in `docs/multithreading-in-pyo3.md`.
 - Public Python-facing APIs must receive matching stubs in
   `femtologging/_femtologging_rs.pyi`.
 - New Rust tests must use `rstest` fixtures and parameterized cases where
@@ -333,8 +334,8 @@ Add Rust coverage for:
 Add Python unit tests for direct API usage, likely in a new file such as
 `tests/test_runtime_reconfiguration.py`.
 
-Add a BDD feature such as `tests/features/runtime_reconfiguration.feature` with
-scenarios for:
+Add a Behaviour-Driven Development (BDD) feature such as
+`tests/features/runtime_reconfiguration.feature` with scenarios for:
 
 - appending a handler at runtime
 - replacing filters at runtime
@@ -391,14 +392,18 @@ Expected outcome:
 
 - [x] 2026-03-11: Wrote the initial ExecPlan draft after reviewing the roadmap,
   design docs, runtime reconfiguration code, and existing tests.
-- [ ] Confirm the final public API names before implementation starts.
-- [ ] Add runtime-mutation builder types and Python bindings.
-- [ ] Extend manager runtime state and bootstrap seeding.
-- [ ] Implement transactional runtime apply and rollback.
-- [ ] Add Rust `rstest` coverage.
-- [ ] Add Python unit, `pytest-bdd`, and syrupy coverage.
-- [ ] Update design docs and mark roadmap item 3.2.4 done.
-- [ ] Run all quality gates and keep the logs.
+- [x] Confirmed the public API names as `RuntimeConfigBuilder` and
+  `LoggerMutationBuilder`.
+- [x] Added runtime-mutation builder types and Python bindings.
+- [x] Extended manager runtime state and bootstrap seeding.
+- [x] Implemented transactional runtime apply semantics with pre-apply
+  validation and snapshot-based rollback hooks.
+- [x] Added Rust `rstest` coverage.
+- [x] Added Python unit, `pytest-bdd`, and syrupy coverage.
+- [x] Updated design docs and marked roadmap item 3.2.4 done.
+- [x] Ran `make fmt`, `make check-fmt`, `make typecheck`, `make lint`,
+  `make test`, `make markdownlint`, and `make nixie`, capturing logs under
+  `/tmp/3-2-4-*.log`.
 
 ## Surprises & Discoveries
 
@@ -414,6 +419,9 @@ Expected outcome:
 - `rust_extension/src/config/types.rs` is near the 400-line project limit and
   `rust_extension/src/logger/mod.rs` is already far beyond it, so this feature
   must be split into new modules from the start.
+- Replacing a shared handler ID at runtime also needs to refresh untouched
+  loggers that still reference that ID; otherwise manager metadata and live
+  logger attachments diverge.
 
 ## Decision Log
 
@@ -439,10 +447,24 @@ Expected outcome:
   and widening the scope would conflate this work with the more general future
   reconfiguration ideas in design section 7.2. Date/Author: 2026-03-11 / Codex.
 
+- Decision: a runtime replacement of an existing handler or filter ID updates
+  every tracked logger that still references that ID, even if that logger was
+  not named in the mutation request. Rationale: handler/filter IDs are shared
+  configuration identities, so replacing one must keep manager metadata and
+  live `Arc` attachments aligned across the logger graph. Date/Author:
+  2026-03-13 / Codex.
+
 ## Outcomes & Retrospective
 
-This document is still in draft status. No code has been implemented yet, no
-roadmap entry has been marked done, and no design document text has been
-updated beyond this plan. The intended outcome of execution is a Python-first,
-transactional runtime mutation API for handler and filter attachments that is
-fully covered by Rust unit tests, Python behavioural tests, and snapshots.
+The implementation landed as a Python-first runtime control plane built around
+`RuntimeConfigBuilder` and `LoggerMutationBuilder`. Structured runtime
+reconfiguration now supports append, replace, remove, and clear workflows for
+handlers and filters, preserves shared `Arc` attachments for unchanged IDs, and
+rejects unknown IDs before mutating live state.
+
+Bootstrap configuration remains on `ConfigBuilder.build_and_init()`, but that
+path now seeds manager-owned runtime metadata so later runtime mutations can be
+resolved by configuration ID. Rust `rstest` coverage, direct Python tests,
+`pytest-bdd` scenarios, and syrupy snapshots were added. The design document,
+configuration design document, and roadmap entry were updated to reflect the
+shipped behaviour.

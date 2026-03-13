@@ -7,7 +7,7 @@ use thiserror::Error;
 #[cfg(feature = "python")]
 use pyo3::prelude::pyclass;
 
-fn normalize_vec(ids: Vec<String>) -> Vec<String> {
+pub(crate) fn normalize_vec(ids: Vec<String>) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     ids.into_iter()
@@ -126,6 +126,9 @@ pub enum ConfigError {
     /// Initializing a logger failed.
     #[error("failed to initialize logger: {0}")]
     LoggerInit(String),
+    /// The runtime mutation request contains conflicting collection updates.
+    #[error("invalid runtime mutation: {0}")]
+    InvalidMutation(String),
 }
 
 /// Builder for formatter definitions.

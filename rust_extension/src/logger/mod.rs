@@ -10,6 +10,8 @@
 mod convenience_methods;
 mod py_handler;
 mod python_helpers;
+#[cfg(feature = "python")]
+mod runtime_mutation;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};

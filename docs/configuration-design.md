@@ -855,13 +855,43 @@ surfaces mature further.
   atomic operations in Rust for thread-safe updates. This will be exposed via
   methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
-- **Future Enhancements:** Dynamic changes to handlers, formatters, and filters
-  (e.g., swapping out a file handler for a new one with a different path, or
-  changing a formatter's string) will be considered for future versions (V1.1
-  or V2) due to their complexity. This would require careful management of
-  consumer threads and resource lifecycles in Rust, likely involving a
-  `reload()` method on the `ConfigBuilder` or dedicated control plane for the
-  logging system.
+- **Structured runtime mutation control plane:** Handler and filter mutation is
+  now exposed through a dedicated `RuntimeConfigBuilder` paired with
+  `LoggerMutationBuilder`, rather than overloading `LoggerConfigBuilder`.
+  `LoggerMutationBuilder` supports explicit collection mutation semantics for
+  handlers and filters:
+
+  - leave the collection unchanged
+  - replace the collection with a specific ordered ID list
+  - append IDs without rebuilding unchanged attachments
+  - remove IDs by configuration identity
+  - clear the collection entirely
+
+- **Transactional apply semantics:** `RuntimeConfigBuilder.apply()` first builds
+  any newly declared Rust-backed handlers and filters, validates every
+  requested ID, computes the full post-mutation attachment state in memory, and
+  only then swaps the live logger attachments. If validation fails, the prior
+  runtime state remains intact.
+
+- **Manager-owned runtime metadata:** The global manager now retains:
+
+  - shared live handlers by configuration ID
+  - shared live filters by configuration ID
+  - per-logger attachment metadata for handler IDs and filter IDs applied
+    through the structured configuration path
+
+  This metadata allows targeted operations such as "remove handler `audit`"
+  while keeping `FemtoLogger` hot-path storage as plain `Arc` collections.
+
+- **Scope boundary:** Runtime mutation in 3.2.4 covers Rust-backed declarative
+  handlers and filters plus optional `level` and `propagate` updates as part of
+  the same transaction. Python callback filters, formatter hot-swapping, and
+  other stdlib-parity work remain follow-on items.
+
+- **Bootstrap compatibility:** `ConfigBuilder.build_and_init()` still performs
+  full bootstrap-style replacement, but it now seeds the manager runtime
+  metadata so later `RuntimeConfigBuilder` calls can mutate the live
+  configuration safely.
 
 ## 4. Integration with Rust Ecosystem
 
