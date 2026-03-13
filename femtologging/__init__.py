@@ -10,6 +10,7 @@ from ._compat import (
 from ._femtologging_rs import (
     EXCEPTION_SCHEMA_VERSION,
     ROTATION_VALIDATION_MSG,
+    TIMED_ROTATION_VALIDATION_MSG,
     BackoffConfig,
     ConfigBuilder,
     FemtoFileHandler,
@@ -19,6 +20,7 @@ from ._femtologging_rs import (
     FemtoRotatingFileHandler,
     FemtoSocketHandler,
     FemtoStreamHandler,
+    FemtoTimedRotatingFileHandler,
     FileHandlerBuilder,
     FilterBuildError,
     FormatterBuilder,
@@ -32,6 +34,8 @@ from ._femtologging_rs import (
     RotatingFileHandlerBuilder,
     SocketHandlerBuilder,
     StreamHandlerBuilder,
+    TimedHandlerOptions,
+    TimedRotatingFileHandlerBuilder,
     debug,
     error,
     filter_frames,
@@ -45,12 +49,10 @@ from ._femtologging_rs import (
     reset_manager_py as reset_manager,
 )
 from ._rust_compat import (
-    _clear_rotating_fresh_failure_for_test as _clear_rotating_fresh_failure_for_test,
-)
-from ._rust_compat import (
-    _force_rotating_fresh_failure_for_test as _force_rotating_fresh_failure_for_test,
-)
-from ._rust_compat import (
+    _clear_rotating_fresh_failure_for_test,
+    _clear_timed_rotation_test_times_for_test,
+    _force_rotating_fresh_failure_for_test,
+    _set_timed_rotation_test_times_for_test,
     setup_rust_logging,
 )
 from .adapter import StdlibHandlerAdapter
@@ -61,6 +63,7 @@ from .overflow_policy import OverflowPolicy
 __all__ = [
     "EXCEPTION_SCHEMA_VERSION",
     "ROTATION_VALIDATION_MSG",
+    "TIMED_ROTATION_VALIDATION_MSG",
     "BackoffConfig",
     "BasicConfig",
     "ConfigBuilder",
@@ -71,6 +74,7 @@ __all__ = [
     "FemtoRotatingFileHandler",
     "FemtoSocketHandler",
     "FemtoStreamHandler",
+    "FemtoTimedRotatingFileHandler",
     "FileHandlerBuilder",
     "FilterBuildError",
     "FormatterBuilder",
@@ -86,6 +90,12 @@ __all__ = [
     "SocketHandlerBuilder",
     "StdlibHandlerAdapter",
     "StreamHandlerBuilder",
+    "TimedHandlerOptions",
+    "TimedRotatingFileHandlerBuilder",
+    "_clear_rotating_fresh_failure_for_test",
+    "_clear_timed_rotation_test_times_for_test",
+    "_force_rotating_fresh_failure_for_test",
+    "_set_timed_rotation_test_times_for_test",
     "basicConfig",
     "debug",
     "dictConfig",

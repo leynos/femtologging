@@ -248,6 +248,21 @@ fields with safe defaults does not require a version bump.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 
+### FemtoTimedRotatingFileHandler
+
+- Wraps `FemtoFileHandler` with time-based rotation. Instantiate via
+  `FemtoTimedRotatingFileHandler(path, options=TimedHandlerOptions(…))`.
+- `TimedHandlerOptions` keeps the queue fields (`capacity`, `flush_interval`,
+  `policy`) and adds `when`, `interval`, `backup_count`, `utc`, and optional
+  `at_time`.
+- Supported `when` values are `S`, `M`, `H`, `D`, `MIDNIGHT`, and `W0`-`W6`.
+  `at_time` is only valid for daily, midnight, and weekday schedules.
+- Rotation runs on the worker thread. `backup_count == 0` keeps all timestamped
+  backups instead of disabling rotation.
+- `TimedRotatingFileHandlerBuilder` mirrors the direct handler surface with
+  `.with_when()`, `.with_interval()`, `.with_backup_count()`, `.with_utc()`,
+  and `.with_at_time()`.
+
 ### FemtoSocketHandler
 
 - Socket handlers must be built via `SocketHandlerBuilder`. Typical usage:
@@ -263,14 +278,12 @@ socket_handler = (
     .with_write_timeout_ms(1000)
     .with_tls("logs.example.com", insecure=False)
     .with_backoff(
-        BackoffConfig(
-            {
-                "base_ms": 100,
-                "cap_ms": 5000,
-                "reset_after_ms": 30000,
-                "deadline_ms": 120000,
-            }
-        )
+        BackoffConfig({
+            "base_ms": 100,
+            "cap_ms": 5000,
+            "reset_after_ms": 30000,
+            "deadline_ms": 120000,
+        })
     )
     .build()
 )
@@ -298,6 +311,7 @@ class Collector:
     def handle(self, logger: str, level: str, message: str) -> None:
         # Runs inside the FemtoLogger worker thread
         self.records.append((logger, level, message))
+
 
 collector = Collector()
 logger.add_handler(collector)
@@ -478,7 +492,9 @@ builder = (
         .with_filters(["info_only"])
         .with_propagate(False),
     )
-    .with_root_logger(LoggerConfigBuilder().with_level("WARNING").with_handlers(["console"]))
+    .with_root_logger(
+        LoggerConfigBuilder().with_level("WARNING").with_handlers(["console"])
+    )
 )
 
 builder.build_and_init()
@@ -500,7 +516,8 @@ builder.build_and_init()
 
 - Supported handler classes: `logging.StreamHandler`,
   `femtologging.StreamHandler`, `logging.FileHandler`,
-  `femtologging.FileHandler`, `logging.handlers.RotatingFileHandler`, and
+  `femtologging.FileHandler`, `logging.handlers.RotatingFileHandler`,
+  `logging.handlers.TimedRotatingFileHandler`, and
   `logging.handlers.SocketHandler` (plus their femtologging equivalents).
 - Handler `args` are evaluated with `ast.literal_eval`, matching the stdlib
   behaviour for simple tuples. For socket handlers you can pass either
@@ -539,6 +556,7 @@ builder.build_and_init()
 ```python
 def json_formatter(record: dict[str, object]) -> str:
     import json
+
     return json.dumps(
         {
             "logger": record["logger"],
@@ -547,6 +565,7 @@ def json_formatter(record: dict[str, object]) -> str:
         },
         separators=(",", ":"),
     )
+
 
 stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 ```

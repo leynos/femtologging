@@ -354,14 +354,21 @@ equivalent. `NOTSET` is not supported.
 from typing import List, Optional, Union
 from .levels import FemtoLevel  # Enum of logging levels
 
+
 class ConfigBuilder:
     def __init__(self) -> None: ...
     def with_version(self, version: int) -> "ConfigBuilder": ...
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
-    def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder": ...
+    def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder":
+        ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
-    def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
-    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
+
+    def with_formatter(
+        self, id: str, builder: "FormatterBuilder"
+    ) -> "ConfigBuilder": ...  # replaces existing formatter
+    def with_filter(
+        self, id: str, builder: "FilterBuilder"
+    ) -> "ConfigBuilder": ...  # replaces existing filter
     def with_handler(
         self,
         id: str,
@@ -371,36 +378,57 @@ class ConfigBuilder:
             "StreamHandlerBuilder",
         ],
     ) -> "ConfigBuilder": ...
-    def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
-    def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
+    def with_logger(
+        self, name: str, builder: "LoggerConfigBuilder"
+    ) -> "ConfigBuilder": ...  # replaces existing logger
+    def with_root_logger(
+        self, builder: "LoggerConfigBuilder"
+    ) -> "ConfigBuilder": ...  # replaces previous root logger
     def build_and_init(self) -> None: ...
+
 
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
-    def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder": ...
+    def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder":
+        ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
+
     def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
-    def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing filters
-    def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing handlers
+    def with_filters(
+        self, filter_ids: List[str]
+    ) -> "LoggerConfigBuilder": ...  # replaces existing filters
+    def with_handlers(
+        self, handler_ids: List[str]
+    ) -> "LoggerConfigBuilder": ...  # replaces existing handlers
+
 
 class FormatterBuilder:
     def __init__(self) -> None: ...
     def with_format(self, format_str: str) -> "FormatterBuilder": ...
     def with_datefmt(self, date_format_str: str) -> "FormatterBuilder": ...
+
     # def style(self, style: str) -> "FormatterBuilder": ... # Future
 
+
 # In femtologging.handlers
-class HandlerBuilder: # Abstract base class or conceptual union
+class HandlerBuilder:  # Abstract base class or conceptual union
     # Common methods
-    def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder": ...
+    def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder":
+        ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
+
     def with_formatter(
         self,
         formatter: str
         | collections.abc.Callable[[collections.abc.Mapping[str, object]], str],
     ) -> "HandlerBuilder": ...
-    def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
-    def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
+    def with_filters(
+        self, filter_ids: List[str]
+    ) -> "HandlerBuilder": ...  # replaces existing filters
+    def with_capacity(
+        self, capacity: int
+    ) -> "HandlerBuilder": ...  # Common for queue-based handlers
+
 
 class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
@@ -408,17 +436,24 @@ class FileHandlerBuilder(HandlerBuilder):
     def encoding(self, encoding: str) -> "FileHandlerBuilder": ...
     def with_flush_after_records(self, interval: int) -> "FileHandlerBuilder": ...
 
+
 class StreamHandlerBuilder(HandlerBuilder):
     @classmethod
     def stdout(cls) -> "StreamHandlerBuilder": ...
     @classmethod
     def stderr(cls) -> "StreamHandlerBuilder": ...
-    def stream_target(self, target: str) -> "StreamHandlerBuilder": ... # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
+    def stream_target(
+        self, target: str
+    ) -> (
+        "StreamHandlerBuilder"
+    ): ...  # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
     def with_flush_after_ms(self, flush_ms: int) -> "StreamHandlerBuilder": ...
+
 
 # New
 class BackoffConfig:
     def __init__(self, config: dict[str, int] | None = None) -> None: ...
+
 
 class SocketHandlerBuilder(HandlerBuilder):
     def __init__(self) -> None: ...
@@ -435,30 +470,33 @@ class SocketHandlerBuilder(HandlerBuilder):
     ) -> "SocketHandlerBuilder": ...
     def with_backoff(self, config: BackoffConfig) -> "SocketHandlerBuilder": ...
 
+
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
 
 ### 1.3. Implemented handler builders
 
 The initial implementation provides `FileHandlerBuilder`,
-`RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
-the existing handler types. `FileHandlerBuilder` supports capacity and flush
-interval, while `RotatingFileHandlerBuilder` layers on `max_bytes` and
-`backup_count` rotation thresholds. Rotation is opt-in: both limits must be
-provided with positive values. Passing zero or negative integers raises a
-`ValueError` immediately because the PyO3 bindings reject invalid unsigned
-inputs, keeping misconfigurations obvious. When thresholds are omitted the
-handler stores `(0, 0)`, disabling rotation entirely. Mismatched pairs continue
-to raise configuration errors so invalid rollover settings fail fast. The
-`StreamHandlerBuilder` configures the stream target and capacity. All builders
-expose `build()` methods returning ready‑to‑use handlers. Advanced options such
-as file encoding or custom writers are deferred until the corresponding handler
-features are ported from picologging. The Rust implementation stores the
-configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
-the rotation algorithm without changing the builder API. Internally, a shared
-`FileLikeBuilderState` keeps the queue configuration logic in one place for
-both file-based builders, reducing duplication and ensuring validation stays
-consistent.
+`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`, and
+`StreamHandlerBuilder` as thin wrappers over the existing handler types.
+`FileHandlerBuilder` supports capacity and flush interval,
+`RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
+thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
+`backup_count`, `utc`, and `at_time`. Rotation is opt-in for the size-based
+builder: both limits must be provided with positive values. Passing zero or
+negative integers raises a `ValueError` immediately because the PyO3 bindings
+reject invalid unsigned inputs, keeping misconfigurations obvious. When size
+thresholds are omitted the handler stores `(0, 0)`, disabling rotation
+entirely. Mismatched pairs continue to raise configuration errors so invalid
+rollover settings fail fast. The `StreamHandlerBuilder` configures the stream
+target and capacity. All builders expose `build()` methods returning
+ready‑to‑use handlers. Advanced options such as file encoding or custom writers
+are deferred until the corresponding handler features are ported from
+picologging. The Rust implementation stores the configured thresholds on
+`FemtoRotatingFileHandler` so later work can wire in the rotation algorithm
+without changing the builder API. Internally, a shared `FileLikeBuilderState`
+keeps the queue configuration logic in one place for both file-based builders,
+reducing duplication and ensuring validation stays consistent.
 
 `SocketHandlerBuilder` follows the same fluent approach but focuses on
 transport concerns rather than file metadata. Callers select either a TCP
@@ -727,12 +765,18 @@ components in a fixed order to honour dependencies:
    - ``"logging.handlers.RotatingFileHandler"``,
      ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
      and ``"femtologging.FemtoRotatingFileHandler"`` →
-     ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
-     ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
-     structures or as strings, which are safely evaluated with
-     ``ast.literal_eval``. For stream handlers, ``ext://sys.stdout`` and
-     ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
-     ``filters`` settings are currently unsupported and produce ``ValueError``.
+     ``RotatingFileHandlerBuilder``
+   - ``"logging.handlers.TimedRotatingFileHandler"``,
+     ``"logging.TimedRotatingFileHandler"``,
+     ``"femtologging.TimedRotatingFileHandler"``, and
+     ``"femtologging.FemtoTimedRotatingFileHandler"`` →
+     ``TimedRotatingFileHandlerBuilder``
+     Unsupported handler classes raise ``ValueError``. ``args`` and ``kwargs``
+     may be provided either as native structures or as strings, which are
+     safely evaluated with ``ast.literal_eval``. For stream handlers,
+     ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted targets.
+     Handler ``level`` and ``filters`` settings are currently unsupported and
+     produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers``, ``filters``,
    and ``propagate`` settings. Logger and root ``filters`` values are lists of
@@ -948,10 +992,8 @@ Or through `dictConfig`:
 ```python
 femtologging.dictConfig({
     "version": 1,
-    "loggers": {
-        "worker": {"level": "DEBUG", "propagate": False}
-    },
-    "root": {"level": "INFO"}
+    "loggers": {"worker": {"level": "DEBUG", "propagate": False}},
+    "root": {"level": "INFO"},
 })
 ```
 
