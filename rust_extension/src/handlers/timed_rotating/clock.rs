@@ -87,6 +87,7 @@ pub(crate) struct SequenceClock {
 
 #[cfg(test)]
 impl SequenceClock {
+    #[expect(dead_code, reason = "reserved for deterministic Rust-only clock tests")]
     pub(crate) fn new(times: impl IntoIterator<Item = DateTime<Utc>>) -> Self {
         let remaining: std::collections::VecDeque<_> = times.into_iter().collect();
         let fallback = remaining
