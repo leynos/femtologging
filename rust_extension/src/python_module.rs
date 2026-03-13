@@ -9,7 +9,8 @@ use pyo3::{Bound, PyResult, prelude::*, wrap_pyfunction};
 use crate::{
     ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
     FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
-    NameFilterBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    LoggerMutationBuilder, NameFilterBuilder, RotatingFileHandlerBuilder, RuntimeConfigBuilder,
+    SocketHandlerBuilder, StreamHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
@@ -49,6 +50,14 @@ pub(crate) fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
         ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
         ("ConfigBuilder", py.get_type::<ConfigBuilder>()),
         ("LoggerConfigBuilder", py.get_type::<LoggerConfigBuilder>()),
+        (
+            "RuntimeConfigBuilder",
+            py.get_type::<RuntimeConfigBuilder>(),
+        ),
+        (
+            "LoggerMutationBuilder",
+            py.get_type::<LoggerMutationBuilder>(),
+        ),
         ("FormatterBuilder", py.get_type::<FormatterBuilder>()),
     ] {
         m.add(name, ty)?;
@@ -138,6 +147,8 @@ mod tests {
                 "FilterBuildError",
                 "ConfigBuilder",
                 "LoggerConfigBuilder",
+                "RuntimeConfigBuilder",
+                "LoggerMutationBuilder",
                 "FormatterBuilder",
             ],
             expected_rotation_validation_msg: None,

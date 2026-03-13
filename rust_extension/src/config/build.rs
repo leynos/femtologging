@@ -51,11 +51,24 @@ impl ConfigBuilder {
                 .map(|c| ("root", c))
                 .into_iter()
                 .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
+            let mut runtime_loggers = BTreeMap::new();
 
             for (name, cfg) in targets {
                 let logger = self.fetch_logger(py, name)?;
                 self.apply_logger_config(py, &logger, cfg, &built_handlers, &built_filters)?;
+                runtime_loggers.insert(
+                    name.to_string(),
+                    manager::LoggerAttachmentState::new(
+                        cfg.handler_ids().to_vec(),
+                        cfg.filter_ids().to_vec(),
+                    ),
+                );
             }
+            manager::replace_runtime_state(
+                built_handlers.clone(),
+                built_filters.clone(),
+                runtime_loggers,
+            );
             Ok(())
         })?;
         Ok(())

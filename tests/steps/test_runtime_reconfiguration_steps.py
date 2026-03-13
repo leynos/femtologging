@@ -1,0 +1,157 @@
+"""BDD steps for structured runtime reconfiguration scenarios."""
+
+from __future__ import annotations
+
+import typing as typ
+from pathlib import Path
+
+import pytest
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from femtologging import (
+    ConfigBuilder,
+    LevelFilterBuilder,
+    LoggerConfigBuilder,
+    LoggerMutationBuilder,
+    NameFilterBuilder,
+    RuntimeConfigBuilder,
+    StreamHandlerBuilder,
+    get_logger,
+    reset_manager,
+)
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+    from syrupy.assertion import SnapshotAssertion
+
+FEATURES = Path(__file__).resolve().parents[1] / "features"
+
+scenarios(str(FEATURES / "runtime_reconfiguration.feature"))
+
+
+@pytest.fixture(autouse=True)
+def reset_logger_state() -> cabc.Iterator[None]:
+    """Reset the global manager around each scenario."""
+    reset_manager()
+    yield
+    reset_manager()
+
+
+@given(
+    parsers.parse('a runtime-configured logger named "{name}"'),
+    target_fixture="runtime_logger_name",
+)
+def runtime_configured_logger(name: str) -> str:
+    """Create a logger with one handler and one suppressing filter."""
+    (
+        ConfigBuilder()
+        .with_handler("stderr", StreamHandlerBuilder.stderr())
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+        .with_logger(
+            name,
+            LoggerConfigBuilder().with_handlers(["stderr"]).with_filters(["lvl"]),
+        )
+        .build_and_init()
+    )
+    return name
+
+
+@when(
+    parsers.parse(
+        'I append runtime handler "{hid}" targeting "{target}" to logger "{name}"'
+    )
+)
+def append_runtime_handler(hid: str, target: str, name: str) -> None:
+    """Append a new stream handler to the named logger."""
+    builder = (
+        StreamHandlerBuilder.stderr()
+        if target.lower() == "stderr"
+        else StreamHandlerBuilder.stdout()
+    )
+    (
+        RuntimeConfigBuilder()
+        .with_handler(hid, builder)
+        .with_logger(name, LoggerMutationBuilder().append_handlers([hid]))
+        .apply()
+    )
+
+
+@when(
+    parsers.parse(
+        'I replace logger "{name}" filters with name filter "{fid}" '
+        'using prefix "{prefix}"'
+    )
+)
+def replace_runtime_filters(name: str, fid: str, prefix: str) -> None:
+    """Replace the logger filters with a name-prefix filter."""
+    (
+        RuntimeConfigBuilder()
+        .with_filter(fid, NameFilterBuilder().with_prefix(prefix))
+        .with_logger(name, LoggerMutationBuilder().replace_filters([fid]))
+        .apply()
+    )
+
+
+@when(
+    parsers.parse('I try to replace logger "{name}" filters with missing id "{fid}"'),
+    target_fixture="runtime_mutation_error",
+)
+def replace_runtime_filters_with_missing(name: str, fid: str) -> BaseException:
+    """Capture a failed runtime mutation for later assertions."""
+    with pytest.raises(KeyError) as excinfo:
+        (
+            RuntimeConfigBuilder()
+            .with_logger(name, LoggerMutationBuilder().replace_filters([fid]))
+            .apply()
+        )
+    return excinfo.value
+
+
+@when(parsers.parse('I set root logger level to "{level}" via runtime mutation'))
+def set_root_level(level: str) -> None:
+    """Update the root logger level through the runtime control plane."""
+    RuntimeConfigBuilder().with_root_logger(
+        LoggerMutationBuilder().with_level(level)
+    ).apply()
+
+
+@then(parsers.parse('logger "{name}" has {count:d} handlers'))
+def logger_has_handler_count(name: str, count: int) -> None:
+    """Assert the handler count seen by the named logger."""
+    assert len(get_logger(name).handler_ptrs_for_test()) == count
+
+
+@then(parsers.parse('logger "{name}" emits "{level}"'))
+def logger_emits(name: str, level: str) -> None:
+    """Assert that the logger emits at the requested level."""
+    assert get_logger(name).log(level, "emit") is not None
+
+
+@then(parsers.parse('logger "{name}" suppresses "{level}"'))
+def logger_suppresses(name: str, level: str) -> None:
+    """Assert that the logger suppresses at the requested level."""
+    assert get_logger(name).log(level, "suppress") is None
+
+
+@then(parsers.parse('the runtime mutation fails with key error containing "{msg}"'))
+def mutation_fails_with_key_error(
+    runtime_mutation_error: BaseException, msg: str
+) -> None:
+    """Assert that the captured runtime mutation failure mentions the ID."""
+    assert isinstance(runtime_mutation_error, KeyError)
+    assert msg in str(runtime_mutation_error)
+
+
+@then(parsers.parse('logger "{name}" runtime state matches snapshot'))
+def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> None:
+    """Assert that a normalized runtime state payload stays stable."""
+    logger = get_logger(name)
+    state = {
+        "name": name,
+        "level": logger.level,
+        "propagate": logger.propagate,
+        "handler_count": len(logger.handler_ptrs_for_test()),
+    }
+    assert state == snapshot

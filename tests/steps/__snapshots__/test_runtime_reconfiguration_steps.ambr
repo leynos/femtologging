@@ -1,0 +1,17 @@
+# serializer version: 1
+# name: test_appending_a_handler_at_runtime
+  dict({
+    'handler_count': 2,
+    'level': 'INFO',
+    'name': 'core',
+    'propagate': True,
+  })
+# ---
+# name: test_replacing_filters_at_runtime
+  dict({
+    'handler_count': 1,
+    'level': 'INFO',
+    'name': 'core',
+    'propagate': True,
+  })
+# ---

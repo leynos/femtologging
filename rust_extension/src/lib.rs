@@ -68,6 +68,12 @@ mod traceback_frames_tests;
 
 // Re-exports: configuration builders
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+#[cfg_attr(
+    not(feature = "python"),
+    expect(unused_imports, reason = "public re-exports for Python-enabled builds")
+)]
+#[cfg(feature = "python")]
+pub use config::{LoggerMutationBuilder, RuntimeConfigBuilder};
 
 // Re-exports: filter types (FilterBuildErrorPy is Python-only)
 #[cfg(feature = "python")]

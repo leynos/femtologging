@@ -996,13 +996,16 @@ potential future enhancement.
   ```python
   from femtologging import Config, FileHandler, Formatter
 
+
   def setup_logging() -> None:
       (
-          Config.builder()
+          Config
+          .builder()
           .default_level("INFO")
           .add_handler(
               "file_handler_1",
-              FileHandler.builder()
+              FileHandler
+              .builder()
               .path("application.log")
               .formatter(Formatter("%(message)s"))
               .level("DEBUG")
@@ -1488,32 +1491,42 @@ configurations, especially log levels, without restarting the application.
       demonstrates dynamic control over filter parameters.
 
 - `femtologging` **Strategy for Dynamic Reconfiguration:**
+  - **Level changes remain atomic:** `FemtoLogger.set_level()` continues to use
+    atomic storage for low-overhead level updates.
 
-  - **V1 Priority:** Dynamic log level changes for loggers will be a core
-    feature in the initial version, leveraging atomic operations for
-    thread-safe updates.
+  - **Structured handler/filter mutation now uses a dedicated control plane:**
+    runtime reconfiguration is exposed through `RuntimeConfigBuilder` and
+    `LoggerMutationBuilder`, not through `LoggerConfigBuilder`. This keeps
+    bootstrap semantics distinct from live mutation semantics.
 
-  - **Future Enhancements:** The architecture should be designed to accommodate
-    dynamic changes to handlers, formatters, and filters, but the full
-    implementation of this dynamic reconfiguration might be a V1.1 or V2
-    feature due to its complexity. This would involve designing the central
-    logger dispatcher to safely manage and swap out handler configurations and
-    their associated consumer threads and MPSC channels.
+  - **Collection updates are explicit:** handler and filter attachments support
+    `unchanged`, `replace`, `append`, `remove`, and `clear` operations. This
+    avoids the ambiguity of plain vectors, where an empty list cannot
+    distinguish "clear the collection" from "leave it alone".
 
-Graceful handler reconfiguration requires careful resource management. If a
-`FemtoFileHandler`'s configured output path changes, the consumer thread
-associated with the old file must close it cleanly, and then open and use the
-new file. If an entire handler is removed from the configuration, its consumer
-thread must be signaled to shut down. This shutdown process should be graceful,
-meaning the consumer attempts to process all remaining `FemtoLogRecord`s in its
-MPSC queue before exiting. The `FemtoHandler` trait might need to include
-methods like
-`reconfigure(&self, new_config: Box<dyn Any + Send + Sync>) -> Result<()>`
-(where `new_config` is a type-erased configuration specific to the handler
-type) and `shutdown(&self) -> Result<()>` that can be invoked by a central
-configuration manager. The MPSC channel itself is crucial here; the sender side
-(from the logger) would be dropped, and the consumer would drain the channel
-before terminating.
+  - **Identity lives in the manager, not on the hot path:** the global manager
+    retains shared handler/filter registries keyed by configuration ID together
+    with per-logger attachment metadata. `FemtoLogger` continues to store only
+    plain `Arc<dyn FemtoHandlerTrait>` and `Arc<dyn FemtoFilter>` collections
+    so log dispatch and filter evaluation stay fast.
+
+  - **Apply semantics are transactional at the library level:** newly declared
+    handlers and filters are built before the live state is touched. The full
+    post-mutation attachment graph is then computed and validated in memory
+    before logger collections are swapped. Invalid IDs therefore fail without a
+    partial runtime mutation.
+
+  - **Scope remains intentionally narrow:** this phase covers Rust-backed
+    handler and filter mutation plus optional `level` and `propagate` updates
+    in the same transaction. Python callback filters, formatter hot-swapping,
+    and richer stdlib parity stay in later roadmap items.
+
+This design avoids a handler-specific `reconfigure()` trait requirement for the
+current phase. Existing live handler `Arc`s are preserved for unchanged IDs,
+while IDs explicitly replaced by the runtime builder are rebuilt and
+re-attached. When a shared handler ID is replaced, every logger tracked by the
+structured configuration metadata and still referencing that ID is refreshed to
+point at the new shared runtime object.
 
 ### 7.3. Integration with Application Configuration
 

@@ -97,18 +97,22 @@ import pytest
 from femtologging import FemtoFileHandler
 
 # Block until space is available
-handler = FemtoFileHandler(
-    "app.log", capacity=4096, flush_interval=1, policy="block"
-)
+handler = FemtoFileHandler("app.log", capacity=4096, flush_interval=1, policy="block")
 
 # Or wait up to 250 ms when the queue is full
 timeout_handler = FemtoFileHandler(
-    "app.log", capacity=4096, flush_interval=10, policy="timeout:250",
+    "app.log",
+    capacity=4096,
+    flush_interval=10,
+    policy="timeout:250",
 )
 
 # Drop raises when the queue is full
 drop_handler = FemtoFileHandler(
-    "app.log", capacity=1, flush_interval=1, policy="drop",
+    "app.log",
+    capacity=1,
+    flush_interval=1,
+    policy="drop",
 )
 drop_handler.handle("core", "INFO", "first")
 with pytest.raises(RuntimeError) as err:

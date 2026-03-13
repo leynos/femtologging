@@ -7,15 +7,67 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::{HashMap, hash_map::Entry};
+#[cfg(feature = "python")]
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::logger::FemtoLogger;
+#[cfg(feature = "python")]
+use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
+
+#[cfg(feature = "python")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LoggerAttachmentState {
+    handler_ids: Vec<String>,
+    filter_ids: Vec<String>,
+}
+
+#[cfg(feature = "python")]
+impl LoggerAttachmentState {
+    pub(crate) fn new(handler_ids: Vec<String>, filter_ids: Vec<String>) -> Self {
+        Self {
+            handler_ids,
+            filter_ids,
+        }
+    }
+
+    pub(crate) fn handler_ids(&self) -> &[String] {
+        &self.handler_ids
+    }
+
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filter_ids
+    }
+}
+
+#[cfg(feature = "python")]
+type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
+#[cfg(feature = "python")]
+type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
+
+#[cfg(feature = "python")]
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeStateSnapshot {
+    pub(crate) handler_registry: SharedHandlers,
+    pub(crate) filter_registry: SharedFilters,
+    pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
+}
 
 #[derive(Default)]
 struct Manager {
     loggers: HashMap<String, Py<FemtoLogger>>,
+    #[cfg(feature = "python")]
+    runtime: RuntimeStateSnapshot,
 }
 
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
+
+#[cfg(feature = "python")]
+fn clear_runtime_state(mgr: &mut Manager) {
+    mgr.runtime = RuntimeStateSnapshot::default();
+}
+
+#[cfg(not(feature = "python"))]
+fn clear_runtime_state(_mgr: &mut Manager) {}
 
 /// Return `true` when the provided name is not a valid logger identifier.
 ///
@@ -64,6 +116,25 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     }
 }
 
+#[cfg(feature = "python")]
+pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
+    MANAGER.read().runtime.clone()
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn replace_runtime_state(
+    handler_registry: SharedHandlers,
+    filter_registry: SharedFilters,
+    logger_states: BTreeMap<String, LoggerAttachmentState>,
+) {
+    let mut mgr = MANAGER.write();
+    mgr.runtime = RuntimeStateSnapshot {
+        handler_registry,
+        filter_registry,
+        logger_states,
+    };
+}
+
 /// Disable existing loggers not mentioned in the provided keep list.
 ///
 /// Iterates through all loggers and clears handlers and filters for any
@@ -99,6 +170,7 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
 pub fn reset_manager() {
     let mut mgr = MANAGER.write();
     mgr.loggers.clear();
+    clear_runtime_state(&mut mgr);
 }
 
 #[cfg(test)]
