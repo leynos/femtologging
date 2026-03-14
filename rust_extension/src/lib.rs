@@ -14,6 +14,7 @@ mod handler;
 mod handlers;
 mod http_handler;
 mod level;
+mod log_context;
 mod log_record;
 mod logger;
 mod socket_handler;
@@ -100,6 +101,10 @@ pub use http_handler::{
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
+pub use log_context::{
+    LogContextError, LogContextGuard, pop_log_context, push_log_context, push_log_context_map,
+    with_log_context,
+};
 /// Re-export log record types.
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 /// Re-export the logger and queued record handle.

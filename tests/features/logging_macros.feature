@@ -40,3 +40,22 @@ Feature: Module-level logging convenience functions
     When I call info with message "located call"
     Then the result is not None
     And the result format is "root [INFO] located call"
+
+  Scenario: log_context adds structured metadata key-values
+    Given a record-collecting logger named "ctx.logger" with level "INFO"
+    When I call info with message "ctx log" and name "ctx.logger" inside context "request_id"="42" and "user"="alice"
+    Then the latest record metadata key_values contain "request_id"="42" and "user"="alice"
+
+  Scenario: inline fields override outer context values
+    Given a record-collecting logger named "override.logger" with level "INFO"
+    When I call info with message "inner" and name "override.logger" inside nested context "request_id"="outer" then "request_id"="inner" and "phase"="test"
+    Then the latest record metadata key_values contain "request_id"="inner" and "phase"="test"
+
+  Scenario: invalid context value type is rejected
+    When I push log context with an invalid nested value
+    Then a context error is raised containing "context values must be str, int, float, bool, or None"
+
+  Scenario: context metadata output matches snapshot
+    Given a record-collecting logger named "snap.logger" with level "INFO"
+    When I call info with message "snap" and name "snap.logger" inside context "request_id"="123" and "user"="bob"
+    Then the latest record metadata key_values match snapshot

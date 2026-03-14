@@ -263,14 +263,12 @@ socket_handler = (
     .with_write_timeout_ms(1000)
     .with_tls("logs.example.com", insecure=False)
     .with_backoff(
-        BackoffConfig(
-            {
-                "base_ms": 100,
-                "cap_ms": 5000,
-                "reset_after_ms": 30000,
-                "deadline_ms": 120000,
-            }
-        )
+        BackoffConfig({
+            "base_ms": 100,
+            "cap_ms": 5000,
+            "reset_after_ms": 30000,
+            "deadline_ms": 120000,
+        })
     )
     .build()
 )
@@ -298,6 +296,7 @@ class Collector:
     def handle(self, logger: str, level: str, message: str) -> None:
         # Runs inside the FemtoLogger worker thread
         self.records.append((logger, level, message))
+
 
 collector = Collector()
 logger.add_handler(collector)
@@ -478,7 +477,9 @@ builder = (
         .with_filters(["info_only"])
         .with_propagate(False),
     )
-    .with_root_logger(LoggerConfigBuilder().with_level("WARNING").with_handlers(["console"]))
+    .with_root_logger(
+        LoggerConfigBuilder().with_level("WARNING").with_handlers(["console"])
+    )
 )
 
 builder.build_and_init()
@@ -539,6 +540,7 @@ builder.build_and_init()
 ```python
 def json_formatter(record: dict[str, object]) -> str:
     import json
+
     return json.dumps(
         {
             "logger": record["logger"],
@@ -547,6 +549,7 @@ def json_formatter(record: dict[str, object]) -> str:
         },
         separators=(",", ":"),
     )
+
 
 stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 ```
@@ -618,3 +621,24 @@ Keep an eye on the roadmap in `docs/` for upcoming additions (formatter
 resolution, richer dictConfig support, timed rotation) and update your
 configuration once those features land. For now, the patterns above reflect the
 current, tested surface area of femtologging.
+
+## Scoped structured context
+
+Use `log_context(...)` to add structured key-values to every record emitted on
+the current thread while the context is active:
+
+```python
+import femtologging
+
+logger = femtologging.get_logger("service")
+with femtologging.log_context(request_id=42, user="alice"):
+    logger.info("request accepted")
+```
+
+Behavioural guarantees:
+
+- Context values are merged on the producer thread before queueing.
+- Inline structured fields emitted by Rust macros override outer context keys.
+- Context values must be `str`, `int`, `float`, `bool`, or `None`.
+- Key-value limits match the enrichment contract documented in
+  `docs/configuration-design.md`.

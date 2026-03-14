@@ -1,4 +1,10 @@
 # serializer version: 1
+# name: test_context_metadata_output_matches_snapshot
+  dict({
+    'request_id': '123',
+    'user': 'bob',
+  })
+# ---
 # name: test_info_output_matches_snapshot
   'root [INFO] snapshot test'
 # ---

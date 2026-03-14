@@ -44,6 +44,7 @@ from ._femtologging_rs import (
 from ._femtologging_rs import (
     reset_manager_py as reset_manager,
 )
+from ._log_context import log_context
 from ._rust_compat import (
     _clear_rotating_fresh_failure_for_test as _clear_rotating_fresh_failure_for_test,
 )
@@ -97,6 +98,7 @@ __all__ = [
     "get_logging_infrastructure_patterns",
     "hello",
     "info",
+    "log_context",
     "reset_manager",
     "rust",
     "setup_rust_logging",

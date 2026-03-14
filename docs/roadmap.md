@@ -229,7 +229,7 @@ where applicable.
   interoperability. See
   [ADR 001 decision](./adr-001-python-exception-logging.md#decision) and
   [ADR 001 schema versioning](./adr-001-python-exception-logging.md#schema-versioning).
-- [ ] 3.4.2. Improve structured logging in macros to simplify context
+- [x] 3.4.2. Improve structured logging in macros to simplify context
   propagation. See
   [design §6.2](./rust-multithreaded-logging-framework-for-python-design.md#62-logging-macros-the-primary-user-interface)
    and
