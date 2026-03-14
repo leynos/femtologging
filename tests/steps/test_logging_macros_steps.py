@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import time
 import typing as typ
+from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
 
@@ -74,6 +75,15 @@ class FlushableLogger(typ.Protocol):
 
     def flush_handlers(self) -> bool:
         """Flush pending records and return whether the flush succeeded."""
+
+    def clear_handlers(self) -> None:
+        """Remove all handlers before test-scoped capture."""
+
+    def add_handler(self, handler: object) -> None:
+        """Attach a handler for the current capture scope."""
+
+    def remove_handler(self, handler: object) -> None:
+        """Detach a handler when capture scope exits."""
 
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -296,18 +306,11 @@ def call_with_nested_context_and_capture_metadata(
     outer_map = _parse_pairs(outer)
     inner_map = _parse_pairs(inner)
     logger = get_logger(name)
-    logger.clear_handlers()
-    flushed = logger.flush_handlers()
-    assert flushed, "flush_handlers() failed before attaching context collector"
-    collector = RecordCollector()
-    logger.add_handler(collector)
     fn = _FUNC_MAP[func]
-    try:
+    with _capture_records(logger) as collector:
         with log_context(**outer_map), log_context(**inner_map):
             fn(message, name=name)
         latest = _wait_for_latest_key_values(logger, collector)
-    finally:
-        logger.remove_handler(collector)
     return {"value": {str(k): str(v) for k, v in latest.items()}}
 
 
@@ -483,18 +486,25 @@ def _capture_latest_key_values(
 ) -> dict[str, str]:
     """Emit a record and return captured metadata key-values."""
     logger = get_logger(logger_name)
+    with _capture_records(logger) as collector:
+        with log_context(**context):
+            fn(message, name=logger_name)
+        latest = _wait_for_latest_key_values(logger, collector)
+    return {str(k): str(v) for k, v in latest.items()}
+
+
+@contextmanager
+def _capture_records(logger: FlushableLogger) -> typ.Iterator[RecordCollector]:
+    """Attach a short-lived collector after draining pending records."""
     logger.clear_handlers()
     flushed = logger.flush_handlers()
     assert flushed, "flush_handlers() failed before attaching context collector"
     collector = RecordCollector()
     logger.add_handler(collector)
     try:
-        with log_context(**context):
-            fn(message, name=logger_name)
-        latest = _wait_for_latest_key_values(logger, collector)
+        yield collector
     finally:
         logger.remove_handler(collector)
-    return {str(k): str(v) for k, v in latest.items()}
 
 
 def _wait_for_latest_key_values(

@@ -96,8 +96,8 @@ fn extract_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
     if raw_value.is_none() {
         return Ok(String::from("None"));
     }
-    if let Ok(v) = raw_value.extract::<bool>() {
-        return Ok(v.to_string());
+    if raw_value.extract::<bool>().is_ok() {
+        return Ok(raw_value.str()?.to_str()?.to_owned());
     }
     if raw_value.is_instance_of::<PyInt>() {
         return Ok(raw_value.str()?.to_str()?.to_owned());

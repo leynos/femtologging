@@ -99,14 +99,28 @@ where
 pub(crate) fn merge_context_values(
     explicit_key_values: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, LogContextError> {
-    let mut merged = active_context();
-    merged.extend(
+    let stack_is_empty = CONTEXT_STACK.with(|stack| stack.borrow().is_empty());
+    if stack_is_empty && explicit_key_values.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    if stack_is_empty {
+        validate_context_map(explicit_key_values)?;
+        return Ok(explicit_key_values.clone());
+    }
+
+    let mut active = active_context();
+    if explicit_key_values.is_empty() {
+        validate_context_map(&active)?;
+        return Ok(active);
+    }
+
+    active.extend(
         explicit_key_values
             .iter()
             .map(|(k, v)| (k.clone(), v.clone())),
     );
-    validate_context_map(&merged)?;
-    Ok(merged)
+    validate_context_map(&active)?;
+    Ok(active)
 }
 
 fn pop_internal() -> Result<(), LogContextError> {

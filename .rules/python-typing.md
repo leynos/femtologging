@@ -125,6 +125,7 @@ type is provided.
 ```python
 import typing
 
+
 class Box[T = int]:
     def __init__(self, value: T):
         self.value = value
