@@ -137,14 +137,14 @@ Relevant files and roles:
 
 - `rust_extension/src/logging_macros.rs`:
   Rust `femtolog_debug!`, `femtolog_info!`, `femtolog_warn!`, `femtolog_error!`
-  and internal `__femtolog_impl!`.
+  routed through `__femtolog_at_level!` and split helper macro arms.
 - `rust_extension/src/log_record.rs`:
   `RecordMetadata` with `key_values: BTreeMap<String, String>`.
 - `rust_extension/src/logger/mod.rs`:
   `FemtoLogger::log_with_metadata` and dispatch/filter flow.
 - `rust_extension/src/convenience_functions.rs`:
-  Python module-level logging entrypoints; candidate for parity integration if
-  needed for Python tests.
+  Python module-level logging entrypoints and Python log-context bindings used
+  for context propagation tests.
 - `tests/features/logging_macros.feature` and
   `tests/steps/test_logging_macros_steps.py`: Existing BDD harness to extend.
 - `docs/rust-multithreaded-logging-framework-for-python-design.md`:
@@ -254,7 +254,7 @@ Working directory: `/home/user/project`
 
    ```bash
    set -o pipefail && cargo test --manifest-path rust_extension/Cargo.toml \
-     --features python logging_macros::tests convenience_functions::tests \
+     --features python -- logging_macros::tests convenience_functions::tests \
      | tee /tmp/3-4-2-rust-focused.log
    ```
 
