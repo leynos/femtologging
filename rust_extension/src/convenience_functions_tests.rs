@@ -117,6 +117,14 @@ fn source_location_falls_back_gracefully(unique_logger_name: String) {
 
 #[rstest]
 fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
+    struct LogContextPopGuard;
+
+    impl Drop for LogContextPopGuard {
+        fn drop(&mut self) {
+            let _ = py_pop_log_context();
+        }
+    }
+
     Python::attach(|py| {
         let logger =
             manager::get_logger(py, &unique_logger_name).expect("logger should be created");
@@ -129,6 +137,7 @@ fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
         ctx.set_item("request_id", 42).expect("set request_id");
         ctx.set_item("user", "alice").expect("set user");
         py_push_log_context(&ctx).expect("context push should succeed");
+        let _guard = LogContextPopGuard;
         let _ = log_at_level(
             py,
             FemtoLevel::Info,
@@ -136,7 +145,6 @@ fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
             Some(&unique_logger_name),
         )
         .expect("log call should succeed");
-        py_pop_log_context().expect("context pop should succeed");
         assert!(logger.borrow(py).flush_handlers());
 
         let records = handler.collected();

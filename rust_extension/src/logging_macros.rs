@@ -32,13 +32,13 @@ macro_rules! __femtolog_at_level {
             $crate::__femtolog_kv_map!($($key = $value),+)
         )
     };
-    ($logger:expr, $level:expr, $fmt:expr, $($arg:tt)+ ; $($key:ident = $value:expr),+ $(,)?) => {
+    ($logger:expr, $level:expr, $fmt:expr, $($arg:expr),+ ; $($key:ident = $value:expr),+ $(,)?) => {
         $crate::__femtolog_impl_fmt!(
             $logger,
             $level,
             $fmt,
             $crate::__femtolog_kv_map!($($key = $value),+),
-            $($arg)+
+            $($arg),+
         )
     };
     ($logger:expr, $level:expr, $message:expr) => {
@@ -60,7 +60,7 @@ macro_rules! __femtolog_at_level {
     };
 }
 
-// Log a message at `DEBUG` level, capturing the call site's source location.
+/// Log a message at `DEBUG` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_debug {
     ($logger:expr, $($rest:tt)+) => {
@@ -68,7 +68,7 @@ macro_rules! femtolog_debug {
     };
 }
 
-// Log a message at `INFO` level, capturing the call site's source location.
+/// Log a message at `INFO` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_info {
     ($logger:expr, $($rest:tt)+) => {
@@ -76,7 +76,7 @@ macro_rules! femtolog_info {
     };
 }
 
-// Log a message at `WARN` level, capturing the call site's source location.
+/// Log a message at `WARN` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_warn {
     ($logger:expr, $($rest:tt)+) => {
@@ -84,7 +84,7 @@ macro_rules! femtolog_warn {
     };
 }
 
-// Log a message at `ERROR` level, capturing the call site's source location.
+/// Log a message at `ERROR` level, capturing the call site's source location.
 #[macro_export]
 macro_rules! femtolog_error {
     ($logger:expr, $($rest:tt)+) => {
@@ -261,6 +261,21 @@ mod tests {
         let kv = &records[0].metadata().key_values;
         assert_eq!(kv.get("request_id").map(String::as_str), Some("42"));
         assert_eq!(kv.get("user").map(String::as_str), Some("alice"));
+    }
+
+    #[rstest]
+    fn formatted_message_with_fields(logger_with_handler: (FemtoLogger, Arc<CollectingHandler>)) {
+        let (logger, handler) = logger_with_handler;
+
+        let result = femtolog_info!(logger, "user {}", "alice"; request_id = 42);
+        assert!(result.is_some());
+        assert!(logger.flush_handlers());
+
+        let records = handler.collected();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].message(), "user alice");
+        let kv = &records[0].metadata().key_values;
+        assert_eq!(kv.get("request_id").map(String::as_str), Some("42"));
     }
 
     #[rstest]

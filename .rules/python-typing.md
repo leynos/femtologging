@@ -125,11 +125,7 @@ type is provided.
 ```python
 import typing
 
-
-T = typing.TypeVar("T", default=int)
-
-
-class Box[T]:
+class Box[T = int]:
     def __init__(self, value: T):
         self.value = value
 

@@ -152,11 +152,14 @@ impl FemtoLogger {
         exc_info: Option<&Bound<'_, PyAny>>,
         stack_info: Option<bool>,
     ) -> PyResult<Option<String>> {
+        if !self.is_enabled_for(level) {
+            return Ok(None);
+        }
         let explicit_key_values = BTreeMap::new();
         let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
             Ok(key_values) => key_values,
             Err(err) => {
-                warn!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
                 return Ok(None);
             }
         };
@@ -359,10 +362,13 @@ impl FemtoLogger {
         message: &str,
         mut metadata: RecordMetadata,
     ) -> Option<String> {
+        if !self.is_enabled_for(level) {
+            return None;
+        }
         match log_context::merge_context_values(&metadata.key_values) {
             Ok(merged_key_values) => metadata.key_values = merged_key_values,
             Err(err) => {
-                warn!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
                 return None;
             }
         }
