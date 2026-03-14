@@ -40,7 +40,10 @@ pub enum LogContextError {
 }
 
 /// RAII guard that pops one context frame on drop.
-pub struct LogContextGuard;
+#[must_use = "hold the guard for as long as the scoped log context should remain active"]
+pub struct LogContextGuard {
+    _private: (),
+}
 
 impl Drop for LogContextGuard {
     fn drop(&mut self) {
@@ -51,6 +54,9 @@ impl Drop for LogContextGuard {
 /// Push a map-based context frame onto the current thread's context stack.
 pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), LogContextError> {
     validate_context_map(&context)?;
+    let mut merged = active_context();
+    merged.extend(context.iter().map(|(k, v)| (k.clone(), v.clone())));
+    validate_context_map(&merged)?;
     CONTEXT_STACK.with(|stack| stack.borrow_mut().push(context));
     Ok(())
 }
@@ -72,7 +78,7 @@ where
         .map(|(k, v)| (k.into(), v.into()))
         .collect::<BTreeMap<_, _>>();
     push_log_context_map(context)?;
-    Ok(LogContextGuard)
+    Ok(LogContextGuard { _private: () })
 }
 
 /// Run a closure with a pushed context frame and pop it afterward.

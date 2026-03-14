@@ -270,22 +270,22 @@ Working directory: `/home/user/project`
 4. Run required full gates before completing the work.
 
    ```bash
+   set -o pipefail && make fmt | tee /tmp/3-4-2-fmt.log
    set -o pipefail && make check-fmt | tee /tmp/3-4-2-check-fmt.log
    set -o pipefail && make typecheck | tee /tmp/3-4-2-typecheck.log
    set -o pipefail && make lint | tee /tmp/3-4-2-lint.log
    set -o pipefail && make test | tee /tmp/3-4-2-test.log
-   set -o pipefail && make fmt | tee /tmp/3-4-2-fmt.log
    set -o pipefail && make markdownlint | tee /tmp/3-4-2-markdownlint.log
    set -o pipefail && make nixie | tee /tmp/3-4-2-nixie.log
    ```
 
 Expected success markers:
 
+- `make fmt`: exits 0.
 - `make check-fmt`: exits 0.
 - `make typecheck`: exits 0.
 - `make lint`: exits 0 with no clippy warnings.
 - `make test`: exits 0 with Rust and Python suites passing.
-- `make fmt`: exits 0.
 - `make markdownlint`: exits 0.
 - `make nixie`: exits 0.
 

@@ -102,8 +102,8 @@ fn extract_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
     if raw_value.is_instance_of::<PyInt>() {
         return Ok(raw_value.str()?.to_str()?.to_owned());
     }
-    if let Ok(v) = raw_value.extract::<f64>() {
-        return Ok(v.to_string());
+    if raw_value.extract::<f64>().is_ok() {
+        return Ok(raw_value.str()?.to_str()?.to_owned());
     }
     if let Ok(v) = raw_value.extract::<String>() {
         return Ok(v);
