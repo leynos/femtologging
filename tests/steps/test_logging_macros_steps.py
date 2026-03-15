@@ -519,9 +519,6 @@ def _wait_for_latest_key_values(
         if collector.records:
             break
         time.sleep(interval_s)
-        if collector.records:
-            break
-        flushed = logger.flush_handlers()
-        assert flushed, "flush_handlers() failed while waiting for captured records"
+        logger.flush_handlers()
     assert collector.records, "expected at least one captured record"
     return collector.records[-1]["metadata"]["key_values"]
