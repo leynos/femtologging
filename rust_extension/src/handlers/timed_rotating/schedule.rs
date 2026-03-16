@@ -238,8 +238,8 @@ impl TimedRotationSchedule {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::test_helpers::utc_datetime;
+    use super::*;
     use rstest::rstest;
 
     fn naive_time(hour: u32, minute: u32, second: u32) -> NaiveTime {
