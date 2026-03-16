@@ -241,18 +241,7 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
-    fn utc_datetime(
-        year: i32,
-        month: u32,
-        day: u32,
-        hour: u32,
-        minute: u32,
-        second: u32,
-    ) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(year, month, day, hour, minute, second)
-            .single()
-            .expect("test datetime must be valid")
-    }
+    use super::super::test_helpers::utc_datetime;
 
     fn naive_time(hour: u32, minute: u32, second: u32) -> NaiveTime {
         NaiveTime::from_hms_opt(hour, minute, second).expect("test time must be valid")
@@ -301,11 +290,11 @@ mod tests {
     #[rstest]
     fn next_hourly_rollover_uses_fixed_duration() {
         let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 2, true, None).unwrap();
-        let now = utc_datetime(2026, 3, 11, 8, 30, 0);
+        let now = utc_datetime("2026-03-11T08:30:00Z");
 
         let next = schedule.next_rollover(now);
 
-        assert_eq!(next, utc_datetime(2026, 3, 11, 10, 30, 0));
+        assert_eq!(next, utc_datetime("2026-03-11T10:30:00Z"));
     }
 
     #[rstest]
@@ -317,22 +306,22 @@ mod tests {
             Some(naive_time(9, 30, 0)),
         )
         .unwrap();
-        let now = utc_datetime(2026, 3, 11, 8, 0, 0);
+        let now = utc_datetime("2026-03-11T08:00:00Z");
 
         let next = schedule.next_rollover(now);
 
-        assert_eq!(next, utc_datetime(2026, 3, 11, 9, 30, 0));
+        assert_eq!(next, utc_datetime("2026-03-11T09:30:00Z"));
     }
 
     #[rstest]
     fn next_midnight_rollover_uses_start_of_day() {
         let schedule =
             TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None).unwrap();
-        let now = utc_datetime(2026, 3, 11, 23, 30, 0);
+        let now = utc_datetime("2026-03-11T23:30:00Z");
 
         let next = schedule.next_rollover(now);
 
-        assert_eq!(next, utc_datetime(2026, 3, 12, 0, 0, 0));
+        assert_eq!(next, utc_datetime("2026-03-12T00:00:00Z"));
     }
 
     #[rstest]
@@ -344,18 +333,18 @@ mod tests {
             Some(naive_time(6, 0, 0)),
         )
         .unwrap();
-        let now = utc_datetime(2026, 3, 11, 12, 0, 0);
+        let now = utc_datetime("2026-03-11T12:00:00Z");
 
         let next = schedule.next_rollover(now);
 
-        assert_eq!(next, utc_datetime(2026, 3, 13, 6, 0, 0));
+        assert_eq!(next, utc_datetime("2026-03-13T06:00:00Z"));
     }
 
     #[rstest]
     fn daily_suffix_uses_calendar_date() {
         let schedule =
             TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None).unwrap();
-        let rollover_at = utc_datetime(2026, 3, 12, 0, 0, 0);
+        let rollover_at = utc_datetime("2026-03-12T00:00:00Z");
 
         let suffix = schedule.suffix_for(rollover_at);
 
@@ -366,7 +355,7 @@ mod tests {
     fn second_suffix_includes_full_timestamp() {
         let schedule =
             TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None).unwrap();
-        let rollover_at = utc_datetime(2026, 3, 12, 7, 8, 9);
+        let rollover_at = utc_datetime("2026-03-12T07:08:09Z");
 
         let suffix = schedule.suffix_for(rollover_at);
 

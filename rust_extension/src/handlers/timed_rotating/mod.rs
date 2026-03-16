@@ -6,6 +6,8 @@
 mod clock;
 mod core;
 mod schedule;
+#[cfg(test)]
+mod test_helpers;
 
 pub use core::FemtoTimedRotatingFileHandler;
 pub(crate) use core::TimedRotationConfig;

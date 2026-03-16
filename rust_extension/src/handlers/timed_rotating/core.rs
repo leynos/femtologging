@@ -305,7 +305,7 @@ impl Drop for FemtoTimedRotatingFileHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveTime, TimeZone};
+    use chrono::NaiveTime;
     use rstest::rstest;
     use tempfile::tempdir;
 
@@ -315,18 +315,7 @@ mod tests {
         log_record::FemtoLogRecord,
     };
 
-    fn utc_datetime(
-        year: i32,
-        month: u32,
-        day: u32,
-        hour: u32,
-        minute: u32,
-        second: u32,
-    ) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(year, month, day, hour, minute, second)
-            .single()
-            .expect("test datetime must be valid")
-    }
+    use super::super::test_helpers::utc_datetime;
 
     #[rstest]
     fn rotates_and_prunes_backups() {
@@ -369,8 +358,8 @@ mod tests {
         )
         .expect("midnight schedule must validate");
 
-        let next = schedule.next_rollover(utc_datetime(2026, 3, 11, 23, 59, 59));
+        let next = schedule.next_rollover(utc_datetime("2026-03-11T23:59:59Z"));
 
-        assert_eq!(next, utc_datetime(2026, 3, 12, 0, 0, 0));
+        assert_eq!(next, utc_datetime("2026-03-12T00:00:00Z"));
     }
 }
