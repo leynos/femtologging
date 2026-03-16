@@ -175,29 +175,29 @@ impl TimedRotationSchedule {
         }
     }
 
-    fn next_daily_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+    fn next_rollover_at_trigger(
+        &self,
+        now: DateTime<Utc>,
+        days_before_trigger: u32,
+    ) -> DateTime<Utc> {
         let naive = self.local_naive(now);
         let trigger = self.at_time.unwrap_or(MIDNIGHT);
         let mut date = naive.date();
         let candidate = date.and_time(trigger);
         if naive >= candidate {
             date += Duration::days(i64::from(self.interval));
+        } else {
+            date += Duration::days(i64::from(days_before_trigger));
         }
         self.to_utc(date.and_time(trigger))
     }
 
+    fn next_daily_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+        self.next_rollover_at_trigger(now, 0)
+    }
+
     fn next_midnight_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
-        let naive = self.local_naive(now);
-        let trigger = self.at_time.unwrap_or(MIDNIGHT);
-        let mut date = naive.date();
-        let candidate = date.and_time(trigger);
-        if naive >= candidate {
-            date += Duration::days(1);
-        }
-        if self.interval > 1 {
-            date += Duration::days(i64::from(self.interval - 1));
-        }
-        self.to_utc(date.and_time(trigger))
+        self.next_rollover_at_trigger(now, self.interval.saturating_sub(1))
     }
 
     fn next_weekday_rollover(&self, now: DateTime<Utc>, weekday: Weekday) -> DateTime<Utc> {
