@@ -239,9 +239,8 @@ impl TimedRotationSchedule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rstest::rstest;
-
     use super::super::test_helpers::utc_datetime;
+    use rstest::rstest;
 
     fn naive_time(hour: u32, minute: u32, second: u32) -> NaiveTime {
         NaiveTime::from_hms_opt(hour, minute, second).expect("test time must be valid")
@@ -298,22 +297,6 @@ mod tests {
     }
 
     #[rstest]
-    fn next_daily_rollover_respects_at_time() {
-        let schedule = TimedRotationSchedule::new(
-            TimedRotationWhen::Days,
-            1,
-            true,
-            Some(naive_time(9, 30, 0)),
-        )
-        .unwrap();
-        let now = utc_datetime("2026-03-11T08:00:00Z");
-
-        let next = schedule.next_rollover(now);
-
-        assert_eq!(next, utc_datetime("2026-03-11T09:30:00Z"));
-    }
-
-    #[rstest]
     fn next_midnight_rollover_uses_start_of_day() {
         let schedule =
             TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None).unwrap();
@@ -325,19 +308,29 @@ mod tests {
     }
 
     #[rstest]
-    fn next_weekday_rollover_targets_requested_day() {
-        let schedule = TimedRotationSchedule::new(
-            TimedRotationWhen::Weekday(Weekday::Fri),
-            1,
-            true,
-            Some(naive_time(6, 0, 0)),
-        )
-        .unwrap();
-        let now = utc_datetime("2026-03-11T12:00:00Z");
-
-        let next = schedule.next_rollover(now);
-
-        assert_eq!(next, utc_datetime("2026-03-13T06:00:00Z"));
+    #[case(
+        TimedRotationWhen::Days,
+        naive_time(9, 30, 0),
+        "2026-03-11T08:00:00Z",
+        "2026-03-11T09:30:00Z"
+    )]
+    #[case(
+        TimedRotationWhen::Weekday(Weekday::Fri),
+        naive_time(6, 0, 0),
+        "2026-03-11T12:00:00Z",
+        "2026-03-13T06:00:00Z"
+    )]
+    fn next_rollover_with_at_time(
+        #[case] when: TimedRotationWhen,
+        #[case] at_time: NaiveTime,
+        #[case] now: &str,
+        #[case] expected: &str,
+    ) {
+        let schedule = TimedRotationSchedule::new(when, 1, true, Some(at_time)).unwrap();
+        assert_eq!(
+            schedule.next_rollover(utc_datetime(now)),
+            utc_datetime(expected),
+        );
     }
 
     #[rstest]
