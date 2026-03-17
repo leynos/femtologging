@@ -216,10 +216,19 @@ class _NetworkHandlerBuilderBase(_HandlerBuilderBase[_H_co]):
     def with_write_timeout_ms(self, timeout_ms: int) -> Self: ...
     def with_backoff(self, config: BackoffConfig) -> Self: ...
 
-class HandlerOptions:
+class _BaseHandlerOptions:
     capacity: int
     flush_interval: int
     policy: PolicyName
+
+    def __init__(
+        self,
+        capacity: int = ...,
+        flush_interval: int = ...,
+        policy: PolicyName = ...,
+    ) -> None: ...
+
+class HandlerOptions(_BaseHandlerOptions):
     max_bytes: int
     backup_count: int
 
@@ -281,10 +290,7 @@ class RotatingFileHandlerBuilder(_FileHandlerBuilderBase[FemtoRotatingFileHandle
     def __init__(self, path: str) -> None: ...
     def with_max_bytes(self, max_bytes: int) -> Self: ...
 
-class TimedHandlerOptions:
-    capacity: int
-    flush_interval: int
-    policy: PolicyName
+class TimedHandlerOptions(_BaseHandlerOptions):
     when: str
     interval: int
     backup_count: int
