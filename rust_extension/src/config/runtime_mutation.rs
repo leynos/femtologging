@@ -120,6 +120,22 @@ impl LoggerMutationBuilder {
         Self::default()
     }
 
+    fn apply_ids_mutation<I, S>(
+        self,
+        ids: I,
+        make_mutation: fn(Vec<String>) -> CollectionMutation<String>,
+        setter: fn(&mut Self, CollectionMutation<String>),
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mutation = make_mutation(ids.into_iter().map(Into::into).collect());
+        let mut builder = self;
+        setter(&mut builder, mutation);
+        builder
+    }
+
     pub fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
@@ -130,37 +146,28 @@ impl LoggerMutationBuilder {
         self
     }
 
-    pub fn replace_handlers<I, S>(mut self, ids: I) -> Self
+    pub fn replace_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.set_handlers(CollectionMutation::replace(
-            ids.into_iter().map(Into::into).collect(),
-        ));
-        self
+        self.apply_ids_mutation(ids, CollectionMutation::replace, Self::set_handlers)
     }
 
-    pub fn append_handlers<I, S>(mut self, ids: I) -> Self
+    pub fn append_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.set_handlers(CollectionMutation::append(
-            ids.into_iter().map(Into::into).collect(),
-        ));
-        self
+        self.apply_ids_mutation(ids, CollectionMutation::append, Self::set_handlers)
     }
 
-    pub fn remove_handlers<I, S>(mut self, ids: I) -> Self
+    pub fn remove_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.set_handlers(CollectionMutation::remove(
-            ids.into_iter().map(Into::into).collect(),
-        ));
-        self
+        self.apply_ids_mutation(ids, CollectionMutation::remove, Self::set_handlers)
     }
 
     pub fn clear_handlers(mut self) -> Self {
@@ -168,37 +175,28 @@ impl LoggerMutationBuilder {
         self
     }
 
-    pub fn replace_filters<I, S>(mut self, ids: I) -> Self
+    pub fn replace_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.set_filters(CollectionMutation::replace(
-            ids.into_iter().map(Into::into).collect(),
-        ));
-        self
+        self.apply_ids_mutation(ids, CollectionMutation::replace, Self::set_filters)
     }
 
-    pub fn append_filters<I, S>(mut self, ids: I) -> Self
+    pub fn append_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.set_filters(CollectionMutation::append(
-            ids.into_iter().map(Into::into).collect(),
-        ));
-        self
+        self.apply_ids_mutation(ids, CollectionMutation::append, Self::set_filters)
     }
 
-    pub fn remove_filters<I, S>(mut self, ids: I) -> Self
+    pub fn remove_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.set_filters(CollectionMutation::remove(
-            ids.into_iter().map(Into::into).collect(),
-        ));
-        self
+        self.apply_ids_mutation(ids, CollectionMutation::remove, Self::set_filters)
     }
 
     pub fn clear_filters(mut self) -> Self {
@@ -274,6 +272,11 @@ pub struct RuntimeConfigBuilder {
 type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
 type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 
+struct BuiltRegistries {
+    handlers: SharedHandlers,
+    filters: SharedFilters,
+}
+
 struct RuntimeCommit {
     logger_states: BTreeMap<String, LoggerAttachmentState>,
     handler_registry: SharedHandlers,
@@ -320,12 +323,14 @@ impl RuntimeConfigBuilder {
     /// Apply the runtime mutation transactionally.
     pub fn apply(&self) -> Result<(), ConfigError> {
         self.validate()?;
-        let built_handlers = build_handlers(&self.handlers)?;
-        let built_filters = build_filters(&self.filters)?;
+        let built = BuiltRegistries {
+            handlers: build_handlers(&self.handlers)?,
+            filters: build_filters(&self.filters)?,
+        };
 
         Python::attach(|py| {
             let before = manager::snapshot_runtime_state();
-            let commit = self.prepare_commit(py, before.clone(), built_handlers, built_filters)?;
+            let commit = self.prepare_commit(py, before.clone(), built)?;
             apply_commit(py, &commit, before)
         })
     }
@@ -344,13 +349,12 @@ impl RuntimeConfigBuilder {
         &self,
         py: Python<'_>,
         before: RuntimeStateSnapshot,
-        built_handlers: SharedHandlers,
-        built_filters: SharedFilters,
+        built: BuiltRegistries,
     ) -> Result<RuntimeCommit, ConfigError> {
         let mut handler_registry = before.handler_registry.clone();
-        handler_registry.extend(built_handlers);
+        handler_registry.extend(built.handlers);
         let mut filter_registry = before.filter_registry.clone();
-        filter_registry.extend(built_filters);
+        filter_registry.extend(built.filters);
 
         let mut logger_states = before.logger_states.clone();
         let mut impacted = BTreeSet::new();
@@ -377,33 +381,23 @@ impl RuntimeConfigBuilder {
         impacted.extend(self.loggers.keys().cloned());
 
         if let Some(root) = &self.root_logger {
-            let existing = logger_states
-                .get("root")
-                .cloned()
-                .unwrap_or_else(LoggerAttachmentState::default);
-            validate_remove_ids(existing.handler_ids(), &root.handlers)?;
-            validate_remove_ids(existing.filter_ids(), &root.filters)?;
-            let next = LoggerAttachmentState::new(
-                root.handlers.apply(existing.handler_ids()),
-                root.filters.apply(existing.filter_ids()),
-            );
-            resolve_attachment_ids(&next, &handler_registry, &filter_registry)?;
-            logger_states.insert("root".to_string(), next);
+            apply_logger_state_mutation(
+                "root",
+                root,
+                &mut logger_states,
+                &handler_registry,
+                &filter_registry,
+            )?;
         }
 
         for (name, mutation) in &self.loggers {
-            let existing = logger_states
-                .get(name)
-                .cloned()
-                .unwrap_or_else(LoggerAttachmentState::default);
-            validate_remove_ids(existing.handler_ids(), &mutation.handlers)?;
-            validate_remove_ids(existing.filter_ids(), &mutation.filters)?;
-            let next = LoggerAttachmentState::new(
-                mutation.handlers.apply(existing.handler_ids()),
-                mutation.filters.apply(existing.filter_ids()),
-            );
-            resolve_attachment_ids(&next, &handler_registry, &filter_registry)?;
-            logger_states.insert(name.clone(), next);
+            apply_logger_state_mutation(
+                name,
+                mutation,
+                &mut logger_states,
+                &handler_registry,
+                &filter_registry,
+            )?;
         }
 
         let impacted_loggers = impacted
@@ -439,6 +433,25 @@ impl RuntimeConfigBuilder {
         manager::get_logger(py, name)
             .map_err(|err| ConfigError::LoggerInit(format!("{name}: {err}")))
     }
+}
+
+fn apply_logger_state_mutation(
+    name: &str,
+    mutation: &LoggerMutationBuilder,
+    logger_states: &mut BTreeMap<String, LoggerAttachmentState>,
+    handler_registry: &SharedHandlers,
+    filter_registry: &SharedFilters,
+) -> Result<(), ConfigError> {
+    let existing = logger_states.get(name).cloned().unwrap_or_default();
+    validate_remove_ids(existing.handler_ids(), &mutation.handlers)?;
+    validate_remove_ids(existing.filter_ids(), &mutation.filters)?;
+    let next = LoggerAttachmentState::new(
+        mutation.handlers.apply(existing.handler_ids()),
+        mutation.filters.apply(existing.filter_ids()),
+    );
+    resolve_attachment_ids(&next, handler_registry, filter_registry)?;
+    logger_states.insert(name.to_string(), next);
+    Ok(())
 }
 
 fn build_handlers(items: &BTreeMap<String, HandlerBuilder>) -> Result<SharedHandlers, ConfigError> {

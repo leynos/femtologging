@@ -4,6 +4,17 @@ use super::*;
 use crate::macros::AsPyDict;
 use pyo3::{Bound, IntoPyObjectExt, types::PyDict};
 
+fn collection_to_pydict<'py, V: AsPyDict>(
+    py: Python<'py>,
+    map: &BTreeMap<String, V>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (key, val) in map {
+        dict.set_item(key, val.as_pydict(py)?)?;
+    }
+    Ok(dict)
+}
+
 impl AsPyDict for LoggerMutationBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
@@ -23,25 +34,13 @@ impl AsPyDict for RuntimeConfigBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         if !self.handlers.is_empty() {
-            let handlers = PyDict::new(py);
-            for (id, builder) in &self.handlers {
-                handlers.set_item(id, builder.as_pydict(py)?)?;
-            }
-            dict.set_item("handlers", handlers)?;
+            dict.set_item("handlers", collection_to_pydict(py, &self.handlers)?)?;
         }
         if !self.filters.is_empty() {
-            let filters = PyDict::new(py);
-            for (id, builder) in &self.filters {
-                filters.set_item(id, builder.as_pydict(py)?)?;
-            }
-            dict.set_item("filters", filters)?;
+            dict.set_item("filters", collection_to_pydict(py, &self.filters)?)?;
         }
         if !self.loggers.is_empty() {
-            let loggers = PyDict::new(py);
-            for (name, builder) in &self.loggers {
-                loggers.set_item(name, builder.as_pydict(py)?)?;
-            }
-            dict.set_item("loggers", loggers)?;
+            dict.set_item("loggers", collection_to_pydict(py, &self.loggers)?)?;
         }
         if let Some(root) = &self.root_logger {
             dict.set_item("root", root.as_pydict(py)?)?;
