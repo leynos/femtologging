@@ -186,6 +186,17 @@ class OverflowPolicy:
 
 _H_co = typ.TypeVar("_H_co", covariant=True)
 
+class _NamedLogFn(typ.Protocol):
+    """Shared call signature for module-level log helpers."""
+
+    def __call__(
+        self,
+        message: str,
+        /,
+        *,
+        name: str | None = ...,
+    ) -> str | None: ...
+
 class _HandlerBuilderBase(typ.Generic[_H_co]):  # noqa: UP046
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> _H_co: ...
@@ -419,21 +430,14 @@ def runtime_attachment_state_for_test(
 
 setup_rust_logging: Callable[[], None]
 
-def debug(message: str, /, *, name: str | None = ...) -> str | None:
-    """Log a message at DEBUG level via the root logger (or named logger)."""
-    ...
-
-def info(message: str, /, *, name: str | None = ...) -> str | None:
-    """Log a message at INFO level via the root logger (or named logger)."""
-    ...
-
-def warn(message: str, /, *, name: str | None = ...) -> str | None:
-    """Log a message at WARN level via the root logger (or named logger)."""
-    ...
-
-def error(message: str, /, *, name: str | None = ...) -> str | None:
-    """Log a message at ERROR level via the root logger (or named logger)."""
-    ...
+debug: _NamedLogFn
+"""Log a message at DEBUG level via the root logger (or named logger)."""
+info: _NamedLogFn
+"""Log a message at INFO level via the root logger (or named logger)."""
+warn: _NamedLogFn
+"""Log a message at WARN level via the root logger (or named logger)."""
+error: _NamedLogFn
+"""Log a message at ERROR level via the root logger (or named logger)."""
 
 def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> None: ...
 def parse_ini_file(
