@@ -345,6 +345,60 @@ impl RuntimeConfigBuilder {
         Ok(())
     }
 
+    fn collect_impacted(&self, before: &RuntimeStateSnapshot) -> BTreeSet<String> {
+        let overridden_handler_ids = self.handlers.keys().cloned().collect::<BTreeSet<_>>();
+        let overridden_filter_ids = self.filters.keys().cloned().collect::<BTreeSet<_>>();
+        let mut impacted = before
+            .logger_states
+            .iter()
+            .filter(|(_, state)| {
+                state
+                    .handler_ids()
+                    .iter()
+                    .any(|id| overridden_handler_ids.contains(id))
+                    || state
+                        .filter_ids()
+                        .iter()
+                        .any(|id| overridden_filter_ids.contains(id))
+            })
+            .map(|(name, _)| name.clone())
+            .collect::<BTreeSet<_>>();
+        if self.root_logger.is_some() {
+            impacted.insert("root".to_string());
+        }
+        impacted.extend(self.loggers.keys().cloned());
+        impacted
+    }
+
+    fn apply_logger_mutations(
+        &self,
+        logger_states: &mut BTreeMap<String, LoggerAttachmentState>,
+        handler_registry: &SharedHandlers,
+        filter_registry: &SharedFilters,
+    ) -> Result<(), ConfigError> {
+        let root_iter = self.root_logger.iter().map(|m| ("root", m));
+        let named_iter = self.loggers.iter().map(|(n, m)| (n.as_str(), m));
+        for (name, mutation) in root_iter.chain(named_iter) {
+            apply_mutation_to_logger(
+                name,
+                mutation,
+                logger_states,
+                handler_registry,
+                filter_registry,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn build_scalar_mutations(&self) -> BTreeMap<String, LoggerMutationBuilder> {
+        let root_iter = self
+            .root_logger
+            .iter()
+            .map(|m| ("root".to_string(), m.clone()));
+        let named_iter = self.loggers.iter().map(|(n, m)| (n.clone(), m.clone()));
+        root_iter.chain(named_iter).collect()
+    }
+
     fn prepare_commit(
         &self,
         py: Python<'_>,
@@ -357,48 +411,9 @@ impl RuntimeConfigBuilder {
         filter_registry.extend(built.filters);
 
         let mut logger_states = before.logger_states.clone();
-        let mut impacted = BTreeSet::new();
-        let overridden_handler_ids = self.handlers.keys().cloned().collect::<BTreeSet<_>>();
-        let overridden_filter_ids = self.filters.keys().cloned().collect::<BTreeSet<_>>();
+        let impacted = self.collect_impacted(&before);
 
-        for (name, state) in &before.logger_states {
-            if state
-                .handler_ids()
-                .iter()
-                .any(|id| overridden_handler_ids.contains(id))
-                || state
-                    .filter_ids()
-                    .iter()
-                    .any(|id| overridden_filter_ids.contains(id))
-            {
-                impacted.insert(name.clone());
-            }
-        }
-
-        if self.root_logger.is_some() {
-            impacted.insert("root".to_string());
-        }
-        impacted.extend(self.loggers.keys().cloned());
-
-        if let Some(root) = &self.root_logger {
-            apply_logger_state_mutation(
-                "root",
-                root,
-                &mut logger_states,
-                &handler_registry,
-                &filter_registry,
-            )?;
-        }
-
-        for (name, mutation) in &self.loggers {
-            apply_logger_state_mutation(
-                name,
-                mutation,
-                &mut logger_states,
-                &handler_registry,
-                &filter_registry,
-            )?;
-        }
+        self.apply_logger_mutations(&mut logger_states, &handler_registry, &filter_registry)?;
 
         let impacted_loggers = impacted
             .into_iter()
@@ -408,20 +423,12 @@ impl RuntimeConfigBuilder {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut scalar_mutations = BTreeMap::new();
-        if let Some(root) = &self.root_logger {
-            scalar_mutations.insert("root".to_string(), root.clone());
-        }
-        for (name, mutation) in &self.loggers {
-            scalar_mutations.insert(name.clone(), mutation.clone());
-        }
-
         Ok(RuntimeCommit {
             logger_states,
             handler_registry,
             filter_registry,
             impacted_loggers,
-            scalar_mutations,
+            scalar_mutations: self.build_scalar_mutations(),
         })
     }
 
@@ -435,7 +442,7 @@ impl RuntimeConfigBuilder {
     }
 }
 
-fn apply_logger_state_mutation(
+fn apply_mutation_to_logger(
     name: &str,
     mutation: &LoggerMutationBuilder,
     logger_states: &mut BTreeMap<String, LoggerAttachmentState>,
