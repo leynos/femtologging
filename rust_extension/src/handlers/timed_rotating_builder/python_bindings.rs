@@ -18,10 +18,9 @@ use crate::{
     handlers::{
         HandlerBuildError, HandlerBuilderTrait,
         common::{PyOverflowPolicy, py_flush_after_records_to_nonzero},
-        timed_rotating::PyTimedRotatingFileHandler,
+        timed_rotating::{PyTimedRotatingFileHandler, python::extract_naive_time_from_py_time},
     },
     macros::{AsPyDict, dict_into_py},
-    python::fq_py_type,
 };
 
 fn extract_positive_i128(value: Bound<'_, PyAny>, field: &str) -> PyResult<i128> {
@@ -47,25 +46,7 @@ fn map_config_error(err: HandlerBuildError) -> PyErr {
 }
 
 fn extract_optional_time(value: Bound<'_, PyAny>) -> PyResult<Option<NaiveTime>> {
-    if value.is_none() {
-        return Ok(None);
-    }
-    let hour: u32 = value.getattr("hour")?.extract()?;
-    let minute: u32 = value.getattr("minute")?.extract()?;
-    let second: u32 = value.getattr("second")?.extract()?;
-    let microsecond: u32 = value.getattr("microsecond")?.extract()?;
-    let tzinfo = value.getattr("tzinfo")?;
-    if !tzinfo.is_none() {
-        return Err(PyValueError::new_err("at_time must be timezone-naive"));
-    }
-    NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
-        .map(Some)
-        .ok_or_else(|| {
-            PyValueError::new_err(format!(
-                "invalid at_time value of type {}",
-                fq_py_type(&value)
-            ))
-        })
+    extract_naive_time_from_py_time(&value, "at_time", true)
 }
 
 fn fill_pydict(builder: &TimedRotatingFileHandlerBuilder, d: &Bound<'_, PyDict>) -> PyResult<()> {

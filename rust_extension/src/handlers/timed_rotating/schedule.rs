@@ -231,7 +231,19 @@ impl TimedRotationSchedule {
         match Local.from_local_datetime(&value) {
             LocalResult::Single(dt) => dt.with_timezone(&Utc),
             LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
-            LocalResult::None => Local.from_utc_datetime(&value).with_timezone(&Utc),
+            // DST gap: the requested local time doesn't exist (spring-forward).
+            // Skip forward by small increments until we find a valid local time.
+            LocalResult::None => {
+                let mut candidate = value;
+                loop {
+                    candidate += Duration::minutes(1);
+                    match Local.from_local_datetime(&candidate) {
+                        LocalResult::Single(dt) => return dt.with_timezone(&Utc),
+                        LocalResult::Ambiguous(earliest, _) => return earliest.with_timezone(&Utc),
+                        LocalResult::None => continue,
+                    }
+                }
+            }
         }
     }
 }
@@ -288,7 +300,8 @@ mod tests {
 
     #[rstest]
     fn next_hourly_rollover_uses_fixed_duration() {
-        let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 2, true, None).unwrap();
+        let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 2, true, None)
+            .expect("hourly schedule must validate");
         let now = utc_datetime("2026-03-11T08:30:00Z");
 
         let next = schedule.next_rollover(now);
@@ -298,8 +311,8 @@ mod tests {
 
     #[rstest]
     fn next_midnight_rollover_uses_start_of_day() {
-        let schedule =
-            TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None).unwrap();
+        let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None)
+            .expect("midnight schedule must validate");
         let now = utc_datetime("2026-03-11T23:30:00Z");
 
         let next = schedule.next_rollover(now);
@@ -326,7 +339,8 @@ mod tests {
         #[case] now: &str,
         #[case] expected: &str,
     ) {
-        let schedule = TimedRotationSchedule::new(when, 1, true, Some(at_time)).unwrap();
+        let schedule = TimedRotationSchedule::new(when, 1, true, Some(at_time))
+            .expect("schedule with at_time must validate");
         assert_eq!(
             schedule.next_rollover(utc_datetime(now)),
             utc_datetime(expected),
@@ -335,8 +349,8 @@ mod tests {
 
     #[rstest]
     fn daily_suffix_uses_calendar_date() {
-        let schedule =
-            TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None).unwrap();
+        let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None)
+            .expect("midnight schedule must validate");
         let rollover_at = utc_datetime("2026-03-12T00:00:00Z");
 
         let suffix = schedule.suffix_for(rollover_at);
@@ -346,8 +360,8 @@ mod tests {
 
     #[rstest]
     fn second_suffix_includes_full_timestamp() {
-        let schedule =
-            TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None).unwrap();
+        let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
+            .expect("seconds schedule must validate");
         let rollover_at = utc_datetime("2026-03-12T07:08:09Z");
 
         let suffix = schedule.suffix_for(rollover_at);

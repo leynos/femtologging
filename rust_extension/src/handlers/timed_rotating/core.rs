@@ -51,8 +51,26 @@ where
         backup_count: usize,
         mut clock: C,
     ) -> Self {
-        let now = clock.now();
-        let next_rollover_at = schedule.next_rollover(now);
+        // Seed rollover from existing file's mtime if available, otherwise use current time
+        let seed_time = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|system_time| {
+                // Convert SystemTime to DateTime<Utc>
+                system_time
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|duration| {
+                        chrono::DateTime::<chrono::Utc>::from_timestamp(
+                            duration.as_secs() as i64,
+                            duration.subsec_nanos(),
+                        )
+                        .expect("valid timestamp from system time")
+                    })
+            })
+            .unwrap_or_else(|| clock.now());
+
+        let next_rollover_at = schedule.next_rollover(seed_time);
         Self {
             path,
             schedule,

@@ -221,25 +221,63 @@ impl PyTimedRotatingFileHandler {
     }
 }
 
-fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
+/// Extract a `NaiveTime` from a Python `datetime.time` object.
+///
+/// # Parameters
+///
+/// - `value`: The Python object to extract from
+/// - `arg_name`: The name of the argument (for error messages)
+/// - `allow_none`: If `true`, `None` values return `Ok(None)`; if `false`, they raise an error
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - `value` is `None` and `allow_none` is `false`
+/// - The time object has a non-None `tzinfo` (timezone-aware)
+/// - The extracted hour/minute/second/microsecond values are invalid
+pub(crate) fn extract_naive_time_from_py_time(
+    value: &Bound<'_, PyAny>,
+    arg_name: &str,
+    allow_none: bool,
+) -> PyResult<Option<NaiveTime>> {
     if value.is_none() {
-        return Err(PyTypeError::new_err(
-            "at_time must be datetime.time or None",
-        ));
+        if allow_none {
+            return Ok(None);
+        }
+
+        return Err(PyTypeError::new_err(format!(
+            "{arg_name} must be datetime.time or None"
+        )));
     }
+
     let hour: u32 = value.getattr("hour")?.extract()?;
     let minute: u32 = value.getattr("minute")?.extract()?;
     let second: u32 = value.getattr("second")?.extract()?;
     let microsecond: u32 = value.getattr("microsecond")?.extract()?;
     let tzinfo = value.getattr("tzinfo")?;
+
     if !tzinfo.is_none() {
-        return Err(PyValueError::new_err("at_time must be timezone-naive"));
+        return Err(PyValueError::new_err(format!(
+            "{arg_name} must be timezone-naive"
+        )));
     }
-    NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond).ok_or_else(|| {
-        PyTypeError::new_err(format!(
-            "invalid at_time value of type {}",
-            fq_py_type(&value)
-        ))
+
+    NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
+        .ok_or_else(|| {
+            PyTypeError::new_err(format!(
+                "invalid {arg_name} value of type {}",
+                fq_py_type(value)
+            ))
+        })
+        .map(Some)
+}
+
+fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
+    // Local convenience wrapper for the common helper; this retains the
+    // existing `at_time`-specific error messages.
+    extract_naive_time_from_py_time(&value, "at_time", false).map(|opt| {
+        // `allow_none` is false, so `opt` is guaranteed to be `Some`.
+        opt.expect("extract_naive_time_from_py_time returned None with allow_none = false")
     })
 }
 
