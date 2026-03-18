@@ -46,31 +46,31 @@ class LogResultPayload(typ.TypedDict):
     value: str | None
 
 
-class MetadataPayload(typ.TypedDict):
+class __MetadataPayload(typ.TypedDict):
     """Structured metadata captured from ``handle_record`` callbacks."""
 
     value: dict[str, str]
 
 
-class ErrorPayload(typ.TypedDict):
+class __ErrorPayload(typ.TypedDict):
     """Error payload captured for unhappy-path assertions."""
 
     value: str | None
 
 
-class RecordMetadataPayload(typ.TypedDict):
+class _Record_MetadataPayload(typ.TypedDict):
     """Subset of record metadata used in these behavioural assertions."""
 
     key_values: dict[str, object]
 
 
-class CapturedRecordPayload(typ.TypedDict):
+class _CapturedRecordPayload(typ.TypedDict):
     """Subset of captured record payloads consumed by helper assertions."""
 
-    metadata: RecordMetadataPayload
+    metadata: _Record_MetadataPayload
 
 
-class FlushableLogger(typ.Protocol):
+class __FlushableLogger(typ.Protocol):
     """Structural type for logger objects that expose ``flush_handlers``."""
 
     def flush_handlers(self) -> bool:
@@ -112,13 +112,13 @@ def log_result() -> LogResultPayload:
 
 
 @pytest.fixture
-def metadata_payload() -> MetadataPayload:
+def metadata_payload() -> _MetadataPayload:
     """Provide structured metadata storage for context scenarios."""
     return {"value": {}}
 
 
 @pytest.fixture
-def context_error() -> ErrorPayload:
+def context_error() -> _ErrorPayload:
     """Provide context error storage for unhappy-path scenarios."""
     return {"value": None}
 
@@ -196,18 +196,18 @@ _EXPECT_KEY_VALUES_PATTERN = (
 )
 
 
-class RecordCollector:
+class _RecordCollector:
     """Collect full records passed to ``handle_record`` callbacks."""
 
     def __init__(self) -> None:
         """Initialize collector state for one scenario."""
-        self.records: list[CapturedRecordPayload] = []
+        self.records: list[_CapturedRecordPayload] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
         """Accept classic handler calls for compatibility with logger handlers."""
         _ = (self.records, logger, level, message)
 
-    def handle_record(self, record: CapturedRecordPayload) -> None:
+    def handle_record(self, record: _CapturedRecordPayload) -> None:
         """Capture full record payloads for metadata assertions."""
         self.records.append(record)
 
@@ -278,7 +278,7 @@ def call_with_context_and_capture_metadata(
     message: str,
     name: str,
     context: str,
-) -> MetadataPayload:
+) -> _MetadataPayload:
     """Emit a log call inside ``log_context`` and capture key-values."""
     context_map = _parse_pairs(context)
     fn = _FUNC_MAP[func]
@@ -300,7 +300,7 @@ def call_with_nested_context_and_capture_metadata(
     message: str,
     name: str,
     contexts: str,
-) -> MetadataPayload:
+) -> _MetadataPayload:
     """Emit one log call with nested contexts and capture key-values."""
     outer, inner = _split_nested_contexts(contexts)
     outer_map = _parse_pairs(outer)
@@ -315,7 +315,7 @@ def call_with_nested_context_and_capture_metadata(
 
 
 @when("I push log context with an invalid nested value", target_fixture="context_error")
-def push_invalid_context_value() -> ErrorPayload:
+def push_invalid_context_value() -> _ErrorPayload:
     """Capture error text when pushing unsupported context value types."""
     message: str | None = None
     try:
@@ -423,7 +423,7 @@ def result_format_is(log_result: LogResultPayload, expected: str) -> None:
 
 @then(parsers.re(_EXPECT_KEY_VALUES_PATTERN))
 def key_values_contain_expected_pairs(
-    metadata_payload: MetadataPayload, pairs: str
+    metadata_payload: _MetadataPayload, pairs: str
 ) -> None:
     """Assert captured metadata includes expected key-values."""
     expected = _parse_pairs(pairs)
@@ -433,7 +433,7 @@ def key_values_contain_expected_pairs(
 
 
 @then(parsers.parse('a context error is raised containing "{text}"'))
-def context_error_contains(context_error: ErrorPayload, text: str) -> None:
+def context_error_contains(context_error: _ErrorPayload, text: str) -> None:
     """Assert invalid context operations report deterministic errors."""
     value = context_error["value"]
     assert value is not None, "expected context error, got none"
@@ -442,7 +442,7 @@ def context_error_contains(context_error: ErrorPayload, text: str) -> None:
 
 @then("the latest record metadata key_values match snapshot")
 def key_values_match_snapshot(
-    metadata_payload: MetadataPayload, snapshot: SnapshotAssertion
+    metadata_payload: _MetadataPayload, snapshot: SnapshotAssertion
 ) -> None:
     """Assert metadata key-values for context scenarios match the snapshot."""
     assert metadata_payload["value"] == snapshot
@@ -494,12 +494,12 @@ def _capture_latest_key_values(
 
 
 @contextmanager
-def _capture_records(logger: FlushableLogger) -> typ.Iterator[RecordCollector]:
+def _capture_records(logger: _FlushableLogger) -> typ.Iterator[_RecordCollector]:
     """Attach a short-lived collector after draining pending records."""
     logger.clear_handlers()
     flushed = logger.flush_handlers()
     assert flushed, "flush_handlers() failed before attaching context collector"
-    collector = RecordCollector()
+    collector = _RecordCollector()
     logger.add_handler(collector)
     try:
         yield collector
@@ -508,8 +508,8 @@ def _capture_records(logger: FlushableLogger) -> typ.Iterator[RecordCollector]:
 
 
 def _wait_for_latest_key_values(
-    logger: FlushableLogger,
-    collector: RecordCollector,
+    logger: _FlushableLogger,
+    collector: _RecordCollector,
     *,
     attempts: int = 20,
     interval_s: float = 0.01,
@@ -519,6 +519,7 @@ def _wait_for_latest_key_values(
         if collector.records:
             break
         time.sleep(interval_s)
-        logger.flush_handlers()
+        flushed = logger.flush_handlers()
+        assert flushed, "flush_handlers() failed while waiting for captured records"
     assert collector.records, "expected at least one captured record"
     return collector.records[-1]["metadata"]["key_values"]
