@@ -234,8 +234,11 @@ impl TimedRotationSchedule {
             // DST gap: the requested local time doesn't exist (spring-forward).
             // Skip forward by small increments until we find a valid local time.
             LocalResult::None => {
+                const MAX_DST_GAP_ATTEMPTS: u32 = 1_440;
                 let mut candidate = value;
-                loop {
+                let mut attempts = 0;
+                while attempts < MAX_DST_GAP_ATTEMPTS {
+                    attempts += 1;
                     candidate += Duration::minutes(1);
                     match Local.from_local_datetime(&candidate) {
                         LocalResult::Single(dt) => return dt.with_timezone(&Utc),
@@ -243,6 +246,9 @@ impl TimedRotationSchedule {
                         LocalResult::None => continue,
                     }
                 }
+                // Fall back to interpreting the naive timestamp as UTC if the
+                // local timezone never resolves within a full day.
+                Utc.from_utc_datetime(&value)
             }
         }
     }
@@ -250,13 +256,9 @@ impl TimedRotationSchedule {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_helpers::utc_datetime;
+    use super::super::test_helpers::{naive_time, utc_datetime};
     use super::*;
     use rstest::rstest;
-
-    fn naive_time(hour: u32, minute: u32, second: u32) -> NaiveTime {
-        NaiveTime::from_hms_opt(hour, minute, second).expect("test time must be valid")
-    }
 
     #[rstest]
     #[case("S", TimedRotationWhen::Seconds)]

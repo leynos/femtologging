@@ -59,16 +59,6 @@ impl TimedRotatingFileHandlerBuilder {
         self
     }
 
-    /// Attach a Python formatter object from PyO3 bindings.
-    #[cfg(feature = "python")]
-    pub(super) fn with_formatter_from_py(
-        mut self,
-        formatter: &pyo3::Bound<'_, pyo3::types::PyAny>,
-    ) -> pyo3::PyResult<Self> {
-        self.common.set_formatter_from_py(formatter)?;
-        Ok(self)
-    }
-
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.common.set_capacity(capacity);

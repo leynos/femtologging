@@ -195,9 +195,10 @@ impl crate::handlers::file::RotationStrategy<BufWriter<File>> for TimedFileRotat
 }
 
 fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
-    let value = value.to_string_lossy();
-    let prefix = prefix.to_string_lossy();
-    value.starts_with(prefix.as_ref())
+    value
+        .as_os_str()
+        .as_encoded_bytes()
+        .starts_with(prefix.as_os_str().as_encoded_bytes())
 }
 
 /// Bundles timed-rotation parameters passed to the handler constructor.
