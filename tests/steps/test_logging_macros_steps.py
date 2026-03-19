@@ -46,19 +46,19 @@ class LogResultPayload(typ.TypedDict):
     value: str | None
 
 
-class __MetadataPayload(typ.TypedDict):
+class _MetadataPayload(typ.TypedDict):
     """Structured metadata captured from ``handle_record`` callbacks."""
 
     value: dict[str, str]
 
 
-class __ErrorPayload(typ.TypedDict):
+class _ErrorPayload(typ.TypedDict):
     """Error payload captured for unhappy-path assertions."""
 
     value: str | None
 
 
-class _Record_MetadataPayload(typ.TypedDict):
+class _RecordMetadataPayload(typ.TypedDict):
     """Subset of record metadata used in these behavioural assertions."""
 
     key_values: dict[str, object]
@@ -67,10 +67,10 @@ class _Record_MetadataPayload(typ.TypedDict):
 class _CapturedRecordPayload(typ.TypedDict):
     """Subset of captured record payloads consumed by helper assertions."""
 
-    metadata: _Record_MetadataPayload
+    metadata: _RecordMetadataPayload
 
 
-class __FlushableLogger(typ.Protocol):
+class _FlushableLogger(typ.Protocol):
     """Structural type for logger objects that expose ``flush_handlers``."""
 
     def flush_handlers(self) -> bool:
@@ -205,7 +205,8 @@ class _RecordCollector:
 
     def handle(self, logger: str, level: str, message: str) -> None:
         """Accept classic handler calls for compatibility with logger handlers."""
-        _ = (self.records, logger, level, message)
+        # Satisfy handler protocol; arguments intentionally unused.
+        del logger, level, message
 
     def handle_record(self, record: _CapturedRecordPayload) -> None:
         """Capture full record payloads for metadata assertions."""
@@ -445,7 +446,9 @@ def key_values_match_snapshot(
     metadata_payload: _MetadataPayload, snapshot: SnapshotAssertion
 ) -> None:
     """Assert metadata key-values for context scenarios match the snapshot."""
-    assert metadata_payload["value"] == snapshot
+    assert metadata_payload["value"] == snapshot, (
+        f"metadata payload key_values {metadata_payload['value']!r} did not match snapshot"
+    )
 
 
 # ---------------------------------------------------------------------------
