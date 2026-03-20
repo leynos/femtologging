@@ -1,7 +1,14 @@
 # serializer version: 1
 # name: test_appending_a_handler_at_runtime
   dict({
+    'filter_ids': list([
+      'lvl',
+    ]),
     'handler_count': 2,
+    'handler_ids': list([
+      'stderr',
+      'stdout',
+    ]),
     'level': 'INFO',
     'name': 'core',
     'propagate': True,
@@ -9,7 +16,25 @@
 # ---
 # name: test_clearing_handlers_and_filters_at_runtime
   dict({
+    'filter_ids': list([
+    ]),
     'handler_count': 0,
+    'handler_ids': list([
+    ]),
+    'level': 'INFO',
+    'name': 'core',
+    'propagate': True,
+  })
+# ---
+# name: test_failed_mutation_preserves_the_prior_state
+  dict({
+    'filter_ids': list([
+      'lvl',
+    ]),
+    'handler_count': 1,
+    'handler_ids': list([
+      'stderr',
+    ]),
     'level': 'INFO',
     'name': 'core',
     'propagate': True,
@@ -17,7 +42,13 @@
 # ---
 # name: test_replacing_filters_at_runtime
   dict({
+    'filter_ids': list([
+      'name',
+    ]),
     'handler_count': 1,
+    'handler_ids': list([
+      'stderr',
+    ]),
     'level': 'INFO',
     'name': 'core',
     'propagate': True,

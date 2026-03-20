@@ -20,6 +20,7 @@ Feature: Runtime handler and filter reconfiguration
     When I try to replace logger "core" filters with missing id "missing"
     Then the runtime mutation fails with key error containing "missing"
     And logger "core" suppresses "ERROR"
+    And logger "core" runtime state matches snapshot
 
   Scenario: Root logger can be mutated at runtime
     When I set root logger level to "ERROR" via runtime mutation

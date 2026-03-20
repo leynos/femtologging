@@ -97,7 +97,12 @@ import pytest
 from femtologging import FemtoFileHandler
 
 # Block until space is available
-handler = FemtoFileHandler("app.log", capacity=4096, flush_interval=1, policy="block")
+handler = FemtoFileHandler(
+    "app.log",
+    capacity=4096,
+    flush_interval=1,
+    policy="block",
+)
 
 # Or wait up to 250 ms when the queue is full
 timeout_handler = FemtoFileHandler(

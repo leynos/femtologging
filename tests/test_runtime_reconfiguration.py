@@ -104,7 +104,12 @@ def test_runtime_apply_unknown_filter_preserves_previous_state() -> None:
             .apply()
         )
 
-    assert logger.log("ERROR", "still blocked") is None
+    assert logger.log("ERROR", "still blocked") is None, (
+        "expected logger.log('ERROR', ...) to stay blocked because the failed "
+        "RuntimeConfigBuilder().with_logger('core', "
+        "LoggerMutationBuilder().replace_filters(['missing'])).apply() must "
+        "preserve the prior lvl filter"
+    )
 
 
 def test_runtime_apply_rejects_conflicting_collection_modes() -> None:
@@ -120,5 +125,22 @@ def test_runtime_apply_rejects_conflicting_collection_modes() -> None:
                 .append_handlers(["stdout"])
                 .replace_handlers(["stderr"]),
             )
+            .apply()
+        )
+
+
+def test_runtime_apply_rejects_root_name_overlap() -> None:
+    """Root mutations must not be provided through both root builder paths."""
+    _configure_core_logger()
+    propagate = False
+
+    with pytest.raises(
+        ValueError,
+        match='with_root_logger\\(\\) and with_logger\\("root", \\.\\.\\.\\)',
+    ):
+        (
+            RuntimeConfigBuilder()
+            .with_root_logger(LoggerMutationBuilder().with_level("ERROR"))
+            .with_logger("root", LoggerMutationBuilder().with_propagate(propagate))
             .apply()
         )

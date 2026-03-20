@@ -123,7 +123,7 @@ def test_login_success():
 
 
 def test_login_failure():
-    assert not login_user("alice", "wrong-password")
+    assert login_user("alice", "wrong-password") is False
 ```
 
 ______________________________________________________________________
