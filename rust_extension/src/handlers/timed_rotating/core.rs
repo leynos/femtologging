@@ -194,7 +194,7 @@ impl crate::handlers::file::RotationStrategy<BufWriter<File>> for TimedFileRotat
     }
 }
 
-fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
+pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
     value
         .as_os_str()
         .as_encoded_bytes()
@@ -300,67 +300,5 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
 impl Drop for FemtoTimedRotatingFileHandler {
     fn drop(&mut self) {
         self.close();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::NaiveTime;
-    use rstest::rstest;
-    use tempfile::tempdir;
-
-    use crate::{
-        formatter::DefaultFormatter,
-        handlers::{file::OverflowPolicy, timed_rotating::schedule::TimedRotationWhen},
-        log_record::FemtoLogRecord,
-    };
-
-    use super::super::test_helpers::utc_datetime;
-
-    #[rstest]
-    fn rotates_and_prunes_backups() {
-        let dir = tempdir().expect("tempdir must create a temporary directory");
-        let path = dir.path().join("timed.log");
-        let schedule =
-            TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None).unwrap();
-        let config = HandlerConfig {
-            capacity: 8,
-            flush_interval: 1,
-            overflow_policy: OverflowPolicy::Drop,
-        };
-        let mut handler = FemtoTimedRotatingFileHandler::with_capacity_flush_policy(
-            &path,
-            DefaultFormatter,
-            config,
-            TimedRotationConfig {
-                schedule,
-                backup_count: 1,
-            },
-        )
-        .expect("timed handler must build");
-        handler
-            .handle(FemtoLogRecord::new(
-                "logger",
-                crate::level::FemtoLevel::Info,
-                "hello",
-            ))
-            .expect("initial write must succeed");
-        handler.close();
-    }
-
-    #[rstest]
-    fn midnight_schedule_is_preserved() {
-        let schedule = TimedRotationSchedule::new(
-            TimedRotationWhen::Midnight,
-            1,
-            true,
-            Some(NaiveTime::from_hms_opt(0, 0, 0).expect("midnight must be valid")),
-        )
-        .expect("midnight schedule must validate");
-
-        let next = schedule.next_rollover(utc_datetime("2026-03-11T23:59:59Z"));
-
-        assert_eq!(next, utc_datetime("2026-03-12T00:00:00Z"));
     }
 }

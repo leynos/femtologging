@@ -5,7 +5,11 @@
 
 mod clock;
 mod core;
+#[cfg(test)]
+mod core_tests;
 mod schedule;
+#[cfg(test)]
+mod schedule_tests;
 #[cfg(test)]
 mod test_helpers;
 

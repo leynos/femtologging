@@ -71,16 +71,21 @@ impl TimedRotatingFileHandlerBuilder {
         self
     }
 
-    /// Set the timed rotation cadence.
-    pub fn with_when(mut self, when: impl AsRef<str>) -> Result<Self, HandlerBuildError> {
-        self.when =
-            TimedRotationWhen::parse(when.as_ref()).map_err(HandlerBuildError::InvalidConfig)?;
+    fn validate_at_time_supported(&self) -> Result<(), HandlerBuildError> {
         if self.at_time.is_some() && !self.when.supports_at_time() {
             return Err(HandlerBuildError::InvalidConfig(format!(
                 "at_time is only supported for daily, midnight, and weekday rotation (got {})",
                 self.when.as_str(),
             )));
         }
+        Ok(())
+    }
+
+    /// Set the timed rotation cadence.
+    pub fn with_when(mut self, when: impl AsRef<str>) -> Result<Self, HandlerBuildError> {
+        self.when =
+            TimedRotationWhen::parse(when.as_ref()).map_err(HandlerBuildError::InvalidConfig)?;
+        self.validate_at_time_supported()?;
         Ok(self)
     }
 
@@ -104,13 +109,8 @@ impl TimedRotatingFileHandlerBuilder {
 
     /// Set an explicit time-of-day trigger for eligible schedules.
     pub fn with_at_time(mut self, at_time: Option<NaiveTime>) -> Result<Self, HandlerBuildError> {
-        if at_time.is_some() && !self.when.supports_at_time() {
-            return Err(HandlerBuildError::InvalidConfig(format!(
-                "at_time is only supported for daily, midnight, and weekday rotation (got {})",
-                self.when.as_str(),
-            )));
-        }
         self.at_time = at_time;
+        self.validate_at_time_supported()?;
         Ok(self)
     }
 

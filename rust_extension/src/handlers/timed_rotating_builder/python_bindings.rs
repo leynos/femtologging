@@ -163,11 +163,7 @@ impl TimedRotatingFileHandlerBuilder {
         let interval = extract_positive_i128(interval, "interval")?;
         let interval = u64::try_from(interval)
             .map_err(|_| PyOverflowError::new_err("interval exceeds the allowable range"))?;
-        let interval = unsafe {
-            // SAFETY: `extract_positive_i128` rejects zero and negative values,
-            // and the `u64` conversion preserves that invariant.
-            NonZeroU64::new_unchecked(interval)
-        };
+        let interval = NonZeroU64::new(interval).unwrap();
         apply_builder_update(slf, |builder| {
             builder.interval = interval;
             Ok(())

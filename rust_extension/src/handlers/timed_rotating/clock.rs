@@ -23,19 +23,23 @@ impl RotationClock for SystemClock {
 
 #[cfg(feature = "python")]
 mod injected {
+    use std::collections::VecDeque;
     use std::sync::Mutex;
 
     use chrono::{DateTime, TimeZone, Utc};
     use once_cell::sync::Lazy;
 
-    static INJECTED_TIMES: Lazy<Mutex<Vec<i64>>> = Lazy::new(|| Mutex::new(Vec::new()));
+    static INJECTED_TIMES: Lazy<Mutex<VecDeque<i64>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
+    #[cfg(feature = "test-util")]
     pub(super) fn set(epoch_millis: Vec<i64>) {
         *INJECTED_TIMES
             .lock()
-            .expect("timed rotation injected-time mutex poisoned") = epoch_millis;
+            .expect("timed rotation injected-time mutex poisoned") =
+            epoch_millis.into_iter().collect();
     }
 
+    #[cfg(feature = "test-util")]
     pub(super) fn clear() {
         INJECTED_TIMES
             .lock()
@@ -47,11 +51,9 @@ mod injected {
         let mut guard = INJECTED_TIMES
             .lock()
             .expect("timed rotation injected-time mutex poisoned");
-        if guard.is_empty() {
-            return None;
-        }
-        let epoch_millis = guard.remove(0);
-        Utc.timestamp_millis_opt(epoch_millis).single()
+        guard
+            .pop_front()
+            .and_then(|epoch_millis| Utc.timestamp_millis_opt(epoch_millis).single())
     }
 }
 

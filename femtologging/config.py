@@ -400,5 +400,6 @@ __all__ = [
     "RotatingFileHandlerBuilder",
     "SocketHandlerBuilder",
     "StreamHandlerBuilder",
+    "TimedRotatingFileHandlerBuilder",
     "dictConfig",
 ]
