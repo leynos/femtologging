@@ -67,6 +67,50 @@ impl LoggerMutationBuilder {
         self
     }
 
+    fn do_replace<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.apply_ids_mutation(
+            Some(ids),
+            |ids| CollectionMutation::replace(ids.unwrap_or_default()),
+            setter,
+        )
+    }
+
+    fn do_append<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.apply_ids_mutation(
+            Some(ids),
+            |ids| CollectionMutation::append(ids.unwrap_or_default()),
+            setter,
+        )
+    }
+
+    fn do_remove<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.apply_ids_mutation(
+            Some(ids),
+            |ids| CollectionMutation::remove(ids.unwrap_or_default()),
+            setter,
+        )
+    }
+
+    fn do_clear(self, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self {
+        self.apply_ids_mutation(
+            Option::<Vec<String>>::None,
+            |_| CollectionMutation::Clear,
+            setter,
+        )
+    }
+
     pub fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
@@ -82,11 +126,7 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::replace(ids.unwrap_or_default()),
-            Self::set_handlers,
-        )
+        self.do_replace(ids, Self::set_handlers)
     }
 
     pub fn append_handlers<I, S>(self, ids: I) -> Self
@@ -94,11 +134,7 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::append(ids.unwrap_or_default()),
-            Self::set_handlers,
-        )
+        self.do_append(ids, Self::set_handlers)
     }
 
     pub fn remove_handlers<I, S>(self, ids: I) -> Self
@@ -106,19 +142,11 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::remove(ids.unwrap_or_default()),
-            Self::set_handlers,
-        )
+        self.do_remove(ids, Self::set_handlers)
     }
 
     pub fn clear_handlers(self) -> Self {
-        self.apply_ids_mutation(
-            Option::<Vec<String>>::None,
-            |_| CollectionMutation::Clear,
-            Self::set_handlers,
-        )
+        self.do_clear(Self::set_handlers)
     }
 
     pub fn replace_filters<I, S>(self, ids: I) -> Self
@@ -126,11 +154,7 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::replace(ids.unwrap_or_default()),
-            Self::set_filters,
-        )
+        self.do_replace(ids, Self::set_filters)
     }
 
     pub fn append_filters<I, S>(self, ids: I) -> Self
@@ -138,11 +162,7 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::append(ids.unwrap_or_default()),
-            Self::set_filters,
-        )
+        self.do_append(ids, Self::set_filters)
     }
 
     pub fn remove_filters<I, S>(self, ids: I) -> Self
@@ -150,19 +170,11 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::remove(ids.unwrap_or_default()),
-            Self::set_filters,
-        )
+        self.do_remove(ids, Self::set_filters)
     }
 
     pub fn clear_filters(self) -> Self {
-        self.apply_ids_mutation(
-            Option::<Vec<String>>::None,
-            |_| CollectionMutation::Clear,
-            Self::set_filters,
-        )
+        self.do_clear(Self::set_filters)
     }
 
     fn set_handlers(&mut self, mutation: CollectionMutation) {
