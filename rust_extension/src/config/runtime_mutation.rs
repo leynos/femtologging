@@ -1,4 +1,4 @@
-//! Runtime mutation builders and apply logic for live logger reconfiguration.
+//! Runtime mutation builders and orchestration for live logger reconfiguration.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,87 +11,18 @@ use crate::{
     FemtoLevel,
     filters::{FemtoFilter, FilterBuilder},
     handler::FemtoHandlerTrait,
-    logger::FemtoLogger,
-    manager::{self, LoggerAttachmentState, RuntimeStateSnapshot},
+    manager::{LoggerAttachmentState, RuntimeStateSnapshot},
 };
 
-use super::{
-    ConfigError,
-    types::{HandlerBuilder, normalize_vec},
-};
+use super::{ConfigError, types::HandlerBuilder};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum CollectionMutation {
-    #[default]
-    Unchanged,
-    Replace(Vec<String>),
-    Append(Vec<String>),
-    Remove(Vec<String>),
-    Clear,
-}
+mod collection_mutation;
+mod commit;
+mod validation;
 
-impl CollectionMutation {
-    fn replace(ids: Vec<String>) -> Self {
-        Self::Replace(normalize_vec(ids))
-    }
-
-    fn append(ids: Vec<String>) -> Self {
-        Self::Append(normalize_vec(ids))
-    }
-
-    fn remove(ids: Vec<String>) -> Self {
-        Self::Remove(normalize_vec(ids))
-    }
-
-    fn apply(&self, existing: &[String]) -> Vec<String> {
-        match self {
-            Self::Unchanged => existing.to_vec(),
-            Self::Replace(ids) => ids.clone(),
-            Self::Append(ids) => {
-                let mut merged = existing.to_vec();
-                let existing = merged.iter().cloned().collect::<BTreeSet<_>>();
-                merged.extend(ids.iter().filter(|id| !existing.contains(*id)).cloned());
-                merged
-            }
-            Self::Remove(ids) => {
-                let removed = ids.iter().collect::<BTreeSet<_>>();
-                existing
-                    .iter()
-                    .filter(|id| !removed.contains(*id))
-                    .cloned()
-                    .collect()
-            }
-            Self::Clear => Vec::new(),
-        }
-    }
-
-    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        use pyo3::types::{PyDict, PyList};
-
-        let dict = PyDict::new(py);
-        match self {
-            Self::Unchanged => {
-                dict.set_item("mode", "unchanged")?;
-            }
-            Self::Replace(ids) => {
-                dict.set_item("mode", "replace")?;
-                dict.set_item("ids", PyList::new(py, ids.iter())?)?;
-            }
-            Self::Append(ids) => {
-                dict.set_item("mode", "append")?;
-                dict.set_item("ids", PyList::new(py, ids.iter())?)?;
-            }
-            Self::Remove(ids) => {
-                dict.set_item("mode", "remove")?;
-                dict.set_item("ids", PyList::new(py, ids.iter())?)?;
-            }
-            Self::Clear => {
-                dict.set_item("mode", "clear")?;
-            }
-        }
-        Ok(dict.unbind().into())
-    }
-}
+pub(crate) use collection_mutation::CollectionMutation;
+pub(crate) use commit::{BuiltRegistries, apply_commit, build_filters, build_handlers};
+pub(crate) use validation::{collection_conflict, resolve_attachment_ids, validate_remove_ids};
 
 /// Builder for structured runtime mutation of a single logger.
 ///
@@ -121,6 +52,51 @@ impl LoggerMutationBuilder {
         ids.into_iter().map(Into::into).collect()
     }
 
+    fn apply_ids_mutation<I, S>(
+        mut self,
+        ids: I,
+        mutation: impl FnOnce(Vec<String>) -> CollectionMutation,
+        set: impl FnOnce(&mut Self, CollectionMutation),
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let ids = Self::normalize_ids(ids);
+        set(&mut self, mutation(ids));
+        self
+    }
+
+    fn do_replace<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.apply_ids_mutation(ids, CollectionMutation::replace, setter)
+    }
+
+    fn do_append<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.apply_ids_mutation(ids, CollectionMutation::append, setter)
+    }
+
+    fn do_remove<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.apply_ids_mutation(ids, CollectionMutation::remove, setter)
+    }
+
+    fn do_clear(self, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self {
+        let mut this = self;
+        setter(&mut this, CollectionMutation::Clear);
+        this
+    }
+
     pub fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
@@ -131,74 +107,60 @@ impl LoggerMutationBuilder {
         self
     }
 
-    pub fn replace_handlers<I, S>(mut self, ids: I) -> Self
+    pub fn replace_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        self.set_handlers(CollectionMutation::replace(ids));
-        self
+        self.do_replace(ids, Self::set_handlers)
     }
 
-    pub fn append_handlers<I, S>(mut self, ids: I) -> Self
+    pub fn append_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        self.set_handlers(CollectionMutation::append(ids));
-        self
+        self.do_append(ids, Self::set_handlers)
     }
 
-    pub fn remove_handlers<I, S>(mut self, ids: I) -> Self
+    pub fn remove_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        self.set_handlers(CollectionMutation::remove(ids));
-        self
+        self.do_remove(ids, Self::set_handlers)
     }
 
-    pub fn clear_handlers(mut self) -> Self {
-        self.set_handlers(CollectionMutation::Clear);
-        self
+    pub fn clear_handlers(self) -> Self {
+        self.do_clear(Self::set_handlers)
     }
 
-    pub fn replace_filters<I, S>(mut self, ids: I) -> Self
+    pub fn replace_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        self.set_filters(CollectionMutation::replace(ids));
-        self
+        self.do_replace(ids, Self::set_filters)
     }
 
-    pub fn append_filters<I, S>(mut self, ids: I) -> Self
+    pub fn append_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        self.set_filters(CollectionMutation::append(ids));
-        self
+        self.do_append(ids, Self::set_filters)
     }
 
-    pub fn remove_filters<I, S>(mut self, ids: I) -> Self
+    pub fn remove_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        self.set_filters(CollectionMutation::remove(ids));
-        self
+        self.do_remove(ids, Self::set_filters)
     }
 
-    pub fn clear_filters(mut self) -> Self {
-        self.set_filters(CollectionMutation::Clear);
-        self
+    pub fn clear_filters(self) -> Self {
+        self.do_clear(Self::set_filters)
     }
 
     fn set_handlers(&mut self, mutation: CollectionMutation) {
@@ -223,44 +185,11 @@ impl LoggerMutationBuilder {
     }
 }
 
-fn collection_conflict(
-    kind: &str,
-    current: &CollectionMutation,
-    new: &CollectionMutation,
-) -> Option<String> {
-    match current {
-        CollectionMutation::Unchanged => None,
-        _ if current == new => None,
-        _ => Some(format!("multiple {kind} mutation modes were requested")),
-    }
-}
-
 /// Builder for transactional runtime reconfiguration.
 ///
 /// `RuntimeConfigBuilder` applies handler and filter mutations against the
 /// live manager state without requiring a full `ConfigBuilder.build_and_init()`
 /// rebuild.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use femtologging_rs::{
-///     ConfigBuilder, FemtoLevel, LoggerConfigBuilder, LoggerMutationBuilder,
-///     RuntimeConfigBuilder, StreamHandlerBuilder,
-/// };
-///
-/// ConfigBuilder::new()
-///     .with_handler("stderr", StreamHandlerBuilder::stderr())
-///     .with_root_logger(LoggerConfigBuilder::new().with_level(FemtoLevel::Info))
-///     .build_and_init()
-///     .unwrap();
-///
-/// RuntimeConfigBuilder::new()
-///     .with_handler("stdout", StreamHandlerBuilder::stdout())
-///     .with_root_logger(LoggerMutationBuilder::new().append_handlers(["stdout"]))
-///     .apply()
-///     .unwrap();
-/// ```
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeConfigBuilder {
@@ -270,25 +199,12 @@ pub struct RuntimeConfigBuilder {
     root_logger: Option<LoggerMutationBuilder>,
 }
 
-type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
-type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
+pub(crate) type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
+pub(crate) type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 
-struct BuiltRegistries {
-    handlers: SharedHandlers,
-    filters: SharedFilters,
-}
-
-struct LoggerScalarMutation {
-    level: Option<FemtoLevel>,
-    propagate: Option<bool>,
-}
-
-struct RuntimeCommit {
-    logger_states: BTreeMap<String, LoggerAttachmentState>,
-    handler_registry: SharedHandlers,
-    filter_registry: SharedFilters,
-    impacted_loggers: Vec<(String, Py<FemtoLogger>)>,
-    scalar_mutations: BTreeMap<String, LoggerScalarMutation>,
+pub(crate) struct LoggerScalarMutation {
+    pub(crate) level: Option<FemtoLevel>,
+    pub(crate) propagate: Option<bool>,
 }
 
 impl RuntimeConfigBuilder {
@@ -328,14 +244,20 @@ impl RuntimeConfigBuilder {
         };
 
         Python::attach(|py| {
-            let before = manager::snapshot_runtime_state();
+            let before = crate::manager::snapshot_runtime_state();
             let commit = self.prepare_commit(py, before, built)?;
-            apply_commit(py, &commit);
+            apply_commit(py, &commit)?;
             Ok(())
         })
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        if self.root_logger.is_some() && self.loggers.contains_key("root") {
+            return Err(ConfigError::InvalidMutation(
+                "root logger cannot be mutated via both with_root_logger() and with_logger(\"root\", ...)"
+                    .to_string(),
+            ));
+        }
         if let Some(root) = &self.root_logger {
             root.ensure_valid("root")?;
         }
@@ -401,58 +323,16 @@ impl RuntimeConfigBuilder {
                 },
             );
         }
-        for (name, m) in &self.loggers {
+        for (name, mutation) in &self.loggers {
             out.insert(
                 name.clone(),
                 LoggerScalarMutation {
-                    level: m.level,
-                    propagate: m.propagate,
+                    level: mutation.level,
+                    propagate: mutation.propagate,
                 },
             );
         }
         out
-    }
-
-    fn prepare_commit(
-        &self,
-        py: Python<'_>,
-        before: RuntimeStateSnapshot,
-        built: BuiltRegistries,
-    ) -> Result<RuntimeCommit, ConfigError> {
-        let mut handler_registry = before.handler_registry.clone();
-        handler_registry.extend(built.handlers);
-        let mut filter_registry = before.filter_registry.clone();
-        filter_registry.extend(built.filters);
-
-        let mut logger_states = before.logger_states.clone();
-        let impacted = self.collect_impacted(&before);
-
-        self.apply_logger_mutations(&mut logger_states, &handler_registry, &filter_registry)?;
-
-        let impacted_loggers = impacted
-            .into_iter()
-            .map(|name| {
-                self.fetch_impacted_logger(py, &name)
-                    .map(|logger| (name, logger))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(RuntimeCommit {
-            logger_states,
-            handler_registry,
-            filter_registry,
-            impacted_loggers,
-            scalar_mutations: self.build_scalar_mutations(),
-        })
-    }
-
-    fn fetch_impacted_logger(
-        &self,
-        py: Python<'_>,
-        name: &str,
-    ) -> Result<Py<FemtoLogger>, ConfigError> {
-        manager::get_logger(py, name)
-            .map_err(|err| ConfigError::LoggerInit(format!("{name}: {err}")))
     }
 }
 
@@ -463,7 +343,17 @@ fn apply_mutation_to_logger(
     handler_registry: &SharedHandlers,
     filter_registry: &SharedFilters,
 ) -> Result<(), ConfigError> {
-    let existing = logger_states.get(name).cloned().unwrap_or_default();
+    let existing = match logger_states.get(name).cloned() {
+        Some(existing) => existing,
+        None if requires_existing_baseline(&mutation.handlers)
+            || requires_existing_baseline(&mutation.filters) =>
+        {
+            return Err(ConfigError::InvalidMutation(format!(
+                "{name}: logger has no runtime metadata; Append/Remove require prior build_and_init()",
+            )));
+        }
+        None => LoggerAttachmentState::default(),
+    };
     validate_remove_ids(existing.handler_ids(), &mutation.handlers)?;
     validate_remove_ids(existing.filter_ids(), &mutation.filters)?;
     let next = LoggerAttachmentState::new(
@@ -475,128 +365,11 @@ fn apply_mutation_to_logger(
     Ok(())
 }
 
-fn build_handlers(items: &BTreeMap<String, HandlerBuilder>) -> Result<SharedHandlers, ConfigError> {
-    let mut built = BTreeMap::new();
-    for (id, builder) in items {
-        let handler = builder
-            .build()
-            .map_err(|source| ConfigError::HandlerBuild {
-                id: id.clone(),
-                source,
-            })?;
-        built.insert(id.clone(), handler);
-    }
-    Ok(built)
-}
-
-fn build_filters(items: &BTreeMap<String, FilterBuilder>) -> Result<SharedFilters, ConfigError> {
-    let mut built = BTreeMap::new();
-    for (id, builder) in items {
-        let filter = builder.build().map_err(|source| ConfigError::FilterBuild {
-            id: id.clone(),
-            source,
-        })?;
-        built.insert(id.clone(), filter);
-    }
-    Ok(built)
-}
-
-fn resolve_attachment_ids(
-    state: &LoggerAttachmentState,
-    handlers: &SharedHandlers,
-    filters: &SharedFilters,
-) -> Result<(), ConfigError> {
-    let missing_handlers = state
-        .handler_ids()
-        .iter()
-        .filter(|id| !handlers.contains_key(*id))
-        .cloned();
-    let missing_filters = state
-        .filter_ids()
-        .iter()
-        .filter(|id| !filters.contains_key(*id))
-        .cloned();
-    let missing = missing_handlers.chain(missing_filters).collect::<Vec<_>>();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(ConfigError::UnknownIds(missing))
-    }
-}
-
-fn validate_remove_ids(
-    existing: &[String],
-    mutation: &CollectionMutation,
-) -> Result<(), ConfigError> {
-    let CollectionMutation::Remove(ids) = mutation else {
-        return Ok(());
-    };
-    let existing = existing.iter().collect::<BTreeSet<_>>();
-    let missing = ids
-        .iter()
-        .filter(|id| !existing.contains(*id))
-        .cloned()
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(ConfigError::UnknownIds(missing))
-    }
-}
-
-fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) {
-    for (name, logger) in &commit.impacted_loggers {
-        let logger_ref = logger.borrow(py);
-        let attachment_state = commit
-            .logger_states
-            .get(name)
-            .cloned()
-            .unwrap_or_else(LoggerAttachmentState::default);
-        let next_handlers = attachment_state
-            .handler_ids()
-            .iter()
-            .map(|id| {
-                commit
-                    .handler_registry
-                    .get(id)
-                    .cloned()
-                    .expect("validated handler registry lookup")
-            })
-            .collect::<Vec<_>>();
-        let next_filters = attachment_state
-            .filter_ids()
-            .iter()
-            .map(|id| {
-                commit
-                    .filter_registry
-                    .get(id)
-                    .cloned()
-                    .expect("validated filter registry lookup")
-            })
-            .collect::<Vec<_>>();
-        logger_ref.replace_handlers(next_handlers);
-        logger_ref.replace_filters(next_filters);
-        if let Some(mutation) = commit.scalar_mutations.get(name) {
-            apply_scalar_mutation(&logger_ref, mutation);
-        }
-    }
-    manager::replace_runtime_state(
-        commit.handler_registry.clone(),
-        commit.filter_registry.clone(),
-        commit.logger_states.clone(),
-    );
-}
-
-fn apply_scalar_mutation(
-    logger_ref: &pyo3::PyRef<'_, FemtoLogger>,
-    mutation: &LoggerScalarMutation,
-) {
-    if let Some(level) = mutation.level {
-        logger_ref.set_level(level);
-    }
-    if let Some(propagate) = mutation.propagate {
-        logger_ref.set_propagate(propagate);
-    }
+fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
+    matches!(
+        mutation,
+        CollectionMutation::Append(ids) | CollectionMutation::Remove(ids) if !ids.is_empty()
+    )
 }
 
 #[cfg(feature = "python")]

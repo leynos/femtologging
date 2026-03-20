@@ -15,6 +15,7 @@ _force_rotating_fresh_failure = getattr(
 _clear_rotating_fresh_failure = getattr(
     rust, "clear_rotating_fresh_failure_for_test", None
 )
+_runtime_attachment_state = getattr(rust, "runtime_attachment_state_for_test", None)
 _setup_rust_logging = getattr(rust, "setup_rust_logging", None)
 
 if callable(_force_rotating_fresh_failure) and callable(_clear_rotating_fresh_failure):
@@ -53,5 +54,23 @@ else:
         msg = (
             "setup_rust_logging requires the extension built with the "
             "'log-compat' Cargo feature"
+        )
+        raise RuntimeError(msg)
+
+
+if callable(_runtime_attachment_state):
+    _runtime_attachment_state_for_test = typ.cast(
+        "cabc.Callable[[str], tuple[list[str], list[str]] | None]",
+        _runtime_attachment_state,
+    )
+else:
+
+    def _runtime_attachment_state_for_test(
+        name: str,
+    ) -> tuple[list[str], list[str]] | None:
+        del name
+        msg = (
+            "runtime attachment state requires the extension built with the "
+            "'python' feature"
         )
         raise RuntimeError(msg)

@@ -96,7 +96,7 @@ def given_dictconfig_rotating_file_builder(
             "args": [str(path)],
         },
     )
-    return _require_rotating_builder(builder)
+    return _require_rotating_builder(typ.cast("FileBuilder", builder))
 
 
 @given("a StreamHandlerBuilder targeting stdout", target_fixture="stream_builder")

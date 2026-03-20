@@ -124,6 +124,121 @@ fn unknown_removed_handler_preserves_existing_state(_configured_core_logger: ())
 
 #[rstest]
 #[serial]
+fn append_handler_requires_runtime_metadata(_gil_and_clean_manager: ()) {
+    Python::attach(|py| {
+        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
+
+        let err = RuntimeConfigBuilder::new()
+            .with_handler("stdout", StreamHandlerBuilder::stdout())
+            .with_logger(
+                "orphan",
+                LoggerMutationBuilder::new().append_handlers(["stdout"]),
+            )
+            .apply()
+            .expect_err("append should reject loggers without runtime metadata");
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidMutation(message)
+                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
+        ));
+    });
+}
+
+#[rstest]
+#[serial]
+fn remove_handler_requires_runtime_metadata(_gil_and_clean_manager: ()) {
+    Python::attach(|py| {
+        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
+
+        let err = RuntimeConfigBuilder::new()
+            .with_logger(
+                "orphan",
+                LoggerMutationBuilder::new().remove_handlers(["stdout"]),
+            )
+            .apply()
+            .expect_err("remove should reject loggers without runtime metadata");
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidMutation(message)
+                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
+        ));
+    });
+}
+
+#[rstest]
+#[serial]
+fn append_filter_requires_runtime_metadata(_gil_and_clean_manager: ()) {
+    let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
+
+    Python::attach(|py| {
+        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
+
+        let err = RuntimeConfigBuilder::new()
+            .with_filter("lvl", FilterBuilder::Level(filter))
+            .with_logger(
+                "orphan",
+                LoggerMutationBuilder::new().append_filters(["lvl"]),
+            )
+            .apply()
+            .expect_err("append should reject filters without runtime metadata");
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidMutation(message)
+                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
+        ));
+    });
+}
+
+#[rstest]
+#[serial]
+fn remove_filter_requires_runtime_metadata(_gil_and_clean_manager: ()) {
+    Python::attach(|py| {
+        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
+
+        let err = RuntimeConfigBuilder::new()
+            .with_logger(
+                "orphan",
+                LoggerMutationBuilder::new().remove_filters(["lvl"]),
+            )
+            .apply()
+            .expect_err("remove should reject filters without runtime metadata");
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidMutation(message)
+                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
+        ));
+    });
+}
+
+#[rstest]
+#[serial]
+fn empty_append_and_remove_allow_missing_runtime_metadata(_gil_and_clean_manager: ()) {
+    Python::attach(|py| {
+        let logger = manager::get_logger(py, "orphan").expect("logger should exist");
+
+        RuntimeConfigBuilder::new()
+            .with_logger(
+                "orphan",
+                LoggerMutationBuilder::new()
+                    .append_handlers(Vec::<&str>::new())
+                    .remove_filters(Vec::<&str>::new()),
+            )
+            .apply()
+            .expect("empty append/remove should act like a no-op without runtime metadata");
+
+        assert!(
+            handler_ptrs(&logger.borrow(py)).is_empty(),
+            "a no-op runtime mutation should not attach handlers",
+        );
+    });
+}
+
+#[rstest]
+#[serial]
 fn replacing_shared_handler_id_updates_untouched_loggers(_gil_and_clean_manager: ()) {
     Python::attach(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);

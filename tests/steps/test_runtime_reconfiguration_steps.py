@@ -19,6 +19,7 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
+from femtologging._rust_compat import _runtime_attachment_state_for_test
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -65,11 +66,14 @@ def runtime_configured_logger(name: str) -> str:
 )
 def append_runtime_handler(hid: str, target: str, name: str) -> None:
     """Append a new stream handler to the named logger."""
-    builder = (
-        StreamHandlerBuilder.stderr()
-        if target.lower() == "stderr"
-        else StreamHandlerBuilder.stdout()
-    )
+    target = target.lower()
+    if target == "stderr":
+        builder = StreamHandlerBuilder.stderr()
+    elif target == "stdout":
+        builder = StreamHandlerBuilder.stdout()
+    else:
+        msg = f"unsupported stream target: {target}"
+        raise ValueError(msg)
     (
         RuntimeConfigBuilder()
         .with_handler(hid, builder)
@@ -120,19 +124,24 @@ def set_root_level(level: str) -> None:
 @then(parsers.parse('logger "{name}" has {count:d} handlers'))
 def logger_has_handler_count(name: str, count: int) -> None:
     """Assert the handler count seen by the named logger."""
-    assert len(get_logger(name).handler_ptrs_for_test()) == count
+    actual = len(get_logger(name).handler_ptrs_for_test())
+    assert actual == count, (
+        f"expected {name} to have {count} handlers but found {actual}"
+    )
 
 
 @then(parsers.parse('logger "{name}" emits "{level}"'))
 def logger_emits(name: str, level: str) -> None:
     """Assert that the logger emits at the requested level."""
-    assert get_logger(name).log(level, "emit") is not None
+    actual = get_logger(name).log(level, "emit")
+    assert actual is not None, f"expected logger {name} to emit at level {level}"
 
 
 @then(parsers.parse('logger "{name}" suppresses "{level}"'))
 def logger_suppresses(name: str, level: str) -> None:
     """Assert that the logger suppresses at the requested level."""
-    assert get_logger(name).log(level, "suppress") is None
+    actual = get_logger(name).log(level, "suppress")
+    assert actual is None, f"expected logger {name} to suppress level {level}"
 
 
 @then(parsers.parse('the runtime mutation fails with key error containing "{msg}"'))
@@ -140,19 +149,33 @@ def mutation_fails_with_key_error(
     runtime_mutation_error: BaseException, msg: str
 ) -> None:
     """Assert that the captured runtime mutation failure mentions the ID."""
-    assert isinstance(runtime_mutation_error, KeyError)
-    assert msg in str(runtime_mutation_error)
+    assert isinstance(runtime_mutation_error, KeyError), (
+        f"expected KeyError but got {runtime_mutation_error!r}"
+    )
+    assert msg in str(runtime_mutation_error), (
+        f"expected {msg!r} in {runtime_mutation_error!r}"
+    )
 
 
 @then(parsers.parse('logger "{name}" runtime state matches snapshot'))
 def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> None:
     """Assert that a normalized runtime state payload stays stable."""
     logger = get_logger(name)
+    attachment_state = _runtime_attachment_state_for_test(name)
+    handler_ids, filter_ids = attachment_state or ([], [])
+    handler_ptrs = logger.handler_ptrs_for_test()
+    assert len(handler_ptrs) == len(handler_ids), (
+        f"expected resolved handler count for {name} to match runtime metadata: "
+        f"{len(handler_ptrs)} != {len(handler_ids)}"
+    )
     state = {
+        "filter_ids": filter_ids,
+        "filter_count": len(filter_ids),
+        "handler_ids": handler_ids,
         "name": name,
         "level": logger.level,
         "propagate": logger.propagate,
-        "handler_count": len(logger.handler_ptrs_for_test()),
+        "handler_count": len(handler_ptrs),
     }
     assert state == snapshot
 
@@ -174,4 +197,6 @@ def clear_runtime_handlers_and_filters(name: str) -> None:
 def logger_has_no_runtime_handlers(name: str) -> None:
     """Assert that the logger has no runtime handlers after mutation."""
     logger = get_logger(name)
-    assert len(logger.handler_ptrs_for_test()) == 0
+    assert len(logger.handler_ptrs_for_test()) == 0, (
+        f"expected {name} to have no runtime handlers"
+    )

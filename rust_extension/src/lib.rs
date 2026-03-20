@@ -68,10 +68,6 @@ mod traceback_frames_tests;
 
 // Re-exports: configuration builders
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
-#[cfg_attr(
-    not(feature = "python"),
-    expect(unused_imports, reason = "public re-exports for Python-enabled builds")
-)]
 #[cfg(feature = "python")]
 pub use config::{LoggerMutationBuilder, RuntimeConfigBuilder};
 
@@ -200,8 +196,24 @@ mod py_api {
     pub(crate) fn reset_manager_py() {
         reset_manager();
     }
+
+    /// Return runtime attachment identifiers for the named logger.
+    ///
+    /// Intended for tests validating manager snapshots.
+    #[cfg(feature = "python")]
+    #[pyfunction]
+    pub(crate) fn runtime_attachment_state_for_test(
+        name: &str,
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        manager::snapshot_runtime_state()
+            .logger_states
+            .get(name)
+            .map(|state| (state.handler_ids().to_vec(), state.filter_ids().to_vec()))
+    }
 }
 
+#[cfg(feature = "python")]
+use py_api::runtime_attachment_state_for_test;
 use py_api::{get_logger, reset_manager_py};
 
 /// Initialize the `_femtologging_rs` Python extension module.
@@ -243,6 +255,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(runtime_attachment_state_for_test, m)?)?;
 
     // Python-only classes, builders, and functions
     #[cfg(feature = "python")]
