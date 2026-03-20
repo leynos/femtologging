@@ -25,3 +25,8 @@ Feature: Runtime handler and filter reconfiguration
     When I set root logger level to "ERROR" via runtime mutation
     Then logger "root" suppresses "INFO"
     And logger "root" emits "ERROR"
+
+  Scenario: Clearing handlers and filters at runtime
+    When logger "core" runtime handlers and filters are cleared
+    Then logger "core" has no runtime handlers
+    And logger "core" runtime state matches snapshot

@@ -7,6 +7,14 @@
     'propagate': True,
   })
 # ---
+# name: test_clearing_handlers_and_filters_at_runtime
+  dict({
+    'handler_count': 0,
+    'level': 'INFO',
+    'name': 'core',
+    'propagate': True,
+  })
+# ---
 # name: test_replacing_filters_at_runtime
   dict({
     'handler_count': 1,

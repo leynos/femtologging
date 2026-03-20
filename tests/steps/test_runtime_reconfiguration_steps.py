@@ -155,3 +155,23 @@ def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> No
         "handler_count": len(logger.handler_ptrs_for_test()),
     }
     assert state == snapshot
+
+
+@when(parsers.parse('logger "{name}" runtime handlers and filters are cleared'))
+def clear_runtime_handlers_and_filters(name: str) -> None:
+    """Clear all runtime handlers and filters for the given logger."""
+    (
+        RuntimeConfigBuilder()
+        .with_logger(
+            name,
+            LoggerMutationBuilder().clear_handlers().clear_filters(),
+        )
+        .apply()
+    )
+
+
+@then(parsers.parse('logger "{name}" has no runtime handlers'))
+def logger_has_no_runtime_handlers(name: str) -> None:
+    """Assert that the logger has no runtime handlers after mutation."""
+    logger = get_logger(name)
+    assert len(logger.handler_ptrs_for_test()) == 0
