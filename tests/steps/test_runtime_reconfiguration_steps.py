@@ -170,6 +170,7 @@ def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> No
     )
     state = {
         "filter_ids": filter_ids,
+        "filter_count": len(filter_ids),
         "handler_ids": handler_ids,
         "name": name,
         "level": logger.level,

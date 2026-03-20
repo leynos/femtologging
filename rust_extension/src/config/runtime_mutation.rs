@@ -54,15 +54,15 @@ impl LoggerMutationBuilder {
 
     fn apply_ids_mutation<I, S>(
         mut self,
-        ids: Option<I>,
-        mutation: impl FnOnce(Option<Vec<String>>) -> CollectionMutation,
+        ids: I,
+        mutation: impl FnOnce(Vec<String>) -> CollectionMutation,
         set: impl FnOnce(&mut Self, CollectionMutation),
     ) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = ids.map(Self::normalize_ids);
+        let ids = Self::normalize_ids(ids);
         set(&mut self, mutation(ids));
         self
     }
@@ -72,11 +72,7 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::replace(ids.unwrap_or_default()),
-            setter,
-        )
+        self.apply_ids_mutation(ids, CollectionMutation::replace, setter)
     }
 
     fn do_append<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
@@ -84,11 +80,7 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::append(ids.unwrap_or_default()),
-            setter,
-        )
+        self.apply_ids_mutation(ids, CollectionMutation::append, setter)
     }
 
     fn do_remove<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
@@ -96,19 +88,13 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.apply_ids_mutation(
-            Some(ids),
-            |ids| CollectionMutation::remove(ids.unwrap_or_default()),
-            setter,
-        )
+        self.apply_ids_mutation(ids, CollectionMutation::remove, setter)
     }
 
     fn do_clear(self, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self {
-        self.apply_ids_mutation(
-            Option::<Vec<String>>::None,
-            |_| CollectionMutation::Clear,
-            setter,
-        )
+        let mut this = self;
+        setter(&mut this, CollectionMutation::Clear);
+        this
     }
 
     pub fn with_level(mut self, level: FemtoLevel) -> Self {
@@ -382,7 +368,7 @@ fn apply_mutation_to_logger(
 fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
     matches!(
         mutation,
-        CollectionMutation::Append(_) | CollectionMutation::Remove(_)
+        CollectionMutation::Append(ids) | CollectionMutation::Remove(ids) if !ids.is_empty()
     )
 }
 

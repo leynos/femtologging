@@ -1,6 +1,7 @@
 # serializer version: 1
 # name: test_appending_a_handler_at_runtime
   dict({
+    'filter_count': 1,
     'filter_ids': list([
       'lvl',
     ]),
@@ -16,6 +17,7 @@
 # ---
 # name: test_clearing_handlers_and_filters_at_runtime
   dict({
+    'filter_count': 0,
     'filter_ids': list([
     ]),
     'handler_count': 0,
@@ -28,6 +30,7 @@
 # ---
 # name: test_failed_mutation_preserves_the_prior_state
   dict({
+    'filter_count': 1,
     'filter_ids': list([
       'lvl',
     ]),
@@ -42,6 +45,7 @@
 # ---
 # name: test_replacing_filters_at_runtime
   dict({
+    'filter_count': 1,
     'filter_ids': list([
       'name',
     ]),
