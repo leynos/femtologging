@@ -345,7 +345,17 @@ fn apply_mutation_to_logger(
     handler_registry: &SharedHandlers,
     filter_registry: &SharedFilters,
 ) -> Result<(), ConfigError> {
-    let existing = logger_states.get(name).cloned().unwrap_or_default();
+    let existing = match logger_states.get(name).cloned() {
+        Some(existing) => existing,
+        None if requires_existing_baseline(&mutation.handlers)
+            || requires_existing_baseline(&mutation.filters) =>
+        {
+            return Err(ConfigError::InvalidMutation(format!(
+                "{name}: logger has no runtime metadata; Append/Remove require prior build_and_init()",
+            )));
+        }
+        None => LoggerAttachmentState::default(),
+    };
     validate_remove_ids(existing.handler_ids(), &mutation.handlers)?;
     validate_remove_ids(existing.filter_ids(), &mutation.filters)?;
     let next = LoggerAttachmentState::new(
@@ -355,6 +365,13 @@ fn apply_mutation_to_logger(
     resolve_attachment_ids(&next, handler_registry, filter_registry)?;
     logger_states.insert(name.to_string(), next);
     Ok(())
+}
+
+fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
+    matches!(
+        mutation,
+        CollectionMutation::Append(_) | CollectionMutation::Remove(_)
+    )
 }
 
 #[cfg(feature = "python")]
