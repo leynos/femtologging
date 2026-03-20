@@ -203,9 +203,10 @@ class _RecordCollector:
         """Initialize collector state for one scenario."""
         self.records: list[_CapturedRecordPayload] = []
 
-    def handle(self, logger: str, level: str, message: str) -> None:
-        """Accept classic handler calls for compatibility with logger handlers."""
-        # Satisfy handler protocol; arguments intentionally unused.
+    @staticmethod
+    def handle(logger: str, level: str, message: str) -> None:
+        """Accept classic handler calls; arguments intentionally unused."""
+        # Satisfy handler protocol signature.
         del logger, level, message
 
     def handle_record(self, record: _CapturedRecordPayload) -> None:
@@ -214,7 +215,6 @@ class _RecordCollector:
 
     def flush(self) -> bool:
         """Report successful flush to satisfy ``flush_handlers`` checks."""
-        _ = self.records
         return True
 
 
@@ -447,7 +447,8 @@ def key_values_match_snapshot(
 ) -> None:
     """Assert metadata key-values for context scenarios match the snapshot."""
     assert metadata_payload["value"] == snapshot, (
-        f"metadata payload key_values {metadata_payload['value']!r} did not match snapshot"
+        f"metadata payload key_values {metadata_payload['value']!r} "
+        f"did not match snapshot"
     )
 
 
