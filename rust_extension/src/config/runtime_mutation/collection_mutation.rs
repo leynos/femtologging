@@ -36,11 +36,17 @@ impl CollectionMutation {
             Self::Replace(ids) => ids.clone(),
             Self::Append(ids) => {
                 let mut merged = existing.to_vec();
-                let existing_set = merged
+                let mut seen = merged
                     .iter()
                     .cloned()
                     .collect::<std::collections::BTreeSet<_>>();
-                merged.extend(ids.iter().filter(|id| !existing_set.contains(*id)).cloned());
+                merged.extend(ids.iter().filter_map(|id| {
+                    if seen.insert(id.clone()) {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                }));
                 merged
             }
             Self::Remove(ids) => {
@@ -57,7 +63,7 @@ impl CollectionMutation {
 
     pub(crate) fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
-        let set_ids = |ids: &Vec<String>| -> PyResult<()> {
+        let set_ids = |ids: &[String]| -> PyResult<()> {
             dict.set_item("ids", PyList::new(py, ids.iter())?)?;
             Ok(())
         };

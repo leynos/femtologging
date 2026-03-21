@@ -120,9 +120,6 @@ Allow generic classes/functions to fall back to default types when no specific
 type is provided.
 
 ```python
-T = typing.TypeVar("T", default=int)
-
-
 class Box[T = object]:
     def __init__(self, value: T | None = None):
         self.value: T | None = value
