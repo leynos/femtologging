@@ -36,11 +36,11 @@ impl CollectionMutation {
             Self::Replace(ids) => ids.clone(),
             Self::Append(ids) => {
                 let mut merged = existing.to_vec();
-                let existing = merged
+                let existing_set = merged
                     .iter()
                     .cloned()
                     .collect::<std::collections::BTreeSet<_>>();
-                merged.extend(ids.iter().filter(|id| !existing.contains(*id)).cloned());
+                merged.extend(ids.iter().filter(|id| !existing_set.contains(*id)).cloned());
                 merged
             }
             Self::Remove(ids) => {
@@ -57,21 +57,25 @@ impl CollectionMutation {
 
     pub(crate) fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
+        let set_ids = |ids: &Vec<String>| -> PyResult<()> {
+            dict.set_item("ids", PyList::new(py, ids.iter())?)?;
+            Ok(())
+        };
         match self {
             Self::Unchanged => {
                 dict.set_item("mode", "unchanged")?;
             }
             Self::Replace(ids) => {
                 dict.set_item("mode", "replace")?;
-                dict.set_item("ids", PyList::new(py, ids.iter())?)?;
+                set_ids(ids)?;
             }
             Self::Append(ids) => {
                 dict.set_item("mode", "append")?;
-                dict.set_item("ids", PyList::new(py, ids.iter())?)?;
+                set_ids(ids)?;
             }
             Self::Remove(ids) => {
                 dict.set_item("mode", "remove")?;
-                dict.set_item("ids", PyList::new(py, ids.iter())?)?;
+                set_ids(ids)?;
             }
             Self::Clear => {
                 dict.set_item("mode", "clear")?;

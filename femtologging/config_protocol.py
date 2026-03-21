@@ -26,7 +26,7 @@ class _LoggerMutationBuilder(typ.Protocol):
 
     def with_level(self, level: object) -> typ.Self: ...
 
-    def with_propagate(self, propagate: bool) -> typ.Self: ...  # noqa: FBT001
+    def with_propagate(self, propagate: bool) -> typ.Self: ...  # noqa: FBT001  # TODO(#340): protocol mirrors the public builder API's boolean setter
 
     def replace_handlers(self, ids: list[str]) -> typ.Self: ...
 

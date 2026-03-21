@@ -132,7 +132,6 @@ def test_runtime_apply_rejects_conflicting_collection_modes() -> None:
 def test_runtime_apply_rejects_root_name_overlap() -> None:
     """Root mutations must not be provided through both root builder paths."""
     _configure_core_logger()
-    propagate = False
 
     with pytest.raises(
         ValueError,
@@ -141,6 +140,8 @@ def test_runtime_apply_rejects_root_name_overlap() -> None:
         (
             RuntimeConfigBuilder()
             .with_root_logger(LoggerMutationBuilder().with_level("ERROR"))
-            .with_logger("root", LoggerMutationBuilder().with_propagate(propagate))
+            .with_logger(
+                "root", LoggerMutationBuilder().with_propagate(propagate=False)
+            )
             .apply()
         )

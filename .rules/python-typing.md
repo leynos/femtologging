@@ -123,9 +123,9 @@ type is provided.
 T = typing.TypeVar("T", default=int)
 
 
-class Box(typing.Generic[T]):
+class Box[T = object]:
     def __init__(self, value: T | None = None):
-        self.value: T = value if value is not None else typing.cast(T, 0)
+        self.value: T | None = value
 ```
 
 This makes APIs more ergonomic while retaining type safety.
