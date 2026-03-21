@@ -40,13 +40,7 @@ impl CollectionMutation {
                     .iter()
                     .cloned()
                     .collect::<std::collections::BTreeSet<_>>();
-                merged.extend(ids.iter().filter_map(|id| {
-                    if seen.insert(id.clone()) {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                }));
+                merged.extend(ids.iter().filter(|id| seen.insert((*id).clone())).cloned());
                 merged
             }
             Self::Remove(ids) => {

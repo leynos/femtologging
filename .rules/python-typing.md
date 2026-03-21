@@ -120,9 +120,15 @@ Allow generic classes/functions to fall back to default types when no specific
 type is provided.
 
 ```python
-class Box[T = object]:
-    def __init__(self, value: T | None = None):
-        self.value: T | None = value
+class Box[T = str]:
+    def __init__(self, value: T):
+        self.value: T = value
+
+
+# The default type is used when no type parameter is provided in annotations
+# and no inference context exists.
+box1: Box = Box("hello")  # Box[str]
+box2 = Box(42)  # Box[int]
 ```
 
 This makes APIs more ergonomic while retaining type safety.
