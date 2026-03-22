@@ -141,6 +141,22 @@ where
         rotated
     }
 
+    /// Check if a filename matches the expected pattern for a rotated log file.
+    ///
+    /// Returns `true` only if the filename starts with the expected prefix
+    /// and has a valid suffix for this schedule's rotation cadence.
+    fn matches_rotated_file_name(&self, name: &OsString, prefix: &OsString) -> bool {
+        if !has_os_prefix(name, prefix) {
+            return false;
+        }
+        let name = name.to_string_lossy();
+        let prefix = prefix.to_string_lossy();
+        let Some(suffix) = name.strip_prefix(prefix.as_ref()) else {
+            return false;
+        };
+        self.schedule.is_valid_suffix(suffix)
+    }
+
     fn prune_backups(&self) -> io::Result<()> {
         if self.backup_count == 0 {
             return Ok(());
@@ -160,7 +176,7 @@ where
         for entry in fs::read_dir(parent)? {
             let entry = entry?;
             let name = entry.file_name();
-            if has_os_prefix(&name, &prefix) {
+            if self.matches_rotated_file_name(&name, &prefix) {
                 backups.push(entry.path());
             }
         }

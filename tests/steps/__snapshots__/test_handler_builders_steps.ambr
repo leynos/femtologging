@@ -56,6 +56,20 @@
     'target': 'stdout',
   })
 # ---
+# name: test_build_timed_rotating_file_handler_builder
+  dict({
+    'at_time': '06:30:00',
+    'backup_count': 5,
+    'capacity': 10,
+    'flush_after_records': 2,
+    'formatter': 'default',
+    'interval': 3,
+    'overflow_policy': 'drop',
+    'path': 'test.log',
+    'utc': True,
+    'when': 'MIDNIGHT',
+  })
+# ---
 # name: test_dictconfig_rotating_file_handler_builder
   dict({
     'backup_count': 5,
@@ -70,7 +84,7 @@
 # name: test_dictconfig_timed_rotating_file_handler_builder
   dict({
     'backup_count': 7,
-    'interval': 2,
+    'interval': 1,
     'overflow_policy': 'drop',
     'path': 'test.log',
     'utc': False,
@@ -90,20 +104,6 @@
     'auth_user': 'admin',
     'format': 'url_encoded',
     'url': 'http://localhost:8080/log',
-  })
-# ---
-# name: test_build_timed_rotating_file_handler_builder
-  dict({
-    'at_time': '06:30:00',
-    'backup_count': 5,
-    'capacity': 10,
-    'flush_after_records': 2,
-    'formatter': 'default',
-    'interval': 3,
-    'overflow_policy': 'drop',
-    'path': 'test.log',
-    'utc': True,
-    'when': 'MIDNIGHT',
   })
 # ---
 # name: test_http_handler_builder_with_bearer_token

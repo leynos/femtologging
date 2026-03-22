@@ -133,12 +133,15 @@ def given_dictconfig_timed_rotating_file_builder(
     tmp_path: Path,
 ) -> TimedRotatingFileHandlerBuilder:
     path = tmp_path / "test.log"
-    builder = config_module._build_handler_from_dict(
-        "h",
-        {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "args": [str(path)],
-        },
+    builder = typ.cast(
+        "FileBuilder",
+        config_module._build_handler_from_dict(
+            "h",
+            {
+                "class": "logging.handlers.TimedRotatingFileHandler",
+                "args": [str(path)],
+            },
+        ),
     )
     return _require_timed_builder(builder)
 

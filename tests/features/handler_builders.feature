@@ -86,7 +86,7 @@ Feature: Handler builders
   Scenario: dictConfig timed rotating file handler builder
     Given a dictConfig TimedRotatingFileHandlerBuilder for path "test.log"
     When I set timed rotation when "W4"
-    And I set timed rotation interval 2
+    And I set timed rotation interval 1
     And I set timed rotation backup count 7
     Then the timed rotating file handler builder matches snapshot
 

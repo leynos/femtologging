@@ -4,8 +4,8 @@
 //! filename suffixes without touching the filesystem or sleeping.
 
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDateTime, NaiveTime, TimeZone, Utc,
-    Weekday,
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    TimeZone, Utc, Weekday,
 };
 
 const MIDNIGHT: NaiveTime = NaiveTime::MIN;
@@ -97,6 +97,9 @@ impl TimedRotationSchedule {
         if interval == 0 {
             return Err("interval must be greater than zero".to_string());
         }
+        if matches!(when, TimedRotationWhen::Weekday(_)) && interval != 1 {
+            return Err("weekday rotation only supports interval = 1".to_string());
+        }
         if at_time.is_some() && !when.supports_at_time() {
             return Err(format!(
                 "at_time is only supported for daily, midnight, and weekday rotation (got {})",
@@ -162,9 +165,26 @@ impl TimedRotationSchedule {
         }
     }
 
+    /// Calculate the timestamp to use for the suffix given a rollover time.
+    ///
+    /// The suffix represents the start of the period being closed, which is
+    /// one interval before the rollover time. This matches Python's
+    /// `logging.handlers.TimedRotatingFileHandler` behavior.
+    pub fn suffix_timestamp(&self, rollover_at: DateTime<Utc>) -> DateTime<Utc> {
+        match self.when {
+            TimedRotationWhen::Seconds => rollover_at - Duration::seconds(i64::from(self.interval)),
+            TimedRotationWhen::Minutes => rollover_at - Duration::minutes(i64::from(self.interval)),
+            TimedRotationWhen::Hours => rollover_at - Duration::hours(i64::from(self.interval)),
+            TimedRotationWhen::Days | TimedRotationWhen::Midnight => {
+                rollover_at - Duration::days(i64::from(self.interval))
+            }
+            TimedRotationWhen::Weekday(_) => rollover_at - Duration::weeks(1),
+        }
+    }
+
     /// Return the suffix used for a file rolled over at ``rollover_at``.
     pub fn suffix_for(&self, rollover_at: DateTime<Utc>) -> String {
-        let naive = self.local_naive(rollover_at);
+        let naive = self.local_naive(self.suffix_timestamp(rollover_at));
         match self.when {
             TimedRotationWhen::Seconds => naive.format("%Y-%m-%d_%H-%M-%S").to_string(),
             TimedRotationWhen::Minutes => naive.format("%Y-%m-%d_%H-%M").to_string(),
@@ -172,6 +192,29 @@ impl TimedRotationSchedule {
             TimedRotationWhen::Days
             | TimedRotationWhen::Midnight
             | TimedRotationWhen::Weekday(_) => naive.format("%Y-%m-%d").to_string(),
+        }
+    }
+
+    /// Check if a suffix string matches the expected format for this schedule.
+    ///
+    /// This is used during backup pruning to distinguish rotated log files
+    /// from unrelated files that happen to share the same prefix.
+    pub(crate) fn is_valid_suffix(&self, suffix: &str) -> bool {
+        match self.when {
+            TimedRotationWhen::Seconds => {
+                NaiveDateTime::parse_from_str(suffix, "%Y-%m-%d_%H-%M-%S").is_ok()
+            }
+            TimedRotationWhen::Minutes => {
+                NaiveDateTime::parse_from_str(suffix, "%Y-%m-%d_%H-%M").is_ok()
+            }
+            TimedRotationWhen::Hours => {
+                NaiveDateTime::parse_from_str(suffix, "%Y-%m-%d_%H").is_ok()
+            }
+            TimedRotationWhen::Days
+            | TimedRotationWhen::Midnight
+            | TimedRotationWhen::Weekday(_) => {
+                NaiveDate::parse_from_str(suffix, "%Y-%m-%d").is_ok()
+            }
         }
     }
 

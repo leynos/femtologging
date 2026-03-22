@@ -2,19 +2,19 @@
 # name: test_backup_count_zero_retains_all_timestamped_files
   dict({
     'timed.log': 'rotate [INFO] third message',
-    'timed.log.2026-03-12_00-00-01': 'rotate [INFO] first message',
-    'timed.log.2026-03-12_00-00-03': 'rotate [INFO] second message',
+    'timed.log.2026-03-12_00-00-00': 'rotate [INFO] first message',
+    'timed.log.2026-03-12_00-00-02': 'rotate [INFO] second message',
   })
 # ---
 # name: test_rotates_at_midnight_with_at_time
   dict({
     'timed.log': 'rotate [INFO] second message',
-    'timed.log.2026-03-12': 'rotate [INFO] first message',
+    'timed.log.2026-03-11': 'rotate [INFO] first message',
   })
 # ---
 # name: test_rotates_when_the_next_write_crosses_a_second_boundary
   dict({
     'timed.log': 'rotate [INFO] second message',
-    'timed.log.2026-03-12_00-00-01': 'rotate [INFO] first message',
+    'timed.log.2026-03-12_00-00-00': 'rotate [INFO] first message',
   })
 # ---
