@@ -1,0 +1,43 @@
+# serializer version: 1
+# name: test_runtime_builder_dict_matches_snapshot
+  dict({
+    'filters': dict({
+      'name': dict({
+        'prefix': 'core',
+      }),
+    }),
+    'handlers': dict({
+      'stdout': dict({
+        'target': 'stdout',
+      }),
+    }),
+    'loggers': dict({
+      'core': dict({
+        'filters': dict({
+          'ids': list([
+            'name',
+          ]),
+          'mode': 'replace',
+        }),
+        'handlers': dict({
+          'ids': list([
+            'stdout',
+          ]),
+          'mode': 'append',
+        }),
+        'level': 'ERROR',
+      }),
+    }),
+    'root': dict({
+      'filters': dict({
+        'mode': 'unchanged',
+      }),
+      'handlers': dict({
+        'ids': list([
+          'stdout',
+        ]),
+        'mode': 'append',
+      }),
+    }),
+  })
+# ---

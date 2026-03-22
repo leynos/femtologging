@@ -8,9 +8,23 @@ use std::{
 use pyo3::prelude::*;
 
 use crate::config::ConfigError;
-use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait, logger::FemtoLogger, manager};
+use crate::{
+    filters::FemtoFilter, handler::FemtoHandlerTrait, level::FemtoLevel, logger::FemtoLogger,
+    manager,
+};
 
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
+
+struct ConfiguredLoggerPlan {
+    name: String,
+    logger: Py<FemtoLogger>,
+    handler_ids: Vec<String>,
+    filter_ids: Vec<String>,
+    handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    filters: Vec<Arc<dyn FemtoFilter>>,
+    level: Option<FemtoLevel>,
+    propagate: Option<bool>,
+}
 
 impl ConfigBuilder {
     /// Finalize the configuration and initialize loggers.
@@ -33,7 +47,6 @@ impl ConfigBuilder {
         )?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
-            // Handle disable_existing_loggers if requested
             if self.disable_existing_loggers() {
                 let mut keep_names: HashSet<String> = self
                     .logger_builders()
@@ -51,11 +64,28 @@ impl ConfigBuilder {
                 .map(|c| ("root", c))
                 .into_iter()
                 .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
+            let plans = targets
+                .map(|(name, cfg)| {
+                    self.prepare_logger_plan(py, name, cfg, &built_handlers, &built_filters)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-            for (name, cfg) in targets {
-                let logger = self.fetch_logger(py, name)?;
-                self.apply_logger_config(py, &logger, cfg, &built_handlers, &built_filters)?;
+            let mut runtime_loggers = BTreeMap::new();
+            for plan in &plans {
+                self.apply_logger_plan(py, plan);
+                runtime_loggers.insert(
+                    plan.name.clone(),
+                    manager::LoggerAttachmentState::new(
+                        plan.handler_ids.clone(),
+                        plan.filter_ids.clone(),
+                    ),
+                );
             }
+            manager::replace_runtime_state(
+                built_handlers.clone(),
+                built_filters.clone(),
+                runtime_loggers,
+            );
             Ok(())
         })?;
         Ok(())
@@ -132,26 +162,6 @@ impl ConfigBuilder {
         Ok(items)
     }
 
-    // Apply a sequence of items to a logger, clearing existing state first.
-    // - `clear` removes existing handlers or filters.
-    // - `add` attaches each collected item.
-    fn apply_items<T: ?Sized>(
-        &self,
-        logger_ref: &PyRef<FemtoLogger>,
-        ids: &[String],
-        pool: &BTreeMap<String, Arc<T>>,
-        clear: impl Fn(&PyRef<FemtoLogger>),
-        add: impl Fn(&PyRef<FemtoLogger>, Arc<T>),
-        dup_err: impl Fn(Vec<String>) -> ConfigError,
-    ) -> Result<(), ConfigError> {
-        let items = Self::collect_items(ids, pool, dup_err)?;
-        clear(logger_ref);
-        for item in items {
-            add(logger_ref, item);
-        }
-        Ok(())
-    }
-
     fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
         ConfigError::DuplicateHandlerIds(ids)
     }
@@ -160,37 +170,46 @@ impl ConfigBuilder {
         ConfigError::DuplicateFilterIds(ids)
     }
 
-    fn apply_logger_config<'py>(
+    fn prepare_logger_plan<'py>(
         &self,
         py: Python<'py>,
-        logger: &Py<FemtoLogger>,
+        name: &str,
         cfg: &LoggerConfigBuilder,
         handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
-    ) -> Result<(), ConfigError> {
-        let logger_ref = logger.borrow(py);
-        self.apply_items(
-            &logger_ref,
-            cfg.handler_ids(),
-            handlers,
-            |l| l.clear_handlers(),
-            |l, h| l.add_handler(h),
-            Self::duplicate_handler_ids,
-        )?;
-        self.apply_items(
-            &logger_ref,
-            cfg.filter_ids(),
-            filters,
-            |l| l.clear_filters(),
-            |l, f| l.add_filter(f),
-            Self::duplicate_filter_ids,
-        )?;
-        if let Some(level) = cfg.level_opt().or(self.default_level()) {
+    ) -> Result<ConfiguredLoggerPlan, ConfigError> {
+        let logger = self.fetch_logger(py, name)?;
+        let planned_handlers =
+            Self::collect_items(cfg.handler_ids(), handlers, Self::duplicate_handler_ids)?;
+        let planned_filters =
+            Self::collect_items(cfg.filter_ids(), filters, Self::duplicate_filter_ids)?;
+        Ok(ConfiguredLoggerPlan {
+            name: name.to_string(),
+            logger,
+            handler_ids: cfg.handler_ids().to_vec(),
+            filter_ids: cfg.filter_ids().to_vec(),
+            handlers: planned_handlers,
+            filters: planned_filters,
+            level: cfg.level_opt().or(self.default_level()),
+            propagate: cfg.propagate_opt(),
+        })
+    }
+
+    fn apply_logger_plan(&self, py: Python<'_>, plan: &ConfiguredLoggerPlan) {
+        let logger_ref = plan.logger.borrow(py);
+        logger_ref.clear_handlers();
+        for handler in &plan.handlers {
+            logger_ref.add_handler(handler.clone());
+        }
+        logger_ref.clear_filters();
+        for filter in &plan.filters {
+            logger_ref.add_filter(filter.clone());
+        }
+        if let Some(level) = plan.level {
             logger_ref.set_level(level);
         }
-        if let Some(propagate) = cfg.propagate_opt() {
+        if let Some(propagate) = plan.propagate {
             logger_ref.set_propagate(propagate);
         }
-        Ok(())
     }
 }

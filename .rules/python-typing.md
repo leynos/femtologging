@@ -13,13 +13,16 @@ with integers or strings is required (e.g. for database or JSON serialization).
 ```python
 import enum
 
+
 class Status(enum.Enum):
     PENDING = enum.auto()
     COMPLETE = enum.auto()
 
+
 class ErrorCode(enum.IntEnum):
     OK = 0
     NOT_FOUND = 404
+
 
 class Role(enum.StrEnum):
     ADMIN = enum.auto()
@@ -65,6 +68,7 @@ returns the same instance.
 ```python
 import typing
 
+
 class Builder:
     def add(self, value: int) -> typing.Self:
         self.values.append(value)
@@ -81,9 +85,10 @@ enables static analysis tools to detect typos and signature mismatches.
 ```python
 import typing
 
+
 class Base:
-    def run(self) -> None:
-        ...
+    def run(self) -> None: ...
+
 
 class Child(Base):
     @typing.override
@@ -101,6 +106,7 @@ checkers.
 ```python
 import typing
 
+
 def is_str_list(val: list[object]) -> typing.TypeIs[list[str]]:
     return all(isinstance(x, str) for x in val)
 ```
@@ -114,12 +120,15 @@ Allow generic classes/functions to fall back to default types when no specific
 type is provided.
 
 ```python
-T = typing.TypeVar("T", default=int)
+class Box[T = str]:
+    def __init__(self, value: T):
+        self.value: T = value
 
-class Box[T]:
-    def __init__(self, value: T | None = None):
-        # Fallback to the TypeVar default (int in this example)
-        self.value: T = value if value is not None else int()  # type: ignore[arg-type]
+
+# The default type is used when no type parameter is provided in annotations
+# and no inference context exists.
+box1: Box = Box("hello")  # Box[str]
+box2 = Box(42)  # Box[int]
 ```
 
 This makes APIs more ergonomic while retaining type safety.

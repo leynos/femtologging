@@ -176,7 +176,7 @@ where applicable.
   [design §5.1](./rust-multithreaded-logging-framework-for-python-design.md#51-minimizing-overhead-at-the-log-call-site-the-hot-path)
    and
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap).
-- [ ] 3.2.4. Extend runtime reconfiguration to support richer handler and filter
+- [x] 3.2.4. Extend runtime reconfiguration to support richer handler and filter
   mutation workflows beyond level changes. See
   [design §7.2](./rust-multithreaded-logging-framework-for-python-design.md#72-dynamic-reconfiguration)
    and

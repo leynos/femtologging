@@ -354,14 +354,21 @@ equivalent. `NOTSET` is not supported.
 from typing import List, Optional, Union
 from .levels import FemtoLevel  # Enum of logging levels
 
+
 class ConfigBuilder:
     def __init__(self) -> None: ...
     def with_version(self, version: int) -> "ConfigBuilder": ...
     def with_disable_existing_loggers(self, disable: bool) -> "ConfigBuilder": ...
-    def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder": ...
+    def with_default_level(self, level: Union[str, FemtoLevel]) -> "ConfigBuilder":
+        ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
-    def with_formatter(self, id: str, builder: "FormatterBuilder") -> "ConfigBuilder": ...  # replaces existing formatter
-    def with_filter(self, id: str, builder: "FilterBuilder") -> "ConfigBuilder": ...  # replaces existing filter
+
+    def with_formatter(
+        self, id: str, builder: "FormatterBuilder"
+    ) -> "ConfigBuilder": ...  # replaces existing formatter
+    def with_filter(
+        self, id: str, builder: "FilterBuilder"
+    ) -> "ConfigBuilder": ...  # replaces existing filter
     def with_handler(
         self,
         id: str,
@@ -371,36 +378,57 @@ class ConfigBuilder:
             "StreamHandlerBuilder",
         ],
     ) -> "ConfigBuilder": ...
-    def with_logger(self, name: str, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces existing logger
-    def with_root_logger(self, builder: "LoggerConfigBuilder") -> "ConfigBuilder": ...  # replaces previous root logger
+    def with_logger(
+        self, name: str, builder: "LoggerConfigBuilder"
+    ) -> "ConfigBuilder": ...  # replaces existing logger
+    def with_root_logger(
+        self, builder: "LoggerConfigBuilder"
+    ) -> "ConfigBuilder": ...  # replaces previous root logger
     def build_and_init(self) -> None: ...
+
 
 class LoggerConfigBuilder:
     def __init__(self) -> None: ...
-    def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder": ...
+    def with_level(self, level: Union[str, FemtoLevel]) -> "LoggerConfigBuilder":
+        ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
+
     def with_propagate(self, propagate: bool) -> "LoggerConfigBuilder": ...
-    def with_filters(self, filter_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing filters
-    def with_handlers(self, handler_ids: List[str]) -> "LoggerConfigBuilder": ...  # replaces existing handlers
+    def with_filters(
+        self, filter_ids: List[str]
+    ) -> "LoggerConfigBuilder": ...  # replaces existing filters
+    def with_handlers(
+        self, handler_ids: List[str]
+    ) -> "LoggerConfigBuilder": ...  # replaces existing handlers
+
 
 class FormatterBuilder:
     def __init__(self) -> None: ...
     def with_format(self, format_str: str) -> "FormatterBuilder": ...
     def with_datefmt(self, date_format_str: str) -> "FormatterBuilder": ...
+
     # def style(self, style: str) -> "FormatterBuilder": ... # Future
 
+
 # In femtologging.handlers
-class HandlerBuilder: # Abstract base class or conceptual union
+class HandlerBuilder:  # Abstract base class or conceptual union
     # Common methods
-    def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder": ...
+    def with_level(self, level: Union[str, FemtoLevel]) -> "HandlerBuilder":
+        ...
         # accepts "TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"
+
     def with_formatter(
         self,
         formatter: str
         | collections.abc.Callable[[collections.abc.Mapping[str, object]], str],
     ) -> "HandlerBuilder": ...
-    def with_filters(self, filter_ids: List[str]) -> "HandlerBuilder": ...  # replaces existing filters
-    def with_capacity(self, capacity: int) -> "HandlerBuilder": ... # Common for queue-based handlers
+    def with_filters(
+        self, filter_ids: List[str]
+    ) -> "HandlerBuilder": ...  # replaces existing filters
+    def with_capacity(
+        self, capacity: int
+    ) -> "HandlerBuilder": ...  # Common for queue-based handlers
+
 
 class FileHandlerBuilder(HandlerBuilder):
     def __init__(self, path: str) -> None: ...
@@ -408,17 +436,24 @@ class FileHandlerBuilder(HandlerBuilder):
     def encoding(self, encoding: str) -> "FileHandlerBuilder": ...
     def with_flush_after_records(self, interval: int) -> "FileHandlerBuilder": ...
 
+
 class StreamHandlerBuilder(HandlerBuilder):
     @classmethod
     def stdout(cls) -> "StreamHandlerBuilder": ...
     @classmethod
     def stderr(cls) -> "StreamHandlerBuilder": ...
-    def stream_target(self, target: str) -> "StreamHandlerBuilder": ... # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
+    def stream_target(
+        self, target: str
+    ) -> (
+        "StreamHandlerBuilder"
+    ): ...  # "stdout", "stderr", "ext://sys.stdout", "ext://sys.stderr"
     def with_flush_after_ms(self, flush_ms: int) -> "StreamHandlerBuilder": ...
+
 
 # New
 class BackoffConfig:
     def __init__(self, config: dict[str, int] | None = None) -> None: ...
+
 
 class SocketHandlerBuilder(HandlerBuilder):
     def __init__(self) -> None: ...
@@ -434,6 +469,7 @@ class SocketHandlerBuilder(HandlerBuilder):
         insecure: bool = False,
     ) -> "SocketHandlerBuilder": ...
     def with_backoff(self, config: BackoffConfig) -> "SocketHandlerBuilder": ...
+
 
 # ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
 ```
@@ -819,13 +855,43 @@ surfaces mature further.
   atomic operations in Rust for thread-safe updates. This will be exposed via
   methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
-- **Future Enhancements:** Dynamic changes to handlers, formatters, and filters
-  (e.g., swapping out a file handler for a new one with a different path, or
-  changing a formatter's string) will be considered for future versions (V1.1
-  or V2) due to their complexity. This would require careful management of
-  consumer threads and resource lifecycles in Rust, likely involving a
-  `reload()` method on the `ConfigBuilder` or dedicated control plane for the
-  logging system.
+- **Structured runtime mutation control plane:** Handler and filter mutation is
+  now exposed through a dedicated `RuntimeConfigBuilder` paired with
+  `LoggerMutationBuilder`, rather than overloading `LoggerConfigBuilder`.
+  `LoggerMutationBuilder` supports explicit collection mutation semantics for
+  handlers and filters:
+
+  - leave the collection unchanged
+  - replace the collection with a specific ordered ID list
+  - append IDs without rebuilding unchanged attachments
+  - remove IDs by configuration identity
+  - clear the collection entirely
+
+- **Transactional apply semantics:** `RuntimeConfigBuilder.apply()` first builds
+  any newly declared Rust-backed handlers and filters, validates every
+  requested ID, computes the full post-mutation attachment state in memory, and
+  only then swaps the live logger attachments. If validation fails, the prior
+  runtime state remains intact.
+
+- **Manager-owned runtime metadata:** The global manager now retains:
+
+  - shared live handlers by configuration ID
+  - shared live filters by configuration ID
+  - per-logger attachment metadata for handler IDs and filter IDs applied
+    through the structured configuration path
+
+  This metadata allows targeted operations such as "remove handler `audit`"
+  while keeping `FemtoLogger` hot-path storage as plain `Arc` collections.
+
+- **Scope boundary:** Runtime mutation in 3.2.4 covers Rust-backed declarative
+  handlers and filters plus optional `level` and `propagate` updates as part of
+  the same transaction. Python callback filters, formatter hot-swapping, and
+  other stdlib-parity work remain follow-on items.
+
+- **Bootstrap compatibility:** `ConfigBuilder.build_and_init()` still performs
+  full bootstrap-style replacement, but it now seeds the manager runtime
+  metadata so later `RuntimeConfigBuilder` calls can mutate the live
+  configuration safely.
 
 ## 4. Integration with Rust Ecosystem
 
@@ -948,10 +1014,8 @@ Or through `dictConfig`:
 ```python
 femtologging.dictConfig({
     "version": 1,
-    "loggers": {
-        "worker": {"level": "DEBUG", "propagate": False}
-    },
-    "root": {"level": "INFO"}
+    "loggers": {"worker": {"level": "DEBUG", "propagate": False}},
+    "root": {"level": "INFO"},
 })
 ```
 
