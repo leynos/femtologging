@@ -184,6 +184,16 @@ def _validate_handler_config(
     return cls_name, args, kwargs, data.get("formatter")
 
 
+def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
+    """Remap stdlib-style keyword arguments to femtologging conventions."""
+    if "path" not in kwargs_d and "filename" in kwargs_d:
+        kwargs_d["path"] = kwargs_d.pop("filename")
+    if "backupCount" in kwargs_d and "backup_count" not in kwargs_d:
+        kwargs_d["backup_count"] = kwargs_d.pop("backupCount")
+    if "atTime" in kwargs_d and "at_time" not in kwargs_d:
+        kwargs_d["at_time"] = kwargs_d.pop("atTime")
+
+
 def _create_handler_instance(
     hid: str, cls_name: str, args: list[object], kwargs: dict[str, object]
 ) -> object:
@@ -196,6 +206,8 @@ def _create_handler_instance(
     try:
         args_t = tuple(args)
         kwargs_d = dict(kwargs)
+        if builder_cls is TimedRotatingFileHandlerBuilder:
+            _remap_timed_handler_kwargs(kwargs_d)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"

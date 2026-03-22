@@ -41,9 +41,13 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     poll_file_for_text(path, "file", timeout=1.0)
 
 
-def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
-    """DictConfig should construct a timed rotating handler via class mapping."""
-    path = tmp_path / "timed.log"
+def _run_timed_dictconfig_rotation_test(
+    tmp_path: Path,
+    filename: str,
+    handler_config: dict[str, object],
+    rotated_suffix: str,
+) -> None:
+    path = tmp_path / filename
     _set_timed_rotation_test_times_for_test([
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
@@ -55,7 +59,7 @@ def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
             "handlers": {
                 "f": {
                     "class": "logging.handlers.TimedRotatingFileHandler",
-                    "args": [str(path), "S", 1, 1, True],
+                    **handler_config,
                 }
             },
             "root": {"level": "INFO", "handlers": ["f"]},
@@ -65,10 +69,41 @@ def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
         logger.log("INFO", "first")
         logger.log("INFO", "second")
         poll_file_for_text(path, "second", timeout=1.0)
-        rotated = path.with_name(f"{path.name}.2026-03-12_00-00-01")
+        rotated = path.with_name(f"{path.name}.{rotated_suffix}")
         poll_file_for_text(rotated, "first", timeout=1.0)
     finally:
         _clear_timed_rotation_test_times_for_test()
+
+
+def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
+    """DictConfig should construct a timed rotating handler via class mapping."""
+    path = tmp_path / "timed.log"
+    _run_timed_dictconfig_rotation_test(
+        tmp_path,
+        "timed.log",
+        {"args": [str(path), "S", 1, 1, True]},
+        "2026-03-12_00-00-00",
+    )
+
+
+def test_dict_config_timed_rotating_handler_stdlib_kwargs(tmp_path: Path) -> None:
+    """Timed dictConfig kwargs should accept stdlib naming aliases."""
+    path = tmp_path / "timed_kwargs.log"
+    _run_timed_dictconfig_rotation_test(
+        tmp_path,
+        "timed_kwargs.log",
+        {
+            "kwargs": {
+                "filename": str(path),
+                "when": "MIDNIGHT",
+                "interval": 1,
+                "backupCount": 1,
+                "utc": True,
+                "atTime": dt.time(0, 0, 0, 123456),
+            }
+        },
+        "2026-03-11",
+    )
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,42 @@ def basicConfig(config: BasicConfig, /, **kwargs: object) -> None: ...
 def basicConfig(**kwargs: object) -> None: ...
 
 
+def _resolve_basic_config_params(
+    config: BasicConfig | None,
+    kwargs: dict[str, object],
+) -> tuple[
+    str | int | None,
+    str | None,
+    typ.TextIO | None,
+    bool,
+    cabc.Iterable[FemtoHandler] | None,
+]:
+    """Merge a ``BasicConfig`` object with keyword argument overrides."""
+    if config is None:
+        return (
+            typ.cast("str | int | None", kwargs.get("level")),
+            typ.cast("str | None", kwargs.get("filename")),
+            typ.cast("typ.TextIO | None", kwargs.get("stream")),
+            bool(kwargs.get("force")),
+            typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers")),
+        )
+    return (
+        config.level
+        if config.level is not None
+        else typ.cast("str | int | None", kwargs.get("level")),
+        config.filename
+        if config.filename is not None
+        else typ.cast("str | None", kwargs.get("filename")),
+        config.stream
+        if config.stream is not None
+        else typ.cast("typ.TextIO | None", kwargs.get("stream")),
+        bool(config.force),
+        config.handlers
+        if config.handlers is not None
+        else typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers")),
+    )
+
+
 def basicConfig(  # noqa: N802
     config: BasicConfig | None = None, /, **kwargs: object
 ) -> None:
@@ -102,41 +138,9 @@ def basicConfig(  # noqa: N802
         msg = f"basicConfig() got an unexpected keyword argument {name!r}"
         raise TypeError(msg)
 
-    level: str | int | None
-    filename: str | None
-    stream: typ.TextIO | None
-    force: bool
-    handlers: cabc.Iterable[FemtoHandler] | None
-    if config is not None:
-        level = (
-            config.level
-            if config.level is not None
-            else typ.cast("str | int | None", kwargs.get("level"))
-        )
-        filename = (
-            config.filename
-            if config.filename is not None
-            else typ.cast("str | None", kwargs.get("filename"))
-        )
-        stream = (
-            config.stream
-            if config.stream is not None
-            else typ.cast("typ.TextIO | None", kwargs.get("stream"))
-        )
-        force = bool(config.force)
-        handlers = (
-            config.handlers
-            if config.handlers is not None
-            else typ.cast("cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers"))
-        )
-    else:
-        level = typ.cast("str | int | None", kwargs.get("level"))
-        filename = typ.cast("str | None", kwargs.get("filename"))
-        stream = typ.cast("typ.TextIO | None", kwargs.get("stream"))
-        force = bool(kwargs.get("force"))
-        handlers = typ.cast(
-            "cabc.Iterable[FemtoHandler] | None", kwargs.get("handlers")
-        )
+    level, filename, stream, force, handlers = _resolve_basic_config_params(
+        config, kwargs
+    )
 
     _validate_basic_config_params(filename, stream, handlers)
 
