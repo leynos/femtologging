@@ -48,6 +48,17 @@ impl CollectionMutation {
         Self::Remove(normalize_vec(ids))
     }
 
+    /// Computes and returns a new `Vec<String>` representing the resulting ID
+    /// list after applying this mutation to the provided `existing` slice.
+    ///
+    /// Possible behaviors:
+    /// - [`Unchanged`](Self::Unchanged) returns a copy of the existing IDs.
+    /// - [`Replace`](Self::Replace) returns the provided replacement IDs.
+    /// - [`Append`](Self::Append) merges new IDs without duplicating existing ones.
+    /// - [`Remove`](Self::Remove) filters out listed IDs.
+    /// - [`Clear`](Self::Clear) returns an empty `Vec`.
+    ///
+    /// The original `existing` slice is not modified.
     pub(crate) fn apply(&self, existing: &[String]) -> Vec<String> {
         match self {
             Self::Unchanged => existing.to_vec(),
@@ -73,6 +84,15 @@ impl CollectionMutation {
         }
     }
 
+    /// Serializes this [`CollectionMutation`] into a Python dict with a
+    /// `"mode"` key whose value is one of `"unchanged"`, `"replace"`,
+    /// `"append"`, `"remove"`, or `"clear"`.
+    ///
+    /// For the [`Replace`](Self::Replace), [`Append`](Self::Append), and
+    /// [`Remove`](Self::Remove) variants, the dict will also include an `"ids"`
+    /// key containing a list of strings.
+    ///
+    /// Returns a [`Py<PyAny>`] for Python interop.
     pub(crate) fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         let set_ids = |ids: &[String]| -> PyResult<()> {
