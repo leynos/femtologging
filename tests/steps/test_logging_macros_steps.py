@@ -213,7 +213,8 @@ class _RecordCollector:
         """Capture full record payloads for metadata assertions."""
         self.records.append(record)
 
-    def flush(self) -> bool:
+    @staticmethod
+    def flush() -> bool:
         """Report successful flush to satisfy ``flush_handlers`` checks."""
         return True
 
