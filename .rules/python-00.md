@@ -122,7 +122,6 @@ def test_login_success():
     assert login_user("alice", "correct-password") is True
 
 
-
 def test_login_failure():
     assert login_user("alice", "wrong-password") is False
 ```

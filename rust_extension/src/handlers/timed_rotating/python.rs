@@ -12,9 +12,11 @@ use pyo3::{
 
 use super::{
     FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler, TimedRotationConfig,
-    clock::{clear_injected_times_for_test, set_injected_times_for_test},
     schedule::{TimedRotationSchedule, TimedRotationWhen},
 };
+
+#[cfg(feature = "test-util")]
+use super::clock::{clear_injected_times_for_test, set_injected_times_for_test};
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
@@ -281,11 +283,13 @@ fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     })
 }
 
+#[cfg(feature = "test-util")]
 #[pyfunction]
 pub fn set_timed_rotation_test_times_for_test(epoch_millis: Vec<i64>) {
     set_injected_times_for_test(epoch_millis);
 }
 
+#[cfg(feature = "test-util")]
 #[pyfunction]
 pub fn clear_timed_rotation_test_times_for_test() {
     clear_injected_times_for_test();

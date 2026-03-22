@@ -10,8 +10,7 @@ use crate::{
     ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
     FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
     LoggerMutationBuilder, NameFilterBuilder, RotatingFileHandlerBuilder, RuntimeConfigBuilder,
-    SocketHandlerBuilder, StreamHandlerBuilder,
-    TimedRotatingFileHandlerBuilder,
+    SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
@@ -21,7 +20,6 @@ use crate::{
         socket_builder::BackoffOverrides,
         timed_rotating::{
             PyTimedRotatingFileHandler, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions,
-            clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
         },
     },
 };
@@ -96,11 +94,17 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
     m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
     m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
-    m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        clear_timed_rotation_test_times_for_test,
-        m
-    )?)?;
+    #[cfg(feature = "test-util")]
+    {
+        use crate::handlers::timed_rotating::{
+            clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+        };
+        m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
+        m.add_function(wrap_pyfunction!(
+            clear_timed_rotation_test_times_for_test,
+            m
+        )?)?;
+    }
     m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::frame_filter_py::get_logging_infrastructure_patterns,

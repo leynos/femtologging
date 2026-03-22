@@ -22,7 +22,8 @@ pub(crate) mod python;
 #[cfg(feature = "python")]
 pub(crate) use python::PyTimedRotatingFileHandler;
 #[cfg(feature = "python")]
+pub use python::{TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};
+#[cfg(all(feature = "python", feature = "test-util"))]
 pub use python::{
-    TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions, clear_timed_rotation_test_times_for_test,
-    set_timed_rotation_test_times_for_test,
+    clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
 };

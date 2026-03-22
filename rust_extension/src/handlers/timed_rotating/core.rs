@@ -181,7 +181,10 @@ where
     }
 }
 
-impl crate::handlers::file::RotationStrategy<BufWriter<File>> for TimedFileRotationStrategy {
+impl<C> crate::handlers::file::RotationStrategy<BufWriter<File>> for TimedFileRotationStrategy<C>
+where
+    C: RotationClock,
+{
     fn before_write(&mut self, writer: &mut BufWriter<File>, _formatted: &str) -> io::Result<bool> {
         let now = self.clock.now();
         if now < self.next_rollover_at {

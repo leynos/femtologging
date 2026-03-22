@@ -70,12 +70,12 @@ fn take_injected_time() -> Option<DateTime<Utc>> {
     injected::take()
 }
 
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn set_injected_times_for_test(epoch_millis: Vec<i64>) {
     injected::set(epoch_millis);
 }
 
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn clear_injected_times_for_test() {
     injected::clear();
 }
