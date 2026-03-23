@@ -19,7 +19,8 @@ use crate::{
         HandlerBuildError, HandlerBuilderTrait,
         common::{PyOverflowPolicy, py_flush_after_records_to_nonzero},
         timed_rotating::{
-            PyTimedRotatingFileHandler, TimedRotationWhen, python::extract_naive_time_from_py_time,
+            PyTimedRotatingFileHandler, TimedRotationWhen,
+            python::{TimedHandlerOptions, extract_naive_time_from_py_time},
         },
     },
     macros::{AsPyDict, dict_into_py},
@@ -78,35 +79,24 @@ where
 #[pymethods]
 impl TimedRotatingFileHandlerBuilder {
     #[new]
-    #[pyo3(signature = (
-        path,
-        when = "H".to_string(),
-        interval = 1,
-        backup_count = 0,
-        utc = false,
-        at_time = None,
-    ))]
-    fn py_new(
-        path: String,
-        when: String,
-        interval: u64,
-        backup_count: usize,
-        utc: bool,
-        at_time: Option<Bound<'_, PyAny>>,
-    ) -> PyResult<Self> {
-        let interval = nonzero_interval(interval)?;
-        let at_time = match at_time {
-            Some(value) => extract_optional_time(value)?,
-            None => None,
+    #[pyo3(signature = (path, options = None))]
+    fn py_new(path: String, options: Option<Bound<'_, TimedHandlerOptions>>) -> PyResult<Self> {
+        let builder = Self::new(path);
+        let Some(opts) = options else {
+            return Ok(builder);
         };
-        Self::new(path)
+        let when = opts.borrow().when.clone();
+        let interval = nonzero_interval(u64::from(opts.borrow().interval))?;
+        let at_time_naive = opts.borrow().at_time_naive();
+        let backup_count = opts.borrow().backup_count;
+        let utc = opts.borrow().utc;
+        builder
             .with_when(when)
             .map_err(map_config_error)?
-            .with_at_time(at_time)
+            .with_at_time(at_time_naive)
             .map_err(map_config_error)
-            .map(|builder| {
-                builder
-                    .with_interval(interval)
+            .map(|b| {
+                b.with_interval(interval)
                     .with_backup_count(backup_count)
                     .with_utc(utc)
             })

@@ -64,6 +64,10 @@ pub struct TimedHandlerOptions {
 }
 
 impl TimedHandlerOptions {
+    pub(crate) fn at_time_naive(&self) -> Option<NaiveTime> {
+        self.at_time
+    }
+
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
         let flush_interval = match self.flush_interval {
             -1 => file::validate_params(self.capacity, 1)?,

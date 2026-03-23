@@ -336,11 +336,7 @@ class TimedRotatingFileHandlerBuilder(
     def __init__(
         self,
         path: str,
-        when: str = ...,
-        interval: int = ...,
-        backup_count: int = ...,
-        utc: bool = ...,
-        at_time: dt.time | None = ...,
+        options: TimedHandlerOptions | None = ...,
     ) -> None: ...
     def with_when(self, when: str) -> Self: ...
     def with_interval(self, interval: int) -> Self: ...
