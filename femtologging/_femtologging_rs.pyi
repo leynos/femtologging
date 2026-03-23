@@ -395,6 +395,7 @@ RuntimeHandlerBuilder = (
     StreamHandlerBuilder
     | FileHandlerBuilder
     | RotatingFileHandlerBuilder
+    | TimedRotatingFileHandlerBuilder
     | SocketHandlerBuilder
 )
 

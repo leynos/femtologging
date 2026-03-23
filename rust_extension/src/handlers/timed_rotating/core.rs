@@ -66,6 +66,7 @@ where
         &mut self,
         writer: &mut BufWriter<File>,
         rollover_at: DateTime<Utc>,
+        now: DateTime<Utc>,
     ) -> io::Result<()> {
         writer.flush()?;
         let capacity = writer.capacity();
@@ -86,12 +87,19 @@ where
             Ok(fresh_writer) => {
                 let _ = original_file;
                 *writer = fresh_writer;
+                // Advance the rollover deadline before pruning so that a
+                // prune failure does not cause repeated rollovers on the
+                // next write.
+                self.next_rollover_at = self.schedule.next_rollover(now);
                 self.prune_backups()?;
                 Ok(())
             }
             Err(err) => {
-                fs::rename(&rotated_path, &self.path)?;
+                // Restore the writer before attempting a filesystem
+                // rollback so that the handler remains usable even if the
+                // rename also fails.
                 *writer = BufWriter::with_capacity(capacity, original_file);
+                let _ = fs::rename(&rotated_path, &self.path);
                 Err(err)
             }
         }
@@ -207,8 +215,7 @@ where
             return Ok(false);
         }
         let rollover_at = self.next_rollover_at;
-        self.rotate(writer, rollover_at)?;
-        self.next_rollover_at = self.schedule.next_rollover(now);
+        self.rotate(writer, rollover_at, now)?;
         Ok(true)
     }
 }

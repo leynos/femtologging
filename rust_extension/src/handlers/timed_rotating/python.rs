@@ -150,8 +150,7 @@ impl TimedHandlerOptions {
 
     #[getter]
     fn at_time(&self) -> Option<String> {
-        self.at_time
-            .map(|value| value.format("%H:%M:%S").to_string())
+        self.at_time.map(|value| value.to_string())
     }
 }
 
@@ -201,7 +200,7 @@ impl PyTimedRotatingFileHandler {
         self.inner
             .schedule()
             .at_time()
-            .map(|value| value.format("%H:%M:%S").to_string())
+            .map(|value| value.to_string())
     }
 
     #[pyo3(name = "handle")]
@@ -252,6 +251,15 @@ pub(crate) fn extract_naive_time_from_py_time(
         )));
     }
 
+    let py = value.py();
+    let time_type = py.import("datetime")?.getattr("time")?;
+    if !value.is_instance(&time_type)? {
+        return Err(PyTypeError::new_err(format!(
+            "{arg_name} must be datetime.time, got {}",
+            fq_py_type(value),
+        )));
+    }
+
     let hour: u32 = value.getattr("hour")?.extract()?;
     let minute: u32 = value.getattr("minute")?.extract()?;
     let second: u32 = value.getattr("second")?.extract()?;
@@ -277,10 +285,14 @@ pub(crate) fn extract_naive_time_from_py_time(
 fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     // Local convenience wrapper for the common helper; this retains the
     // existing `at_time`-specific error messages.
-    extract_naive_time_from_py_time(&value, "at_time", false).map(|opt| {
-        // `allow_none` is false, so `opt` is guaranteed to be `Some`.
-        opt.expect("extract_naive_time_from_py_time returned None with allow_none = false")
-    })
+    match extract_naive_time_from_py_time(&value, "at_time", false)? {
+        Some(time) => Ok(time),
+        // `allow_none` is false, so the helper rejects None before reaching
+        // this arm. A defensive error keeps the contract visible.
+        None => Err(PyTypeError::new_err(
+            "at_time must be datetime.time or None",
+        )),
+    }
 }
 
 #[cfg(feature = "test-util")]

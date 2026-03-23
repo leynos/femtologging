@@ -19,6 +19,8 @@ programmatic and type-safe setup of the logging system.
 pub enum HandlerBuilder {
     Stream(StreamHandlerBuilder),
     File(FileHandlerBuilder),
+    Rotating(RotatingFileHandlerBuilder),
+    TimedRotating(TimedRotatingFileHandlerBuilder),
 }
 
 pub enum FormatterId {
@@ -488,15 +490,20 @@ negative integers raises a `ValueError` immediately because the PyO3 bindings
 reject invalid unsigned inputs, keeping misconfigurations obvious. When size
 thresholds are omitted the handler stores `(0, 0)`, disabling rotation
 entirely. Mismatched pairs continue to raise configuration errors so invalid
-rollover settings fail fast. The `StreamHandlerBuilder` configures the stream
-target and capacity. All builders expose `build()` methods returning
-ready‑to‑use handlers. Advanced options such as file encoding or custom writers
-are deferred until the corresponding handler features are ported from
-picologging. The Rust implementation stores the configured thresholds on
-`FemtoRotatingFileHandler` so later work can wire in the rotation algorithm
-without changing the builder API. Internally, a shared `FileLikeBuilderState`
-keeps the queue configuration logic in one place for both file-based builders,
-reducing duplication and ensuring validation stays consistent.
+rollover settings fail fast. The timed rotation builder validates its inputs
+eagerly: unsupported `when` values, zero `interval`, and `at_time` on cadences
+that do not use a time-of-day trigger all raise `ValueError` at setter time.
+Unlike size-based rotation, `backup_count == 0` does not disable timed
+rotation; it retains all timestamped backups indefinitely. The
+`StreamHandlerBuilder` configures the stream target and capacity. All builders
+expose `build()` methods returning ready‑to‑use handlers. Advanced options such
+as file encoding or custom writers are deferred until the corresponding handler
+features are ported from picologging. The Rust implementation stores the
+configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
+the rotation algorithm without changing the builder API. Internally, a shared
+`FileLikeBuilderState` keeps the queue configuration logic in one place for
+both file-based builders, reducing duplication and ensuring validation stays
+consistent.
 
 `SocketHandlerBuilder` follows the same fluent approach but focuses on
 transport concerns rather than file metadata. Callers select either a TCP
@@ -569,7 +576,7 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|StreamHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|TimedRotatingFileHandlerBuilder|StreamHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -591,6 +598,17 @@ classDiagram
         )
         +with_max_bytes(max_bytes: int)
         +with_backup_count(count: int)
+    }
+    class TimedRotatingFileHandlerBuilder {
+        +__init__(path: str)
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
+        +with_when(when: str)
+        +with_interval(interval: int)
+        +with_backup_count(count: int)
+        +with_utc(utc: bool)
+        +with_at_time(at_time: datetime.time)
     }
     class StreamHandlerBuilder {
         +stdout()
@@ -618,6 +636,8 @@ classDiagram
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
     FileHandlerBuilder <|-- RotatingFileHandlerBuilder
+    FileHandlerBuilder <|-- TimedRotatingFileHandlerBuilder
+    ConfigBuilder --> TimedRotatingFileHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder

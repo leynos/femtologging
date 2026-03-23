@@ -59,7 +59,7 @@ fn fill_pydict(builder: &TimedRotatingFileHandlerBuilder, d: &Bound<'_, PyDict>)
     d.set_item("backup_count", builder.backup_count)?;
     d.set_item("utc", builder.use_utc)?;
     if let Some(at_time) = builder.at_time {
-        d.set_item("at_time", at_time.format("%H:%M:%S").to_string())?;
+        d.set_item("at_time", at_time.to_string())?;
     }
     Ok(())
 }
@@ -163,7 +163,8 @@ impl TimedRotatingFileHandlerBuilder {
         let interval = extract_positive_i128(interval, "interval")?;
         let interval = u64::try_from(interval)
             .map_err(|_| PyOverflowError::new_err("interval exceeds the allowable range"))?;
-        let interval = NonZeroU64::new(interval).unwrap();
+        let interval = NonZeroU64::new(interval)
+            .expect("interval validated as positive by extract_positive_i128");
         apply_builder_update(slf, |builder| {
             builder.interval = interval;
             Ok(())

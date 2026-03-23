@@ -80,6 +80,61 @@ fn rotates_and_prunes_backups() {
 }
 
 #[rstest]
+fn retains_all_backups_when_backup_count_is_zero() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
+    let path = dir.path().join("timed.log");
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
+        .expect("seconds schedule must validate");
+    let start = utc_datetime("2026-03-12T00:00:00Z");
+    let clock = SequenceClock::new([
+        start,
+        start,
+        start + Duration::seconds(2),
+        start + Duration::seconds(4),
+    ]);
+    let mut strategy = TimedFileRotationStrategy::new_with_clock(path.clone(), schedule, 0, clock);
+    let mut writer = BufWriter::new(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("log file must open"),
+    );
+
+    RotationStrategy::before_write(&mut strategy, &mut writer, "first")
+        .expect("initial rollover check must succeed");
+    writer
+        .write_all(b"first\n")
+        .expect("first record must be written");
+    writer.flush().expect("first flush must succeed");
+
+    RotationStrategy::before_write(&mut strategy, &mut writer, "second")
+        .expect("first rotation must succeed");
+    writer
+        .write_all(b"second\n")
+        .expect("second record must be written");
+    writer.flush().expect("second flush must succeed");
+
+    RotationStrategy::before_write(&mut strategy, &mut writer, "third")
+        .expect("second rotation must succeed");
+    writer
+        .write_all(b"third\n")
+        .expect("third record must be written");
+    writer.flush().expect("third flush must succeed");
+
+    assert!(
+        path.with_file_name("timed.log.2026-03-12_00-00-00")
+            .exists(),
+        "first timed backup must be retained when backup_count is zero",
+    );
+    assert!(
+        path.with_file_name("timed.log.2026-03-12_00-00-02")
+            .exists(),
+        "second timed backup must be retained when backup_count is zero",
+    );
+}
+
+#[rstest]
 fn midnight_schedule_is_preserved() {
     let schedule = TimedRotationSchedule::new(
         TimedRotationWhen::Midnight,

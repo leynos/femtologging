@@ -32,7 +32,7 @@ def test_timed_rotating_handler_defaults(tmp_path: Path) -> None:
 
 
 def test_timed_rotating_handler_accepts_options(tmp_path: Path) -> None:
-    """Timed handler options should configure schedule and queue settings."""
+    """Timed handler options configure schedule and queue settings."""
     path = tmp_path / "timed.log"
     options = TimedHandlerOptions(
         capacity=32,
@@ -52,12 +52,14 @@ def test_timed_rotating_handler_accepts_options(tmp_path: Path) -> None:
         assert handler.utc is True, "utc flag must round-trip"
         assert handler.at_time == "06:30:00", "at_time must format consistently"
         handler.handle("timed", "INFO", "probe message")
-        assert isinstance(handler.flush(), bool), "flush must return a boolean"
+        assert handler.flush() is True, "flush must return True"
     finally:
         handler.close()
 
 
-def test_timed_rotating_handler_rejects_invalid_when(tmp_path: Path) -> None:
+def test_timed_rotating_handler_rejects_invalid_when(
+    tmp_path: Path,
+) -> None:
     """Unsupported schedule values should fail fast."""
     path = tmp_path / "timed.log"
     with pytest.raises(ValueError, match=TIMED_ROTATION_VALIDATION_MSG):
@@ -67,7 +69,9 @@ def test_timed_rotating_handler_rejects_invalid_when(tmp_path: Path) -> None:
         )
 
 
-def test_timed_rotating_handler_rejects_at_time_for_hourly(tmp_path: Path) -> None:
+def test_timed_rotating_handler_rejects_at_time_for_hourly(
+    tmp_path: Path,
+) -> None:
     """Hour-based rotation should reject at_time."""
     path = tmp_path / "timed.log"
     with pytest.raises(

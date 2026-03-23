@@ -104,6 +104,31 @@ fn next_rollover_with_at_time(
 }
 
 #[rstest]
+fn next_hourly_rollover_local_time() {
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, false, None)
+        .expect("hourly local schedule must validate");
+    let now = utc_datetime("2026-03-11T08:00:00Z");
+
+    let next = schedule.next_rollover(now);
+
+    // Local-time path should still advance by one hour relative to the
+    // input, although the exact UTC result depends on the host timezone.
+    assert!(next > now, "local-time rollover must be in the future");
+}
+
+#[rstest]
+fn midnight_with_explicit_at_time() {
+    let at_time = naive_time(2, 30, 0);
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, Some(at_time))
+        .expect("midnight schedule with at_time must validate");
+    let now = utc_datetime("2026-03-11T01:00:00Z");
+
+    let next = schedule.next_rollover(now);
+
+    assert_eq!(next, utc_datetime("2026-03-11T02:30:00Z"));
+}
+
+#[rstest]
 fn midnight_suffix_is_date_only() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None)
         .expect("midnight schedule must validate");

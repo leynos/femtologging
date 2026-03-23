@@ -108,7 +108,7 @@ The design sources that constrain this plan are:
 - Risk: calendar-based schedules (`MIDNIGHT`, weekday rotation, and
   `at_time`) are easy to implement incorrectly around UTC/local-time
   boundaries. Severity: high Likelihood: medium Mitigation: isolate
-  next-rollover calculation in a pure schedule component with parameterised
+  next-rollover calculation in a pure schedule component with parameterized
   `rstest` cases before wiring the handler.
 
 - Risk: timed rotation tests become flaky if they depend on real time passing.
@@ -146,7 +146,7 @@ The design sources that constrain this plan are:
 - [x] Add Rust `rstest` coverage, Python `pytest` unit coverage, BDD scenarios,
   and syrupy snapshots.
 - [x] Update design/configuration docs and mark roadmap item `2.1.2` done.
-- [ ] Run and pass all quality gates.
+- [x] Run and pass all quality gates.
 
 ## Surprises & Discoveries
 
@@ -335,7 +335,7 @@ Python configuration surfaces:
 - add the timed builder variant to `rust_extension/src/config/types.rs`
 - update `rust_extension/src/config/py.rs` so `HandlerBuilder` can extract the
   timed builder from Python objects
-- extend `femtologging/config.py` so `_HANDLER_CLASS_MAP` recognises stdlib and
+- extend `femtologging/config.py` so `_HANDLER_CLASS_MAP` recognizes stdlib and
   femtologging timed rotating handler class names
 
 At minimum, support these class aliases:
@@ -354,7 +354,7 @@ a handler class string and valid kwargs.
 ## Stage 5: Add comprehensive tests across Rust and Python
 
 Rust coverage should use `rstest` and stay close to the schedule and worker
-components so failures point at a single concern. Prefer parameterised cases
+components so failures point at a single concern. Prefer parameterized cases
 over repeated setup code.
 
 Python coverage must include all three layers already expected in this

@@ -152,6 +152,7 @@ mod tests {
         register_fn: RegisterFn,
         type_names: &'static [&'static str],
         expected_rotation_validation_msg: Option<&'static str>,
+        expected_timed_rotation_validation_msg: Option<&'static str>,
     }
 
     #[fixture]
@@ -177,6 +178,7 @@ mod tests {
                 "FormatterBuilder",
             ],
             expected_rotation_validation_msg: None,
+            expected_timed_rotation_validation_msg: None,
         }
     }
 
@@ -195,7 +197,18 @@ mod tests {
                 "BackoffConfig",
             ],
             expected_rotation_validation_msg: Some(ROTATION_VALIDATION_MSG),
+            expected_timed_rotation_validation_msg: Some(TIMED_ROTATION_VALIDATION_MSG),
         }
+    }
+
+    fn assert_string_attr(module: &Bound<'_, PyModule>, attr_name: &str, expected: &str) {
+        let attr = module
+            .getattr(attr_name)
+            .unwrap_or_else(|_| panic!("{attr_name} not found"));
+        let value: &str = attr
+            .extract()
+            .unwrap_or_else(|_| panic!("failed to extract {attr_name} as str"));
+        assert_eq!(value, expected);
     }
 
     #[rstest]
@@ -213,12 +226,11 @@ mod tests {
                 attr.cast::<PyType>()
                     .expect("attribute is not a Python type");
             }
-            if let Some(expected_message) = case_data.expected_rotation_validation_msg {
-                let message = module
-                    .getattr("ROTATION_VALIDATION_MSG")
-                    .expect("ROTATION_VALIDATION_MSG not found");
-                let value: &str = message.extract().expect("failed to extract message as str");
-                assert_eq!(value, expected_message);
+            if let Some(expected) = case_data.expected_rotation_validation_msg {
+                assert_string_attr(&module, "ROTATION_VALIDATION_MSG", expected);
+            }
+            if let Some(expected) = case_data.expected_timed_rotation_validation_msg {
+                assert_string_attr(&module, "TIMED_ROTATION_VALIDATION_MSG", expected);
             }
         });
     }

@@ -35,22 +35,21 @@ mod injected {
     pub(super) fn set(epoch_millis: Vec<i64>) {
         *INJECTED_TIMES
             .lock()
-            .expect("timed rotation injected-time mutex poisoned") =
-            epoch_millis.into_iter().collect();
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = epoch_millis.into_iter().collect();
     }
 
     #[cfg(feature = "test-util")]
     pub(super) fn clear() {
         INJECTED_TIMES
             .lock()
-            .expect("timed rotation injected-time mutex poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
     }
 
     pub(super) fn take() -> Option<DateTime<Utc>> {
         let mut guard = INJECTED_TIMES
             .lock()
-            .expect("timed rotation injected-time mutex poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard
             .pop_front()
             .and_then(|epoch_millis| Utc.timestamp_millis_opt(epoch_millis).single())

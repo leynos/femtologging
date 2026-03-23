@@ -108,6 +108,11 @@ impl TimedRotatingFileHandlerBuilder {
     }
 
     /// Set an explicit time-of-day trigger for eligible schedules.
+    ///
+    /// When called from Python, `datetime.time` microsecond precision is
+    /// preserved internally. The getter formats the stored value with
+    /// `NaiveTime::to_string`, which includes subsecond digits only when
+    /// they are non-zero.
     pub fn with_at_time(mut self, at_time: Option<NaiveTime>) -> Result<Self, HandlerBuildError> {
         self.at_time = at_time;
         self.validate_at_time_supported()?;

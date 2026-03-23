@@ -83,7 +83,9 @@ def _parse_time(value: str) -> dt.time:
 
 
 def _epoch_millis(value: str) -> int:
-    timestamp = dt.datetime.fromisoformat(value).replace(tzinfo=dt.UTC)
+    timestamp = dt.datetime.fromisoformat(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=dt.UTC)
     return int(timestamp.timestamp() * 1000)
 
 
