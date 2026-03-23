@@ -15,7 +15,7 @@ build: ## Build dev artifact and install into venv
 	UV_VENV_CLEAR=1 uv venv
 	$(CARGO_BUILD_ENV) uv sync --group dev
 	# Install the mixed Rust/Python package into the venv for tests/tools
-	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST) --features test-util
+	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST) --features python,test-util
 
 release: ## Build release artifact
 	$(CARGO_BUILD_ENV) $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
