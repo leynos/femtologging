@@ -210,7 +210,8 @@ def _create_handler_instance(
             _remap_timed_handler_kwargs(kwargs_d)
             # Handle both positional and keyword arguments
             if args_t:
-                # Positional args: (path, when='H', interval=1, backup_count=0, utc=False, at_time=None)
+                # Positional args: (path, when='H', interval=1, backup_count=0,
+                # utc=False, at_time=None)
                 path = cast(str, args_t[0])
                 # Map remaining positional args to kwargs
                 pos_names = ["when", "interval", "backup_count", "utc", "at_time"]
