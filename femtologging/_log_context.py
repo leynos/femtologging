@@ -10,8 +10,7 @@ from ._femtologging_rs import _pop_log_context, _push_log_context
 
 @contextmanager
 def log_context(**fields: object) -> typ.Iterator[None]:
-    """
-    Temporarily attach structured key-values to log records on this thread.
+    """Temporarily attach structured key-values to log records on this thread.
 
     Parameters
     ----------
@@ -38,6 +37,7 @@ def log_context(**fields: object) -> typ.Iterator[None]:
     -----
     Context values are merged on the producer thread before queueing. Inline
     structured fields emitted by Rust macros override outer context keys.
+
     """
     _push_log_context(fields)
     try:

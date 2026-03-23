@@ -25,9 +25,8 @@ After this work:
 
 Observable success: structured fields and propagated context appear in
 `record.metadata.key_values` for accepted records, validation failures surface
-as explicit Python/Rust errors, and `make check-fmt`, `make typecheck`,
-`make lint`, `make test`, `make fmt`, `make markdownlint`, and `make nixie` all
-pass.
+as explicit Python/Rust errors, and `make fmt`, `make check-fmt`, `make typecheck`,
+`make lint`, `make test`, `make markdownlint`, and `make nixie` all pass.
 
 ## Constraints
 
@@ -82,8 +81,8 @@ pass.
   empty-context hot paths. Currently, every merge allocates and validates even
   when the context stack is empty. A future optimization should short-circuit
   allocation and validation when no scoped context exists. This is tracked as a
-  known performance improvement for future work (see roadmap item 3.4.2.a and
-  design §6.2, §8.3).
+  known performance improvement for future work (referenced in roadmap item
+  3.4.2 note and design §6.2, §8.3).
 
 ## Progress
 

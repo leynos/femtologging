@@ -106,9 +106,7 @@ Unlike `isinstance`, this informs the type checker that `val` is now `Sequence[s
 Allow generic classes/functions to fall back to default types when no specific type is provided.
 
 ```python
-T = typing.TypeVar("T", default=int)
-
-class Box[T]:
+class Box[T = int]:
     def __init__(self, value: T):
         self.value = value
 
