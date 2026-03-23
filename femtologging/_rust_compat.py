@@ -31,7 +31,7 @@ def _make_rotating_fresh_failure_hooks(
         raise RuntimeError(msg)
 
     def _clear() -> None:
-        return
+        pass
 
     return _force, _clear
 
@@ -57,7 +57,7 @@ def _make_timed_rotation_hooks(
         raise RuntimeError(msg)
 
     def _clear() -> None:
-        return
+        pass
 
     return _set, _clear
 
