@@ -77,16 +77,28 @@ pass.
   Severity: low Likelihood: medium Mitigation: normalize unstable fields before
   syrupy comparisons.
 
+- **Technical Debt**: The `merge_context_values` and `active_context`
+  implementations in `log_context.rs` lack a fast-path optimization for
+  empty-context hot paths. Currently, every merge allocates and validates even
+  when the context stack is empty. A future optimization should short-circuit
+  allocation and validation when no scoped context exists. This is tracked as a
+  known performance improvement for future work (see roadmap item 3.4.2.a and
+  design §6.2, §8.3).
+
 ## Progress
 
-- [x] (2026-03-04 00:00Z) Gather roadmap/design/testing context and draft this
+- [x] (2026-03-04T00:00Z) Gather roadmap/design/testing context and draft this
       ExecPlan.
-- [ ] Finalize macro syntax and context propagation API surface.
-- [ ] Implement shared structured-field validation and metadata merge helper.
-- [ ] Implement macro updates and scoped context support.
-- [ ] Add Rust `rstest` unit tests for happy, unhappy, and edge paths.
-- [ ] Add Python `pytest-bdd` + `syrupy` tests for runtime behaviour.
-- [ ] Update design docs and mark roadmap item 3.4.2 done.
+- [x] (2026-03-23T00:00Z) Finalize macro syntax and context propagation API
+      surface.
+- [x] (2026-03-23T00:00Z) Implement shared structured-field validation and
+      metadata merge helper.
+- [x] (2026-03-23T00:00Z) Implement macro updates and scoped context support.
+- [x] (2026-03-23T00:00Z) Add Rust `rstest` unit tests for happy, unhappy, and
+      edge paths.
+- [x] (2026-03-23T00:00Z) Add Python `pytest-bdd` + `syrupy` tests for runtime
+      behaviour.
+- [x] (2026-03-23T00:00Z) Update design docs and mark roadmap item 3.4.2 done.
 - [ ] Run full quality gates and capture evidence in this plan.
 
 ## Surprises & Discoveries

@@ -95,7 +95,7 @@ Use `TypeIs[T]` to define custom runtime type guards that narrow types in type c
 ```python
 import typing
 
-def is_str_list(val: typing.Sequence[object]) -> typing.TypeIs[typing.Sequence[str]]:
+def is_str_sequence(val: typing.Sequence[object]) -> typing.TypeIs[typing.Sequence[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 

@@ -641,4 +641,4 @@ Behavioural guarantees:
 - Inline structured fields emitted by Rust macros override outer context keys.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
 - Key-value limits match the enrichment contract documented in
-  `docs/configuration-design.md`.
+  [Configuration Design](docs/configuration-design.md).
