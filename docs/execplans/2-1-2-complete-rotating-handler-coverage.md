@@ -30,25 +30,25 @@ Observable success criteria (achieved):
 
 ## Context and orientation
 
-The current rotating implementation is size-based only:
+At the outset, the tree contained only size-based rotating implementations:
 
-- `rust_extension/src/handlers/rotating/` contains the existing
+- `rust_extension/src/handlers/rotating/` contained the existing
   `FemtoRotatingFileHandler` split into `core.rs`, `python.rs`, and
   `strategy.rs`.
 - `rust_extension/src/handlers/rotating_builder.rs` and
-  `rust_extension/src/handlers/rotating_builder/python_bindings.rs` provide the
-  builder and PyO3 wrappers for the size-based handler.
-- `femtologging/config.py` maps stdlib handler class names such as
+  `rust_extension/src/handlers/rotating_builder/python_bindings.rs` provided
+  the builder and PyO3 wrappers for the size-based handler.
+- `femtologging/config.py` mapped stdlib handler class names such as
   `logging.handlers.RotatingFileHandler` to the builder layer used by
   `dictConfig`.
 - `tests/test_rotating_handler.py`,
   `tests/steps/test_rotating_rotation_steps.py`, and
-  `tests/features/rotating_handler_rotation.feature` show the established
+  `tests/features/rotating_handler_rotation.feature` showed the established
   Python testing pattern for direct handler construction, BDD scenarios, and
   syrupy snapshots.
 
-There is no timed rotating handler, timed rotating builder, timed handler class
-mapping, or timed rotating test suite in the current tree.
+There was no timed rotating handler, timed rotating builder, timed handler
+class mapping, or timed rotating test suite in the tree at project start.
 
 The design sources that constrain this plan are:
 

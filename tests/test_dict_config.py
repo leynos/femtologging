@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import typing as typ
 
@@ -18,6 +19,18 @@ from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+
+@contextlib.contextmanager
+def _timed_rotation_test_clock(
+    times: list[int],
+) -> typ.Generator[None, None, None]:
+    """Context manager to set up and tear down timed rotation test clock."""
+    _set_timed_rotation_test_times_for_test(times)
+    try:
+        yield
+    finally:
+        _clear_timed_rotation_test_times_for_test()
 
 
 def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
@@ -48,12 +61,13 @@ def _run_timed_dictconfig_rotation_test(
     rotated_suffix: str,
 ) -> None:
     path = tmp_path / filename
-    _set_timed_rotation_test_times_for_test([
+    test_times = [
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
         int(dt.datetime(2026, 3, 12, 0, 0, 2, tzinfo=dt.UTC).timestamp() * 1000),
-    ])
-    try:
+    ]
+
+    with _timed_rotation_test_clock(test_times):
         cfg = {
             "version": 1,
             "handlers": {
@@ -71,38 +85,61 @@ def _run_timed_dictconfig_rotation_test(
         poll_file_for_text(path, "second", timeout=1.0)
         rotated = path.with_name(f"{path.name}.{rotated_suffix}")
         poll_file_for_text(rotated, "first", timeout=1.0)
-    finally:
-        _clear_timed_rotation_test_times_for_test()
 
 
-def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
-    """DictConfig should construct a timed rotating handler via class mapping."""
-    path = tmp_path / "timed.log"
+@pytest.mark.parametrize(
+    ("filename", "handler_config_template", "rotated_suffix"),
+    [
+        (
+            "timed.log",
+            {"args_template": ["S", 1, 1], "kwargs": {"utc": True}},
+            "2026-03-12_00-00-00",
+        ),
+        (
+            "timed_kwargs.log",
+            {
+                "kwargs": {
+                    "when": "MIDNIGHT",
+                    "interval": 1,
+                    "backupCount": 1,
+                    "utc": True,
+                    "atTime": dt.time(0, 0, 0, 123456),
+                }
+            },
+            "2026-03-11",
+        ),
+    ],
+    ids=["positional_args", "stdlib_kwargs"],
+)
+def test_dict_config_timed_rotating_handler(
+    tmp_path: Path,
+    filename: str,
+    handler_config_template: dict[str, object],
+    rotated_suffix: str,
+) -> None:
+    """DictConfig should construct timed rotating handlers via various config styles."""
+    path = tmp_path / filename
+
+    # Build handler_config with actual path
+    handler_config: dict[str, object] = {}
+    if "args_template" in handler_config_template:
+        args_template = handler_config_template["args_template"]
+        if isinstance(args_template, list):
+            handler_config["args"] = [str(path)] + args_template
+        if "kwargs" in handler_config_template:
+            handler_config["kwargs"] = handler_config_template["kwargs"]
+    else:
+        kwargs_template = handler_config_template.get("kwargs", {})
+        if isinstance(kwargs_template, dict):
+            kwargs = dict(kwargs_template)
+            kwargs["filename"] = str(path)
+            handler_config["kwargs"] = kwargs
+
     _run_timed_dictconfig_rotation_test(
         tmp_path,
-        "timed.log",
-        {"args": [str(path), "S", 1, 1], "kwargs": {"utc": True}},
-        "2026-03-12_00-00-00",
-    )
-
-
-def test_dict_config_timed_rotating_handler_stdlib_kwargs(tmp_path: Path) -> None:
-    """Timed dictConfig kwargs should accept stdlib naming aliases."""
-    path = tmp_path / "timed_kwargs.log"
-    _run_timed_dictconfig_rotation_test(
-        tmp_path,
-        "timed_kwargs.log",
-        {
-            "kwargs": {
-                "filename": str(path),
-                "when": "MIDNIGHT",
-                "interval": 1,
-                "backupCount": 1,
-                "utc": True,
-                "atTime": dt.time(0, 0, 0, 123456),
-            }
-        },
-        "2026-03-11",
+        filename,
+        handler_config,
+        rotated_suffix,
     )
 
 

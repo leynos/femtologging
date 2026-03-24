@@ -261,6 +261,8 @@ def _unpack_timed_handler_positional_args(
         )
         raise TypeError(msg)
 
+    stdlib_only_slots = {"encoding", "delay", "errors"}
+
     for i, value in enumerate(args_t[1:]):
         if i < len(pos_names):
             name = pos_names[i]
@@ -272,7 +274,10 @@ def _unpack_timed_handler_positional_args(
                 raise TypeError(msg)
 
             _validate_stdlib_unsupported_param(name, value)
-            kwargs_d[name] = value
+
+            # Skip stdlib-only slots - validate but don't forward
+            if name not in stdlib_only_slots:
+                kwargs_d[name] = value
 
     return path
 

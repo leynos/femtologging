@@ -627,6 +627,12 @@ classDiagram
         +with_handlers(handlers: list)
         +with_propagate(flag: bool)
     }
+    class FileLikeBuilderState {
+        +capacity
+        +flush_interval
+        +overflow_policy
+        +formatter
+    }
     class dictConfig {
         +dictConfig(config: Mapping[str, object])
     }
@@ -636,8 +642,10 @@ classDiagram
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
-    FileHandlerBuilder <|-- RotatingFileHandlerBuilder
-    FileHandlerBuilder <|-- TimedRotatingFileHandlerBuilder
+    FileHandlerBuilder *-- FileLikeBuilderState
+    RotatingFileHandlerBuilder *-- FileLikeBuilderState
+    TimedRotatingFileHandlerBuilder *-- FileLikeBuilderState
+    ConfigBuilder --> RotatingFileHandlerBuilder
     ConfigBuilder --> TimedRotatingFileHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
