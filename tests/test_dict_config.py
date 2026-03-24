@@ -125,7 +125,7 @@ def test_dict_config_timed_rotating_handler(
     if "args_template" in handler_config_template:
         args_template = handler_config_template["args_template"]
         if isinstance(args_template, list):
-            handler_config["args"] = [str(path)] + args_template
+            handler_config["args"] = [str(path), *args_template]
         if "kwargs" in handler_config_template:
             handler_config["kwargs"] = handler_config_template["kwargs"]
     else:
