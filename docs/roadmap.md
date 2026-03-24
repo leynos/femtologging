@@ -140,10 +140,31 @@ where applicable.
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration)
    and
   [logging sequence diagrams](./logging-sequence-diagrams.md#5-shutdown--orderly-shutdown-at-process-exit).
-- [ ] 2.3.3. Explore batching optimizations in consumer threads. See
-  [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads)
-   and
-  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap).
+- [x] 2.3.3. Explore batching optimizations in consumer threads. See
+  [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads),
+  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap),
+  and [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md).
+- [ ] 2.3.4. Implement drain-loop batching and vectored I/O for file and
+  stream handler consumer threads. Introduce `recv_batch` helper and
+  `BatchConfig` type, modify `FemtoFileHandler` and `FemtoStreamHandler` worker
+  loops, and add Criterion benchmarks. Completion criteria: batched file and
+  stream throughput benchmarks show measurable improvement over single-record
+  baselines. See
+  [ADR 004 phase 1](./adr-004-batching-optimizations-in-consumer-threads.md#phase-1-core-batch-collection-and-filestream-handler-batching).
+- [ ] 2.3.5. Implement drain-loop batching for HTTP and socket handler
+  consumer threads. Modify `FemtoHTTPHandler` to send batched JSON array
+  payloads and `FemtoSocketHandler` to concatenate frames into combined writes.
+  Add Criterion benchmarks and update the users guide. Completion criteria:
+  network handler benchmarks show reduced per-record overhead and user-facing
+  batching configuration is documented. See
+  [ADR 004 phase 2](./adr-004-batching-optimizations-in-consumer-threads.md#phase-2-network-handler-batching).
+- [ ] 2.3.6. Implement drain-loop batching in the logger dispatch worker
+  thread and add integration hardening. Modify the logger worker to batch
+  records before handler dispatch, verify shutdown drain semantics, and add
+  ordering and completeness tests under load. Completion criteria: integration
+  tests confirm record ordering, completeness, and graceful shutdown with
+  batched workers. See
+  [ADR 004 phase 3](./adr-004-batching-optimizations-in-consumer-threads.md#phase-3-logger-dispatch-batching-and-hardening).
 
 ## 3. Configuration, compatibility, and ecosystem integration
 
