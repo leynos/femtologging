@@ -194,6 +194,41 @@ def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
         kwargs_d["at_time"] = kwargs_d.pop("atTime")
 
 
+def _unpack_timed_handler_positional_args(
+    args_t: tuple[object, ...],
+    kwargs_d: dict[str, object],
+) -> str:
+    """Map positional args for a timed rotating handler into *kwargs_d*.
+
+    Returns the path extracted from the first positional argument.
+    """
+    path = cast(str, args_t[0])
+    pos_names = ["when", "interval", "backup_count", "utc", "at_time"]
+    for i, value in enumerate(args_t[1:]):
+        if i < len(pos_names):
+            kwargs_d.setdefault(pos_names[i], value)
+    return path
+
+
+def _build_timed_handler(
+    builder_cls: object,
+    args_t: tuple[object, ...],
+    kwargs_d: dict[str, object],
+) -> object:
+    """Construct a ``TimedRotatingFileHandlerBuilder`` from args and kwargs."""
+    _remap_timed_handler_kwargs(kwargs_d)
+    if args_t:
+        path = _unpack_timed_handler_positional_args(args_t, kwargs_d)
+    else:
+        path = cast(str, kwargs_d.pop("path"))
+    from femtologging._femtologging_rs import TimedHandlerOptions
+
+    options = (
+        TimedHandlerOptions(**cast("Any", kwargs_d)) if kwargs_d else None  # pyright: ignore[reportCallIssue]
+    )
+    return cast("Any", builder_cls)(path, options)
+
+
 def _create_handler_instance(
     hid: str, cls_name: str, args: list[object], kwargs: dict[str, object]
 ) -> object:
@@ -207,26 +242,7 @@ def _create_handler_instance(
         args_t = tuple(args)
         kwargs_d = dict(kwargs)
         if builder_cls is TimedRotatingFileHandlerBuilder:
-            _remap_timed_handler_kwargs(kwargs_d)
-            # Handle both positional and keyword arguments
-            if args_t:
-                # Positional args: (path, when='H', interval=1, backup_count=0,
-                # utc=False, at_time=None)
-                path = cast(str, args_t[0])
-                # Map remaining positional args to kwargs
-                pos_names = ["when", "interval", "backup_count", "utc", "at_time"]
-                for i, value in enumerate(args_t[1:], start=0):
-                    if i < len(pos_names):
-                        kwargs_d.setdefault(pos_names[i], value)
-            else:
-                path = cast(str, kwargs_d.pop("path"))
-
-            from femtologging._femtologging_rs import TimedHandlerOptions
-
-            options = (
-                TimedHandlerOptions(**cast("Any", kwargs_d)) if kwargs_d else None  # pyright: ignore[reportCallIssue]
-            )
-            return builder_cls(path, options)
+            return _build_timed_handler(builder_cls, args_t, kwargs_d)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"
