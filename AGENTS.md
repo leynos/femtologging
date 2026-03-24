@@ -61,6 +61,7 @@
     above.
   - Passes lint checks
   - Adheres to formatting standards tested using a formatting validator.
+  - Passes static type checking (run `make typecheck` to verify)
 - **Committing:**
   - Only changes that meet all the quality gates above should be committed.
   - Write clear, descriptive commit messages summarizing the change, following
@@ -113,8 +114,9 @@ This repository is written in Rust and uses Cargo for building and dependency
 management. Contributors should follow these best practices when working on the
 project:
 
-- Run `make fmt`, `make lint`, and `make test` before committing. These targets
-  wrap `cargo fmt`, `cargo clippy`, and `cargo test` with the appropriate flags.
+- Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
+  committing. These targets wrap `cargo fmt`, `cargo clippy`, type checking
+  with `ty`, and `cargo test` with the appropriate flags.
 - Clippy warnings MUST be disallowed.
 - Fix any warnings emitted during tests in the code itself rather than
   silencing them.

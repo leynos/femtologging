@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import typing as typ
 
-from ._femtologging_rs import FemtoLogger, get_logger
+from ._femtologging_rs import ExcInfo, FemtoLogger, get_logger
 
-_MISSING: object = object()
+_MISSING = typ.cast("ExcInfo", object())
 
 getLogger = get_logger  # noqa: N816  # TODO(#343): camelCase alias for stdlib compat
 
@@ -40,7 +40,7 @@ def _exception_wrapper(
     message: str,
     /,
     *,
-    exc_info: object = _MISSING,
+    exc_info: ExcInfo = _MISSING,
     stack_info: bool = False,
 ) -> str | None:
     """Log at ERROR level, defaulting ``exc_info`` to ``True`` when omitted.
@@ -58,6 +58,6 @@ def _exception_wrapper(
     return self._exception_impl(message, exc_info=resolved, stack_info=stack_info)
 
 
-FemtoLogger.exception = _exception_wrapper  # type: ignore[assignment,method-assign]
+FemtoLogger.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]
 
 __all__ = ["getLogger"]

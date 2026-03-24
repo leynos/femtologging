@@ -300,6 +300,10 @@ def _build_timed_handler(
             msg = "missing required 'path' argument for timed rotating handler"
             raise HandlerConfigError(msg)
         path = cast(str, kwargs_d.pop("path"))
+        # Validate and strip stdlib-only params from kwargs path
+        for param_name in ("encoding", "delay", "errors"):
+            if param_name in kwargs_d:
+                _validate_stdlib_unsupported_param(param_name, kwargs_d.pop(param_name))
     from femtologging._femtologging_rs import TimedHandlerOptions
 
     # Suppress reportCallIssue because kwargs_d is dynamically typed and

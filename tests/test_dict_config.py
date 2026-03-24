@@ -60,6 +60,7 @@ def _run_timed_dictconfig_rotation_test(
     handler_config: dict[str, object],
     rotated_suffix: str,
 ) -> None:
+    reset_manager()
     path = tmp_path / filename
     test_times = [
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),

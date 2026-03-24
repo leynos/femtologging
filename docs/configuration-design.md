@@ -21,6 +21,7 @@ pub enum HandlerBuilder {
     File(FileHandlerBuilder),
     Rotating(RotatingFileHandlerBuilder),
     TimedRotating(TimedRotatingFileHandlerBuilder),
+    Socket(SocketHandlerBuilder),
 }
 
 pub enum FormatterId {
@@ -379,6 +380,7 @@ class ConfigBuilder:
             "RotatingFileHandlerBuilder",
             "TimedRotatingFileHandlerBuilder",
             "StreamHandlerBuilder",
+            "SocketHandlerBuilder",
         ],
     ) -> "ConfigBuilder": ...
     def with_logger(
@@ -577,7 +579,7 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|TimedRotatingFileHandlerBuilder|StreamHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|TimedRotatingFileHandlerBuilder|StreamHandlerBuilder|SocketHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
