@@ -9,14 +9,14 @@ Status: COMPLETE
 
 ## Purpose / big picture
 
-Roadmap item `2.1.2` is still open in [docs/roadmap.md](../roadmap.md): add
+Roadmap item `2.1.2` was completed in [docs/roadmap.md](../roadmap.md): added
 `FemtoTimedRotatingFileHandler` so femtologging covers both size-based and
-time-based rotating file handlers. This matters because the project is first a
+time-based rotating file handlers. This mattered because the project is first a
 Python logging library implemented in Rust, and Python users reasonably expect
 stdlib-style timed file rotation to exist wherever size-based rotation already
 exists.
 
-Observable success after implementation:
+Observable success criteria (achieved):
 
 1. Python code can construct and use a timed rotating file handler through the
    public package surface and through `dictConfig`.

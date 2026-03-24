@@ -485,25 +485,25 @@ The initial implementation provides `FileHandlerBuilder`,
 `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
 thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
 `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the size-based
-builder: both limits must be provided with positive values. Passing zero or
-negative integers raises a `ValueError` immediately because the PyO3 bindings
-reject invalid unsigned inputs, keeping misconfigurations obvious. When size
-thresholds are omitted the handler stores `(0, 0)`, disabling rotation
-entirely. Mismatched pairs continue to raise configuration errors so invalid
-rollover settings fail fast. The timed rotation builder validates its inputs
-eagerly: unsupported `when` values, zero `interval`, and `at_time` on cadences
-that do not use a time-of-day trigger all raise `ValueError` at setter time.
-Unlike size-based rotation, `backup_count == 0` does not disable timed
-rotation; it retains all timestamped backups indefinitely. The
-`StreamHandlerBuilder` configures the stream target and capacity. All builders
-expose `build()` methods returning ready‑to‑use handlers. Advanced options such
-as file encoding or custom writers are deferred until the corresponding handler
-features are ported from picologging. The Rust implementation stores the
-configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
-the rotation algorithm without changing the builder API. Internally, a shared
-`FileLikeBuilderState` keeps the queue configuration logic in one place for
-both file-based builders, reducing duplication and ensuring validation stays
-consistent.
+builder: both limits must be provided with positive values. Passing zero raises
+a `ValueError`, while negative or out-of-range integers raise an
+`OverflowError` immediately through the PyO3 unsigned conversions, keeping
+misconfigurations obvious. When size thresholds are omitted the handler stores
+`(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise
+configuration errors so invalid rollover settings fail fast. The timed rotation
+builder validates its inputs eagerly: unsupported `when` values, zero
+`interval`, and `at_time` on cadences that do not use a time-of-day trigger all
+raise `ValueError` at setter time. Unlike size-based rotation,
+`backup_count == 0` does not disable timed rotation; it retains all timestamped
+backups indefinitely. The `StreamHandlerBuilder` configures the stream target
+and capacity. All builders expose `build()` methods returning ready‑to‑use
+handlers. Advanced options such as file encoding or custom writers are deferred
+until the corresponding handler features are ported from picologging. The Rust
+implementation stores the configured thresholds on `FemtoRotatingFileHandler`
+so later work can wire in the rotation algorithm without changing the builder
+API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
+logic in one place for both file-based builders, reducing duplication and
+ensuring validation stays consistent.
 
 `SocketHandlerBuilder` follows the same fluent approach but focuses on
 transport concerns rather than file metadata. Callers select either a TCP

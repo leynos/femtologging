@@ -186,6 +186,18 @@ def _validate_handler_config(
 
 def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
     """Remap stdlib-style keyword arguments to femtologging conventions."""
+    # Check for alias conflicts
+    if "path" in kwargs_d and "filename" in kwargs_d:
+        msg = "cannot specify both 'path' and 'filename'"
+        raise ValueError(msg)
+    if "backup_count" in kwargs_d and "backupCount" in kwargs_d:
+        msg = "cannot specify both 'backup_count' and 'backupCount'"
+        raise ValueError(msg)
+    if "at_time" in kwargs_d and "atTime" in kwargs_d:
+        msg = "cannot specify both 'at_time' and 'atTime'"
+        raise ValueError(msg)
+
+    # Remap aliases
     if "path" not in kwargs_d and "filename" in kwargs_d:
         kwargs_d["path"] = kwargs_d.pop("filename")
     if "backupCount" in kwargs_d and "backup_count" not in kwargs_d:
@@ -202,7 +214,16 @@ def _unpack_timed_handler_positional_args(
 
     Returns the path extracted from the first positional argument.
     """
-    path = cast(str, args_t[0])
+    if not args_t:
+        msg = "expected at least one positional argument 'path'"
+        raise TypeError(msg)
+    if not isinstance(args_t[0], str):
+        msg = (
+            f"expected first positional argument 'path' to be str, "
+            f"got {type(args_t[0]).__name__}"
+        )
+        raise TypeError(msg)
+    path = args_t[0]
     pos_names = ["when", "interval", "backup_count", "utc", "at_time"]
     for i, value in enumerate(args_t[1:]):
         if i < len(pos_names):
@@ -220,9 +241,15 @@ def _build_timed_handler(
     if args_t:
         path = _unpack_timed_handler_positional_args(args_t, kwargs_d)
     else:
+        if "path" not in kwargs_d:
+            msg = "missing required 'path' argument for timed rotating handler"
+            raise HandlerConfigError(msg)
         path = cast(str, kwargs_d.pop("path"))
     from femtologging._femtologging_rs import TimedHandlerOptions
 
+    # Suppress reportCallIssue because kwargs_d is dynamically typed and
+    # validated upstream by _remap_timed_handler_kwargs; pyright cannot infer
+    # the mapping of dict[str, object] to TimedHandlerOptions parameters.
     options = (
         TimedHandlerOptions(**cast("Any", kwargs_d)) if kwargs_d else None  # pyright: ignore[reportCallIssue]
     )

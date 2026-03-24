@@ -18,6 +18,7 @@ use crate::{
     handlers::{
         HandlerBuildError, HandlerBuilderTrait,
         common::{PyOverflowPolicy, py_flush_after_records_to_nonzero},
+        file::policy::parse_policy_string,
         timed_rotating::{
             PyTimedRotatingFileHandler, TimedRotationWhen,
             python::{TimedHandlerOptions, extract_naive_time_from_py_time},
@@ -81,15 +82,29 @@ impl TimedRotatingFileHandlerBuilder {
     #[new]
     #[pyo3(signature = (path, options = None))]
     fn py_new(path: String, options: Option<Bound<'_, TimedHandlerOptions>>) -> PyResult<Self> {
-        let builder = Self::new(path);
+        let mut builder = Self::new(path);
         let Some(opts) = options else {
             return Ok(builder);
         };
-        let when = opts.borrow().when.clone();
-        let interval = nonzero_interval(u64::from(opts.borrow().interval))?;
-        let at_time_naive = opts.borrow().at_time_naive();
-        let backup_count = opts.borrow().backup_count;
-        let utc = opts.borrow().utc;
+        let opts_ref = opts.borrow();
+
+        // Apply queue configuration
+        builder.common.set_capacity(opts_ref.capacity);
+        let flush_interval = py_flush_after_records_to_nonzero(
+            opts_ref.flush_interval.try_into().unwrap_or(u64::MAX),
+        )?;
+        builder.common.set_flush_after_records(flush_interval);
+        let policy = parse_policy_string(&opts_ref.policy)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        builder.common.set_overflow_policy(policy);
+
+        // Apply rotation configuration
+        let when = opts_ref.when.clone();
+        let interval = nonzero_interval(u64::from(opts_ref.interval))?;
+        let at_time_naive = opts_ref.at_time_naive();
+        let backup_count = opts_ref.backup_count;
+        let utc = opts_ref.utc;
+
         builder
             .with_when(when)
             .map_err(map_config_error)?
@@ -153,8 +168,7 @@ impl TimedRotatingFileHandlerBuilder {
         let interval = extract_positive_i128(interval, "interval")?;
         let interval = u64::try_from(interval)
             .map_err(|_| PyOverflowError::new_err("interval exceeds the allowable range"))?;
-        let interval = NonZeroU64::new(interval)
-            .expect("interval validated as positive by extract_positive_i128");
+        let interval = nonzero_interval(interval)?;
         apply_builder_update(slf, |builder| {
             builder.interval = interval;
             Ok(())

@@ -52,7 +52,7 @@ def _make_timed_rotation_hooks(
     def _set(epoch_millis: list[int]) -> None:
         msg = (
             "timed rotation test clock requires the extension built with the "
-            "'python' feature"
+            "'test-util' feature"
         )
         raise RuntimeError(msg)
 
