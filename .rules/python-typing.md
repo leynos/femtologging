@@ -70,6 +70,9 @@ import typing
 
 
 class Builder:
+    def __init__(self) -> None:
+        self.values: list[int] = []
+
     def add(self, value: int) -> typing.Self:
         self.values.append(value)
         return self
@@ -107,12 +110,14 @@ checkers.
 import typing
 
 
-def is_str_list(val: list[object]) -> typing.TypeIs[list[str]]:
+def is_str_sequence(
+    val: typing.Sequence[object],
+) -> typing.TypeIs[typing.Sequence[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 
 Unlike `isinstance`, this informs the type checker that `val` is now
-`list[str]`.
+`Sequence[str]`.
 
 ## Defaults for TypeVars (PEP 696)
 
@@ -120,15 +125,12 @@ Allow generic classes/functions to fall back to default types when no specific
 type is provided.
 
 ```python
-class Box[T = str]:
+class Box[T = int]:
     def __init__(self, value: T):
-        self.value: T = value
+        self.value = value
 
 
-# The default type is used when no type parameter is provided in annotations
-# and no inference context exists.
-box1: Box = Box("hello")  # Box[str]
-box2 = Box(42)  # Box[int]
+default_box: Box = Box(0)
 ```
 
 This makes APIs more ergonomic while retaining type safety.

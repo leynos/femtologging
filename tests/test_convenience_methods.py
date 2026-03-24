@@ -34,9 +34,12 @@ True
 
 from __future__ import annotations
 
+import time
+import typing as typ
+
 import pytest
 
-from femtologging import FemtoLogger, get_logger, getLogger
+from femtologging import FemtoLogger, get_logger, getLogger, log_context
 
 # -- getLogger alias ----------------------------------------------------------
 
@@ -187,6 +190,51 @@ def test_convenience_method_with_stack_info() -> None:
     assert output is not None, "info(stack_info=True) should produce output"
     assert "Stack (most recent call last)" in output, (
         "output should contain stack trace"
+    )
+
+
+def test_direct_logger_info_merges_scoped_log_context() -> None:
+    """``logger.info`` should include scoped ``log_context`` metadata."""
+
+    class RecordCollector:
+        def __init__(self) -> None:
+            self.records: list[dict[str, object]] = []
+
+        def handle(self, logger: str, level: str, message: str) -> None:
+            _ = (self.records, logger, level, message)
+
+        def handle_record(self, record: dict[str, object]) -> None:
+            self.records.append(record)
+
+        def flush(self) -> bool:
+            _ = self.records
+            return True
+
+    logger = FemtoLogger("ctx.direct")
+    logger.set_level("INFO")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    with log_context(request_id="abc123", user="alice"):
+        output = logger.info("inside context")
+    assert output is not None, "info() should emit at INFO level"
+    for _ in range(20):
+        if collector.records:
+            break
+        logger.flush_handlers()
+        time.sleep(0.01)
+    assert collector.records, "expected at least one captured record"
+
+    last_record = collector.records[-1]
+    metadata = last_record.get("metadata")
+    assert isinstance(metadata, dict), f"unexpected metadata payload: {metadata!r}"
+    metadata_dict = typ.cast("dict[str, object]", metadata)
+    key_values = metadata_dict.get("key_values")
+    assert isinstance(key_values, dict), (
+        f"unexpected key_values payload: {key_values!r}"
+    )
+    assert key_values == {"request_id": "abc123", "user": "alice"}, (
+        f"unexpected key_values: {key_values!r}"
     )
 
 

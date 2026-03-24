@@ -922,8 +922,9 @@ approach:
 The logging macros are central to the developer experience. As outlined in
 section 4.3, they will support:
 
-- Log levels (e.g., `trace!`, `debug!`, `info!`, `warn!`, `error!`,
-  `critical!`).
+- Log levels (e.g., `debug!`, `info!`, `warn!`, `error!`; `trace!` and
+  `critical!` remain planned but are not part of the current shipped macro
+  surface).
 
 - Automatic capture of source code location (`file!`, `line!`, `module_path!`).
 
@@ -931,6 +932,19 @@ section 4.3, they will support:
   `info!("User {} logged in", user.name; user_id = user.id, ip_address = "127.0.0.1");` ).
 
 - Compile-time validation of format strings and arguments.
+
+Implemented baseline (roadmap item 3.4.2):
+
+- Rust-facing macros are exposed as `femtolog_debug!`, `femtolog_info!`,
+  `femtolog_warn!`, and `femtolog_error!`.
+- Each macro supports both message-only calls and structured fields:
+  `femtolog_info!(logger, "accepted"; request_id = 42, user = "alice")`.
+- A scoped context stack can be pushed/popped on the producer thread; macro
+  records automatically merge active context with inline key-values.
+- Inline key-values take precedence over scoped context keys when collisions
+  occur.
+- Merged key-values are persisted into `RecordMetadata.key_values` before the
+  record is queued to consumer threads.
 
 Inspired by `tracing::span!`,
 
@@ -1727,6 +1741,12 @@ their consumer logic (which is a robust and simple model), future versions of
 `femtologging` could explore deeper integration with Rust's `async`/`await`
 ecosystem. This is particularly relevant for applications already built around
 an async runtime like Tokio or `async-std`.
+
+The currently implemented scoped context propagation is thread-local and based
+on OS-thread execution. Context capture and merge occur on the producer thread
+before queueing, which ensures records are Rust-owned and safe to dispatch
+across dedicated worker threads. Async task propagation across executors
+requires additional task-local bridging or explicit context passing.
 
 - **Async MPSC Channels:** Utilize MPSC channel implementations that are
   designed for async contexts, such as `tokio::sync::mpsc`, `flume`'s async

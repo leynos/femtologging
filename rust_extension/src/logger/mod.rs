@@ -16,10 +16,12 @@ mod runtime_mutation;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::log_context;
 use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
@@ -152,8 +154,26 @@ impl FemtoLogger {
         exc_info: Option<&Bound<'_, PyAny>>,
         stack_info: Option<bool>,
     ) -> PyResult<Option<String>> {
-        // Create base record
-        let mut record = FemtoLogRecord::new(&self.name, level, message);
+        if !self.is_enabled_for(level) {
+            return Ok(None);
+        }
+        let explicit_key_values = BTreeMap::new();
+        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
+            Ok(key_values) => key_values,
+            Err(err) => {
+                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                return Ok(None);
+            }
+        };
+        let mut record = FemtoLogRecord::with_metadata(
+            &self.name,
+            level,
+            message,
+            RecordMetadata {
+                key_values: merged_key_values,
+                ..Default::default()
+            },
+        );
 
         // Capture exception payload if exc_info is provided and truthy
         #[cfg(feature = "python")]
@@ -342,8 +362,18 @@ impl FemtoLogger {
         &self,
         level: FemtoLevel,
         message: &str,
-        metadata: RecordMetadata,
+        mut metadata: RecordMetadata,
     ) -> Option<String> {
+        if !self.is_enabled_for(level) {
+            return None;
+        }
+        match log_context::merge_context_values(&metadata.key_values) {
+            Ok(merged_key_values) => metadata.key_values = merged_key_values,
+            Err(err) => {
+                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                return None;
+            }
+        }
         let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
         self.log_record(record)
     }

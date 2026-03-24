@@ -2,8 +2,12 @@
 
 use super::*;
 use crate::handler::FemtoHandlerTrait;
+use crate::log_context;
+use crate::log_record::RecordMetadata;
 use crate::test_utils::collecting_handler::CollectingHandler;
+use pyo3::types::PyDict;
 use rstest::{fixture, rstest};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -108,5 +112,95 @@ fn source_location_falls_back_gracefully(unique_logger_name: String) {
         assert_eq!(meta.filename, "", "fallback filename should be empty");
         assert_eq!(meta.line_number, 0, "fallback line number should be zero");
         assert_eq!(meta.module_path, "", "fallback module_path should be empty");
+    });
+}
+
+#[rstest]
+fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
+    struct LogContextPopGuard;
+
+    impl Drop for LogContextPopGuard {
+        fn drop(&mut self) {
+            let _ = py_pop_log_context();
+        }
+    }
+
+    Python::attach(|py| {
+        let logger =
+            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
+        let handler = Arc::new(CollectingHandler::default());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+
+        let ctx = PyDict::new(py);
+        ctx.set_item("request_id", 42).expect("set request_id");
+        ctx.set_item("user", "alice").expect("set user");
+        py_push_log_context(&ctx).expect("context push should succeed");
+        let _guard = LogContextPopGuard;
+        let _ = log_at_level(
+            py,
+            FemtoLevel::Info,
+            "with context",
+            Some(&unique_logger_name),
+        )
+        .expect("log call should succeed");
+        assert!(logger.borrow(py).flush_handlers());
+
+        let records = handler.collected();
+        assert_eq!(records.len(), 1);
+        let key_values = &records[0].metadata().key_values;
+        assert_eq!(key_values.get("request_id").map(String::as_str), Some("42"));
+        assert_eq!(key_values.get("user").map(String::as_str), Some("alice"));
+    });
+}
+
+#[rstest]
+fn context_rejects_invalid_value_type() {
+    Python::attach(|py| {
+        let ctx = PyDict::new(py);
+        ctx.set_item("bad", PyDict::new(py))
+            .expect("set nested dict value");
+        let err = py_push_log_context(&ctx).expect_err("nested dict should be rejected");
+        assert!(
+            err.to_string()
+                .contains("context values must be str, int, float, bool, or None"),
+            "unexpected error: {err}"
+        );
+        log_context::clear_log_context_for_test();
+    });
+}
+
+#[rstest]
+fn invalid_merged_context_drops_record(unique_logger_name: String) {
+    Python::attach(|py| {
+        let logger =
+            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
+        let handler = Arc::new(CollectingHandler::default());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+
+        let mut invalid_key_values = BTreeMap::new();
+        invalid_key_values.insert(String::from("oversize"), "x".repeat(1_025));
+        let metadata = RecordMetadata {
+            key_values: invalid_key_values,
+            ..Default::default()
+        };
+        let result = logger
+            .borrow(py)
+            .log_with_metadata(FemtoLevel::Info, "should drop", metadata);
+
+        assert!(
+            result.is_none(),
+            "invalid merged context should drop record"
+        );
+        assert!(logger.borrow(py).flush_handlers());
+        assert!(
+            handler.collected().is_empty(),
+            "no records should be emitted when context merge fails"
+        );
+
+        log_context::clear_log_context_for_test();
     });
 }

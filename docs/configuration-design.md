@@ -330,6 +330,11 @@ The ADR also defines the callback-enrichment persistence contract:
   UTF-8 bytes per value, and 16 KiB total serialized enrichment payload per
   record.
 
+Macro-driven structured logging and scoped context propagation use the same
+producer-side bounds when materializing `RecordMetadata.key_values`. Inline
+macro fields override scoped-context values on key collisions before the merged
+map is validated and persisted.
+
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
 The Python API will mirror the Rust builder's semantics, providing a familiar

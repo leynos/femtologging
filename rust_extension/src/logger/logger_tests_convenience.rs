@@ -1,9 +1,13 @@
 //! Tests for convenience logging methods and `isEnabledFor`.
 
 use super::*;
+use crate::handler::FemtoHandlerTrait;
+use crate::log_context;
+use crate::test_utils::collecting_handler::CollectingHandler;
 use pyo3::Python;
 use pyo3::types::PyBool;
 use rstest::rstest;
+use std::sync::Arc;
 
 /// Dispatch to the named convenience method on `FemtoLogger`.
 ///
@@ -126,5 +130,32 @@ fn exception_with_explicit_python_none_suppresses_capture() {
             .py_exception_impl(py, "none passed", Some(&none_val.as_borrowed()), None)
             .expect("exception(exc_info=<Python None>) should not fail");
         assert_eq!(result, Some("test [ERROR] none passed".to_string()));
+    });
+}
+
+#[rstest]
+fn convenience_methods_merge_scoped_context() {
+    Python::attach(|py| {
+        log_context::clear_log_context_for_test();
+        let logger = FemtoLogger::new("test".to_string());
+        logger.set_level(FemtoLevel::Info);
+        let handler = Arc::new(CollectingHandler::default());
+        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+
+        let _guard = log_context::push_log_context([("request_id", "123")])
+            .expect("context push should succeed");
+        let result = logger
+            .py_info(py, "message", None, None)
+            .expect("py_info should not fail");
+        assert!(result.is_some());
+        assert!(logger.flush_handlers());
+
+        let records = handler.collected();
+        assert_eq!(records.len(), 1);
+        let key_values = &records[0].metadata().key_values;
+        assert_eq!(
+            key_values.get("request_id").map(String::as_str),
+            Some("123")
+        );
     });
 }
