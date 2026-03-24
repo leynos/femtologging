@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import typing as typ
 
+from typing_extensions import TypedDict
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 from . import _femtologging_rs as rust
+
+
+class _RustCompatPayload(TypedDict):
+    """Typed schema for Rust extension compatibility layer."""
+
+    _force_rotating_fresh_failure_for_test: cabc.Callable[[int, str | None], None]
+    _clear_rotating_fresh_failure_for_test: cabc.Callable[[], None]
+    _set_timed_rotation_test_times_for_test: cabc.Callable[[list[int]], None]
+    _clear_timed_rotation_test_times_for_test: cabc.Callable[[], None]
+    setup_rust_logging: cabc.Callable[[], None]
+    _runtime_attachment_state_for_test: cabc.Callable[
+        [str], tuple[list[str], list[str]] | None
+    ]
 
 
 def _make_rotating_fresh_failure_hooks(
@@ -93,11 +108,11 @@ def _make_runtime_attachment_state(
     return _fallback
 
 
-def _initialize_rust_compat() -> dict[str, object]:
+def _initialize_rust_compat() -> _RustCompatPayload:
     """Initialize Rust extension compatibility layer.
 
     Extracts all optional Rust extension functions and wraps them with
-    appropriate fallback behavior. Returns a dictionary of initialized
+    appropriate fallback behavior. Returns a typed payload of initialized
     module-level variables.
     """
     force_rotating, clear_rotating = _make_rotating_fresh_failure_hooks(
@@ -124,32 +139,20 @@ def _initialize_rust_compat() -> dict[str, object]:
     }
 
 
-_compat = _initialize_rust_compat()
+_compat: _RustCompatPayload = _initialize_rust_compat()
 _force_rotating_fresh_failure_for_test: cabc.Callable[[int, str | None], None] = (
-    typ.cast(
-        "cabc.Callable[[int, str | None], None]",
-        _compat["_force_rotating_fresh_failure_for_test"],
-    )
+    _compat["_force_rotating_fresh_failure_for_test"]
 )
-_clear_rotating_fresh_failure_for_test: cabc.Callable[[], None] = typ.cast(
-    "cabc.Callable[[], None]",
-    _compat["_clear_rotating_fresh_failure_for_test"],
+_clear_rotating_fresh_failure_for_test: cabc.Callable[[], None] = (
+    _compat["_clear_rotating_fresh_failure_for_test"]
 )
-_set_timed_rotation_test_times_for_test: cabc.Callable[[list[int]], None] = typ.cast(
-    "cabc.Callable[[list[int]], None]",
-    _compat["_set_timed_rotation_test_times_for_test"],
+_set_timed_rotation_test_times_for_test: cabc.Callable[[list[int]], None] = (
+    _compat["_set_timed_rotation_test_times_for_test"]
 )
-_clear_timed_rotation_test_times_for_test: cabc.Callable[[], None] = typ.cast(
-    "cabc.Callable[[], None]",
-    _compat["_clear_timed_rotation_test_times_for_test"],
+_clear_timed_rotation_test_times_for_test: cabc.Callable[[], None] = (
+    _compat["_clear_timed_rotation_test_times_for_test"]
 )
-setup_rust_logging: cabc.Callable[[], None] = typ.cast(
-    "cabc.Callable[[], None]",
-    _compat["setup_rust_logging"],
-)
+setup_rust_logging: cabc.Callable[[], None] = _compat["setup_rust_logging"]
 _runtime_attachment_state_for_test: cabc.Callable[
     [str], tuple[list[str], list[str]] | None
-] = typ.cast(
-    "cabc.Callable[[str], tuple[list[str], list[str]] | None]",
-    _compat["_runtime_attachment_state_for_test"],
-)
+] = _compat["_runtime_attachment_state_for_test"]
