@@ -81,7 +81,7 @@ def test_dict_config_timed_rotating_handler_args(tmp_path: Path) -> None:
     _run_timed_dictconfig_rotation_test(
         tmp_path,
         "timed.log",
-        {"args": [str(path), "S", 1, 1, True]},
+        {"args": [str(path), "S", 1, 1], "kwargs": {"utc": True}},
         "2026-03-12_00-00-00",
     )
 

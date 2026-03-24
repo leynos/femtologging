@@ -440,9 +440,9 @@ The implementation is complete only when:
 
 ## Approval gate
 
-This document is the draft phase required by the `execplans` workflow. Do not
-begin implementation until the user explicitly approves the plan or requests
-specific revisions to it.
+This ExecPlan was approved and implementation was completed. The approval gate
+was satisfied during the draft phase, and all work outlined in this plan has
+been delivered.
 
 ## Outcomes & Retrospective
 

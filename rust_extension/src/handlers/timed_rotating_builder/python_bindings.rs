@@ -159,6 +159,12 @@ impl TimedRotatingFileHandlerBuilder {
                     when.as_str(),
                 ))));
             }
+            // Validate weekday/interval invariant
+            if matches!(when, TimedRotationWhen::Weekday(_)) && builder.interval.get() != 1 {
+                return Err(map_config_error(HandlerBuildError::InvalidConfig(
+                    "weekday rotation only supports interval = 1".to_string(),
+                )));
+            }
             builder.when = when;
             Ok(())
         })
@@ -174,6 +180,12 @@ impl TimedRotatingFileHandlerBuilder {
             .map_err(|_| PyOverflowError::new_err("interval exceeds the allowable range"))?;
         let interval = nonzero_interval(interval)?;
         apply_builder_update(slf, |builder| {
+            // Validate weekday/interval invariant
+            if matches!(builder.when, TimedRotationWhen::Weekday(_)) && interval.get() != 1 {
+                return Err(map_config_error(HandlerBuildError::InvalidConfig(
+                    "weekday rotation only supports interval = 1".to_string(),
+                )));
+            }
             builder.interval = interval;
             Ok(())
         })

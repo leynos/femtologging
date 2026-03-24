@@ -208,6 +208,19 @@ def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
         kwargs_d["at_time"] = kwargs_d.pop("atTime")
 
 
+def _validate_stdlib_unsupported_param(name: str, value: object) -> None:
+    """Validate that unsupported stdlib parameters have default values."""
+    if name == "encoding" and value is not None:
+        msg = "encoding parameter is not supported (must be None)"
+        raise ValueError(msg)
+    if name == "delay" and value is not False:
+        msg = "delay parameter is not supported (must be False)"
+        raise ValueError(msg)
+    if name == "errors" and value is not None:
+        msg = "errors parameter is not supported (must be None)"
+        raise ValueError(msg)
+
+
 def _unpack_timed_handler_positional_args(
     args_t: tuple[object, ...],
     kwargs_d: dict[str, object],
@@ -215,6 +228,7 @@ def _unpack_timed_handler_positional_args(
     """Map positional args for a timed rotating handler into *kwargs_d*.
 
     Returns the path extracted from the first positional argument.
+    Validates stdlib-compatible positional args and rejects unsupported features.
     """
     if not args_t:
         msg = "expected at least one positional argument 'path'"
@@ -226,10 +240,40 @@ def _unpack_timed_handler_positional_args(
         )
         raise TypeError(msg)
     path = args_t[0]
-    pos_names = ["when", "interval", "backup_count", "utc", "at_time"]
+
+    # Full stdlib positional sequence
+    pos_names = [
+        "when",
+        "interval",
+        "backup_count",
+        "encoding",
+        "delay",
+        "utc",
+        "at_time",
+        "errors",
+    ]
+
+    if len(args_t) > len(pos_names) + 1:  # +1 for path
+        max_args = len(pos_names) + 1
+        msg = (
+            f"too many positional arguments: "
+            f"expected at most {max_args}, got {len(args_t)}"
+        )
+        raise TypeError(msg)
+
     for i, value in enumerate(args_t[1:]):
         if i < len(pos_names):
-            kwargs_d.setdefault(pos_names[i], value)
+            name = pos_names[i]
+            if name in kwargs_d:
+                msg = (
+                    f"duplicate argument: '{name}' provided both "
+                    f"positionally and as keyword"
+                )
+                raise TypeError(msg)
+
+            _validate_stdlib_unsupported_param(name, value)
+            kwargs_d[name] = value
+
     return path
 
 
@@ -241,6 +285,10 @@ def _build_timed_handler(
     """Construct a ``TimedRotatingFileHandlerBuilder`` from args and kwargs."""
     _remap_timed_handler_kwargs(kwargs_d)
     if args_t:
+        # Check for duplicate path before unpacking
+        if "path" in kwargs_d:
+            msg = "duplicate argument: 'path' provided both positionally and as keyword"
+            raise TypeError(msg)
         path = _unpack_timed_handler_positional_args(args_t, kwargs_d)
     else:
         if "path" not in kwargs_d:

@@ -143,15 +143,15 @@ _compat: _RustCompatPayload = _initialize_rust_compat()
 _force_rotating_fresh_failure_for_test: cabc.Callable[[int, str | None], None] = (
     _compat["_force_rotating_fresh_failure_for_test"]
 )
-_clear_rotating_fresh_failure_for_test: cabc.Callable[[], None] = (
-    _compat["_clear_rotating_fresh_failure_for_test"]
-)
-_set_timed_rotation_test_times_for_test: cabc.Callable[[list[int]], None] = (
-    _compat["_set_timed_rotation_test_times_for_test"]
-)
-_clear_timed_rotation_test_times_for_test: cabc.Callable[[], None] = (
-    _compat["_clear_timed_rotation_test_times_for_test"]
-)
+_clear_rotating_fresh_failure_for_test: cabc.Callable[[], None] = _compat[
+    "_clear_rotating_fresh_failure_for_test"
+]
+_set_timed_rotation_test_times_for_test: cabc.Callable[[list[int]], None] = _compat[
+    "_set_timed_rotation_test_times_for_test"
+]
+_clear_timed_rotation_test_times_for_test: cabc.Callable[[], None] = _compat[
+    "_clear_timed_rotation_test_times_for_test"
+]
 setup_rust_logging: cabc.Callable[[], None] = _compat["setup_rust_logging"]
 _runtime_attachment_state_for_test: cabc.Callable[
     [str], tuple[list[str], list[str]] | None
