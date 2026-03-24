@@ -15,7 +15,6 @@ from os import PathLike, fsdecode, fspath
 from pathlib import Path
 
 from . import _femtologging_rs as rust
-from .config import dictConfig
 
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
@@ -41,6 +40,8 @@ def fileConfig(  # noqa: N802
     >>> fileConfig("tests/data/basic_file_config.ini")
 
     """
+    from .config import dictConfig
+
     path_str = _normalize_path(fname)
     sections = rust.parse_ini_file(path_str, encoding)
     config = _ini_to_dict_config(

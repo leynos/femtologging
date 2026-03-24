@@ -25,6 +25,8 @@ import collections.abc as cabc
 import typing as typ
 
 from . import _femtologging_rs as rust
+from ._basic_config import BasicConfig, basicConfig
+from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
 
 Callable = cabc.Callable
@@ -464,6 +466,7 @@ def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
 
 
 __all__ = [
+    "BasicConfig",
     "ConfigBuilder",
     "FileHandlerBuilder",
     "FormatterBuilder",
@@ -475,5 +478,7 @@ __all__ = [
     "SocketHandlerBuilder",
     "StreamHandlerBuilder",
     "TimedRotatingFileHandlerBuilder",
+    "basicConfig",
     "dictConfig",
+    "fileConfig",
 ]
