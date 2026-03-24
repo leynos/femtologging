@@ -142,11 +142,8 @@ fn convenience_methods_merge_scoped_context() {
         let handler = Arc::new(CollectingHandler::default());
         logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
 
-        let _guard = log_context::push_log_context_map(std::collections::BTreeMap::from([(
-            String::from("request_id"),
-            String::from("123"),
-        )]))
-        .expect("context push should succeed");
+        let _guard = log_context::push_log_context([("request_id", "123")])
+            .expect("context push should succeed");
         let result = logger
             .py_info(py, "message", None, None)
             .expect("py_info should not fail");
