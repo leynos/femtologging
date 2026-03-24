@@ -24,6 +24,9 @@ libraries. Use the links below to explore each topic.
 - [adr-003-python-stdlib-filter-parity.md](./adr-003-python-stdlib-filter-parity.md)
   - Records the decision to add phased parity for Python stdlib callback
     filters.
+- [adr-004-batching-optimizations-in-consumer-threads.md](./adr-004-batching-optimizations-in-consumer-threads.md)
+  - Proposes drain-loop batching and vectored I/O optimizations for handler
+    consumer threads.
 
 ## Logging Architecture
 
