@@ -488,9 +488,9 @@ thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
 builder: both limits must be provided with positive values. Passing zero raises
 a `ValueError`, while negative or out-of-range integers raise an
 `OverflowError` immediately through the PyO3 unsigned conversions, keeping
-misconfigurations obvious. When size thresholds are omitted the handler stores
+misconfigurations obvious. When size thresholds are omitted, the handler stores
 `(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise
-configuration errors so invalid rollover settings fail fast. The timed rotation
+configuration errors, so invalid rollover settings fail fast. The timed rotation
 builder validates its inputs eagerly: unsupported `when` values, zero
 `interval`, and `at_time` on cadences that do not use a time-of-day trigger all
 raise `ValueError` at setter time. Unlike size-based rotation,

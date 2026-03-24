@@ -111,7 +111,7 @@ The design sources that constrain this plan are:
   next-rollover calculation in a pure schedule component with parameterized
   `rstest` cases before wiring the handler.
 
-- Risk: timed rotation tests become flaky if they depend on real time passing.
+- Risk: timed rotation tests become flaky if they depend on real-time passing.
   Severity: high Likelihood: high Mitigation: add an injected clock or
   test-only scheduler control and keep BDD tests deterministic.
 

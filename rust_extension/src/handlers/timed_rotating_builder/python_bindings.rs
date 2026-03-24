@@ -90,9 +90,13 @@ impl TimedRotatingFileHandlerBuilder {
 
         // Apply queue configuration
         builder.common.set_capacity(opts_ref.capacity);
-        let flush_interval = py_flush_after_records_to_nonzero(
-            opts_ref.flush_interval.try_into().unwrap_or(u64::MAX),
-        )?;
+        let flush_interval_u64 = u64::try_from(opts_ref.flush_interval).map_err(|_| {
+            PyOverflowError::new_err(format!(
+                "flush_interval out of range for u64: {}",
+                opts_ref.flush_interval
+            ))
+        })?;
+        let flush_interval = py_flush_after_records_to_nonzero(flush_interval_u64)?;
         builder.common.set_flush_after_records(flush_interval);
         let policy = parse_policy_string(&opts_ref.policy)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
