@@ -34,7 +34,7 @@ _STDLIB_ONLY_SLOTS: typ.Final[frozenset[str]] = frozenset({
     "errors",
 })
 
-_ALIAS_MAP: dict[str, str] = {
+_ALIAS_MAP: typ.Final[dict[str, str]] = {
     "filename": "path",
     "backupCount": "backup_count",
     "atTime": "at_time",
@@ -97,8 +97,8 @@ def _unpack_positional(
         )
         raise TypeError(msg)
 
-    for i, value in enumerate(args_t[1:]):
-        _assign_positional_arg(_TIMED_ROTATION_POS_ARGS[i], value, kwargs_d)
+    for name, value in zip(_TIMED_ROTATION_POS_ARGS, args_t[1:], strict=False):
+        _assign_positional_arg(name, value, kwargs_d)
 
     return path
 
@@ -125,16 +125,20 @@ def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
 def _extract_path_from_kwargs(
     kwargs_d: dict[str, object], handler_config_error: type[Exception]
 ) -> str:
-    """Extract path from kwargs, raising if missing."""
+    """Extract path from kwargs, raising if missing or invalid type."""
     if "path" not in kwargs_d:
         msg = "missing required 'path' argument for timed rotating handler"
+        raise handler_config_error(msg)
+    val = kwargs_d["path"]
+    if not isinstance(val, str):
+        msg = f"invalid type for 'path': expected str, got {type(val).__name__}"
         raise handler_config_error(msg)
     return cast(str, kwargs_d.pop("path"))
 
 
 def _strip_validate_stdlib_only_kwargs(kwargs_d: dict[str, object]) -> None:
     """Validate and remove stdlib-only parameters from kwargs."""
-    for param_name in ("encoding", "delay", "errors"):
+    for param_name in _STDLIB_ONLY_SLOTS:
         if param_name in kwargs_d:
             _validate_stdlib_unsupported_param(param_name, kwargs_d.pop(param_name))
 

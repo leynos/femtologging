@@ -146,9 +146,6 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "."
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
-# Include test-util so that dev and CI builds expose the deterministic
-# test-clock injection hooks needed by the Python test suite.
-features = ["test-util"]
 
 [tool.pytest.ini_options]
 timeout = 30
