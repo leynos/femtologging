@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import typing as typ
 
-from ._femtologging_rs import ExcInfo, FemtoLogger, get_logger
+from ._femtologging_rs import FemtoLogger, get_logger
+
+if typ.TYPE_CHECKING:
+    from ._femtologging_rs import ExcInfo
 
 _MISSING = typ.cast("ExcInfo", object())
 

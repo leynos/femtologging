@@ -441,6 +441,7 @@ def test_handler_gains_handle_record_after_registration() -> None:
     def late_handle_record(record: dict[str, typ.Any]) -> None:
         handler.handle_record_calls.append(record)
 
+    # NOTE: dynamic attribute required to test frozen dispatch behavior
     setattr(handler, "handle_record", late_handle_record)  # noqa: B010
 
     # Log a message
@@ -474,6 +475,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     def initial_handle_record(record: dict[str, typ.Any]) -> None:
         handler.handle_record_calls.append(record)
 
+    # NOTE: intentional dynamic attribute for testing dispatch path freeze
     setattr(handler, "handle_record", initial_handle_record)  # noqa: B010
 
     # Register with handle_record present - this freezes the dispatch path
@@ -483,6 +485,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     def replacement_handle_record(record: dict[str, typ.Any]) -> None:
         handler.handle_record_calls.append(record)
 
+    # NOTE: intentional dynamic attribute for testing dispatch path freeze
     setattr(handler, "handle_record", replacement_handle_record)  # noqa: B010
 
     # Log a message
@@ -543,6 +546,7 @@ def test_exc_info_no_deprecation_warning(
         mod = types.ModuleType("custom_mod")
         monkeypatch.setitem(sys.modules, "custom_mod", mod)
         custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
+        # NOTE: dynamic module attribute for testing exception module resolution
         setattr(mod, "CustomError", custom_cls)  # noqa: B010
         exc = custom_cls("module check")
         output = logger.log("ERROR", "caught", exc_info=exc)

@@ -25,7 +25,11 @@ import collections.abc as cabc
 import typing as typ
 
 from . import _femtologging_rs as rust
+
+# Re-export BasicConfig, basicConfig, and fileConfig for backward compatibility
+# (these are also available from the top-level femtologging package)
 from ._basic_config import BasicConfig, basicConfig
+from ._timed_handler_config import parse_timed_args
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
 
@@ -186,135 +190,6 @@ def _validate_handler_config(
     return cls_name, args, kwargs, data.get("formatter")
 
 
-def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
-    """Remap stdlib-style keyword arguments to femtologging conventions."""
-    # Check for alias conflicts
-    if "path" in kwargs_d and "filename" in kwargs_d:
-        msg = "cannot specify both 'path' and 'filename'"
-        raise ValueError(msg)
-    if "backup_count" in kwargs_d and "backupCount" in kwargs_d:
-        msg = "cannot specify both 'backup_count' and 'backupCount'"
-        raise ValueError(msg)
-    if "at_time" in kwargs_d and "atTime" in kwargs_d:
-        msg = "cannot specify both 'at_time' and 'atTime'"
-        raise ValueError(msg)
-
-    # Remap aliases
-    if "path" not in kwargs_d and "filename" in kwargs_d:
-        kwargs_d["path"] = kwargs_d.pop("filename")
-    if "backupCount" in kwargs_d and "backup_count" not in kwargs_d:
-        kwargs_d["backup_count"] = kwargs_d.pop("backupCount")
-    if "atTime" in kwargs_d and "at_time" not in kwargs_d:
-        kwargs_d["at_time"] = kwargs_d.pop("atTime")
-
-
-def _validate_stdlib_unsupported_param(name: str, value: object) -> None:
-    """Validate that unsupported stdlib parameters have default values."""
-    if name == "encoding" and value is not None:
-        msg = "encoding parameter is not supported (must be None)"
-        raise ValueError(msg)
-    if name == "delay" and value is not False:
-        msg = "delay parameter is not supported (must be False)"
-        raise ValueError(msg)
-    if name == "errors" and value is not None:
-        msg = "errors parameter is not supported (must be None)"
-        raise ValueError(msg)
-
-
-def _unpack_timed_handler_positional_args(
-    args_t: tuple[object, ...],
-    kwargs_d: dict[str, object],
-) -> str:
-    """Map positional args for a timed rotating handler into *kwargs_d*.
-
-    Returns the path extracted from the first positional argument.
-    Validates stdlib-compatible positional args and rejects unsupported features.
-    """
-    if not args_t:
-        msg = "expected at least one positional argument 'path'"
-        raise TypeError(msg)
-    if not isinstance(args_t[0], str):
-        msg = (
-            f"expected first positional argument 'path' to be str, "
-            f"got {type(args_t[0]).__name__}"
-        )
-        raise TypeError(msg)
-    path = args_t[0]
-
-    # Full stdlib positional sequence
-    pos_names = [
-        "when",
-        "interval",
-        "backup_count",
-        "encoding",
-        "delay",
-        "utc",
-        "at_time",
-        "errors",
-    ]
-
-    if len(args_t) > len(pos_names) + 1:  # +1 for path
-        max_args = len(pos_names) + 1
-        msg = (
-            f"too many positional arguments: "
-            f"expected at most {max_args}, got {len(args_t)}"
-        )
-        raise TypeError(msg)
-
-    stdlib_only_slots = {"encoding", "delay", "errors"}
-
-    for i, value in enumerate(args_t[1:]):
-        if i < len(pos_names):
-            name = pos_names[i]
-            if name in kwargs_d:
-                msg = (
-                    f"duplicate argument: '{name}' provided both "
-                    f"positionally and as keyword"
-                )
-                raise TypeError(msg)
-
-            _validate_stdlib_unsupported_param(name, value)
-
-            # Skip stdlib-only slots - validate but don't forward
-            if name not in stdlib_only_slots:
-                kwargs_d[name] = value
-
-    return path
-
-
-def _build_timed_handler(
-    builder_cls: object,
-    args_t: tuple[object, ...],
-    kwargs_d: dict[str, object],
-) -> object:
-    """Construct a ``TimedRotatingFileHandlerBuilder`` from args and kwargs."""
-    _remap_timed_handler_kwargs(kwargs_d)
-    if args_t:
-        # Check for duplicate path before unpacking
-        if "path" in kwargs_d:
-            msg = "duplicate argument: 'path' provided both positionally and as keyword"
-            raise TypeError(msg)
-        path = _unpack_timed_handler_positional_args(args_t, kwargs_d)
-    else:
-        if "path" not in kwargs_d:
-            msg = "missing required 'path' argument for timed rotating handler"
-            raise HandlerConfigError(msg)
-        path = cast(str, kwargs_d.pop("path"))
-        # Validate and strip stdlib-only params from kwargs path
-        for param_name in ("encoding", "delay", "errors"):
-            if param_name in kwargs_d:
-                _validate_stdlib_unsupported_param(param_name, kwargs_d.pop(param_name))
-    from femtologging._femtologging_rs import TimedHandlerOptions
-
-    # Suppress reportCallIssue because kwargs_d is dynamically typed and
-    # validated upstream by _remap_timed_handler_kwargs; pyright cannot infer
-    # the mapping of dict[str, object] to TimedHandlerOptions parameters.
-    options = (
-        TimedHandlerOptions(**cast("Any", kwargs_d)) if kwargs_d else None  # pyright: ignore[reportCallIssue]
-    )
-    return cast("Any", builder_cls)(path, options)
-
-
 def _create_handler_instance(
     hid: str, cls_name: str, args: list[object], kwargs: dict[str, object]
 ) -> object:
@@ -328,7 +203,8 @@ def _create_handler_instance(
         args_t = tuple(args)
         kwargs_d = dict(kwargs)
         if builder_cls is TimedRotatingFileHandlerBuilder:
-            return _build_timed_handler(builder_cls, args_t, kwargs_d)
+            path, options = parse_timed_args(args_t, kwargs_d)
+            return cast("Any", builder_cls)(path, options)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"

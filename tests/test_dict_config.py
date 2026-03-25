@@ -62,6 +62,8 @@ def _run_timed_dictconfig_rotation_test(
 ) -> None:
     reset_manager()
     path = tmp_path / filename
+    # test_times: [0] = handler init time, [1] = first log (no advance, same as init),
+    # [2] = second log at +2s triggers rotation
     test_times = [
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
         int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),

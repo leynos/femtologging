@@ -620,6 +620,13 @@ classDiagram
             fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
         )
     }
+    class SocketHandlerBuilder {
+        +with_host(host: str)
+        +with_port(port: int)
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
+    }
     class FilterBuilder {
         +build()
     }
@@ -642,6 +649,7 @@ classDiagram
     ConfigBuilder --> FormatterBuilder
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
+    ConfigBuilder --> SocketHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
     FileHandlerBuilder *-- FileLikeBuilderState
@@ -651,14 +659,18 @@ classDiagram
     ConfigBuilder --> TimedRotatingFileHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
+    LoggerConfigBuilder --> SocketHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
     StreamHandlerBuilder --> FormatterBuilder
+    SocketHandlerBuilder --> FormatterBuilder
     LoggerConfigBuilder --> FilterBuilder
     LoggerConfigBuilder --> "uses" FormatterBuilder
     LoggerConfigBuilder --> "references" FileHandlerBuilder
     LoggerConfigBuilder --> "references" StreamHandlerBuilder
+    LoggerConfigBuilder --> "references" SocketHandlerBuilder
     FileHandlerBuilder --> "uses" FormatterBuilder
     StreamHandlerBuilder --> "uses" FormatterBuilder
+    SocketHandlerBuilder --> "uses" FormatterBuilder
 ```
 
 **Figure 1.4:** Builder relationships and configuration flow.
