@@ -28,9 +28,17 @@ _TIMED_ROTATION_POS_ARGS: typ.Final[tuple[str, ...]] = (
     "errors",
 )
 
-_STDLIB_ONLY_SLOTS: typ.Final[frozenset[str]] = frozenset(
-    {"encoding", "delay", "errors"}
-)
+_STDLIB_ONLY_SLOTS: typ.Final[frozenset[str]] = frozenset({
+    "encoding",
+    "delay",
+    "errors",
+})
+
+_ALIAS_MAP: dict[str, str] = {
+    "filename": "path",
+    "backupCount": "backup_count",
+    "atTime": "at_time",
+}
 
 
 def _validate_stdlib_unsupported_param(name: str, value: object) -> None:
@@ -60,10 +68,7 @@ def _assign_positional_arg(
 ) -> None:
     """Assign a positional argument to kwargs_d after validation."""
     if name in kwargs_d:
-        msg = (
-            f"duplicate argument: '{name}' provided both "
-            f"positionally and as keyword"
-        )
+        msg = f"duplicate argument: '{name}' provided both positionally and as keyword"
         raise TypeError(msg)
 
     _validate_stdlib_unsupported_param(name, value)
@@ -101,23 +106,37 @@ def _unpack_positional(
 def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
     """Remap stdlib-style keyword arguments to femtologging conventions."""
     # Check for alias conflicts
-    if "path" in kwargs_d and "filename" in kwargs_d:
-        msg = "cannot specify both 'path' and 'filename'"
-        raise ValueError(msg)
-    if "backup_count" in kwargs_d and "backupCount" in kwargs_d:
-        msg = "cannot specify both 'backup_count' and 'backupCount'"
-        raise ValueError(msg)
-    if "at_time" in kwargs_d and "atTime" in kwargs_d:
-        msg = "cannot specify both 'at_time' and 'atTime'"
+    conflicts = [
+        (canon, alias)
+        for alias, canon in _ALIAS_MAP.items()
+        if alias in kwargs_d and canon in kwargs_d
+    ]
+    if conflicts:
+        canon, alias = conflicts[0]
+        msg = f"cannot specify both '{canon}' and '{alias}'"
         raise ValueError(msg)
 
     # Remap aliases
-    if "path" not in kwargs_d and "filename" in kwargs_d:
-        kwargs_d["path"] = kwargs_d.pop("filename")
-    if "backupCount" in kwargs_d and "backup_count" not in kwargs_d:
-        kwargs_d["backup_count"] = kwargs_d.pop("backupCount")
-    if "atTime" in kwargs_d and "at_time" not in kwargs_d:
-        kwargs_d["at_time"] = kwargs_d.pop("atTime")
+    for alias, canon in _ALIAS_MAP.items():
+        if canon not in kwargs_d and alias in kwargs_d:
+            kwargs_d[canon] = kwargs_d.pop(alias)
+
+
+def _extract_path_from_kwargs(
+    kwargs_d: dict[str, object], handler_config_error: type[Exception]
+) -> str:
+    """Extract path from kwargs, raising if missing."""
+    if "path" not in kwargs_d:
+        msg = "missing required 'path' argument for timed rotating handler"
+        raise handler_config_error(msg)
+    return cast(str, kwargs_d.pop("path"))
+
+
+def _strip_validate_stdlib_only_kwargs(kwargs_d: dict[str, object]) -> None:
+    """Validate and remove stdlib-only parameters from kwargs."""
+    for param_name in ("encoding", "delay", "errors"):
+        if param_name in kwargs_d:
+            _validate_stdlib_unsupported_param(param_name, kwargs_d.pop(param_name))
 
 
 def parse_timed_args(
@@ -148,34 +167,24 @@ def parse_timed_args(
 
     _remap_timed_handler_kwargs(kwargs_d)
 
-    # Extract path from positional or keyword arguments
-    if args_t:
-        if "path" in kwargs_d:
-            msg = (
-                "duplicate argument: 'path' provided both positionally and as keyword"
-            )
-            raise TypeError(msg)
-        path = _unpack_positional(args_t, kwargs_d)
-    else:
-        if "path" not in kwargs_d:
-            msg = "missing required 'path' argument for timed rotating handler"
-            raise handler_config_error(msg)
-        path = cast(str, kwargs_d.pop("path"))
-        # Validate and strip stdlib-only params from kwargs path
-        for param_name in ("encoding", "delay", "errors"):
-            if param_name in kwargs_d:
-                _validate_stdlib_unsupported_param(
-                    param_name, kwargs_d.pop(param_name)
-                )
+    if args_t and "path" in kwargs_d:
+        msg = "duplicate argument: 'path' provided both positionally and as keyword"
+        raise TypeError(msg)
 
-    # Construct TimedHandlerOptions if kwargs remain
-    timed_handler_options = getattr(rust, "TimedHandlerOptions", None)
-    if timed_handler_options is None:
-        return path, None
-
-    options = (
-        timed_handler_options(**cast("typ.Any", kwargs_d)) if kwargs_d else None
+    path = (
+        _unpack_positional(args_t, kwargs_d)
+        if args_t
+        else _extract_path_from_kwargs(kwargs_d, handler_config_error)
     )
+
+    if not args_t:
+        _strip_validate_stdlib_only_kwargs(kwargs_d)
+
+    timed_handler_options = getattr(rust, "TimedHandlerOptions", None)
+    if timed_handler_options is None or not kwargs_d:
+        return path, None
+    # kwargs_d is runtime dict from external config; typ.Any cast needed for **kwargs
+    options = timed_handler_options(**cast("typ.Any", kwargs_d))  # pyright: ignore[reportCallIssue]
     return path, options
 
 

@@ -18,6 +18,7 @@ from femtologging import (
 from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 
@@ -90,25 +91,34 @@ def _run_timed_dictconfig_rotation_test(
         poll_file_for_text(rotated, "first", timeout=1.0)
 
 
+def _args_config_factory(path: Path) -> dict[str, object]:
+    return {"args": [str(path), "S", 1, 1], "kwargs": {"utc": True}}
+
+
+def _kwargs_config_factory(path: Path) -> dict[str, object]:
+    return {
+        "kwargs": {
+            "filename": str(path),
+            "when": "MIDNIGHT",
+            "interval": 1,
+            "backupCount": 1,
+            "utc": True,
+            "atTime": dt.time(0, 0, 0, 123456),
+        }
+    }
+
+
 @pytest.mark.parametrize(
-    ("filename", "handler_config_template", "rotated_suffix"),
+    ("filename", "config_factory", "rotated_suffix"),
     [
         (
             "timed.log",
-            {"args_template": ["S", 1, 1], "kwargs": {"utc": True}},
+            _args_config_factory,
             "2026-03-12_00-00-00",
         ),
         (
             "timed_kwargs.log",
-            {
-                "kwargs": {
-                    "when": "MIDNIGHT",
-                    "interval": 1,
-                    "backupCount": 1,
-                    "utc": True,
-                    "atTime": dt.time(0, 0, 0, 123456),
-                }
-            },
+            _kwargs_config_factory,
             "2026-03-11",
         ),
     ],
@@ -117,26 +127,13 @@ def _run_timed_dictconfig_rotation_test(
 def test_dict_config_timed_rotating_handler(
     tmp_path: Path,
     filename: str,
-    handler_config_template: dict[str, object],
+    config_factory: cabc.Callable[[Path], dict[str, object]],
     rotated_suffix: str,
 ) -> None:
     """DictConfig should construct timed rotating handlers via various config styles."""
     path = tmp_path / filename
 
-    # Build handler_config with actual path
-    handler_config: dict[str, object] = {}
-    if "args_template" in handler_config_template:
-        args_template = handler_config_template["args_template"]
-        if isinstance(args_template, list):
-            handler_config["args"] = [str(path), *args_template]
-        if "kwargs" in handler_config_template:
-            handler_config["kwargs"] = handler_config_template["kwargs"]
-    else:
-        kwargs_template = handler_config_template.get("kwargs", {})
-        if isinstance(kwargs_template, dict):
-            kwargs = dict(kwargs_template)
-            kwargs["filename"] = str(path)
-            handler_config["kwargs"] = kwargs
+    handler_config = config_factory(path)
 
     _run_timed_dictconfig_rotation_test(
         tmp_path,

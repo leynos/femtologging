@@ -57,10 +57,10 @@ def _exception_wrapper(
     # Normalize falsy exc_info (None, False, 0, …) to Python False so that
     # PyO3 receives a concrete PyBool rather than Python None (which PyO3
     # maps to Rust Option::None and would trigger the auto-capture default).
-    resolved = typ.cast("typ.Any", exc_info) if exc_info else False
+    resolved = exc_info or False
     return self._exception_impl(message, exc_info=resolved, stack_info=stack_info)
 
 
-FemtoLogger.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]
+FemtoLogger.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]  # noqa: TD001, TD002, TD003  # FIXME: method assignment requires typ.Any cast to bypass type checker — revisit when PyO3 supports native method binding
 
 __all__ = ["getLogger"]
