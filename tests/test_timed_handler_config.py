@@ -79,9 +79,9 @@ def test_parse_timed_args_strips_valid_stdlib_only_kwargs(
     """Stdlib-only kwargs supplied only as keywords should be stripped."""
     path, options = parse_timed_args((), kwargs_d)
 
-    assert path == "app.log"
-    assert options is not None
-    assert name not in kwargs_d
+    assert path == "app.log", "parse_timed_args should preserve the path 'app.log'"
+    assert options is not None, "parse_timed_args should return non-None options"
+    assert name not in kwargs_d, f"expected {name!r} to be removed from kwargs_d"
 
 
 @pytest.mark.parametrize(
