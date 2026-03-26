@@ -126,20 +126,30 @@ fn midnight_schedule_is_preserved() {
 }
 
 #[rstest]
-fn new_with_mtime_seed_uses_provided_seed() {
+fn seed_rollover_from_overrides_initial_rollover() {
     let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("timed.log");
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
         .expect("hourly schedule must validate");
 
-    let seed = utc_datetime("2026-03-12T08:00:00Z");
-    let strategy = TimedFileRotationStrategy::new_with_mtime_seed(path, schedule.clone(), 1, seed);
+    let now = utc_datetime("2026-03-12T10:00:00Z");
+    let mtime = utc_datetime("2026-03-12T08:00:00Z");
+    let clock = SequenceClock::new([now]);
+    let mut strategy = TimedFileRotationStrategy::new_with_clock(path, schedule.clone(), 1, clock);
 
-    let expected = schedule.next_rollover(seed);
+    strategy.seed_rollover_from(mtime);
+
+    let expected = schedule.next_rollover(mtime);
+    let not_expected = schedule.next_rollover(now);
     assert_eq!(
         strategy.next_rollover_at(),
         expected,
-        "next_rollover_at must be seeded from provided mtime"
+        "next_rollover_at must be reseeded from mtime"
+    );
+    assert_ne!(
+        strategy.next_rollover_at(),
+        not_expected,
+        "next_rollover_at must not retain the original clock seed"
     );
 }
 

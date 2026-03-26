@@ -33,6 +33,7 @@ pub(crate) struct TimedFileRotationStrategy<C = SystemClock> {
     schedule: TimedRotationSchedule,
     backup_count: usize,
     clock: C,
+    created_at: DateTime<Utc>,
     next_rollover_at: DateTime<Utc>,
 }
 
@@ -40,11 +41,17 @@ impl TimedFileRotationStrategy<SystemClock> {
     pub(crate) fn new(path: PathBuf, schedule: TimedRotationSchedule, backup_count: usize) -> Self {
         Self::new_with_clock(path, schedule, backup_count, SystemClock)
     }
+}
 
-    pub(crate) fn new_with_mtime_seed(
+impl<C> TimedFileRotationStrategy<C>
+where
+    C: RotationClock,
+{
+    fn from_seed(
         path: PathBuf,
         schedule: TimedRotationSchedule,
         backup_count: usize,
+        clock: C,
         seed: DateTime<Utc>,
     ) -> Self {
         let next_rollover_at = schedule.next_rollover(seed);
@@ -52,31 +59,26 @@ impl TimedFileRotationStrategy<SystemClock> {
             path,
             schedule,
             backup_count,
-            clock: SystemClock,
+            clock,
+            created_at: seed,
             next_rollover_at,
         }
     }
-}
 
-impl<C> TimedFileRotationStrategy<C>
-where
-    C: RotationClock,
-{
     pub(crate) fn new_with_clock(
         path: PathBuf,
         schedule: TimedRotationSchedule,
         backup_count: usize,
         mut clock: C,
     ) -> Self {
-        let now = clock.now();
-        let next_rollover_at = schedule.next_rollover(now);
-        Self {
-            path,
-            schedule,
-            backup_count,
-            clock,
-            next_rollover_at,
-        }
+        let seed = clock.now();
+        Self::from_seed(path, schedule, backup_count, clock, seed)
+    }
+
+    /// Re-seed `next_rollover_at` from an externally determined instant
+    /// (e.g. an existing log file's modification time).
+    pub(crate) fn seed_rollover_from(&mut self, seed: DateTime<Utc>) {
+        self.next_rollover_at = self.schedule.next_rollover(seed);
     }
 
     #[cfg(test)]
@@ -310,7 +312,9 @@ impl FemtoTimedRotatingFileHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let path_ref = path.as_ref();
-        // Capture mtime before opening (which may create) the file
+        // Capture mtime before opening (which may create) the file so we
+        // can seed the first rollover from it, matching the Python stdlib
+        // TimedRotatingFileHandler contract.
         let existing_mtime = fs::metadata(path_ref)
             .and_then(|m| m.modified())
             .ok()
@@ -323,20 +327,20 @@ impl FemtoTimedRotatingFileHandler {
             .append(true)
             .open(path_ref)?;
         let writer = BufWriter::new(file);
-        let rotation_strategy = if let Some(mtime) = existing_mtime {
-            TimedFileRotationStrategy::new_with_mtime_seed(
-                path_ref.to_path_buf(),
-                rotation.schedule.clone(),
-                rotation.backup_count,
-                mtime,
-            )
-        } else {
-            TimedFileRotationStrategy::new(
-                path_ref.to_path_buf(),
-                rotation.schedule.clone(),
-                rotation.backup_count,
-            )
-        };
+        let mut rotation_strategy = TimedFileRotationStrategy::new(
+            path_ref.to_path_buf(),
+            rotation.schedule.clone(),
+            rotation.backup_count,
+        );
+        // Only apply the mtime seed when it predates the clock's "now"
+        // (which new() already consumed). A future mtime indicates a
+        // clock mismatch (e.g. injected test times vs. real filesystem)
+        // and must be ignored.
+        if let Some(mtime) = existing_mtime
+            && mtime <= rotation_strategy.created_at
+        {
+            rotation_strategy.seed_rollover_from(mtime);
+        }
         let options = BuilderOptions::<BufWriter<File>, _>::new(rotation_strategy, None);
         let handler = FemtoFileHandler::build_from_worker(writer, formatter, config, options);
         Ok(Self::new_with_schedule(
