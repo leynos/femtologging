@@ -81,4 +81,4 @@ jobs:
           format: cobertura
           cargo-manifest: rust_extension/Cargo.toml
           with-default-features: false
-          features: python
+          features: python,test-util

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import datetime as dt
 import typing as typ
 
 import pytest
 
 from femtologging import (
+    _clear_timed_rotation_test_times_for_test,
+    _has_test_util,
+    _set_timed_rotation_test_times_for_test,
     dictConfig,
     get_logger,
     reset_manager,
@@ -14,7 +19,20 @@ from femtologging import (
 from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
+
+
+@contextlib.contextmanager
+def _timed_rotation_test_clock(
+    times: list[int],
+) -> typ.Generator[None, None, None]:
+    """Context manager to set up and tear down timed rotation test clock."""
+    _set_timed_rotation_test_times_for_test(times)
+    try:
+        yield
+    finally:
+        _clear_timed_rotation_test_times_for_test()
 
 
 def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
@@ -36,6 +54,98 @@ def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:
     logger = get_logger("root")
     logger.log("INFO", "file")
     poll_file_for_text(path, "file", timeout=1.0)
+
+
+def _run_timed_dictconfig_rotation_test(
+    tmp_path: Path,
+    filename: str,
+    handler_config: dict[str, object],
+    rotated_suffix: str,
+) -> None:
+    reset_manager()
+    path = tmp_path / filename
+    # test_times: [0] = handler init time, [1] = first log (no advance, same as init),
+    # [2] = second log at +2s triggers rotation
+    test_times = [
+        int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
+        int(dt.datetime(2026, 3, 12, 0, 0, 0, tzinfo=dt.UTC).timestamp() * 1000),
+        int(dt.datetime(2026, 3, 12, 0, 0, 2, tzinfo=dt.UTC).timestamp() * 1000),
+    ]
+
+    with _timed_rotation_test_clock(test_times):
+        cfg = {
+            "version": 1,
+            "handlers": {
+                "f": {
+                    "class": "logging.handlers.TimedRotatingFileHandler",
+                    **handler_config,
+                }
+            },
+            "root": {"level": "INFO", "handlers": ["f"]},
+        }
+        dictConfig(cfg)
+        logger = get_logger("root")
+        logger.log("INFO", "first")
+        logger.log("INFO", "second")
+        poll_file_for_text(path, "second", timeout=1.0)
+        rotated = path.with_name(f"{path.name}.{rotated_suffix}")
+        poll_file_for_text(rotated, "first", timeout=1.0)
+
+
+def _args_config_factory(path: Path) -> dict[str, object]:
+    return {"args": [str(path), "S", 1, 1], "kwargs": {"utc": True}}
+
+
+def _kwargs_config_factory(path: Path) -> dict[str, object]:
+    return {
+        "kwargs": {
+            "filename": str(path),
+            "when": "MIDNIGHT",
+            "interval": 1,
+            "backupCount": 1,
+            "utc": True,
+            "atTime": dt.time(0, 0, 0, 123456),
+        }
+    }
+
+
+@pytest.mark.skipif(
+    not _has_test_util,
+    reason="requires Rust extension built with the 'test-util' feature",
+)
+@pytest.mark.parametrize(
+    ("filename", "config_factory", "rotated_suffix"),
+    [
+        (
+            "timed.log",
+            _args_config_factory,
+            "2026-03-12_00-00-00",
+        ),
+        (
+            "timed_kwargs.log",
+            _kwargs_config_factory,
+            "2026-03-11",
+        ),
+    ],
+    ids=["positional_args", "stdlib_kwargs"],
+)
+def test_dict_config_timed_rotating_handler(
+    tmp_path: Path,
+    filename: str,
+    config_factory: cabc.Callable[[Path], dict[str, object]],
+    rotated_suffix: str,
+) -> None:
+    """DictConfig should construct timed rotating handlers via various config styles."""
+    path = tmp_path / filename
+
+    handler_config = config_factory(path)
+
+    _run_timed_dictconfig_rotation_test(
+        tmp_path,
+        filename,
+        handler_config,
+        rotated_suffix,
+    )
 
 
 @pytest.mark.parametrize(

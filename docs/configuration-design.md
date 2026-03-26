@@ -19,6 +19,9 @@ programmatic and type-safe setup of the logging system.
 pub enum HandlerBuilder {
     Stream(StreamHandlerBuilder),
     File(FileHandlerBuilder),
+    Rotating(RotatingFileHandlerBuilder),
+    TimedRotating(TimedRotatingFileHandlerBuilder),
+    Socket(SocketHandlerBuilder),
 }
 
 pub enum FormatterId {
@@ -380,7 +383,9 @@ class ConfigBuilder:
         builder: Union[
             "FileHandlerBuilder",
             "RotatingFileHandlerBuilder",
+            "TimedRotatingFileHandlerBuilder",
             "StreamHandlerBuilder",
+            "SocketHandlerBuilder",
         ],
     ) -> "ConfigBuilder": ...
     def with_logger(
@@ -482,24 +487,33 @@ class SocketHandlerBuilder(HandlerBuilder):
 ### 1.3. Implemented handler builders
 
 The initial implementation provides `FileHandlerBuilder`,
-`RotatingFileHandlerBuilder`, and `StreamHandlerBuilder` as thin wrappers over
-the existing handler types. `FileHandlerBuilder` supports capacity and flush
-interval, while `RotatingFileHandlerBuilder` layers on `max_bytes` and
-`backup_count` rotation thresholds. Rotation is opt-in: both limits must be
-provided with positive values. Passing zero or negative integers raises a
-`ValueError` immediately because the PyO3 bindings reject invalid unsigned
-inputs, keeping misconfigurations obvious. When thresholds are omitted the
-handler stores `(0, 0)`, disabling rotation entirely. Mismatched pairs continue
-to raise configuration errors so invalid rollover settings fail fast. The
-`StreamHandlerBuilder` configures the stream target and capacity. All builders
-expose `build()` methods returning ready‑to‑use handlers. Advanced options such
-as file encoding or custom writers are deferred until the corresponding handler
-features are ported from picologging. The Rust implementation stores the
-configured thresholds on `FemtoRotatingFileHandler` so later work can wire in
-the rotation algorithm without changing the builder API. Internally, a shared
-`FileLikeBuilderState` keeps the queue configuration logic in one place for
-both file-based builders, reducing duplication and ensuring validation stays
-consistent.
+`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`,
+`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over
+the existing handler types.
+`FileHandlerBuilder` supports capacity and flush interval,
+`RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
+thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
+`backup_count`, `utc`, and `at_time`. Rotation is opt-in for the size-based
+builder: both limits must be provided with positive values. Passing zero raises
+a `ValueError`, while negative or out-of-range integers raise an
+`OverflowError` immediately through the PyO3 unsigned conversions, keeping
+misconfigurations obvious. When size thresholds are omitted, the handler stores
+`(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise
+configuration errors, so invalid rollover settings fail fast. The timed
+rotation builder validates its inputs eagerly: unsupported `when` values, zero
+`interval`, and `at_time` on cadences that do not use a time-of-day trigger all
+raise `ValueError`, while supplying negative or out-of-range integers for
+`interval` raises `OverflowError`. Unlike size-based rotation,
+`backup_count == 0` does not disable timed rotation; it retains all timestamped
+backups indefinitely. The `StreamHandlerBuilder` configures the stream target
+and capacity. All builders expose `build()` methods returning ready‑to‑use
+handlers. Advanced options such as file encoding or custom writers are deferred
+until the corresponding handler features are ported from picologging. The Rust
+implementation stores the configured thresholds on `FemtoRotatingFileHandler`
+so later work can wire in the rotation algorithm without changing the builder
+API. Internally, a shared `FileLikeBuilderState` keeps the queue configuration
+logic in one place for both file-based builders, reducing duplication and
+ensuring validation stays consistent.
 
 `SocketHandlerBuilder` follows the same fluent approach but focuses on
 transport concerns rather than file metadata. Callers select either a TCP
@@ -572,7 +586,11 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|StreamHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|
+            RotatingFileHandlerBuilder|
+            TimedRotatingFileHandlerBuilder|
+            StreamHandlerBuilder|
+            SocketHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -595,9 +613,33 @@ classDiagram
         +with_max_bytes(max_bytes: int)
         +with_backup_count(count: int)
     }
+    class TimedRotatingFileHandlerBuilder {
+        +__init__(path: str)
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
+        +with_when(when: str)
+        +with_interval(interval: int)
+        +with_backup_count(count: int)
+        +with_utc(utc: bool)
+        +with_at_time(at_time: datetime.time)
+    }
     class StreamHandlerBuilder {
         +stdout()
         +stderr()
+        +with_formatter(
+            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
+        )
+    }
+    class SocketHandlerBuilder {
+        +__init__()
+        +with_tcp(host: str, port: int)
+        +with_unix_path(path: str)
+        +with_connect_timeout_ms(timeout: int)
+        +with_write_timeout_ms(timeout: int)
+        +with_max_frame_size(size: int)
+        +with_tls(domain: str, insecure: bool)
+        +with_backoff(config: BackoffConfig)
         +with_formatter(
             fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
         )
@@ -611,6 +653,12 @@ classDiagram
         +with_handlers(handlers: list)
         +with_propagate(flag: bool)
     }
+    class FileLikeBuilderState {
+        +capacity
+        +flush_interval
+        +overflow_policy
+        +formatter
+    }
     class dictConfig {
         +dictConfig(config: Mapping[str, object])
     }
@@ -618,19 +666,28 @@ classDiagram
     ConfigBuilder --> FormatterBuilder
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
+    ConfigBuilder --> SocketHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
-    FileHandlerBuilder <|-- RotatingFileHandlerBuilder
+    FileHandlerBuilder *-- FileLikeBuilderState
+    RotatingFileHandlerBuilder *-- FileLikeBuilderState
+    TimedRotatingFileHandlerBuilder *-- FileLikeBuilderState
+    ConfigBuilder --> RotatingFileHandlerBuilder
+    ConfigBuilder --> TimedRotatingFileHandlerBuilder
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
+    LoggerConfigBuilder --> SocketHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
     StreamHandlerBuilder --> FormatterBuilder
+    SocketHandlerBuilder --> FormatterBuilder
     LoggerConfigBuilder --> FilterBuilder
     LoggerConfigBuilder --> "uses" FormatterBuilder
     LoggerConfigBuilder --> "references" FileHandlerBuilder
     LoggerConfigBuilder --> "references" StreamHandlerBuilder
+    LoggerConfigBuilder --> "references" SocketHandlerBuilder
     FileHandlerBuilder --> "uses" FormatterBuilder
     StreamHandlerBuilder --> "uses" FormatterBuilder
+    SocketHandlerBuilder --> "uses" FormatterBuilder
 ```
 
 **Figure 1.4:** Builder relationships and configuration flow.
@@ -768,12 +825,18 @@ components in a fixed order to honour dependencies:
    - ``"logging.handlers.RotatingFileHandler"``,
      ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
      and ``"femtologging.FemtoRotatingFileHandler"`` →
-     ``RotatingFileHandlerBuilder`` Unsupported handler classes raise
-     ``ValueError``. ``args`` and ``kwargs`` may be provided either as native
-     structures or as strings, which are safely evaluated with
-     ``ast.literal_eval``. For stream handlers, ``ext://sys.stdout`` and
-     ``ext://sys.stderr`` are accepted targets. Handler ``level`` and
-     ``filters`` settings are currently unsupported and produce ``ValueError``.
+     ``RotatingFileHandlerBuilder``
+   - ``"logging.handlers.TimedRotatingFileHandler"``,
+     ``"logging.TimedRotatingFileHandler"``,
+     ``"femtologging.TimedRotatingFileHandler"``, and
+     ``"femtologging.FemtoTimedRotatingFileHandler"`` →
+     ``TimedRotatingFileHandlerBuilder``
+     Unsupported handler classes raise ``ValueError``. ``args`` and ``kwargs``
+     may be provided either as native structures or as strings, which are
+     safely evaluated with ``ast.literal_eval``. For stream handlers,
+     ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted targets.
+     Handler ``level`` and ``filters`` settings are currently unsupported and
+     produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers``, ``filters``,
    and ``propagate`` settings. Logger and root ``filters`` values are lists of

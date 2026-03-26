@@ -10,7 +10,7 @@ use crate::{
     ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
     FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
     LoggerMutationBuilder, NameFilterBuilder, RotatingFileHandlerBuilder, RuntimeConfigBuilder,
-    SocketHandlerBuilder, StreamHandlerBuilder,
+    SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
@@ -18,6 +18,9 @@ use crate::{
             clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
         },
         socket_builder::BackoffOverrides,
+        timed_rotating::{
+            PyTimedRotatingFileHandler, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions,
+        },
     },
 };
 
@@ -45,6 +48,10 @@ pub(crate) fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "RotatingFileHandlerBuilder",
             py.get_type::<RotatingFileHandlerBuilder>(),
         ),
+        (
+            "TimedRotatingFileHandlerBuilder",
+            py.get_type::<TimedRotatingFileHandlerBuilder>(),
+        ),
         ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
         ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
         ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
@@ -70,9 +77,15 @@ pub(crate) fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoSocketHandler>()?;
     m.add_class::<FemtoHTTPHandler>()?;
     m.add_class::<PyRotatingFileHandler>()?;
+    m.add_class::<PyTimedRotatingFileHandler>()?;
     m.add_class::<HandlerOptions>()?;
+    m.add_class::<TimedHandlerOptions>()?;
     m.add_class::<BackoffOverrides>()?;
     m.add("ROTATION_VALIDATION_MSG", ROTATION_VALIDATION_MSG)?;
+    m.add(
+        "TIMED_ROTATION_VALIDATION_MSG",
+        TIMED_ROTATION_VALIDATION_MSG,
+    )?;
     Ok(())
 }
 
@@ -81,6 +94,17 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
     m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
     m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
+    #[cfg(feature = "test-util")]
+    {
+        use crate::handlers::timed_rotating::{
+            clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+        };
+        m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
+        m.add_function(wrap_pyfunction!(
+            clear_timed_rotation_test_times_for_test,
+            m
+        )?)?;
+    }
     m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::frame_filter_py::get_logging_infrastructure_patterns,
@@ -136,6 +160,7 @@ mod tests {
         register_fn: RegisterFn,
         type_names: &'static [&'static str],
         expected_rotation_validation_msg: Option<&'static str>,
+        expected_timed_rotation_validation_msg: Option<&'static str>,
     }
 
     #[fixture]
@@ -150,6 +175,7 @@ mod tests {
                 "FileHandlerBuilder",
                 "HTTPHandlerBuilder",
                 "RotatingFileHandlerBuilder",
+                "TimedRotatingFileHandlerBuilder",
                 "LevelFilterBuilder",
                 "NameFilterBuilder",
                 "FilterBuildError",
@@ -160,6 +186,7 @@ mod tests {
                 "FormatterBuilder",
             ],
             expected_rotation_validation_msg: None,
+            expected_timed_rotation_validation_msg: None,
         }
     }
 
@@ -172,11 +199,24 @@ mod tests {
                 "FemtoSocketHandler",
                 "FemtoHTTPHandler",
                 "FemtoRotatingFileHandler",
+                "FemtoTimedRotatingFileHandler",
                 "HandlerOptions",
+                "TimedHandlerOptions",
                 "BackoffConfig",
             ],
             expected_rotation_validation_msg: Some(ROTATION_VALIDATION_MSG),
+            expected_timed_rotation_validation_msg: Some(TIMED_ROTATION_VALIDATION_MSG),
         }
+    }
+
+    fn assert_string_attr(module: &Bound<'_, PyModule>, attr_name: &str, expected: &str) {
+        let attr = module
+            .getattr(attr_name)
+            .unwrap_or_else(|_| panic!("{attr_name} not found"));
+        let value: &str = attr
+            .extract()
+            .unwrap_or_else(|_| panic!("failed to extract {attr_name} as str"));
+        assert_eq!(value, expected);
     }
 
     #[rstest]
@@ -194,12 +234,11 @@ mod tests {
                 attr.cast::<PyType>()
                     .expect("attribute is not a Python type");
             }
-            if let Some(expected_message) = case_data.expected_rotation_validation_msg {
-                let message = module
-                    .getattr("ROTATION_VALIDATION_MSG")
-                    .expect("ROTATION_VALIDATION_MSG not found");
-                let value: &str = message.extract().expect("failed to extract message as str");
-                assert_eq!(value, expected_message);
+            if let Some(expected) = case_data.expected_rotation_validation_msg {
+                assert_string_attr(&module, "ROTATION_VALIDATION_MSG", expected);
+            }
+            if let Some(expected) = case_data.expected_timed_rotation_validation_msg {
+                assert_string_attr(&module, "TIMED_ROTATION_VALIDATION_MSG", expected);
             }
         });
     }

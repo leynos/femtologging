@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import typing as typ
+
 from femtologging import filter_frames
 
 from .conftest import StackPayload, make_stack_payload
@@ -145,11 +147,13 @@ def test_stack_no_filters_returns_copy() -> None:
 def test_stack_preserves_extra_keys() -> None:
     """Stack payload should preserve all keys, not just schema_version and frames."""
     payload = make_stack_payload(["a.py", "b.py"])
-    payload["thread_id"] = 12345  # type: ignore[typeddict-unknown-key]
-    payload["process_id"] = 67890  # type: ignore[typeddict-unknown-key]
-    payload["custom_field"] = "preserved"  # type: ignore[typeddict-unknown-key]
+    # Add extra fields to test preservation - cast to dict for type safety
+    payload_dict = typ.cast("dict[str, typ.Any]", payload)
+    payload_dict["thread_id"] = 12345
+    payload_dict["process_id"] = 67890
+    payload_dict["custom_field"] = "preserved"
 
-    result = filter_frames(payload, max_depth=1)
+    result = filter_frames(payload_dict, max_depth=1)
 
     assert result["thread_id"] == 12345, "thread_id should be preserved"
     assert result["process_id"] == 67890, "process_id should be preserved"

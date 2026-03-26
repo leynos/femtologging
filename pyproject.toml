@@ -90,6 +90,9 @@ select = [
 extend-ignore = [
     "D203",  # Conflicts with D211; prefer enforcing no blank line before class docstring.
     "D213",  # Conflicts with D212; keep summary on the first line.
+    "TD001", # FIXME is valid TODO tag for inline suppressions
+    "TD002", # Author not required for inline FIXME annotations
+    "TD003", # Issue link not required for inline FIXME annotations
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -148,6 +151,7 @@ python-packages = ["femtologging"]
 timeout = 30
 markers = [
     "concurrency: tests covering threaded behaviour",
+    "log_compat: tests requiring the Rust log-compat feature",
     "send_sync: tests covering Send/Sync guarantees",
 ]
 filterwarnings = [

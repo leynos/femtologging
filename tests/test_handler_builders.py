@@ -12,6 +12,7 @@ from femtologging import (
     OverflowPolicy,
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
 )
 from tests.helpers import poll_file_for_text
 
@@ -35,6 +36,20 @@ def test_with_backup_count_negative_raises(tmp_path: Path, backup_count: int) ->
 
     with pytest.raises(ValueError, match="backup"):
         builder.with_backup_count(backup_count)
+
+
+def test_timed_builder_invalid_when_raises(tmp_path: Path) -> None:
+    """Unsupported timed rotation values must be rejected."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed.log"))
+    with pytest.raises(ValueError, match="unsupported timed rotation value"):
+        builder.with_when("fortnight")
+
+
+def test_timed_builder_rejects_at_time_for_hourly(tmp_path: Path) -> None:
+    """Hour-based timed rotation should reject at_time."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed.log"))
+    with pytest.raises(ValueError, match="at_time is only supported"):
+        builder.with_at_time(__import__("datetime").time(8, 15, 0))
 
 
 @pytest.mark.parametrize(

@@ -84,7 +84,7 @@ where applicable.
   `FemtoStreamHandler`, and `FemtoFileHandler`). See
   [formatters and handlers port](./formatters-and-handlers-rust-port.md) and
   [design §3.4](./rust-multithreaded-logging-framework-for-python-design.md#34-handler-implementation-strategy).
-- [ ] 2.1.2. Complete rotating-handler coverage by adding
+- [x] 2.1.2. Complete rotating-handler coverage by adding
   `FemtoTimedRotatingFileHandler`. See
   [design §3.4](./rust-multithreaded-logging-framework-for-python-design.md#34-handler-implementation-strategy)
    and

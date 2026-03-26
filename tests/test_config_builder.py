@@ -11,6 +11,7 @@ from femtologging import (
     LoggerConfigBuilder,
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
     get_logger,
 )
 
@@ -63,6 +64,30 @@ def test_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
     assert config["handlers"]["rot"]["path"] == str(log_path)
     assert config["handlers"]["rot"]["max_bytes"] == 1024
     assert config["handlers"]["rot"]["backup_count"] == 3
+
+
+def test_timed_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
+    """ConfigBuilder should accept timed rotating file handler builders."""
+    builder = ConfigBuilder()
+    log_path = tmp_path / "timed.log"
+    use_utc = True
+    timed = (
+        TimedRotatingFileHandlerBuilder(str(log_path))
+        .with_when("MIDNIGHT")
+        .with_interval(2)
+        .with_backup_count(4)
+        .with_utc(use_utc)
+    )
+    builder.with_handler("timed", timed)
+    builder.with_root_logger(LoggerConfigBuilder().with_handlers(["timed"]))
+
+    builder.build_and_init()
+    config = builder.as_dict()
+    assert config["handlers"]["timed"]["path"] == str(log_path)
+    assert config["handlers"]["timed"]["when"] == "MIDNIGHT"
+    assert config["handlers"]["timed"]["interval"] == 2
+    assert config["handlers"]["timed"]["backup_count"] == 4
+    assert config["handlers"]["timed"]["utc"] is True
 
 
 def test_duplicate_logger_overwrites() -> None:
@@ -229,5 +254,8 @@ def test_builder_symbols_exposed_publicly() -> None:
     assert femtologging.FormatterBuilder is FormatterBuilder
     assert femtologging.StreamHandlerBuilder is StreamHandlerBuilder
     assert femtologging.RotatingFileHandlerBuilder is RotatingFileHandlerBuilder
+    assert (
+        femtologging.TimedRotatingFileHandlerBuilder is TimedRotatingFileHandlerBuilder
+    )
     assert config_module.ConfigBuilder is ConfigBuilder
     assert config_module.LoggerConfigBuilder is LoggerConfigBuilder

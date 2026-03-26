@@ -25,6 +25,12 @@ import collections.abc as cabc
 import typing as typ
 
 from . import _femtologging_rs as rust
+
+# Re-export BasicConfig, basicConfig, and fileConfig for backward compatibility
+# (these are also available from the top-level femtologging package)
+from ._basic_config import BasicConfig, basicConfig
+from ._timed_handler_config import parse_timed_args
+from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
 
 Callable = cabc.Callable
@@ -45,6 +51,7 @@ SocketHandlerBuilder = rust.SocketHandlerBuilder
 BackoffConfig = getattr(rust, "BackoffConfig", None)
 FileHandlerBuilder = rust.FileHandlerBuilder
 RotatingFileHandlerBuilder = rust.RotatingFileHandlerBuilder
+TimedRotatingFileHandlerBuilder = rust.TimedRotatingFileHandlerBuilder
 ConfigBuilder = rust.ConfigBuilder
 LoggerConfigBuilder = rust.LoggerConfigBuilder
 FormatterBuilder = rust.FormatterBuilder
@@ -64,6 +71,10 @@ _HANDLER_CLASS_MAP: typ.Final[dict[str, object]] = {
     "logging.RotatingFileHandler": RotatingFileHandlerBuilder,
     "femtologging.RotatingFileHandler": RotatingFileHandlerBuilder,
     "femtologging.FemtoRotatingFileHandler": RotatingFileHandlerBuilder,
+    "logging.handlers.TimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
+    "logging.TimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
+    "femtologging.TimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
+    "femtologging.FemtoTimedRotatingFileHandler": TimedRotatingFileHandlerBuilder,
 }
 
 
@@ -191,6 +202,9 @@ def _create_handler_instance(
     try:
         args_t = tuple(args)
         kwargs_d = dict(kwargs)
+        if builder_cls is TimedRotatingFileHandlerBuilder:
+            path, options = parse_timed_args(args_t, kwargs_d)
+            return cast("Any", builder_cls)(path, options)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"
@@ -385,6 +399,7 @@ def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
 
 
 __all__ = [
+    "BasicConfig",
     "ConfigBuilder",
     "FileHandlerBuilder",
     "FormatterBuilder",
@@ -395,5 +410,8 @@ __all__ = [
     "RotatingFileHandlerBuilder",
     "SocketHandlerBuilder",
     "StreamHandlerBuilder",
+    "TimedRotatingFileHandlerBuilder",
+    "basicConfig",
     "dictConfig",
+    "fileConfig",
 ]

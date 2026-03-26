@@ -30,7 +30,10 @@ import typing as typ
 
 from ._femtologging_rs import FemtoLogger, get_logger
 
-_MISSING: object = object()
+if typ.TYPE_CHECKING:
+    from ._femtologging_rs import ExcInfo
+
+_MISSING = typ.cast("ExcInfo", object())
 
 getLogger = get_logger  # noqa: N816  # TODO(#343): camelCase alias for stdlib compat
 
@@ -40,7 +43,7 @@ def _exception_wrapper(
     message: str,
     /,
     *,
-    exc_info: object = _MISSING,
+    exc_info: ExcInfo = _MISSING,
     stack_info: bool = False,
 ) -> str | None:
     """Log at ERROR level, defaulting ``exc_info`` to ``True`` when omitted.
@@ -54,10 +57,10 @@ def _exception_wrapper(
     # Normalize falsy exc_info (None, False, 0, …) to Python False so that
     # PyO3 receives a concrete PyBool rather than Python None (which PyO3
     # maps to Rust Option::None and would trigger the auto-capture default).
-    resolved = typ.cast("typ.Any", exc_info) if exc_info else False
+    resolved = exc_info or False
     return self._exception_impl(message, exc_info=resolved, stack_info=stack_info)
 
 
-FemtoLogger.exception = _exception_wrapper  # type: ignore[assignment,method-assign]
+FemtoLogger.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]  # FIXME: method assignment requires typ.Any cast to bypass type checker — revisit when PyO3 supports native method binding
 
 __all__ = ["getLogger"]

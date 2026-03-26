@@ -56,6 +56,20 @@
     'target': 'stdout',
   })
 # ---
+# name: test_build_timed_rotating_file_handler_builder
+  dict({
+    'at_time': '06:30:00',
+    'backup_count': 5,
+    'capacity': 10,
+    'flush_after_records': 2,
+    'formatter': 'default',
+    'interval': 3,
+    'overflow_policy': 'drop',
+    'path': 'test.log',
+    'utc': True,
+    'when': 'MIDNIGHT',
+  })
+# ---
 # name: test_dictconfig_rotating_file_handler_builder
   dict({
     'backup_count': 5,
@@ -65,6 +79,16 @@
     'max_bytes': 1024,
     'overflow_policy': 'drop',
     'path': 'test.log',
+  })
+# ---
+# name: test_dictconfig_timed_rotating_file_handler_builder
+  dict({
+    'backup_count': 7,
+    'interval': 1,
+    'overflow_policy': 'drop',
+    'path': 'test.log',
+    'utc': False,
+    'when': 'W4',
   })
 # ---
 # name: test_file_handler_builder_with_timeout_overflow_policy

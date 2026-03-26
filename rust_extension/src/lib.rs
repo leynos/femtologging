@@ -88,15 +88,16 @@ pub use exception_schema::{
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
 pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
-#[cfg(feature = "python")]
-pub use handlers::HandlerOptions;
 /// Re-export handler builders and errors.
 pub use handlers::{
-    FemtoRotatingFileHandler, FileHandlerBuilder, HTTPHandlerBuilder, HandlerBuilderTrait,
-    HandlerConfigError, HandlerIOError, RotatingFileHandlerBuilder, SocketHandlerBuilder,
-    StreamHandlerBuilder,
+    FemtoRotatingFileHandler, FemtoTimedRotatingFileHandler, FileHandlerBuilder,
+    HTTPHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
+    RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
 };
+#[cfg(feature = "python")]
+pub use handlers::{HandlerOptions, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};
 /// Re-export HTTP handler types.
 pub use http_handler::{
     AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,

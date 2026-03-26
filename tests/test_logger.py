@@ -245,10 +245,10 @@ def test_log_with_invalid_exc_info_type() -> None:
     logger = FemtoLogger("core")
 
     with pytest.raises(TypeError, match="exc_info"):
-        logger.log("ERROR", "bad exc_info", exc_info="bad")  # type: ignore[arg-type]
+        logger.log("ERROR", "bad exc_info", exc_info=typ.cast("typ.Any", "bad"))
 
     with pytest.raises(TypeError, match="exc_info"):
-        logger.log("ERROR", "bad exc_info", exc_info=123)  # type: ignore[arg-type]
+        logger.log("ERROR", "bad exc_info", exc_info=typ.cast("typ.Any", 123))
 
 
 def test_log_with_exc_info_false_and_none() -> None:
@@ -441,7 +441,7 @@ def test_handler_gains_handle_record_after_registration() -> None:
     def late_handle_record(record: dict[str, typ.Any]) -> None:
         handler.handle_record_calls.append(record)
 
-    handler.handle_record = late_handle_record  # type: ignore[attr-defined]
+    setattr(handler, "handle_record", late_handle_record)  # noqa: B010  # FIXME: dynamic setattr needed to test frozen dispatch — MutableHandler has no handle_record attribute
 
     # Log a message
     logger.log("INFO", "test message")
@@ -474,7 +474,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     def initial_handle_record(record: dict[str, typ.Any]) -> None:
         handler.handle_record_calls.append(record)
 
-    handler.handle_record = initial_handle_record  # type: ignore[attr-defined]
+    setattr(handler, "handle_record", initial_handle_record)  # noqa: B010  # FIXME: dynamic setattr needed to register handle_record before add_handler call
 
     # Register with handle_record present - this freezes the dispatch path
     logger.add_handler(handler)
@@ -483,7 +483,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     def replacement_handle_record(record: dict[str, typ.Any]) -> None:
         handler.handle_record_calls.append(record)
 
-    handler.handle_record = replacement_handle_record  # type: ignore[attr-defined]
+    setattr(handler, "handle_record", replacement_handle_record)  # noqa: B010  # FIXME: dynamic setattr needed to replace handle_record after registration to test frozen dispatch
 
     # Log a message
     logger.log("INFO", "test message")
@@ -543,7 +543,7 @@ def test_exc_info_no_deprecation_warning(
         mod = types.ModuleType("custom_mod")
         monkeypatch.setitem(sys.modules, "custom_mod", mod)
         custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
-        mod.CustomError = custom_cls  # type: ignore[attr-defined]
+        setattr(mod, "CustomError", custom_cls)  # noqa: B010  # FIXME: dynamic setattr required to attach custom exception class to a synthetic module
         exc = custom_cls("module check")
         output = logger.log("ERROR", "caught", exc_info=exc)
         assert output is not None, "exc_info with custom module should produce output"

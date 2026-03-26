@@ -27,6 +27,7 @@ ini = { package = "rust-ini", version = "0.21.3" }
 ureq = { version = "2.9", features = ["native-tls"] }
 percent-encoding = "2.3"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [features]
 default = ["extension-module", "python", "log-compat"]
@@ -45,3 +46,4 @@ itertools = "0.10"
 serial_test = "2"
 _femtologging_rs = { path = ".", package = "femtologging_rs", default-features = false, features = ["test-util"] }
 static_assertions = "1"
+filetime = "0.2"

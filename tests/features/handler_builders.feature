@@ -71,6 +71,33 @@ Feature: Handler builders
     When I set backup count 2
     Then building the rotating file handler fails with "max_bytes must be provided when backup_count is set"
 
+  Scenario: build timed rotating file handler builder
+    Given a TimedRotatingFileHandlerBuilder for path "test.log"
+    When I set file capacity 10
+    And I set flush after records 2
+    And I set timed rotation when "MIDNIGHT"
+    And I set timed rotation interval 3
+    And I set timed rotation backup count 5
+    And I enable timed rotation UTC mode
+    And I set timed rotation at time "06:30:00"
+    And I set file formatter "default"
+    Then the timed rotating file handler builder matches snapshot
+
+  Scenario: dictConfig timed rotating file handler builder
+    Given a dictConfig TimedRotatingFileHandlerBuilder for path "test.log"
+    When I set timed rotation when "W4"
+    And I set timed rotation interval 1
+    And I set timed rotation backup count 7
+    Then the timed rotating file handler builder matches snapshot
+
+  Scenario: invalid timed rotation when value
+    Given a TimedRotatingFileHandlerBuilder for path "test.log"
+    Then setting timed rotation when "fortnight" fails with "unsupported timed rotation value: fortnight"
+
+  Scenario: invalid timed rotation at_time for hourly rotation
+    Given a TimedRotatingFileHandlerBuilder for path "test.log"
+    Then setting timed rotation at time "08:15:00" fails with "at_time is only supported for daily, midnight, and weekday rotation (got H)"
+
   Scenario: build stream handler builder
     Given a StreamHandlerBuilder targeting stdout
     When I set stream capacity 8
