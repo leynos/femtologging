@@ -497,7 +497,8 @@ misconfigurations obvious. When size thresholds are omitted, the handler stores
 configuration errors, so invalid rollover settings fail fast. The timed
 rotation builder validates its inputs eagerly: unsupported `when` values, zero
 `interval`, and `at_time` on cadences that do not use a time-of-day trigger all
-raise `ValueError` at setter time. Unlike size-based rotation,
+raise `ValueError`, while supplying negative or out-of-range integers for
+`interval` raises `OverflowError`. Unlike size-based rotation,
 `backup_count == 0` does not disable timed rotation; it retains all timestamped
 backups indefinitely. The `StreamHandlerBuilder` configures the stream target
 and capacity. All builders expose `build()` methods returning ready‑to‑use
@@ -580,7 +581,11 @@ classDiagram
         +with_disable_existing_loggers(flag: bool)
         +with_formatter(id: str, builder: FormatterBuilder)
         +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|RotatingFileHandlerBuilder|TimedRotatingFileHandlerBuilder|StreamHandlerBuilder|SocketHandlerBuilder)
+        +with_handler(id: str, builder: FileHandlerBuilder|
+            RotatingFileHandlerBuilder|
+            TimedRotatingFileHandlerBuilder|
+            StreamHandlerBuilder|
+            SocketHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()

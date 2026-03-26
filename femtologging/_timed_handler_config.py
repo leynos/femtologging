@@ -49,13 +49,15 @@ def _validate_stdlib_unsupported_param(name: str, value: object) -> None:
         raise ValueError(msg)
 
 
-def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
-    """Remap stdlib-style keyword arguments to femtologging conventions."""
-    # Check for alias conflicts
+def _check_alias_conflict(
+    kwargs_d: dict[str, object],
+    alias_map: dict[str, str],
+) -> None:
+    """Check for conflicts between aliased and canonical parameter names."""
     conflict = next(
         (
             (canon, alias)
-            for alias, canon in _ALIAS_MAP.items()
+            for alias, canon in alias_map.items()
             if alias in kwargs_d and canon in kwargs_d
         ),
         None,
@@ -65,15 +67,20 @@ def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
         msg = f"cannot specify both '{canon}' and '{alias}'"
         raise ValueError(msg)
 
+
+def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
+    """Remap stdlib-style keyword arguments to femtologging conventions."""
+    _check_alias_conflict(kwargs_d, _ALIAS_MAP)
+
     # Remap aliases
     for alias, canon in _ALIAS_MAP.items():
         if canon not in kwargs_d and alias in kwargs_d:
             kwargs_d[canon] = kwargs_d.pop(alias)
 
-    # Validate unsupported stdlib kwargs
+    # Validate and strip unsupported stdlib kwargs
     for name in _STDLIB_ONLY_SLOTS:
         if name in kwargs_d:
-            _validate_stdlib_unsupported_param(name, kwargs_d[name])
+            _validate_stdlib_unsupported_param(name, kwargs_d.pop(name))
 
 
 def _unpack_positional(
@@ -167,6 +174,10 @@ def parse_timed_args(
         # Enforce presence of 'path'
         if "path" not in kwargs_d:
             msg = "missing required 'path' argument for timed rotating handler"
+            raise handler_config_error(msg)
+        # Validate path type
+        if not isinstance(kwargs_d.get("path"), str):
+            msg = "'path' argument must be a string"
             raise handler_config_error(msg)
         path = cast(str, kwargs_d.pop("path"))
 

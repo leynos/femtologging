@@ -320,7 +320,8 @@ impl FemtoTimedRotatingFileHandler {
             .ok()
             .and_then(|st| {
                 let d = st.duration_since(SystemTime::UNIX_EPOCH).ok()?;
-                DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
+                let secs = i64::try_from(d.as_secs()).ok()?;
+                DateTime::from_timestamp(secs, d.subsec_nanos())
             });
         let file = OpenOptions::new()
             .create(true)
