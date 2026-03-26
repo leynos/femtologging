@@ -9,6 +9,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use chrono::{DateTime, Utc};
@@ -39,6 +40,22 @@ impl TimedFileRotationStrategy<SystemClock> {
     pub(crate) fn new(path: PathBuf, schedule: TimedRotationSchedule, backup_count: usize) -> Self {
         Self::new_with_clock(path, schedule, backup_count, SystemClock)
     }
+
+    pub(crate) fn new_with_mtime_seed(
+        path: PathBuf,
+        schedule: TimedRotationSchedule,
+        backup_count: usize,
+        seed: DateTime<Utc>,
+    ) -> Self {
+        let next_rollover_at = schedule.next_rollover(seed);
+        Self {
+            path,
+            schedule,
+            backup_count,
+            clock: SystemClock,
+            next_rollover_at,
+        }
+    }
 }
 
 impl<C> TimedFileRotationStrategy<C>
@@ -60,6 +77,11 @@ where
             clock,
             next_rollover_at,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn next_rollover_at(&self) -> DateTime<Utc> {
+        self.next_rollover_at
     }
 
     fn rotate(
@@ -99,7 +121,14 @@ where
                 // rollback so that the handler remains usable even if the
                 // rename also fails.
                 *writer = BufWriter::with_capacity(capacity, original_file);
-                let _ = fs::rename(&rotated_path, &self.path);
+                if let Err(rollback_err) = fs::rename(&rotated_path, &self.path) {
+                    return Err(io::Error::new(
+                        err.kind(),
+                        format!(
+                            "failed to open fresh writer: {err}; rollback rename also failed: {rollback_err}"
+                        ),
+                    ));
+                }
                 Err(err)
             }
         }
@@ -281,16 +310,33 @@ impl FemtoTimedRotatingFileHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let path_ref = path.as_ref();
+        // Capture mtime before opening (which may create) the file
+        let existing_mtime = fs::metadata(path_ref)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|st| {
+                let d = st.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+                DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
+            });
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(path_ref)?;
         let writer = BufWriter::new(file);
-        let rotation_strategy = TimedFileRotationStrategy::new(
-            path_ref.to_path_buf(),
-            rotation.schedule.clone(),
-            rotation.backup_count,
-        );
+        let rotation_strategy = if let Some(mtime) = existing_mtime {
+            TimedFileRotationStrategy::new_with_mtime_seed(
+                path_ref.to_path_buf(),
+                rotation.schedule.clone(),
+                rotation.backup_count,
+                mtime,
+            )
+        } else {
+            TimedFileRotationStrategy::new(
+                path_ref.to_path_buf(),
+                rotation.schedule.clone(),
+                rotation.backup_count,
+            )
+        };
         let options = BuilderOptions::<BufWriter<File>, _>::new(rotation_strategy, None);
         let handler = FemtoFileHandler::build_from_worker(writer, formatter, config, options);
         Ok(Self::new_with_schedule(

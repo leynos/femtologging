@@ -46,3 +46,4 @@ itertools = "0.10"
 serial_test = "2"
 _femtologging_rs = { path = ".", package = "femtologging_rs", default-features = false, features = ["test-util"] }
 static_assertions = "1"
+filetime = "0.2"

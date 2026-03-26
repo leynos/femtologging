@@ -17,7 +17,33 @@ use super::schedule::TimedRotationSchedule;
 use super::test_helpers::utc_datetime;
 
 #[rstest]
-fn rotates_and_prunes_backups() {
+#[case::prunes_with_backup_count_1(
+    1,
+    true,
+    false,
+    true,
+    "non-rotated siblings must not be pruned as backups",
+    "oldest timed backup must be pruned",
+    "most recent timed backup must remain"
+)]
+#[case::retains_all_with_backup_count_0(
+    0,
+    false,
+    true,
+    true,
+    "",
+    "first timed backup must be retained when backup_count is zero",
+    "second timed backup must be retained when backup_count is zero"
+)]
+fn rotation_and_pruning_behavior(
+    #[case] backup_count: usize,
+    #[case] create_notes_file: bool,
+    #[case] expect_oldest_exists: bool,
+    #[case] expect_recent_exists: bool,
+    #[case] notes_assertion_msg: &str,
+    #[case] oldest_assertion_msg: &str,
+    #[case] recent_assertion_msg: &str,
+) {
     let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("timed.log");
     let notes_path = dir.path().join("timed.log.notes");
@@ -30,7 +56,8 @@ fn rotates_and_prunes_backups() {
         start + Duration::seconds(2),
         start + Duration::seconds(4),
     ]);
-    let mut strategy = TimedFileRotationStrategy::new_with_clock(path.clone(), schedule, 1, clock);
+    let mut strategy =
+        TimedFileRotationStrategy::new_with_clock(path.clone(), schedule, backup_count, clock);
     let mut writer = BufWriter::new(
         OpenOptions::new()
             .create(true)
@@ -53,7 +80,9 @@ fn rotates_and_prunes_backups() {
         .expect("second record must be written");
     writer.flush().expect("second flush must succeed");
 
-    fs::write(&notes_path, "keep me").expect("sibling file must be created");
+    if create_notes_file {
+        fs::write(&notes_path, "keep me").expect("sibling file must be created");
+    }
 
     RotationStrategy::before_write(&mut strategy, &mut writer, "third")
         .expect("second rotation must succeed");
@@ -62,75 +91,22 @@ fn rotates_and_prunes_backups() {
         .expect("third record must be written");
     writer.flush().expect("third flush must succeed");
 
-    assert!(
-        notes_path.exists(),
-        "non-rotated siblings must not be pruned as backups",
-    );
-    assert!(
-        !path
-            .with_file_name("timed.log.2026-03-12_00-00-00")
-            .exists(),
-        "oldest timed backup must be pruned",
-    );
-    assert!(
-        path.with_file_name("timed.log.2026-03-12_00-00-02")
-            .exists(),
-        "most recent timed backup must remain",
-    );
-}
+    if create_notes_file {
+        assert!(notes_path.exists(), "{notes_assertion_msg}");
+    }
 
-#[rstest]
-fn retains_all_backups_when_backup_count_is_zero() {
-    let dir = tempdir().expect("tempdir must create a temporary directory");
-    let path = dir.path().join("timed.log");
-    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
-        .expect("seconds schedule must validate");
-    let start = utc_datetime("2026-03-12T00:00:00Z");
-    let clock = SequenceClock::new([
-        start,
-        start,
-        start + Duration::seconds(2),
-        start + Duration::seconds(4),
-    ]);
-    let mut strategy = TimedFileRotationStrategy::new_with_clock(path.clone(), schedule, 0, clock);
-    let mut writer = BufWriter::new(
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .expect("log file must open"),
+    let oldest_path = path.with_file_name("timed.log.2026-03-12_00-00-00");
+    assert_eq!(
+        oldest_path.exists(),
+        expect_oldest_exists,
+        "{oldest_assertion_msg}"
     );
 
-    RotationStrategy::before_write(&mut strategy, &mut writer, "first")
-        .expect("initial rollover check must succeed");
-    writer
-        .write_all(b"first\n")
-        .expect("first record must be written");
-    writer.flush().expect("first flush must succeed");
-
-    RotationStrategy::before_write(&mut strategy, &mut writer, "second")
-        .expect("first rotation must succeed");
-    writer
-        .write_all(b"second\n")
-        .expect("second record must be written");
-    writer.flush().expect("second flush must succeed");
-
-    RotationStrategy::before_write(&mut strategy, &mut writer, "third")
-        .expect("second rotation must succeed");
-    writer
-        .write_all(b"third\n")
-        .expect("third record must be written");
-    writer.flush().expect("third flush must succeed");
-
-    assert!(
-        path.with_file_name("timed.log.2026-03-12_00-00-00")
-            .exists(),
-        "first timed backup must be retained when backup_count is zero",
-    );
-    assert!(
-        path.with_file_name("timed.log.2026-03-12_00-00-02")
-            .exists(),
-        "second timed backup must be retained when backup_count is zero",
+    let recent_path = path.with_file_name("timed.log.2026-03-12_00-00-02");
+    assert_eq!(
+        recent_path.exists(),
+        expect_recent_exists,
+        "{recent_assertion_msg}"
     );
 }
 
@@ -147,4 +123,41 @@ fn midnight_schedule_is_preserved() {
     let next = schedule.next_rollover(utc_datetime("2026-03-11T23:59:59Z"));
 
     assert_eq!(next, utc_datetime("2026-03-12T00:00:00Z"));
+}
+
+#[rstest]
+fn new_with_mtime_seed_uses_provided_seed() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
+    let path = dir.path().join("timed.log");
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
+        .expect("hourly schedule must validate");
+
+    let seed = utc_datetime("2026-03-12T08:00:00Z");
+    let strategy = TimedFileRotationStrategy::new_with_mtime_seed(path, schedule.clone(), 1, seed);
+
+    let expected = schedule.next_rollover(seed);
+    assert_eq!(
+        strategy.next_rollover_at(),
+        expected,
+        "next_rollover_at must be seeded from provided mtime"
+    );
+}
+
+#[rstest]
+fn new_with_clock_uses_clock_time() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
+    let path = dir.path().join("timed.log");
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
+        .expect("hourly schedule must validate");
+
+    let now = utc_datetime("2026-03-12T10:00:00Z");
+    let clock = SequenceClock::new([now]);
+    let strategy = TimedFileRotationStrategy::new_with_clock(path, schedule.clone(), 1, clock);
+
+    let expected = schedule.next_rollover(now);
+    assert_eq!(
+        strategy.next_rollover_at(),
+        expected,
+        "next_rollover_at must be seeded from clock.now()"
+    );
 }

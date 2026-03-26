@@ -41,7 +41,7 @@ def _make_rotating_fresh_failure_hooks(
     def _force(count: int, reason: str | None = None) -> None:
         msg = (
             "rotating fresh-failure hook requires the extension built with the "
-            "'python' feature"
+            "'test-util' feature"
         )
         raise RuntimeError(msg)
 
@@ -101,7 +101,7 @@ def _make_runtime_attachment_state(
         del name
         msg = (
             "runtime attachment state requires the extension built with the "
-            "'python' feature"
+            "'test-util' feature"
         )
         raise RuntimeError(msg)
 
