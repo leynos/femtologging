@@ -49,33 +49,28 @@ def _validate_stdlib_unsupported_param(name: str, value: object) -> None:
         raise ValueError(msg)
 
 
-def _validate_path_arg(args_t: tuple[object, ...]) -> str:
-    """Extract and validate the path argument from positional args."""
-    if not args_t:
-        msg = "expected at least one positional argument 'path'"
-        raise TypeError(msg)
-    if not isinstance(args_t[0], str):
-        msg = (
-            f"expected first positional argument 'path' to be str, "
-            f"got {type(args_t[0]).__name__}"
-        )
-        raise TypeError(msg)
-    return args_t[0]
+def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
+    """Remap stdlib-style keyword arguments to femtologging conventions."""
+    # Check for alias conflicts
+    conflict = next(
+        ((canon, alias) for alias, canon in _ALIAS_MAP.items()
+         if alias in kwargs_d and canon in kwargs_d),
+        None
+    )
+    if conflict:
+        canon, alias = conflict
+        msg = f"cannot specify both '{canon}' and '{alias}'"
+        raise ValueError(msg)
 
+    # Remap aliases
+    for alias, canon in _ALIAS_MAP.items():
+        if canon not in kwargs_d and alias in kwargs_d:
+            kwargs_d[canon] = kwargs_d.pop(alias)
 
-def _assign_positional_arg(
-    name: str, value: object, kwargs_d: dict[str, object]
-) -> None:
-    """Assign a positional argument to kwargs_d after validation."""
-    if name in kwargs_d:
-        msg = f"duplicate argument: '{name}' provided both positionally and as keyword"
-        raise TypeError(msg)
-
-    _validate_stdlib_unsupported_param(name, value)
-
-    # Skip stdlib-only slots - validate but don't forward
-    if name not in _STDLIB_ONLY_SLOTS:
-        kwargs_d[name] = value
+    # Validate unsupported stdlib kwargs
+    for name in _STDLIB_ONLY_SLOTS:
+        if name in kwargs_d:
+            _validate_stdlib_unsupported_param(name, kwargs_d[name])
 
 
 def _unpack_positional(
@@ -87,8 +82,22 @@ def _unpack_positional(
     Returns the path extracted from the first positional argument.
     Validates stdlib-compatible positional args and rejects unsupported features.
     """
-    path = _validate_path_arg(args_t)
+    # Guard: missing path
+    if not args_t:
+        msg = "expected at least one positional argument 'path'"
+        raise TypeError(msg)
 
+    # Guard: non-str path
+    if not isinstance(args_t[0], str):
+        msg = (
+            f"expected first positional argument 'path' to be str, "
+            f"got {type(args_t[0]).__name__}"
+        )
+        raise TypeError(msg)
+
+    path = args_t[0]
+
+    # Guard: too many args
     if len(args_t) > len(_TIMED_ROTATION_POS_ARGS) + 1:  # +1 for path
         max_args = len(_TIMED_ROTATION_POS_ARGS) + 1
         msg = (
@@ -97,50 +106,24 @@ def _unpack_positional(
         )
         raise TypeError(msg)
 
+    # Process remaining positional args
     for name, value in zip(_TIMED_ROTATION_POS_ARGS, args_t[1:], strict=False):
-        _assign_positional_arg(name, value, kwargs_d)
+        # Check for duplicate
+        if name in kwargs_d:
+            msg = (
+                f"duplicate argument: '{name}' provided both positionally "
+                f"and as keyword"
+            )
+            raise TypeError(msg)
+
+        # Validate stdlib param
+        _validate_stdlib_unsupported_param(name, value)
+
+        # Skip stdlib-only slots - validate but don't forward
+        if name not in _STDLIB_ONLY_SLOTS:
+            kwargs_d[name] = value
 
     return path
-
-
-def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
-    """Remap stdlib-style keyword arguments to femtologging conventions."""
-    # Check for alias conflicts
-    conflicts = [
-        (canon, alias)
-        for alias, canon in _ALIAS_MAP.items()
-        if alias in kwargs_d and canon in kwargs_d
-    ]
-    if conflicts:
-        canon, alias = conflicts[0]
-        msg = f"cannot specify both '{canon}' and '{alias}'"
-        raise ValueError(msg)
-
-    # Remap aliases
-    for alias, canon in _ALIAS_MAP.items():
-        if canon not in kwargs_d and alias in kwargs_d:
-            kwargs_d[canon] = kwargs_d.pop(alias)
-
-
-def _extract_path_from_kwargs(
-    kwargs_d: dict[str, object], handler_config_error: type[Exception]
-) -> str:
-    """Extract path from kwargs, raising if missing or invalid type."""
-    if "path" not in kwargs_d:
-        msg = "missing required 'path' argument for timed rotating handler"
-        raise handler_config_error(msg)
-    val = kwargs_d["path"]
-    if not isinstance(val, str):
-        msg = f"invalid type for 'path': expected str, got {type(val).__name__}"
-        raise handler_config_error(msg)
-    return cast(str, kwargs_d.pop("path"))
-
-
-def _strip_validate_stdlib_only_kwargs(kwargs_d: dict[str, object]) -> None:
-    """Validate and remove stdlib-only parameters from kwargs."""
-    for param_name in _STDLIB_ONLY_SLOTS:
-        if param_name in kwargs_d:
-            _validate_stdlib_unsupported_param(param_name, kwargs_d.pop(param_name))
 
 
 def parse_timed_args(
@@ -175,13 +158,19 @@ def parse_timed_args(
         msg = "duplicate argument: 'path' provided both positionally and as keyword"
         raise TypeError(msg)
 
-    path = (
-        _unpack_positional(args_t, kwargs_d)
-        if args_t
-        else _extract_path_from_kwargs(kwargs_d, handler_config_error)
-    )
+    if args_t:
+        path = _unpack_positional(args_t, kwargs_d)
+    else:
+        # Enforce presence of 'path'
+        if "path" not in kwargs_d:
+            msg = "missing required 'path' argument for timed rotating handler"
+            raise handler_config_error(msg)
+        path = cast(str, kwargs_d.pop("path"))
 
-    _strip_validate_stdlib_only_kwargs(kwargs_d)
+        # Validate and strip stdlib-only params from kwargs path
+        for name in _STDLIB_ONLY_SLOTS:
+            if name in kwargs_d:
+                _validate_stdlib_unsupported_param(name, kwargs_d.pop(name))
 
     timed_handler_options = getattr(rust, "TimedHandlerOptions", None)
     if timed_handler_options is None or not kwargs_d:
