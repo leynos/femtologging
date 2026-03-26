@@ -53,9 +53,12 @@ def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
     """Remap stdlib-style keyword arguments to femtologging conventions."""
     # Check for alias conflicts
     conflict = next(
-        ((canon, alias) for alias, canon in _ALIAS_MAP.items()
-         if alias in kwargs_d and canon in kwargs_d),
-        None
+        (
+            (canon, alias)
+            for alias, canon in _ALIAS_MAP.items()
+            if alias in kwargs_d and canon in kwargs_d
+        ),
+        None,
     )
     if conflict:
         canon, alias = conflict

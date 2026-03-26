@@ -482,8 +482,9 @@ class SocketHandlerBuilder(HandlerBuilder):
 ### 1.3. Implemented handler builders
 
 The initial implementation provides `FileHandlerBuilder`,
-`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`, and
-`StreamHandlerBuilder` as thin wrappers over the existing handler types.
+`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`,
+`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over
+the existing handler types.
 `FileHandlerBuilder` supports capacity and flush interval,
 `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
 thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
@@ -621,8 +622,14 @@ classDiagram
         )
     }
     class SocketHandlerBuilder {
-        +with_host(host: str)
-        +with_port(port: int)
+        +__init__()
+        +with_tcp(host: str, port: int)
+        +with_unix_path(path: str)
+        +with_connect_timeout_ms(timeout: int)
+        +with_write_timeout_ms(timeout: int)
+        +with_max_frame_size(size: int)
+        +with_tls(domain: str, insecure: bool)
+        +with_backoff(config: BackoffConfig)
         +with_formatter(
             fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
         )
