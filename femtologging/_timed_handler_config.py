@@ -77,10 +77,13 @@ def _remap_timed_handler_kwargs(kwargs_d: dict[str, object]) -> None:
         if canon not in kwargs_d and alias in kwargs_d:
             kwargs_d[canon] = kwargs_d.pop(alias)
 
-    # Validate and strip unsupported stdlib kwargs
+
+def _validate_and_strip_stdlib_only_kwargs(kwargs_d: dict[str, object]) -> None:
+    """Validate stdlib-only keyword defaults, then remove them before binding."""
     for name in _STDLIB_ONLY_SLOTS:
         if name in kwargs_d:
-            _validate_stdlib_unsupported_param(name, kwargs_d.pop(name))
+            _validate_stdlib_unsupported_param(name, kwargs_d[name])
+            kwargs_d.pop(name)
 
 
 def _unpack_positional(
@@ -181,10 +184,7 @@ def parse_timed_args(
             raise handler_config_error(msg)
         path = cast(str, kwargs_d.pop("path"))
 
-        # Validate and strip stdlib-only params from kwargs path
-        for name in _STDLIB_ONLY_SLOTS:
-            if name in kwargs_d:
-                _validate_stdlib_unsupported_param(name, kwargs_d.pop(name))
+    _validate_and_strip_stdlib_only_kwargs(kwargs_d)
 
     timed_handler_options = getattr(rust, "TimedHandlerOptions", None)
     if timed_handler_options is None or not kwargs_d:

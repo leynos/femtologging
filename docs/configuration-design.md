@@ -493,7 +493,7 @@ the existing handler types.
 `FileHandlerBuilder` supports capacity and flush interval,
 `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
 thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
-`backup_count`, `utc`, and `at_time`. Rotation is opt-in for the size-based
+`backup_count`, `utc`, and `at_time`. Rotation is opt-in for a size-based
 builder: both limits must be provided with positive values. Passing zero raises
 a `ValueError`, while negative or out-of-range integers raise an
 `OverflowError` immediately through the PyO3 unsigned conversions, keeping
@@ -831,11 +831,13 @@ components in a fixed order to honour dependencies:
      ``"femtologging.TimedRotatingFileHandler"``, and
      ``"femtologging.FemtoTimedRotatingFileHandler"`` →
      ``TimedRotatingFileHandlerBuilder``
-     Unsupported handler classes raise ``ValueError``. ``args`` and ``kwargs``
-     may be provided either as native structures or as strings, which are
-     safely evaluated with ``ast.literal_eval``. For stream handlers,
-     ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted targets.
-     Handler ``level`` and ``filters`` settings are currently unsupported and
+   - ``args`` and ``kwargs`` may be provided either as native structures or as
+     strings, which are safely evaluated with ``ast.literal_eval``.
+   - For stream handlers, ``ext://sys.stdout`` and ``ext://sys.stderr`` are
+     accepted targets.
+   - Unsupported handler classes for all handler class mappings raise
+     ``ValueError``.
+   - Handler ``level`` and ``filters`` settings are currently unsupported and
      produce ``ValueError``.
 5. **Loggers** are processed next. Each definition yields a
    ``LoggerConfigBuilder`` with optional ``level``, ``handlers``, ``filters``,
