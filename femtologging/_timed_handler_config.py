@@ -181,8 +181,7 @@ def parse_timed_args(
         else _extract_path_from_kwargs(kwargs_d, handler_config_error)
     )
 
-    if not args_t:
-        _strip_validate_stdlib_only_kwargs(kwargs_d)
+    _strip_validate_stdlib_only_kwargs(kwargs_d)
 
     timed_handler_options = getattr(rust, "TimedHandlerOptions", None)
     if timed_handler_options is None or not kwargs_d:
