@@ -82,8 +82,8 @@ def _validate_and_strip_stdlib_only_kwargs(kwargs_d: dict[str, object]) -> None:
     """Validate stdlib-only keyword defaults, then remove them before binding."""
     for name in _STDLIB_ONLY_SLOTS:
         if name in kwargs_d:
-            _validate_stdlib_unsupported_param(name, kwargs_d[name])
-            kwargs_d.pop(name)
+            value = kwargs_d.pop(name)
+            _validate_stdlib_unsupported_param(name, value)
 
 
 def _unpack_positional(
