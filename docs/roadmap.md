@@ -154,7 +154,7 @@ where applicable.
 - [ ] 2.3.5. Implement drain-loop batching for HTTP and socket handler
   consumer threads. Modify `FemtoHTTPHandler` to send batched JSON array
   payloads and `FemtoSocketHandler` to concatenate frames into combined writes.
-  Add Criterion benchmarks and update the users guide. Completion criteria:
+  Add Criterion benchmarks and update the user guide. Completion criteria:
   network handler benchmarks show reduced per-record overhead and user-facing
   batching configuration is documented. See
   [ADR 004 phase 2](./adr-004-batching-optimizations-in-consumer-threads.md#phase-2-network-handler-batching).

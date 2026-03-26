@@ -219,6 +219,9 @@ use crossbeam_channel::{Receiver, RecvError};
 ///
 /// Blocks until the first item arrives, then drains up to
 /// `max_batch - 1` additional items that are immediately available.
+/// The internal `Vec` is preallocated to `max_batch` because the
+/// caller controls the ceiling via `BatchConfig` (which enforces
+/// an upper bound at construction time).
 ///
 /// # Returns
 ///
@@ -226,7 +229,7 @@ use crossbeam_channel::{Receiver, RecvError};
 /// the channel is disconnected and empty.
 fn recv_batch<T>(rx: &Receiver<T>, max_batch: usize) -> Result<Vec<T>, RecvError> {
     let first = rx.recv()?;
-    let mut batch = Vec::with_capacity(max_batch.min(64));
+    let mut batch = Vec::with_capacity(max_batch);
     batch.push(first);
     while batch.len() < max_batch {
         match rx.try_recv() {
@@ -241,7 +244,18 @@ fn recv_batch<T>(rx: &Receiver<T>, max_batch: usize) -> Result<Vec<T>, RecvError
 ### File handler worker loop (batched)
 
 The file handler collects a batch, formats each record, writes all formatted
-output via `write_vectored`, and flushes once per batch.
+output via `write_vectored`, and flushes once per batch. `state.write_batch`
+performs only the vectored write; it does not flush. A single
+`state.flush_once` call follows after all records in the batch have been
+written.
+
+If a `Flush` command appears mid-batch, all accumulated record lines must be
+written **and** flushed **before** the acknowledgement is sent. This preserves
+the existing flush-acknowledge contract: when the caller receives the ack,
+every record submitted before the `Flush` command is guaranteed to have reached
+the underlying writer. In the sketch below, `state.write_batch` writes the
+pending lines, `state.flush_once` flushes the writer, and only then is the ack
+sent via `ack_tx`. Remaining records in the batch continue into a fresh buffer.
 
 ```rust,no_run
 use std::io::{IoSlice, Write};
@@ -270,11 +284,22 @@ fn run_batched_file_worker<W, F, R>(
                             line.push(b'\n');
                             formatted.push(line);
                         }
-                        FileCommand::Flush => state.handle_flush(&ack_tx),
+                        FileCommand::Flush => {
+                            // Write all pending lines, flush, then ack.
+                            // The ack must not be sent until every
+                            // preceding record has reached the writer.
+                            if !formatted.is_empty() {
+                                state.write_batch(&formatted);
+                                formatted.clear();
+                            }
+                            state.flush_once();
+                            let _ = ack_tx.send(());
+                        }
                     }
                 }
                 if !formatted.is_empty() {
                     state.write_batch(&formatted);
+                    state.flush_once();
                 }
             }
             Err(_) => break,
@@ -286,6 +311,14 @@ fn run_batched_file_worker<W, F, R>(
 ```
 
 ### Stream handler worker loop (batched with `write_vectored`)
+
+Each batch results in exactly one `write_vectored` call (to submit the
+formatted lines) followed by exactly one `flush` call (to ensure the data
+reaches the underlying stream). If a `Flush` command appears mid-batch, the
+accumulated lines are written and flushed before acknowledging; remaining
+records in the same batch continue into a fresh buffer. The helper
+`write_batch_vectored` performs only the vectored write — it never flushes — so
+the caller controls when and how often `flush` is invoked.
 
 ```rust,no_run
 fn run_batched_stream_worker<W, F>(
@@ -311,14 +344,19 @@ fn run_batched_stream_worker<W, F>(
                             formatted.push(line);
                         }
                         StreamCommand::Flush(ack) => {
-                            flush_buffered(&mut writer, &formatted);
+                            // Drain accumulated lines, then flush once.
+                            write_batch_vectored(&mut writer, &formatted);
                             formatted.clear();
                             let _ = writer.flush();
                             let _ = ack.send(());
                         }
                     }
                 }
-                flush_buffered(&mut writer, &formatted);
+                // Write remaining lines and flush once for the batch.
+                if !formatted.is_empty() {
+                    write_batch_vectored(&mut writer, &formatted);
+                    let _ = writer.flush();
+                }
             }
             Err(_) => break,
         }
@@ -327,13 +365,20 @@ fn run_batched_stream_worker<W, F>(
     let _ = done_tx.send(());
 }
 
-fn flush_buffered<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
+/// Writes all pre-formatted lines via vectored I/O.
+///
+/// Uses `write_all_vectored` (stable since Rust 1.78) to guarantee
+/// that every byte is written even when the underlying writer
+/// performs a short write.  This function does **not** flush — the
+/// caller is responsible for calling `flush` at the appropriate
+/// batch boundary.
+fn write_batch_vectored<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
     if lines.is_empty() {
         return;
     }
-    let slices: Vec<IoSlice<'_>> = lines.iter().map(|l| IoSlice::new(l)).collect();
-    let _ = writer.write_vectored(&slices);
-    let _ = writer.flush();
+    let mut slices: Vec<IoSlice<'_>> =
+        lines.iter().map(|l| IoSlice::new(l)).collect();
+    let _ = writer.write_all_vectored(&mut slices);
 }
 ```
 
@@ -430,6 +475,12 @@ fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
 
 ### `BatchConfig` structure
 
+Because `BatchConfig` is expected to be constructed from user-driven
+configuration (builder APIs, `dictConfig`, `fileConfig`), the constructor
+returns a `Result` rather than panicking on invalid input. This makes
+misconfiguration recoverable and avoids process-terminating panics in library
+code.
+
 ```rust,no_run
 /// Controls batching behaviour for handler consumer threads.
 ///
@@ -447,12 +498,14 @@ impl BatchConfig {
 
     /// Creates a new `BatchConfig` with the given capacity.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `capacity` is zero.
-    pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "batch capacity must be greater than zero");
-        Self { capacity }
+    /// Returns an error if `capacity` is zero.
+    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+        if capacity == 0 {
+            return Err(BatchConfigError::ZeroCapacity);
+        }
+        Ok(Self { capacity })
     }
 }
 
@@ -462,6 +515,12 @@ impl Default for BatchConfig {
             capacity: Self::DEFAULT_CAPACITY,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BatchConfigError {
+    #[error("batch capacity must be greater than zero")]
+    ZeroCapacity,
 }
 ```
 
@@ -482,7 +541,7 @@ impl Default for BatchConfig {
   send one request per batch.
 - Modify `FemtoSocketHandler` to concatenate frames and write combined buffers.
 - Add Criterion benchmarks for HTTP and socket handler batched throughput.
-- Update the users guide with batching configuration guidance.
+- Update the user guide with batching configuration guidance.
 
 ### Phase 3: logger dispatch batching and hardening
 
