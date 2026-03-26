@@ -151,6 +151,7 @@ python-packages = ["femtologging"]
 timeout = 30
 markers = [
     "concurrency: tests covering threaded behaviour",
+    "log_compat: tests requiring the Rust log-compat feature",
     "send_sync: tests covering Send/Sync guarantees",
 ]
 filterwarnings = [
