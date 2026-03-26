@@ -54,6 +54,7 @@ from ._rust_compat import (
     _clear_rotating_fresh_failure_for_test,
     _clear_timed_rotation_test_times_for_test,
     _force_rotating_fresh_failure_for_test,
+    _has_test_util,
     _set_timed_rotation_test_times_for_test,
     setup_rust_logging,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "_clear_rotating_fresh_failure_for_test",
     "_clear_timed_rotation_test_times_for_test",
     "_force_rotating_fresh_failure_for_test",
+    "_has_test_util",
     "_set_timed_rotation_test_times_for_test",
     "basicConfig",
     "debug",

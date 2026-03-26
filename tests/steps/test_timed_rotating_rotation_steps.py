@@ -14,7 +14,13 @@ from femtologging import (
     FemtoTimedRotatingFileHandler,
     TimedHandlerOptions,
     _clear_timed_rotation_test_times_for_test,
+    _has_test_util,
     _set_timed_rotation_test_times_for_test,
+)
+
+pytestmark = pytest.mark.skipif(
+    not _has_test_util,
+    reason="requires Rust extension built with the 'test-util' feature",
 )
 
 if typ.TYPE_CHECKING:

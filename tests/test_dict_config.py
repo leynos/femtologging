@@ -10,6 +10,7 @@ import pytest
 
 from femtologging import (
     _clear_timed_rotation_test_times_for_test,
+    _has_test_util,
     _set_timed_rotation_test_times_for_test,
     dictConfig,
     get_logger,
@@ -108,6 +109,10 @@ def _kwargs_config_factory(path: Path) -> dict[str, object]:
     }
 
 
+@pytest.mark.skipif(
+    not _has_test_util,
+    reason="requires Rust extension built with the 'test-util' feature",
+)
 @pytest.mark.parametrize(
     ("filename", "config_factory", "rotated_suffix"),
     [

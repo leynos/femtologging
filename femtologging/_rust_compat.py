@@ -156,3 +156,6 @@ setup_rust_logging: cabc.Callable[[], None] = _compat["setup_rust_logging"]
 _runtime_attachment_state_for_test: cabc.Callable[
     [str], tuple[list[str], list[str]] | None
 ] = _compat["_runtime_attachment_state_for_test"]
+
+# Feature detection: True when the Rust extension was compiled with test-util.
+_has_test_util: bool = hasattr(rust, "set_timed_rotation_test_times_for_test")
