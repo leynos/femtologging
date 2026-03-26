@@ -81,6 +81,15 @@ def test_parse_timed_args_strips_valid_stdlib_only_kwargs(
 
     assert path == "app.log", "parse_timed_args should preserve the path 'app.log'"
     assert options is not None, "parse_timed_args should return non-None options"
+    assert not hasattr(options, "encoding"), (
+        "TimedHandlerOptions should not expose an 'encoding' attribute"
+    )
+    assert not hasattr(options, "delay"), (
+        "TimedHandlerOptions should not expose a 'delay' attribute"
+    )
+    assert not hasattr(options, "errors"), (
+        "TimedHandlerOptions should not expose an 'errors' attribute"
+    )
     assert name not in kwargs_d, f"expected {name!r} to be removed from kwargs_d"
 
 
