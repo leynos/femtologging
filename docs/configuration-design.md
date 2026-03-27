@@ -846,11 +846,23 @@ components in a fixed order to honour dependencies:
    `filters` section.
 1. Finally, the **root** logger configuration is applied.
 
-In the shipped implementation, top-level `filters` entries currently support
-the declarative `{"level": ...}` and `{"name": ...}` forms. ADR 003 adds
-the accepted direction to extend `dictConfig` filter parsing with stdlib
-factory support (`"()"`) while preserving the existing declarative
-forms.[^adr003] The ADR defines the conflict rules for this mixed syntax:
+In the shipped implementation, top-level ``filters`` entries support both the
+declarative ``{"level": ...}`` / ``{"name": ...}`` forms and the stdlib factory
+form ``{"()": "path.to.FilterFactory", ...}``.[^adr003] Factory entries are
+resolved in Python, instantiated with the remaining keys as keyword arguments,
+and wrapped as producer-thread callback filters. The callback may be either a
+plain callable or a ``logging.Filter``-style object exposing ``filter(record)``.
+
+When a Python callback filter accepts a record, any new or modified attributes
+it adds to the mutable ``logging.LogRecord`` view are copied into
+``RecordMetadata.key_values`` before the record crosses the async queue
+boundary. Accepted enrichment keys must be non-empty strings that do not
+collide with stdlib ``LogRecord`` attributes or femtologging-reserved keys.
+Values are limited to ``str``, ``int``, ``float``, ``bool``, and ``None`` and
+are stringified into Rust-owned metadata with bounds of 64 keys, 64 UTF-8 bytes
+per key, 1,024 UTF-8 bytes per value, and 16 KiB total per record.
+
+The ADR defines the conflict rules for mixed declarative and factory syntax:
 
 - If a filter entry uses `"()"`, it is treated as a factory entry and must not
   include `level` or `name`.

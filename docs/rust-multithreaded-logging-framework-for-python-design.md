@@ -879,7 +879,11 @@ Simultaneously, the API will be thoroughly Rust-idiomatic:
 
 - **Traits for Extensibility:** Core functionalities like formatting
   (`FemtoFormatter`), filtering (`FemtoFilter`), and handling (`FemtoHandler`)
-  will be defined by traits, allowing users to implement custom behaviours.
+  are defined by traits, allowing users to implement custom behaviours. For
+  Python parity, logger and root filters also accept Python callables and
+  `logging.Filter`-style objects; these are evaluated on the producer thread,
+  and accepted enrichment fields are copied into Rust-owned metadata before
+  asynchronous dispatch.
 
 - **Rust Error Handling:** Operations that can fail (e.g., handler construction
   due to I/O errors, configuration parsing) will return `Result<T, E>`,

@@ -386,7 +386,13 @@ class NameFilterBuilder:
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> object: ...
 
-RuntimeFilterBuilder = LevelFilterBuilder | NameFilterBuilder
+class PythonCallbackFilterBuilder:
+    def __init__(self, callback: object, /) -> None: ...
+    def as_dict(self) -> dict[str, object]: ...
+
+RuntimeFilterBuilder = (
+    LevelFilterBuilder | NameFilterBuilder | PythonCallbackFilterBuilder
+)
 RuntimeHandlerBuilder = (
     StreamHandlerBuilder
     | FileHandlerBuilder

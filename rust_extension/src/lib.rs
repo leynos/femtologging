@@ -75,6 +75,8 @@ pub use config::{LoggerMutationBuilder, RuntimeConfigBuilder};
 // Re-exports: filter types (FilterBuildErrorPy is Python-only)
 #[cfg(feature = "python")]
 pub use filters::FilterBuildErrorPy;
+#[cfg(feature = "python")]
+pub use filters::PythonCallbackFilterBuilder;
 pub use filters::{
     FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
 };

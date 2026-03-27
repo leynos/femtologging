@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections
 `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
 proceeds.
 
-Status: DRAFT
+Status: Complete
 
 ## Purpose / big picture
 
@@ -724,22 +724,40 @@ after a partial failure is safe. `make fmt` is idempotent.
 
 ## Progress
 
-- [ ] Write ExecPlan draft.
-- [ ] Obtain approval.
-- [ ] Stage A: design and implement the Python callback filter adapter.
-- [ ] Stage B: wire filters into the producer path.
-- [ ] Stage C: extend dictConfig with factory filter parsing.
-- [ ] Stage D: add BDD, snapshot, and concurrency tests.
-- [ ] Stage E: update documentation and close roadmap items.
+- [x] Write ExecPlan draft.
+- [x] Obtain approval.
+- [x] Stage A: design and implement the Python callback filter adapter.
+- [x] Stage B: wire filters into the producer path.
+- [x] Stage C: extend dictConfig with factory filter parsing.
+- [x] Stage D: add BDD, snapshot, and concurrency tests.
+- [x] Stage E: update documentation and close roadmap items.
 
 ## Surprises & discoveries
 
-(None yet.)
+- `logging.makeLogRecord()` was the simplest way to give Python filters a
+  mutable stdlib-compatible `LogRecord` view without creating a custom proxy
+  type in Rust.
+- Existing Python test handlers do not guarantee `flush()` support, so the new
+  Python callback filter tests use short polling loops rather than relying on
+  `logger.flush_handlers()`.
 
 ## Decision log
 
-(None yet.)
+- Persist callback enrichment into `RecordMetadata.key_values` rather than
+  adding a dedicated enrichment field, because the existing Python handler and
+  stdlib adapter paths already expose `key_values` to Python consumers.
+- Support both explicit `PythonCallbackFilterBuilder(...)` construction and
+  direct callable / `filter(record)` objects passed to `ConfigBuilder` and
+  `RuntimeConfigBuilder`, keeping the fluent builder API concise.
 
 ## Outcomes & retrospective
 
-(Not yet started.)
+- Implemented `PythonCallbackFilterBuilder`, producer-thread callback
+  evaluation, enrichment validation, and `dictConfig` factory parsing for
+  `filters` entries using `"()"`.
+- Added focused Rust tests for enrichment validation and Python callback
+  behaviour, Python unit tests for callback/filter-object/factory forms and
+  contextvar isolation, plus BDD coverage and a snapshot for configuration
+  serialisation.
+- Updated the configuration and architecture documentation and marked roadmap
+  items `3.2.5` through `3.2.5.3` complete.

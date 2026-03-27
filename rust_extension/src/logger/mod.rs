@@ -20,6 +20,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
+#[cfg(feature = "python")]
+use crate::filters::python_callback::PythonCallbackFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_context;
 use crate::manager;
@@ -314,13 +316,13 @@ impl FemtoLogger {
     /// Checks level threshold and filters, formats the record, and dispatches
     /// to handlers. Returns `Some(formatted_message)` if the record was logged,
     /// or `None` if it was filtered out.
-    fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
+    fn log_record(&self, mut record: FemtoLogRecord) -> Option<String> {
         let threshold = self.level.load(Ordering::Relaxed);
         if u8::from(record.level()) < threshold {
             return None;
         }
 
-        if !self.passes_all_filters(&record) {
+        if !self.apply_filters(&mut record) {
             return None;
         }
         let msg = self.formatter.format(&record);
@@ -389,10 +391,11 @@ impl FemtoLogger {
     /// being enqueued for handler processing.
     #[cfg(feature = "log-compat")]
     pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
+        let mut record = record;
         if !self.is_enabled_for(record.level()) {
             return;
         }
-        if !self.passes_all_filters(&record) {
+        if !self.apply_filters(&mut record) {
             return;
         }
         self.dispatch_to_handlers(record);
@@ -429,13 +432,44 @@ impl FemtoLogger {
     ///
     /// Iterates over each filter and returns `false` on the first rejection.
     /// If no filters are configured, the record passes.
-    fn passes_all_filters(&self, record: &FemtoLogRecord) -> bool {
+    fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
         for f in self.filters.read().iter() {
+            #[cfg(feature = "python")]
+            if let Some(py_filter) = f.as_any().downcast_ref::<PythonCallbackFilter>() {
+                if !self.apply_python_filter(py_filter, record) {
+                    return false;
+                }
+                continue;
+            }
+
             if !f.should_log(record) {
                 return false;
             }
         }
         true
+    }
+
+    #[cfg(feature = "python")]
+    fn apply_python_filter(
+        &self,
+        py_filter: &PythonCallbackFilter,
+        record: &mut FemtoLogRecord,
+    ) -> bool {
+        match py_filter.filter_with_enrichment(record) {
+            Ok(decision) if decision.accepted => {
+                record.metadata_mut().key_values.extend(decision.enrichment);
+                true
+            }
+            Ok(_) => false,
+            Err(err) => {
+                warn!(
+                    "Python filter callback '{}' raised an exception; record dropped: {}",
+                    py_filter.description(),
+                    err
+                );
+                false
+            }
+        }
     }
 
     fn should_propagate_to_parent(&self) -> bool {
