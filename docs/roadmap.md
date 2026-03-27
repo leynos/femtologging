@@ -234,7 +234,7 @@ where applicable.
   [design §6.2](./rust-multithreaded-logging-framework-for-python-design.md#62-logging-macros-the-primary-user-interface)
    and
   [design §8.3](./rust-multithreaded-logging-framework-for-python-design.md#83-exploring-advanced-asynchronous-capabilities).
-  **Note**: Fast-path optimization for empty-context merges remains as tracked
+   **Note**: Fast-path optimization for empty-context merges remains as tracked
   technical debt (see
   [ExecPlan 3.4.2 — Risks](./execplans/3-4-2-improve-structured-logging-in-macros.md#risks)).
 

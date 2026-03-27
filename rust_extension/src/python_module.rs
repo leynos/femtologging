@@ -10,7 +10,8 @@ use crate::{
     ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
     FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
     LoggerMutationBuilder, NameFilterBuilder, PythonCallbackFilterBuilder,
-    RotatingFileHandlerBuilder, RuntimeConfigBuilder, SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
+    RotatingFileHandlerBuilder, RuntimeConfigBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{

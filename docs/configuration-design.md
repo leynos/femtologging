@@ -488,14 +488,13 @@ class SocketHandlerBuilder(HandlerBuilder):
 
 The initial implementation provides `FileHandlerBuilder`,
 `RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`,
-`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over
-the existing handler types.
-`FileHandlerBuilder` supports capacity and flush interval,
-`RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
-thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
-`backup_count`, `utc`, and `at_time`. Rotation is opt-in for a size-based
-builder: both limits must be provided with positive values. Passing zero raises
-a `ValueError`, while negative or out-of-range integers raise an
+`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over the
+existing handler types. `FileHandlerBuilder` supports capacity and flush
+interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count`
+rotation thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`,
+`interval`, `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the
+size-based builder: both limits must be provided with positive values. Passing
+zero raises a `ValueError`, while negative or out-of-range integers raise an
 `OverflowError` immediately through the PyO3 unsigned conversions, keeping
 misconfigurations obvious. When size thresholds are omitted, the handler stores
 `(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise

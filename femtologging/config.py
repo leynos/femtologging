@@ -204,7 +204,7 @@ def _create_handler_instance(
         kwargs_d = dict(kwargs)
         if builder_cls is TimedRotatingFileHandlerBuilder:
             path, options = parse_timed_args(args_t, kwargs_d)
-            return cast("Any", builder_cls)(path, options)
+            return builder_cls(path, options)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"
