@@ -297,7 +297,7 @@ where applicable.
 - [ ] 4.2.3. Publish the femtologging package and complete user-facing
   documentation updates for shipped capabilities. See
   [design §9.3](./rust-multithreaded-logging-framework-for-python-design.md#93-call-to-actionnext-steps)
-   and [users guide](./users-guide.md).
+   and [user guide](./users-guide.md).
 
 ## 5. Roadmap consolidation checks
 

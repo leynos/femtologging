@@ -6,7 +6,7 @@ Proposed.
 
 ## Date
 
-2026-03-24.
+2026-03-24
 
 ## Context and problem statement
 
@@ -31,9 +31,8 @@ Under sustained high-volume logging, per-record I/O imposes measurable overhead:
   kernel-side locking on file descriptors and socket buffers is entered once
   per record.
 
-The design document identifies this opportunity in [§5.4][design-5-4] and marks
-it as a Phase 3 exploration item in [§8.1][design-8-1]. Roadmap item 2.3.3
-formalizes the task.
+The design document identifies this opportunity in §5.4[^1] and marks it as a
+Phase 3 exploration item in §8.1[^2]. Roadmap item 2.3.3 formalizes the task.
 
 This ADR analyses the batching strategies available, weighs their trade-offs,
 and proposes a direction for implementation.
@@ -595,11 +594,8 @@ surface small and testable.
 The `write_vectored` complement for file and stream handlers aligns with Rust's
 standard I/O abstractions and avoids introducing platform-specific code paths.
 Together, these two techniques address the primary I/O overhead identified in
-[design §5.4][design-5-4] without compromising the latency characteristics that
-make femtologging suitable for interactive and debug logging under light
-traffic.
+design §5.4[^1] without compromising the latency characteristics that make
+femtologging suitable for interactive and debug logging under light traffic.
 
-[design-5-4]:
-./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads
- [design-8-1]:
-./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap
+[^1]: <./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads>
+[^2]: <./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap>
