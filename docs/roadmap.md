@@ -140,7 +140,7 @@ where applicable.
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration)
    and
   [logging sequence diagrams](./logging-sequence-diagrams.md#5-shutdown--orderly-shutdown-at-process-exit).
-- [x] 2.3.3. Explore batching optimizations in consumer threads. See
+- [x] 2.3.3. Deliver batching optimization design for consumer threads. See
   [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads),
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap),
   and [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md).

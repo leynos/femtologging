@@ -242,8 +242,27 @@ fn recv_batch<T>(rx: &Receiver<T>, max_batch: usize) -> Result<Vec<T>, RecvError
 
 ### File handler worker loop (batched)
 
+The existing `FileCommand` enum uses a shared acknowledgement channel returned
+by `spawn_worker()` rather than embedding a per-command `Sender<()>` in the
+`Flush` variant. The sketch below preserves this pattern: `ack_tx` is the
+shared sender created at spawn time, and the caller waits on the corresponding
+`ack_rx`. The enum does not carry a `Shutdown` variant because orderly shutdown
+is signalled by dropping the command sender, which causes `recv_batch` to
+return `Err(RecvError)` and the loop to exit.
+
+```rust,no_run
+/// Commands sent to the file handler worker thread.
+pub enum FileCommand {
+    /// Write a log record to the underlying writer.
+    Record(Box<FemtoLogRecord>),
+    /// Flush the writer; the worker sends an ack on the shared
+    /// `ack_tx` channel once the flush completes.
+    Flush,
+}
+```
+
 The file handler collects a batch, formats each record, writes all formatted
-output via `write_vectored`, and flushes once per batch. `state.write_batch`
+output via vectored I/O, and flushes once per batch. `state.write_batch`
 performs only the vectored write; it does not flush. A single
 `state.flush_once` call follows after all records in the batch have been
 written.
@@ -301,7 +320,7 @@ fn run_batched_file_worker<W, F, R>(
                     state.flush_once();
                 }
             }
-            Err(_) => break,
+            Err(_) => break, // sender dropped → orderly shutdown
         }
     }
     state.final_flush();
@@ -311,13 +330,27 @@ fn run_batched_file_worker<W, F, R>(
 
 ### Stream handler worker loop (batched with `write_vectored`)
 
-Each batch results in exactly one `write_vectored` call (to submit the
-formatted lines) followed by exactly one `flush` call (to ensure the data
-reaches the underlying stream). If a `Flush` command appears mid-batch, the
-accumulated lines are written and flushed before acknowledging; remaining
-records in the same batch continue into a fresh buffer. The helper
-`write_batch_vectored` performs only the vectored write — it never flushes — so
-the caller controls when and how often `flush` is invoked.
+The existing `StreamCommand` enum carries a per-command `Sender<()>` in the
+`Flush` variant so the caller can wait for the specific flush to complete. Like
+`FileCommand`, there is no `Shutdown` variant: orderly shutdown is signalled by
+dropping the command sender, causing `recv_batch` to return `Err(RecvError)`.
+
+```rust,no_run
+/// Commands sent to the stream handler worker thread.
+enum StreamCommand {
+    Record(FemtoLogRecord),
+    /// Flush the writer and send an ack on the provided channel.
+    Flush(Sender<()>),
+}
+```
+
+Each batch results in exactly one vectored write (to submit the formatted
+lines) followed by exactly one `flush` call (to ensure the data reaches the
+underlying stream). If a `Flush` command appears mid-batch, the accumulated
+lines are written and flushed before acknowledging; remaining records in the
+same batch continue into a fresh buffer. The helper `write_batch_vectored`
+performs only the vectored write — it never flushes — so the caller controls
+when and how often `flush` is invoked.
 
 ```rust,no_run
 fn run_batched_stream_worker<W, F>(
@@ -364,20 +397,31 @@ fn run_batched_stream_worker<W, F>(
     let _ = done_tx.send(());
 }
 
-/// Writes all pre-formatted lines via vectored I/O.
+/// Writes all pre-formatted lines to `writer`, handling short writes.
 ///
-/// Uses `write_all_vectored` (stable since Rust 1.78) to guarantee
-/// that every byte is written even when the underlying writer
-/// performs a short write.  This function does **not** flush — the
-/// caller is responsible for calling `flush` at the appropriate
-/// batch boundary.
+/// Concatenates the lines into a single contiguous buffer and calls
+/// `write_all`, which loops internally until every byte is written.
+/// A single-buffer approach is used because `write_all_vectored` and
+/// `IoSlice::advance_slices` remain nightly-only (tracking issues
+/// [#70436][wa] and [#62726][adv]).  If those APIs are stabilised in
+/// a future Rust release the implementation can switch to true
+/// scatter-gather I/O without changing the function signature.
+///
+/// This function does **not** flush — the caller is responsible for
+/// calling `flush` at the appropriate batch boundary.
+///
+/// [wa]: https://github.com/rust-lang/rust/issues/70436
+/// [adv]: https://github.com/rust-lang/rust/issues/62726
 fn write_batch_vectored<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
     if lines.is_empty() {
         return;
     }
-    let mut slices: Vec<IoSlice<'_>> =
-        lines.iter().map(|l| IoSlice::new(l)).collect();
-    let _ = writer.write_all_vectored(&mut slices);
+    let total: usize = lines.iter().map(|l| l.len()).sum();
+    let mut buf = Vec::with_capacity(total);
+    for line in lines {
+        buf.extend_from_slice(line);
+    }
+    let _ = writer.write_all(&buf);
 }
 ```
 
