@@ -25,8 +25,8 @@ use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 pub enum FileCommand {
     /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
-    /// Flush the writer and acknowledge completion.
-    Flush,
+    /// Flush the writer and acknowledge completion on the provided channel.
+    Flush(Sender<()>),
 }
 
 /// Strategy for rotating the log file before writes.
@@ -175,7 +175,7 @@ where
         }
     }
 
-    fn handle_flush(&mut self, ack_tx: &Sender<()>) {
+    fn handle_flush(&mut self, ack_tx: Sender<()>) {
         if let Err(err) = self.writer.flush() {
             warn!("FemtoFileHandler flush error: {err}");
         }
@@ -210,19 +210,13 @@ where
 /// A tuple containing:
 /// - Command sender for enqueueing records and flush requests.
 /// - Completion receiver that signals when the worker thread exits.
-/// - Acknowledgement receiver that signals when a flush completes.
 /// - Join handle for the worker thread.
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     rotation: R,
-) -> (
-    Sender<FileCommand>,
-    Receiver<()>,
-    Receiver<()>,
-    JoinHandle<()>,
-)
+) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
@@ -235,7 +229,6 @@ where
     } = config;
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
-    let (ack_tx, ack_rx) = bounded(1);
     let handle = thread::spawn(move || {
         if let Some(b) = start_barrier {
             b.wait();
@@ -245,7 +238,7 @@ where
         for cmd in rx {
             match cmd {
                 FileCommand::Record(record) => state.handle_record(&formatter, *record),
-                FileCommand::Flush => state.handle_flush(&ack_tx),
+                FileCommand::Flush(ack_tx) => state.handle_flush(ack_tx),
             }
         }
         state.final_flush();
@@ -253,7 +246,7 @@ where
             warn!("FemtoFileHandler done channel disconnected");
         }
     });
-    (tx, done_rx, ack_rx, handle)
+    (tx, done_rx, handle)
 }
 
 #[cfg(test)]

@@ -413,6 +413,8 @@ def test_handle_record_includes_both_exc_and_stack_info() -> None:
 class MutableHandler:
     """Handler whose capabilities can be mutated after construction."""
 
+    handle_record: cabc.Callable[[dict[str, typ.Any]], None]
+
     def __init__(self) -> None:
         """Initialize an empty record buffer for both dispatch paths."""
         self.handle_calls: list[tuple[str, str, str]] = []

@@ -61,6 +61,7 @@ def _exception_wrapper(
     return self._exception_impl(message, exc_info=resolved, stack_info=stack_info)
 
 
-FemtoLogger.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]  # FIXME: method assignment requires typ.Any cast to bypass type checker — revisit when PyO3 supports native method binding
+logger_type = typ.cast("type[typ.Any]", FemtoLogger)
+logger_type.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]  # FIXME: method assignment requires typ.Any cast to bypass type checker — revisit when PyO3 supports native method binding
 
 __all__ = ["getLogger"]

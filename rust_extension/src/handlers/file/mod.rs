@@ -76,7 +76,6 @@ pub struct FemtoFileHandler {
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
     overflow_policy: OverflowPolicy,
-    ack_rx: Receiver<()>,
 }
 
 const CAPACITY_ZERO_MSG: &str = "capacity must be greater than zero";
@@ -323,14 +322,15 @@ impl FemtoFileHandler {
     }
 
     fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
-        if tx.send(FileCommand::Flush).is_err() {
+        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+        if tx.send(FileCommand::Flush(ack_tx)).is_err() {
             return false;
         }
-        self.wait_for_flush_completion()
+        self.wait_for_flush_completion(&ack_rx)
     }
 
-    fn wait_for_flush_completion(&self) -> bool {
-        self.ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
+    fn wait_for_flush_completion(&self, ack_rx: &Receiver<()>) -> bool {
+        ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
     }
 
     /// Close the handler and wait for the worker to stop.
@@ -375,13 +375,12 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (tx, done_rx, ack_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
+        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
             tx: Some(tx),
             handle: Some(handle),
             done_rx,
             overflow_policy,
-            ack_rx,
         }
     }
 
@@ -470,5 +469,7 @@ impl Drop for FemtoFileHandler {
     }
 }
 
+#[cfg(test)]
+mod flush_ack_tests;
 #[cfg(test)]
 mod tests;

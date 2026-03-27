@@ -163,5 +163,6 @@ markers = [
     "send_sync: tests covering Send/Sync guarantees",
 ]
 filterwarnings = [
+    "ignore:Module already imported so cannot be rewritten; slipcover:pytest.PytestAssertRewriteWarning",
     "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin.gherkin_line",
 ]

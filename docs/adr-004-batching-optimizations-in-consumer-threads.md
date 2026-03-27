@@ -219,8 +219,9 @@ use crossbeam_channel::{Receiver, RecvError};
 /// Blocks until the first item arrives, then drains up to
 /// `max_batch - 1` additional items that are immediately available.
 /// The internal `Vec` is preallocated to `max_batch` because the
-/// caller controls the ceiling via `BatchConfig` (which enforces
-/// an upper bound at construction time).
+/// caller controls the ceiling; the proposed `BatchConfig`
+/// configuration type introduced later in this document validates
+/// that ceiling before batched workers start.
 ///
 /// # Returns
 ///
@@ -242,22 +243,19 @@ fn recv_batch<T>(rx: &Receiver<T>, max_batch: usize) -> Result<Vec<T>, RecvError
 
 ### File handler worker loop (batched)
 
-The existing `FileCommand` enum uses a shared acknowledgement channel returned
-by `spawn_worker()` rather than embedding a per-command `Sender<()>` in the
-`Flush` variant. The sketch below preserves this pattern: `ack_tx` is the
-shared sender created at spawn time, and the caller waits on the corresponding
-`ack_rx`. The enum does not carry a `Shutdown` variant because orderly shutdown
-is signalled by dropping the command sender, which causes `recv_batch` to
-return `Err(RecvError)` and the loop to exit.
+`FileCommand::Flush` should carry a per-command acknowledgement sender so file
+and stream handlers follow the same flush contract before drain-loop batching
+lands. Like `StreamCommand`, the enum does not carry a `Shutdown` variant
+because orderly shutdown is signalled by dropping the command sender, which
+causes `recv_batch` to return `Err(RecvError)` and the loop to exit.
 
 ```rust,no_run
 /// Commands sent to the file handler worker thread.
 pub enum FileCommand {
     /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
-    /// Flush the writer; the worker sends an ack on the shared
-    /// `ack_tx` channel once the flush completes.
-    Flush,
+    /// Flush the writer and send an ack on the provided channel.
+    Flush(Sender<()>),
 }
 ```
 
@@ -273,7 +271,8 @@ the existing flush-acknowledge contract: when the caller receives the ack,
 every record submitted before the `Flush` command is guaranteed to have reached
 the underlying writer. In the sketch below, `state.write_batch` writes the
 pending lines, `state.flush_once` flushes the writer, and only then is the ack
-sent via `ack_tx`. Remaining records in the batch continue into a fresh buffer.
+sent via the per-command `Sender<()>`. Remaining records in the batch continue
+into a fresh buffer.
 
 ```rust,no_run
 use std::io::{IoSlice, Write};
@@ -282,7 +281,6 @@ fn run_batched_file_worker<W, F, R>(
     rx: Receiver<FileCommand>,
     mut state: WorkerState<W, R>,
     formatter: F,
-    ack_tx: Sender<()>,
     done_tx: Sender<()>,
     batch_capacity: usize,
 ) where
@@ -302,7 +300,7 @@ fn run_batched_file_worker<W, F, R>(
                             line.push(b'\n');
                             formatted.push(line);
                         }
-                        FileCommand::Flush => {
+                        FileCommand::Flush(ack) => {
                             // Write all pending lines, flush, then ack.
                             // The ack must not be sent until every
                             // preceding record has reached the writer.
@@ -311,7 +309,7 @@ fn run_batched_file_worker<W, F, R>(
                                 formatted.clear();
                             }
                             state.flush_once();
-                            let _ = ack_tx.send(());
+                            let _ = ack.send(());
                         }
                     }
                 }
@@ -351,6 +349,12 @@ lines are written and flushed before acknowledging; remaining records in the
 same batch continue into a fresh buffer. The helper `write_batch_vectored`
 performs only the vectored write — it never flushes — so the caller controls
 when and how often `flush` is invoked.
+
+The current `FemtoStreamHandler` worker already drains queued commands before
+shutdown because `for cmd in rx` only terminates once the sender is dropped
+_and_ the channel is empty. The batched drain-loop variant must preserve that
+behaviour by fully processing the backlog collected after each blocking receive
+before calling `final_flush`.
 
 ```rust,no_run
 fn run_batched_stream_worker<W, F>(
@@ -518,11 +522,11 @@ fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
 
 ### `BatchConfig` structure
 
-Because `BatchConfig` is expected to be constructed from user-driven
-configuration (builder APIs, `dictConfig`, `fileConfig`), the constructor
-returns a `Result` rather than panicking on invalid input. This makes
-misconfiguration recoverable and avoids process-terminating panics in library
-code.
+To match the existing `FileHandlerBuilder` and `StreamHandlerBuilder` two-phase
+validation flow, `BatchConfig::new` records user input without failing
+immediately. Validation happens when a handler build path consumes the config,
+so fluent builders can continue to stage partially configured state and surface
+one coherent validation error at build time.
 
 ```rust,no_run
 /// Controls batching behaviour for handler consumer threads.
@@ -540,15 +544,21 @@ impl BatchConfig {
     const DEFAULT_CAPACITY: usize = 64;
 
     /// Creates a new `BatchConfig` with the given capacity.
+    pub fn new(capacity: usize) -> Self {
+        Self { capacity }
+    }
+
+    /// Validates the staged batch configuration before worker construction.
     ///
     /// # Errors
     ///
     /// Returns an error if `capacity` is zero.
-    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
-        if capacity == 0 {
-            return Err(BatchConfigError::ZeroCapacity);
+    pub fn validate(self) -> Result<Self, BatchConfigError> {
+        if self.capacity == 0 {
+            Err(BatchConfigError::ZeroCapacity)
+        } else {
+            Ok(self)
         }
-        Ok(Self { capacity })
     }
 }
 
@@ -567,11 +577,24 @@ pub enum BatchConfigError {
 }
 ```
 
+### Validation strategy
+
+`FileHandlerBuilder::build_inner` and `StreamHandlerBuilder::build_inner`
+already defer capacity validation until build time via their existing
+`validate`/`ensure_non_zero` flow. This ADR keeps batching aligned with that
+pattern: builders may store a provisional batch capacity, but they must call
+`BatchConfig::validate()` before passing the value into the file/stream handler
+spawn path.
+
 ## Migration plan
 
 ### Phase 1: core batch collection and file/stream handler batching
 
 - Introduce the `recv_batch` helper and `BatchConfig` type.
+- Standardize flush acknowledgements first by making `FileCommand::Flush` and
+  `StreamCommand::Flush` both carry per-command `Sender<()>` values, then
+  thread that sender through the handler construction and spawn path used by
+  `FemtoFileHandler`, `FemtoStreamHandler`, and their builder APIs.
 - Modify `FemtoFileHandler` and `FemtoStreamHandler` worker loops to use
   drain-loop batching with `write_vectored`.
 - Add Criterion benchmarks comparing single-record and batched throughput for
