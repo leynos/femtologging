@@ -108,6 +108,11 @@ def _make_runtime_attachment_state(
     return _fallback
 
 
+def _has_timed_rotation_test_util_support(setter: object, clearer: object) -> bool:
+    """Report whether timed rotation test hooks are fully available."""
+    return callable(setter) and callable(clearer)
+
+
 def _initialize_rust_compat() -> _RustCompatPayload:
     """Initialize Rust extension compatibility layer.
 
@@ -158,4 +163,7 @@ _runtime_attachment_state_for_test: cabc.Callable[
 ] = _compat["_runtime_attachment_state_for_test"]
 
 # Feature detection: True when the Rust extension was compiled with test-util.
-_has_test_util: bool = hasattr(rust, "set_timed_rotation_test_times_for_test")
+_has_test_util: bool = _has_timed_rotation_test_util_support(
+    getattr(rust, "set_timed_rotation_test_times_for_test", None),
+    getattr(rust, "clear_timed_rotation_test_times_for_test", None),
+)

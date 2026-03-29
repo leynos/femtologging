@@ -290,7 +290,7 @@ dictionary representations mirror these names to avoid ambiguity.
 
 Both builders now accept `NonZeroU64` in Rust, enforcing the non-zero
 constraint at the type level. Python receives `u64` and validates inputs,
-raising ``ValueError`` for zero values and ``OverflowError`` for negative
+raising `ValueError` for zero values and `OverflowError` for negative
 values or values exceeding the unsigned 64-bit range. This type unification
 (Issue #168) and method rename (Issue #238) ensure consistent error handling
 and a unified `with_flush_after_*` naming pattern while preserving the distinct
@@ -493,7 +493,7 @@ the existing handler types.
 `FileHandlerBuilder` supports capacity and flush interval,
 `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
 thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
-`backup_count`, `utc`, and `at_time`. Rotation is opt-in for the size-based
+`backup_count`, `utc`, and `at_time`. Rotation is opt-in for a size-based
 builder: both limits must be provided with positive values. Passing zero raises
 a `ValueError`, while negative or out-of-range integers raise an
 `OverflowError` immediately through the PyO3 unsigned conversions, keeping
@@ -538,7 +538,7 @@ Both file-derived builders expose a `with_overflow_policy` fluent that applies
 back-pressure rules to the worker queue. Callers pass the helper class
 `OverflowPolicy`, using its factory methods to create strongly typed policies.
 `OverflowPolicy.drop()` and `OverflowPolicy.block()` need no parameters, while
-`OverflowPolicy.timeout(ms)` validates that ``ms`` is positive before returning
+`OverflowPolicy.timeout(ms)` validates that `ms` is positive before returning
 the bounded-wait variant. The fluent stores the resolved `OverflowPolicy` to
 keep subsequent calls and the Rust build pipeline aligned. Direct construction
 uses `HandlerOptions.policy`, which accepts the string forms parsed by
@@ -767,12 +767,12 @@ standard `logging.basicConfig` interface.
 
   - If `filename` is provided, a `FileHandlerBuilder` targets the given path.
     Otherwise, a `StreamHandlerBuilder` writes to `stderr` by default or to
-    `stdout` when ``stream`` is ``sys.stdout``.
+    `stdout` when `stream` is `sys.stdout`.
 
   - The handler is registered under a default identifier and attached to the
-    root logger. The root's level is set if ``level`` is provided.
+    root logger. The root's level is set if `level` is provided.
 
-  - Passing ``force=True`` uses the `FemtoLogger.clear_handlers` method to
+  - Passing `force=True` uses the `FemtoLogger.clear_handlers` method to
     remove any existing root handlers before applying the new configuration.
 
   - `ConfigBuilder.build_and_init()` finalizes the setup.
@@ -811,42 +811,44 @@ sequenceDiagram
 `logging.config.dictConfig` schema into builder calls. The function processes
 components in a fixed order to honour dependencies:
 
-1. The `version` key must be `1`; any other value raises ``ValueError``.
-2. `disable_existing_loggers` is mapped directly to
-   ``ConfigBuilder.with_disable_existing_loggers``.
-3. **Formatters** are created first. Each entry yields a ``FormatterBuilder``
-   populated via ``with_format`` and ``with_datefmt``.
-4. **Handlers** follow. Supported string class names are resolved via an
+1. The `version` key must be `1`; any other value raises `ValueError`.
+1. `disable_existing_loggers` is mapped directly to
+   `ConfigBuilder.with_disable_existing_loggers`.
+1. **Formatters** are created first. Each entry yields a `FormatterBuilder`
+   populated via `with_format` and `with_datefmt`.
+1. **Handlers** follow. Supported string class names are resolved via an
    internal registry of builder classes:
-   - ``"logging.StreamHandler"`` and ``"femtologging.StreamHandler"``
-     → ``StreamHandlerBuilder``
-   - ``"logging.FileHandler"`` and ``"femtologging.FileHandler"``
-     → ``FileHandlerBuilder``
-   - ``"logging.handlers.RotatingFileHandler"``,
-     ``"logging.RotatingFileHandler"``, ``"femtologging.RotatingFileHandler"``,
-     and ``"femtologging.FemtoRotatingFileHandler"`` →
-     ``RotatingFileHandlerBuilder``
-   - ``"logging.handlers.TimedRotatingFileHandler"``,
-     ``"logging.TimedRotatingFileHandler"``,
-     ``"femtologging.TimedRotatingFileHandler"``, and
-     ``"femtologging.FemtoTimedRotatingFileHandler"`` →
-     ``TimedRotatingFileHandlerBuilder``
-     Unsupported handler classes raise ``ValueError``. ``args`` and ``kwargs``
-     may be provided either as native structures or as strings, which are
-     safely evaluated with ``ast.literal_eval``. For stream handlers,
-     ``ext://sys.stdout`` and ``ext://sys.stderr`` are accepted targets.
-     Handler ``level`` and ``filters`` settings are currently unsupported and
-     produce ``ValueError``.
-5. **Loggers** are processed next. Each definition yields a
-   ``LoggerConfigBuilder`` with optional ``level``, ``handlers``, ``filters``,
-   and ``propagate`` settings. Logger and root ``filters`` values are lists of
+   - `"logging.StreamHandler"` and `"femtologging.StreamHandler"`
+     → `StreamHandlerBuilder`
+   - `"logging.FileHandler"` and `"femtologging.FileHandler"`
+     → `FileHandlerBuilder`
+   - `"logging.handlers.RotatingFileHandler"`,
+     `"logging.RotatingFileHandler"`, `"femtologging.RotatingFileHandler"`,
+     and `"femtologging.FemtoRotatingFileHandler"` →
+     `RotatingFileHandlerBuilder`
+   - `"logging.handlers.TimedRotatingFileHandler"`,
+     `"logging.TimedRotatingFileHandler"`,
+     `"femtologging.TimedRotatingFileHandler"`, and
+     `"femtologging.FemtoTimedRotatingFileHandler"` →
+     `TimedRotatingFileHandlerBuilder`
+   - `args` and `kwargs` may be provided either as native structures or as
+     strings, which are safely evaluated with `ast.literal_eval`.
+   - For stream handlers, `ext://sys.stdout` and `ext://sys.stderr` are
+     accepted targets.
+   - Unsupported handler classes in any handler class mapping raise a
+     `ValueError`.
+   - Handler `level` and `filters` settings are currently unsupported and
+     produce `ValueError`.
+1. **Loggers** are processed next. Each definition yields a
+   `LoggerConfigBuilder` with optional `level`, `handlers`, `filters`,
+   and `propagate` settings. Logger and root `filters` values are lists of
    filter identifiers that reference entries declared in the top-level
-   ``filters`` section.
-6. Finally, the **root** logger configuration is applied.
+   `filters` section.
+1. Finally, the **root** logger configuration is applied.
 
-In the shipped implementation, top-level ``filters`` entries currently support
-the declarative ``{"level": ...}`` and ``{"name": ...}`` forms. ADR 003 adds
-the accepted direction to extend ``dictConfig`` filter parsing with stdlib
+In the shipped implementation, top-level `filters` entries currently support
+the declarative `{"level": ...}` and `{"name": ...}` forms. ADR 003 adds
+the accepted direction to extend `dictConfig` filter parsing with stdlib
 factory support (`"()"`) while preserving the existing declarative
 forms.[^adr003] The ADR defines the conflict rules for this mixed syntax:
 
@@ -854,7 +856,7 @@ forms.[^adr003] The ADR defines the conflict rules for this mixed syntax:
   include `level` or `name`.
 - If a filter entry omits `"()"`, it must include exactly one of `level` or
   `name`.
-- Mixed or ambiguous forms are rejected with ``ValueError``. No precedence is
+- Mixed or ambiguous forms are rejected with `ValueError`. No precedence is
   applied between factory and declarative keys.
 
 `incremental=True` is explicitly rejected. The implementation favours explicit
@@ -911,7 +913,7 @@ The shipped implementation intentionally mirrors `dictConfig`'s restrictions:
 filters and formatters remain unsupported, handler-level overrides trigger
 `ValueError`, and formatter sections reject `class`, `defaults`, or `style`.
 Placeholder expansion is scoped to handler parameters so formatter strings such
-as ``%(message)s`` remain untouched. These constraints keep `fileConfig`
+as `%(message)s` remain untouched. These constraints keep `fileConfig`
 predictable today while leaving space for future relaxations when the builder
 surfaces mature further.
 
@@ -919,7 +921,7 @@ surfaces mature further.
 
 - **Dynamic Log Level Updates:** As outlined in the design document \[cite:
   uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-   Dynamic log-level changes for loggers will be a core feature, utilizing
+  Dynamic log-level changes for loggers will be a core feature, utilizing
   atomic operations in Rust for thread-safe updates. This will be exposed via
   methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
@@ -967,7 +969,7 @@ surfaces mature further.
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
 \[cite:
 uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
- This ensures that `femtologging` can serve as a high-performance backend for
+This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
 
@@ -998,10 +1000,10 @@ Each `FemtoLogger` maintains a `propagate` flag (default: `true`). When a
 logger emits a record:
 
 1. The record passes through the logger's level check and filters.
-2. If accepted, the record is dispatched to the logger's own handlers.
-3. If `propagate` is `true` and the logger has a parent, the record is
+1. If accepted, the record is dispatched to the logger's own handlers.
+1. If `propagate` is `true` and the logger has a parent, the record is
    **cloned** and forwarded to the parent's `dispatch_to_handlers()` method.
-4. The parent applies the same propagation logic, creating a chain that
+1. The parent applies the same propagation logic, creating a chain that
    continues up to the root logger.
 
 The root logger's `propagate` flag is effectively a no-op since it has no
@@ -1100,16 +1102,16 @@ logger.set_propagate(False)  # Disable propagation
    enabled by default, ensuring records reach the root handler unless
    explicitly disabled.
 
-2. **Clone before propagate**: Avoids ownership issues and allows handlers to
+1. **Clone before propagate**: Avoids ownership issues and allows handlers to
    mutate records without affecting propagation. The alternative (passing
    references) would require complex lifetime management across the async
    worker threads.
 
-3. **Recursive dispatch**: Rather than accumulating handlers and dispatching
+1. **Recursive dispatch**: Rather than accumulating handlers and dispatching
    once, each ancestor logger runs its own `dispatch_to_handlers()`. This
    preserves per-logger filter semantics and simplifies the implementation.
 
-4. **SeqCst ordering**: Chosen for simplicity over minimal performance gains
+1. **SeqCst ordering**: Chosen for simplicity over minimal performance gains
    from weaker orderings. The flag is rarely toggled after initial
    configuration.
 
