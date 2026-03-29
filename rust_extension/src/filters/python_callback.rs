@@ -79,7 +79,9 @@ impl PythonCallbackFilter {
         let callback = self
             .callback
             .lock()
-            .expect("python callback filter mutex should not be poisoned")
+            .map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err("python callback filter mutex poisoned")
+            })?
             .clone_ref(py);
         let callback = callback.bind(py);
         if callback.is_callable() {
@@ -222,6 +224,12 @@ fn create_filter_record<'py>(
     log_record_payload.set_item("message", record.message())?;
     log_record_payload.set_item("metadata", metadata)?;
     log_record_payload.set_item("args", PyList::empty(py))?;
+    if let Some(exc_info) = record_dict.get_item("exc_info")? {
+        log_record_payload.set_item("exc_info", exc_info)?;
+    }
+    if let Some(stack_info) = record_dict.get_item("stack_info")? {
+        log_record_payload.set_item("stack_info", stack_info)?;
+    }
     for (key, value) in extra.iter() {
         log_record_payload.set_item(key, value)?;
     }
@@ -231,11 +239,14 @@ fn create_filter_record<'py>(
 }
 
 fn snapshot_record_attrs(record_view: &Bound<'_, PyAny>) -> PyResult<BTreeMap<String, Py<PyAny>>> {
+    let py = record_view.py();
+    let copy = py.import("copy")?;
     let binding = record_view.getattr("__dict__")?;
     let dict = binding.cast::<PyDict>()?;
     let mut attrs = BTreeMap::new();
     for (key, value) in dict.iter() {
-        attrs.insert(key.extract::<String>()?, value.unbind());
+        let copied = copy.call_method1("deepcopy", (value,))?;
+        attrs.insert(key.extract::<String>()?, copied.unbind());
     }
     Ok(attrs)
 }
@@ -269,7 +280,58 @@ fn apply_enrichment_to_record_view(
     for (key, value) in enrichment {
         dict.set_item(key, value)?;
     }
+    if let Some(metadata) = dict.get_item("metadata")? {
+        let metadata = metadata.cast::<PyDict>()?;
+        if let Some(key_values) = metadata.get_item("key_values")? {
+            let key_values = key_values.cast::<PyDict>()?;
+            for (key, value) in enrichment {
+                key_values.set_item(key, value)?;
+            }
+        }
+    }
     Ok(())
+}
+
+fn try_validate_and_insert_enrichment(
+    py: Python<'_>,
+    description: &str,
+    key: String,
+    value: &Bound<'_, PyAny>,
+    previous: Option<&Py<PyAny>>,
+    enrichment: &mut BTreeMap<String, String>,
+) -> PyResult<bool> {
+    let has_changed = match previous {
+        Some(previous) => !python_values_equal(py, previous, value)?,
+        None => true,
+    };
+    if !has_changed {
+        return Ok(false);
+    }
+
+    let candidate = match extract_supported_value(&key, value) {
+        Ok(candidate) => candidate,
+        Err(err) => {
+            warn!("Python filter callback '{description}' ignored enrichment: {err}");
+            return Ok(false);
+        }
+    };
+    if let Err(err) = validate_enrichment_key(&key) {
+        warn!("Python filter callback '{description}' ignored enrichment: {err}");
+        return Ok(false);
+    }
+    if let Err(err) = validate_enrichment_value(&key, &candidate) {
+        warn!("Python filter callback '{description}' ignored enrichment: {err}");
+        return Ok(false);
+    }
+
+    enrichment.insert(key.clone(), candidate);
+    if let Err(err) = validate_enrichment_total(enrichment) {
+        enrichment.remove(&key);
+        warn!("Python filter callback '{description}' ignored enrichment: {err}");
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 fn extract_enrichment(
@@ -287,33 +349,15 @@ fn extract_enrichment(
         if is_reserved_enrichment_key(&key) {
             continue;
         }
-        let changed = match before.get(&key) {
-            Some(previous) => !python_values_equal(py, previous, &value)?,
-            None => true,
-        };
-        if !changed {
-            continue;
-        }
-        let candidate = match extract_supported_value(&key, &value) {
-            Ok(candidate) => candidate,
-            Err(err) => {
-                warn!("Python filter callback '{description}' ignored enrichment: {err}");
-                continue;
-            }
-        };
-        if let Err(err) = validate_enrichment_key(&key) {
-            warn!("Python filter callback '{description}' ignored enrichment: {err}");
-            continue;
-        }
-        if let Err(err) = validate_enrichment_value(&key, &candidate) {
-            warn!("Python filter callback '{description}' ignored enrichment: {err}");
-            continue;
-        }
-        enrichment.insert(key.clone(), candidate);
-        if let Err(err) = validate_enrichment_total(&enrichment) {
-            enrichment.remove(&key);
-            warn!("Python filter callback '{description}' ignored enrichment: {err}");
-        }
+        let previous = before.get(&key);
+        let _ = try_validate_and_insert_enrichment(
+            py,
+            description,
+            key,
+            &value,
+            previous,
+            &mut enrichment,
+        )?;
     }
 
     Ok(enrichment)

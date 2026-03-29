@@ -1,6 +1,7 @@
 //! Validation helpers for Python callback filter enrichment.
 
 use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
 
 use crate::python::fq_py_type;
 
@@ -118,11 +119,10 @@ pub(crate) fn extract_supported_value(
     if value.is_none() {
         return Ok("None".to_owned());
     }
-    if value.extract::<bool>().is_ok()
-        || value.extract::<String>().is_ok()
-        || value.extract::<i128>().is_ok()
-        || value.extract::<u128>().is_ok()
-        || value.extract::<f64>().is_ok()
+    if value.is_instance_of::<PyBool>()
+        || value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyInt>()
+        || value.is_instance_of::<PyFloat>()
     {
         return Ok(value
             .str()

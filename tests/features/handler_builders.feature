@@ -158,6 +158,21 @@ Feature: Handler builders
     When I set bearer token "my-api-token"
     Then the HTTP handler builder with bearer matches snapshot
 
+  Scenario: HTTP handler builder ignores unsupported auth keys
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I set auth config token "my-api-token" with extra key "scope" value "ignored"
+    Then the HTTP handler builder ignores unsupported auth keys
+
+  Scenario: HTTP handler builder rejects mixed auth config
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I try auth config token "my-api-token" username "admin" password "secret"
+    Then setting the HTTP auth config fails with "with_auth config must not mix 'token' with 'username'/'password'"
+
+  Scenario: HTTP handler builder rejects incomplete basic auth config
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I try auth config username "admin" without password
+    Then setting the HTTP auth config fails with "with_auth config must specify either 'token' or both 'username' and 'password'"
+
   Scenario: HTTP handler builder with record fields
     Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
     When I set record fields to "name,msg,levelname"

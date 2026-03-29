@@ -45,18 +45,30 @@ class RejectAllFilter(logging.Filter):
         return False
 
 
+class RecordMetadataPayload(typ.TypedDict):
+    """Subset of metadata fields asserted by these BDD scenarios."""
+
+    key_values: dict[str, str]
+
+
+class CollectedRecordPayload(typ.TypedDict):
+    """Structured record subset consumed by the callback-filter steps."""
+
+    metadata: RecordMetadataPayload
+
+
 class RecordCollector:
     """Collect structured records from ``handle_record``."""
 
     def __init__(self) -> None:
         """Initialize the in-memory record buffer."""
-        self.records: list[dict[str, typ.Any]] = []
+        self.records: list[CollectedRecordPayload] = []
 
     @staticmethod
     def handle(_logger: str, _level: str, _message: str) -> None:
         """Fallback handle method required by registration."""
 
-    def handle_record(self, record: dict[str, typ.Any]) -> None:
+    def handle_record(self, record: CollectedRecordPayload) -> None:
         """Capture structured record payloads for assertions."""
         self.records.append(record)
 
@@ -163,5 +175,5 @@ def assert_collected_metadata(
 )
 def suppresses_record(name: str, level: str, collector: RecordCollector) -> None:
     assert get_logger(name).log(level, "blocked") is None
-    time.sleep(0.05)
+    _wait_for(lambda: collector.records == [])
     assert collector.records == []

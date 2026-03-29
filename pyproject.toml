@@ -146,8 +146,13 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "."
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
-# Ensure source builds used by CI coverage include the timed-rotation
-# test hooks, not just the project's default Cargo features.
+# Coverage jobs install femtologging from source in an ephemeral environment,
+# so they do not inherit the Makefile's explicit `python,test-util` feature
+# flags. Keep `test-util` enabled here so those source builds expose the timed
+# rotation test hooks and exercise the full snapshot set.
+# Security note: this also exposes test-only helper APIs to source builds.
+# Production packaging should continue to use explicit release feature sets and
+# must not rely on these helpers as stable runtime surface.
 features = ["test-util"]
 
 [tool.pytest.ini_options]

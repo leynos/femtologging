@@ -5,8 +5,10 @@ from __future__ import annotations
 import contextvars
 import io
 import logging
+import sys
 import threading
 import time
+import types
 import typing as typ
 
 import pytest
@@ -77,8 +79,10 @@ NONCALLABLE_FACTORY = object()
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> typ.Iterator[None]:
     """Reset the global logging manager around each test."""
+    _REQUEST_ID.set("")
     reset_manager()
     yield
+    _REQUEST_ID.set("")
     reset_manager()
 
 
@@ -158,6 +162,36 @@ def test_python_callback_filter_exceptions_drop_records() -> None:
     assert collector.records == []
 
 
+def test_python_callback_filters_preserve_exception_fields() -> None:
+    """Callback records should include emitted ``exc_info`` and ``stack_info``."""
+    seen: dict[str, object] = {}
+
+    def require_exception_state(record: logging.LogRecord) -> bool:
+        seen["exc_info"] = record.exc_info
+        seen["stack_info"] = record.stack_info
+        return record.exc_info is not None and bool(record.stack_info)
+
+    def raise_boom() -> None:
+        message = "boom"
+        raise ValueError(message)
+
+    collector = _build_filtered_logger(
+        PythonCallbackFilterBuilder(require_exception_state)
+    )
+    logger = get_logger("app")
+
+    try:
+        raise_boom()
+    except ValueError:
+        assert logger.log("ERROR", "caught", exc_info=True, stack_info=True) is not None
+
+    _wait_for(lambda: len(collector.records) == 1)
+    exc_info = typ.cast("dict[str, object]", seen["exc_info"])
+    stack_info = typ.cast("dict[str, object]", seen["stack_info"])
+    assert exc_info["type_name"] == "ValueError"
+    assert stack_info["frames"]
+
+
 def test_stdlib_handler_adapter_receives_enrichment_fields() -> None:
     """Enrichment should be visible to stdlib formatters via the adapter."""
 
@@ -230,6 +264,41 @@ def test_dict_config_filter_factory_rejects_non_callable_objects() -> None:
 
     with pytest.raises(TypeError, match="factory must be callable"):
         dictConfig(cfg)
+
+
+def test_dict_config_filter_factory_prefers_attributes_over_submodules() -> None:
+    """Factory resolution should prefer attributes before importing submodules."""
+    package = types.ModuleType("factory_pkg")
+    package_obj = typ.cast("typ.Any", package)
+    package_obj.__path__ = []
+    package_obj.factory = ContextFilterFactory
+    submodule = types.ModuleType("factory_pkg.factory")
+    original_modules = dict(sys.modules)
+    sys.modules["factory_pkg"] = package
+    sys.modules["factory_pkg.factory"] = submodule
+
+    try:
+        cfg = {
+            "version": 1,
+            "filters": {
+                "factory": {"()": "factory_pkg.factory", "request_id": "factory-attr"}
+            },
+            "loggers": {"app": {"filters": ["factory"]}},
+            "root": {"level": "DEBUG"},
+        }
+        dictConfig(cfg)
+    finally:
+        sys.modules.clear()
+        sys.modules.update(original_modules)
+
+    collector = RecordCollector()
+    get_logger("app").add_handler(collector)
+
+    assert get_logger("app").log("INFO", "hello") is not None
+    _wait_for(lambda: len(collector.records) == 1)
+    assert (
+        collector.records[0]["metadata"]["key_values"]["request_id"] == "factory-attr"
+    )
 
 
 @pytest.mark.parametrize(

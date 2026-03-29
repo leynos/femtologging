@@ -147,7 +147,7 @@ The following files are most relevant to this work:
 - Do not introduce new external Rust or Python dependencies.
 - Public Python-facing APIs must receive matching stubs in
   `femtologging/_femtologging_rs.pyi`.
-- New Rust tests must use `rstest` fixtures and parameterised cases,
+- New Rust tests must use `rstest` fixtures and parameterized cases,
   following `docs/rust-testing-with-rstest-fixtures.md`.
 - New public Rust APIs must receive Rustdoc comments following
   `docs/rust-doctest-dry-guide.md`.
@@ -283,7 +283,7 @@ Define enrichment validation helpers:
 - `validate_enrichment_value(value: &str) -> Result<(), EnrichmentError>`:
   checks that the stringified value does not exceed 1,024 UTF-8 bytes.
 - `validate_enrichment_total(map: &BTreeMap<String, String>)`: checks
-  that the map has at most 64 keys and total serialised size does not exceed 16
+  that the map has at most 64 keys and total serialized size does not exceed 16
   KiB. Returns `Result<(), EnrichmentError>`.
 
 #### A.2. Add `PythonCallbackFilter` to `FilterBuilder` enum
@@ -320,7 +320,7 @@ to `femtologging/_femtologging_rs.pyi`.
 
 #### A.4. Rust unit tests for enrichment validation
 
-Add `rstest`-parameterised tests in a new test module
+Add `rstest`-parameterized tests in a new test module
 `rust_extension/src/filters/python_callback_tests.rs` covering:
 
 - Reserved key rejection (each reserved key in the static set).
@@ -390,7 +390,7 @@ This matches the principle of deterministic error handling stated in ADR 003.
 
 The enrichment map extracted from a Python callback filter is merged into
 `record.metadata.key_values`. This field already exists as a
-`BTreeMap<String, String>` on `RecordMetadata` and is already serialised into
+`BTreeMap<String, String>` on `RecordMetadata` and is already serialized into
 the Python dict by `record_to_dict()` in
 `rust_extension/src/formatter/python.rs`. This means enrichment fields will
 automatically be visible to Python handlers and formatters without additional
@@ -691,7 +691,7 @@ Quality criteria (what "done" means):
   new BDD scenarios and snapshot tests).
 - `make markdownlint` passes on all documentation changes.
 - `make nixie` passes on all Mermaid diagrams.
-- New `rstest` parameterised cases exist for enrichment validation.
+- New `rstest` parameterized cases exist for enrichment validation.
 - New `pytest-bdd` scenarios cover happy paths, unhappy paths, and edge
   cases for Python callback filters.
 - New syrupy snapshots cover builder output, enriched record dicts, and
@@ -759,6 +759,6 @@ after a partial failure is safe. `make fmt` is idempotent.
 - Added focused Rust tests for enrichment validation and Python callback
   behaviour, Python unit tests for callback/filter-object/factory forms and
   contextvar isolation, plus BDD coverage and a snapshot for configuration
-  serialisation.
+  serialization.
 - Updated the configuration and architecture documentation and marked roadmap
   items `3.2.5` through `3.2.5.3` complete.

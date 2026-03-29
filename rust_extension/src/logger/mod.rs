@@ -431,8 +431,9 @@ impl FemtoLogger {
     /// Iterates over each filter and returns `false` on the first rejection.
     /// If no filters are configured, the record passes.
     fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
+        let filters = self.filters.read().clone();
         let mut context = FilterContext::default();
-        for filter in self.filters.read().iter() {
+        for filter in filters {
             let decision = filter.decision(record, &mut context);
             if !decision.accepted {
                 return false;
