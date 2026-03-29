@@ -8,10 +8,12 @@
 )]
 
 mod convenience_methods;
+mod producer;
 mod py_handler;
 mod python_helpers;
 #[cfg(feature = "python")]
 mod runtime_mutation;
+mod worker;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
@@ -19,26 +21,23 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::filters::{FemtoFilter, FilterContext};
+use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_context;
-use crate::manager;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use crate::traceback_capture;
 
 use crate::{
-    formatter::{DefaultFormatter, SharedFormatter},
+    formatter::SharedFormatter,
     level::FemtoLevel,
     log_record::{FemtoLogRecord, RecordMetadata},
 };
-use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select};
-use log::warn;
+use crossbeam_channel::Sender;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
 #[cfg(feature = "python")]
@@ -309,212 +308,6 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
-    /// Core logging logic shared between Python and Rust APIs.
-    ///
-    /// Checks level threshold and filters, formats the record, and dispatches
-    /// to handlers. Returns `Some(formatted_message)` if the record was logged,
-    /// or `None` if it was filtered out.
-    fn log_record(&self, mut record: FemtoLogRecord) -> Option<String> {
-        let threshold = self.level.load(Ordering::Relaxed);
-        if u8::from(record.level()) < threshold {
-            return None;
-        }
-
-        if !self.apply_filters(&mut record) {
-            return None;
-        }
-        let msg = self.formatter.format(&record);
-        self.dispatch_to_handlers(record);
-        Some(msg)
-    }
-
-    /// Log a message at the given level (Rust-only API).
-    ///
-    /// This method is a simplified version of the PyO3-exposed `log` method
-    /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
-    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
-        let record = FemtoLogRecord::new(&self.name, level, message);
-        self.log_record(record)
-    }
-
-    /// Log a message with explicit source location metadata.
-    ///
-    /// Used by the [`femtolog_info!`] family of macros and the Python
-    /// convenience functions to attach caller-captured source information
-    /// (filename, line number, module path) to the record before filtering
-    /// and dispatch.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use femtologging_rs::{FemtoLevel, FemtoLogger, RecordMetadata};
-    ///
-    /// let logger = FemtoLogger::new("example".into());
-    /// let metadata = RecordMetadata {
-    ///     filename: "main.rs".into(),
-    ///     line_number: 42,
-    ///     module_path: "example".into(),
-    ///     ..Default::default()
-    /// };
-    /// logger.log_with_metadata(FemtoLevel::Info, "hello", metadata);
-    /// ```
-    pub fn log_with_metadata(
-        &self,
-        level: FemtoLevel,
-        message: &str,
-        mut metadata: RecordMetadata,
-    ) -> Option<String> {
-        if !self.is_enabled_for(level) {
-            return None;
-        }
-        match log_context::merge_context_values(&metadata.key_values) {
-            Ok(merged_key_values) => metadata.key_values = merged_key_values,
-            Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return None;
-            }
-        }
-        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
-        self.log_record(record)
-    }
-
-    /// Return whether `level` is enabled for this logger.
-    pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
-        u8::from(level) >= self.level.load(Ordering::Relaxed)
-    }
-
-    /// Dispatch an already-constructed record through this logger.
-    ///
-    /// The record is filtered against the logger's level and filters before
-    /// being enqueued for handler processing.
-    #[cfg(feature = "log-compat")]
-    pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
-        let mut record = record;
-        if !self.is_enabled_for(record.level()) {
-            return;
-        }
-        if !self.apply_filters(&mut record) {
-            return;
-        }
-        self.dispatch_to_handlers(record);
-    }
-
-    /// Return the logger's current minimum level.
-    ///
-    /// This method is thread-safe; the level is stored in an `AtomicU8` and
-    /// read with `Ordering::Relaxed`.
-    pub fn get_level(&self) -> FemtoLevel {
-        self.load_level()
-    }
-
-    /// Load the current level from the atomic storage.
-    ///
-    /// The level is guaranteed to be a valid `FemtoLevel` discriminant because
-    /// the only way to set it is through `set_level`, which accepts a typed
-    /// `FemtoLevel` value.
-    fn load_level(&self) -> FemtoLevel {
-        match self.level.load(Ordering::Relaxed) {
-            0 => FemtoLevel::Trace,
-            1 => FemtoLevel::Debug,
-            2 => FemtoLevel::Info,
-            3 => FemtoLevel::Warn,
-            4 => FemtoLevel::Error,
-            // Default case covers Critical (5) and any unexpected value.
-            // In practice, only 0–5 are stored because `set_level` takes a
-            // typed `FemtoLevel`.
-            _ => FemtoLevel::Critical,
-        }
-    }
-
-    /// Return `true` if every configured filter approves the record.
-    ///
-    /// Iterates over each filter and returns `false` on the first rejection.
-    /// If no filters are configured, the record passes.
-    fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
-        let filters = self.filters.read().clone();
-        let mut context = FilterContext::default();
-        for filter in filters {
-            let decision = filter.decision(record, &mut context);
-            if !decision.accepted {
-                return false;
-            }
-            record.metadata_mut().key_values.extend(decision.enrichment);
-        }
-        true
-    }
-
-    fn should_propagate_to_parent(&self) -> bool {
-        self.propagate.load(Ordering::SeqCst) && self.parent.is_some()
-    }
-
-    fn handle_parent_propagation(&self, record: FemtoLogRecord) {
-        let Some(parent_name) = &self.parent else {
-            return;
-        };
-        Python::attach(|py| {
-            if let Ok(parent) = manager::get_logger(py, parent_name) {
-                parent.borrow(py).dispatch_to_handlers(record);
-            }
-        });
-    }
-
-    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
-        let Some(tx) = &self.tx else {
-            return;
-        };
-        let handlers = self.handlers.read().clone();
-        if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
-            return;
-        }
-        self.dropped_records.fetch_add(1, Ordering::Relaxed);
-        self.drop_warner.record_drop();
-        self.drop_warner.warn_if_due(|count| {
-            warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
-        });
-    }
-
-    fn flush_handlers_blocking(&self) -> bool {
-        self.wait_for_worker_idle() && self.flush_configured_handlers()
-    }
-
-    fn wait_for_worker_idle(&self) -> bool {
-        let Some(tx) = &self.tx else {
-            return true;
-        };
-        let (ack_tx, ack_rx) = bounded(1);
-        let ack_handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FlushAckHandler::new(ack_tx));
-        let record = FemtoLogRecord::new("__femtologging__", FemtoLevel::Info, "__flush__");
-        if tx
-            .send(QueuedRecord {
-                record,
-                handlers: vec![ack_handler],
-            })
-            .is_err()
-        {
-            return false;
-        }
-        ack_rx
-            .recv_timeout(Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS))
-            .is_ok()
-    }
-
-    fn flush_configured_handlers(&self) -> bool {
-        self.handlers.read().iter().all(|handler| handler.flush())
-    }
-
-    /// Dispatch a record to the logger's handlers via the background queue.
-    ///
-    /// The record is sent to the worker thread if a channel is configured.
-    /// When the queue is full or the logger is shutting down, the record is
-    /// dropped; a drop counter increments and a rate-limited warning is
-    /// emitted.
-    fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
-        let parent_record = self.should_propagate_to_parent().then(|| record.clone());
-        self.send_to_local_handlers(record);
-        if let Some(pr) = parent_record {
-            self.handle_parent_propagation(pr);
-        }
-    }
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
@@ -574,158 +367,6 @@ impl FemtoLogger {
     pub fn clone_sender_for_test(&self) -> Option<Sender<QueuedRecord>> {
         self.tx.as_ref().cloned()
     }
-
-    /// Create a logger with an explicit parent name.
-    pub fn with_parent(name: String, parent: Option<String>) -> Self {
-        let formatter = SharedFormatter::new(DefaultFormatter);
-        let handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>> =
-            Arc::new(RwLock::new(Vec::new()));
-        let filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>> = Arc::new(RwLock::new(Vec::new()));
-
-        let (tx, rx) = bounded::<QueuedRecord>(DEFAULT_CHANNEL_CAPACITY);
-        let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
-        let handle = thread::spawn(move || {
-            Self::worker_thread_loop(rx, shutdown_rx);
-        });
-
-        Self {
-            name,
-            parent,
-            formatter,
-            level: AtomicU8::new(u8::from(FemtoLevel::Info)),
-            propagate: AtomicBool::new(true),
-            handlers,
-            filters,
-            dropped_records: AtomicU64::new(0),
-            drop_warner: RateLimitedWarner::default(),
-            tx: Some(tx),
-            shutdown_tx: Some(shutdown_tx),
-            handle: Mutex::new(Some(handle)),
-        }
-    }
-
-    /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
-    fn handle_log_record(job: QueuedRecord) {
-        for h in job.handlers.iter() {
-            if let Err(err) = h.handle(job.record.clone()) {
-                warn!("FemtoLogger: handler reported an error: {err}");
-            }
-        }
-    }
-
-    /// Drain any remaining records once a shutdown signal is received.
-    ///
-    /// Consumes all messages still available on `rx` and dispatches them
-    /// through the provided `handlers`. This ensures no log records are lost
-    /// during shutdown.
-    ///
-    /// # Arguments
-    ///
-    /// * `rx` - Channel receiver holding pending log records.
-    fn drain_remaining_records(rx: &Receiver<QueuedRecord>) {
-        while let Ok(job) = rx.try_recv() {
-            Self::handle_log_record(job);
-        }
-    }
-
-    /// Finalize the worker thread by draining any remaining queued
-    /// records.
-    ///
-    /// Acts as the shutdown entry point for the worker loop. The
-    /// drain step ensures that records already enqueued at the moment
-    /// shutdown was signalled are not silently lost.
-    ///
-    /// # Arguments
-    ///
-    /// * `rx` - Channel receiver holding pending log records.
-    fn shutdown_and_drain(rx: &Receiver<QueuedRecord>) {
-        Self::drain_remaining_records(rx);
-    }
-
-    /// Perform a non-blocking check for a pending shutdown signal.
-    ///
-    /// This is the Phase 1 check in the two-phase shutdown pattern
-    /// used by [`worker_thread_loop`]. It uses `try_recv` rather
-    /// than a blocking receive so the worker can detect a shutdown
-    /// request that arrived while the previous `select!` iteration
-    /// was busy processing a log record. Without this check, a
-    /// continuously saturated record channel could delay shutdown
-    /// recognition indefinitely.
-    ///
-    /// Returns `true` when the shutdown channel carries a message or
-    /// has been disconnected.
-    ///
-    /// # Arguments
-    ///
-    /// * `shutdown_rx` - Channel receiver carrying the shutdown
-    ///   signal.
-    fn should_shutdown_now(shutdown_rx: &Receiver<()>) -> bool {
-        matches!(
-            shutdown_rx.try_recv(),
-            Ok(()) | Err(TryRecvError::Disconnected)
-        )
-    }
-
-    /// Main loop executed by the logger's worker thread.
-    ///
-    /// Uses a two-phase shutdown pattern to guarantee prompt shutdown
-    /// even under sustained high-throughput logging:
-    ///
-    /// - **Phase 1** ([`should_shutdown_now`]): A non-blocking
-    ///   `try_recv` on the shutdown channel, executed at the top of
-    ///   every iteration *before* the blocking `select!`. This
-    ///   provides a deterministic opportunity to observe a shutdown
-    ///   signal that arrived while the previous iteration was
-    ///   servicing a log record.
-    ///
-    /// - **Phase 2** (`select!`): A blocking wait on both the
-    ///   shutdown and record channels. Although `crossbeam`'s
-    ///   `select!` uses random selection when multiple channels are
-    ///   ready, a continuously saturated record channel could still
-    ///   cause the shutdown branch to lose repeated coin-flips,
-    ///   delaying exit. Phase 1 eliminates this probabilistic delay
-    ///   by guaranteeing that every loop iteration checks for
-    ///   shutdown deterministically.
-    ///
-    /// When either phase detects a shutdown signal, all remaining
-    /// queued records are drained before the thread exits so that no
-    /// log messages are silently lost.
-    ///
-    /// # Arguments
-    ///
-    /// * `rx` - Channel receiver for incoming log records.
-    /// * `shutdown_rx` - Channel receiver carrying the shutdown
-    ///   signal, sent by [`FemtoLogger::drop`].
-    fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
-        loop {
-            // Phase 1: non-blocking check prevents shutdown starvation
-            // when the record channel is continuously saturated.
-            if Self::should_shutdown_now(&shutdown_rx) {
-                Self::shutdown_and_drain(&rx);
-                break;
-            }
-            // Phase 2: block until either a shutdown signal or a new
-            // record arrives.  Under heavy load the random selection
-            // in select! may repeatedly favour the record branch, so
-            // Phase 1 above provides the deterministic guarantee.
-            select! {
-                recv(shutdown_rx) -> _ => {
-                    Self::shutdown_and_drain(&rx);
-                    break;
-                },
-                recv(rx) -> rec => match rec {
-                    Ok(job) => Self::handle_log_record(job),
-                    Err(_) => break,
-                },
-            }
-        }
-    }
-}
-
-fn log_join_result(handle: JoinHandle<()>) {
-    if handle.join().is_err() {
-        warn!("FemtoLogger: worker thread panicked");
-    }
 }
 
 impl Drop for FemtoLogger {
@@ -737,7 +378,7 @@ impl Drop for FemtoLogger {
         // Drop the lock before joining the worker thread.
         let handle = { self.handle.lock().take() };
         if let Some(handle) = handle {
-            Python::attach(|py| py.detach(move || log_join_result(handle)));
+            Python::attach(|py| py.detach(move || worker::log_join_result(handle)));
         }
     }
 }

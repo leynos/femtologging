@@ -24,6 +24,9 @@ use super::python_callback_validation::{
 };
 use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait, FilterContext, FilterDecision};
 
+type SerializedEnrichment = BTreeMap<String, String>;
+type TypedEnrichment = BTreeMap<String, Py<PyAny>>;
+
 /// A filter backed by a Python callable or `logging.Filter`-style object.
 #[derive(Clone, Debug)]
 pub struct PythonCallbackFilter {
@@ -51,12 +54,13 @@ impl PythonCallbackFilter {
             let outcome = (|| -> Result<FilterDecision, PyErr> {
                 let result = self.invoke(py, &record_view)?;
                 let accepted = result.is_truthy()?;
-                let enrichment = extract_enrichment(py, &record_view, &before, &self.description)?;
+                let (enrichment, typed_enrichment) =
+                    extract_enrichment(py, &record_view, &before, &self.description)?;
                 restore_record_attrs(&record_view, &before)?;
                 if !accepted {
                     return Ok(FilterDecision::accept(false));
                 }
-                apply_enrichment_to_record_view(&record_view, &enrichment)?;
+                apply_enrichment_to_record_view(&record_view, &enrichment, &typed_enrichment)?;
                 Ok(FilterDecision {
                     accepted: true,
                     enrichment,
@@ -231,6 +235,10 @@ fn create_filter_record<'py>(
         log_record_payload.set_item("stack_info", stack_info)?;
     }
     for (key, value) in extra.iter() {
+        let key = key.extract::<String>()?;
+        if is_reserved_enrichment_key(&key) {
+            continue;
+        }
         log_record_payload.set_item(key, value)?;
     }
 
@@ -273,22 +281,25 @@ fn restore_record_attrs(
 
 fn apply_enrichment_to_record_view(
     record_view: &Bound<'_, PyAny>,
-    enrichment: &BTreeMap<String, String>,
+    enrichment: &SerializedEnrichment,
+    typed_enrichment: &TypedEnrichment,
 ) -> PyResult<()> {
+    let py = record_view.py();
     let binding = record_view.getattr("__dict__")?;
     let dict = binding.cast::<PyDict>()?;
-    for (key, value) in enrichment {
-        dict.set_item(key, value)?;
+    for (key, value) in typed_enrichment {
+        dict.set_item(key, value.bind(py))?;
     }
     if let Some(metadata) = dict.get_item("metadata")? {
         let metadata = metadata.cast::<PyDict>()?;
         if let Some(key_values) = metadata.get_item("key_values")? {
             let key_values = key_values.cast::<PyDict>()?;
-            for (key, value) in enrichment {
-                key_values.set_item(key, value)?;
+            for (key, value) in typed_enrichment {
+                key_values.set_item(key, value.bind(py))?;
             }
         }
     }
+    debug_assert_eq!(enrichment.len(), typed_enrichment.len());
     Ok(())
 }
 
@@ -298,7 +309,8 @@ fn try_validate_and_insert_enrichment(
     key: String,
     value: &Bound<'_, PyAny>,
     previous: Option<&Py<PyAny>>,
-    enrichment: &mut BTreeMap<String, String>,
+    enrichment: &mut SerializedEnrichment,
+    typed_enrichment: &mut TypedEnrichment,
 ) -> PyResult<bool> {
     let has_changed = match previous {
         Some(previous) => !python_values_equal(py, previous, value)?,
@@ -325,8 +337,10 @@ fn try_validate_and_insert_enrichment(
     }
 
     enrichment.insert(key.clone(), candidate);
+    typed_enrichment.insert(key.clone(), value.clone().unbind());
     if let Err(err) = validate_enrichment_total(enrichment) {
         enrichment.remove(&key);
+        typed_enrichment.remove(&key);
         warn!("Python filter callback '{description}' ignored enrichment: {err}");
         return Ok(false);
     }
@@ -339,10 +353,11 @@ fn extract_enrichment(
     record_view: &Bound<'_, PyAny>,
     before: &BTreeMap<String, Py<PyAny>>,
     description: &str,
-) -> PyResult<BTreeMap<String, String>> {
+) -> PyResult<(SerializedEnrichment, TypedEnrichment)> {
     let binding = record_view.getattr("__dict__")?;
     let after = binding.cast::<PyDict>()?;
-    let mut enrichment = BTreeMap::new();
+    let mut enrichment = SerializedEnrichment::new();
+    let mut typed_enrichment = TypedEnrichment::new();
 
     for (key, value) in after.iter() {
         let key = key.extract::<String>()?;
@@ -357,10 +372,11 @@ fn extract_enrichment(
             &value,
             previous,
             &mut enrichment,
+            &mut typed_enrichment,
         )?;
     }
 
-    Ok(enrichment)
+    Ok((enrichment, typed_enrichment))
 }
 
 fn python_values_equal(

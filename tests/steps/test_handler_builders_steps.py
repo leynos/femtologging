@@ -579,6 +579,7 @@ def when_set_auth_with_extra_key(
 def when_try_mixed_auth_config(
     http_builder: HTTPHandlerBuilder, token: str, user: str, password: str
 ) -> ValueError:
+    # Intentionally mix token and basic-auth fields to exercise validation.
     invalid_config = typ.cast(
         "HTTPBasicAuthConfig | HTTPTokenAuthConfig",
         {"token": token, "username": user, "password": password},
@@ -600,6 +601,7 @@ def when_try_mixed_auth_config(
 def when_try_incomplete_basic_auth(
     http_builder: HTTPHandlerBuilder, user: str
 ) -> ValueError:
+    # Intentionally omit password/token so with_auth rejects the payload.
     invalid_config = typ.cast(
         "HTTPBasicAuthConfig | HTTPTokenAuthConfig",
         {"username": user},

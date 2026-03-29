@@ -36,7 +36,17 @@ const RESERVED_STD_RECORD_KEYS: &[&str] = &[
     "taskName",
 ];
 
-const RESERVED_FEMTO_KEYS: &[&str] = &["logger", "level", "metadata"];
+const RESERVED_FEMTO_KEYS: &[&str] = &[
+    "logger",
+    "level",
+    "metadata",
+    "module_path",
+    "line_number",
+    "timestamp",
+    "thread_id",
+    "thread_name",
+    "key_values",
+];
 
 pub(crate) fn is_reserved_enrichment_key(key: &str) -> bool {
     RESERVED_STD_RECORD_KEYS.contains(&key) || RESERVED_FEMTO_KEYS.contains(&key)

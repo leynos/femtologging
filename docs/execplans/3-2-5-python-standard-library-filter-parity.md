@@ -583,70 +583,70 @@ set -o pipefail && make nixie 2>&1 | tee /tmp/3-2-5-e-nixie.log
 In `rust_extension/src/filters/python_callback.rs`:
 
 ```rust
-/// Result of evaluating a Python callback filter.
-pub struct FilterResult {
-    /// Whether the record passed the filter.
-    pub accepted: bool,
+/// Outcome returned by the filter pipeline.
+pub struct FilterDecision {
+    /// Whether the record should continue through the pipeline.
+    pub(crate) accepted: bool,
     /// Enrichment fields to merge into the record's metadata.
-    /// Empty if the filter rejected the record or produced no enrichment.
-    pub enrichment: BTreeMap<String, String>,
+    pub(crate) enrichment: BTreeMap<String, String>,
 }
 
-/// A filter backed by a Python callable or `logging.Filter` object.
-///
-/// The callable is invoked on the producer thread via `Python::attach`.
-/// Enrichment fields set on the mutable record view are extracted and
-/// persisted into Rust-owned metadata before the record is queued.
-pub struct PythonCallbackFilter {
-    callable: Arc<Mutex<Py<PyAny>>>,
-    description: String,
+/// Per-record state shared across filters during evaluation.
+pub struct FilterContext {
+    pub(crate) python_record_view: Option<Py<PyAny>>,
 }
 
-impl PythonCallbackFilter {
-    /// Evaluate the filter and extract enrichment.
-    pub fn filter_with_enrichment(
+pub trait FemtoFilter: Send + Sync {
+    /// Evaluate the filter for `record`, optionally returning enrichment.
+    fn decision(
         &self,
-        record: &FemtoLogRecord,
-    ) -> FilterResult { /* ... */ }
-}
+        record: &mut FemtoLogRecord,
+        context: &mut FilterContext,
+    ) -> FilterDecision;
 
-impl FemtoFilter for PythonCallbackFilter {
-    fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        self.filter_with_enrichment(record).accepted
+    fn should_log(&self, record: &mut FemtoLogRecord) -> bool {
+        self.decision(record, &mut FilterContext::default()).accepted
     }
 }
 ```
 
-In `rust_extension/src/filters/enrichment.rs`:
+Python callback filters now implement `FemtoFilter::decision(...)` directly.
+They cache a stdlib-compatible `logging.LogRecord` view in `FilterContext`,
+evaluate the callback on the producer thread, and return a `FilterDecision`
+whose enrichment map is later merged into `RecordMetadata.key_values`.
+
+In `rust_extension/src/filters/python_callback_validation.rs`:
 
 ```rust
-/// Errors produced during enrichment validation.
 #[derive(Debug, Error)]
-pub enum EnrichmentError {
-    #[error("enrichment key {key:?} collides with reserved attribute")]
+pub(crate) enum EnrichmentError {
+    #[error("enrichment key '{key}' is reserved")]
     ReservedKey { key: String },
-    #[error("enrichment key exceeds 64-byte limit: {len} bytes")]
-    KeyTooLong { len: usize },
-    #[error("enrichment value exceeds 1024-byte limit: {len} bytes")]
-    ValueTooLong { len: usize },
-    #[error("enrichment exceeds 64-key limit: {count} keys")]
-    TooManyKeys { count: usize },
-    #[error("enrichment total size exceeds 16 KiB limit: {size} bytes")]
-    TotalTooLarge { size: usize },
-    #[error("unsupported enrichment value type: {type_name}")]
-    UnsupportedType { type_name: String },
+    #[error("enrichment key '{key}' exceeds {limit} UTF-8 bytes")]
+    KeyTooLong { key: String, limit: usize },
+    #[error("enrichment value for '{key}' exceeds {limit} UTF-8 bytes")]
+    ValueTooLong { key: String, limit: usize },
+    #[error("enrichment supports at most {limit} keys")]
+    TooManyKeys { limit: usize },
+    #[error("enrichment total exceeds {limit} bytes")]
+    TotalTooLarge { limit: usize },
+    #[error("enrichment key '{key}' has unsupported Python type {python_type}")]
+    UnsupportedValueType { key: String, python_type: String },
 }
 
-/// Validate an enrichment key.
-pub fn validate_enrichment_key(key: &str) -> Result<(), EnrichmentError>;
-
-/// Validate a stringified enrichment value.
-pub fn validate_enrichment_value(value: &str) -> Result<(), EnrichmentError>;
-
-/// Validate the total enrichment map.
-pub fn validate_enrichment_total(
+pub(crate) fn is_reserved_enrichment_key(key: &str) -> bool;
+pub(crate) fn validate_enrichment_key(key: &str) -> Result<(), EnrichmentError>;
+pub(crate) fn validate_enrichment_value(
+    key: &str,
+    value: &str,
+) -> Result<(), EnrichmentError>;
+pub(crate) fn validate_enrichment_total(
     map: &BTreeMap<String, String>,
 ) -> Result<(), EnrichmentError>;
+pub(crate) fn extract_supported_value(
+    key: &str,
+    value: &Bound<'_, PyAny>,
+) -> Result<String, EnrichmentError>;
 ```
 
 ### New Python types
@@ -655,15 +655,34 @@ pub fn validate_enrichment_total(
 class PythonCallbackFilterBuilder:
     """Builder for a Python callback filter.
 
-    Accepts a callable that takes a single record argument (a mutable
-    dict) and returns a truthy/falsy value, or an object with a
-    ``filter(record)`` method.
+    Accepts either a callable that receives a stdlib ``logging.LogRecord``
+    view and returns a truthy/falsy value, or an object exposing
+    ``filter(record)``.
     """
 
-    def __init__(self, callback: Callable | object) -> None: ...
+    def __init__(self, callback: object) -> None: ...
     def as_dict(self) -> dict[str, object]: ...
-    def build(self) -> object: ...
 ```
+
+Callback examples in the shipped runtime use the `logging.LogRecord` attribute
+API rather than dictionary mutation:
+
+```python
+def enrich(record: logging.LogRecord) -> bool:
+    if record.exc_info is None:
+        return False
+    record.request_id = get_request_id()
+    return True
+```
+
+Accepted enrichment is validated at runtime before it is copied into Rust-owned
+metadata:
+
+- Keys must be non-empty strings that are not reserved stdlib or femtologging
+  names.
+- Values must be Python `str`, `int`, `float`, `bool`, or `None`.
+- The runtime enforces the shipped limits of 64 keys, 64 UTF-8 bytes per key,
+  1,024 UTF-8 bytes per value, and 16 KiB total payload size.
 
 ### Modified Python functions
 

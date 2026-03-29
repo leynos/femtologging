@@ -9,7 +9,9 @@ def _try_import_module(module_name: str) -> object | None:
     """Import ``module_name`` and return ``None`` on import failure."""
     try:
         return importlib.import_module(module_name)
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
         return None
 
 

@@ -82,6 +82,28 @@ def _wait_for(condition: typ.Callable[[], bool], timeout: float = 1.0) -> None:
     pytest.fail("condition was not met before timeout")
 
 
+def _wait_for_quiescence(
+    condition: typ.Callable[[], bool],
+    *,
+    quiet_period: float = 0.05,
+    timeout: float = 1.0,
+) -> None:
+    """Wait until ``condition`` stays true for the whole quiet period."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not condition():
+            time.sleep(0.01)
+            continue
+        quiet_deadline = time.time() + quiet_period
+        while time.time() < quiet_deadline:
+            if not condition():
+                break
+            time.sleep(0.01)
+        else:
+            return
+    pytest.fail("condition did not remain stable for the quiet period")
+
+
 scenarios(str(FEATURES / "python_callback_filters.feature"))
 
 
@@ -175,5 +197,5 @@ def assert_collected_metadata(
 )
 def suppresses_record(name: str, level: str, collector: RecordCollector) -> None:
     assert get_logger(name).log(level, "blocked") is None
-    _wait_for(lambda: collector.records == [])
+    _wait_for_quiescence(lambda: collector.records == [])
     assert collector.records == []
