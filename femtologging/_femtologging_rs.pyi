@@ -380,14 +380,6 @@ class HTTPHandlerBuilder(_NetworkHandlerBuilderBase[FemtoHTTPHandler]):
     def with_headers(self, headers: Mapping[str, str]) -> Self: ...
     def with_json_format(self) -> Self: ...
     def with_record_fields(self, fields: list[str]) -> Self: ...
-    def with_basic_auth(
-        self, username: str, password: str
-    ) -> (
-        Self
-    ): ...  # Deprecated: use with_auth({"username": ..., "password": ...}) instead.
-    def with_bearer_token(
-        self, token: str
-    ) -> Self: ...  # Deprecated: use with_auth({"token": ...}) instead.
 
 ConfigBuilder: _Any
 LoggerConfigBuilder: _Any

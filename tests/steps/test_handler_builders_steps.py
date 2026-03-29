@@ -543,14 +543,14 @@ def when_enable_json_format(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuil
 def when_set_basic_auth(
     http_builder: HTTPHandlerBuilder, user: str, password: str
 ) -> HTTPHandlerBuilder:
-    return http_builder.with_basic_auth(user, password)
+    return http_builder.with_auth({"username": user, "password": password})
 
 
 @when(parsers.parse('I set bearer token "{token}"'), target_fixture="http_builder")
 def when_set_bearer_token(
     http_builder: HTTPHandlerBuilder, token: str
 ) -> HTTPHandlerBuilder:
-    return http_builder.with_bearer_token(token)
+    return http_builder.with_auth({"token": token})
 
 
 @when(parsers.parse('I set record fields to "{fields}"'), target_fixture="http_builder")
