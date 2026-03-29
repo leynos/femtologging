@@ -13,6 +13,16 @@ use crate::macros::{AsPyDict, dict_into_py};
 
 use super::HTTPHandlerBuilder;
 
+fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
+    match method.to_uppercase().as_str() {
+        "GET" => Ok(HTTPMethod::GET),
+        "POST" => Ok(HTTPMethod::POST),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unsupported HTTP method: {method}; expected GET or POST"
+        ))),
+    }
+}
+
 #[pymethods]
 impl HTTPHandlerBuilder {
     #[new]
@@ -34,15 +44,7 @@ impl HTTPHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         method: &str,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let method = match method.to_uppercase().as_str() {
-            "GET" => HTTPMethod::GET,
-            "POST" => HTTPMethod::POST,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unsupported HTTP method: {method}; expected GET or POST"
-                )));
-            }
-        };
+        let method = parse_http_method(method)?;
         let updated = slf.clone().with_method(method);
         *slf = updated;
         Ok(slf)
@@ -57,15 +59,7 @@ impl HTTPHandlerBuilder {
         method: Option<String>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let updated = if let Some(m) = method {
-            let method = match m.to_uppercase().as_str() {
-                "GET" => HTTPMethod::GET,
-                "POST" => HTTPMethod::POST,
-                _ => {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "unsupported HTTP method: {m}; expected GET or POST"
-                    )));
-                }
-            };
+            let method = parse_http_method(&m)?;
             slf.clone().with_url(url).with_method(method)
         } else {
             slf.clone().with_url(url)

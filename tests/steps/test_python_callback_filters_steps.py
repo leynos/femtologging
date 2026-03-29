@@ -138,7 +138,7 @@ def add_enrich_filter(config_builder: ConfigBuilder, fid: str) -> None:
     )
 )
 def add_reject_filter(config_builder: ConfigBuilder, fid: str) -> None:
-    config_builder.with_filter(fid, RejectAllFilter())
+    config_builder.with_filter(fid, PythonCallbackFilterBuilder(RejectAllFilter()))
 
 
 @when(parsers.parse('I add logger "{name}" with python filter "{filter_id}"'))

@@ -68,8 +68,8 @@ impl PythonCallbackFilter {
             })();
 
             if outcome.is_err() {
-                restore_record_attrs(&record_view, &before)?;
                 context.python_record_view = None;
+                let _ = restore_record_attrs(&record_view, &before);
             }
             outcome
         })
@@ -195,7 +195,7 @@ fn get_or_create_filter_record<'py>(
         .python_record_view
         .as_ref()
         .ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("python record view not initialized")
+            pyo3::exceptions::PyRuntimeError::new_err("python record view not initialised")
         })?
         .bind(py)
         .clone())
