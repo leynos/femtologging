@@ -3,24 +3,52 @@
 //! Provides the [`FemtoFilter`] trait along with concrete filter builders for
 //! constructing filters.
 
-use std::{any::Any, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use thiserror::Error;
 
 use crate::log_record::FemtoLogRecord;
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+/// Outcome returned by the filter pipeline.
+#[derive(Debug, Default)]
+pub struct FilterDecision {
+    /// Whether the record should continue through the pipeline.
+    pub(crate) accepted: bool,
+    /// Additional metadata fields accepted by the filter.
+    pub(crate) enrichment: BTreeMap<String, String>,
+}
+
+impl FilterDecision {
+    /// Build a decision with no enrichment payload.
+    #[must_use]
+    pub(crate) fn accept(accepted: bool) -> Self {
+        Self {
+            accepted,
+            enrichment: BTreeMap::new(),
+        }
+    }
+}
+
+/// Per-record state shared across filters during evaluation.
+#[derive(Default)]
+pub struct FilterContext {
+    #[cfg(feature = "python")]
+    pub(crate) python_record_view: Option<Py<PyAny>>,
+}
 
 /// Trait implemented by all log filters.
 ///
 /// Filters are `Send + Sync` so they can be shared across threads.
-pub trait FemtoFilter: Any + Send + Sync {
-    /// Return `true` if `record` should be processed.
-    fn should_log(&self, record: &FemtoLogRecord) -> bool;
-}
+pub trait FemtoFilter: Send + Sync {
+    /// Evaluate the filter for `record`, optionally returning enrichment.
+    fn decision(&self, record: &mut FemtoLogRecord, context: &mut FilterContext) -> FilterDecision;
 
-impl dyn FemtoFilter {
-    /// Return the filter as [`Any`] for downcasting to concrete types.
-    pub fn as_any(&self) -> &dyn Any {
-        self
+    /// Return `true` if `record` should be processed.
+    fn should_log(&self, record: &mut FemtoLogRecord) -> bool {
+        self.decision(record, &mut FilterContext::default())
+            .accepted
     }
 }
 
@@ -112,7 +140,8 @@ mod py_helpers {
     use super::*;
     use crate::macros::AsPyDict;
     use crate::python::fq_py_type;
-    use pyo3::{Borrowed, create_exception, exceptions::PyTypeError, prelude::*};
+    use pyo3::prelude::{Py, PyAny, PyErr, PyResult, Python};
+    use pyo3::{Borrowed, FromPyObject, create_exception, exceptions::PyTypeError};
 
     create_exception!(
         _femtologging_rs,

@@ -37,6 +37,10 @@ const RESERVED_STD_RECORD_KEYS: &[&str] = &[
 
 const RESERVED_FEMTO_KEYS: &[&str] = &["logger", "level", "metadata"];
 
+pub(crate) fn is_reserved_enrichment_key(key: &str) -> bool {
+    RESERVED_STD_RECORD_KEYS.contains(&key) || RESERVED_FEMTO_KEYS.contains(&key)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum EnrichmentError {
     #[error("enrichment key must not be empty")]
@@ -65,7 +69,7 @@ pub(crate) fn validate_enrichment_key(key: &str) -> Result<(), EnrichmentError> 
             limit: MAX_KEY_BYTES,
         });
     }
-    if RESERVED_STD_RECORD_KEYS.contains(&key) || RESERVED_FEMTO_KEYS.contains(&key) {
+    if is_reserved_enrichment_key(key) {
         return Err(EnrichmentError::ReservedKey {
             key: key.to_owned(),
         });

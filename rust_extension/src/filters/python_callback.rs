@@ -19,16 +19,10 @@ use crate::macros::{AsPyDict, dict_into_py};
 use crate::python::fq_py_type;
 
 use super::python_callback_validation::{
-    extract_supported_value, validate_enrichment_key, validate_enrichment_total,
-    validate_enrichment_value,
+    extract_supported_value, is_reserved_enrichment_key, validate_enrichment_key,
+    validate_enrichment_total, validate_enrichment_value,
 };
-use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait};
-
-#[derive(Debug)]
-pub(crate) struct FilterDecision {
-    pub(crate) accepted: bool,
-    pub(crate) enrichment: BTreeMap<String, String>,
-}
+use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait, FilterContext, FilterDecision};
 
 /// A filter backed by a Python callable or `logging.Filter`-style object.
 #[derive(Clone, Debug)]
@@ -46,20 +40,34 @@ impl PythonCallbackFilter {
         }
     }
 
-    pub(crate) fn filter_with_enrichment(
+    fn decision_with_context(
         &self,
         record: &FemtoLogRecord,
+        context: &mut FilterContext,
     ) -> Result<FilterDecision, PyErr> {
         Python::attach(|py| {
-            let record_view = create_filter_record(py, record)?;
+            let record_view = get_or_create_filter_record(py, record, context)?;
             let before = snapshot_record_attrs(&record_view)?;
-            let result = self.invoke(py, &record_view)?;
-            let accepted = result.is_truthy()?;
-            let enrichment = extract_enrichment(py, &record_view, &before, &self.description)?;
-            Ok(FilterDecision {
-                accepted,
-                enrichment,
-            })
+            let outcome = (|| -> Result<FilterDecision, PyErr> {
+                let result = self.invoke(py, &record_view)?;
+                let accepted = result.is_truthy()?;
+                let enrichment = extract_enrichment(py, &record_view, &before, &self.description)?;
+                restore_record_attrs(&record_view, &before)?;
+                if !accepted {
+                    return Ok(FilterDecision::accept(false));
+                }
+                apply_enrichment_to_record_view(&record_view, &enrichment)?;
+                Ok(FilterDecision {
+                    accepted: true,
+                    enrichment,
+                })
+            })();
+
+            if outcome.is_err() {
+                restore_record_attrs(&record_view, &before)?;
+                context.python_record_view = None;
+            }
+            outcome
         })
     }
 
@@ -87,15 +95,15 @@ impl PythonCallbackFilter {
 }
 
 impl FemtoFilter for PythonCallbackFilter {
-    fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        match self.filter_with_enrichment(record) {
-            Ok(decision) => decision.accepted,
+    fn decision(&self, record: &mut FemtoLogRecord, context: &mut FilterContext) -> FilterDecision {
+        match self.decision_with_context(record, context) {
+            Ok(decision) => decision,
             Err(err) => {
                 warn!(
                     "Python filter callback '{}' raised an exception; record dropped: {}",
                     self.description, err
                 );
-                false
+                FilterDecision::accept(false)
             }
         }
     }
@@ -153,15 +161,36 @@ pub(crate) fn validate_filter_target(obj: &Bound<'_, PyAny>) -> PyResult<()> {
         return Ok(());
     }
 
-    let filter_method = obj.getattr("filter")?;
-    if filter_method.is_callable() {
-        return Ok(());
+    match obj.getattr("filter") {
+        Ok(filter_method) if filter_method.is_callable() => Ok(()),
+        Ok(_) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "python callback filter must be callable or expose a callable 'filter' method (got {})",
+            fq_py_type(obj),
+        ))),
+        Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(obj.py()) => {
+            Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "python callback filter must be callable or expose a callable 'filter' method (got {})",
+                fq_py_type(obj),
+            )))
+        }
+        Err(err) => Err(err),
     }
+}
 
-    Err(pyo3::exceptions::PyTypeError::new_err(format!(
-        "python callback filter must be callable or expose a callable 'filter' method (got {})",
-        fq_py_type(obj),
-    )))
+fn get_or_create_filter_record<'py>(
+    py: Python<'py>,
+    record: &FemtoLogRecord,
+    context: &mut FilterContext,
+) -> PyResult<Bound<'py, PyAny>> {
+    if context.python_record_view.is_none() {
+        context.python_record_view = Some(create_filter_record(py, record)?.unbind());
+    }
+    Ok(context
+        .python_record_view
+        .as_ref()
+        .expect("python record view should be initialized")
+        .bind(py)
+        .clone())
 }
 
 fn create_filter_record<'py>(
@@ -211,6 +240,38 @@ fn snapshot_record_attrs(record_view: &Bound<'_, PyAny>) -> PyResult<BTreeMap<St
     Ok(attrs)
 }
 
+fn restore_record_attrs(
+    record_view: &Bound<'_, PyAny>,
+    before: &BTreeMap<String, Py<PyAny>>,
+) -> PyResult<()> {
+    let py = record_view.py();
+    let binding = record_view.getattr("__dict__")?;
+    let dict = binding.cast::<PyDict>()?;
+    let keys = dict.keys();
+    for key in keys.iter() {
+        let key = key.extract::<String>()?;
+        if !before.contains_key(&key) {
+            dict.del_item(&key)?;
+        }
+    }
+    for (key, value) in before {
+        dict.set_item(key, value.bind(py))?;
+    }
+    Ok(())
+}
+
+fn apply_enrichment_to_record_view(
+    record_view: &Bound<'_, PyAny>,
+    enrichment: &BTreeMap<String, String>,
+) -> PyResult<()> {
+    let binding = record_view.getattr("__dict__")?;
+    let dict = binding.cast::<PyDict>()?;
+    for (key, value) in enrichment {
+        dict.set_item(key, value)?;
+    }
+    Ok(())
+}
+
 fn extract_enrichment(
     py: Python<'_>,
     record_view: &Bound<'_, PyAny>,
@@ -223,6 +284,9 @@ fn extract_enrichment(
 
     for (key, value) in after.iter() {
         let key = key.extract::<String>()?;
+        if is_reserved_enrichment_key(&key) {
+            continue;
+        }
         let changed = match before.get(&key) {
             Some(previous) => !python_values_equal(py, previous, &value)?,
             None => true,

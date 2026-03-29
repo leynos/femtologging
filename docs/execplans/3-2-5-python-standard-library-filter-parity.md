@@ -46,9 +46,10 @@ Observable success after implementation:
 
 This plan implements roadmap items 3.2.5, 3.2.5.1, 3.2.5.2, and 3.2.5.3 as
 defined in `docs/roadmap.md`. The architectural direction is set by
-[ADR 003](../adr-003-python-stdlib-filter-parity.md), which chose Option B:
-evaluate Python callback filters on the producer thread and persist accepted
-enrichments into Rust-owned record metadata before queueing.
+[Architectural Decision Record (ADR) 003](../adr-003-python-stdlib-filter-parity.md),
+ which chose Option B: evaluate Python callback filters on the producer thread
+and persist accepted enrichments into Rust-owned record metadata before
+queueing.
 
 The design constraints for enrichment persistence are documented in both ADR
 003 and
@@ -121,7 +122,7 @@ The following files are most relevant to this work:
 **Existing tests:**
 
 - `tests/features/filters.feature` and `tests/steps/test_filters_steps.py`
-  contain BDD scenarios for level/name filters.
+  contain behaviour-driven development (BDD) scenarios for level/name filters.
 - `tests/test_filters.py` contains Python unit tests for filter AND logic,
   reconfiguration, and clearing.
 - `tests/test_dict_config.py` contains dictConfig-related tests.

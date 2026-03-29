@@ -132,11 +132,9 @@ fn python_callback_filter_extracts_enrichment() {
         )
         .expect("builder should be created");
         let filter = builder.build_inner().expect("filter should build");
-        let record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+        let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
 
-        let decision = filter
-            .filter_with_enrichment(&record)
-            .expect("filter should run");
+        let decision = filter.decision(&mut record, &mut crate::filters::FilterContext::default());
 
         assert!(decision.accepted);
         assert_eq!(
@@ -173,8 +171,42 @@ fn python_callback_filter_supports_filter_method_objects() {
             .expect("instance construction should succeed");
         let filter =
             PythonCallbackFilter::new(instance.unbind(), "test_filter_obj.OnlyInfo".into());
+        let mut info_record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+        let mut error_record = FemtoLogRecord::new("core", FemtoLevel::Error, "hello");
 
-        assert!(filter.should_log(&FemtoLogRecord::new("core", FemtoLevel::Info, "hello",)));
-        assert!(!filter.should_log(&FemtoLogRecord::new("core", FemtoLevel::Error, "hello",)));
+        assert!(filter.should_log(&mut info_record));
+        assert!(!filter.should_log(&mut error_record));
+    });
+}
+
+#[test]
+fn python_callback_filter_exceptions_drop_records() {
+    Python::attach(|py| {
+        let module = PyModule::from_code(
+            py,
+            CString::new(concat!(
+                "def boom(record):\n",
+                "    raise RuntimeError('boom')\n",
+            ))
+            .expect("valid Python code")
+            .as_c_str(),
+            CString::new("test_filter_raise.py")
+                .expect("valid filename")
+                .as_c_str(),
+            CString::new("test_filter_raise")
+                .expect("valid module name")
+                .as_c_str(),
+        )
+        .expect("module creation should succeed");
+        let filter = PythonCallbackFilter::new(
+            module
+                .getattr("boom")
+                .expect("function should exist")
+                .unbind(),
+            "test_filter_raise.boom".into(),
+        );
+        let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+
+        assert!(!filter.should_log(&mut record));
     });
 }

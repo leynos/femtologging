@@ -71,6 +71,9 @@ class ContextFilterFactory(logging.Filter):
         return True
 
 
+NONCALLABLE_FACTORY = object()
+
+
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> typ.Iterator[None]:
     """Reset the global logging manager around each test."""
@@ -128,6 +131,33 @@ def test_python_filter_object_rejects_records() -> None:
     assert logger.log("INFO", "blocked") is None
 
 
+def test_python_callback_filter_builder_rejects_invalid_targets() -> None:
+    """Invalid callback targets should raise a consistent ``TypeError``."""
+    with pytest.raises(
+        TypeError,
+        match=(
+            "python callback filter must be callable or expose a callable "
+            "'filter' method"
+        ),
+    ):
+        PythonCallbackFilterBuilder(object())
+
+
+def test_python_callback_filter_exceptions_drop_records() -> None:
+    """Callback exceptions should drop the record without crashing."""
+
+    def boom(record: logging.LogRecord) -> bool:
+        message = f"boom: {record.msg}"
+        raise RuntimeError(message)
+
+    collector = _build_filtered_logger(PythonCallbackFilterBuilder(boom))
+
+    logger = get_logger("app")
+    assert logger.log("INFO", "hello") is None
+    time.sleep(0.05)
+    assert collector.records == []
+
+
 def test_stdlib_handler_adapter_receives_enrichment_fields() -> None:
     """Enrichment should be visible to stdlib formatters via the adapter."""
 
@@ -174,6 +204,32 @@ def test_dict_config_filter_factory_form_supports_kwargs() -> None:
     assert get_logger("app").log("INFO", "hello") is not None
     _wait_for(lambda: len(collector.records) == 1)
     assert collector.records[0]["metadata"]["key_values"]["request_id"] == "factory-123"
+
+
+def test_dict_config_filter_factory_rejects_unimportable_paths() -> None:
+    """Factory-mode filters should surface import resolution failures."""
+    cfg = {
+        "version": 1,
+        "filters": {"factory": {"()": "missing_python_filter_factory.factory"}},
+        "root": {"level": "DEBUG"},
+    }
+
+    with pytest.raises(ValueError, match="failed to import filter factory"):
+        dictConfig(cfg)
+
+
+def test_dict_config_filter_factory_rejects_non_callable_objects() -> None:
+    """Factory-mode filters should reject resolved non-callable objects."""
+    cfg = {
+        "version": 1,
+        "filters": {
+            "factory": {"()": "tests.test_python_callback_filters.NONCALLABLE_FACTORY"}
+        },
+        "root": {"level": "DEBUG"},
+    }
+
+    with pytest.raises(TypeError, match="factory must be callable"):
+        dictConfig(cfg)
 
 
 @pytest.mark.parametrize(

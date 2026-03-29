@@ -19,9 +19,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::filters::FemtoFilter;
-#[cfg(feature = "python")]
-use crate::filters::python_callback::PythonCallbackFilter;
+use crate::filters::{FemtoFilter, FilterContext};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_context;
 use crate::manager;
@@ -433,43 +431,15 @@ impl FemtoLogger {
     /// Iterates over each filter and returns `false` on the first rejection.
     /// If no filters are configured, the record passes.
     fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
-        for f in self.filters.read().iter() {
-            #[cfg(feature = "python")]
-            if let Some(py_filter) = f.as_any().downcast_ref::<PythonCallbackFilter>() {
-                if !self.apply_python_filter(py_filter, record) {
-                    return false;
-                }
-                continue;
-            }
-
-            if !f.should_log(record) {
+        let mut context = FilterContext::default();
+        for filter in self.filters.read().iter() {
+            let decision = filter.decision(record, &mut context);
+            if !decision.accepted {
                 return false;
             }
+            record.metadata_mut().key_values.extend(decision.enrichment);
         }
         true
-    }
-
-    #[cfg(feature = "python")]
-    fn apply_python_filter(
-        &self,
-        py_filter: &PythonCallbackFilter,
-        record: &mut FemtoLogRecord,
-    ) -> bool {
-        match py_filter.filter_with_enrichment(record) {
-            Ok(decision) if decision.accepted => {
-                record.metadata_mut().key_values.extend(decision.enrichment);
-                true
-            }
-            Ok(_) => false,
-            Err(err) => {
-                warn!(
-                    "Python filter callback '{}' raised an exception; record dropped: {}",
-                    py_filter.description(),
-                    err
-                );
-                false
-            }
-        }
     }
 
     fn should_propagate_to_parent(&self) -> bool {
