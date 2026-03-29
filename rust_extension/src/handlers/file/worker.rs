@@ -262,6 +262,18 @@ where
             warn!("FemtoFileHandler final flush error: {err}");
         }
     }
+
+    fn process_batch<F>(&mut self, formatter: &F, commands: Vec<FileCommand>)
+    where
+        F: FemtoFormatter,
+    {
+        for command in commands {
+            match command {
+                FileCommand::Record(record) => self.handle_record(formatter, *record),
+                FileCommand::Flush(ack_tx) => self.handle_flush(ack_tx),
+            }
+        }
+    }
 }
 
 /// Spawn a background worker thread for file handling.
@@ -309,14 +321,7 @@ where
         let mut state = WorkerState::new(writer, rotation, flush_interval);
         loop {
             match recv_batch(&rx, batch.capacity()) {
-                Ok(commands) => {
-                    for command in commands {
-                        match command {
-                            FileCommand::Record(record) => state.handle_record(&formatter, *record),
-                            FileCommand::Flush(ack_tx) => state.handle_flush(ack_tx),
-                        }
-                    }
-                }
+                Ok(commands) => state.process_batch(&formatter, commands),
                 Err(RecvBatchError::Disconnected) => break,
                 Err(RecvBatchError::ZeroCapacity) => {
                     error!("FemtoFileHandler batch capacity must be greater than zero");
