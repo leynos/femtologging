@@ -48,6 +48,32 @@ impl HTTPHandlerBuilder {
         Ok(slf)
     }
 
+    /// Configure the HTTP endpoint URL and optional request method.
+    #[pyo3(name = "with_endpoint")]
+    #[pyo3(signature = (url, method = None))]
+    fn py_with_endpoint<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        url: String,
+        method: Option<String>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let updated = if let Some(m) = method {
+            let method = match m.to_uppercase().as_str() {
+                "GET" => HTTPMethod::GET,
+                "POST" => HTTPMethod::POST,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "unsupported HTTP method: {m}; expected GET or POST"
+                    )));
+                }
+            };
+            slf.clone().with_url(url).with_method(method)
+        } else {
+            slf.clone().with_url(url)
+        };
+        *slf = updated;
+        Ok(slf)
+    }
+
     /// Configure HTTP authentication from a Python mapping.
     #[pyo3(name = "with_auth")]
     #[pyo3(signature = (config))]

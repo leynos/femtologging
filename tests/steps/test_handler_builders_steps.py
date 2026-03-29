@@ -503,7 +503,7 @@ def then_setting_flush_after_records_fails(
     target_fixture="http_builder",
 )
 def given_http_builder(url: str) -> HTTPHandlerBuilder:
-    return HTTPHandlerBuilder().with_url(url)
+    return HTTPHandlerBuilder().with_endpoint(url)
 
 
 @given("an empty HTTPHandlerBuilder", target_fixture="http_builder")
@@ -513,7 +513,8 @@ def given_empty_http_builder() -> HTTPHandlerBuilder:
 
 @when("I set HTTP method POST", target_fixture="http_builder")
 def when_set_http_method_post(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuilder:
-    return http_builder.with_method("POST")
+    current_url = typ.cast("str", http_builder.as_dict()["url"])
+    return http_builder.with_endpoint(current_url, "POST")
 
 
 @when(

@@ -194,7 +194,9 @@ fn get_or_create_filter_record<'py>(
     Ok(context
         .python_record_view
         .as_ref()
-        .expect("python record view should be initialized")
+        .ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("python record view not initialized")
+        })?
         .bind(py)
         .clone())
 }

@@ -82,6 +82,19 @@ def _wait_for(condition: typ.Callable[[], bool], timeout: float = 1.0) -> None:
     pytest.fail("condition was not met before timeout")
 
 
+def _holds_for_quiet_period(
+    condition: typ.Callable[[], bool],
+    quiet_period: float,
+) -> bool:
+    """Return ``True`` when ``condition`` holds for ``quiet_period`` seconds."""
+    quiet_deadline = time.time() + quiet_period
+    while time.time() < quiet_deadline:
+        if not condition():
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def _wait_for_quiescence(
     condition: typ.Callable[[], bool],
     *,
@@ -94,12 +107,7 @@ def _wait_for_quiescence(
         if not condition():
             time.sleep(0.01)
             continue
-        quiet_deadline = time.time() + quiet_period
-        while time.time() < quiet_deadline:
-            if not condition():
-                break
-            time.sleep(0.01)
-        else:
+        if _holds_for_quiet_period(condition, quiet_period):
             return
     pytest.fail("condition did not remain stable for the quiet period")
 
