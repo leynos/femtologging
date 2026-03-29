@@ -271,7 +271,6 @@ where
             b.wait();
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
-        let formatter = formatter;
         while let Ok(commands) = recv_batch(&rx, batch.capacity) {
             for command in commands {
                 match command {
