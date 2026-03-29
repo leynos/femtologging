@@ -37,9 +37,7 @@ impl FemtoHandlerTrait for FemtoFileHandler {
             OverflowPolicy::Block => match tx.send(FileCommand::Record(Box::new(record))) {
                 Ok(()) => Ok(()),
                 Err(_) => {
-                    log::warn!(
-                        "FemtoFileHandler (Block): queue full or shutting down, dropping record"
-                    );
+                    log::warn!("FemtoFileHandler (Block): channel disconnected or shutting down");
                     Err(HandlerError::Closed)
                 }
             },

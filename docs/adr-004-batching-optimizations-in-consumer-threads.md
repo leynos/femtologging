@@ -293,11 +293,11 @@ pub enum FileCommand {
 }
 ```
 
-The file handler collects a batch, formats each record, writes all formatted
-output via vectored I/O, and flushes once per batch. `state.write_batch`
-performs only the vectored write; it does not flush. A single
-`state.flush_once` call follows after all records in the batch have been
-written.
+The file handler collects a batch, formats each record, concatenates the
+formatted lines into a single stable-Rust buffer, writes that buffer with
+`write_all`, and flushes once per batch. `state.write_batch` performs only the
+contiguous-buffer `write_all`; it does not flush. A single `state.flush_once`
+call follows after all records in the batch have been written.
 
 If a `Flush` command appears mid-batch, all accumulated record lines must be
 written **and** flushed **before** the acknowledgement is sent. This preserves
@@ -632,50 +632,50 @@ spawn path.
 
 ### 1. Core batch collection and file/stream handler batching
 
-1.1 [ ] Define the core batching primitives.
-    1.1.1 [ ] Introduce the `recv_batch` helper and `BatchConfig` type.
-    1.1.2 [ ] Default `batch_capacity` to 64 and expose it through the
+- [ ] 1.1 Define the core batching primitives.
+  - [ ] 1.1.1 Introduce the `recv_batch` helper and `BatchConfig` type.
+  - [ ] 1.1.2 Default `batch_capacity` to 64 and expose it through the
         existing builder APIs.
-1.2 [ ] Standardize the flush acknowledgement contract before enabling
-    drain-loop batching.
-    1.2.1 [ ] Make `FileCommand::Flush` and `StreamCommand::Flush` both
-        carry per-command `Sender<()>` values.
-    1.2.2 [ ] Thread the per-command flush sender through the handler
+- [ ] 1.2 Standardize the flush acknowledgement contract before enabling
+      drain-loop batching.
+  - [ ] 1.2.1 Make `FileCommand::Flush` and `StreamCommand::Flush` both carry
+        per-command `Sender<()>` values.
+  - [ ] 1.2.2 Thread the per-command flush sender through the handler
         construction and spawn paths used by `FemtoFileHandler`,
         `FemtoStreamHandler`, and their builder APIs.
-1.3 [ ] Batch file and stream worker writes on stable Rust.
-    1.3.1 [ ] Modify `FemtoFileHandler` worker loops to use drain-loop
+- [ ] 1.3 Batch file and stream worker writes on stable Rust.
+  - [ ] 1.3.1 Modify `FemtoFileHandler` worker loops to use drain-loop
         batching with a contiguous batch buffer plus `write_all`.
-    1.3.2 [ ] Modify `FemtoStreamHandler` worker loops to use drain-loop
+  - [ ] 1.3.2 Modify `FemtoStreamHandler` worker loops to use drain-loop
         batching with a contiguous batch buffer plus `write_all`.
-1.4 [ ] Add Criterion benchmarks comparing single-record and batched
-    throughput for file and stream handlers.
+- [ ] 1.4 Add Criterion benchmarks comparing single-record and batched
+      throughput for file and stream handlers.
 
 ### 2. Network handler batching
 
-2.1 [ ] Batch HTTP handler writes.
-    2.1.1 [ ] Modify `FemtoHTTPHandler` to serialize batch payloads as JSON
+- [ ] 2.1 Batch HTTP handler writes.
+  - [ ] 2.1.1 Modify `FemtoHTTPHandler` to serialize batch payloads as JSON
         arrays and send one request per batch.
-2.2 [ ] Batch socket handler writes.
-    2.2.1 [ ] Modify `FemtoSocketHandler` to concatenate frames and write
+- [ ] 2.2 Batch socket handler writes.
+  - [ ] 2.2.1 Modify `FemtoSocketHandler` to concatenate frames and write
         combined buffers.
-2.3 [ ] Add Criterion benchmarks for HTTP and socket handler batched
-    throughput.
-2.4 [ ] Update the user guide with batching configuration guidance.
+- [ ] 2.3 Add Criterion benchmarks for HTTP and socket handler batched
+      throughput.
+- [ ] 2.4 Update the user guide with batching configuration guidance.
 
 ### 3. Logger dispatch batching and hardening
 
-3.1 [ ] Batch logger dispatch.
-    3.1.1 [ ] Modify the logger worker thread to drain-loop batch records
+- [ ] 3.1 Batch logger dispatch.
+  - [ ] 3.1.1 Modify the logger worker thread to drain-loop batch records
         before dispatching to handlers.
-3.2 [ ] Preserve drain and shutdown correctness.
-    3.2.1 [ ] Ensure shutdown drain semantics process all remaining records.
-    3.2.2 [ ] Add integration tests verifying record ordering, completeness
+- [ ] 3.2 Preserve drain and shutdown correctness.
+  - [ ] 3.2.1 Ensure shutdown drain semantics process all remaining records.
+  - [ ] 3.2.2 Add integration tests verifying record ordering, completeness
         under load, and graceful shutdown with batched workers.
-3.3 [ ] Finalize the documentation and roadmap.
-    3.3.1 [ ] Update design document §5.4 and §8.1 to reflect the
+- [ ] 3.3 Finalize the documentation and roadmap.
+  - [ ] 3.3.1 Update design document §5.4 and §8.1 to reflect the
         implemented approach.
-    3.3.2 [ ] Mark roadmap item 2.3.3 as complete.
+  - [ ] 3.3.2 Mark roadmap item 2.3.3 as complete.
 
 ## Known Risks and Limitations
 

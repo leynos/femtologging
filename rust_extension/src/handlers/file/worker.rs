@@ -18,7 +18,7 @@ use log::{error, warn};
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
-const DEFAULT_BATCH_CAPACITY: usize = 64;
+pub(crate) const DEFAULT_BATCH_CAPACITY: usize = 64;
 
 /// Commands sent to the worker thread.
 ///
@@ -62,24 +62,41 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
     }
 }
 
-/// Configuration for the background worker thread.
+/// Configuration for batch draining in the worker loop.
 ///
-/// Specifies the channel capacity, flush interval, and optional synchronisation
-/// barrier for testing.
+/// `capacity` is the maximum number of commands processed in one blocking
+/// receive plus non-blocking drain cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatchConfig {
     /// Maximum number of commands to process in one drain-loop batch.
     pub capacity: usize,
 }
 
-impl Default for BatchConfig {
-    fn default() -> Self {
-        Self {
-            capacity: DEFAULT_BATCH_CAPACITY,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BatchConfigError {
+    ZeroCapacity,
+}
+
+impl BatchConfig {
+    pub(crate) fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+        if capacity == 0 {
+            return Err(BatchConfigError::ZeroCapacity);
         }
+        Ok(Self { capacity })
     }
 }
 
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self::new(DEFAULT_BATCH_CAPACITY)
+            .expect("DEFAULT_BATCH_CAPACITY must always be greater than zero")
+    }
+}
+
+/// Configuration for the background worker thread.
+///
+/// Specifies the channel `capacity`, batch-drain configuration, `flush_interval`,
+/// and optional synchronisation `start_barrier` for tests.
 pub struct WorkerConfig {
     /// Capacity of the command channel.
     pub capacity: usize,
@@ -113,11 +130,22 @@ impl From<&HandlerConfig> for WorkerConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecvBatchError {
+    Disconnected,
+    ZeroCapacity,
+}
+
 fn recv_batch(
     rx: &Receiver<FileCommand>,
     batch_capacity: usize,
-) -> Result<Vec<FileCommand>, RecvError> {
-    let first = rx.recv()?;
+) -> Result<Vec<FileCommand>, RecvBatchError> {
+    if batch_capacity == 0 {
+        return Err(RecvBatchError::ZeroCapacity);
+    }
+    let first = rx
+        .recv()
+        .map_err(|_: RecvError| RecvBatchError::Disconnected)?;
     let mut batch = Vec::with_capacity(batch_capacity);
     batch.push(first);
     while batch.len() < batch_capacity {
@@ -271,11 +299,20 @@ where
             b.wait();
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
-        while let Ok(commands) = recv_batch(&rx, batch.capacity) {
-            for command in commands {
-                match command {
-                    FileCommand::Record(record) => state.handle_record(&formatter, *record),
-                    FileCommand::Flush(ack_tx) => state.handle_flush(ack_tx),
+        loop {
+            match recv_batch(&rx, batch.capacity) {
+                Ok(commands) => {
+                    for command in commands {
+                        match command {
+                            FileCommand::Record(record) => state.handle_record(&formatter, *record),
+                            FileCommand::Flush(ack_tx) => state.handle_flush(ack_tx),
+                        }
+                    }
+                }
+                Err(RecvBatchError::Disconnected) => break,
+                Err(RecvBatchError::ZeroCapacity) => {
+                    error!("FemtoFileHandler batch capacity must be greater than zero");
+                    break;
                 }
             }
         }
