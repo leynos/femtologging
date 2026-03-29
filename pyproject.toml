@@ -146,6 +146,9 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "."
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
+# Ensure source builds used by CI coverage include the timed-rotation
+# test hooks, not just the project's default Cargo features.
+features = ["test-util"]
 
 [tool.pytest.ini_options]
 timeout = 30
