@@ -169,7 +169,7 @@ where
             error!("FemtoFileHandler rotation error; writing record without rotating: {err}");
         }
         if let Err(err) =
-            super::mod_impl::write_record(&mut self.writer, &message, &mut self.tracker)
+            super::io_utils::write_record(&mut self.writer, &message, &mut self.tracker)
         {
             warn!("FemtoFileHandler write error: {err}");
         }

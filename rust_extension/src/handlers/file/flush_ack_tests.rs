@@ -155,7 +155,10 @@ fn flush_waits_for_its_own_acknowledgement() {
     );
     assert!(
         second_done_rx
-            .recv_timeout(Duration::from_millis(200))
+            // Slow CI workers can take longer to schedule the waiting flush,
+            // so keep a wider margin before declaring the stale-ack guard
+            // broken.
+            .recv_timeout(Duration::from_millis(500))
             .is_err(),
         "second flush must wait for its own acknowledgement instead of consuming a stale ack",
     );

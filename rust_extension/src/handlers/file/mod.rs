@@ -17,28 +17,29 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
+mod builder_options;
 mod config;
+mod handler_impl;
+mod io_utils;
 pub(crate) mod policy;
+mod validations;
 mod worker;
 pub(crate) use worker::{NoRotation, RotationStrategy};
 #[cfg(test)]
 pub(crate) mod test_support;
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self, BufWriter, Seek, Write},
-    marker::PhantomData,
     path::Path,
-    sync::{Arc, Barrier},
     thread::JoinHandle,
     time::Duration,
 };
 
-use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender};
 use pyo3::prelude::*;
-use std::any::Any;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
 use crate::{
@@ -46,25 +47,13 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
+pub(crate) use builder_options::BuilderOptions;
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
+use io_utils::open_log_file;
+pub(crate) use validations::{
+    validate_capacity_nonzero, validate_flush_interval_nonzero, validate_params,
+};
 use worker::{FileCommand, WorkerConfig, spawn_worker};
-
-/// Internal items needed by the worker implementation.
-mod mod_impl {
-    use super::*;
-
-    pub(super) fn write_record<W>(
-        writer: &mut W,
-        message: &str,
-        flush_tracker: &mut worker::FlushTracker,
-    ) -> io::Result<()>
-    where
-        W: Write,
-    {
-        writeln!(writer, "{message}")?;
-        flush_tracker.record_write(writer)
-    }
-}
 
 /// File-based logging handler exposed to Python.
 ///
@@ -76,55 +65,6 @@ pub struct FemtoFileHandler {
     handle: Option<JoinHandle<()>>,
     done_rx: Receiver<()>,
     overflow_policy: OverflowPolicy,
-}
-
-const CAPACITY_ZERO_MSG: &str = "capacity must be greater than zero";
-const FLUSH_INTERVAL_ZERO_MSG: &str = "flush_interval must be greater than zero";
-
-fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
-    let path_ref = path.as_ref();
-    let path_display = path_ref.display();
-    #[expect(
-        clippy::ineffective_open_options,
-        reason = "Be explicit about write intent alongside append"
-    )]
-    OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(true)
-        .open(path_ref)
-        .map_err(|e| io::Error::new(e.kind(), format!("{path_display}: {e}")))
-}
-
-fn validate_capacity_nonzero(capacity: usize) -> Result<(), &'static str> {
-    if capacity == 0 {
-        return Err(CAPACITY_ZERO_MSG);
-    }
-    Ok(())
-}
-
-/// Validate a possibly negative flush interval from FFI or other input-boundary
-/// sources and return a usable `usize` on success.
-fn validate_flush_interval_value(flush_interval: isize) -> Result<usize, &'static str> {
-    if flush_interval <= 0 {
-        return Err(FLUSH_INTERVAL_ZERO_MSG);
-    }
-    Ok(flush_interval as usize)
-}
-
-/// Validate a Rust-side non-negative flush interval that only needs a zero
-/// guard, mirroring `validate_capacity_nonzero` for internal callers.
-fn validate_flush_interval_nonzero(flush_interval: usize) -> Result<(), &'static str> {
-    if flush_interval == 0 {
-        return Err(FLUSH_INTERVAL_ZERO_MSG);
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
-    use pyo3::exceptions::PyValueError;
-    validate_capacity_nonzero(capacity).map_err(PyValueError::new_err)?;
-    validate_flush_interval_value(flush_interval).map_err(PyValueError::new_err)
 }
 
 #[allow(
@@ -214,43 +154,6 @@ impl FemtoFileHandler {
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.close();
-    }
-}
-
-pub(crate) struct BuilderOptions<W, R = NoRotation>
-where
-    W: Write + Seek,
-    R: RotationStrategy<W>,
-{
-    pub(crate) rotation: R,
-    pub(crate) start_barrier: Option<Arc<Barrier>>,
-    _phantom: PhantomData<W>,
-}
-
-impl<W> Default for BuilderOptions<W>
-where
-    W: Write + Seek,
-{
-    fn default() -> Self {
-        Self {
-            rotation: NoRotation,
-            start_barrier: None,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<W, R> BuilderOptions<W, R>
-where
-    W: Write + Seek,
-    R: RotationStrategy<W>,
-{
-    pub(crate) fn new(rotation: R, start_barrier: Option<Arc<Barrier>>) -> Self {
-        Self {
-            rotation,
-            start_barrier,
-            _phantom: PhantomData,
-        }
     }
 }
 
@@ -404,68 +307,6 @@ impl FemtoFileHandler {
         };
         let options = BuilderOptions::<W>::new(NoRotation, start_barrier);
         Self::build_from_worker(writer, formatter, handler_config, options)
-    }
-}
-
-impl FemtoHandlerTrait for FemtoFileHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let Some(tx) = &self.tx else {
-            log::warn!("FemtoFileHandler: handle called after close");
-            return Err(HandlerError::Closed);
-        };
-        match self.overflow_policy {
-            OverflowPolicy::Drop => match tx.try_send(FileCommand::Record(Box::new(record))) {
-                Ok(()) => Ok(()),
-                Err(TrySendError::Full(_)) => {
-                    log::warn!(
-                        "FemtoFileHandler (Drop): queue full or shutting down, dropping record"
-                    );
-                    Err(HandlerError::QueueFull)
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    log::warn!("FemtoFileHandler (Drop): queue closed, dropping record");
-                    Err(HandlerError::Closed)
-                }
-            },
-            OverflowPolicy::Block => match tx.send(FileCommand::Record(Box::new(record))) {
-                Ok(()) => Ok(()),
-                Err(_) => {
-                    log::warn!(
-                        "FemtoFileHandler (Block): queue full or shutting down, dropping record"
-                    );
-                    Err(HandlerError::Closed)
-                }
-            },
-            OverflowPolicy::Timeout(dur) => {
-                match tx.send_timeout(FileCommand::Record(Box::new(record)), dur) {
-                    Ok(()) => Ok(()),
-                    Err(SendTimeoutError::Timeout(_)) => {
-                        log::warn!(
-                            "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
-                        );
-                        Err(HandlerError::Timeout(dur))
-                    }
-                    Err(SendTimeoutError::Disconnected(_)) => {
-                        log::warn!("FemtoFileHandler (Timeout): queue closed, dropping record");
-                        Err(HandlerError::Closed)
-                    }
-                }
-            }
-        }
-    }
-
-    fn flush(&self) -> bool {
-        FemtoFileHandler::flush(self)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-impl Drop for FemtoFileHandler {
-    fn drop(&mut self) {
-        self.close();
     }
 }
 

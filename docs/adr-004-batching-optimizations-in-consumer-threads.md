@@ -405,17 +405,18 @@ fn run_batched_stream_worker<W, F>(
 ///
 /// Concatenates the lines into a single contiguous buffer and calls
 /// `write_all`, which loops internally until every byte is written.
-/// A single-buffer approach is used because `write_all_vectored` and
-/// `IoSlice::advance_slices` remain nightly-only (tracking issues
-/// [#70436][wa] and [#62726][adv]).  If those APIs are stabilised in
-/// a future Rust release the implementation can switch to true
+/// A single-buffer approach is used because `write_all_vectored`
+/// remains nightly-only (tracking issue [#70436][wa]).  By contrast,
+/// `IoSlice::advance_slices` was stabilised in Rust 1.81.0, so the
+/// remaining blocker for true scatter-gather I/O is the nightly
+/// `write_all_vectored` API. If `write_all_vectored` is stabilised in a
+/// future Rust release the implementation can switch to true
 /// scatter-gather I/O without changing the function signature.
 ///
 /// This function does **not** flush — the caller is responsible for
 /// calling `flush` at the appropriate batch boundary.
 ///
 /// [wa]: https://github.com/rust-lang/rust/issues/70436
-/// [adv]: https://github.com/rust-lang/rust/issues/62726
 fn write_batch_vectored<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
     if lines.is_empty() {
         return;
