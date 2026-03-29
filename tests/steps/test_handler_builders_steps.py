@@ -26,11 +26,12 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
+    from syrupy import SnapshotAssertion
+
     from femtologging._femtologging_rs import (
         HTTPBasicAuthConfig,
         HTTPTokenAuthConfig,
     )
-    from syrupy import SnapshotAssertion
 
 FileBuilder = (
     FileHandlerBuilder | RotatingFileHandlerBuilder | TimedRotatingFileHandlerBuilder
