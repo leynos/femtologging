@@ -237,9 +237,13 @@ impl FemtoFileHandler {
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
-    fn wait_for_flush_completion(&self, ack_rx: &Receiver<()>, deadline: Instant) -> bool {
+    fn wait_for_flush_completion(
+        &self,
+        ack_rx: &Receiver<io::Result<()>>,
+        deadline: Instant,
+    ) -> bool {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        ack_rx.recv_timeout(remaining).is_ok()
+        matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
     }
 
     /// Close the handler and wait for the worker to stop.

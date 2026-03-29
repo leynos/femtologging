@@ -940,11 +940,12 @@ surfaces mature further.
 
 ## 3. Runtime Reconfiguration
 
-- **Dynamic Log Level Updates:** As outlined in the design document \[cite:
-  uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-   Dynamic log-level changes for loggers will be a core feature, utilizing
-  atomic operations in Rust for thread-safe updates. This will be exposed via
-  methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
+- **Dynamic Log Level Updates:** As outlined in the [Rust multithreaded
+  logging framework for Python
+  design](./rust-multithreaded-logging-framework-for-python-design.md), dynamic
+  log-level changes for loggers will be a core feature, utilizing atomic
+  operations in Rust for thread-safe updates. This will be exposed via methods
+  on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
 - **Structured runtime mutation control plane:** Handler and filter mutation is
   now exposed through a dedicated `RuntimeConfigBuilder` paired with
@@ -988,8 +989,8 @@ surfaces mature further.
 
 `femtologging` will integrate with the broader Rust logging ecosystem by
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
-\[cite:
-uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
+as described in the
+[Rust multithreaded logging framework for Python design](./rust-multithreaded-logging-framework-for-python-design.md).
  This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.

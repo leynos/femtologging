@@ -183,7 +183,7 @@ fn worker_config_from_handlerconfig_copies_values() {
     };
     let worker = WorkerConfig::from(&cfg);
     assert_eq!(worker.capacity, 42);
-    assert_eq!(worker.batch.capacity, DEFAULT_BATCH_CAPACITY);
+    assert_eq!(worker.batch.capacity(), DEFAULT_BATCH_CAPACITY);
     assert_eq!(worker.flush_interval, 7);
     assert!(worker.start_barrier.is_none());
 }

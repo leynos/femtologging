@@ -28,7 +28,7 @@ pub enum FileCommand {
     /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
     /// Flush the writer and acknowledge completion on the provided channel.
-    Flush(Sender<()>),
+    Flush(Sender<io::Result<()>>),
 }
 
 /// Strategy for rotating the log file before writes.
@@ -68,28 +68,34 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
 /// receive plus non-blocking drain cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatchConfig {
-    /// Maximum number of commands to process in one drain-loop batch.
-    pub capacity: usize,
+    capacity: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BatchConfigError {
+pub enum BatchConfigError {
     ZeroCapacity,
 }
 
 impl BatchConfig {
-    pub(crate) fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+    /// Create a batch configuration with a non-zero drain capacity.
+    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
         if capacity == 0 {
             return Err(BatchConfigError::ZeroCapacity);
         }
         Ok(Self { capacity })
     }
+
+    /// Return the maximum number of commands drained in one batch.
+    pub const fn capacity(self) -> usize {
+        self.capacity
+    }
 }
 
 impl Default for BatchConfig {
     fn default() -> Self {
-        Self::new(DEFAULT_BATCH_CAPACITY)
-            .expect("DEFAULT_BATCH_CAPACITY must always be greater than zero")
+        Self {
+            capacity: DEFAULT_BATCH_CAPACITY,
+        }
     }
 }
 
@@ -112,7 +118,7 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             capacity: super::config::DEFAULT_CHANNEL_CAPACITY,
-            batch: BatchConfig::default(),
+            batch: BatchConfig::new(DEFAULT_BATCH_CAPACITY).unwrap_or_default(),
             flush_interval: 1,
             start_barrier: None,
         }
@@ -123,7 +129,7 @@ impl From<&HandlerConfig> for WorkerConfig {
     fn from(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,
-            batch: BatchConfig::default(),
+            batch: BatchConfig::new(DEFAULT_BATCH_CAPACITY).unwrap_or_default(),
             flush_interval: cfg.flush_interval,
             start_barrier: None,
         }
@@ -239,12 +245,14 @@ where
         }
     }
 
-    fn handle_flush(&mut self, ack_tx: Sender<()>) {
-        if let Err(err) = self.writer.flush() {
+    fn handle_flush(&mut self, ack_tx: Sender<io::Result<()>>) {
+        let flush_result = self.writer.flush();
+        if let Err(err) = &flush_result {
             warn!("FemtoFileHandler flush error: {err}");
+        } else {
+            self.tracker.reset();
         }
-        self.tracker.reset();
-        if ack_tx.send(()).is_err() {
+        if ack_tx.send(flush_result).is_err() {
             warn!("FemtoFileHandler flush ack channel disconnected");
         }
     }
@@ -300,7 +308,7 @@ where
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
         loop {
-            match recv_batch(&rx, batch.capacity) {
+            match recv_batch(&rx, batch.capacity()) {
                 Ok(commands) => {
                     for command in commands {
                         match command {
