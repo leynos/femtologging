@@ -12,11 +12,13 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 use log::{error, warn};
 
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
+
+const DEFAULT_BATCH_CAPACITY: usize = 64;
 
 /// Commands sent to the worker thread.
 ///
@@ -64,9 +66,25 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
 ///
 /// Specifies the channel capacity, flush interval, and optional synchronisation
 /// barrier for testing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BatchConfig {
+    /// Maximum number of commands to process in one drain-loop batch.
+    pub capacity: usize,
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            capacity: DEFAULT_BATCH_CAPACITY,
+        }
+    }
+}
+
 pub struct WorkerConfig {
     /// Capacity of the command channel.
     pub capacity: usize,
+    /// Maximum number of commands to drain after the blocking receive.
+    pub batch: BatchConfig,
     /// Number of writes between automatic flushes (0 disables periodic flushing).
     pub flush_interval: usize,
     /// Optional barrier for synchronising worker startup in tests.
@@ -77,6 +95,7 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             capacity: super::config::DEFAULT_CHANNEL_CAPACITY,
+            batch: BatchConfig::default(),
             flush_interval: 1,
             start_barrier: None,
         }
@@ -87,10 +106,27 @@ impl From<&HandlerConfig> for WorkerConfig {
     fn from(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,
+            batch: BatchConfig::default(),
             flush_interval: cfg.flush_interval,
             start_barrier: None,
         }
     }
+}
+
+fn recv_batch(
+    rx: &Receiver<FileCommand>,
+    batch_capacity: usize,
+) -> Result<Vec<FileCommand>, RecvError> {
+    let first = rx.recv()?;
+    let mut batch = Vec::with_capacity(batch_capacity);
+    batch.push(first);
+    while batch.len() < batch_capacity {
+        match rx.try_recv() {
+            Ok(command) => batch.push(command),
+            Err(_) => break,
+        }
+    }
+    Ok(batch)
 }
 
 /// Tracks how many writes occurred and triggers periodic flushes.
@@ -224,6 +260,7 @@ where
 {
     let WorkerConfig {
         capacity,
+        batch,
         flush_interval,
         start_barrier,
     } = config;
@@ -235,10 +272,12 @@ where
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
         let formatter = formatter;
-        for cmd in rx {
-            match cmd {
-                FileCommand::Record(record) => state.handle_record(&formatter, *record),
-                FileCommand::Flush(ack_tx) => state.handle_flush(ack_tx),
+        while let Ok(commands) = recv_batch(&rx, batch.capacity) {
+            for command in commands {
+                match command {
+                    FileCommand::Record(record) => state.handle_record(&formatter, *record),
+                    FileCommand::Flush(ack_tx) => state.handle_flush(ack_tx),
+                }
             }
         }
         state.final_flush();

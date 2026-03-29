@@ -33,7 +33,7 @@ use std::{
     io::{self, BufWriter, Seek, Write},
     path::Path,
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{Receiver, Sender};
@@ -225,15 +225,21 @@ impl FemtoFileHandler {
     }
 
     fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-        if tx.send(FileCommand::Flush(ack_tx)).is_err() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if tx
+            .send_timeout(FileCommand::Flush(ack_tx), remaining)
+            .is_err()
+        {
             return false;
         }
-        self.wait_for_flush_completion(&ack_rx)
+        self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
-    fn wait_for_flush_completion(&self, ack_rx: &Receiver<()>) -> bool {
-        ack_rx.recv_timeout(Duration::from_secs(1)).is_ok()
+    fn wait_for_flush_completion(&self, ack_rx: &Receiver<()>, deadline: Instant) -> bool {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        ack_rx.recv_timeout(remaining).is_ok()
     }
 
     /// Close the handler and wait for the worker to stop.

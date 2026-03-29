@@ -493,16 +493,18 @@ existing handler types. `FileHandlerBuilder` supports capacity and flush
 interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count`
 rotation thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`,
 `interval`, `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the
-size-based builder: both limits must be provided with positive values. Passing
-zero raises a `ValueError`, while negative or out-of-range integers raise an
-`OverflowError` immediately through the PyO3 unsigned conversions, keeping
-misconfigurations obvious. When size thresholds are omitted, the handler stores
-`(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise
-configuration errors, so invalid rollover settings fail fast. The timed
+size-based builder: `max_bytes` and `backup_count` must be supplied together.
+When both thresholds are omitted, the handler stores `(0, 0)`, which disables
+rotation entirely. A mismatched pair, where one value is zero and the other is
+non-zero, raises a `ValueError` through the validation path in
+`rust_extension/src/handlers/rotating/python.rs`, so invalid rollover settings
+fail fast. Invalid integer bounds are rejected by the typed
+conversion-and-validation path before the builder is created, rather than
+relying on a blanket PyO3 `OverflowError` for all bad inputs. The timed
 rotation builder validates its inputs eagerly: unsupported `when` values, zero
 `interval`, and `at_time` on cadences that do not use a time-of-day trigger all
 raise `ValueError`, while supplying negative or out-of-range integers for
-`interval` raises `OverflowError`. Unlike size-based rotation,
+`interval` is rejected during typed conversion. Unlike size-based rotation,
 `backup_count == 0` does not disable timed rotation; it retains all timestamped
 backups indefinitely. The `StreamHandlerBuilder` configures the stream target
 and capacity. All builders expose `build()` methods returning ready‑to‑use

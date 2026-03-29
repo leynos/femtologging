@@ -14,13 +14,8 @@ use super::worker::FlushTracker;
 pub(super) fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
     let path_ref = path.as_ref();
     let path_display = path_ref.display();
-    #[expect(
-        clippy::ineffective_open_options,
-        reason = "Be explicit about write intent alongside append"
-    )]
     OpenOptions::new()
         .create(true)
-        .write(true)
         .append(true)
         .open(path_ref)
         .map_err(|e| io::Error::new(e.kind(), format!("{path_display}: {e}")))

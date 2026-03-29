@@ -44,7 +44,7 @@ class Metadata(typ.TypedDict, total=False):
 class ExcInfo(typ.TypedDict, total=False):
     """The ``exc_info`` sub-dictionary of a femtologging record."""
 
-    schema_version: int
+    schema_version: typ.Required[int]
     type_name: str
     message: str
     frames: list[Frame]

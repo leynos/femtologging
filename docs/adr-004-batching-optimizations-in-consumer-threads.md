@@ -8,7 +8,7 @@ Proposed.
 
 2026-03-24
 
-## Context and problem statement
+## Context and Problem Statement
 
 Every `femtologging` handler runs a dedicated consumer thread that receives
 `FemtoLogRecord` instances from a bounded `crossbeam-channel` and processes
@@ -37,7 +37,7 @@ Phase 3 exploration item in §8.1[^2]. Roadmap item 2.3.3 formalizes the task.
 This ADR analyses the batching strategies available, weighs their trade-offs,
 and proposes a direction for implementation.
 
-## Decision drivers
+## Decision Drivers
 
 - Reduce per-record I/O system call overhead for file and stream handlers.
 - Amortize network round-trip costs for HTTP and socket handlers.
@@ -49,7 +49,26 @@ and proposes a direction for implementation.
 - Avoid introducing dependencies beyond `crossbeam-channel` for the core
   batching primitive.
 
-## Options considered
+## Requirements
+
+- Reduce per-record I/O syscall overhead for file and stream handlers under
+  sustained load.
+- Amortize network round-trip and framing overhead for HTTP and socket
+  handlers.
+- Preserve deterministic shutdown semantics so dropping a sender still drains
+  all queued records before worker exit.
+- Preserve the existing flush acknowledgement contract for explicit flush
+  operations.
+- Maintain current tail-latency characteristics under light traffic by
+  avoiding time-based dwell before the first record in a batch is processed.
+- Keep batching opt-in or backward-compatible with existing handler
+  configuration and overflow semantics.
+- Avoid introducing new dependencies beyond `crossbeam-channel` for the core
+  batching primitive.
+- Keep the implementation local to handler worker loops so rollout remains
+  incremental and testable.
+
+## Options Considered
 
 ### Option A: drain-loop batching with `try_recv`
 
@@ -154,10 +173,13 @@ Replace `crossbeam-channel` with `flume`, which exposes `try_iter()` and
 
 _Table 1: Trade-offs between batching strategies._
 
-## Decision outcome / proposed direction
+## Decision Outcome / Proposed Direction
 
-Adopt **Option A (drain-loop batching)** as the primary strategy, with **Option
-C (`writev`)** as a complementary optimization for file and stream handlers.
+Adopt **Option A (drain-loop batching)** as the primary strategy. For
+`FemtoFileHandler` and `FemtoStreamHandler`, use a **single contiguous buffer
+plus `write_all`** as the canonical Phase 1 batch write strategy. True
+scatter-gather I/O remains a future optimisation once `write_all_vectored`
+stabilises.
 
 **Rationale:**
 
@@ -168,24 +190,36 @@ signalling architecture. Under sustained load — the scenario where batching
 matters most — `try_recv()` naturally collects large batches. Under light
 traffic, it degrades gracefully to the current one-at-a-time behaviour.
 
-Option C is additive: once records are collected into a batch, file and stream
-handlers can use `write_vectored` to submit the formatted output in a single
-system call, compounding the benefit.
+For Phase 1, the accepted file and stream write path is:
 
-Options B and D are not selected at this time. Option B's added latency under
-light load is unacceptable for debug and interactive logging without
-significant configuration effort. Option D introduces migration risk for
-marginal ergonomic gain over Option A.
+- format each record into a newline-terminated byte buffer;
+- concatenate the batch into one contiguous `Vec<u8>`;
+- call `write_all` once for the concatenated payload;
+- flush once at the batch boundary, or immediately before acknowledging an
+  explicit `Flush`.
 
-## Goals and non-goals
+This keeps the implementation on stable Rust while still collapsing multiple
+record writes into one batch write. If true vectored writes become practical in
+stable Rust, the handlers can switch internally without changing the external
+batching contract. Until then, there is no secondary `write_vectored` path in
+Phase 1, so the fallback rule is simple: `FemtoFileHandler` and
+`FemtoStreamHandler` always use the contiguous-buffer `write_all` path.
+
+Options B, C, and D are not selected at this time. Option B's added latency
+under light load is unacceptable for debug and interactive logging without
+significant configuration effort. Option C still depends on unstable
+`write_all_vectored` for a robust stable-Rust implementation, and Option D
+introduces migration risk for marginal ergonomic gain over Option A.
+
+## Goals and Non-goals
 
 ### Goals
 
 - Introduce a `BatchConfig` structure controlling maximum batch size.
 - Implement drain-loop batching in all four handler worker threads (stream,
   file, HTTP, socket).
-- Use `write_vectored` for file and stream handlers where the batch contains
-  more than one record.
+- Use a contiguous batch buffer plus `write_all` for file and stream handlers
+  during Phase 1.
 - Preserve existing shutdown drain semantics: all queued records are processed
   before the worker thread exits.
 - Preserve the existing flush-acknowledge protocol used by `handle_flush`.
@@ -200,7 +234,7 @@ marginal ergonomic gain over Option A.
 - Changing the channel capacity or backpressure/overflow policy semantics.
 - Batching across multiple handlers (each handler batches independently).
 
-## Code sketches
+## Code Sketches
 
 The following sketches illustrate the proposed approach for the chosen
 direction. They are simplified for clarity; production code will include full
@@ -326,7 +360,7 @@ fn run_batched_file_worker<W, F, R>(
 }
 ```
 
-### Stream handler worker loop (batched with `write_vectored`)
+### Stream handler worker loop (batched with contiguous-buffer writes)
 
 The existing `StreamCommand` enum carries a per-command `Sender<()>` in the
 `Flush` variant so the caller can wait for the specific flush to complete. Like
@@ -342,12 +376,12 @@ enum StreamCommand {
 }
 ```
 
-Each batch results in exactly one vectored write (to submit the formatted
-lines) followed by exactly one `flush` call (to ensure the data reaches the
-underlying stream). If a `Flush` command appears mid-batch, the accumulated
-lines are written and flushed before acknowledging; remaining records in the
-same batch continue into a fresh buffer. The helper `write_batch_vectored`
-performs only the vectored write — it never flushes — so the caller controls
+Each batch results in exactly one contiguous-buffer `write_all` call (to submit
+the formatted lines) followed by exactly one `flush` call (to ensure the data
+reaches the underlying stream). If a `Flush` command appears mid-batch, the
+accumulated lines are written and flushed before acknowledging; remaining
+records in the same batch continue into a fresh buffer. The helper
+`write_batch_buffered` performs only the buffered write, so the caller controls
 when and how often `flush` is invoked.
 
 The current `FemtoStreamHandler` worker already drains queued commands before
@@ -381,7 +415,7 @@ fn run_batched_stream_worker<W, F>(
                         }
                         StreamCommand::Flush(ack) => {
                             // Drain accumulated lines, then flush once.
-                            write_batch_vectored(&mut writer, &formatted);
+                            write_batch_buffered(&mut writer, &formatted);
                             formatted.clear();
                             let _ = writer.flush();
                             let _ = ack.send(());
@@ -390,7 +424,7 @@ fn run_batched_stream_worker<W, F>(
                 }
                 // Write remaining lines and flush once for the batch.
                 if !formatted.is_empty() {
-                    write_batch_vectored(&mut writer, &formatted);
+                    write_batch_buffered(&mut writer, &formatted);
                     let _ = writer.flush();
                 }
             }
@@ -417,7 +451,7 @@ fn run_batched_stream_worker<W, F>(
 /// calling `flush` at the appropriate batch boundary.
 ///
 /// [wa]: https://github.com/rust-lang/rust/issues/70436
-fn write_batch_vectored<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
+fn write_batch_buffered<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
     if lines.is_empty() {
         return;
     }
@@ -429,6 +463,13 @@ fn write_batch_vectored<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
     let _ = writer.write_all(&buf);
 }
 ```
+
+The same contiguous-buffer rule applies to `FemtoFileHandler` in Phase 1. If a
+future stable Rust release makes `write_all_vectored` available, both file and
+stream handlers can switch to a true scatter-gather implementation behind the
+same batch-processing contract. Until then, `WouldBlock` or partial-write
+fallback logic is unnecessary because the accepted implementation always uses a
+single `write_all` call over the concatenated buffer.
 
 ### HTTP handler worker loop (batched JSON array)
 
@@ -587,45 +628,50 @@ pattern: builders may store a provisional batch capacity, but they must call
 `BatchConfig::validate()` before passing the value into the file/stream handler
 spawn path.
 
-## Migration plan
+## Migration Plan
 
-### Phase 1: core batch collection and file/stream handler batching
+### 1. Core batch collection and file/stream handler batching
 
-- Introduce the `recv_batch` helper and `BatchConfig` type.
-- Standardize flush acknowledgements first by making `FileCommand::Flush` and
-  `StreamCommand::Flush` both carry per-command `Sender<()>` values, then
-  thread that sender through the handler construction and spawn path used by
-  `FemtoFileHandler`, `FemtoStreamHandler`, and their builder APIs.
-- Modify `FemtoFileHandler` and `FemtoStreamHandler` worker loops to use
-  drain-loop batching with `write_vectored`.
-- Add Criterion benchmarks comparing single-record and batched throughput for
-  file and stream handlers.
-- Default `batch_capacity` to 64; expose it through the existing builder APIs.
+1.1 [ ] Define the core batching primitives. 1.1.1 [ ] Introduce the
+`recv_batch` helper and `BatchConfig` type. 1.1.2 [ ] Default `batch_capacity`
+to 64 and expose it through the existing builder APIs. 1.2 [ ] Standardize the
+flush acknowledgement contract before enabling drain-loop batching. 1.2.1 [ ]
+Make `FileCommand::Flush` and `StreamCommand::Flush` both carry per-command
+`Sender<()>` values. 1.2.2 [ ] Thread the per-command flush sender through the
+handler construction and spawn paths used by `FemtoFileHandler`,
+`FemtoStreamHandler`, and their builder APIs. 1.3 [ ] Batch file and stream
+worker writes on stable Rust. 1.3.1 [ ] Modify `FemtoFileHandler` worker loops
+to use drain-loop batching with a contiguous batch buffer plus `write_all`.
+1.3.2 [ ] Modify `FemtoStreamHandler` worker loops to use drain-loop batching
+with a contiguous batch buffer plus `write_all`. 1.4 [ ] Add Criterion
+benchmarks comparing single-record and batched throughput for file and stream
+handlers.
 
-### Phase 2: network handler batching
+### 2. Network handler batching
 
-- Modify `FemtoHTTPHandler` to serialize batch payloads as JSON arrays and
-  send one request per batch.
-- Modify `FemtoSocketHandler` to concatenate frames and write combined buffers.
-- Add Criterion benchmarks for HTTP and socket handler batched throughput.
-- Update the user guide with batching configuration guidance.
+2.1 [ ] Batch HTTP handler writes. 2.1.1 [ ] Modify `FemtoHTTPHandler` to
+serialize batch payloads as JSON arrays and send one request per batch. 2.2 [ ]
+Batch socket handler writes. 2.2.1 [ ] Modify `FemtoSocketHandler` to
+concatenate frames and write combined buffers. 2.3 [ ] Add Criterion benchmarks
+for HTTP and socket handler batched throughput. 2.4 [ ] Update the user guide
+with batching configuration guidance.
 
-### Phase 3: logger dispatch batching and hardening
+### 3. Logger dispatch batching and hardening
 
-- Modify the logger worker thread to drain-loop batch records before
-  dispatching to handlers.
-- Ensure shutdown drain semantics process all remaining records.
-- Add integration tests verifying record ordering, completeness under load,
-  and graceful shutdown with batched workers.
-- Update design document §5.4 and §8.1 to reflect the implemented approach.
-- Mark roadmap item 2.3.3 as complete.
+3.1 [ ] Batch logger dispatch. 3.1.1 [ ] Modify the logger worker thread to
+drain-loop batch records before dispatching to handlers. 3.2 [ ] Preserve drain
+and shutdown correctness. 3.2.1 [ ] Ensure shutdown drain semantics process all
+remaining records. 3.2.2 [ ] Add integration tests verifying record ordering,
+completeness under load, and graceful shutdown with batched workers. 3.3 [ ]
+Finalize the documentation and roadmap. 3.3.1 [ ] Update design document §5.4
+and §8.1 to reflect the implemented approach. 3.3.2 [ ] Mark roadmap item 2.3.3
+as complete.
 
-## Known risks and limitations
+## Known Risks and Limitations
 
-- **`write_vectored` fallback.** On platforms or file descriptors where
-  scatter-gather I/O is not supported, `write_vectored` falls back to
-  sequential writes, negating the system call reduction benefit. The Rust
-  standard library provides `is_write_vectored()` to detect this at runtime.
+- **Contiguous-buffer allocation cost.** File and stream batching trades extra
+  copying into one `Vec<u8>` for fewer write calls. Large batches increase
+  temporary allocation pressure even though the approach stays on stable Rust.
 - **HTTP receiver compatibility.** Batched JSON array payloads require the
   receiving HTTP endpoint to accept arrays. Endpoints expecting single-object
   payloads will reject batched requests. This must be documented and the
@@ -638,7 +684,7 @@ spawn path.
   local batch). With the default capacity of 64 and typical record sizes, this
   overhead is negligible.
 
-## Outstanding decisions
+## Outstanding Decisions
 
 - Whether HTTP batch mode should be opt-in (requiring explicit configuration)
   or opt-out (enabled by default with a way to disable).
@@ -650,7 +696,7 @@ spawn path.
 - Whether `FlushTracker` interval semantics should count individual records or
   batches after the change.
 
-## Architectural rationale
+## Architectural Rationale
 
 Drain-loop batching preserves femtologging's core architectural invariants:
 dedicated consumer threads, bounded channels with backpressure, and
@@ -659,11 +705,13 @@ no timer threads, and no cross-handler coordination. The optimization is
 localized entirely within each handler's worker loop, keeping the change
 surface small and testable.
 
-The `write_vectored` complement for file and stream handlers aligns with Rust's
-standard I/O abstractions and avoids introducing platform-specific code paths.
-Together, these two techniques address the primary I/O overhead identified in
-design §5.4[^1] without compromising the latency characteristics that make
-femtologging suitable for interactive and debug logging under light traffic.
+The contiguous-buffer write path for file and stream handlers keeps the Phase 1
+implementation on stable Rust and avoids introducing platform-specific
+scatter-gather branches before the standard library grows a stable
+`write_all_vectored`. Together with drain-loop batching, this addresses the
+primary I/O overhead identified in design §5.4[^1] without compromising the
+latency characteristics that make femtologging suitable for interactive and
+debug logging under light traffic.
 
 [^1]: <./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads>
 [^2]: <./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap>
