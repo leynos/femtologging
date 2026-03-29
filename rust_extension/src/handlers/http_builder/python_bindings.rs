@@ -48,6 +48,30 @@ impl HTTPHandlerBuilder {
         Ok(slf)
     }
 
+    /// Configure HTTP authentication from a Python mapping.
+    #[pyo3(name = "with_auth")]
+    #[pyo3(signature = (config))]
+    fn py_with_auth<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        config: &Bound<'py, PyDict>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let updated = if let Some(token) = config.get_item("token")? {
+            slf.clone().with_bearer_token(token.extract::<String>()?)
+        } else {
+            let username: String = config
+                .get_item("username")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("username"))?
+                .extract()?;
+            let password: String = config
+                .get_item("password")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("password"))?
+                .extract()?;
+            slf.clone().with_basic_auth(username, password)
+        };
+        *slf = updated;
+        Ok(slf)
+    }
+
     #[pyo3(name = "with_basic_auth")]
     #[pyo3(signature = (username, password))]
     fn py_with_basic_auth<'py>(
