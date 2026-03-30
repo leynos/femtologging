@@ -230,11 +230,12 @@ The design sources that constrain this plan are:
 
 ## Stage 1: Add feature gating and a minimal tracing module skeleton
 
-Extend `rust_extension/Cargo.toml` with explicit caret-version dependencies for
-`tracing` and `tracing-subscriber`, then add a feature such as
-`tracing-compat`. Keep the default feature decision conservative: if enabling
-the layer by default risks unexpected dependency or compile-time expansion for
-Python-only users, leave it opt-in and document that choice.
+Extend `rust_extension/Cargo.toml` with SemVer version requirements for
+`tracing` and `tracing-subscriber` using Cargo's default implicit caret
+behaviour, then add a feature such as `tracing-compat`. Keep the default
+feature decision conservative: if enabling the layer by default risks
+unexpected dependency or compile-time expansion for Python-only users, leave it
+opt-in and document that choice.
 
 Create a new module, likely `rust_extension/src/tracing_compat.rs`, parallel to
 `log_compat.rs`. The module should begin with a `//!` comment and own the
