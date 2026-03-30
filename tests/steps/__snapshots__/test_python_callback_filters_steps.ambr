@@ -1,0 +1,22 @@
+# serializer version: 1
+# name: test_callable_filter_enriches_an_emitted_record
+  dict({
+    'disable_existing_loggers': False,
+    'filters': dict({
+      'context': dict({
+        'callable_type': 'function',
+      }),
+    }),
+    'loggers': dict({
+      'svc': dict({
+        'filters': list([
+          'context',
+        ]),
+      }),
+    }),
+    'root': dict({
+      'level': 'DEBUG',
+    }),
+    'version': 1,
+  })
+# ---

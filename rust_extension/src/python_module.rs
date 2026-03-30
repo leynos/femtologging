@@ -9,8 +9,9 @@ use pyo3::{Bound, PyResult, prelude::*, wrap_pyfunction};
 use crate::{
     ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
     FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
-    LoggerMutationBuilder, NameFilterBuilder, RotatingFileHandlerBuilder, RuntimeConfigBuilder,
-    SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
+    LoggerMutationBuilder, NameFilterBuilder, PythonCallbackFilterBuilder,
+    RotatingFileHandlerBuilder, RuntimeConfigBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
@@ -54,6 +55,10 @@ pub(crate) fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
         ),
         ("LevelFilterBuilder", py.get_type::<LevelFilterBuilder>()),
         ("NameFilterBuilder", py.get_type::<NameFilterBuilder>()),
+        (
+            "PythonCallbackFilterBuilder",
+            py.get_type::<PythonCallbackFilterBuilder>(),
+        ),
         ("FilterBuildError", py.get_type::<FilterBuildErrorPy>()),
         ("ConfigBuilder", py.get_type::<ConfigBuilder>()),
         ("LoggerConfigBuilder", py.get_type::<LoggerConfigBuilder>()),
@@ -178,6 +183,7 @@ mod tests {
                 "TimedRotatingFileHandlerBuilder",
                 "LevelFilterBuilder",
                 "NameFilterBuilder",
+                "PythonCallbackFilterBuilder",
                 "FilterBuildError",
                 "ConfigBuilder",
                 "LoggerConfigBuilder",

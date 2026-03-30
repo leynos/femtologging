@@ -28,6 +28,11 @@ from femtologging import (
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
 
+    from femtologging._femtologging_rs import (
+        HTTPBasicAuthConfig,
+        HTTPTokenAuthConfig,
+    )
+
 FileBuilder = (
     FileHandlerBuilder | RotatingFileHandlerBuilder | TimedRotatingFileHandlerBuilder
 )
@@ -498,7 +503,7 @@ def then_setting_flush_after_records_fails(
     target_fixture="http_builder",
 )
 def given_http_builder(url: str) -> HTTPHandlerBuilder:
-    return HTTPHandlerBuilder().with_url(url)
+    return HTTPHandlerBuilder().with_endpoint(url)
 
 
 @given("an empty HTTPHandlerBuilder", target_fixture="http_builder")
@@ -508,7 +513,8 @@ def given_empty_http_builder() -> HTTPHandlerBuilder:
 
 @when("I set HTTP method POST", target_fixture="http_builder")
 def when_set_http_method_post(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuilder:
-    return http_builder.with_method("POST")
+    current_url = typ.cast("str", http_builder.as_dict()["url"])
+    return http_builder.with_endpoint(current_url, "POST")
 
 
 @when(
@@ -543,14 +549,73 @@ def when_enable_json_format(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuil
 def when_set_basic_auth(
     http_builder: HTTPHandlerBuilder, user: str, password: str
 ) -> HTTPHandlerBuilder:
-    return http_builder.with_basic_auth(user, password)
+    return http_builder.with_auth({"username": user, "password": password})
 
 
 @when(parsers.parse('I set bearer token "{token}"'), target_fixture="http_builder")
 def when_set_bearer_token(
     http_builder: HTTPHandlerBuilder, token: str
 ) -> HTTPHandlerBuilder:
-    return http_builder.with_bearer_token(token)
+    return http_builder.with_auth({"token": token})
+
+
+@when(
+    parsers.parse(
+        'I set auth config token "{token}" with extra key "{key}" value "{value}"'
+    ),
+    target_fixture="http_builder",
+)
+def when_set_auth_with_extra_key(
+    http_builder: HTTPHandlerBuilder, token: str, key: str, value: str
+) -> HTTPHandlerBuilder:
+    return http_builder.with_auth({"token": token, key: value})
+
+
+@when(
+    parsers.parse(
+        'I try auth config token "{token}" username "{user}" password "{password}"'
+    ),
+    target_fixture="auth_error",
+)
+def when_try_mixed_auth_config(
+    http_builder: HTTPHandlerBuilder, token: str, user: str, password: str
+) -> ValueError:
+    # Intentionally mix token and basic-auth fields to exercise validation.
+    invalid_config = typ.cast(
+        "HTTPBasicAuthConfig | HTTPTokenAuthConfig",
+        {"token": token, "username": user, "password": password},
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "with_auth config must not mix 'token' with 'username'/'password'"
+        ),
+    ) as exc_info:
+        http_builder.with_auth(invalid_config)
+    return exc_info.value
+
+
+@when(
+    parsers.parse('I try auth config username "{user}" without password'),
+    target_fixture="auth_error",
+)
+def when_try_incomplete_basic_auth(
+    http_builder: HTTPHandlerBuilder, user: str
+) -> ValueError:
+    # Intentionally omit password/token so with_auth rejects the payload.
+    invalid_config = typ.cast(
+        "HTTPBasicAuthConfig | HTTPTokenAuthConfig",
+        {"username": user},
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "with_auth config must specify either 'token' or both "
+            "'username' and 'password'"
+        ),
+    ) as exc_info:
+        http_builder.with_auth(invalid_config)
+    return exc_info.value
 
 
 @when(parsers.parse('I set record fields to "{fields}"'), target_fixture="http_builder")
@@ -584,7 +649,13 @@ def then_http_builder_auth_snapshot(
     http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     data = http_builder.as_dict()
-    assert data.get("auth_type") == "basic", "must have basic auth"
+    assert data == {
+        "auth_type": "basic",
+        "auth_user": "admin",
+        "format": "url_encoded",
+        "url": "http://localhost:8080/log",
+    }, "must expose the exact basic-auth mapping"
+    assert "token" not in data, "basic auth must not retain bearer fields"
     assert data == snapshot, "HTTP builder with auth must match snapshot"
     _build_flush_close(http_builder)
 
@@ -594,8 +665,29 @@ def then_http_builder_bearer_snapshot(
     http_builder: HTTPHandlerBuilder, snapshot: SnapshotAssertion
 ) -> None:
     data = http_builder.as_dict()
-    assert data.get("auth_type") == "bearer", "must have bearer auth"
+    assert data == {
+        "auth_type": "bearer",
+        "format": "url_encoded",
+        "url": "http://localhost:8080/log",
+    }, "must expose the exact bearer-auth mapping"
+    assert "auth_user" not in data, "bearer auth must not retain basic fields"
+    assert "token" not in data, "raw token must not leak through builder output"
+    assert "scope" not in data, "unsupported auth keys must be ignored"
     assert data == snapshot, "HTTP builder with bearer must match snapshot"
+    _build_flush_close(http_builder)
+
+
+@then("the HTTP handler builder ignores unsupported auth keys")
+def then_http_builder_ignores_unsupported_auth_keys(
+    http_builder: HTTPHandlerBuilder,
+) -> None:
+    data = http_builder.as_dict()
+    assert data == {
+        "auth_type": "bearer",
+        "format": "url_encoded",
+        "url": "http://localhost:8080/log",
+    }, "unsupported auth keys must not change the resolved bearer mapping"
+    assert "scope" not in data, "unsupported auth keys must be ignored"
     _build_flush_close(http_builder)
 
 
@@ -613,3 +705,8 @@ def then_http_builder_fields_snapshot(
 def then_http_builder_fails(http_builder: HTTPHandlerBuilder, message: str) -> None:
     with pytest.raises(HandlerConfigError, match=re.escape(message)):
         http_builder.build()
+
+
+@then(parsers.parse('setting the HTTP auth config fails with "{message}"'))
+def then_http_auth_config_fails(auth_error: ValueError, message: str) -> None:
+    assert str(auth_error) == message, "HTTP auth config error must match exactly"

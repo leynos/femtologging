@@ -3,25 +3,68 @@
 //! Provides the [`FemtoFilter`] trait along with concrete filter builders for
 //! constructing filters.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use thiserror::Error;
 
 use crate::log_record::FemtoLogRecord;
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+/// Outcome returned by the filter pipeline.
+#[derive(Debug, Default)]
+pub struct FilterDecision {
+    /// Whether the record should continue through the pipeline.
+    pub(crate) accepted: bool,
+    /// Additional metadata fields accepted by the filter.
+    pub(crate) enrichment: BTreeMap<String, String>,
+}
+
+impl FilterDecision {
+    /// Build a decision with no enrichment payload.
+    #[must_use]
+    pub(crate) fn accept(accepted: bool) -> Self {
+        Self {
+            accepted,
+            enrichment: BTreeMap::new(),
+        }
+    }
+}
+
+/// Per-record state shared across filters during evaluation.
+#[derive(Default)]
+pub struct FilterContext {
+    #[cfg(feature = "python")]
+    pub(crate) python_record_view: Option<Py<PyAny>>,
+}
 
 /// Trait implemented by all log filters.
 ///
 /// Filters are `Send + Sync` so they can be shared across threads.
 pub trait FemtoFilter: Send + Sync {
+    /// Evaluate the filter for `record`, optionally returning enrichment.
+    fn decision(&self, record: &mut FemtoLogRecord, context: &mut FilterContext) -> FilterDecision;
+
     /// Return `true` if `record` should be processed.
-    fn should_log(&self, record: &FemtoLogRecord) -> bool;
+    fn should_log(&self, record: &mut FemtoLogRecord) -> bool {
+        self.decision(record, &mut FilterContext::default())
+            .accepted
+    }
 }
 
 pub mod level_filter;
 pub mod name_filter;
+#[cfg(feature = "python")]
+pub mod python_callback;
+#[cfg(all(test, feature = "python"))]
+mod python_callback_tests;
+#[cfg(feature = "python")]
+mod python_callback_validation;
 
 pub use level_filter::LevelFilterBuilder;
 pub use name_filter::NameFilterBuilder;
+#[cfg(feature = "python")]
+pub use python_callback::PythonCallbackFilterBuilder;
 
 /// Errors that may occur while building a filter.
 #[derive(Debug, Error)]
@@ -50,6 +93,9 @@ pub enum FilterBuilder {
     Level(LevelFilterBuilder),
     /// Build a [`NameFilter`].
     Name(NameFilterBuilder),
+    /// Build a Python callback filter.
+    #[cfg(feature = "python")]
+    PythonCallback(PythonCallbackFilterBuilder),
 }
 
 impl FilterBuilder {
@@ -57,6 +103,10 @@ impl FilterBuilder {
         match self {
             Self::Level(b) => <LevelFilterBuilder as FilterBuilderTrait>::build(b),
             Self::Name(b) => <NameFilterBuilder as FilterBuilderTrait>::build(b),
+            #[cfg(feature = "python")]
+            Self::PythonCallback(b) => {
+                <PythonCallbackFilterBuilder as FilterBuilderTrait>::build(b)
+            }
         }
     }
 }
@@ -74,6 +124,13 @@ impl From<NameFilterBuilder> for FilterBuilder {
 }
 
 #[cfg(feature = "python")]
+impl From<PythonCallbackFilterBuilder> for FilterBuilder {
+    fn from(value: PythonCallbackFilterBuilder) -> Self {
+        Self::PythonCallback(value)
+    }
+}
+
+#[cfg(feature = "python")]
 mod py_helpers {
     //! Python-specific filter helpers grouped to avoid repeated `#[cfg]`
     //! attributes.
@@ -83,7 +140,8 @@ mod py_helpers {
     use super::*;
     use crate::macros::AsPyDict;
     use crate::python::fq_py_type;
-    use pyo3::{Borrowed, create_exception, exceptions::PyTypeError, prelude::*};
+    use pyo3::prelude::{Py, PyAny, PyErr, PyResult, Python};
+    use pyo3::{Borrowed, FromPyObject, create_exception, exceptions::PyTypeError};
 
     create_exception!(
         _femtologging_rs,
@@ -102,6 +160,7 @@ mod py_helpers {
             match self {
                 Self::Level(b) => b.as_pydict(py),
                 Self::Name(b) => b.as_pydict(py),
+                Self::PythonCallback(b) => b.as_pydict(py),
             }
         }
     }
@@ -118,9 +177,17 @@ mod py_helpers {
                 return Ok(FilterBuilder::Name(builder));
             }
 
+            if let Ok(builder) = obj.extract::<PythonCallbackFilterBuilder>() {
+                return Ok(FilterBuilder::PythonCallback(builder));
+            }
+
+            if let Ok(builder) = PythonCallbackFilterBuilder::from_callback_obj(obj.to_owned()) {
+                return Ok(FilterBuilder::PythonCallback(builder));
+            }
+
             let fq = fq_py_type(&obj.to_owned());
             Err(PyTypeError::new_err(format!(
-                "builder must be LevelFilterBuilder or NameFilterBuilder (got Python type: {fq})",
+                "builder must be LevelFilterBuilder, NameFilterBuilder, or a Python callback filter (got Python type: {fq})",
             )))
         }
     }

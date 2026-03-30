@@ -207,7 +207,7 @@ def test_dict_config_handler_validation_errors(
         ),
         (
             {"version": 1, "filters": {"f": {}}, "root": {}},
-            r"filter 'f' must contain a 'level' or 'name' key",
+            r"filter 'f' must contain a 'level', 'name', or '\(\)' key",
             ValueError,
         ),
         (

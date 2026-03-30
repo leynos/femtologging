@@ -25,8 +25,9 @@ After this work:
 
 Observable success: structured fields and propagated context appear in
 `record.metadata.key_values` for accepted records, validation failures surface
-as explicit Python/Rust errors, and `make fmt`, `make check-fmt`, `make typecheck`,
-`make lint`, `make test`, `make markdownlint`, and `make nixie` all pass.
+as explicit Python/Rust errors, and `make fmt`, `make check-fmt`,
+`make typecheck`, `make lint`, `make test`, `make markdownlint`, and
+`make nixie` all pass.
 
 ## Constraints
 

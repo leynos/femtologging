@@ -13,8 +13,12 @@ pub struct LevelFilter {
 }
 
 impl FemtoFilter for LevelFilter {
-    fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        record.level() <= self.max_level
+    fn decision(
+        &self,
+        record: &mut FemtoLogRecord,
+        _context: &mut crate::filters::FilterContext,
+    ) -> crate::filters::FilterDecision {
+        crate::filters::FilterDecision::accept(record.level() <= self.max_level)
     }
 }
 
@@ -87,6 +91,7 @@ mod tests {
     ) {
         let builder = LevelFilterBuilder::new().with_max_level(max);
         let filter = builder.build().expect("build should succeed");
-        assert_eq!(filter.should_log(&record(rec_level)), expected);
+        let mut record = record(rec_level);
+        assert_eq!(filter.should_log(&mut record), expected);
     }
 }

@@ -13,6 +13,16 @@ use crate::macros::{AsPyDict, dict_into_py};
 
 use super::HTTPHandlerBuilder;
 
+fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
+    match method.to_uppercase().as_str() {
+        "GET" => Ok(HTTPMethod::GET),
+        "POST" => Ok(HTTPMethod::POST),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unsupported HTTP method: {method}; expected GET or POST"
+        ))),
+    }
+}
+
 #[pymethods]
 impl HTTPHandlerBuilder {
     #[new]
@@ -34,16 +44,57 @@ impl HTTPHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         method: &str,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let method = match method.to_uppercase().as_str() {
-            "GET" => HTTPMethod::GET,
-            "POST" => HTTPMethod::POST,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unsupported HTTP method: {method}; expected GET or POST"
-                )));
-            }
-        };
+        let method = parse_http_method(method)?;
         let updated = slf.clone().with_method(method);
+        *slf = updated;
+        Ok(slf)
+    }
+
+    /// Configure the HTTP endpoint URL and optional request method.
+    #[pyo3(name = "with_endpoint")]
+    #[pyo3(signature = (url, method = None))]
+    fn py_with_endpoint<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        url: String,
+        method: Option<String>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let updated = if let Some(m) = method {
+            let method = parse_http_method(&m)?;
+            slf.clone().with_url(url).with_method(method)
+        } else {
+            slf.clone().with_url(url)
+        };
+        *slf = updated;
+        Ok(slf)
+    }
+
+    /// Configure HTTP authentication from a Python mapping.
+    #[pyo3(name = "with_auth")]
+    #[pyo3(signature = (config))]
+    fn py_with_auth<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        config: &Bound<'py, PyDict>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let token = config.get_item("token")?;
+        let username = config.get_item("username")?;
+        let password = config.get_item("password")?;
+        let updated = if let Some(token) = token {
+            if username.is_some() || password.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "with_auth config must not mix 'token' with 'username'/'password'",
+                ));
+            }
+            slf.clone().with_bearer_token(token.extract::<String>()?)
+        } else {
+            let (Some(username), Some(password)) = (username, password) else {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "with_auth config must specify either 'token' or both 'username' and 'password'",
+                ));
+            };
+            let username: String = username.extract()?;
+            let password: String = password.extract()?;
+            slf.clone().with_basic_auth(username, password)
+        };
         *slf = updated;
         Ok(slf)
     }
@@ -255,6 +306,52 @@ mod tests {
                 .extract()
                 .expect("extract succeeds");
             assert_eq!(auth_user, "user");
+        });
+    }
+
+    #[test]
+    fn with_auth_rejects_mixed_modes() {
+        Python::attach(|py| {
+            let builder = pyo3::Py::new(py, HTTPHandlerBuilder::new())
+                .expect("Py::new should succeed in test");
+            let config = PyDict::new(py);
+            config
+                .set_item("token", "abc-123")
+                .expect("token should be set");
+            config
+                .set_item("username", "user")
+                .expect("username should be set");
+            config
+                .set_item("password", "pass")
+                .expect("password should be set");
+
+            let err = HTTPHandlerBuilder::py_with_auth(builder.borrow_mut(py), &config)
+                .expect_err("mixed auth config should fail");
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert_eq!(
+                err.to_string(),
+                "ValueError: with_auth config must not mix 'token' with 'username'/'password'"
+            );
+        });
+    }
+
+    #[test]
+    fn with_auth_rejects_incomplete_basic_auth() {
+        Python::attach(|py| {
+            let builder = pyo3::Py::new(py, HTTPHandlerBuilder::new())
+                .expect("Py::new should succeed in test");
+            let config = PyDict::new(py);
+            config
+                .set_item("username", "user")
+                .expect("username should be set");
+
+            let err = HTTPHandlerBuilder::py_with_auth(builder.borrow_mut(py), &config)
+                .expect_err("incomplete auth config should fail");
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert_eq!(
+                err.to_string(),
+                "ValueError: with_auth config must specify either 'token' or both 'username' and 'password'"
+            );
         });
     }
 }

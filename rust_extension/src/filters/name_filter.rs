@@ -19,8 +19,14 @@ pub struct NameFilter {
 }
 
 impl FemtoFilter for NameFilter {
-    fn should_log(&self, record: &FemtoLogRecord) -> bool {
-        record.logger() == self.prefix || record.logger().starts_with(&self.prefix_dot)
+    fn decision(
+        &self,
+        record: &mut FemtoLogRecord,
+        _context: &mut crate::filters::FilterContext,
+    ) -> crate::filters::FilterDecision {
+        crate::filters::FilterDecision::accept(
+            record.logger() == self.prefix || record.logger().starts_with(&self.prefix_dot),
+        )
     }
 }
 
@@ -94,7 +100,8 @@ mod tests {
     ) {
         let builder = NameFilterBuilder::new().with_prefix(prefix);
         let filter = builder.build().expect("build should succeed");
-        assert_eq!(filter.should_log(&record(logger_name)), expected);
+        let mut record = record(logger_name);
+        assert_eq!(filter.should_log(&mut record), expected);
     }
     #[test]
     fn empty_prefix_rejected() {

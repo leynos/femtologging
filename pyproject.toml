@@ -146,6 +146,14 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "."
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
+# Coverage jobs install femtologging from source in an ephemeral environment,
+# so they do not inherit the Makefile's explicit `python,test-util` feature
+# flags. Keep `test-util` enabled here so those source builds expose the timed
+# rotation test hooks and exercise the full snapshot set.
+# Security note: this also exposes test-only helper APIs to source builds.
+# Production packaging should continue to use explicit release feature sets and
+# must not rely on these helpers as stable runtime surface.
+features = ["test-util"]
 
 [tool.pytest.ini_options]
 timeout = 30
@@ -156,5 +164,4 @@ markers = [
 ]
 filterwarnings = [
     "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin.gherkin_line",
-    "ignore:Module already imported so cannot be rewritten; slipcover:pytest.PytestAssertRewriteWarning",
 ]

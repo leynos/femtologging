@@ -98,6 +98,12 @@ impl FemtoLogRecord {
         &self.metadata
     }
 
+    /// Returns a mutable reference to the record metadata.
+    #[inline]
+    pub(crate) fn metadata_mut(&mut self) -> &mut RecordMetadata {
+        &mut self.metadata
+    }
+
     /// Returns a reference to the exception payload, if present.
     #[inline]
     pub fn exception_payload(&self) -> Option<&ExceptionPayload> {

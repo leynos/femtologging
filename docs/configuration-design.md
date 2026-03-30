@@ -290,11 +290,11 @@ dictionary representations mirror these names to avoid ambiguity.
 
 Both builders now accept `NonZeroU64` in Rust, enforcing the non-zero
 constraint at the type level. Python receives `u64` and validates inputs,
-raising `ValueError` for zero values and `OverflowError` for negative
-values or values exceeding the unsigned 64-bit range. This type unification
-(Issue #168) and method rename (Issue #238) ensure consistent error handling
-and a unified `with_flush_after_*` naming pattern while preserving the distinct
-flush semantics described above.
+raising `ValueError` for zero values and `OverflowError` for negative values or
+values exceeding the unsigned 64-bit range. This type unification (Issue #168)
+and method rename (Issue #238) ensure consistent error handling and a unified
+`with_flush_after_*` naming pattern while preserving the distinct flush
+semantics described above.
 
 #### 1.1.1 Filters
 
@@ -488,14 +488,13 @@ class SocketHandlerBuilder(HandlerBuilder):
 
 The initial implementation provides `FileHandlerBuilder`,
 `RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`,
-`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over
-the existing handler types.
-`FileHandlerBuilder` supports capacity and flush interval,
-`RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count` rotation
-thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`, `interval`,
-`backup_count`, `utc`, and `at_time`. Rotation is opt-in for a size-based
-builder: both limits must be provided with positive values. Passing zero raises
-a `ValueError`, while negative or out-of-range integers raise an
+`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over the
+existing handler types. `FileHandlerBuilder` supports capacity and flush
+interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count`
+rotation thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`,
+`interval`, `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the
+size-based builder: both limits must be provided with positive values. Passing
+zero raises a `ValueError`, while negative or out-of-range integers raise an
 `OverflowError` immediately through the PyO3 unsigned conversions, keeping
 misconfigurations obvious. When size thresholds are omitted, the handler stores
 `(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise
@@ -812,11 +811,17 @@ sequenceDiagram
 components in a fixed order to honour dependencies:
 
 1. The `version` key must be `1`; any other value raises `ValueError`.
-1. `disable_existing_loggers` is mapped directly to
+2. `disable_existing_loggers` is mapped directly to
    `ConfigBuilder.with_disable_existing_loggers`.
-1. **Formatters** are created first. Each entry yields a `FormatterBuilder`
+3. **Formatters** are created first. Each entry yields a `FormatterBuilder`
    populated via `with_format` and `with_datefmt`.
-1. **Handlers** follow. Supported string class names are resolved via an
+4. **Filters** are resolved next. Each entry in the top-level `filters`
+   section is built before any logger or root configuration references it.
+   Declarative `{"level": ...}` and `{"name": ...}` entries are built directly,
+   while stdlib factory entries `{"()": "path.to.Factory", ...}` are resolved
+   in Python during this phase and instantiated with the remaining keys as
+   keyword arguments.
+5. **Handlers** follow. Supported string class names are resolved via an
    internal registry of builder classes:
    - `"logging.StreamHandler"` and `"femtologging.StreamHandler"`
      → `StreamHandlerBuilder`
@@ -839,18 +844,32 @@ components in a fixed order to honour dependencies:
      `ValueError`.
    - Handler `level` and `filters` settings are currently unsupported and
      produce `ValueError`.
-1. **Loggers** are processed next. Each definition yields a
-   `LoggerConfigBuilder` with optional `level`, `handlers`, `filters`,
-   and `propagate` settings. Logger and root `filters` values are lists of
-   filter identifiers that reference entries declared in the top-level
-   `filters` section.
-1. Finally, the **root** logger configuration is applied.
+6. **Loggers** are processed next. Each definition yields a
+   `LoggerConfigBuilder` with optional `level`, `handlers`, `filters`, and
+   `propagate` settings. Logger and root `filters` values are lists of filter
+   identifiers that reference entries declared in the top-level `filters`
+   section, so those identifiers must already have been resolved during the
+   filters phase.
+7. Finally, the **root** logger configuration is applied.
 
-In the shipped implementation, top-level `filters` entries currently support
-the declarative `{"level": ...}` and `{"name": ...}` forms. ADR 003 adds
-the accepted direction to extend `dictConfig` filter parsing with stdlib
-factory support (`"()"`) while preserving the existing declarative
-forms.[^adr003] The ADR defines the conflict rules for this mixed syntax:
+In the shipped implementation, top-level ``filters`` entries support both the
+declarative ``{"level": ...}`` / ``{"name": ...}`` forms and the stdlib factory
+form ``{"()": "path.to.FilterFactory", ...}``.[^adr003] Factory entries are
+resolved in Python during the filters phase, instantiated with the remaining
+keys as keyword arguments, and wrapped as producer-thread callback filters. The
+callback may be either a plain callable or a ``logging.Filter``-style object
+exposing ``filter(record)``.
+
+When a Python callback filter accepts a record, any new or modified attributes
+it adds to the mutable ``logging.LogRecord`` view are copied into
+``RecordMetadata.key_values`` before the record crosses the async queue
+boundary. Accepted enrichment keys must be non-empty strings that do not
+collide with stdlib ``LogRecord`` attributes or femtologging-reserved keys.
+Values are limited to ``str``, ``int``, ``float``, ``bool``, and ``None`` and
+are stringified into Rust-owned metadata with bounds of 64 keys, 64 UTF-8 bytes
+per key, 1,024 UTF-8 bytes per value, and 16 KiB total per record.
+
+The ADR defines the conflict rules for mixed declarative and factory syntax:
 
 - If a filter entry uses `"()"`, it is treated as a factory entry and must not
   include `level` or `name`.
@@ -921,7 +940,7 @@ surfaces mature further.
 
 - **Dynamic Log Level Updates:** As outlined in the design document \[cite:
   uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-  Dynamic log-level changes for loggers will be a core feature, utilizing
+   Dynamic log-level changes for loggers will be a core feature, utilizing
   atomic operations in Rust for thread-safe updates. This will be exposed via
   methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
@@ -969,7 +988,7 @@ surfaces mature further.
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
 \[cite:
 uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
-This ensures that `femtologging` can serve as a high-performance backend for
+ This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.
 
@@ -1000,10 +1019,10 @@ Each `FemtoLogger` maintains a `propagate` flag (default: `true`). When a
 logger emits a record:
 
 1. The record passes through the logger's level check and filters.
-1. If accepted, the record is dispatched to the logger's own handlers.
-1. If `propagate` is `true` and the logger has a parent, the record is
+2. If accepted, the record is dispatched to the logger's own handlers.
+3. If `propagate` is `true` and the logger has a parent, the record is
    **cloned** and forwarded to the parent's `dispatch_to_handlers()` method.
-1. The parent applies the same propagation logic, creating a chain that
+4. The parent applies the same propagation logic, creating a chain that
    continues up to the root logger.
 
 The root logger's `propagate` flag is effectively a no-op since it has no
@@ -1102,16 +1121,16 @@ logger.set_propagate(False)  # Disable propagation
    enabled by default, ensuring records reach the root handler unless
    explicitly disabled.
 
-1. **Clone before propagate**: Avoids ownership issues and allows handlers to
+2. **Clone before propagate**: Avoids ownership issues and allows handlers to
    mutate records without affecting propagation. The alternative (passing
    references) would require complex lifetime management across the async
    worker threads.
 
-1. **Recursive dispatch**: Rather than accumulating handlers and dispatching
+3. **Recursive dispatch**: Rather than accumulating handlers and dispatching
    once, each ancestor logger runs its own `dispatch_to_handlers()`. This
    preserves per-logger filter semantics and simplifies the implementation.
 
-1. **SeqCst ordering**: Chosen for simplicity over minimal performance gains
+4. **SeqCst ordering**: Chosen for simplicity over minimal performance gains
    from weaker orderings. The flag is rarely toggled after initial
    configuration.
 

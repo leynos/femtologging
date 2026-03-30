@@ -147,8 +147,8 @@ def test_stack_no_filters_returns_copy() -> None:
 def test_stack_preserves_extra_keys() -> None:
     """Stack payload should preserve all keys, not just schema_version and frames."""
     payload = make_stack_payload(["a.py", "b.py"])
-    # Add extra fields to test preservation - cast to dict for type safety
-    payload_dict = typ.cast("dict[str, typ.Any]", payload)
+    # Cast around the TypedDict's closed key set so the test can add extras.
+    payload_dict = typ.cast("dict[str, object]", payload)
     payload_dict["thread_id"] = 12345
     payload_dict["process_id"] = 67890
     payload_dict["custom_field"] = "preserved"

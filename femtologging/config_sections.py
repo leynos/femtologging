@@ -15,8 +15,8 @@ from __future__ import annotations
 import collections.abc as cabc
 import typing as typ
 
+from ._config_filters import build_filter_from_dict
 from .config import (
-    _build_filter_from_dict,
     _build_formatter,
     _build_handler_from_dict,
     _build_logger_from_dict,
@@ -78,7 +78,9 @@ def _process_filters(
         "filters",
         "filter",
     ):
-        builder = builder.with_filter(fid, _build_filter_from_dict(fid, filter_cfg))
+        builder = builder.with_filter(
+            fid, build_filter_from_dict(fid, dict(filter_cfg))
+        )
     return builder
 
 

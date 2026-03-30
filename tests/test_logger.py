@@ -543,7 +543,7 @@ def test_exc_info_no_deprecation_warning(
         mod = types.ModuleType("custom_mod")
         monkeypatch.setitem(sys.modules, "custom_mod", mod)
         custom_cls = type("CustomError", (Exception,), {"__module__": "custom_mod"})
-        setattr(mod, "CustomError", custom_cls)  # noqa: B010  # FIXME: dynamic setattr required to attach custom exception class to a synthetic module
+        typ.cast("typ.Any", mod).CustomError = custom_cls
         exc = custom_cls("module check")
         output = logger.log("ERROR", "caught", exc_info=exc)
         assert output is not None, "exc_info with custom module should produce output"

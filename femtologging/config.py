@@ -204,7 +204,7 @@ def _create_handler_instance(
         kwargs_d = dict(kwargs)
         if builder_cls is TimedRotatingFileHandlerBuilder:
             path, options = parse_timed_args(args_t, kwargs_d)
-            return cast("Any", builder_cls)(path, options)
+            return builder_cls(path, options)
         return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"
@@ -221,42 +221,6 @@ def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
             raise TypeError(msg)
         builder = builder.with_formatter(fmt)
     return builder
-
-
-def _validate_filter_config_keys(fid: str, data: Mapping[str, object]) -> None:
-    """Ensure ``data`` contains exactly one of ``level`` or ``name``."""
-    allowed = {"level", "name"}
-    present = allowed & set(data.keys())
-    if not present:
-        msg = f"filter {fid!r} must contain a 'level' or 'name' key"
-        raise ValueError(msg)
-    if len(present) > 1:
-        msg = f"filter {fid!r} must contain 'level' or 'name', not both"
-        raise ValueError(msg)
-    unknown = set(data.keys()) - allowed
-    if unknown:
-        msg = f"filter {fid!r} has unsupported keys: {sorted(unknown)!r}"
-        raise ValueError(msg)
-
-
-def _build_filter_from_dict(fid: str, data: Mapping[str, object]) -> object:
-    """Create a filter builder from ``dictConfig`` filter data.
-
-    Each filter must contain exactly one of ``level`` or ``name``.
-    Supplying both is rejected as ambiguous.
-    """
-    _validate_filter_config_keys(fid, data)
-    if "level" in data:
-        level = data["level"]
-        if not isinstance(level, str):
-            msg = f"filter {fid!r} level must be a string"
-            raise TypeError(msg)
-        return LevelFilterBuilder().with_max_level(level)
-    name = data["name"]
-    if not isinstance(name, str):
-        msg = f"filter {fid!r} name must be a string"
-        raise TypeError(msg)
-    return NameFilterBuilder().with_prefix(name)
 
 
 def _validate_string_list(value: object, label: str) -> list[str]:
