@@ -301,6 +301,21 @@ socket_handler = (
 - `handler.flush()` forces the worker to flush the active socket. Always call
   `handler.close()` to terminate the worker thread cleanly.
 
+### FemtoHTTPHandler
+
+- HTTP handlers are built via `HTTPHandlerBuilder` and send one serialized
+  record per request from a dedicated worker thread.
+- Use `.with_endpoint(url, method="POST")` to configure the destination in a
+  single call. Legacy `.with_url()` and `.with_method()` setters remain
+  available for compatibility.
+- Use `.with_auth({"token": "..."})` for bearer tokens or
+  `.with_auth({"username": "...", "password": "..."})` for basic auth. Legacy
+  `.with_basic_auth()` and `.with_bearer_token()` setters remain available for
+  compatibility.
+- `with_headers(...)`, `with_capacity(...)`, timeout setters, and
+  `.with_json_format()` mirror the socket/file builder style. Validation
+  failures raise `ValueError` before the handler is built.
+
 ### Custom Python handlers
 
 ```python
@@ -472,6 +487,7 @@ from femtologging import (
     FileHandlerBuilder,
     OverflowPolicy,
     LevelFilterBuilder,
+    PythonCallbackFilterBuilder,
 )
 
 builder = (
@@ -483,13 +499,19 @@ builder = (
             OverflowPolicy.block()
         ),
     )
+    .with_filter(
+        "request_context",
+        PythonCallbackFilterBuilder(
+            lambda record: setattr(record, "request_id", "req-123") or True
+        ),
+    )
     .with_filter("info_only", LevelFilterBuilder().with_max_level("INFO"))
     .with_logger(
         "app.audit",
         LoggerConfigBuilder()
         .with_level("INFO")
         .with_handlers(["audit"])
-        .with_filters(["info_only"])
+        .with_filters(["request_context", "info_only"])
         .with_propagate(False),
     )
     .with_root_logger(
@@ -504,9 +526,11 @@ builder.build_and_init()
   levels. `with_disable_existing_loggers(True)` clears handlers and filters on
   previously created loggers that are not part of the new configuration (their
   ancestors are preserved automatically).
-- Only two filter builders exist today: `LevelFilterBuilder` and
-  `NameFilterBuilder`. Filters are applied in the order they are declared in
-  each `LoggerConfigBuilder`.
+- Available filter builders are `LevelFilterBuilder`,
+  `NameFilterBuilder`, and `PythonCallbackFilterBuilder`. Callback filters run
+  on the producer thread and may either return a truthy/falsy value directly or
+  expose a stdlib-style `filter(record)` method. Filters are applied in the
+  order they are declared in each `LoggerConfigBuilder`.
 - Formatter registration (`with_formatter(id, FormatterBuilder)`) is currently
   a placeholder. Registered formatters are stored in the serialized config, but
   handlers still treat any string other than `"default"` as unknown and raise
@@ -525,11 +549,13 @@ builder.build_and_init()
   builder API (`host`, `port`, `unix_path`, `capacity`, `connect_timeout_ms`,
   `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
   `backoff_*` aliases).
-- Top-level `filters` sections are supported. Each filter mapping must
-  contain exactly one of `level` or `name`; supplying both is rejected as
-  ambiguous. `level` creates a `LevelFilterBuilder` (via `with_max_level`),
-  `name` creates a `NameFilterBuilder` (via `with_prefix`). Loggers and the
-  root logger accept a `filters` list of filter IDs.
+- Top-level `filters` sections are supported. Declarative mappings still use
+  exactly one of `level` or `name`, while factory mappings use stdlib-style
+  `"()"` syntax such as `{"()": "pkg.module.FilterFactory", "prefix": "svc"}`.
+  The factory target may be a dotted path or a direct callable and is
+  instantiated with the remaining keys as keyword arguments. Mixing `"()"` with
+  `level` or `name` is rejected. Loggers and the root logger accept a `filters`
+  list of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
   handler `level`, handler `filters`, and handler formatters. Although the
   schema accepts a `formatters` section, referencing a formatter from a handler
@@ -577,6 +603,28 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   `fileConfig` does not yet support filter declarations. Handler-level
   `filters` and `level` attributes remain unsupported, as these require Rust
   infrastructure changes outside the current scope.
+- Python callback filters receive a mutable `logging.LogRecord` view on the
+  producer thread. When they accept the record, any new supported attributes
+  they add are copied into `metadata.key_values` before the record enters the
+  async queue, making them visible to formatter callables and
+  `StdlibHandlerAdapter`.
+
+```python
+import contextvars
+import logging
+
+from femtologging import PythonCallbackFilterBuilder
+
+request_id = contextvars.ContextVar("request_id", default="")
+
+
+def enrich_request(record: logging.LogRecord) -> bool:
+    record.request_id = request_id.get()
+    return record.levelname == "INFO"
+
+
+callback_filter = PythonCallbackFilterBuilder(enrich_request)
+```
 
 ## Deviations from stdlib logging
 
