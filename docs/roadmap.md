@@ -237,7 +237,7 @@ where applicable.
 - [x] 3.3.2. Provide migration notes for `log-compat`, including when and how to
   call `setup_rust_logging()` during start-up. See
   [rust extension](./rust-extension.md#rust-log-crate-bridge).
-- [ ] 3.3.3. Provide a `tracing_subscriber::Layer` so femtologging handlers can
+- [x] 3.3.3. Provide a `tracing_subscriber::Layer` so femtologging handlers can
   process `tracing` spans and events. See
   [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
    and

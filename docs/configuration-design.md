@@ -987,13 +987,18 @@ surfaces mature further.
 
 ## 4. Integration with Rust Ecosystem
 
-`femtologging` will integrate with the broader Rust logging ecosystem by
-implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
-as described in the
+`femtologging` integrates with the broader Rust logging ecosystem through both
+the `log::Log` bridge and a `tracing_subscriber::Layer`, as described in the
 [Rust multithreaded logging framework for Python design](./rust-multithreaded-logging-framework-for-python-design.md).
- This ensures that `femtologging` can serve as a high-performance backend for
-applications already using these established facades, without requiring them to
-switch their logging calls.
+Both adapters route into the same `FemtoLogger` and handler pipeline, so Rust
+events respect the same logger hierarchy, level filtering, propagation, and
+Python-visible `handle_record` metadata that ordinary femtologging records use.
+The tracing layer stores structured event fields in `metadata.key_values` and
+merges active span fields under deterministic `span.<depth>.*` keys, keeping
+the Python-side configuration and handler story consistent across native and
+Rust-emitted records. This ensures that `femtologging` can serve as a
+high-performance backend for applications already using these established
+facades, without requiring them to switch their logging calls.
 
 ## 5. Implementation Notes
 

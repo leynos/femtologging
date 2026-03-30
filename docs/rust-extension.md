@@ -434,6 +434,47 @@ Users building the extension from source may disable the bridge with
 `cargo build --no-default-features`, or re-enable it explicitly with
 `--features log-compat`.
 
+## Rust tracing bridge
+
+When built with the default `tracing-compat` feature, femtologging also ships
+`femtologging_rs::tracing_compat::layer()` and the `FemtoTracingLayer` type for
+use with `tracing_subscriber`.
+
+```rust
+use femtologging_rs::tracing_layer;
+use tracing_subscriber::prelude::*;
+
+let subscriber = tracing_subscriber::registry().with(tracing_layer());
+tracing::subscriber::with_default(subscriber, || {
+    tracing::info!(target: "app::worker", request_id = "req-42", "hello");
+});
+```
+
+The layer converts tracing events into `FemtoLogRecord`s and dispatches them
+through the normal femtologging handler queues. It mirrors the `log` bridge's
+target routing rules by normalizing `::` to `.`, falling back to the root
+logger for invalid targets, and preserving logger-level filtering through
+`FemtoLogger`.
+
+Structured tracing fields are stored in `record.metadata.key_values`. Active
+span context is merged into the same map using deterministic keys such as
+`span.0.name`, `span.0.request_id`, and `span.1.attempt`, ordered from the
+outermost active span inward. Targets in the `femtologging` namespace are
+ignored to prevent recursive feedback loops from the library's own internal
+diagnostics.
+
+For Python-first start-up flows, `femtologging.setup_rust_tracing()` installs a
+process-global subscriber backed by `tracing_subscriber::registry().with(...)`.
+The call is explicit and idempotent after a successful install. If another
+global tracing subscriber is already set, the helper raises `RuntimeError`
+instead of replacing it.
+
+Users building from source may disable tracing integration with
+`cargo build --no-default-features`, or enable it explicitly with
+`--features tracing-compat`. More advanced Rust callers should prefer the Rust
+layer constructor so they can compose femtologging with additional subscriber
+layers such as OpenTelemetry.
+
 `FemtoLogger` can now dispatch a record to multiple handlers. Handlers
 implement `FemtoHandlerTrait` and run their I/O on worker threads. The logger
 keeps its handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`,

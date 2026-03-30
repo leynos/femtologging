@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections
 `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
 proceeds.
 
-Status: DRAFT
+Status: DONE
 
 ## Purpose / big picture
 
@@ -171,14 +171,21 @@ The design sources that constrain this plan are:
   surface, and BDD/snapshot coverage pattern.
 - [x] 2026-03-27: Wrote this draft ExecPlan in
   `docs/execplans/3-3-3-tracing-subscriber-layer.md`.
-- [ ] Add a feature-gated tracing integration module and dependency wiring.
-- [ ] Implement event conversion, logger resolution, and feedback-loop guards.
-- [ ] Decide and implement the minimal supported span-context propagation.
-- [ ] Expose any required Python-facing compatibility helpers and type stubs.
-- [ ] Add Rust `rstest` coverage, Python behavioural coverage, and syrupy
-  snapshots.
-- [ ] Update design and user documentation, then mark roadmap item `3.3.3`
-  done.
+- [x] 2026-03-30: Added the `tracing-compat` feature, `tracing` and
+  `tracing-subscriber` dependencies, and a split
+  `rust_extension/src/tracing_compat/` module tree.
+- [x] 2026-03-30: Implemented `FemtoTracingLayer` event conversion, logger
+  resolution, root fallback, and feedback-loop guards for `femtologging.*`
+  targets.
+- [x] 2026-03-30: Implemented bounded span-context propagation using
+  `span.<depth>.*` keys stored in `RecordMetadata.key_values`.
+- [x] 2026-03-30: Exposed `setup_rust_tracing()` plus narrow Python behavioural
+  test helpers and updated `_rust_compat.py`, `__init__.py`, and
+  `_femtologging_rs.pyi`.
+- [x] 2026-03-30: Added Rust `rstest` coverage, Python behavioural coverage,
+  and syrupy snapshots.
+- [x] 2026-03-30: Updated design and user documentation and marked roadmap item
+  `3.3.3` done.
 - [ ] Run and pass all repository quality gates.
 
 ## Surprises & Discoveries
@@ -199,6 +206,11 @@ The design sources that constrain this plan are:
 - The roadmap item is phrased narrowly as a `tracing_subscriber::Layer`, but
   ADR 002 also expects documentation about OpenTelemetry composition and
   feedback-loop boundaries. The code and docs must therefore land together.
+- `tracing` macro targets must be static at each callsite. Behavioural tests
+  and Python helper functions therefore use fixed literal logger targets rather
+  than trying to generate per-scenario targets dynamically.
+- Python handlers still need a callable `handle()` method at registration time
+  even when `handle_record()` is the dispatch path that will actually be used.
 
 ## Decision Log
 
@@ -225,6 +237,16 @@ The design sources that constrain this plan are:
 - Decision: document and test explicit loop-prevention rules instead of relying
   on vague "do not log internally" guidance. Rationale: recursive logging bugs
   are subtle and expensive to debug in multithreaded extension code.
+
+- Decision: use `span.<depth>.name` and `span.<depth>.<field>` for span
+  metadata instead of flattening to a single `span.` namespace. Rationale: this
+  preserves nested span ordering without risking key collisions between parent
+  and child spans.
+
+- Decision: enable `tracing-compat` in the crate's default feature set while
+  still keeping it as an explicit Cargo feature. Rationale: the shipped Python
+  package and default Rust build should exercise the integration by default,
+  but source builders may still opt out with `--no-default-features`.
 
 ## Plan of work
 
@@ -433,12 +455,26 @@ gates affected by the fix.
 
 ## Outcomes & Retrospective
 
-This section remains intentionally incomplete until implementation finishes.
-When the work is done, replace this placeholder with:
-
-- the final public API shape
-- the chosen feature-gating strategy
-- what span data was ultimately supported
-- the exact tests added
-- the documentation files updated
-- any lessons learned about Rust/Python integration through `tracing`
+- Final public API shape: Rust callers use
+  `femtologging_rs::tracing_compat::layer()` or `FemtoTracingLayer`; Python
+  callers may explicitly install a global bridge with
+  `femtologging.setup_rust_tracing()`.
+- Feature-gating strategy: `tracing-compat` is a dedicated Cargo feature and
+  is enabled by default alongside `log-compat`; focused `cargo test` and
+  `cargo clippy` coverage was added for the feature in `Makefile`.
+- Supported span data: active span names plus captured span fields are merged
+  into event metadata under ordered `span.<depth>.*` keys. Distributed tracing
+  and OpenTelemetry export remain outside this roadmap item.
+- Tests added: Rust `rstest` coverage in
+  `rust_extension/src/tracing_compat/tests.rs`; Python behavioural coverage in
+  `tests/features/rust_tracing_compat.feature`,
+  `tests/steps/test_rust_tracing_compat_steps.py`, and the matching syrupy
+  snapshot file.
+- Documentation updated:
+  `docs/rust-multithreaded-logging-framework-for-python-design.md`,
+  `docs/configuration-design.md`, `docs/rust-extension.md`, `docs/roadmap.md`,
+  and this ExecPlan.
+- Lesson learned: for Python-facing validation, the simplest reliable tracing
+  path is a fixed-target helper surface plus local Rust subscribers in unit
+  tests, because global tracing state and static macro metadata make fully
+  dynamic per-scenario targets awkward.

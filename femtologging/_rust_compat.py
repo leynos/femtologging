@@ -20,6 +20,7 @@ class _RustCompatPayload(TypedDict):
     _set_timed_rotation_test_times_for_test: cabc.Callable[[list[int]], None]
     _clear_timed_rotation_test_times_for_test: cabc.Callable[[], None]
     setup_rust_logging: cabc.Callable[[], None]
+    setup_rust_tracing: cabc.Callable[[], None]
     _runtime_attachment_state_for_test: cabc.Callable[
         [str], tuple[list[str], list[str]] | None
     ]
@@ -91,6 +92,20 @@ def _make_setup_rust_logging(fn: object) -> cabc.Callable[[], None]:
     return _fallback
 
 
+def _make_setup_rust_tracing(fn: object) -> cabc.Callable[[], None]:
+    if callable(fn):
+        return typ.cast("cabc.Callable[[], None]", fn)
+
+    def _fallback() -> None:
+        msg = (
+            "setup_rust_tracing requires the extension built with the "
+            "'tracing-compat' Cargo feature"
+        )
+        raise RuntimeError(msg)
+
+    return _fallback
+
+
 def _make_runtime_attachment_state(
     fn: object,
 ) -> cabc.Callable[[str], tuple[list[str], list[str]] | None]:
@@ -138,6 +153,9 @@ def _initialize_rust_compat() -> _RustCompatPayload:
         "setup_rust_logging": _make_setup_rust_logging(
             getattr(rust, "setup_rust_logging", None)
         ),
+        "setup_rust_tracing": _make_setup_rust_tracing(
+            getattr(rust, "setup_rust_tracing", None)
+        ),
         "_runtime_attachment_state_for_test": _make_runtime_attachment_state(
             getattr(rust, "runtime_attachment_state_for_test", None)
         ),
@@ -158,6 +176,7 @@ _clear_timed_rotation_test_times_for_test: cabc.Callable[[], None] = _compat[
     "_clear_timed_rotation_test_times_for_test"
 ]
 setup_rust_logging: cabc.Callable[[], None] = _compat["setup_rust_logging"]
+setup_rust_tracing: cabc.Callable[[], None] = _compat["setup_rust_tracing"]
 _runtime_attachment_state_for_test: cabc.Callable[
     [str], tuple[list[str], list[str]] | None
 ] = _compat["_runtime_attachment_state_for_test"]
@@ -167,3 +186,4 @@ _has_test_util: bool = _has_timed_rotation_test_util_support(
     getattr(rust, "set_timed_rotation_test_times_for_test", None),
     getattr(rust, "clear_timed_rotation_test_times_for_test", None),
 )
+_has_tracing_compat: bool = hasattr(rust, "setup_rust_tracing")

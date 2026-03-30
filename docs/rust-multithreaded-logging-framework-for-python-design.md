@@ -1428,16 +1428,46 @@ Implement `log::Log` first for immediate ecosystem compatibility; a
   to collect structured, event-based diagnostic data, including spans with
   temporal context.
 
-  femtologging can provide a tracing_subscriber::Layer implementation.
+  femtologging now provides a `tracing_subscriber::Layer` implementation via
+  `femtologging_rs::tracing_compat::layer()` and the concrete
+  `FemtoTracingLayer` type. The layer mirrors the `log::Log` bridge's routing
+  rules:
 
-  A FemtoTracingLayer could receive tracing events and spans and convert them
-  into FemtoLogRecords. These records would then be dispatched through
-  femtologging's MPSC channels to its configured handlers. This allows users of
-  the tracing API to leverage femtologging's specific handler implementations
-  (e.g., FemtoRotatingFileHandler) and its producer-consumer architecture. The
-  tracing-slog crate, which bridges
+  - `tracing` targets are normalized from `::` to `.` before logger
+    resolution.
+  - Invalid targets fall back to the root logger instead of panicking.
+  - Logger-level filtering still happens through `FemtoLogger::is_enabled_for`.
+  - Converted records are dispatched through the existing queue-based
+    handler path rather than a tracing-specific side channel.
 
-  `slog` and `tracing`, serves as an example of such interoperability.
+  The first implementation is intentionally bounded to log-record semantics.
+  `on_event` converts each tracing event into a `FemtoLogRecord`, storing
+  structured fields in `RecordMetadata.key_values`. Supported field capture
+  includes strings, booleans, signed and unsigned integers, floats, and a
+  debug-rendered fallback for other values. Duplicate keys follow last-write
+  wins semantics because the metadata carrier is a `BTreeMap<String, String>`.
+
+  Span support is similarly bounded. `on_new_span` and `on_record` cache span
+  fields in span extensions, and `on_event` merges the active span stack into
+  the emitted record metadata under deterministic keys:
+
+  - `span.0.name`, `span.0.<field>` for the outermost active span
+  - `span.1.name`, `span.1.<field>` for the next nested span
+  - and so on from root to current span
+
+  This provides useful request and step context without claiming full tracing
+  semantic export or distributed trace propagation.
+
+  The bridge also applies an explicit loop-prevention rule: targets that
+  normalize to `femtologging` or start with `femtologging.` are ignored so
+  femtologging's own internal diagnostics do not recurse back through the layer.
+
+  For Python-first hybrid applications, the package exposes
+  `femtologging.setup_rust_tracing()` as an explicit convenience helper that
+  installs `tracing_subscriber::registry().with(femtologging layer())` as the
+  process-global subscriber. This mirrors `setup_rust_logging()` in spirit
+  while keeping the underlying Rust API composable for callers that want to add
+  OpenTelemetry or other tracing layers themselves.
 
 This focus on interoperability is strategically important. Rather than forcing
 the entire ecosystem to adopt a new set of logging macros, `femtologging` can

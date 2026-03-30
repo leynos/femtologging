@@ -160,6 +160,7 @@ timeout = 30
 markers = [
     "concurrency: tests covering threaded behaviour",
     "log_compat: tests requiring the Rust log-compat feature",
+    "tracing_compat: tests requiring the Rust tracing-compat feature",
     "send_sync: tests covering Send/Sync guarantees",
 ]
 filterwarnings = [

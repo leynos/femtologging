@@ -146,6 +146,33 @@ pub(crate) fn register_log_compat_functions(m: &Bound<'_, PyModule>) -> PyResult
     Ok(())
 }
 
+/// Register tracing-compat functions when both python and tracing-compat
+/// features are enabled.
+#[cfg(feature = "tracing-compat")]
+pub(crate) fn register_tracing_compat_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(
+        crate::tracing_compat::python::setup_rust_tracing,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::tracing_compat::python::emit_rust_tracing_event,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::tracing_compat::python::emit_rust_tracing_structured_event,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::tracing_compat::python::emit_rust_tracing_span_event,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::tracing_compat::python::install_test_global_tracing_subscriber,
+        m
+    )?)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     //! Ensure Python-only bindings register expected types.
