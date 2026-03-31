@@ -307,8 +307,8 @@ into `RecordMetadata.key_values`.
 - Values are limited to `str`, `int`, `float`, `bool`, and `None`; scalar
   values are stringified into Rust-owned metadata.
 - Bounds are enforced at 64 keys per record, 64 UTF-8 bytes per key,
-  1,024 UTF-8 bytes per value, and 16 KiB total serialized enrichment per
-  record.
+  1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
+  enrichment per record.
 
 Rejected enrichment raises a Python exception inside the callback path; the
 logger catches that failure, emits a warning, and drops the record rather than
@@ -325,8 +325,8 @@ The Python `dictConfig` parity layer is split into two focused helpers:
   `{"()": ...}` filter entries, following the same module/attribute traversal
   rules as `logging.config.dictConfig`.
 
-This keeps the Rust extension focused on runtime behaviour while Python retains
-responsibility for importing arbitrary user-defined factories.
+This keeps the Rust extension focused on runtime behaviour, while Python
+retains responsibility for importing arbitrary user-defined factories.
 
 ## HTTP handler builder bindings
 

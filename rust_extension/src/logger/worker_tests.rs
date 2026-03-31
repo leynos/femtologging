@@ -3,11 +3,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rstest::{fixture, rstest};
+use rstest::rstest;
 
+use super::logger_tests_helpers::collecting_handler;
 use super::*;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::test_utils::collecting_handler::CollectingHandler;
 
 #[derive(Default)]
 struct FailingHandler;
@@ -22,13 +22,9 @@ impl FemtoHandlerTrait for FailingHandler {
     }
 }
 
-#[fixture]
-fn collecting_handler() -> Arc<CollectingHandler> {
-    Arc::new(CollectingHandler::new())
-}
-
 #[rstest]
-fn handle_log_record_continues_after_handler_errors(collecting_handler: Arc<CollectingHandler>) {
+fn handle_log_record_continues_after_handler_errors() {
+    let collecting_handler = collecting_handler();
     let failing = Arc::new(FailingHandler) as Arc<dyn FemtoHandlerTrait>;
     let collecting = collecting_handler.clone() as Arc<dyn FemtoHandlerTrait>;
 

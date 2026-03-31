@@ -44,6 +44,11 @@ class FakePythonCallbackFilterBuilder:
         self.callback = callback
 
 
+def fake_filter_factory(**kwargs: object) -> dict[str, object]:
+    """Return kwargs so factory-based validation can use a real callable."""
+    return {"built": kwargs}
+
+
 @pytest.mark.parametrize(
     ("data", "message"),
     [
@@ -69,6 +74,23 @@ def test_validate_filter_config_keys_rejects_invalid_shapes(
     """Validation should reject malformed declarative and factory forms."""
     with pytest.raises(ValueError, match=re.escape(message)):
         config_filters.validate_filter_config_keys("f", data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"level": "INFO"},
+        {"name": "svc"},
+        {"()": "pkg.factory"},
+        {"()": fake_filter_factory, "request_id": "req-123"},
+    ],
+    ids=["level", "name", "factory_path", "factory_callable"],
+)
+def test_validate_filter_config_keys_accepts_valid_shapes(
+    data: dict[str, object],
+) -> None:
+    """Validation should accept well-formed declarative and factory forms."""
+    config_filters.validate_filter_config_keys("f", data)
 
 
 @pytest.mark.parametrize(
@@ -98,6 +120,7 @@ def test_build_filter_from_dict_resolves_factory_paths(
     built_with: dict[str, object] = {}
 
     def factory(**kwargs: object) -> object:
+        """Capture kwargs and return a sentinel callback filter."""
         built_with.update(kwargs)
         return {"built": kwargs}
 
@@ -131,6 +154,7 @@ def test_build_filter_from_dict_accepts_direct_callable_factories(
     )
 
     def factory(*, enabled: bool) -> dict[str, bool]:
+        """Return a minimal callback filter payload for assertions."""
         return {"enabled": enabled}
 
     result = typ.cast(
@@ -142,6 +166,26 @@ def test_build_filter_from_dict_accepts_direct_callable_factories(
     )
 
     assert result.callback == {"enabled": True}
+
+
+def test_build_filter_from_dict_surfaces_factory_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory invocation failures should propagate unchanged to callers."""
+
+    def boom_factory(**kwargs: object) -> object:
+        """Raise a deterministic error once the factory is invoked."""
+        assert kwargs["request_id"] == "req-123"
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(config_filters, "resolve_factory", lambda dotted: boom_factory)
+
+    with pytest.raises(RuntimeError, match=re.escape("boom")):
+        config_filters.build_filter_from_dict(
+            "f",
+            {"()": "pkg.filter_factory", "request_id": "req-123"},
+        )
 
 
 def test_build_filter_from_dict_rejects_non_callable_factories(

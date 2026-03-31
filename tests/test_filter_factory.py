@@ -17,6 +17,7 @@ def test_try_import_module_returns_none_for_missing_root_module(
     """Missing root-module imports should resolve to ``None``."""
 
     def fake_import(name: str) -> object:
+        """Raise a missing-root import error for the requested module."""
         raise ModuleNotFoundError(name=name)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
@@ -30,6 +31,7 @@ def test_try_import_module_reraises_nested_import_failures(
     """Nested import failures should not be mistaken for a missing root path."""
 
     def fake_import(name: str) -> object:
+        """Raise an import error for a nested dependency instead."""
         raise ModuleNotFoundError(name="nested_dependency")
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
@@ -76,6 +78,7 @@ def test_resolve_factory_resolves_supported_dotted_paths(
     """Factory resolution should follow stdlib-style module and attribute hops."""
 
     def fake_import(name: str) -> object:
+        """Return stub modules or simulate a missing import."""
         try:
             return modules[name]
         except KeyError as exc:
@@ -104,15 +107,14 @@ def test_resolve_factory_rejects_invalid_paths(
     message: str,
 ) -> None:
     """Invalid dotted paths should raise consistent ``ValueError`` messages."""
-    monkeypatch.setattr(
-        importlib,
-        "import_module",
-        lambda name: (
-            SimpleNamespace()
-            if name == "pkg"
-            else (_ for _ in ()).throw(ModuleNotFoundError(name=name))
-        ),
-    )
+
+    def fake_import(name: str) -> object:
+        """Return the root module or raise for any missing nested import."""
+        if name == "pkg":
+            return SimpleNamespace()
+        raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
 
     with pytest.raises(ValueError, match=re.escape(message)):
         filter_factory.resolve_factory(dotted_path)

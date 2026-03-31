@@ -490,6 +490,12 @@ from femtologging import (
     PythonCallbackFilterBuilder,
 )
 
+
+def add_request_id(record):
+    record.request_id = "req-123"
+    return True
+
+
 builder = (
     ConfigBuilder()
     .with_handler("console", StreamHandlerBuilder.stderr())
@@ -501,9 +507,7 @@ builder = (
     )
     .with_filter(
         "request_context",
-        PythonCallbackFilterBuilder(
-            lambda record: setattr(record, "request_id", "req-123") or True
-        ),
+        PythonCallbackFilterBuilder(add_request_id),
     )
     .with_filter("info_only", LevelFilterBuilder().with_max_level("INFO"))
     .with_logger(
@@ -552,7 +556,7 @@ builder.build_and_init()
 - Top-level `filters` sections are supported. Declarative mappings still use
   exactly one of `level` or `name`, while factory mappings use stdlib-style
   `"()"` syntax such as `{"()": "pkg.module.FilterFactory", "prefix": "svc"}`.
-  The factory target may be a dotted path or a direct callable and is
+  The factory target may be a dotted path or a direct callable, and is
   instantiated with the remaining keys as keyword arguments. Mixing `"()"` with
   `level` or `name` is rejected. Loggers and the root logger accept a `filters`
   list of filter IDs.
@@ -704,5 +708,67 @@ Behavioural guarantees:
 - Context values are merged on the producer thread before queueing.
 - Inline structured fields emitted by Rust macros override outer context keys.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
-- Key-value limits match the enrichment contract documented in
-  [Configuration Design](./configuration-design.md).
+- Callback-filter enrichment uses the same scalar contract: keys must be
+  non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
+  `None`.
+- Keys must not collide with stdlib `logging.LogRecord` attributes or
+  femtologging-reserved metadata names.
+- Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
+  1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
+  enrichment per record.
+
+### Callback enrichment validation
+
+Python callback filters may mutate the temporary `logging.LogRecord` object and
+return a truthy result to accept the record. femtologging copies only the
+validated scalar additions from that record into Rust-owned metadata before the
+record is queued.
+
+Accepted enrichment must satisfy all of the following:
+
+- Keys are non-empty `str` instances.
+- Values are limited to `str`, `int`, `float`, `bool`, or `None`.
+- Keys do not overwrite built-in `logging.LogRecord` fields such as `name`,
+  `msg`, `levelname`, `created`, or femtologging-reserved metadata fields.
+- The serialized payload stays within 64 keys, 64 UTF-8 bytes per key,
+  1,024 UTF-8 bytes per value, and 16 KiB total.
+
+Example of accepted enrichment:
+
+```python
+import logging
+
+import femtologging
+
+
+def request_filter(record: logging.LogRecord) -> bool:
+    record.request_id = "req-123"
+    record.user_id = 42
+    record.cache_hit = False
+    return True
+
+
+logger = femtologging.get_logger(
+    "service",
+    filters=[femtologging.PythonCallbackFilterBuilder(request_filter)],
+)
+```
+
+Collisions and invalid values are rejected before the record enters the worker
+thread. For example, this filter tries to overwrite a stdlib field and attach
+an unsupported value:
+
+```python
+import logging
+
+
+def invalid_filter(record: logging.LogRecord) -> bool:
+    record.name = "rewritten"
+    record.payload = {"not": "allowed"}
+    return True
+```
+
+When validation fails, femtologging raises a Python exception inside the
+callback path, catches it at the logger boundary, emits a warning, and drops
+that record. The process keeps running, but the invalid record is not queued or
+delivered to handlers.
