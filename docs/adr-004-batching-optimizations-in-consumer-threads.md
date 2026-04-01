@@ -178,7 +178,7 @@ _Table 1: Trade-offs between batching strategies._
 Adopt **Option A (drain-loop batching)** as the primary strategy. For
 `FemtoFileHandler` and `FemtoStreamHandler`, use a **single contiguous buffer
 plus `write_all`** as the canonical Phase 1 batch write strategy. True
-scatter-gather I/O remains a future optimisation once `write_all_vectored`
+scatter-gather I/O remains a future optimization once `write_all_vectored`
 stabilises.
 
 **Rationale:**
