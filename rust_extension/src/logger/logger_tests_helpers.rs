@@ -56,7 +56,7 @@ impl SignallingCollectingHandler {
 impl FemtoHandlerTrait for SignallingCollectingHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         self.inner.handle(record)?;
-        let _ = self.record_tx.send(());
+        let _ = self.record_tx.try_send(());
         Ok(())
     }
 

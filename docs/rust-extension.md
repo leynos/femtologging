@@ -83,6 +83,8 @@ configure loggers without digging into submodules. These items are always
 available, though they are added to the Python module only when the `python`
 feature is enabled via [`add_python_bindings`](./add-python-bindings.md).
 
+Public API re-exports.
+
 | Symbol                        | Source module                                           |
 | ----------------------------- | ------------------------------------------------------- |
 | `ConfigBuilder`               | `config::ConfigBuilder`                                 |
