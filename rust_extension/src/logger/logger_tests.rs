@@ -7,9 +7,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-#[path = "logger_tests_helpers.rs"]
-mod helpers;
-use helpers::{CollectingHandler, CountingHandler};
+use super::logger_tests_helpers::{CollectingHandler, CountingHandler};
 
 #[test]
 fn handle_log_record_dispatches() {

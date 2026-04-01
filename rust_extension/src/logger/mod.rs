@@ -386,3 +386,12 @@ impl Drop for FemtoLogger {
 #[cfg(test)]
 #[path = "logger_tests.rs"]
 mod logger_tests;
+#[cfg(test)]
+#[path = "logger_tests_helpers.rs"]
+mod logger_tests_helpers;
+#[cfg(test)]
+#[path = "producer_tests.rs"]
+mod producer_tests;
+#[cfg(test)]
+#[path = "worker_tests.rs"]
+mod worker_tests;

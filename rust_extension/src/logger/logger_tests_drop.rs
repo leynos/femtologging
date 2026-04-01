@@ -1,7 +1,7 @@
 //! Tests verifying `FemtoLogger::drop` releases the handle mutex
 //! before joining the worker thread.
 
-use super::helpers::HandlePtr;
+use super::logger_tests_helpers::HandlePtr;
 use super::*;
 
 fn setup_logger_for_drop_test() -> FemtoLogger {

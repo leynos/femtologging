@@ -7,12 +7,16 @@
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
+use crossbeam_channel::{Receiver, Sender, bounded};
 use parking_lot::Mutex;
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 pub(super) use crate::test_utils::collecting_handler::CollectingHandler;
+
+const RECORD_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 pub(super) struct HandlePtr(pub(super) *const Mutex<Option<std::thread::JoinHandle<()>>>);
@@ -30,6 +34,42 @@ impl HandlePtr {
 // outlives any use of `HandlePtr`.
 unsafe impl Send for HandlePtr {}
 unsafe impl Sync for HandlePtr {}
+
+pub(super) fn collecting_handler() -> Arc<CollectingHandler> {
+    Arc::new(CollectingHandler::new())
+}
+
+#[derive(Clone)]
+pub(super) struct SignallingCollectingHandler {
+    inner: Arc<CollectingHandler>,
+    record_tx: Sender<()>,
+}
+
+impl SignallingCollectingHandler {
+    pub(super) fn with_signal() -> (Arc<CollectingHandler>, Self, Receiver<()>) {
+        let inner = collecting_handler();
+        let (record_tx, record_rx) = bounded(1);
+        (Arc::clone(&inner), Self { inner, record_tx }, record_rx)
+    }
+}
+
+impl FemtoHandlerTrait for SignallingCollectingHandler {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.inner.handle(record)?;
+        let _ = self.record_tx.try_send(());
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+pub(super) fn wait_for_record_signal(record_rx: &Receiver<()>) {
+    record_rx
+        .recv_timeout(RECORD_WAIT_TIMEOUT)
+        .expect("timed out waiting for queued record");
+}
 
 #[derive(Clone, Default)]
 pub(super) struct CountingHandler {

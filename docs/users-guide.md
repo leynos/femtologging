@@ -301,6 +301,21 @@ socket_handler = (
 - `handler.flush()` forces the worker to flush the active socket. Always call
   `handler.close()` to terminate the worker thread cleanly.
 
+### FemtoHTTPHandler
+
+- HTTP handlers are built via `HTTPHandlerBuilder` and send one serialized
+  record per request from a dedicated worker thread.
+- Use `.with_endpoint(url, method="POST")` to configure the destination in a
+  single call. Legacy `.with_url()` and `.with_method()` setters remain
+  available for compatibility.
+- Use `.with_auth({"token": "..."})` for bearer tokens or
+  `.with_auth({"username": "...", "password": "..."})` for basic auth. Legacy
+  `.with_basic_auth()` and `.with_bearer_token()` setters remain available for
+  compatibility.
+- `with_headers(...)`, `with_capacity(...)`, timeout setters, and
+  `.with_json_format()` mirror the socket/file builder style. Validation
+  failures raise `ValueError` before the handler is built.
+
 ### Custom Python handlers
 
 ```python
@@ -472,7 +487,14 @@ from femtologging import (
     FileHandlerBuilder,
     OverflowPolicy,
     LevelFilterBuilder,
+    PythonCallbackFilterBuilder,
 )
+
+
+def add_request_id(record):
+    record.request_id = "req-123"
+    return True
+
 
 builder = (
     ConfigBuilder()
@@ -483,13 +505,17 @@ builder = (
             OverflowPolicy.block()
         ),
     )
+    .with_filter(
+        "request_context",
+        PythonCallbackFilterBuilder(add_request_id),
+    )
     .with_filter("info_only", LevelFilterBuilder().with_max_level("INFO"))
     .with_logger(
         "app.audit",
         LoggerConfigBuilder()
         .with_level("INFO")
         .with_handlers(["audit"])
-        .with_filters(["info_only"])
+        .with_filters(["request_context", "info_only"])
         .with_propagate(False),
     )
     .with_root_logger(
@@ -504,9 +530,11 @@ builder.build_and_init()
   levels. `with_disable_existing_loggers(True)` clears handlers and filters on
   previously created loggers that are not part of the new configuration (their
   ancestors are preserved automatically).
-- Only two filter builders exist today: `LevelFilterBuilder` and
-  `NameFilterBuilder`. Filters are applied in the order they are declared in
-  each `LoggerConfigBuilder`.
+- Available filter builders are `LevelFilterBuilder`,
+  `NameFilterBuilder`, and `PythonCallbackFilterBuilder`. Callback filters run
+  on the producer thread and may either return a truthy/falsy value directly or
+  expose a stdlib-style `filter(record)` method. Filters are applied in the
+  order they are declared in each `LoggerConfigBuilder`.
 - Formatter registration (`with_formatter(id, FormatterBuilder)`) is currently
   a placeholder. Registered formatters are stored in the serialized config, but
   handlers still treat any string other than `"default"` as unknown and raise
@@ -525,11 +553,13 @@ builder.build_and_init()
   builder API (`host`, `port`, `unix_path`, `capacity`, `connect_timeout_ms`,
   `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
   `backoff_*` aliases).
-- Top-level `filters` sections are supported. Each filter mapping must
-  contain exactly one of `level` or `name`; supplying both is rejected as
-  ambiguous. `level` creates a `LevelFilterBuilder` (via `with_max_level`),
-  `name` creates a `NameFilterBuilder` (via `with_prefix`). Loggers and the
-  root logger accept a `filters` list of filter IDs.
+- Top-level `filters` sections are supported. Declarative mappings still use
+  exactly one of `level` or `name`, while factory mappings use stdlib-style
+  `"()"` syntax such as `{"()": "pkg.module.FilterFactory", "prefix": "svc"}`.
+  The factory target may be a dotted path or a direct callable, and is
+  instantiated with the remaining keys as keyword arguments. Mixing `"()"` with
+  `level` or `name` is rejected. Loggers and the root logger accept a `filters`
+  list of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
   handler `level`, handler `filters`, and handler formatters. Although the
   schema accepts a `formatters` section, referencing a formatter from a handler
@@ -577,6 +607,28 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   `fileConfig` does not yet support filter declarations. Handler-level
   `filters` and `level` attributes remain unsupported, as these require Rust
   infrastructure changes outside the current scope.
+- Python callback filters receive a mutable `logging.LogRecord` view on the
+  producer thread. When they accept the record, any new supported attributes
+  they add are copied into `metadata.key_values` before the record enters the
+  async queue, making them visible to formatter callables and
+  `StdlibHandlerAdapter`.
+
+```python
+import contextvars
+import logging
+
+from femtologging import PythonCallbackFilterBuilder
+
+request_id = contextvars.ContextVar("request_id", default="")
+
+
+def enrich_request(record: logging.LogRecord) -> bool:
+    record.request_id = request_id.get()
+    return record.levelname == "INFO"
+
+
+callback_filter = PythonCallbackFilterBuilder(enrich_request)
+```
 
 ## Deviations from stdlib logging
 
@@ -656,5 +708,67 @@ Behavioural guarantees:
 - Context values are merged on the producer thread before queueing.
 - Inline structured fields emitted by Rust macros override outer context keys.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
-- Key-value limits match the enrichment contract documented in
-  [Configuration Design](./configuration-design.md).
+- Callback-filter enrichment uses the same scalar contract: keys must be
+  non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
+  `None`.
+- Keys must not collide with stdlib `logging.LogRecord` attributes or
+  femtologging-reserved metadata names.
+- Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
+  1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
+  enrichment per record.
+
+### Callback enrichment validation
+
+Python callback filters may mutate the temporary `logging.LogRecord` object and
+return a truthy result to accept the record. femtologging copies only the
+validated scalar additions from that record into Rust-owned metadata before the
+record is queued.
+
+Accepted enrichment must satisfy all of the following:
+
+- Keys are non-empty `str` instances.
+- Values are limited to `str`, `int`, `float`, `bool`, or `None`.
+- Keys do not overwrite built-in `logging.LogRecord` fields such as `name`,
+  `msg`, `levelname`, `created`, or femtologging-reserved metadata fields.
+- The serialized payload stays within 64 keys, 64 UTF-8 bytes per key,
+  1,024 UTF-8 bytes per value, and 16 KiB total.
+
+Example of accepted enrichment:
+
+```python
+import logging
+
+import femtologging
+
+
+def request_filter(record: logging.LogRecord) -> bool:
+    record.request_id = "req-123"
+    record.user_id = 42
+    record.cache_hit = False
+    return True
+
+
+logger = femtologging.get_logger(
+    "service",
+    filters=[femtologging.PythonCallbackFilterBuilder(request_filter)],
+)
+```
+
+Collisions and invalid values are rejected before the record enters the worker
+thread. For example, this filter tries to overwrite a stdlib field and attach
+an unsupported value:
+
+```python
+import logging
+
+
+def invalid_filter(record: logging.LogRecord) -> bool:
+    record.name = "rewritten"
+    record.payload = {"not": "allowed"}
+    return True
+```
+
+When validation fails, femtologging raises a Python exception inside the
+callback path, catches it at the logger boundary, emits a warning, and drops
+that record. The process keeps running, but the invalid record is not queued or
+delivered to handlers.
