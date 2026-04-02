@@ -179,7 +179,7 @@ Adopt **Option A (drain-loop batching)** as the primary strategy. For
 `FemtoFileHandler` and `FemtoStreamHandler`, use a **single contiguous buffer
 plus `write_all`** as the canonical Phase 1 batch write strategy. True
 scatter-gather I/O remains a future optimization once `write_all_vectored`
-stabilises.
+stabilizes.
 
 **Rationale:**
 
@@ -289,7 +289,7 @@ pub enum FileCommand {
     /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
     /// Flush the writer and send an ack on the provided channel.
-    Flush(Sender<()>),
+    Flush(Sender<io::Result<()>>),
 }
 ```
 
@@ -300,13 +300,15 @@ contiguous-buffer `write_all`; it does not flush. A single `state.flush_once`
 call follows after all records in the batch have been written.
 
 If a `Flush` command appears mid-batch, all accumulated record lines must be
-written **and** flushed **before** the acknowledgement is sent. This preserves
-the existing flush-acknowledge contract: when the caller receives the ack,
-every record submitted before the `Flush` command is guaranteed to have reached
-the underlying writer. In the sketch below, `state.write_batch` writes the
-pending lines, `state.flush_once` flushes the writer, and only then is the ack
-sent via the per-command `Sender<()>`. Remaining records in the batch continue
-into a fresh buffer.
+written **and** flushed **before** the acknowledgement is sent. In the
+implemented contract, `FileCommand::Flush` acknowledges only the result of the
+writer flush itself, so `FemtoFileHandler::wait_for_flush_completion` treats
+`Ok(Ok(()))` as success. Earlier `handle_record` failures are still logged at
+write time and are not folded into the later flush acknowledgement. In the
+sketch below, `state.write_batch` writes the pending lines, `state.flush_once`
+flushes the writer, and only then is the ack sent via the per-command
+`Sender<io::Result<()>>`. Remaining records in the batch continue into a fresh
+buffer.
 
 ```rust,no_run
 use std::io::{IoSlice, Write};
@@ -343,7 +345,7 @@ fn run_batched_file_worker<W, F, R>(
                                 formatted.clear();
                             }
                             state.flush_once();
-                            let _ = ack.send(());
+                            let _ = ack.send(state.flush_once());
                         }
                     }
                 }
@@ -441,9 +443,9 @@ fn run_batched_stream_worker<W, F>(
 /// `write_all`, which loops internally until every byte is written.
 /// A single-buffer approach is used because `write_all_vectored`
 /// remains nightly-only (tracking issue [#70436][wa]).  By contrast,
-/// `IoSlice::advance_slices` was stabilised in Rust 1.81.0, so the
+/// `IoSlice::advance_slices` was stabilized in Rust 1.81.0, so the
 /// remaining blocker for true scatter-gather I/O is the nightly
-/// `write_all_vectored` API. If `write_all_vectored` is stabilised in a
+/// `write_all_vectored` API. If `write_all_vectored` is stabilized in a
 /// future Rust release the implementation can switch to true
 /// scatter-gather I/O without changing the function signature.
 ///
@@ -564,11 +566,9 @@ fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
 
 ### `BatchConfig` structure
 
-To match the existing `FileHandlerBuilder` and `StreamHandlerBuilder` two-phase
-validation flow, `BatchConfig::new` records user input without failing
-immediately. Validation happens when a handler build path consumes the config,
-so fluent builders can continue to stage partially configured state and surface
-one coherent validation error at build time.
+`BatchConfig` uses an eager checked constructor in the current implementation.
+This keeps zero-capacity errors close to the API boundary and avoids carrying
+an invalid batch size deeper into the worker setup path.
 
 ```rust,no_run
 /// Controls batching behaviour for handler consumer threads.
@@ -586,21 +586,15 @@ impl BatchConfig {
     const DEFAULT_CAPACITY: usize = 64;
 
     /// Creates a new `BatchConfig` with the given capacity.
-    pub fn new(capacity: usize) -> Self {
-        Self { capacity }
-    }
-
-    /// Validates the staged batch configuration before worker construction.
     ///
     /// # Errors
     ///
     /// Returns an error if `capacity` is zero.
-    pub fn validate(self) -> Result<Self, BatchConfigError> {
-        if self.capacity == 0 {
-            Err(BatchConfigError::ZeroCapacity)
-        } else {
-            Ok(self)
+    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+        if capacity == 0 {
+            return Err(BatchConfigError::ZeroCapacity);
         }
+        Ok(Self { capacity })
     }
 }
 
@@ -622,11 +616,11 @@ pub enum BatchConfigError {
 ### Validation strategy
 
 `FileHandlerBuilder::build_inner` and `StreamHandlerBuilder::build_inner`
-already defer capacity validation until build time via their existing
-`validate`/`ensure_non_zero` flow. This ADR keeps batching aligned with that
-pattern: builders may store a provisional batch capacity, but they must call
-`BatchConfig::validate()` before passing the value into the file/stream handler
-spawn path.
+should consume a checked `BatchConfig`, rather than staging an invalid batch
+size and validating it later. In the current implementation, callers use
+`BatchConfig::new(...)` at the point where a custom batch capacity is created,
+and the worker configuration keeps `BatchConfig::default()` for the built-in
+non-zero default. There is no separate `BatchConfig::validate()` phase.
 
 ## Migration Plan
 
