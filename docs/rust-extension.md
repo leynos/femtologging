@@ -11,13 +11,28 @@ provide the core handler implementations as well:
   thread. It now provides `flush()` and `close()` to deterministically manage
   that thread.
 
-The file handler lives under `rust_extension/src/handlers/file`. This directory
-splits responsibilities into three modules:
+The file handler lives under `rust_extension/src/handlers/file`. ADR 004's
+batching work prompted a split into focused submodules so the public handler
+API could stay stable while the implementation remained readable:
 
-1. `config.rs` – configuration types shared with the Python bindings.
-2. `worker.rs` — the asynchronous consumer thread that writes log records.
-3. `mod.rs` — the public API exposing `FemtoFileHandler` and re‑exporting the
-    configuration items.
+1. `mod.rs` — the public `FemtoFileHandler` entry point that wires the module
+   tree together and re-exports the file-handler surface.
+2. `config.rs` — configuration types shared with the Python bindings and the
+   higher-level builders.
+3. `builder_options.rs` — worker construction options such as rotation
+   strategy injection and test-only start barriers.
+4. `handler_impl.rs` — the `FemtoHandlerTrait` and `Drop` implementations that
+   define the handler's runtime semantics.
+5. `io_utils.rs` — writer-side helpers for opening files and emitting
+   formatted records.
+6. `validations.rs` — constructor and Python-binding guards for capacity and
+   flush-interval validation.
+7. `worker.rs` — the asynchronous consumer thread, including ADR 004's batch
+   draining, flush tracking, and worker lifecycle management.
+
+This split keeps the ADR 004 batching changes local to `worker.rs` and its
+helpers instead of forcing `mod.rs` to carry validation, I/O, builder, and
+runtime concerns in one file.
 
 ## Builder composition
 

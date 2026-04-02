@@ -73,6 +73,7 @@ pub struct BatchConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchConfigError {
+    /// The requested batch capacity was zero.
     ZeroCapacity,
 }
 
@@ -340,3 +341,7 @@ where
 #[cfg(test)]
 #[path = "flush_tracker_tests.rs"]
 mod flush_tracker_tests;
+
+#[cfg(test)]
+#[path = "worker_batch_tests.rs"]
+mod worker_batch_tests;
