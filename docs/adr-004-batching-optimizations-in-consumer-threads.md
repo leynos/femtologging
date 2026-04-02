@@ -297,7 +297,7 @@ The file handler collects a batch, formats each record, concatenates the
 formatted lines into a single stable-Rust buffer, writes that buffer with
 `write_all`, and flushes once per batch. `state.write_batch` performs only the
 contiguous-buffer `write_all`; it does not flush. A single `state.flush_once`
-call follows after all records in the batch have been written.
+call follows once all records in the batch have been written.
 
 If a `Flush` command appears mid-batch, all accumulated record lines must be
 written **and** flushed **before** the acknowledgement is sent. In the
@@ -311,7 +311,7 @@ flushes the writer, and only then is the ack sent via the per-command
 buffer.
 
 ```rust,no_run
-use std::io::{IoSlice, Write};
+use std::io::{self, IoSlice, Write};
 
 fn run_batched_file_worker<W, F, R>(
     rx: Receiver<FileCommand>,
@@ -344,7 +344,6 @@ fn run_batched_file_worker<W, F, R>(
                                 state.write_batch(&formatted);
                                 formatted.clear();
                             }
-                            state.flush_once();
                             let _ = ack.send(state.flush_once());
                         }
                     }
@@ -364,17 +363,18 @@ fn run_batched_file_worker<W, F, R>(
 
 ### Stream handler worker loop (batched with contiguous-buffer writes)
 
-The existing `StreamCommand` enum carries a per-command `Sender<()>` in the
-`Flush` variant so the caller can wait for the specific flush to complete. Like
-`FileCommand`, there is no `Shutdown` variant: orderly shutdown is signalled by
-dropping the command sender, causing `recv_batch` to return `Err(RecvError)`.
+The existing `StreamCommand` enum should carry a per-command
+`Sender<io::Result<()>>` in the `Flush` variant so the caller can wait for the
+specific flush result, matching `FileCommand::Flush`. Like `FileCommand`, there
+is no `Shutdown` variant: orderly shutdown is signalled by dropping the command
+sender, causing `recv_batch` to return `Err(RecvError)`.
 
 ```rust,no_run
 /// Commands sent to the stream handler worker thread.
 enum StreamCommand {
     Record(FemtoLogRecord),
     /// Flush the writer and send an ack on the provided channel.
-    Flush(Sender<()>),
+    Flush(Sender<io::Result<()>>),
 }
 ```
 
@@ -384,7 +384,10 @@ reaches the underlying stream). If a `Flush` command appears mid-batch, the
 accumulated lines are written and flushed before acknowledging; remaining
 records in the same batch continue into a fresh buffer. The helper
 `write_batch_buffered` performs only the buffered write, so the caller controls
-when and how often `flush` is invoked.
+when and how often `flush` is invoked. As with the file handler,
+`StreamCommand::Flush` acknowledges only the direct `writer.flush()` result;
+earlier write failures remain warning-only events rather than being folded into
+the later flush ack.
 
 The current `FemtoStreamHandler` worker already drains queued commands before
 shutdown because `for cmd in rx` only terminates once the sender is dropped
@@ -393,6 +396,8 @@ behaviour by fully processing the backlog collected after each blocking receive
 before calling `final_flush`.
 
 ```rust,no_run
+use std::io;
+
 fn run_batched_stream_worker<W, F>(
     rx: Receiver<StreamCommand>,
     mut writer: W,
@@ -419,8 +424,8 @@ fn run_batched_stream_worker<W, F>(
                             // Drain accumulated lines, then flush once.
                             write_batch_buffered(&mut writer, &formatted);
                             formatted.clear();
-                            let _ = writer.flush();
-                            let _ = ack.send(());
+                            let flush_result = writer.flush();
+                            let _ = ack.send(flush_result);
                         }
                     }
                 }
@@ -633,7 +638,7 @@ non-zero default. There is no separate `BatchConfig::validate()` phase.
 - [ ] 1.2 Standardize the flush acknowledgement contract before enabling
       drain-loop batching.
 - [ ] 1.2.1 Make `FileCommand::Flush` and `StreamCommand::Flush` both carry
-      per-command `Sender<()>` values.
+      per-command `Sender<io::Result<()>>` values.
 - [ ] 1.2.2 Thread the per-command flush sender through the handler
       construction and spawn paths used by `FemtoFileHandler`,
       `FemtoStreamHandler`, and their builder APIs.

@@ -80,7 +80,7 @@ impl HandlerConfig {
 )]
 enum StreamCommand {
     Record(FemtoLogRecord),
-    Flush(Sender<()>),
+    Flush(Sender<io::Result<()>>),
 }
 
 fn flush_with_warning<W: Write>(writer: &mut W) {
@@ -103,9 +103,12 @@ where
     }
 }
 
-fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<()>) {
-    flush_with_warning(writer);
-    let _ = ack.send(());
+fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
+    let flush_result = writer.flush();
+    if flush_result.is_err() {
+        warn!("FemtoStreamHandler flush error");
+    }
+    let _ = ack.send(flush_result);
 }
 
 fn run_stream_worker<W, F>(
@@ -346,7 +349,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                 {
                     return false;
                 }
-                ack_rx.recv_timeout(self.flush_timeout).is_ok()
+                matches!(ack_rx.recv_timeout(self.flush_timeout), Ok(Ok(())))
             }
             None => false,
         }
