@@ -422,17 +422,24 @@ fn run_batched_stream_worker<W, F>(
                         }
                         StreamCommand::Flush(ack) => {
                             // Drain accumulated lines, then flush once.
-                            write_batch_buffered(&mut writer, &formatted);
-                            formatted.clear();
-                            let flush_result = writer.flush();
+                            let write_result =
+                                write_batch_buffered(&mut writer, &formatted);
+                            if write_result.is_ok() {
+                                formatted.clear();
+                            }
+                            let flush_result = write_result.and_then(|()| writer.flush());
                             let _ = ack.send(flush_result);
                         }
                     }
                 }
                 // Write remaining lines and flush once for the batch.
                 if !formatted.is_empty() {
-                    write_batch_buffered(&mut writer, &formatted);
-                    let _ = writer.flush();
+                    if let Err(err) = write_batch_buffered(&mut writer, &formatted) {
+                        log::warn!("FemtoStreamHandler batch write error: {err}");
+                    } else {
+                        formatted.clear();
+                        let _ = writer.flush();
+                    }
                 }
             }
             Err(_) => break,
@@ -458,16 +465,19 @@ fn run_batched_stream_worker<W, F>(
 /// calling `flush` at the appropriate batch boundary.
 ///
 /// [wa]: https://github.com/rust-lang/rust/issues/70436
-fn write_batch_buffered<W: Write>(writer: &mut W, lines: &[Vec<u8>]) {
+fn write_batch_buffered<W: Write>(
+    writer: &mut W,
+    lines: &[Vec<u8>],
+) -> io::Result<()> {
     if lines.is_empty() {
-        return;
+        return Ok(());
     }
     let total: usize = lines.iter().map(|l| l.len()).sum();
     let mut buf = Vec::with_capacity(total);
     for line in lines {
         buf.extend_from_slice(line);
     }
-    let _ = writer.write_all(&buf);
+    writer.write_all(&buf)
 }
 ```
 

@@ -182,11 +182,12 @@ impl FemtoStreamHandler {
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker acknowledges the flush within the
-    ///     configured timeout.
+    ///     ``True`` only when the worker acknowledges the flush with
+    ///     ``Ok(())`` within the configured timeout.
     ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, or the worker
-    ///     does not acknowledge before the timeout elapses.
+    ///     internal channel to the worker has been dropped, the worker
+    ///     acknowledges ``Err(io.Error)``, or the acknowledgement does not
+    ///     arrive before the timeout elapses.
     ///
     /// Examples
     /// --------
