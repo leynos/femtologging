@@ -8,7 +8,7 @@ Proposed.
 
 2026-03-24
 
-## Context and Problem Statement
+## Context and problem statement
 
 Every `femtologging` handler runs a dedicated consumer thread that receives
 `FemtoLogRecord` instances from a bounded `crossbeam-channel` and processes
@@ -37,7 +37,7 @@ Phase 3 exploration item in §8.1[^2]. Roadmap item 2.3.3 formalizes the task.
 This ADR analyses the batching strategies available, weighs their trade-offs,
 and proposes a direction for implementation.
 
-## Decision Drivers
+## Decision drivers
 
 - Reduce per-record I/O system call overhead for file and stream handlers.
 - Amortize network round-trip costs for HTTP and socket handlers.
@@ -68,7 +68,7 @@ and proposes a direction for implementation.
 - Keep the implementation local to handler worker loops so rollout remains
   incremental and testable.
 
-## Options Considered
+## Options considered
 
 ### Option A: drain-loop batching with `try_recv`
 
@@ -173,7 +173,7 @@ Replace `crossbeam-channel` with `flume`, which exposes `try_iter()` and
 
 _Table 1: Trade-offs between batching strategies._
 
-## Decision Outcome / Proposed Direction
+## Decision outcome / proposed direction
 
 Adopt **Option A (drain-loop batching)** as the primary strategy. For
 `FemtoFileHandler` and `FemtoStreamHandler`, use a **single contiguous buffer
@@ -211,7 +211,7 @@ significant configuration effort. Option C still depends on unstable
 `write_all_vectored` for a robust stable-Rust implementation, and Option D
 introduces migration risk for marginal ergonomic gain over Option A.
 
-## Goals and Non-goals
+## Goals and non-goals
 
 ### Goals
 
@@ -234,7 +234,7 @@ introduces migration risk for marginal ergonomic gain over Option A.
 - Changing the channel capacity or backpressure/overflow policy semantics.
 - Batching across multiple handlers (each handler batches independently).
 
-## Code Sketches
+## Code sketches
 
 The following sketches illustrate the proposed approach for the chosen
 direction. They are simplified for clarity; production code will include full
@@ -637,7 +637,7 @@ size and validating it later. In the current implementation, callers use
 and the worker configuration keeps `BatchConfig::default()` for the built-in
 non-zero default. There is no separate `BatchConfig::validate()` phase.
 
-## Migration Plan
+## Migration plan
 
 ### 1. Core batch collection and file/stream handler batching
 
@@ -686,7 +686,7 @@ non-zero default. There is no separate `BatchConfig::validate()` phase.
       approach.
 - [ ] 3.3.2 Mark roadmap item 2.3.3 as complete.
 
-## Known Risks and Limitations
+## Known risks and limitations
 
 - **Contiguous-buffer allocation cost.** File and stream batching trades extra
   copying into one `Vec<u8>` for fewer write calls. Large batches increase
@@ -703,7 +703,7 @@ non-zero default. There is no separate `BatchConfig::validate()` phase.
   local batch). With the default capacity of 64 and typical record sizes, this
   overhead is negligible.
 
-## Outstanding Decisions
+## Outstanding decisions
 
 - Whether HTTP batch mode should be opt-in (requiring explicit configuration)
   or opt-out (enabled by default with a way to disable).
@@ -715,7 +715,7 @@ non-zero default. There is no separate `BatchConfig::validate()` phase.
 - Whether `FlushTracker` interval semantics should count individual records or
   batches after the change.
 
-## Architectural Rationale
+## Architectural rationale
 
 Drain-loop batching preserves femtologging's core architectural invariants:
 dedicated consumer threads, bounded channels with backpressure, and

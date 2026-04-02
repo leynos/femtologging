@@ -186,7 +186,7 @@ impl FemtoStreamHandler {
     ///     ``Ok(())`` within the configured timeout.
     ///     ``False`` when the handler has already been closed, the
     ///     internal channel to the worker has been dropped, the worker
-    ///     acknowledges ``Err(io.Error)``, or the acknowledgement does not
+    ///     acknowledges ``Err(io::Error)``, or the acknowledgement does not
     ///     arrive before the timeout elapses.
     ///
     /// Examples
