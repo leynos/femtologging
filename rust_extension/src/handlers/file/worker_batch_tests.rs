@@ -29,6 +29,7 @@ impl Seek for RecordingWriter {
     }
 }
 
+/// Create a record command with a stable logger and level for assertions.
 fn record(message: &str) -> FileCommand {
     FileCommand::Record(Box::new(FemtoLogRecord::new(
         "core",
@@ -38,17 +39,20 @@ fn record(message: &str) -> FileCommand {
 }
 
 #[test]
+/// Reject zero-capacity batch configs at construction time.
 fn batch_config_rejects_zero_capacity() {
     assert_eq!(BatchConfig::new(0), Err(BatchConfigError::ZeroCapacity));
 }
 
 #[test]
+/// Preserve the configured capacity when construction succeeds.
 fn batch_config_accepts_positive_capacity() {
     let config = BatchConfig::new(3).expect("positive capacity should succeed");
     assert_eq!(config.capacity(), 3);
 }
 
 #[test]
+/// Guard the drain helper against zero-capacity callers.
 fn recv_batch_rejects_zero_capacity() {
     let (_tx, rx) = bounded(1);
     assert!(matches!(
@@ -58,6 +62,7 @@ fn recv_batch_rejects_zero_capacity() {
 }
 
 #[test]
+/// Drain additional queued commands until the requested capacity is reached.
 fn recv_batch_collects_up_to_capacity() {
     let (tx, rx) = bounded(4);
     tx.send(record("one")).expect("first record queued");
@@ -74,6 +79,7 @@ fn recv_batch_collects_up_to_capacity() {
 }
 
 #[test]
+/// Report disconnection when no command can be received.
 fn recv_batch_reports_disconnection_when_empty() {
     let (tx, rx) = bounded::<FileCommand>(1);
     drop(tx);
@@ -84,6 +90,7 @@ fn recv_batch_reports_disconnection_when_empty() {
 }
 
 #[test]
+/// Process batched records in order and forward flush acknowledgements.
 fn process_batch_preserves_record_order_and_flush_acknowledges() {
     let mut state = WorkerState::new(RecordingWriter::default(), NoRotation, 8);
     let (ack_tx, ack_rx) = bounded(1);

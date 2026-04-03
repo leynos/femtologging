@@ -11,6 +11,7 @@ use std::{
 
 use super::worker::FlushTracker;
 
+/// Open a log file in append mode and attach the file path to I/O errors.
 pub(super) fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
     let path_ref = path.as_ref();
     let path_display = path_ref.display();
@@ -21,6 +22,7 @@ pub(super) fn open_log_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
         .map_err(|e| io::Error::new(e.kind(), format!("{path_display}: {e}")))
 }
 
+/// Write one formatted record and delegate periodic flushing to the tracker.
 pub(super) fn write_record<W>(
     writer: &mut W,
     message: &str,

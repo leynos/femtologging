@@ -28,6 +28,7 @@ impl Write for DummyWriter {
 }
 
 #[fixture]
+/// Provide a writer that can optionally fail its next flush.
 fn writer(#[default(false)] fail: bool) -> DummyWriter {
     DummyWriter { flushed: 0, fail }
 }
@@ -38,6 +39,7 @@ fn writer(#[default(false)] fail: bool) -> DummyWriter {
 #[case(3, 1, false, 0, false)]
 #[case(0, 5, false, 0, false)]
 #[case(2, 0, false, 0, false)]
+/// Verify when the periodic tracker flushes and when it propagates errors.
 fn flush_if_due_cases(
     #[case] interval: usize,
     #[case] writes: usize,
@@ -55,6 +57,7 @@ fn flush_if_due_cases(
 
 #[rstest]
 #[serial]
+/// Confirm write-triggered flush failures are logged as warnings.
 fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
     test_support::install_test_logger();
     let mut tracker = FlushTracker::new(1);

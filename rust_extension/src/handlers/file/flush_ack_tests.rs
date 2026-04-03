@@ -24,6 +24,7 @@ struct BlockingFlushState {
 }
 
 impl BlockingFlushWriter {
+    /// Build a writer whose flush calls block until the test releases them.
     fn new(started_tx: mpsc::Sender<usize>) -> Self {
         Self {
             state: Arc::new(BlockingFlushState {
@@ -36,6 +37,7 @@ impl BlockingFlushWriter {
         }
     }
 
+    /// Release all blocked flushes up to and including `flush_number`.
     fn release_flushes_through(&self, flush_number: usize) {
         let mut released = self
             .state
@@ -46,6 +48,7 @@ impl BlockingFlushWriter {
         self.state.release_cvar.notify_all();
     }
 
+    /// Release every blocked flush call.
     fn release_all_flushes(&self) {
         self.release_flushes_through(usize::MAX);
     }
@@ -103,6 +106,7 @@ impl Seek for BlockingFlushWriter {
 }
 
 #[test]
+/// Ensure each flush waits on its own acknowledgement channel.
 fn flush_waits_for_its_own_acknowledgement() {
     let (started_tx, started_rx) = mpsc::channel();
     let writer = BlockingFlushWriter::new(started_tx);

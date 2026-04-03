@@ -12,6 +12,11 @@ use std::{
 
 use super::{NoRotation, RotationStrategy};
 
+/// Builder-only state needed to start a file-handler worker.
+///
+/// The public builders construct this value just before spawning the worker so
+/// rotation hooks and test-only synchronisation can stay out of the runtime
+/// handler state.
 pub(crate) struct BuilderOptions<W, R = NoRotation>
 where
     W: Write + Seek,
@@ -40,6 +45,8 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
+    /// Bundle rotation behaviour and an optional start barrier for worker
+    /// construction.
     pub(crate) fn new(rotation: R, start_barrier: Option<Arc<Barrier>>) -> Self {
         Self {
             rotation,

@@ -34,6 +34,25 @@ This split keeps the ADR 004 batching changes local to `worker.rs` and its
 helpers instead of forcing `mod.rs` to carry validation, I/O, builder, and
 runtime concerns in one file.
 
+ADR 004's file-handler work also changed the worker contract in two ways that
+matter for contributors working below the Python API surface:
+
+- `BatchConfig` now owns the worker's drain-loop capacity. Construction is
+  fallible, so `BatchConfig::new(...)` rejects zero and
+  `HandlerConfig -> WorkerConfig` conversion wires a validated batch size into
+  `worker.rs` before the thread starts.
+- Flushes now use per-call acknowledgement channels instead of a handler-wide
+  receiver. `FileCommand::Flush` carries a fresh `Sender<io::Result<()>>`, and
+  `FemtoFileHandler::flush()` only reports success when that specific worker
+  flush sends `Ok(())` back before the deadline.
+
+Inside `worker.rs`, batching follows ADR 004's "block once, then drain"
+strategy. `recv_batch()` blocks for the first command, then uses `try_recv()`
+to pull additional pending commands up to `BatchConfig.capacity()` with no
+extra delay under light traffic. `WorkerState::process_batch()` applies each
+drained `FileCommand` in order, so queued records and explicit flush requests
+still preserve deterministic shutdown and acknowledgement semantics.
+
 ## Builder composition
 
 The handler builders reuse a small shared state machine so both the Rust and
