@@ -87,7 +87,7 @@ impl HandlerOptions {
         let capacity = isize::try_from(self.capacity).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("capacity must be greater than zero")
         })?;
-        let flush_interval = match self.flush_interval {
+        let (capacity, flush_interval) = match self.flush_interval {
             -1 => file::validate_params(capacity, 1)?,
             value => file::validate_params(capacity, value)?,
         };
@@ -96,7 +96,7 @@ impl HandlerOptions {
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         let handler_cfg = HandlerConfig {
-            capacity: self.capacity,
+            capacity,
             flush_interval,
             overflow_policy,
         };

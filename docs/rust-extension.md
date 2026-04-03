@@ -12,7 +12,7 @@ provide the core handler implementations as well:
   that thread.
 
 The file handler lives under `rust_extension/src/handlers/file`. ADR 004's
-batching work prompted a split into focused submodules so the public handler
+batching work prompted a split into focused submodules, so the public handler
 API could stay stable while the implementation remained readable. The list
 below covers the primary runtime and test-support modules declared from
 `rust_extension/src/handlers/file/mod.rs`; it is a guide to the current module
