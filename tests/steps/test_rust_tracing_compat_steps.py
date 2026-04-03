@@ -59,14 +59,11 @@ scenarios(str(FEATURES / "rust_tracing_compat.feature"))
 )
 def given_stream_handler(name: str) -> Iterator[tuple[FemtoStreamHandler, str]]:
     """Attach a stderr stream handler to the named logger."""
-    handler = StreamHandlerBuilder.stderr().build()
-    logger = get_logger(name)
-    logger.add_handler(handler)
-    try:
-        yield handler, name
-    finally:
-        logger.clear_handlers()
-        handler.close()
+    with _attach_handler_ctx(
+        StreamHandlerBuilder.stderr().build(),
+        name,
+    ) as handler_ctx:
+        yield handler_ctx
 
 
 class _RecordCaptureHandler:
@@ -85,13 +82,15 @@ class _RecordCaptureHandler:
         """Provide a stdlib-like close hook for teardown symmetry."""
 
 
-@given(
-    parsers.parse('a record-collecting handler attached to logger "{name}"'),
-    target_fixture="record_handler_ctx",
-)
-def given_record_handler(name: str) -> Iterator[tuple[_RecordCaptureHandler, str]]:
-    """Attach a Python ``handle_record`` collector to the named logger."""
-    handler = _RecordCaptureHandler()
+class _Closeable(typ.Protocol):
+    def close(self) -> None: ...
+
+
+_H = typ.TypeVar("_H", bound="_Closeable")
+
+
+@contextlib.contextmanager
+def _attach_handler_ctx(handler: _H, name: str) -> Iterator[tuple[_H, str]]:  # noqa: UP047
     logger = get_logger(name)
     logger.add_handler(handler)
     try:
@@ -99,6 +98,16 @@ def given_record_handler(name: str) -> Iterator[tuple[_RecordCaptureHandler, str
     finally:
         logger.clear_handlers()
         handler.close()
+
+
+@given(
+    parsers.parse('a record-collecting handler attached to logger "{name}"'),
+    target_fixture="record_handler_ctx",
+)
+def given_record_handler(name: str) -> Iterator[tuple[_RecordCaptureHandler, str]]:
+    """Attach a Python ``handle_record`` collector to the named logger."""
+    with _attach_handler_ctx(_RecordCaptureHandler(), name) as handler_ctx:
+        yield handler_ctx
 
 
 @when("I set up rust tracing bridge")
