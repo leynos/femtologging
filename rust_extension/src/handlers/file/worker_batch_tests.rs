@@ -5,6 +5,7 @@ use crate::formatter::DefaultFormatter;
 use crate::level::FemtoLevel;
 use crossbeam_channel::bounded;
 use std::io::{self, Cursor, Seek, SeekFrom, Write};
+use std::time::Duration;
 
 #[derive(Default)]
 struct RecordingWriter {
@@ -107,5 +108,10 @@ fn process_batch_preserves_record_order_and_flush_acknowledges() {
         "core [INFO] first\ncore [INFO] second\n"
     );
     assert_eq!(state.writer.flushes, 1);
-    assert!(ack_rx.recv().expect("ack should be sent").is_ok());
+    assert!(
+        ack_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("ack should be sent within the timeout")
+            .is_ok()
+    );
 }

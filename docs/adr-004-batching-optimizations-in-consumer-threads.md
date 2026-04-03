@@ -175,9 +175,9 @@ _Table 1: Trade-offs between batching strategies._
 
 ## Decision outcome / proposed direction
 
-Adopt **Option A (drain-loop batching)** as the primary strategy. For
-`FemtoFileHandler` and `FemtoStreamHandler`, use a **single contiguous buffer
-plus `write_all`** as the canonical Phase 1 batch write strategy. True
+Adopt **Option A (drain-loop batching)** as the primary strategy. Phase 1 in
+the current codebase is limited to the **batched receive and per-command
+dispatch plumbing**. True batch writes remain follow-on work, and
 scatter-gather I/O remains a future optimization once `write_all_vectored`
 stabilizes.
 
@@ -190,20 +190,20 @@ signalling architecture. Under sustained load — the scenario where batching
 matters most — `try_recv()` naturally collects large batches. Under light
 traffic, it degrades gracefully to the current one-at-a-time behaviour.
 
-For Phase 1, the accepted file and stream write path is:
+In the shipped Phase 1 plumbing, `recv_batch()` and `BatchConfig` let the file
+worker block once and then drain additional commands before dispatch. The file
+path still performs per-record writes through `WorkerState::handle_record()`
+and `super::io_utils::write_record()` in
+`rust_extension/src/handlers/file/worker.rs`, and the stream path still writes
+per record in `handle_record_command()` in
+`rust_extension/src/stream_handler.rs`. The contiguous-buffer `Vec<u8>` plus
+`write_all` path described below remains the intended next step for Phase 1
+write batching rather than an already-landed implementation.
 
-- format each record into a newline-terminated byte buffer;
-- concatenate the batch into one contiguous `Vec<u8>`;
-- call `write_all` once for the concatenated payload;
-- flush once at the batch boundary, or immediately before acknowledging an
-  explicit `Flush`.
-
-This keeps the implementation on stable Rust while still collapsing multiple
-record writes into one batch write. If true vectored writes become practical in
-stable Rust, the handlers can switch internally without changing the external
-batching contract. Until then, there is no secondary `write_vectored` path in
-Phase 1, so the fallback rule is simple: `FemtoFileHandler` and
-`FemtoStreamHandler` always use the contiguous-buffer `write_all` path.
+This staged approach keeps the acknowledgement and batching contracts stable
+while the actual file and stream write path is upgraded in a later change. If
+true vectored writes become practical in stable Rust, the handlers can still
+switch internally without changing the external batching contract.
 
 Options B, C, and D are not selected at this time. Option B's added latency
 under light load is unacceptable for debug and interactive logging without
@@ -641,15 +641,15 @@ non-zero default. There is no separate `BatchConfig::validate()` phase.
 
 ### 1. Core batch collection and file/stream handler batching
 
-- [ ] 1.1 Define the core batching primitives.
-- [ ] 1.1.1 Introduce the `recv_batch` helper and `BatchConfig` type.
-- [ ] 1.1.2 Default `batch_capacity` to 64 and expose it through the existing
+- [x] 1.1 Define the core batching primitives.
+- [x] 1.1.1 Introduce the `recv_batch` helper and `BatchConfig` type.
+- [x] 1.1.2 Default `batch_capacity` to 64 and expose it through the existing
       builder APIs.
-- [ ] 1.2 Standardize the flush acknowledgement contract before enabling
+- [x] 1.2 Standardize the flush acknowledgement contract before enabling
       drain-loop batching.
-- [ ] 1.2.1 Make `FileCommand::Flush` and `StreamCommand::Flush` both carry
+- [x] 1.2.1 Make `FileCommand::Flush` and `StreamCommand::Flush` both carry
       per-command `Sender<io::Result<()>>` values.
-- [ ] 1.2.2 Thread the per-command flush sender through the handler
+- [x] 1.2.2 Thread the per-command flush sender through the handler
       construction and spawn paths used by `FemtoFileHandler`,
       `FemtoStreamHandler`, and their builder APIs.
 - [ ] 1.3 Batch file and stream worker writes on stable Rust.
@@ -659,6 +659,11 @@ non-zero default. There is no separate `BatchConfig::validate()` phase.
       batching with a contiguous batch buffer plus `write_all`.
 - [ ] 1.4 Add Criterion benchmarks comparing single-record and batched
       throughput for file and stream handlers.
+
+Phase 1's shipped plumbing now includes `recv_batch`, `BatchConfig`,
+`FileCommand::Flush`, `StreamCommand::Flush`, and the corresponding
+`FemtoFileHandler`/`FemtoStreamHandler` handler wiring. The remaining unchecked
+items are the actual contiguous-buffer batch write path and its benchmarks.
 
 ### 2. Network handler batching
 

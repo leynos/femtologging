@@ -47,33 +47,40 @@ pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
-    fn validate_capacity_nonzero_handles_boundaries() {
-        assert_eq!(validate_capacity_nonzero(0), Err(CAPACITY_ZERO_MSG));
-        assert_eq!(validate_capacity_nonzero(1), Ok(()));
+    #[rstest]
+    #[case(0, Err(CAPACITY_ZERO_MSG))]
+    #[case(1, Ok(()))]
+    #[case(usize::MAX, Ok(()))]
+    fn validate_capacity_nonzero_handles_boundaries(
+        #[case] capacity: usize,
+        #[case] expected: Result<(), &'static str>,
+    ) {
+        assert_eq!(validate_capacity_nonzero(capacity), expected);
     }
 
-    #[test]
-    fn validate_flush_interval_value_handles_boundaries() {
-        assert_eq!(
-            validate_flush_interval_value(-1),
-            Err(FLUSH_INTERVAL_ZERO_MSG)
-        );
-        assert_eq!(
-            validate_flush_interval_value(0),
-            Err(FLUSH_INTERVAL_ZERO_MSG)
-        );
-        assert_eq!(validate_flush_interval_value(1), Ok(1));
+    #[rstest]
+    #[case(-1, Err(FLUSH_INTERVAL_ZERO_MSG))]
+    #[case(0, Err(FLUSH_INTERVAL_ZERO_MSG))]
+    #[case(1, Ok(1))]
+    #[case(isize::MAX, Ok(isize::MAX as usize))]
+    fn validate_flush_interval_value_handles_boundaries(
+        #[case] flush_interval: isize,
+        #[case] expected: Result<usize, &'static str>,
+    ) {
+        assert_eq!(validate_flush_interval_value(flush_interval), expected);
     }
 
-    #[test]
-    fn validate_flush_interval_nonzero_handles_boundaries() {
-        assert_eq!(
-            validate_flush_interval_nonzero(0),
-            Err(FLUSH_INTERVAL_ZERO_MSG)
-        );
-        assert_eq!(validate_flush_interval_nonzero(2), Ok(()));
+    #[rstest]
+    #[case(0, Err(FLUSH_INTERVAL_ZERO_MSG))]
+    #[case(1, Ok(()))]
+    #[case(usize::MAX, Ok(()))]
+    fn validate_flush_interval_nonzero_handles_boundaries(
+        #[case] flush_interval: usize,
+        #[case] expected: Result<(), &'static str>,
+    ) {
+        assert_eq!(validate_flush_interval_nonzero(flush_interval), expected);
     }
 
     #[test]
