@@ -26,6 +26,25 @@ class _RustCompatPayload(TypedDict):
     ]
 
 
+def _make_zero_arg_hook(fn: object, error_msg: str = "") -> cabc.Callable[[], None]:
+    """Return *fn* cast as a no-arg callable, or a fallback.
+
+    When *error_msg* is non-empty the fallback raises :class:`RuntimeError`;
+    otherwise it is a silent no-op.
+    """
+    if callable(fn):
+        return typ.cast("cabc.Callable[[], None]", fn)
+
+    if error_msg:
+
+        def _fallback() -> None:
+            raise RuntimeError(error_msg)
+
+        return _fallback
+
+    return lambda: None
+
+
 def _make_rotating_fresh_failure_hooks(
     force: object,
     clear: object,
@@ -46,10 +65,7 @@ def _make_rotating_fresh_failure_hooks(
         )
         raise RuntimeError(msg)
 
-    def _clear() -> None:
-        pass
-
-    return _force, _clear
+    return _force, _make_zero_arg_hook(None)
 
 
 def _make_timed_rotation_hooks(
@@ -72,38 +88,7 @@ def _make_timed_rotation_hooks(
         )
         raise RuntimeError(msg)
 
-    def _clear() -> None:
-        pass
-
-    return _set, _clear
-
-
-def _make_setup_rust_logging(fn: object) -> cabc.Callable[[], None]:
-    if callable(fn):
-        return typ.cast("cabc.Callable[[], None]", fn)
-
-    def _fallback() -> None:
-        msg = (
-            "setup_rust_logging requires the extension built with the "
-            "'log-compat' Cargo feature"
-        )
-        raise RuntimeError(msg)
-
-    return _fallback
-
-
-def _make_setup_rust_tracing(fn: object) -> cabc.Callable[[], None]:
-    if callable(fn):
-        return typ.cast("cabc.Callable[[], None]", fn)
-
-    def _fallback() -> None:
-        msg = (
-            "setup_rust_tracing requires the extension built with the "
-            "'tracing-compat' Cargo feature"
-        )
-        raise RuntimeError(msg)
-
-    return _fallback
+    return _set, _make_zero_arg_hook(None)
 
 
 def _make_runtime_attachment_state(
@@ -150,11 +135,15 @@ def _initialize_rust_compat() -> _RustCompatPayload:
         "_clear_rotating_fresh_failure_for_test": clear_rotating,
         "_set_timed_rotation_test_times_for_test": set_timed,
         "_clear_timed_rotation_test_times_for_test": clear_timed,
-        "setup_rust_logging": _make_setup_rust_logging(
-            getattr(rust, "setup_rust_logging", None)
+        "setup_rust_logging": _make_zero_arg_hook(
+            getattr(rust, "setup_rust_logging", None),
+            "setup_rust_logging requires the extension built with the "
+            "'log-compat' Cargo feature",
         ),
-        "setup_rust_tracing": _make_setup_rust_tracing(
-            getattr(rust, "setup_rust_tracing", None)
+        "setup_rust_tracing": _make_zero_arg_hook(
+            getattr(rust, "setup_rust_tracing", None),
+            "setup_rust_tracing requires the extension built with the "
+            "'tracing-compat' Cargo feature",
         ),
         "_runtime_attachment_state_for_test": _make_runtime_attachment_state(
             getattr(rust, "runtime_attachment_state_for_test", None)
