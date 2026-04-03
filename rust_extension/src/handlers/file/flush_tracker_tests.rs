@@ -20,26 +20,26 @@ impl Write for DummyWriter {
     fn flush(&mut self) -> io::Result<()> {
         self.flushed += 1;
         if self.fail {
-            Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            Err(io::Error::other("flush failed"))
         } else {
             Ok(())
         }
     }
 }
 
-#[fixture]
 /// Provide a writer that can optionally fail its next flush.
+#[fixture]
 fn writer(#[default(false)] fail: bool) -> DummyWriter {
     DummyWriter { flushed: 0, fail }
 }
 
+/// Verify when the periodic tracker flushes and when it propagates errors.
 #[rstest]
 #[case(2, 2, false, 1, false)]
 #[case(1, 1, true, 1, true)]
 #[case(3, 1, false, 0, false)]
 #[case(0, 5, false, 0, false)]
 #[case(2, 0, false, 0, false)]
-/// Verify when the periodic tracker flushes and when it propagates errors.
 fn flush_if_due_cases(
     #[case] interval: usize,
     #[case] writes: usize,
@@ -55,9 +55,9 @@ fn flush_if_due_cases(
     assert_eq!(result.is_err(), expect_error);
 }
 
+/// Confirm write-triggered flush failures are logged as warnings.
 #[rstest]
 #[serial]
-/// Confirm write-triggered flush failures are logged as warnings.
 fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
     test_support::install_test_logger();
     let mut tracker = FlushTracker::new(1);

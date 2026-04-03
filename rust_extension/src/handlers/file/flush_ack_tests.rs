@@ -105,8 +105,8 @@ impl Seek for BlockingFlushWriter {
     }
 }
 
-#[test]
 /// Ensure each flush waits on its own acknowledgement channel.
+#[test]
 fn flush_waits_for_its_own_acknowledgement() {
     let (started_tx, started_rx) = mpsc::channel();
     let writer = BlockingFlushWriter::new(started_tx);

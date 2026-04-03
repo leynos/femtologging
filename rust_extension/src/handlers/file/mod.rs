@@ -88,19 +88,22 @@ impl FemtoFileHandler {
     )]
     #[pyo3(signature=(
         path,
-        capacity = DEFAULT_CHANNEL_CAPACITY,
+        capacity = DEFAULT_CHANNEL_CAPACITY as isize,
         flush_interval = 1,
         policy = "drop"
     ))]
     fn py_new(
         path: String,
-        capacity: usize,
+        capacity: isize,
         flush_interval: isize,
         policy: &str,
     ) -> PyResult<Self> {
         let overflow_policy = policy::parse_policy_string(policy)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let flush_interval = validate_params(capacity, flush_interval)?;
+        let capacity = usize::try_from(capacity).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("capacity must be greater than zero")
+        })?;
         let handler_cfg = HandlerConfig {
             capacity,
             flush_interval,

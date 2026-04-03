@@ -39,21 +39,21 @@ fn record(message: &str) -> FileCommand {
     )))
 }
 
-#[test]
 /// Reject zero-capacity batch configs at construction time.
+#[test]
 fn batch_config_rejects_zero_capacity() {
     assert_eq!(BatchConfig::new(0), Err(BatchConfigError::ZeroCapacity));
 }
 
-#[test]
 /// Preserve the configured capacity when construction succeeds.
+#[test]
 fn batch_config_accepts_positive_capacity() {
     let config = BatchConfig::new(3).expect("positive capacity should succeed");
     assert_eq!(config.capacity(), 3);
 }
 
-#[test]
 /// Guard the drain helper against zero-capacity callers.
+#[test]
 fn recv_batch_rejects_zero_capacity() {
     let (_tx, rx) = bounded(1);
     assert!(matches!(
@@ -62,8 +62,8 @@ fn recv_batch_rejects_zero_capacity() {
     ));
 }
 
-#[test]
 /// Drain additional queued commands until the requested capacity is reached.
+#[test]
 fn recv_batch_collects_up_to_capacity() {
     let (tx, rx) = bounded(4);
     tx.send(record("one")).expect("first record queued");
@@ -79,8 +79,8 @@ fn recv_batch_collects_up_to_capacity() {
     assert_eq!(remainder.len(), 1);
 }
 
-#[test]
 /// Report disconnection when no command can be received.
+#[test]
 fn recv_batch_reports_disconnection_when_empty() {
     let (tx, rx) = bounded::<FileCommand>(1);
     drop(tx);
@@ -90,8 +90,8 @@ fn recv_batch_reports_disconnection_when_empty() {
     ));
 }
 
-#[test]
 /// Process batched records in order and forward flush acknowledgements.
+#[test]
 fn process_batch_preserves_record_order_and_flush_acknowledges() {
     let mut state = WorkerState::new(RecordingWriter::default(), NoRotation, 8);
     let (ack_tx, ack_rx) = bounded(1);

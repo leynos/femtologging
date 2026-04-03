@@ -84,9 +84,12 @@ impl HandlerOptions {
             ));
         }
 
+        let capacity = isize::try_from(self.capacity).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("capacity must be greater than zero")
+        })?;
         let flush_interval = match self.flush_interval {
-            -1 => file::validate_params(self.capacity, 1)?,
-            value => file::validate_params(self.capacity, value)?,
+            -1 => file::validate_params(capacity, 1)?,
+            value => file::validate_params(capacity, value)?,
         };
 
         let overflow_policy = file::policy::parse_policy_string(&self.policy)

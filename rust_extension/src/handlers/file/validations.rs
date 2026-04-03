@@ -37,9 +37,11 @@ pub(crate) fn validate_flush_interval_nonzero(flush_interval: usize) -> Result<(
 }
 
 /// Validate constructor parameters exposed through Python bindings.
-pub(crate) fn validate_params(capacity: usize, flush_interval: isize) -> PyResult<usize> {
+pub(crate) fn validate_params(capacity: isize, flush_interval: isize) -> PyResult<usize> {
     use pyo3::exceptions::PyValueError;
 
+    let capacity =
+        usize::try_from(capacity).map_err(|_| PyValueError::new_err(CAPACITY_ZERO_MSG))?;
     validate_capacity_nonzero(capacity).map_err(PyValueError::new_err)?;
     validate_flush_interval_value(flush_interval).map_err(PyValueError::new_err)
 }
@@ -85,6 +87,14 @@ mod tests {
 
     #[test]
     fn validate_params_returns_python_errors_for_invalid_values() {
+        let negative_capacity_err =
+            validate_params(-1, 1).expect_err("negative capacity should fail");
+        assert!(
+            negative_capacity_err
+                .to_string()
+                .contains(CAPACITY_ZERO_MSG)
+        );
+
         let capacity_err = validate_params(0, 1).expect_err("zero capacity should fail");
         assert!(capacity_err.to_string().contains(CAPACITY_ZERO_MSG));
 

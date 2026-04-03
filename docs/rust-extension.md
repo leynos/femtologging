@@ -13,7 +13,10 @@ provide the core handler implementations as well:
 
 The file handler lives under `rust_extension/src/handlers/file`. ADR 004's
 batching work prompted a split into focused submodules so the public handler
-API could stay stable while the implementation remained readable:
+API could stay stable while the implementation remained readable. The list
+below covers the primary runtime and test-support modules declared from
+`rust_extension/src/handlers/file/mod.rs`; it is a guide to the current module
+shape rather than a promise that every future internal helper will appear here:
 
 1. `mod.rs` — the public `FemtoFileHandler` entry point that wires the module
    tree together and re-exports the file-handler surface.
@@ -29,6 +32,10 @@ API could stay stable while the implementation remained readable:
    flush-interval validation.
 7. `worker.rs` — the asynchronous consumer thread, including ADR 004's batch
    draining, flush tracking, and worker lifecycle management.
+8. `policy.rs` — parsing for file-handler overflow policy strings such as
+   `"drop"`, `"block"`, and `"timeout:N"`.
+9. `test_support.rs` — shared Rust-test logging capture helpers used by the
+   file-handler test modules behind `#[cfg(test)]`.
 
 This split keeps the ADR 004 batching changes local to `worker.rs` and its
 helpers instead of forcing `mod.rs` to carry validation, I/O, builder, and
