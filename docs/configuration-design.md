@@ -493,16 +493,18 @@ existing handler types. `FileHandlerBuilder` supports capacity and flush
 interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count`
 rotation thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`,
 `interval`, `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the
-size-based builder: both limits must be provided with positive values. Passing
-zero raises a `ValueError`, while negative or out-of-range integers raise an
-`OverflowError` immediately through the PyO3 unsigned conversions, keeping
-misconfigurations obvious. When size thresholds are omitted, the handler stores
-`(0, 0)`, disabling rotation entirely. Mismatched pairs continue to raise
-configuration errors, so invalid rollover settings fail fast. The timed
+size-based builder: `max_bytes` and `backup_count` must be supplied together.
+When both thresholds are omitted, the handler stores `(0, 0)`, which disables
+rotation entirely. A mismatched pair, where one value is zero and the other is
+non-zero, raises a `ValueError` through the validation path in
+`rust_extension/src/handlers/rotating/python.rs`, so invalid rollover settings
+fail fast. Invalid integer bounds are rejected by the typed
+conversion-and-validation path before the builder is created, rather than
+relying on a blanket PyO3 `OverflowError` for all bad inputs. The timed
 rotation builder validates its inputs eagerly: unsupported `when` values, zero
 `interval`, and `at_time` on cadences that do not use a time-of-day trigger all
 raise `ValueError`, while supplying negative or out-of-range integers for
-`interval` raises `OverflowError`. Unlike size-based rotation,
+`interval` is rejected during typed conversion. Unlike size-based rotation,
 `backup_count == 0` does not disable timed rotation; it retains all timestamped
 backups indefinitely. The `StreamHandlerBuilder` configures the stream target
 and capacity. All builders expose `build()` methods returning ready‑to‑use
@@ -938,11 +940,12 @@ surfaces mature further.
 
 ## 3. Runtime Reconfiguration
 
-- **Dynamic Log Level Updates:** As outlined in the design document \[cite:
-  uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\],
-   Dynamic log-level changes for loggers will be a core feature, utilizing
-  atomic operations in Rust for thread-safe updates. This will be exposed via
-  methods on `FemtoLogger` instances (e.g., `logger.set_level()`).
+- **Dynamic Log Level Updates:** As outlined in the [Rust multithreaded
+  logging framework for Python
+  design](./rust-multithreaded-logging-framework-for-python-design.md), dynamic
+  log-level changes for loggers will be a core feature, utilizing atomic
+  operations in Rust for thread-safe updates. This will be exposed via methods
+  on `FemtoLogger` instances (e.g., `logger.set_level()`).
 
 - **Structured runtime mutation control plane:** Handler and filter mutation is
   now exposed through a dedicated `RuntimeConfigBuilder` paired with
@@ -986,8 +989,8 @@ surfaces mature further.
 
 `femtologging` will integrate with the broader Rust logging ecosystem by
 implementing the `log::Log` trait and providing a `tracing_subscriber::Layer`
-\[cite:
-uploaded:leynos/femtologging/femtologging-1f5b6d137cfb01ba5e55f41c583992a64985340c/docs/[rust-multithreaded-logging-framework-for-python-design.md](http://rust-multithreaded-logging-framework-for-python-design.md)\].
+as described in the
+[Rust multithreaded logging framework for Python design](./rust-multithreaded-logging-framework-for-python-design.md).
  This ensures that `femtologging` can serve as a high-performance backend for
 applications already using these established facades, without requiring them to
 switch their logging calls.

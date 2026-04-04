@@ -11,13 +11,54 @@ provide the core handler implementations as well:
   thread. It now provides `flush()` and `close()` to deterministically manage
   that thread.
 
-The file handler lives under `rust_extension/src/handlers/file`. This directory
-splits responsibilities into three modules:
+The file handler lives under `rust_extension/src/handlers/file`. ADR 004's
+batching work prompted a split into focused submodules, so the public handler
+API could stay stable while the implementation remained readable. The list
+below covers the primary runtime and test-support modules declared from
+`rust_extension/src/handlers/file/mod.rs`; it is a guide to the current module
+shape rather than a promise that every future internal helper will appear here:
 
-1. `config.rs` – configuration types shared with the Python bindings.
-2. `worker.rs` — the asynchronous consumer thread that writes log records.
-3. `mod.rs` — the public API exposing `FemtoFileHandler` and re‑exporting the
-    configuration items.
+1. `mod.rs` — the public `FemtoFileHandler` entry point that wires the module
+   tree together and re-exports the file-handler surface.
+2. `config.rs` — configuration types shared with the Python bindings and the
+   higher-level builders.
+3. `builder_options.rs` — worker construction options such as rotation
+   strategy injection and test-only start barriers.
+4. `handler_impl.rs` — the `FemtoHandlerTrait` and `Drop` implementations that
+   define the handler's runtime semantics.
+5. `io_utils.rs` — writer-side helpers for opening files and emitting
+   formatted records.
+6. `validations.rs` — constructor and Python-binding guards for capacity and
+   flush-interval validation.
+7. `worker.rs` — the asynchronous consumer thread, including ADR 004's batch
+   draining, flush tracking, and worker lifecycle management.
+8. `policy.rs` — parsing for file-handler overflow policy strings such as
+   `"drop"`, `"block"`, and `"timeout:N"`.
+9. `test_support.rs` — shared Rust-test logging capture helpers used by the
+   file-handler test modules behind `#[cfg(test)]`.
+
+This split keeps the ADR 004 batching changes local to `worker.rs` and its
+helpers instead of forcing `mod.rs` to carry validation, I/O, builder, and
+runtime concerns in one file.
+
+ADR 004's file-handler work also changed the worker contract in two ways that
+matter for contributors working below the Python API surface:
+
+- `BatchConfig` now owns the worker's drain-loop capacity. Construction is
+  fallible, so `BatchConfig::new(...)` rejects zero and
+  `HandlerConfig -> WorkerConfig` conversion wires a validated batch size into
+  `worker.rs` before the thread starts.
+- Flushes now use per-call acknowledgement channels instead of a handler-wide
+  receiver. `FileCommand::Flush` carries a fresh `Sender<io::Result<()>>`, and
+  `FemtoFileHandler::flush()` only reports success when that specific worker
+  flush sends `Ok(())` back before the deadline.
+
+Inside `worker.rs`, batching follows ADR 004's "block once, then drain"
+strategy. `recv_batch()` blocks for the first command, then uses `try_recv()`
+to pull additional pending commands up to `BatchConfig.capacity()` with no
+extra delay under light traffic. `WorkerState::process_batch()` applies each
+drained `FileCommand` in order, so queued records and explicit flush requests
+still preserve deterministic shutdown and acknowledgement semantics.
 
 The logger follows the same file-size discipline. `rust_extension/src/logger`
 now splits responsibilities between:

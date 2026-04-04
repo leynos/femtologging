@@ -10,6 +10,9 @@ import pytest
 
 from femtologging import FemtoFileHandler, FemtoLogger
 
+if typ.TYPE_CHECKING:
+    from femtologging.adapter import FemtoRecord
+
 FileHandlerFactory = cabc.Callable[
     [Path, int, int], typ.ContextManager[FemtoFileHandler]
 ]
@@ -296,14 +299,14 @@ class RecordCollectingHandler:
 
     def __init__(self) -> None:
         """Initialize an empty record buffer."""
-        self.records: list[dict[str, typ.Any]] = []
+        self.records: list[FemtoRecord] = []
 
     @staticmethod
     def handle(_logger: str, _level: str, _message: str) -> None:
         """Fallback handle method (required by FemtoLogger validation)."""
         # Should not be called when handle_record is present
 
-    def handle_record(self, record: dict[str, typ.Any]) -> None:
+    def handle_record(self, record: FemtoRecord) -> None:
         """Collect full records for later assertions."""
         self.records.append(record)
 
@@ -413,10 +416,12 @@ def test_handle_record_includes_both_exc_and_stack_info() -> None:
 class MutableHandler:
     """Handler whose capabilities can be mutated after construction."""
 
+    handle_record: cabc.Callable[[FemtoRecord], None]
+
     def __init__(self) -> None:
         """Initialize an empty record buffer for both dispatch paths."""
         self.handle_calls: list[tuple[str, str, str]] = []
-        self.handle_record_calls: list[dict[str, typ.Any]] = []
+        self.handle_record_calls: list[FemtoRecord] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
         """Legacy 3-argument handle method."""
@@ -438,7 +443,7 @@ def test_handler_gains_handle_record_after_registration() -> None:
     logger.add_handler(handler)
 
     # Dynamically add handle_record after registration
-    def late_handle_record(record: dict[str, typ.Any]) -> None:
+    def late_handle_record(record: FemtoRecord) -> None:
         handler.handle_record_calls.append(record)
 
     setattr(handler, "handle_record", late_handle_record)  # noqa: B010  # FIXME: dynamic setattr needed to test frozen dispatch — MutableHandler has no handle_record attribute
@@ -471,7 +476,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     handler = MutableHandler()
 
     # Add handle_record before registration
-    def initial_handle_record(record: dict[str, typ.Any]) -> None:
+    def initial_handle_record(record: FemtoRecord) -> None:
         handler.handle_record_calls.append(record)
 
     setattr(handler, "handle_record", initial_handle_record)  # noqa: B010  # FIXME: dynamic setattr needed to register handle_record before add_handler call
@@ -480,7 +485,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     logger.add_handler(handler)
 
     # Replace handle_record with a different implementation after registration
-    def replacement_handle_record(record: dict[str, typ.Any]) -> None:
+    def replacement_handle_record(record: FemtoRecord) -> None:
         handler.handle_record_calls.append(record)
 
     setattr(handler, "handle_record", replacement_handle_record)  # noqa: B010  # FIXME: dynamic setattr needed to replace handle_record after registration to test frozen dispatch

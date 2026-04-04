@@ -84,16 +84,19 @@ impl HandlerOptions {
             ));
         }
 
-        let flush_interval = match self.flush_interval {
-            -1 => file::validate_params(self.capacity, 1)?,
-            value => file::validate_params(self.capacity, value)?,
+        let capacity = isize::try_from(self.capacity).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("capacity must fit within isize")
+        })?;
+        let (capacity, flush_interval) = match self.flush_interval {
+            -1 => file::validate_params(capacity, 1)?,
+            value => file::validate_params(capacity, value)?,
         };
 
         let overflow_policy = file::policy::parse_policy_string(&self.policy)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         let handler_cfg = HandlerConfig {
-            capacity: self.capacity,
+            capacity,
             flush_interval,
             overflow_policy,
         };

@@ -838,6 +838,13 @@ batches rather than one by one.
   destination. This trade-off (throughput vs. individual message latency)
   should be configurable (e.g., batch size, batch timeout).
 
+[ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md) formalizes
+the analysis of batching strategies. The chosen direction is drain-loop
+batching with `crossbeam-channel` `try_recv()` (Option A), complemented by
+`write_vectored` scatter-gather I/O for file and stream handlers (Option C).
+This combination preserves zero added latency under light traffic while
+amortizing I/O costs under sustained load.
+
 Dynamic filtering, while a desirable feature for operational flexibility, also
 has performance implications. If filters are complex or numerous, evaluating
 them on the hot path for every log call can add overhead. CPython's `logging`
@@ -1643,7 +1650,9 @@ A phased approach will allow for iterative development and feedback:
     capabilities, allowing for the addition, removal, or modification of
     handlers and filters at runtime.
 
-  - Explore performance optimizations like batching in consumer threads.
+  - Explore performance optimizations like batching in consumer threads. See
+    [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md) for the
+    analysis of batching strategies and the chosen drain-loop approach.
 
 A strategic consideration for adoption is the "ecosystem play." While
 `femtologging` will have its own powerful API, prioritizing integration with

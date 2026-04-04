@@ -12,11 +12,13 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 use log::{error, warn};
 
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
+
+pub(crate) const DEFAULT_BATCH_CAPACITY: usize = 64;
 
 /// Commands sent to the worker thread.
 ///
@@ -25,8 +27,8 @@ use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 pub enum FileCommand {
     /// Write a log record to the underlying writer.
     Record(Box<FemtoLogRecord>),
-    /// Flush the writer and acknowledge completion.
-    Flush,
+    /// Flush the writer and acknowledge completion on the provided channel.
+    Flush(Sender<io::Result<()>>),
 }
 
 /// Strategy for rotating the log file before writes.
@@ -60,13 +62,53 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
     }
 }
 
+/// Configuration for batch draining in the worker loop.
+///
+/// `capacity` is the maximum number of commands processed in one blocking
+/// receive plus non-blocking drain cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BatchConfig {
+    capacity: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatchConfigError {
+    /// The requested batch capacity was zero.
+    ZeroCapacity,
+}
+
+impl BatchConfig {
+    /// Create a batch configuration with a non-zero drain capacity.
+    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+        if capacity == 0 {
+            return Err(BatchConfigError::ZeroCapacity);
+        }
+        Ok(Self { capacity })
+    }
+
+    /// Return the maximum number of commands drained in one batch.
+    pub const fn capacity(self) -> usize {
+        self.capacity
+    }
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            capacity: DEFAULT_BATCH_CAPACITY,
+        }
+    }
+}
+
 /// Configuration for the background worker thread.
 ///
-/// Specifies the channel capacity, flush interval, and optional synchronisation
-/// barrier for testing.
+/// Specifies the channel `capacity`, batch-drain configuration, `flush_interval`,
+/// and optional synchronisation `start_barrier` for tests.
 pub struct WorkerConfig {
     /// Capacity of the command channel.
     pub capacity: usize,
+    /// Maximum number of commands to drain after the blocking receive.
+    pub batch: BatchConfig,
     /// Number of writes between automatic flushes (0 disables periodic flushing).
     pub flush_interval: usize,
     /// Optional barrier for synchronising worker startup in tests.
@@ -77,6 +119,7 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             capacity: super::config::DEFAULT_CHANNEL_CAPACITY,
+            batch: BatchConfig::new(DEFAULT_BATCH_CAPACITY).unwrap_or_default(),
             flush_interval: 1,
             start_barrier: None,
         }
@@ -87,10 +130,38 @@ impl From<&HandlerConfig> for WorkerConfig {
     fn from(cfg: &HandlerConfig) -> Self {
         Self {
             capacity: cfg.capacity,
+            batch: BatchConfig::new(DEFAULT_BATCH_CAPACITY).unwrap_or_default(),
             flush_interval: cfg.flush_interval,
             start_barrier: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecvBatchError {
+    Disconnected,
+    ZeroCapacity,
+}
+
+fn recv_batch(
+    rx: &Receiver<FileCommand>,
+    batch_capacity: usize,
+) -> Result<Vec<FileCommand>, RecvBatchError> {
+    if batch_capacity == 0 {
+        return Err(RecvBatchError::ZeroCapacity);
+    }
+    let first = rx
+        .recv()
+        .map_err(|_: RecvError| RecvBatchError::Disconnected)?;
+    let mut batch = Vec::with_capacity(batch_capacity);
+    batch.push(first);
+    while batch.len() < batch_capacity {
+        match rx.try_recv() {
+            Ok(command) => batch.push(command),
+            Err(_) => break,
+        }
+    }
+    Ok(batch)
 }
 
 /// Tracks how many writes occurred and triggers periodic flushes.
@@ -169,18 +240,20 @@ where
             error!("FemtoFileHandler rotation error; writing record without rotating: {err}");
         }
         if let Err(err) =
-            super::mod_impl::write_record(&mut self.writer, &message, &mut self.tracker)
+            super::io_utils::write_record(&mut self.writer, &message, &mut self.tracker)
         {
             warn!("FemtoFileHandler write error: {err}");
         }
     }
 
-    fn handle_flush(&mut self, ack_tx: &Sender<()>) {
-        if let Err(err) = self.writer.flush() {
+    fn handle_flush(&mut self, ack_tx: Sender<io::Result<()>>) {
+        let flush_result = self.writer.flush();
+        if let Err(err) = &flush_result {
             warn!("FemtoFileHandler flush error: {err}");
+        } else {
+            self.tracker.reset();
         }
-        self.tracker.reset();
-        if ack_tx.send(()).is_err() {
+        if ack_tx.send(flush_result).is_err() {
             warn!("FemtoFileHandler flush ack channel disconnected");
         }
     }
@@ -188,6 +261,18 @@ where
     fn final_flush(&mut self) {
         if let Err(err) = self.writer.flush() {
             warn!("FemtoFileHandler final flush error: {err}");
+        }
+    }
+
+    fn process_batch<F>(&mut self, formatter: &F, commands: Vec<FileCommand>)
+    where
+        F: FemtoFormatter,
+    {
+        for command in commands {
+            match command {
+                FileCommand::Record(record) => self.handle_record(formatter, *record),
+                FileCommand::Flush(ack_tx) => self.handle_flush(ack_tx),
+            }
         }
     }
 }
@@ -210,19 +295,13 @@ where
 /// A tuple containing:
 /// - Command sender for enqueueing records and flush requests.
 /// - Completion receiver that signals when the worker thread exits.
-/// - Acknowledgement receiver that signals when a flush completes.
 /// - Join handle for the worker thread.
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     rotation: R,
-) -> (
-    Sender<FileCommand>,
-    Receiver<()>,
-    Receiver<()>,
-    JoinHandle<()>,
-)
+) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
@@ -230,22 +309,25 @@ where
 {
     let WorkerConfig {
         capacity,
+        batch,
         flush_interval,
         start_barrier,
     } = config;
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
-    let (ack_tx, ack_rx) = bounded(1);
     let handle = thread::spawn(move || {
         if let Some(b) = start_barrier {
             b.wait();
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
-        let formatter = formatter;
-        for cmd in rx {
-            match cmd {
-                FileCommand::Record(record) => state.handle_record(&formatter, *record),
-                FileCommand::Flush => state.handle_flush(&ack_tx),
+        loop {
+            match recv_batch(&rx, batch.capacity()) {
+                Ok(commands) => state.process_batch(&formatter, commands),
+                Err(RecvBatchError::Disconnected) => break,
+                Err(RecvBatchError::ZeroCapacity) => {
+                    error!("FemtoFileHandler batch capacity must be greater than zero");
+                    break;
+                }
             }
         }
         state.final_flush();
@@ -253,77 +335,13 @@ where
             warn!("FemtoFileHandler done channel disconnected");
         }
     });
-    (tx, done_rx, ack_rx, handle)
+    (tx, done_rx, handle)
 }
 
 #[cfg(test)]
-mod flush_tracker_tests {
-    use super::*;
-    use crate::handlers::file::test_support;
-    use rstest::*;
-    use serial_test::serial;
-    use std::io::{self, Write};
+#[path = "flush_tracker_tests.rs"]
+mod flush_tracker_tests;
 
-    #[derive(Default)]
-    struct DummyWriter {
-        flushed: usize,
-        fail: bool,
-    }
-
-    impl Write for DummyWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.flushed += 1;
-            if self.fail {
-                Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    #[fixture]
-    fn writer(#[default(false)] fail: bool) -> DummyWriter {
-        DummyWriter { flushed: 0, fail }
-    }
-
-    #[rstest]
-    #[case(2, 2, false, 1, false)]
-    #[case(1, 1, true, 1, true)]
-    #[case(3, 1, false, 0, false)]
-    #[case(0, 5, false, 0, false)]
-    #[case(2, 0, false, 0, false)]
-    fn flush_if_due_cases(
-        #[case] interval: usize,
-        #[case] writes: usize,
-        #[case] _fail: bool,
-        #[case] expected_flushes: usize,
-        #[case] expect_error: bool,
-        #[with(_fail)] mut writer: DummyWriter,
-    ) {
-        let mut tracker = FlushTracker::new(interval);
-        tracker.writes = writes;
-        let result = tracker.flush_if_due(&mut writer);
-        assert_eq!(writer.flushed, expected_flushes);
-        assert_eq!(result.is_err(), expect_error);
-    }
-
-    #[rstest]
-    #[serial]
-    fn record_write_logs_warning_on_error(#[with(true)] mut writer: DummyWriter) {
-        test_support::install_test_logger();
-        let mut tracker = FlushTracker::new(1);
-        let result = tracker.record_write(&mut writer);
-        assert!(result.is_err());
-        assert_eq!(writer.flushed, 1);
-
-        let logs = test_support::take_logged_messages();
-        let log = logs.into_iter().next().expect("no log produced");
-        assert_eq!(log.level, log::Level::Warn);
-        assert!(log.message.contains("after write"));
-        assert!(log.message.contains("flush failed"));
-    }
-}
+#[cfg(test)]
+#[path = "worker_batch_tests.rs"]
+mod worker_batch_tests;

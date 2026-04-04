@@ -202,8 +202,11 @@ fields with safe defaults does not require a version bump.
   standard streams. Calls return immediately; the handler thread flushes the
   underlying `io::Write`.
 - `handler.flush()` waits (up to one second by default) for the worker to flush
-  buffered writes and returns `True` on success. `handler.close()` shuts down
-  the worker thread and should be called before process exit.
+  buffered writes and returns `True` only when the worker acknowledges
+  `Ok(())`. It returns `False` if the underlying I/O flush fails, the handler
+  has already been closed, the worker channel has been dropped, or the timeout
+  expires. `handler.close()` shuts down the worker thread and should be called
+  before process exit.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id)` fluent methods before calling `.build()`.

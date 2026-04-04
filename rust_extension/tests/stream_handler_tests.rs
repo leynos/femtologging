@@ -81,6 +81,21 @@ impl Write for BlockingBuf {
     }
 }
 
+#[derive(Default)]
+struct FlushFailingBuf {
+    buf: Vec<u8>,
+}
+
+impl Write for FlushFailingBuf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buf.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::other("flush failed"))
+    }
+}
+
 #[rstest]
 fn stream_handler_writes_to_buffer(
     #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
@@ -117,6 +132,13 @@ fn stream_handler_flush(
     drop(handler);
 
     assert_eq!(read_output(&buffer), "core [INFO] one\ncore [INFO] two\n");
+}
+
+#[test]
+fn stream_handler_flush_returns_false_on_worker_flush_error() {
+    let handler = FemtoStreamHandler::new(FlushFailingBuf::default(), DefaultFormatter);
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "one"));
+    assert!(!handler.flush());
 }
 
 #[rstest]

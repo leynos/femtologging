@@ -69,9 +69,11 @@ impl TimedHandlerOptions {
     }
 
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
-        let flush_interval = match self.flush_interval {
-            -1 => file::validate_params(self.capacity, 1)?,
-            value => file::validate_params(self.capacity, value)?,
+        let capacity = isize::try_from(self.capacity)
+            .map_err(|_| PyValueError::new_err("capacity must fit within isize"))?;
+        let (capacity, flush_interval) = match self.flush_interval {
+            -1 => file::validate_params(capacity, 1)?,
+            value => file::validate_params(capacity, value)?,
         };
         let overflow_policy = file::policy::parse_policy_string(&self.policy)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -85,7 +87,7 @@ impl TimedHandlerOptions {
         let schedule = TimedRotationSchedule::new(when, self.interval, self.utc, self.at_time)
             .map_err(PyValueError::new_err)?;
         let config = HandlerConfig {
-            capacity: self.capacity,
+            capacity,
             flush_interval,
             overflow_policy,
         };
