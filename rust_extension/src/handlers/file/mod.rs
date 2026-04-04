@@ -12,11 +12,6 @@
 //!
 //! The flush interval must be greater than zero. A value of 1 flushes on every
 //! record.
-#![allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
-
 mod builder_options;
 mod config;
 mod handler_impl;
@@ -67,10 +62,6 @@ pub struct FemtoFileHandler {
     overflow_policy: OverflowPolicy,
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 generates Python-facing wrappers that must preserve constructor parameters"
-)]
 #[pymethods]
 impl FemtoFileHandler {
     /// Create a file handler writing to `path`.
