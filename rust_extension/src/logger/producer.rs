@@ -96,7 +96,7 @@ impl FemtoLogger {
     ///
     /// The record is filtered against the logger's level and filters before
     /// being enqueued for handler processing.
-    #[cfg(feature = "log-compat")]
+    #[cfg(any(feature = "log-compat", feature = "tracing-compat"))]
     pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
         let mut record = record;
         if !self.is_enabled_for(record.level()) {

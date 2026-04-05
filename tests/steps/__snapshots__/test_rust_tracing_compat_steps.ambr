@@ -1,0 +1,46 @@
+# serializer version: 1
+# name: test_rust_tracing_events_are_routed_to_handlers
+  list([
+    'rust.tracing.basic [INFO] hello from tracing',
+  ])
+# ---
+# name: test_rust_tracing_events_respect_femtologger_levels
+  list([
+  ])
+# ---
+# name: test_structured_tracing_fields_arrive_in_python_handle_record_payloads
+  list([
+    dict({
+      'key_values': dict({
+        'details': '["alpha", "beta"]',
+        'latency_ms': '12.5',
+        'success': 'true',
+        'user_id': '42',
+      }),
+      'level': 'INFO',
+      'logger': 'rust.tracing.structured',
+      'message': 'structured event',
+    }),
+  ])
+# ---
+# name: test_nested_span_context_arrives_in_python_handle_record_payloads
+  list([
+    dict({
+      'key_values': dict({
+        'span.0.name': 'request',
+        'span.0.request_id': 'req-42',
+        'span.1.attempt': '2',
+        'span.1.name': 'step',
+        'success': 'true',
+      }),
+      'level': 'INFO',
+      'logger': 'rust.tracing.span',
+      'message': 'span event',
+    }),
+  ])
+# ---
+# name: test_rust_tracing_bridge_rejects_a_preinstalled_global_subscriber
+  list([
+    'global tracing subscriber is already set; femtologging cannot install the tracing bridge',
+  ])
+# ---

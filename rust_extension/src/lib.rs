@@ -54,6 +54,8 @@ pub(crate) mod traceback_frames;
 // Feature-gated log-compat module
 #[cfg(all(feature = "python", feature = "log-compat"))]
 mod log_compat;
+#[cfg(all(feature = "python", feature = "tracing-compat"))]
+pub mod tracing_compat;
 
 // Test modules
 #[cfg(test)]
@@ -121,6 +123,8 @@ pub use socket_handler::{
 };
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
+#[cfg(all(feature = "python", feature = "tracing-compat"))]
+pub use tracing_compat::{FemtoTracingLayer, layer as tracing_layer};
 
 /// Return a static greeting. Exposed to Python for sanity checks.
 ///
@@ -277,6 +281,8 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Log-compat functions (requires both python and log-compat features)
     #[cfg(all(feature = "python", feature = "log-compat"))]
     python_module::register_log_compat_functions(m)?;
+    #[cfg(all(feature = "python", feature = "tracing-compat"))]
+    python_module::register_tracing_compat_functions(m)?;
 
     Ok(())
 }
