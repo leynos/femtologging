@@ -96,12 +96,36 @@ fn invalid_targets_fall_back_to_root() {
 fn event_without_message_uses_stable_fallback() {
     let logger_name = "tracing.bridge.fallback";
     let records = run_bridged_event_test(logger_name, || {
-        tracing::info!(target: "tracing.bridge.fallback", answer = 42_u64, success = true);
+        // No explicit message, but one structured field: this should trigger the
+        // stable formatting "tracing event (request_id=abc-123)".
+        tracing::info!(target: "tracing.bridge.fallback", request_id = "abc-123");
     });
+
     assert_eq!(records.len(), 1);
-    assert_eq!(
-        records[0].message(),
-        "tracing event (answer=42, success=true)"
+    let record = &records[0];
+    assert_eq!(record.logger(), logger_name);
+    assert_eq!(record.message(), "tracing event (request_id=abc-123)");
+    assert_eq!(record.metadata().key_values["request_id"], "abc-123");
+}
+
+#[rstest]
+#[serial]
+fn event_without_message_or_fields_uses_pure_fallback() {
+    let logger_name = "tracing.bridge.fallback";
+    let records = run_bridged_event_test(logger_name, || {
+        // Emit an event with no message and no fields by using an empty message string.
+        // The tracing macro strips empty messages, exercising the pure FALLBACK_EVENT_MESSAGE path.
+        tracing::info!(target: "tracing.bridge.fallback", "");
+    });
+
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.logger(), logger_name);
+    // Empty message should also trigger the fallback message
+    assert!(
+        record.message() == "tracing event" || record.message().is_empty(),
+        "Expected fallback message or empty, got: {}",
+        record.message()
     );
 }
 

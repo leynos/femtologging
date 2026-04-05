@@ -64,16 +64,16 @@ impl FemtoTracingLayer {
         normalized == "femtologging" || normalized.starts_with("femtologging.")
     }
 
-    fn resolve_logger<'py>(
+    fn resolve_logger<'a, 'py>(
         py: Python<'py>,
-        target: &str,
-    ) -> Option<(String, Py<crate::FemtoLogger>)> {
+        target: &'a str,
+    ) -> Option<(Cow<'a, str>, Py<crate::FemtoLogger>)> {
         let normalized = Self::normalize_target(target);
         match manager::get_logger(py, normalized.as_ref()) {
-            Ok(logger) => Some((normalized.into_owned(), logger)),
+            Ok(logger) => Some((normalized, logger)),
             Err(_) => manager::get_logger(py, "root")
                 .ok()
-                .map(|logger| ("root".to_string(), logger)),
+                .map(|logger| (Cow::Borrowed("root"), logger)),
         }
     }
 
@@ -142,7 +142,18 @@ where
     S: Subscriber + for<'span> LookupSpan<'span>,
 {
     fn enabled(&self, metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
-        !Self::should_ignore_target(metadata.target())
+        if Self::should_ignore_target(metadata.target()) {
+            return false;
+        }
+
+        // Check logger-level filtering to avoid evaluating field expressions for disabled events.
+        let level = Self::map_level(metadata.level());
+        Python::attach(|py| {
+            let Some((_, logger)) = Self::resolve_logger(py, metadata.target()) else {
+                return false;
+            };
+            logger.borrow(py).is_enabled_for(level)
+        })
     }
 
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
@@ -172,6 +183,37 @@ where
         stored.fields.extend(captured.key_values);
     }
 
+    /// Process a tracing event and dispatch it to the femtologging handler pipeline.
+    ///
+    /// # Performance Characteristics
+    ///
+    /// This method acquires the Python GIL (Global Interpreter Lock) **for every tracing event**
+    /// to resolve the logger, check level filtering, and dispatch the record. While
+    /// [`visitor::capture_event`], [`Self::resolve_logger`], [`Self::build_record_metadata`],
+    /// and [`FemtoLogRecord::with_metadata`] run before or around the GIL boundary, the per-event
+    /// GIL acquisition can introduce latency in high-throughput scenarios.
+    ///
+    /// ## Mitigation Strategies
+    ///
+    /// For applications emitting thousands of tracing events per second, consider these approaches
+    /// to reduce per-event GIL overhead:
+    ///
+    /// - **Buffering in Rust**: Collect event data (target, level, message, fields) in a
+    ///   lock-free queue or bounded channel on the Rust side, then flush to Python periodically
+    ///   or in a dedicated worker thread. This amortizes GIL acquisition across batches of events.
+    ///
+    /// - **Lock-Free Queues**: Use structures like `crossbeam::queue::ArrayQueue` or
+    ///   `crossbeam::channel` with a background thread that calls `Python::attach` once per batch,
+    ///   decoupling event capture from Python dispatch.
+    ///
+    /// - **Async Dispatch**: Enqueue serialized event payloads and flush them asynchronously,
+    ///   allowing the hot path to return immediately after pushing to the queue.
+    ///
+    /// ## Trade-Offs
+    ///
+    /// Buffering introduces memory overhead and may delay event visibility in logs. For most
+    /// applications, the per-event GIL acquisition is acceptable. Profile your workload to
+    /// determine if batching is necessary.
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         if Self::should_ignore_target(event.metadata().target()) {
             return;

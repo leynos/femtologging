@@ -441,10 +441,10 @@ When built with the default `tracing-compat` feature, femtologging also ships
 use with `tracing_subscriber`.
 
 ```rust
-use femtologging_rs::tracing_layer;
+use femtologging_rs::tracing_compat::layer;
 use tracing_subscriber::prelude::*;
 
-let subscriber = tracing_subscriber::registry().with(tracing_layer());
+let subscriber = tracing_subscriber::registry().with(layer());
 tracing::subscriber::with_default(subscriber, || {
     tracing::info!(target: "app::worker", request_id = "req-42", "hello");
 });

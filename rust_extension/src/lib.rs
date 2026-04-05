@@ -123,7 +123,7 @@ pub use socket_handler::{
 };
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
-#[cfg(feature = "tracing-compat")]
+#[cfg(all(feature = "python", feature = "tracing-compat"))]
 pub use tracing_compat::{FemtoTracingLayer, layer as tracing_layer};
 
 /// Return a static greeting. Exposed to Python for sanity checks.

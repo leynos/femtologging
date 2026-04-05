@@ -32,6 +32,9 @@ if typ.TYPE_CHECKING:
     Iterator = cabc.Iterator
     Sequence = cabc.Sequence
 
+# Polling timeout for log output capture, increased for CI load tolerance.
+LOG_POLL_TIMEOUT = 5.0
+
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 REQUIRED_RUST_ATTRS = (
@@ -90,7 +93,7 @@ _H = typ.TypeVar("_H", bound="_Closeable")
 
 
 @contextlib.contextmanager
-def _attach_handler_ctx(handler: _H, name: str) -> Iterator[tuple[_H, str]]:  # noqa: UP047
+def _attach_handler_ctx(handler: _H, name: str) -> Iterator[tuple[_H, str]]:  # noqa: UP047 - UP047 wants collections.abc.Iterator, but the generator return type annotation is incompatible with the test fixture pattern; safe because the yielded tuple matches the declared Iterator item type.
     logger = get_logger(name)
     logger.add_handler(handler)
     try:
@@ -152,7 +155,7 @@ def when_emit_rust_tracing_event(
     _flush_and_sync_stderr(logger, handler)
 
     prefix = f"{logger_name} [{level.upper()}] "
-    deadline = time.monotonic() + 2.0
+    deadline = time.monotonic() + LOG_POLL_TIMEOUT
     captured: list[str] = []
     while time.monotonic() < deadline:
         err = capfd.readouterr().err

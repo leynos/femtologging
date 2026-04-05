@@ -1464,7 +1464,7 @@ Implement `log::Log` first for immediate ecosystem compatibility; a
 
   For Python-first hybrid applications, the package exposes
   `femtologging.setup_rust_tracing()` as an explicit convenience helper that
-  installs `tracing_subscriber::registry().with(femtologging layer())` as the
+  installs `tracing_subscriber::registry().with(femtologging_rs::tracing_compat::layer())` as the
   process-global subscriber. This mirrors `setup_rust_logging()` in spirit
   while keeping the underlying Rust API composable for callers that want to add
   OpenTelemetry or other tracing layers themselves.

@@ -21,19 +21,21 @@ fn install_global_tracing_subscriber() -> bool {
 fn emit_message_event(level: FemtoLevel, message: &str) {
     match level {
         FemtoLevel::Trace => {
-            tracing::event!(target: "rust.tracing.basic", tracing::Level::TRACE, "{message}")
+            tracing::event!(target: "rust.tracing.basic", tracing::Level::TRACE, "{}", message)
         }
         FemtoLevel::Debug => {
-            tracing::event!(target: "rust.tracing.basic", tracing::Level::DEBUG, "{message}")
+            tracing::event!(target: "rust.tracing.basic", tracing::Level::DEBUG, "{}", message)
         }
         FemtoLevel::Info => {
-            tracing::event!(target: "rust.tracing.basic", tracing::Level::INFO, "{message}")
+            tracing::event!(target: "rust.tracing.basic", tracing::Level::INFO, "{}", message)
         }
         FemtoLevel::Warn => {
-            tracing::event!(target: "rust.tracing.basic", tracing::Level::WARN, "{message}")
+            tracing::event!(target: "rust.tracing.basic", tracing::Level::WARN, "{}", message)
         }
+        // FemtoLevel::Critical is intentionally mapped to tracing::Level::ERROR because
+        // the tracing crate has no CRITICAL level and this is a lossy conversion.
         FemtoLevel::Error | FemtoLevel::Critical => {
-            tracing::event!(target: "rust.tracing.basic", tracing::Level::ERROR, "{message}")
+            tracing::event!(target: "rust.tracing.basic", tracing::Level::ERROR, "{}", message)
         }
     }
 }
