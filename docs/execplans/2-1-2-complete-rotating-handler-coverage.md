@@ -1,9 +1,8 @@
 # Complete timed rotating handler coverage
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
@@ -237,8 +236,8 @@ Validate that:
 - UTC/local schedule selection is represented in config instead of being an
   ad-hoc boolean passed around the worker.
 
-Before touching the worker path, add Rust tests in the new schedule module
-using `rstest` to cover:
+Before touching the worker path, add Rust tests in the new schedule module using
+`rstest` to cover:
 
 - hourly, daily, midnight, and weekday next-rollover calculations
 - `utc=True` versus local-time behaviour

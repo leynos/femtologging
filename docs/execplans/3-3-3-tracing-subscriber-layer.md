@@ -1,9 +1,8 @@
 # Deliver a tracing-subscriber layer for Rust ecosystem integration
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: DONE
 
@@ -158,8 +157,8 @@ The design sources that constrain this plan are:
 
 - Risk: behavioural tests for mixed Rust/Python integration may need a fresh
   tracing subscriber per scenario, and global subscriber state is harder to
-  reset than loggers. Severity: high Likelihood: high Mitigation: prefer a
-  local `tracing_subscriber::Registry` in Rust unit tests and use subprocess
+  reset than loggers. Severity: high Likelihood: high Mitigation: prefer a local
+  `tracing_subscriber::Registry` in Rust unit tests and use subprocess
   isolation only for Python BDD scenarios that must validate fresh-process
   install semantics.
 
@@ -276,7 +275,7 @@ and `tests.rs`.
 
 Observable checkpoint:
 `cargo check --manifest-path rust_extension/Cargo.toml --features tracing-compat`
- succeeds before any Python-facing work begins.
+succeeds before any Python-facing work begins.
 
 ## Stage 2: Implement event conversion and logger dispatch
 
@@ -303,8 +302,8 @@ the last write wins or whether duplicates are rejected, and record that choice
 in the design doc.
 
 Observable checkpoint: a Rust unit test can attach a `CollectingHandler`,
-invoke the layer with a synthetic `tracing::Event`, and assert that the
-captured `FemtoLogRecord` contains the expected logger, level, message, source
+invoke the layer with a synthetic `tracing::Event`, and assert that the captured
+`FemtoLogRecord` contains the expected logger, level, message, source
 location, and structured fields.
 
 ## Stage 3: Add bounded span-context support
@@ -410,7 +409,7 @@ discoverable and consistent:
 
 - expand
   [docs/rust-multithreaded-logging-framework-for-python-design.md](../rust-multithreaded-logging-framework-for-python-design.md)
-   section `6.4` with the final layer shape, supported field capture, span
+  section `6.4` with the final layer shape, supported field capture, span
   behaviour, and loop-prevention rules
 - update [docs/configuration-design.md](../configuration-design.md) section `4`
   so the Rust ecosystem integration description matches the actual feature and

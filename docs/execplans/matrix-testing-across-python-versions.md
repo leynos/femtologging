@@ -11,8 +11,8 @@ Status: COMPLETE (implemented; local validation complete)
 The CI workflow currently runs without an explicit Python-version matrix in
 `.github/workflows/ci.yml`, so compatibility across supported interpreters is
 not enforced per pull request. This change adds a matrix so tests and type
-checking are required to pass on Python `3.12`, `3.13`, and `3.14`, while
-Python `3.15` pre-release (3.15a lane) is executed as a non-blocking signal.
+checking are required to pass on Python `3.12`, `3.13`, and `3.14`, while Python
+`3.15` pre-release (3.15a lane) is executed as a non-blocking signal.
 
 After this change, a pull request will show separate CI checks per Python
 version, and maintainers will see early breakage against Python 3.15 alpha

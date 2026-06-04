@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime as dt
 import io
 import logging
 import time
@@ -428,14 +427,16 @@ class TestLogRecordAttributes:
     @staticmethod
     def test_asctime_uses_overridden_timestamp() -> None:
         """Formatted asctime should reflect the overridden timestamp."""
-        # 2023-11-14 22:13:20.456 UTC
+        # logging.Formatter uses local time unless its converter is overridden.
         timestamp = 1700000000.456
         record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
         formatter = logging.Formatter("%(asctime)s")
         formatted = formatter.format(record)
 
-        expected_dt = dt.datetime.fromtimestamp(timestamp, tz=dt.UTC)
-        expected_prefix = expected_dt.strftime("%Y-%m-%d %H:%M:%S")
+        expected_prefix = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.localtime(timestamp),
+        )
         assert formatted.startswith(expected_prefix), (
             f"asctime does not start with expected prefix: "
             f"got {formatted!r}, expected prefix {expected_prefix!r}"

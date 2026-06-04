@@ -353,8 +353,8 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 ADR 003 extends this API direction by adding Python callback filter parity for
 logger and root filters in a phased rollout.[^adr003]
 
-String level parameters accept case-insensitive names: `TRACE`, `DEBUG`,
-`INFO`, `WARN`, `WARNING`, `ERROR`, and `CRITICAL`. `WARN` and `WARNING` are
+String level parameters accept case-insensitive names: `TRACE`, `DEBUG`, `INFO`,
+`WARN`, `WARNING`, `ERROR`, and `CRITICAL`. `WARN` and `WARNING` are
 equivalent. `NOTSET` is not supported.
 
 ```python

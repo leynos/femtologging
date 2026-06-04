@@ -33,13 +33,13 @@ Rust ecosystem.
 ### 2.1 Compile-Time Safety as a Cornerstone
 
 Rust's powerful type system and ownership model enable the detection of many
-classes of bugs at compile time, including data races and use-after-free
-errors. `femtologging` will embrace this by avoiding `unsafe` code wherever
-possible. Any consideration of `unsafe` blocks, perhaps for highly specialized
-FFI interactions or performance-critical custom data structures, would be
-subject to rigorous justification and review, ensuring that safety guarantees
-are not compromised. This commitment ensures that the logging framework itself
-does not introduce instability into applications.
+classes of bugs at compile time, including data races and use-after-free errors.
+`femtologging` will embrace this by avoiding `unsafe` code wherever possible.
+Any consideration of `unsafe` blocks, perhaps for highly specialized FFI
+interactions or performance-critical custom data structures, would be subject
+to rigorous justification and review, ensuring that safety guarantees are not
+compromised. This commitment ensures that the logging framework itself does not
+introduce instability into applications.
 
 ### 2.2 Pervasive Multithreading via Producer-Consumer
 
@@ -649,7 +649,7 @@ Key features of `femtologging` macros will include:
 - **Ergonomic Structured Data Logging:** A key goal is to make structured
   logging intuitive. The macros should support syntax like:
   `info!(target: "network", "Request received from {}", client_ip; request_id = "123", user_agent = agent_string);`
-   This allows for both a formatted message and arbitrary key-value pairs.
+  This allows for both a formatted message and arbitrary key-value pairs.
 
 - **Compile-Time Format String Checks:** Rust macros can parse format strings
   and arguments at compile time, ensuring that the number and types of
@@ -1052,9 +1052,10 @@ potential future enhancement.
 - The rotating handler remains a thin wrapper around the file handler builder.
   Rotation thresholds live on `FemtoRotatingFileHandler`, while the worker
   thread owns the logic that evaluates when a rollover must occur.
-- The worker evaluates the predicate `current_file_len + buffered_bytes +
-  next_record_bytes >
-  max_bytes` before each write. Because `writeln!` appends a newline, the byte count includes both payload and newline to mirror I/O.
+- The worker evaluates the predicate
+  `current_file_len + buffered_bytes + next_record_bytes > max_bytes` before
+  each write. Because `writeln!` appends a newline, the byte count includes
+  both payload and newline to mirror I/O.
 - Measuring never flushes buffered data. When the predicate fires, the worker
   flushes once, swaps the live `BufWriter` onto an append handle so the
   original file descriptor can be closed, cascades existing backups (dropping
@@ -1119,11 +1120,11 @@ records through femtologging's handler pipeline.
 For hybrid Python/Rust applications, implementing `log::Log` provides unified
 logging:
 
-| Component                                       | Without `log::Log`   | With `log::Log`      |
-| ----------------------------------------------- | -------------------- | -------------------- |
-| Python code using `femtologging.get_logger()`   | ✓ Logs to handlers   | ✓ Logs to handlers   |
-| Rust code using `log::info!()`                  | ✗ Logs go nowhere    | ✓ Same handlers      |
-| Rust dependencies (e.g., `native-tls`, `hyper`) | ✗ Silent             | ✓ Captured           |
+| Component                                       | Without `log::Log` | With `log::Log`    |
+| ----------------------------------------------- | ------------------ | ------------------ |
+| Python code using `femtologging.get_logger()`   | ✓ Logs to handlers | ✓ Logs to handlers |
+| Rust code using `log::info!()`                  | ✗ Logs go nowhere  | ✓ Same handlers    |
+| Rust dependencies (e.g., `native-tls`, `hyper`) | ✗ Silent           | ✓ Captured         |
 
 **Level Mapping:**
 
@@ -1142,10 +1143,10 @@ follows for all other levels:
 
 **Logger Resolution:**
 
-The `log::Record::target()` field typically contains the Rust module path
-(e.g., `my_app::network::client`). This maps naturally to femtologging's
-hierarchical logger system via `Manager::get_logger()`, which creates parent
-loggers automatically based on dotted names.
+The `log::Record::target()` field typically contains the Rust module path (e.g.,
+`my_app::network::client`). This maps naturally to femtologging's hierarchical
+logger system via `Manager::get_logger()`, which creates parent loggers
+automatically based on dotted names.
 
 The implemented bridge normalizes Rust-style `::` separators to `.` before
 resolving the logger, preserving femtologging's dotted hierarchy semantics. If
@@ -1464,10 +1465,11 @@ Implement `log::Log` first for immediate ecosystem compatibility; a
 
   For Python-first hybrid applications, the package exposes
   `femtologging.setup_rust_tracing()` as an explicit convenience helper that
-  installs `tracing_subscriber::registry().with(femtologging_rs::tracing_compat::layer())` as the
-  process-global subscriber. This mirrors `setup_rust_logging()` in spirit
-  while keeping the underlying Rust API composable for callers that want to add
-  OpenTelemetry or other tracing layers themselves.
+  installs
+  `tracing_subscriber::registry().with(femtologging_rs::tracing_compat::layer())`
+  as the process-global subscriber. This mirrors `setup_rust_logging()` in
+  spirit while keeping the underlying Rust API composable for callers that want
+  to add OpenTelemetry or other tracing layers themselves.
 
 This focus on interoperability is strategically important. Rather than forcing
 the entire ecosystem to adopt a new set of logging macros, `femtologging` can
@@ -1685,13 +1687,12 @@ A phased approach will allow for iterative development and feedback:
     analysis of batching strategies and the chosen drain-loop approach.
 
 A strategic consideration for adoption is the "ecosystem play." While
-`femtologging` will have its own powerful API, prioritizing integration with
-the `log` crate (Phase 2) and `tracing` (Phase 3) could significantly
-accelerate its uptake. This allows existing libraries and applications to
-benefit from `femtologging`'s performance and handler architecture without
-needing to rewrite their instrumentation calls. This path might be more
-impactful than perfecting a unique file-based configuration format in the early
-stages.
+`femtologging` will have its own powerful API, prioritizing integration with the
+`log` crate (Phase 2) and `tracing` (Phase 3) could significantly accelerate
+its uptake. This allows existing libraries and applications to benefit from
+`femtologging`'s performance and handler architecture without needing to
+rewrite their instrumentation calls. This path might be more impactful than
+perfecting a unique file-based configuration format in the early stages.
 
 It is also important to manage scope regarding feature parity with CPython's
 `logging` module. CPython `logging` has a vast array of features, helper

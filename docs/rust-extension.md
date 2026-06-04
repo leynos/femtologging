@@ -475,19 +475,19 @@ Users building from source may disable tracing integration with
 layer constructor so they can compose femtologging with additional subscriber
 layers such as OpenTelemetry.
 
-`FemtoLogger` can now dispatch a record to multiple handlers. Handlers
-implement `FemtoHandlerTrait` and run their I/O on worker threads. The logger
-keeps its handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`,
-allowing handlers to be added through `&self`. Calling `add_handler()` pushes
-another reference into that list. When `log()` creates a `FemtoLogRecord`, it
-sends a clone to each configured handler, ensuring thread‑safe routing via the
+`FemtoLogger` can now dispatch a record to multiple handlers. Handlers implement
+`FemtoHandlerTrait` and run their I/O on worker threads. The logger keeps its
+handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`, allowing
+handlers to be added through `&self`. Calling `add_handler()` pushes another
+reference into that list. When `log()` creates a `FemtoLogRecord`, it sends a
+clone to each configured handler, ensuring thread‑safe routing via the
 handlers' MPSC queues.
 
 Handlers observe log records in the order they are attached. Adding a handler
 while other threads are logging is safe—new handlers only receive records
-logged after the addition completes. The `remove_handler()` method works
-through `&self` as well and detaches a handler so it no longer receives
-subsequent records.
+logged after the addition completes. The `remove_handler()` method works through
+`&self` as well and detaches a handler so it no longer receives subsequent
+records.
 
 Handlers manage worker threads; the logger simply forwards each record to every
 handler. Callers may invoke a handler's `flush()` method to ensure queued

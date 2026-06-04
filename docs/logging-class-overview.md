@@ -83,8 +83,8 @@ classDiagram
 ## Notes & coverage
 
 - `Filterer` is a mix-in providing support for `Filter` objects; both `Logger`
-  and every `Handler` subclass inherit from it to gain
-  `addFilter`/`removeFilter`, as seen in the core module definition
+  and every `Handler` subclass inherit from it to gain `addFilter`/
+  `removeFilter`, as seen in the core module definition
   ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/__init__.py?plain=1)).
 
 - Core logging classes (`Logger`, `Manager`, `PlaceHolder`, `LogRecord`,
@@ -94,7 +94,7 @@ classDiagram
   rotating‐file family, network-oriented handlers, queue helpers, etc.; for
   instance `BaseRotatingHandler` and its subclasses
   ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/handlers.py?plain=1)),
-   and buffering-based handlers
+  and buffering-based handlers
   ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/handlers.py?plain=1)).
 
 - Only inheritance and the most important *has-a* relations are shown; run-time

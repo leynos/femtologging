@@ -16,10 +16,10 @@ where applicable.
   [design §5](./rust-multithreaded-logging-framework-for-python-design.md#5-optimizing-for-performance).
 - [x] 1.1.3. Design Rust crate layout and expose PyO3 bindings. See
   [design §3.1](./rust-multithreaded-logging-framework-for-python-design.md#31-key-components)
-   and [rust extension](./rust-extension.md).
+  and [rust extension](./rust-extension.md).
 - [x] 1.1.4. Implement a basic logger in Rust with a matching Python API. See
   [design §3.1](./rust-multithreaded-logging-framework-for-python-design.md#31-key-components)
-   and
+  and
   [design §6.1](./rust-multithreaded-logging-framework-for-python-design.md#61-balancing-api-familiarity-with-rust-idioms).
 - [x] 1.1.5. Integrate the Rust extension into the Python packaging workflow.
   See [dev workflow](./dev-workflow.md#commands).
@@ -28,7 +28,7 @@ where applicable.
 
 - [ ] 1.2.1. Finalize `FemtoLogRecord` and core `FemtoLogger` behaviour. See
   [design §3.3](./rust-multithreaded-logging-framework-for-python-design.md#33-femtologrecord-structure)
-   and
+  and
   [design §4.3](./rust-multithreaded-logging-framework-for-python-design.md#43-macros-for-ergonomic-and-safe-logging).
   - [x] Expand `FemtoLogRecord` with timestamp, source location, thread info,
     and structured key-values.
@@ -41,7 +41,7 @@ where applicable.
 - [x] 1.2.2. Build a `Manager` registry so `get_logger(name)` reuses existing
   loggers and establishes dotted-name parent relationships. See
   [design §3.1](./rust-multithreaded-logging-framework-for-python-design.md#31-key-components)
-   and
+  and
   [configuration design §6](./configuration-design.md#6-logger-propagation).
 - [x] 1.2.3. Implement `propagate` behaviour from child loggers to the root
   logger. See
@@ -64,7 +64,7 @@ where applicable.
 - [x] 1.3.3. Enable multiple handler IDs per logger and `Arc`-shared handler
   instances. See
   [configuration design §1.1](./configuration-design.md#11-rust-builder-api-design)
-   and
+  and
   [configuration design §6](./configuration-design.md#6-logger-propagation).
 - [x] 1.3.4. Expose parity Python builders (`ConfigBuilder`,
   `LoggerConfigBuilder`, `FormatterBuilder`, `FileHandlerBuilder`, and
@@ -73,7 +73,7 @@ where applicable.
 - [x] 1.3.5. Establish a baseline Rust and Python test suite for builder flows,
   including integration coverage. See
   [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage)
-   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+  and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
 ## 2. Handler and transport expansion
 
@@ -87,12 +87,12 @@ where applicable.
 - [x] 2.1.2. Complete rotating-handler coverage by adding
   `FemtoTimedRotatingFileHandler`. See
   [design §3.4](./rust-multithreaded-logging-framework-for-python-design.md#34-handler-implementation-strategy)
-   and
+  and
   [design §6.3.1](./rust-multithreaded-logging-framework-for-python-design.md#631-rotating-file-handler-configuration-decisions).
 - [x] 2.1.3. Implement `FemtoRotatingFileHandler` with non-blocking,
   worker-thread rotation semantics. See
   [design §6.3.1](./rust-multithreaded-logging-framework-for-python-design.md#631-rotating-file-handler-configuration-decisions)
-   and
+  and
   [configuration design §1.3](./configuration-design.md#13-implemented-handler-builders).
   - [x] Expose `max_bytes` and `backup_count` in Rust builders and Python
     wrappers.
@@ -111,7 +111,7 @@ where applicable.
 - [x] 2.2.1. Deliver `FemtoSocketHandler` with framed serialization and robust
   reconnection behaviour. See
   [socket design update](./rust-multithreaded-logging-framework-for-python-design.md#femtosockethandler-implementation-update)
-   and [multithreading in PyO3](./multithreading-in-pyo3.md).
+  and [multithreading in PyO3](./multithreading-in-pyo3.md).
   - [x] Support TCP and Unix domain socket transports with builder and Python
     configuration parity.
   - [x] Serialize records with length-prefixed MessagePack/CBOR framing and
@@ -126,23 +126,23 @@ where applicable.
 - [x] 2.2.2. Deliver `FemtoHTTPHandler` and `HTTPHandlerBuilder` with retry and
   parity-driven integration testing. See
   [HTTP design](./rust-multithreaded-logging-framework-for-python-design.md#femtohttphandler-design)
-   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+  and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
 ### 2.3. Concurrency controls and lifecycle
 
 - [x] 2.3.1. Implement back-pressure controls via bounded queues and overflow
   policies. See
   [formatters and handlers port](./formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
-   and
+  and
   [design §5.1](./rust-multithreaded-logging-framework-for-python-design.md#51-minimizing-overhead-at-the-log-call-site-the-hot-path).
 - [x] 2.3.2. Implement graceful shutdown semantics for logger and handler worker
   threads. See
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration)
-   and
+  and
   [logging sequence diagrams](./logging-sequence-diagrams.md#5-shutdown--orderly-shutdown-at-process-exit).
 - [x] 2.3.3. Deliver batching optimization design for consumer threads. See
-  [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads),
-  [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap),
+  <!-- markdownlint-disable-next-line MD013 -->
+  [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads), [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap),
   and [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md).
 - [ ] 2.3.4. Implement drain-loop batching and vectored I/O for file and
   stream handler consumer threads. Introduce `recv_batch` helper and
@@ -195,35 +195,35 @@ where applicable.
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
 - [ ] 3.2.3. Implement compile-time log-level filtering via Cargo features. See
   [design §5.1](./rust-multithreaded-logging-framework-for-python-design.md#51-minimizing-overhead-at-the-log-call-site-the-hot-path)
-   and
+  and
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap).
 - [x] 3.2.4. Extend runtime reconfiguration to support richer handler and filter
   mutation workflows beyond level changes. See
   [design §7.2](./rust-multithreaded-logging-framework-for-python-design.md#72-dynamic-reconfiguration)
-   and
+  and
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
 - [x] 3.2.5. Deliver Python standard library filter parity for logger and root
   filters. See
   [ADR 003 decision outcome](./adr-003-python-stdlib-filter-parity.md#decision-outcome--proposed-direction)
-   and [configuration design §1.1.1](./configuration-design.md#111-filters).
+  and [configuration design §1.1.1](./configuration-design.md#111-filters).
 - [x] 3.2.5.1. Implement and verify producer-path callback filters:
   execute Python callback filters on the producer path and persist accepted
   enrichments in Rust-owned metadata. Completion criteria: unit tests confirm
   accepted enrichment persistence on records that pass filtering. See
   [ADR 003 phase 1](./adr-003-python-stdlib-filter-parity.md#phase-1-producer-path-callback-filter-support)
-   and [configuration design §1.1.1](./configuration-design.md#111-filters).
+  and [configuration design §1.1.1](./configuration-design.md#111-filters).
 - [x] 3.2.5.2. Implement `dictConfig` filter factory parsing for `"()"` with
   ADR 003 conflict rejection semantics for mixed declarative/factory forms.
   Completion criteria: parser tests cover accepted factory declarations and
   rejected mixed or ambiguous forms. See
   [ADR 003 phase 2](./adr-003-python-stdlib-filter-parity.md#phase-2-configuration-parity-expansion)
-   and [configuration design §2.2](./configuration-design.md#22-dictconfig).
+  and [configuration design §2.2](./configuration-design.md#22-dictconfig).
 - [x] 3.2.5.3. Add integration and concurrency tests for contextvar enrichment
   propagation and thread/async safety. Completion criteria: CI remains green
   with reproducible tests that prove propagation under concurrent and async
   execution paths. See
   [ADR 003 phase 3](./adr-003-python-stdlib-filter-parity.md#phase-3-conformance-and-hardening)
-   and
+  and
   [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
 
 ### 3.3. Rust ecosystem integration
@@ -232,7 +232,7 @@ where applicable.
   target-to-logger routing, flush bridging, feature gating, and Rust/Python
   integration tests. See
   [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
-   and
+  and
   [design §6.4.1](./rust-multithreaded-logging-framework-for-python-design.md#641-implementation-strategy-for-loglog).
 - [x] 3.3.2. Provide migration notes for `log-compat`, including when and how to
   call `setup_rust_logging()` during start-up. See
@@ -240,7 +240,7 @@ where applicable.
 - [x] 3.3.3. Provide a `tracing_subscriber::Layer` so femtologging handlers can
   process `tracing` spans and events. See
   [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
-   and
+  and
   [Architectural Decision Record (ADR) 002 phase 2](./adr-002-journald-and-otel-support.md#phase-2--tracing-layer-for-opentelemetry-and-more).
 
 ### 3.4. Python exception payloads and macro ergonomics
@@ -253,9 +253,9 @@ where applicable.
 - [x] 3.4.2. Improve structured logging in macros to simplify context
   propagation. See
   [design §6.2](./rust-multithreaded-logging-framework-for-python-design.md#62-logging-macros-the-primary-user-interface)
-   and
+  and
   [design §8.3](./rust-multithreaded-logging-framework-for-python-design.md#83-exploring-advanced-asynchronous-capabilities).
-   **Note**: Fast-path optimization for empty-context merges remains as tracked
+  **Note**: Fast-path optimization for empty-context merges remains as tracked
   technical debt (see
   [ExecPlan 3.4.2 — Risks](./execplans/3-4-2-improve-structured-logging-in-macros.md#risks)).
 
@@ -266,23 +266,23 @@ where applicable.
 - [x] 4.1.1. Establish baseline unit and integration testing across Rust and
   Python paths. See
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
-   and
+  and
   [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
 - [x] 4.1.2. Expand test coverage and start benchmarking for configuration and
   handler paths. See
   [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage)
-   and
+  and
   [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach).
 - [ ] 4.1.3. Benchmark directly against picologging and optimize hot paths based
   on measured bottlenecks. See
   [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach)
-   and
+  and
   [design §5](./rust-multithreaded-logging-framework-for-python-design.md#5-optimizing-for-performance).
 - [ ] 4.1.4. Provide unit and integration tests for all remaining roadmap
   features as they land (including timed rotation, tracing, and format-level
   compile-time filtering). See
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
-   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+  and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
 ### 4.2. Delivery and adoption
 
@@ -292,12 +292,12 @@ where applicable.
 - [ ] 4.2.2. Produce migration guidance for existing picologging adopters,
   including API parity limits and operational differences. See
   [design §6.1](./rust-multithreaded-logging-framework-for-python-design.md#61-balancing-api-familiarity-with-rust-idioms)
-   and
+  and
   [design §9.2](./rust-multithreaded-logging-framework-for-python-design.md#92-alignment-with-user-requirements).
 - [ ] 4.2.3. Publish the femtologging package and complete user-facing
   documentation updates for shipped capabilities. See
   [design §9.3](./rust-multithreaded-logging-framework-for-python-design.md#93-call-to-actionnext-steps)
-   and [user guide](./users-guide.md).
+  and [user guide](./users-guide.md).
 
 ## 5. Roadmap consolidation checks
 

@@ -134,10 +134,10 @@ ______________________________________________________________________
 
 Table: Files requiring modification
 
-| File                                              | Changes                                        |
-| ------------------------------------------------- | ---------------------------------------------- |
-| `rust_extension/src/handlers/file_builder.rs`     | Rename `state` → `common`, update references   |
-| `rust_extension/src/handlers/rotating_builder.rs` | Rename `state` → `common`, update references   |
+| File                                              | Changes                                      |
+| ------------------------------------------------- | -------------------------------------------- |
+| `rust_extension/src/handlers/file_builder.rs`     | Rename `state` → `common`, update references |
+| `rust_extension/src/handlers/rotating_builder.rs` | Rename `state` → `common`, update references |
 
 ______________________________________________________________________
 
