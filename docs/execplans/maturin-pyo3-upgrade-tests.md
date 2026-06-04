@@ -4,7 +4,7 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
 and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ## Purpose / big picture
 
@@ -83,7 +83,8 @@ repository layout and CI files.
 - [x] 2026-06-05T01:43:57+02:00 Ran and fixed `make typecheck`.
 - [x] 2026-06-05T01:56:29+02:00 Ran and fixed `make test`.
 - [x] 2026-06-05T01:56:29+02:00 Commit the gated change.
-- [ ] Create the draft pull request.
+- [x] 2026-06-05T01:58:51+02:00 Created draft pull request
+  <https://github.com/leynos/femtologging/pull/375>.
 
 ## Surprises & Discoveries
 
@@ -178,3 +179,7 @@ formatting changes:
 The branch now pins maturin and PyO3 to the upgraded versions, adds adapted
 maturin wheel compatibility tests, adds PyO3 `trybuild` compile tests, and
 cleans up gate failures encountered during validation.
+
+The implementation was committed as `39d80dcbdc521e3022f713535694a0a7427cb21c`
+and opened as draft pull request
+<https://github.com/leynos/femtologging/pull/375>.
