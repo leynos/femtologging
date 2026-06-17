@@ -266,23 +266,26 @@ where applicable.
 - [x] 4.1.1. Establish baseline unit and integration testing across Rust and
   Python paths. See
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
-  and
+   and
   [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
 - [x] 4.1.2. Expand test coverage and start benchmarking for configuration and
   handler paths. See
   [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage)
-  and
+   and
   [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach).
 - [ ] 4.1.3. Benchmark directly against picologging and optimize hot paths based
-  on measured bottlenecks. See
-  [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach)
-  and
-  [design §5](./rust-multithreaded-logging-framework-for-python-design.md#5-optimizing-for-performance).
+  on measured bottlenecks. Expanded and superseded by
+  [Phase 6](#6-performance-benchmarking-and-optimization), which formalizes the
+  public comparison suite and the internal performance laboratory. See
+  [design §8.2](./rust-multithreaded-logging-framework-for-python-design.md#82-benchmarking-approach),
+  [design §5](./rust-multithreaded-logging-framework-for-python-design.md#5-optimizing-for-performance),
+   and
+  [benchmarking and optimization design](./benchmarking-and-optimization-design.md).
 - [ ] 4.1.4. Provide unit and integration tests for all remaining roadmap
   features as they land (including timed rotation, tracing, and format-level
   compile-time filtering). See
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
-  and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
 ### 4.2. Delivery and adoption
 
@@ -314,3 +317,215 @@ where applicable.
   state and mark completed work as done. See
   [dev workflow §commands](./dev-workflow.md#commands) and
   [rust extension](./rust-extension.md#rust-log-crate-bridge).
+
+
+## 6. Performance benchmarking and optimization
+
+Phase idea: femtologging's queue-based architecture delivers lower
+caller-visible latency and competitive end-to-end throughput against the
+standard library `logging` module, `picologging`, and `loguru` for I/O-heavy
+workloads, and the internal performance laboratory can localize and remove the
+dominant consumer-side costs. Each step below validates or falsifies one part of
+that hypothesis. See
+[benchmarking and optimization design](./benchmarking-and-optimization-design.md).
+
+
+### 6.1. Benchmark harness foundations
+
+This step answers whether a single harness can drive every library through one
+fair protocol and emit a stable result schema. It unlocks every later step.
+
+- [ ] 6.1.1. Establish the `benchmarks/femtobench` package skeleton with
+  `pyproject.toml`, a pinned competitor lockfile (standard library,
+  `picologging`, `loguru`), and a `results/` artefact tree. Success: `uv run
+  python -m benchmarks.femtobench.runner --smoke` runs against a stub case. See
+  [benchmarking design §5.1](./benchmarking-and-optimization-design.md#51-repository-structure).
+- [ ] 6.1.2. Define the result schema and metadata capture in `schema.py`: the
+  metrics of design §7 plus commit SHA, Python and package versions, operating
+  system, kernel, CPU model, frequency governor, Rust profile, feature flags,
+  `RUSTFLAGS`, and filesystem target. Success: the schema round-trips to JSON and
+  validates a sample record. See
+  [benchmarking design §7](./benchmarking-and-optimization-design.md#7-metrics-and-result-schema)
+   and
+  [benchmarking design §8](./benchmarking-and-optimization-design.md#8-measurement-protocols).
+- [ ] 6.1.3. Implement the adapter base class and fairness contract in
+  `adapters/base.py`: a uniform configure, warm-up, log, flush, drain, verify,
+  and teardown interface, default-sink removal, colour and introspection
+  disablement, and idiomatic versus parity modes. Success: a conformance test
+  asserts no default handler remains attached before the measured loop and that
+  parity mode normalizes sink and formatting. Requires 6.1.1. See
+  [benchmarking design §5.2](./benchmarking-and-optimization-design.md#52-adapter-layer-and-the-fairness-contract)
+   and
+  [benchmarking design §12](./benchmarking-and-optimization-design.md#12-verification).
+- [ ] 6.1.4. Integrate `pyperf` as the timing engine in `runner.py` and wrap
+  `pyperf compare_to` in `compare.py`. Success: a run emits `pyperf` JSON with
+  worker processes and metadata, and `compare.py` reports the t-test
+  significance verdict between two runs. Requires 6.1.2. See
+  [benchmarking design §5.4](./benchmarking-and-optimization-design.md#54-python-harness)
+   and
+  [benchmarking design §8](./benchmarking-and-optimization-design.md#8-measurement-protocols).
+- [ ] 6.1.5. Add the `bench-smoke`, `bench-python`, `bench-rust`, and
+  `bench-compare` Makefile targets and a CI smoke job. Success: `make
+  bench-smoke` runs in CI within the existing gate budget and fails on a
+  correctness mismatch. Requires 6.1.1, 6.1.4. See
+  [benchmarking design §5.1](./benchmarking-and-optimization-design.md#51-repository-structure)
+   and
+  [benchmarking design §11](./benchmarking-and-optimization-design.md#11-regression-policy-and-reporting).
+
+
+### 6.2. Public comparison suite: v0 adapters and cases
+
+This step delivers the narrow but meaningful v0 leaderboards for caller-visible
+cost and end-to-end completion across the core comparators. Requires 6.1.
+
+- [ ] 6.2.1. Implement the standard library adapters (`stdlib_logging`,
+  `stdlib_queue`) with `QueueHandler`/`QueueListener` drain-and-stop semantics.
+  Requires 6.1.3. See
+  [benchmarking design §4](./benchmarking-and-optimization-design.md#4-comparison-targets).
+- [ ] 6.2.2. Implement the `loguru` adapters (`loguru_sync`, `loguru_enqueue`),
+  including preconfigured-sink removal and a `logger.complete()` drain. Requires
+  6.1.3. See
+  [benchmarking design §4](./benchmarking-and-optimization-design.md#4-comparison-targets)
+   and
+  [benchmarking design §3](./benchmarking-and-optimization-design.md#3-benchmark-philosophy-three-leaderboards).
+- [ ] 6.2.3. Implement the `picologging` adapters (`picologging_sync`,
+  `picologging_queue`) with per-interpreter availability probing that logs a skip
+  rather than omitting the row silently. Requires 6.1.3. See
+  [benchmarking design §4](./benchmarking-and-optimization-design.md#4-comparison-targets)
+   and
+  [benchmarking design §12](./benchmarking-and-optimization-design.md#12-verification).
+- [ ] 6.2.4. Implement the `femtologging` adapter (default handler model) and the
+  null, counting, and slow sinks plus a loopback socket server. Requires 6.1.3.
+  See
+  [benchmarking design §5.1](./benchmarking-and-optimization-design.md#51-repository-structure).
+- [ ] 6.2.5. Implement the v0 case set: `disabled_literal`, `disabled_args`,
+  `enabled_literal_null`, `enabled_args_null`, file with one, eight, and
+  thirty-two threads in synchronous and queue modes, `burst_then_flush`,
+  `slow_consumer_saturation`, and the `basicConfig`, `dictConfig`, and builder
+  configuration cases. Success: v0 produces caller-latency and
+  drained-throughput tables for every v0 comparator, with zero drops outside the
+  saturation case. Requires 6.2.1, 6.2.2, 6.2.3, 6.2.4. See
+  [benchmarking design §9](./benchmarking-and-optimization-design.md#9-concrete-benchmark-groups).
+
+
+### 6.3. Public comparison suite: full workload matrix
+
+This step extends coverage to the full dimension matrix and both run modes,
+answering how `femtologging` compares across realistic handlers and concurrency.
+Requires 6.2.
+
+- [ ] 6.3.1. Add the remaining workload cases: structured fields, context stack,
+  filter accept and reject, exception logging, stack info, socket serialization,
+  and sustained logging. See
+  [benchmarking design §6](./benchmarking-and-optimization-design.md#6-benchmark-dimensions)
+   and
+  [benchmarking design §9](./benchmarking-and-optimization-design.md#9-concrete-benchmark-groups).
+- [ ] 6.3.2. Add the handler progression: stream to a non-terminal sink, file on
+  `tmpfs` and disk, rotating file without and with rollover, socket over TCP and
+  Unix domain sockets, and the slow-sink simulation. See
+  [benchmarking design §6](./benchmarking-and-optimization-design.md#6-benchmark-dimensions).
+- [ ] 6.3.3. Parametrize concurrency over 1, 2, 4, 8, 16, 32, and twice the
+  logical CPU count, with both fixed-total and fixed-per-producer variants. See
+  [benchmarking design §6](./benchmarking-and-optimization-design.md#6-benchmark-dimensions).
+- [ ] 6.3.4. Implement the `femtologging` configuration sweep over queue
+  capacity, batch capacity, flush policy, formatter, timestamp mode, and overflow
+  policy. See
+  [benchmarking design §6](./benchmarking-and-optimization-design.md#6-benchmark-dimensions).
+- [ ] 6.3.5. Run idiomatic and parity modes and emit the `summary.md` report with
+  a per-table benchmark-meaning note. Success: each leaderboard table carries its
+  measurement-boundary caption and no table mixes caller latency with end-to-end
+  work. See
+  [benchmarking design §11.2](./benchmarking-and-optimization-design.md#112-reporting).
+
+
+### 6.4. Internal performance laboratory
+
+This step localizes consumer-side cost with Criterion microbenchmarks across the
+feature matrix. It may proceed in parallel with step 6.2.
+
+- [ ] 6.4.1. Add `[[bench]]` entries with `harness = false` and the `hot_path`
+  bench covering the level check and record creation. Success: the bench builds
+  and runs under `--features python`. See
+  [benchmarking design §5.5](./benchmarking-and-optimization-design.md#55-rust-internal-laboratory)
+   and
+  [benchmarking design §9.1](./benchmarking-and-optimization-design.md#91-group-a-disabled-hot-path).
+- [ ] 6.4.2. Add the `formatter` bench: literal, two-argument, four-field
+  structured, short exception, chained exception, and stack-info formatting. See
+  [benchmarking design §10.2](./benchmarking-and-optimization-design.md#102-playbook-by-failing-benchmark).
+- [ ] 6.4.3. Add the `channel` bench: single-producer and n-producer send under
+  varied capacity and contention. See
+  [benchmarking design §5.5](./benchmarking-and-optimization-design.md#55-rust-internal-laboratory).
+- [ ] 6.4.4. Add the `file_worker` and `batching` benches sweeping batch
+  capacity, producer threads, message size, and sink, measuring syscalls per
+  record, flush latency, shutdown drain latency, and p99 caller latency. Success:
+  results indicate whether contiguous batch writes precede `write_vectored`.
+  Requires 6.4.1. See
+  [benchmarking design §9.4](./benchmarking-and-optimization-design.md#94-group-d-file-batching)
+   and
+  [ADR 004 phase 1](./adr-004-batching-optimizations-in-consumer-threads.md#phase-1-core-batch-collection-and-filestream-handler-batching).
+- [ ] 6.4.5. Add the `socket_worker` bench: MessagePack serialization into a
+  reusable buffer without I/O, loopback write with prebuilt frames, and the
+  combined path. See
+  [benchmarking design §9.5](./benchmarking-and-optimization-design.md#95-group-e-socket-handler).
+
+
+### 6.5. Saturation, backpressure, and soak diagnostics
+
+This step characterizes tail behaviour and memory under stress, where pleasant
+averages hide catastrophe. Requires 6.2.
+
+- [ ] 6.5.1. Implement the Group F saturation cases with drops, blocked time,
+  drain time, and recovery metrics, wiring `femtologging`'s dropped-record count
+  into the result schema. See
+  [benchmarking design §9.6](./benchmarking-and-optimization-design.md#96-group-f-saturation-and-backpressure).
+- [ ] 6.5.2. Capture slow-sink comparator behaviour, including `loguru`
+  `enqueue=True` unbounded-memory growth, reported rather than tuned away.
+  Requires 6.2.2. See
+  [benchmarking design §9.6](./benchmarking-and-optimization-design.md#96-group-f-saturation-and-backpressure).
+- [ ] 6.5.3. Implement the soak test: ten minutes, a fixed rate below drain
+  capacity with periodic bursts above it, sampling resident set size each second.
+  Success: `femtologging` shows no monotonic unbounded growth. See
+  [benchmarking design §10.2](./benchmarking-and-optimization-design.md#102-playbook-by-failing-benchmark).
+
+
+### 6.6. Regression gating and reporting
+
+This step makes regressions fail the build against rolling, per-machine
+baselines. Requires 6.1 and 6.2.
+
+- [ ] 6.6.1. Implement the per-class regression gates of Table 5, consuming the
+  `pyperf` significance verdict, with always-fail behaviour on drops and
+  correctness mismatch. See
+  [benchmarking design §11.1](./benchmarking-and-optimization-design.md#111-regression-gates).
+- [ ] 6.6.2. Implement rolling per-machine-class baselines and raw-artefact
+  retention; never compare across machine classes. See
+  [benchmarking design §11.1](./benchmarking-and-optimization-design.md#111-regression-gates).
+- [ ] 6.6.3. Publish trend lines by commit so that a slow creep is caught before
+  it becomes a swamp. See
+  [benchmarking design §11](./benchmarking-and-optimization-design.md#11-regression-policy-and-reporting).
+
+
+### 6.7. Benchmark-guided optimization
+
+This step converts measured bottlenecks into kept changes through a strict
+measure-hypothesize-change-rerun loop. Requires 6.4 and 6.6.
+
+- [ ] 6.7.1. Adopt the optimization pull-request evidence template (case, before
+  and after, relative change, significance, correctness, memory, complexity, and
+  workload rationale) as a contribution requirement. See
+  [benchmarking design §10.1](./benchmarking-and-optimization-design.md#101-the-loop).
+- [ ] 6.7.2. Implement contiguous batch-buffer writes for the file and stream
+  handlers where Group D shows benefit, and decide on `write_vectored` from
+  measured data. Requires 6.4.4. See
+  [benchmarking design §9.4](./benchmarking-and-optimization-design.md#94-group-d-file-batching),
+  [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md), and roadmap
+  item 2.3.4.
+- [ ] 6.7.3. Apply lazy metadata and an inline small map for the common
+  zero-to-four-field record where Group B shows allocation cost. Requires 6.4.1.
+  See
+  [benchmarking design §10.2](./benchmarking-and-optimization-design.md#102-playbook-by-failing-benchmark).
+- [ ] 6.7.4. Tune channel capacity and batch-drain settings where Group C, Group
+  D, and the channel bench show contention; retain `crossbeam-channel` absent a
+  measured loss. Requires 6.4.3, 6.4.4. See
+  [benchmarking design §2.1](./benchmarking-and-optimization-design.md#21-goals)
+   and [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md).
