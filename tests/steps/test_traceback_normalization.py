@@ -178,6 +178,43 @@ class TestTracebackNormalization:
             "frames and keep a stable pytest entrypoint frame"
         )
 
+    def test_normalize_traceback_output_canonicalizes_private_pytest_entrypoint(
+        self,
+    ) -> None:
+        """Handle pytest private entrypoint spelling used by newer versions.
+
+        Returns
+        -------
+        None
+            Asserts that ``_console_main`` normalizes to the stable public
+            entrypoint spelling used by snapshots.
+
+        """
+        class_name = self.__class__.__name__
+        output = (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    sys.exit(_console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+            '  File "/tmp/pytest.py", line 31, in _main\n'
+            "    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)\n"
+        )
+        expected = (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+            '  File "<file>", line <N>, in main\n'
+            "    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)\n"
+        )
+
+        assert normalize_traceback_output(output) == expected, (
+            f"{class_name}: normalize_traceback_output should canonicalize "
+            "private pytest entrypoint calls"
+        )
+
     def test_normalize_traceback_output_keeps_non_launcher_main_frame(self) -> None:
         """Keep application main frames that are not runpy wrappers.
 

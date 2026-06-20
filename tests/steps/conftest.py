@@ -38,11 +38,14 @@ class LauncherFrameFunc(enum.StrEnum):
 _LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset(
     member.value for member in LauncherFrameFunc
 )
-_SYSTEM_EXIT_PYTEST_LINE = "raise SystemExit(pytest.console_main())"
-_SYSTEM_EXIT_PYTEST_PRIVATE_LINE = "raise SystemExit(pytest._console_main())"
-_SYSTEM_EXIT_BARE_PYTEST_PRIVATE_LINE = "raise SystemExit(_console_main())"
-_SYS_EXIT_PYTEST_PRIVATE_LINE = "sys.exit(_console_main())"
-_PYTEST_PRIVATE_MAIN_LINE = "code = _main(prog=_get_prog_name(sys.argv))"
+_SYSTEM_EXIT_PYTEST_LINES: frozenset[str] = frozenset({
+    "raise SystemExit(pytest.console_main())",
+    "raise SystemExit(pytest._console_main())",
+    "raise SystemExit(_console_main())",
+    "sys.exit(_console_main())",
+})
+_PYTEST_MAIN_INVOCATION_PREFIX = "code = _main("
+_PYTEST_CMDLINE_MAIN_PREFIX = "ret: ExitCode | int = "
 _SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
 _RUNPY_INVOCATION_SNIPPET = "runpy.run_module("
 
@@ -103,7 +106,6 @@ def _normalize_launcher_frames(output: str) -> str:
     lines = output.splitlines()
     normalized_lines: list[str] = []
     index = 0
-    should_normalize_private_main_frame = False
 
     while index < len(lines):
         frame = _parse_frame(lines, index)
@@ -121,18 +123,10 @@ def _normalize_launcher_frames(output: str) -> str:
             continue
 
         normalized_lines.append(
-            _normalize_frame_line(
-                frame.frame_line,
-                should_normalize_private_main_frame=(
-                    should_normalize_private_main_frame
-                ),
-            )
+            _normalize_frame_line(frame.frame_line, frame.frame_func, frame.code_line)
         )
         if frame.code_line:
             normalized_lines.append(_normalize_frame_code_line(frame.code_line))
-        should_normalize_private_main_frame = (
-            frame.code_line == _PYTEST_PRIVATE_MAIN_LINE
-        )
 
     rebuilt = "\n".join(normalized_lines)
     if output.endswith("\n"):
@@ -169,28 +163,19 @@ def _parse_frame(lines: list[str], index: int) -> _FrameInfo | None:
 
 def _normalize_frame_code_line(code_line: str) -> str:
     """Normalize volatile traceback source lines to stable output."""
-    if code_line in {
-        _SYSTEM_EXIT_PYTEST_LINE,
-        _SYSTEM_EXIT_PYTEST_PRIVATE_LINE,
-        _SYSTEM_EXIT_BARE_PYTEST_PRIVATE_LINE,
-        _SYS_EXIT_PYTEST_PRIVATE_LINE,
-    }:
+    if code_line in _SYSTEM_EXIT_PYTEST_LINES:
         return "    sys.exit(console_main())"
-    if code_line == _PYTEST_PRIVATE_MAIN_LINE:
+    if code_line.startswith(_PYTEST_MAIN_INVOCATION_PREFIX):
         return "    code = main()"
     return f"    {code_line}"
 
 
-def _normalize_frame_line(
-    frame_line: str,
-    *,
-    should_normalize_private_main_frame: bool,
-) -> str:
+def _normalize_frame_line(frame_line: str, frame_func: str, code_line: str) -> str:
     """Normalize volatile traceback frame names to stable output."""
-    if frame_line.endswith("in _console_main"):
-        return f"{frame_line.removesuffix('in _console_main')}in console_main"
-    if frame_line.endswith("in _main") and should_normalize_private_main_frame:
-        return f"{frame_line.removesuffix('in _main')}in main"
+    if frame_func == "_console_main":
+        return frame_line.removesuffix(" in _console_main") + " in console_main"
+    if frame_func == "_main" and code_line.startswith(_PYTEST_CMDLINE_MAIN_PREFIX):
+        return frame_line.removesuffix(" in _main") + " in main"
     return frame_line
 
 
