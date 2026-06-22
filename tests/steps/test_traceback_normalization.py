@@ -215,6 +215,39 @@ class TestTracebackNormalization:
             "private pytest entrypoint calls"
         )
 
+    def test_normalize_traceback_output_canonicalizes_unqualified_pytest_entrypoint(
+        self,
+    ) -> None:
+        """Handle unqualified pytest private entrypoint launcher frames.
+
+        Returns
+        -------
+        None
+            Asserts that ``raise SystemExit(_console_main())`` normalizes to
+            the stable public entrypoint spelling used by snapshots.
+
+        """
+        class_name = self.__class__.__name__
+        output = (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 9, in <module>\n'
+            "    raise SystemExit(_console_main())\n"
+            '  File "/tmp/_pytest/config/__init__.py", line 201, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+        )
+        expected = (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        )
+
+        assert normalize_traceback_output(output) == expected, (
+            f"{class_name}: normalize_traceback_output should canonicalize "
+            "unqualified private pytest entrypoint calls"
+        )
+
     def test_normalize_traceback_output_keeps_non_launcher_main_frame(self) -> None:
         """Keep application main frames that are not runpy wrappers.
 
