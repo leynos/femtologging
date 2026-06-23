@@ -116,6 +116,43 @@ class TestTracebackNormalization:
             "frames and keep a stable pytest entrypoint frame"
         )
 
+    def test_normalize_traceback_output_accepts_private_pytest_entrypoint(
+        self,
+    ) -> None:
+        """Normalize pytest private entrypoint frames to public spelling.
+
+        Returns
+        -------
+        None
+            Asserts pytest launcher helper renames do not destabilize
+            snapshots.
+
+        """
+        class_name = self.__class__.__name__
+        output = (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    sys.exit(_console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+            '  File "/tmp/pytest.py", line 30, in _main\n'
+            "    config = prepareconfig(args, plugins)\n"
+        )
+        expected = (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+            '  File "<file>", line <N>, in main\n'
+            "    config = prepareconfig(args, plugins)\n"
+        )
+
+        assert normalize_traceback_output(output) == expected, (
+            f"{class_name}: normalize_traceback_output should keep pytest "
+            "entrypoint snapshots stable when the helper is private"
+        )
+
     def test_normalize_traceback_output_keeps_non_launcher_main_frame(self) -> None:
         """Keep application main frames that are not runpy wrappers.
 

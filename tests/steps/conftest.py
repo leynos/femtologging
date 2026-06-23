@@ -39,6 +39,9 @@ _LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset(
     member.value for member in LauncherFrameFunc
 )
 _SYSTEM_EXIT_PYTEST_LINE = "raise SystemExit(pytest.console_main())"
+_SYSTEM_EXIT_PYTEST_PRIVATE_LINE = "raise SystemExit(pytest._console_main())"
+_SYS_EXIT_PYTEST_PRIVATE_LINE = "sys.exit(_console_main())"
+_PYTEST_PRIVATE_MAIN_LINE = "code = _main(prog=_get_prog_name(sys.argv))"
 _SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
 _RUNPY_INVOCATION_SNIPPET = "runpy.run_module("
 
@@ -99,6 +102,7 @@ def _normalize_launcher_frames(output: str) -> str:
     lines = output.splitlines()
     normalized_lines: list[str] = []
     index = 0
+    should_normalize_private_main_frame = False
 
     while index < len(lines):
         frame = _parse_frame(lines, index)
@@ -115,9 +119,19 @@ def _normalize_launcher_frames(output: str) -> str:
         ):
             continue
 
-        normalized_lines.append(frame.frame_line)
+        normalized_lines.append(
+            _normalize_frame_line(
+                frame.frame_line,
+                should_normalize_private_main_frame=(
+                    should_normalize_private_main_frame
+                ),
+            )
+        )
         if frame.code_line:
             normalized_lines.append(_normalize_frame_code_line(frame.code_line))
+        should_normalize_private_main_frame = (
+            frame.code_line == _PYTEST_PRIVATE_MAIN_LINE
+        )
 
     rebuilt = "\n".join(normalized_lines)
     if output.endswith("\n"):
@@ -154,9 +168,28 @@ def _parse_frame(lines: list[str], index: int) -> _FrameInfo | None:
 
 def _normalize_frame_code_line(code_line: str) -> str:
     """Normalize volatile traceback source lines to stable output."""
-    if code_line == _SYSTEM_EXIT_PYTEST_LINE:
+    if code_line in {
+        _SYSTEM_EXIT_PYTEST_LINE,
+        _SYSTEM_EXIT_PYTEST_PRIVATE_LINE,
+        _SYS_EXIT_PYTEST_PRIVATE_LINE,
+    }:
         return "    sys.exit(console_main())"
+    if code_line == _PYTEST_PRIVATE_MAIN_LINE:
+        return "    code = main()"
     return f"    {code_line}"
+
+
+def _normalize_frame_line(
+    frame_line: str,
+    *,
+    should_normalize_private_main_frame: bool,
+) -> str:
+    """Normalize volatile traceback frame names to stable output."""
+    if frame_line.endswith("in _console_main"):
+        return f"{frame_line.removesuffix('in _console_main')}in console_main"
+    if frame_line.endswith("in _main") and should_normalize_private_main_frame:
+        return f"{frame_line.removesuffix('in _main')}in main"
+    return frame_line
 
 
 def _is_runpy_launcher_path(frame_file: str) -> bool:

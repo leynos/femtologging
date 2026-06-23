@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import email.parser
-import importlib.util
 import re
 import shutil
 import subprocess  # noqa: S404 - tests invoke pinned maturin build commands.
@@ -148,11 +147,14 @@ def toolchain_available() -> bool:
     True
 
     """
-    return (
-        shutil.which("cargo") is not None
-        and shutil.which("rustc") is not None
-        and importlib.util.find_spec("maturin") is not None
+    if shutil.which("cargo") is None or shutil.which("rustc") is None:
+        return False
+    result = subprocess.run(  # noqa: S603, RUF100
+        [sys.executable, "-m", "maturin", "--version"],
+        check=False,
+        capture_output=True,
     )
+    return result.returncode == 0
 
 
 def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:

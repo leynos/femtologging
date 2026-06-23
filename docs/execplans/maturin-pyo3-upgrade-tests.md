@@ -85,6 +85,13 @@ repository layout and CI files.
 - [x] 2026-06-05T01:56:29+02:00 Commit the gated change.
 - [x] 2026-06-05T01:58:51+02:00 Created draft pull request
   <https://github.com/leynos/femtologging/pull/375>.
+- [x] 2026-06-23T00:00:00+02:00 Addressed review feedback by making
+  `toolchain_available()` probe `python -m maturin --version` end to end.
+- [x] 2026-06-23T00:00:00+02:00 Fixed pytest 9 private entrypoint
+  traceback normalization encountered while rerunning `make test`.
+- [x] 2026-06-23T00:00:00+02:00 Reran and passed `make fmt`,
+  `make markdownlint`, `make check-fmt`, `make lint`, `make typecheck`,
+  `make test`, and `git diff --check`.
 
 ## Surprises & Discoveries
 
@@ -106,6 +113,13 @@ repository layout and CI files.
   wrapping across several documents. `markdownlint` then exposed two existing
   long-line cases, one of which required a narrowly scoped MD013 suppression
   for an unbreakable roadmap link.
+- `importlib.util.find_spec("maturin")` can succeed even when
+  `python -m maturin` fails because the maturin Rust script is unavailable. The
+  compatibility skip guard must therefore run the same module entry point that
+  the wheel-build helper depends on.
+- Pytest 9 can render launcher frames with `_console_main` and `_main` helper
+  names. Snapshot normalization must canonicalize only the entrypoint helper
+  frames so later internal `_main` frames remain visible.
 
 ## Decision Log
 
@@ -183,3 +197,12 @@ cleans up gate failures encountered during validation.
 The implementation was committed as `39d80dcbdc521e3022f713535694a0a7427cb21c`
 and opened as draft pull request
 <https://github.com/leynos/femtologging/pull/375>.
+
+Review feedback on 2026-06-23 replaced the import-only maturin availability
+check with a live `python -m maturin --version` probe so the skip predicate
+matches the build path used by the compatibility test.
+
+The validation rerun also exposed pytest 9 launcher-frame drift in the
+stack-info BDD snapshot. The normalizer now maps the private entrypoint helper
+spelling to the existing public `console_main`/`main` snapshot shape while
+preserving subsequent internal pytest `_main` frames.
