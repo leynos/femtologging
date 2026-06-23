@@ -94,6 +94,8 @@ repository layout and CI files.
   `make test`, and `git diff --check`.
 - [x] 2026-06-23T00:00:00+02:00 Fixed the post-turn `nixie` failure in
   `docs/frame-filtering-design.md` by quoting multi-line Mermaid node labels.
+- [x] 2026-06-24T00:00:00+02:00 Pinned local Makefile Ruff execution and CI
+  installation to Ruff `0.15.12`, matching `$(which ruff) --version`.
 
 ## Surprises & Discoveries
 
@@ -125,6 +127,9 @@ repository layout and CI files.
 - `nixie` rejects raw newline-delimited Mermaid flowchart labels. Quoted labels
   with explicit `<br/>` breaks preserve the rendered text while keeping
   `merman-cli` parsing stable.
+- Bare `ruff` in local Make targets and unpinned `uv tool install ruff` in CI
+  can drift independently. `uvx ruff==$(RUFF_VERSION)` keeps Makefile execution
+  pinned without depending on a globally installed Ruff.
 
 ## Decision Log
 

@@ -4,6 +4,8 @@ tools nixie test typecheck
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
 BUILD_JOBS ?=
+RUFF_VERSION ?= 0.15.12
+RUFF ?= uvx ruff==$(RUFF_VERSION)
 MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
@@ -35,20 +37,19 @@ tools:
 	$(call ensure_tool,$(CARGO))
 	$(call ensure_tool,rustfmt)
 	$(call ensure_tool,uv)
-	$(call ensure_tool,ruff)
 	$(call ensure_tool,ty)
 
 fmt: tools ## Format sources
-	ruff format
+	$(RUFF) format
 	$(CARGO) fmt --manifest-path $(RUST_MANIFEST)
 	mdformat-all
 
 check-fmt: ## Verify formatting
-	ruff format --check
+	$(RUFF) format --check
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 
 lint: ## Run linters
-	ruff check
+	$(RUFF) check
 	# Lint pure Rust (no Python features)
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
 	# Lint with python feature only
