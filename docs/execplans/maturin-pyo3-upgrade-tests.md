@@ -92,6 +92,8 @@ repository layout and CI files.
 - [x] 2026-06-23T00:00:00+02:00 Reran and passed `make fmt`,
   `make markdownlint`, `make check-fmt`, `make lint`, `make typecheck`,
   `make test`, and `git diff --check`.
+- [x] 2026-06-23T00:00:00+02:00 Fixed the post-turn `nixie` failure in
+  `docs/frame-filtering-design.md` by quoting multi-line Mermaid node labels.
 
 ## Surprises & Discoveries
 
@@ -120,6 +122,9 @@ repository layout and CI files.
 - Pytest 9 can render launcher frames with `_console_main` and `_main` helper
   names. Snapshot normalization must canonicalize only the entrypoint helper
   frames so later internal `_main` frames remain visible.
+- `nixie` rejects raw newline-delimited Mermaid flowchart labels. Quoted labels
+  with explicit `<br/>` breaks preserve the rendered text while keeping
+  `merman-cli` parsing stable.
 
 ## Decision Log
 

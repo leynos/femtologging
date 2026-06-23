@@ -56,12 +56,8 @@ flowchart TD
     T --> V[filtered_frames]
     U --> V
 
-    C --> W[rebuild exception payload
-with filtered frames
-and recursively filtered
-cause/context/exceptions]
-    D --> X[rebuild stack payload
-with filtered frames]
+    C --> W["rebuild exception payload<br/>with filtered frames<br/>and recursively filtered<br/>cause/context/exceptions"]
+    D --> X["rebuild stack payload<br/>with filtered frames"]
 
     V --> W
     V --> X
