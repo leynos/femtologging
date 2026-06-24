@@ -40,6 +40,7 @@ _LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset(
 )
 _SYSTEM_EXIT_PYTEST_LINE = "raise SystemExit(pytest.console_main())"
 _SYSTEM_EXIT_PYTEST_PRIVATE_LINE = "raise SystemExit(pytest._console_main())"
+_SYSTEM_EXIT_BARE_PYTEST_PRIVATE_LINE = "raise SystemExit(_console_main())"
 _SYS_EXIT_PYTEST_PRIVATE_LINE = "sys.exit(_console_main())"
 _PYTEST_PRIVATE_MAIN_LINE = "code = _main(prog=_get_prog_name(sys.argv))"
 _SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
@@ -171,6 +172,7 @@ def _normalize_frame_code_line(code_line: str) -> str:
     if code_line in {
         _SYSTEM_EXIT_PYTEST_LINE,
         _SYSTEM_EXIT_PYTEST_PRIVATE_LINE,
+        _SYSTEM_EXIT_BARE_PYTEST_PRIVATE_LINE,
         _SYS_EXIT_PYTEST_PRIVATE_LINE,
     }:
         return "    sys.exit(console_main())"

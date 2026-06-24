@@ -96,6 +96,8 @@ repository layout and CI files.
   `docs/frame-filtering-design.md` by quoting multi-line Mermaid node labels.
 - [x] 2026-06-24T00:00:00+02:00 Pinned local Makefile Ruff execution and CI
   installation to Ruff `0.15.12`, matching `$(which ruff) --version`.
+- [x] 2026-06-24T00:00:00+02:00 Fixed CI stack-info snapshot drift for
+  `raise SystemExit(_console_main())` pytest launcher output.
 
 ## Surprises & Discoveries
 
@@ -130,6 +132,10 @@ repository layout and CI files.
 - Bare `ruff` in local Make targets and unpinned `uv tool install ruff` in CI
   can drift independently. `uvx ruff==$(RUFF_VERSION)` keeps Makefile execution
   pinned without depending on a globally installed Ruff.
+- Pytest can render its private entrypoint as
+  `raise SystemExit(_console_main())` on CI even when local runs use
+  `sys.exit(_console_main())`. The traceback normalizer must canonicalize both
+  source-line spellings to keep stack-info snapshots stable.
 
 ## Decision Log
 
