@@ -6,7 +6,6 @@ import importlib.metadata as im
 import pathlib as pth
 import shutil
 import sys
-import typing as typ
 
 import pytest
 
@@ -18,8 +17,45 @@ from tests.maturin_compat import (
     wheel_build_snapshot,
 )
 
-if typ.TYPE_CHECKING:
-    from syrupy.assertion import SnapshotAssertion
+_EXPECTED_WHEEL_ENTRIES: list[str] = [
+    "femtologging-<version>.dist-info/METADATA",
+    "femtologging-<version>.dist-info/RECORD",
+    "femtologging-<version>.dist-info/WHEEL",
+    "femtologging-<version>.dist-info/licenses/LICENSE",
+    "femtologging-<version>.dist-info/sboms/<sbom>.cyclonedx.json",
+    "femtologging/__init__.py",
+    "femtologging/_basic_config.py",
+    "femtologging/_compat.py",
+    "femtologging/_config_filters.py",
+    "femtologging/_femtologging_rs.cpython-<platform>.so",
+    "femtologging/_femtologging_rs.pyi",
+    "femtologging/_filter_factory.py",
+    "femtologging/_log_context.py",
+    "femtologging/_rust_compat.py",
+    "femtologging/_timed_handler_config.py",
+    "femtologging/adapter.py",
+    "femtologging/config.py",
+    "femtologging/config_protocol.py",
+    "femtologging/config_sections.py",
+    "femtologging/config_socket.py",
+    "femtologging/config_socket_opts.py",
+    "femtologging/file_config.py",
+    "femtologging/overflow_policy.py",
+    "femtologging/unittests/test_overflow_policy.py",
+]
+
+_EXPECTED_WHEEL_METADATA: dict[str, object] = {
+    "classifiers": [
+        "License :: OSI Approved :: ISC License (ISCL)",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Rust",
+    ],
+    "name": "femtologging",
+    "requires_dist": [],
+    "requires_python": ">=3.12",
+    "version": "0.1.0",
+}
 
 
 def repo_root() -> pth.Path:
@@ -59,7 +95,6 @@ def test_installed_maturin_matches_expected_pin() -> None:
 @pytest.mark.timeout(0)
 def test_maturin_wheel_build_snapshot(
     tmp_path: pth.Path,
-    request: pytest.FixtureRequest,
 ) -> None:
     """Native wheel metadata and layout match expected maturin output."""
     root = repo_root()
@@ -69,12 +104,14 @@ def test_maturin_wheel_build_snapshot(
     if sys.version_info >= (3, 15):
         pytest.skip()
 
-    snapshot = typ.cast("SnapshotAssertion", request.getfixturevalue("snapshot"))
     wheel_path = build_native_wheel_artifact(root, tmp_path / "wheelhouse")
     snapshot_payload = wheel_build_snapshot(wheel_path)
-    assert snapshot_payload["generator"] == expected, (
-        f"Expected generator {expected!r}, found {snapshot_payload['generator']!r}"
-    )
-    assert snapshot_payload == snapshot, (
-        "Built wheel metadata, file list, and build settings changed."
-    )
+    assert snapshot_payload == {
+        "generator": expected,
+        "metadata": _EXPECTED_WHEEL_METADATA,
+        "wheel": {
+            "root_is_purelib": "false",
+            "tag": "<platform-tag>",
+        },
+        "entries": _EXPECTED_WHEEL_ENTRIES,
+    }

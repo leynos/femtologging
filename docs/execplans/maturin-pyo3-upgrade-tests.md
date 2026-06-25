@@ -109,6 +109,10 @@ repository layout and CI files.
   `make check-fmt`, `make lint`, `make typecheck`, `make test`,
   `make markdownlint`, `make nixie`, and `git diff --check` with the pinned
   pytest toolchain.
+- [x] 2026-06-26T00:00:00+02:00 Replaced the optional maturin wheel-build
+  Syrupy snapshot with explicit payload assertions, because skipped toolchain
+  lanes otherwise report `tests/__snapshots__/test_maturin_build.ambr` as an
+  unused snapshot collection.
 
 ## Surprises & Discoveries
 
@@ -156,6 +160,11 @@ repository layout and CI files.
   pytest 8 or newer, the compatible dependency pair is the latest pytest 8
   release, `pytest==8.4.2`, with `pytest-bdd==8.1.0`, rather than a broad
   warning filter or a downgrade to pytest 7.
+- Syrupy treats the optional maturin snapshot file as unused when the wheel
+  build test skips in environments without the Rust toolchain, even if the test
+  delays requesting the `snapshot` fixture. Keeping that optional compatibility
+  check out of Syrupy avoids weakening unused-snapshot detection for the rest
+  of the suite.
 
 ## Decision Log
 
