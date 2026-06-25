@@ -251,3 +251,9 @@ The validation rerun also exposed pytest 9 launcher-frame drift in the
 stack-info BDD snapshot. The normalizer now maps the private entrypoint helper
 spelling to the existing public `console_main`/`main` snapshot shape while
 preserving subsequent internal pytest `_main` frames.
+
+Review feedback on 2026-06-26 removed duplicated traceback-normalization test
+methods by converting the four pytest compatibility cases into one parametrized
+test with stable case IDs. The refactor preserves the exact scenario inputs and
+expected outputs while continuing to cover runtest-hook canonicalization and
+private pytest entrypoint normalization.
