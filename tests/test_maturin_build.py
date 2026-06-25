@@ -48,7 +48,7 @@ def test_maturin_pins_are_synchronized() -> None:
 def test_installed_maturin_matches_expected_pin() -> None:
     """The active maturin CLI matches the pinned development dependency."""
     if shutil.which("maturin") is None:
-        pytest.skip("maturin is not installed.")
+        pytest.skip()
     expected = read_expected_maturin_version(repo_root())
     installed = im.version("maturin")
     assert installed == expected, (
@@ -59,16 +59,17 @@ def test_installed_maturin_matches_expected_pin() -> None:
 @pytest.mark.timeout(0)
 def test_maturin_wheel_build_snapshot(
     tmp_path: pth.Path,
-    snapshot: SnapshotAssertion,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Native wheel metadata and layout match expected maturin output."""
     root = repo_root()
     expected = read_expected_maturin_version(root)
     if not toolchain_available():
-        pytest.skip("Rust toolchain or maturin unavailable.")
+        pytest.skip()
     if sys.version_info >= (3, 15):
-        pytest.skip(f"maturin {expected} does not support this Python version.")
+        pytest.skip()
 
+    snapshot = typ.cast("SnapshotAssertion", request.getfixturevalue("snapshot"))
     wheel_path = build_native_wheel_artifact(root, tmp_path / "wheelhouse")
     snapshot_payload = wheel_build_snapshot(wheel_path)
     assert snapshot_payload["generator"] == expected, (

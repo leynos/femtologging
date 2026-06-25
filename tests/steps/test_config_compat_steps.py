@@ -181,4 +181,5 @@ def _flush_root_handlers(logger: FemtoLogger) -> None:
     """Ensure femtologging's asynchronous handlers flush pending records."""
     flushed = logger.flush_handlers()
     if not flushed:
-        pytest.fail("Root handlers failed to flush pending femtologging records")
+        msg = "Root handlers failed to flush pending femtologging records"
+        raise AssertionError(msg)

@@ -98,6 +98,17 @@ repository layout and CI files.
   installation to Ruff `0.15.12`, matching `$(which ruff) --version`.
 - [x] 2026-06-24T00:00:00+02:00 Fixed CI stack-info snapshot drift for
   `raise SystemExit(_console_main())` pytest launcher output.
+- [x] 2026-06-26T00:00:00+02:00 Deferred the maturin wheel-build `snapshot`
+  fixture until after skip checks so unsupported CI lanes do not report the
+  stored wheel snapshot as unused.
+- [x] 2026-06-26T00:00:00+02:00 Pinned the pytest toolchain to
+  `pytest==8.4.2` and `pytest-bdd==8.1.0` after confirming `pytest-bdd` `8.1.0`
+  is the current release and still emits pytest 9 fixture-registration
+  deprecation warnings.
+- [x] 2026-06-26T00:00:00+02:00 Reran and passed `make fmt`,
+  `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+  `make markdownlint`, `make nixie`, and `git diff --check` with the pinned
+  pytest toolchain.
 
 ## Surprises & Discoveries
 
@@ -136,6 +147,15 @@ repository layout and CI files.
   `raise SystemExit(_console_main())` on CI even when local runs use
   `sys.exit(_console_main())`. The traceback normalizer must canonicalize both
   source-line spellings to keep stack-info snapshots stable.
+- Syrupy counts stored snapshots as unused once its fixture is requested, even
+  if the test body later skips. Optional compatibility tests should perform
+  environment skip checks before requesting `snapshot`.
+- `pytest-bdd` `8.1.0` remains the current resolved and latest upstream
+  release, but its compatibility layer still calls pytest's private fixture
+  registration API with `nodeid` under pytest 9. Because `syrupy` requires
+  pytest 8 or newer, the compatible dependency pair is the latest pytest 8
+  release, `pytest==8.4.2`, with `pytest-bdd==8.1.0`, rather than a broad
+  warning filter or a downgrade to pytest 7.
 
 ## Decision Log
 

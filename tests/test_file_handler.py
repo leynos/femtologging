@@ -215,7 +215,8 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
         if not worker_started.is_set():
             worker_started.set()
             if not release_worker.wait(timeout=10.0):
-                pytest.fail("timeout waiting for release_worker in formatter")
+                msg = "timeout waiting for release_worker in formatter"
+                raise AssertionError(msg)
         return f"{record['logger']} [{record['level']}] {record['message']}"
 
     builder = (

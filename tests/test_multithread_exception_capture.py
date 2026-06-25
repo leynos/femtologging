@@ -237,18 +237,21 @@ class TestMultithreadExceptionCapture:
         try:
             start_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
         except threading.BrokenBarrierError as exc:
-            pytest.fail(f"Start barrier timed out or was broken: {exc}")
+            msg = f"Start barrier timed out or was broken: {exc}"
+            raise AssertionError(msg) from exc
 
         # Wait for all threads to complete logging (timeout prevents permanent hang)
         try:
             end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
         except threading.BrokenBarrierError as exc:
-            pytest.fail(f"End barrier timed out or was broken: {exc}")
+            msg = f"End barrier timed out or was broken: {exc}"
+            raise AssertionError(msg) from exc
 
         for t in threads:
             t.join(timeout=BARRIER_TIMEOUT_SECONDS)
             if t.is_alive():
-                pytest.fail(f"Thread {t.name} failed to join within timeout")
+                msg = f"Thread {t.name} failed to join within timeout"
+                raise AssertionError(msg)
 
         # Flush handlers and delete logger to ensure all records are processed
         # flush_handlers() triggers the worker to process pending records,

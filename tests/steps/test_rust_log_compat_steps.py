@@ -42,10 +42,7 @@ REQUIRED_RUST_ATTRS = (
 pytestmark = [pytest.mark.log_compat]
 
 if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
-    pytest.skip(
-        "log-compat feature not built; rust bridge helpers unavailable",
-        allow_module_level=True,
-    )
+    pytest.skip(allow_module_level=True)
 
 scenarios(str(FEATURES / "rust_log_compat.feature"))
 

@@ -48,10 +48,7 @@ REQUIRED_RUST_ATTRS = (
 pytestmark = [pytest.mark.tracing_compat]
 
 if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
-    pytest.skip(
-        "tracing-compat feature not built; tracing bridge helpers unavailable",
-        allow_module_level=True,
-    )
+    pytest.skip(allow_module_level=True)
 
 scenarios(str(FEATURES / "rust_tracing_compat.feature"))
 

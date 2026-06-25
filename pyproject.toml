@@ -22,9 +22,9 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "pytest",
+    "pytest==8.4.2",
     "pytest-timeout",
-    "pytest-bdd",
+    "pytest-bdd==8.1.0",
     "syrupy",
     # Keep in sync with the build-system requirement and CI workflows.
     "maturin[patchelf]==1.13.3",
