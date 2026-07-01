@@ -257,3 +257,9 @@ methods by converting the four pytest compatibility cases into one parametrized
 test with stable case IDs. The refactor preserves the exact scenario inputs and
 expected outputs while continuing to cover runtest-hook canonicalization and
 private pytest entrypoint normalization.
+
+Review feedback on 2026-07-01 reduced the multithread exception-capture test
+method complexity by extracting barrier waiting, thread joining, and captured
+record validation into module-level helpers. The test method now acts as a
+short scenario orchestrator while preserving the existing timeout and
+assertion-message behaviour.

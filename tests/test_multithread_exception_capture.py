@@ -195,6 +195,45 @@ def thread_worker(
     end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
 
 
+def _wait_for_barrier(barrier: threading.Barrier, label: str) -> None:
+    """Wait for a labelled barrier and fail clearly on timeout or breakage."""
+    try:
+        barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
+    except threading.BrokenBarrierError as exc:
+        msg = f"{label} barrier timed out or was broken: {exc}"
+        raise AssertionError(msg) from exc
+
+
+def _join_threads(threads: list[threading.Thread]) -> None:
+    """Join worker threads and fail if any remain alive after the timeout."""
+    for thread in threads:
+        thread.join(timeout=BARRIER_TIMEOUT_SECONDS)
+        if thread.is_alive():
+            msg = f"Thread {thread.name} failed to join within timeout"
+            raise AssertionError(msg)
+
+
+def _assert_captured_thread_records(
+    records: list[LogRecordDict],
+    thread_count: int,
+) -> None:
+    """Assert that each thread produced one uncontaminated exception record."""
+    assert len(records) == thread_count, (
+        f"Expected {thread_count} records, got {len(records)}"
+    )
+
+    captured_indices: set[int] = set()
+    for record in records:
+        thread_idx = _validate_record(record, captured_indices)
+        captured_indices.add(thread_idx)
+
+    expected_indices = set(range(thread_count))
+    assert captured_indices == expected_indices, (
+        f"Missing thread indices: {expected_indices - captured_indices}, "
+        f"unexpected indices: {captured_indices - expected_indices}"
+    )
+
+
 class TestMultithreadExceptionCapture:
     """Test suite for multi-threaded exception capture validation."""
 
@@ -233,25 +272,9 @@ class TestMultithreadExceptionCapture:
         for t in threads:
             t.start()
 
-        # Release all threads to start together (timeout prevents permanent hang)
-        try:
-            start_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
-        except threading.BrokenBarrierError as exc:
-            msg = f"Start barrier timed out or was broken: {exc}"
-            raise AssertionError(msg) from exc
-
-        # Wait for all threads to complete logging (timeout prevents permanent hang)
-        try:
-            end_barrier.wait(timeout=BARRIER_TIMEOUT_SECONDS)
-        except threading.BrokenBarrierError as exc:
-            msg = f"End barrier timed out or was broken: {exc}"
-            raise AssertionError(msg) from exc
-
-        for t in threads:
-            t.join(timeout=BARRIER_TIMEOUT_SECONDS)
-            if t.is_alive():
-                msg = f"Thread {t.name} failed to join within timeout"
-                raise AssertionError(msg)
+        _wait_for_barrier(start_barrier, "Start")
+        _wait_for_barrier(end_barrier, "End")
+        _join_threads(threads)
 
         # Flush handlers and delete logger to ensure all records are processed
         # flush_handlers() triggers the worker to process pending records,
@@ -259,20 +282,4 @@ class TestMultithreadExceptionCapture:
         logger.flush_handlers()
         del logger
 
-        # Validate captured records
-        assert len(handler.records) == thread_count, (
-            f"Expected {thread_count} records, got {len(handler.records)}"
-        )
-
-        # Extract and validate thread indices from captured records
-        captured_indices: set[int] = set()
-        for record in handler.records:
-            thread_idx = _validate_record(record, captured_indices)
-            captured_indices.add(thread_idx)
-
-        # All thread indices should be accounted for
-        expected_indices = set(range(thread_count))
-        assert captured_indices == expected_indices, (
-            f"Missing thread indices: {expected_indices - captured_indices}, "
-            f"unexpected indices: {captured_indices - expected_indices}"
-        )
+        _assert_captured_thread_records(handler.records, thread_count)
