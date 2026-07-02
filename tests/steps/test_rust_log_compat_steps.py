@@ -46,8 +46,7 @@ if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
         attr for attr in REQUIRED_RUST_ATTRS if not hasattr(rust, attr)
     )
     message = (
-        "Rust log compatibility bridge missing required attributes: "
-        f"{missing_attrs}"
+        f"Rust log compatibility bridge missing required attributes: {missing_attrs}"
     )
     skip = typ.cast("typ.Any", pytest.skip)
     skip(message, allow_module_level=True)
