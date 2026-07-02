@@ -31,9 +31,8 @@ def poll_file_for_text(path: Path, expected: str, timeout: float = 1.0) -> str:
 
     Raises
     ------
-    Failed
-        Via ``AssertionError`` if the expected text is not found within the
-        timeout.
+    AssertionError
+        If the expected text is not found within the timeout.
 
     Examples
     --------

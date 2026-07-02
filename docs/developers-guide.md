@@ -26,4 +26,5 @@ evaluate Python lint rules with the same Ruff release.
 
 When updating Ruff, first install the intended new version locally, confirm it
 with `$(which ruff) --version`, then update both `RUFF_VERSION` in `Makefile`
-and the `uv tool install ruff==...` line in `.github/workflows/ci.yml`.
+and the `uv tool install ruff==…` line in the GitHub workflow
+`.github/workflows/ci.yml`.

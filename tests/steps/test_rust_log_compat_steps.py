@@ -42,7 +42,15 @@ REQUIRED_RUST_ATTRS = (
 pytestmark = [pytest.mark.log_compat]
 
 if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
-    pytest.skip(allow_module_level=True)
+    missing_attrs = sorted(
+        attr for attr in REQUIRED_RUST_ATTRS if not hasattr(rust, attr)
+    )
+    message = (
+        "Rust log compatibility bridge missing required attributes: "
+        f"{missing_attrs}"
+    )
+    skip = typ.cast("typ.Any", pytest.skip)
+    skip(message, allow_module_level=True)
 
 scenarios(str(FEATURES / "rust_log_compat.feature"))
 

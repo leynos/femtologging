@@ -119,7 +119,7 @@ repository layout and CI files.
 - Femtologging already has a checked-in `rust_extension/Cargo.lock`, but no
   repository-root `uv.lock`.
 - Femtologging has no `.github/actions/build-wheels/action.yml`; Cuprum's
-  maturin pin synchronisation test must therefore compare `pyproject.toml`
+  maturin pin synchronization test must therefore compare `pyproject.toml`
   dev/build-system pins and CI workflow usage instead of an absent reusable
   build-wheel action.
 - Cuprum's dependency versions at the referenced commit match the latest
@@ -263,3 +263,9 @@ method complexity by extracting barrier waiting, thread joining, and captured
 record validation into module-level helpers. The test method now acts as a
 short scenario orchestrator while preserving the existing timeout and
 assertion-message behaviour.
+
+Review feedback on 2026-07-03 corrected remaining documentation wording,
+restored descriptive module-level skip reasons for Rust compatibility BDD
+steps, tightened maturin helper doctest examples and `noqa` rationale, added
+the qualified private pytest entrypoint traceback normalization case, and
+collapsed the Makefile `lint` Rust clippy invocations behind a helper loop.

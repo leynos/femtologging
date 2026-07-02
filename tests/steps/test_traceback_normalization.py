@@ -74,6 +74,25 @@ _PYTEST_COMPAT_CASES = (
         (
             "Stack (most recent call last):\n"
             '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    raise SystemExit(pytest._console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "normalize_traceback_output should normalize qualified private pytest "
+        "entrypoint calls",
+        id="accepts_qualified_private_pytest_entrypoint",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
             "    raise SystemExit(_console_main())\n"
             '  File "/tmp/pytest.py", line 25, in _console_main\n'
             "    code = _main(prog=_get_prog_name(sys.argv))\n"

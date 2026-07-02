@@ -1,5 +1,5 @@
-.PHONY: help all clean build release lint fmt check-fmt markdownlint \
-tools nixie test typecheck
+.PHONY: help all clean build release lint lint-rust fmt check-fmt \
+markdownlint tools nixie test typecheck
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -50,14 +50,14 @@ check-fmt: ## Verify formatting
 
 lint: ## Run linters
 	$(RUFF) check
-	# Lint pure Rust (no Python features)
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
-	# Lint with python feature only
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
-	# Lint with log-compat (implies python)
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
-	# Lint with tracing-compat (implies python)
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- -D warnings
+	$(MAKE) lint-rust
+
+lint-rust: ## Run Rust clippy across feature lanes
+	@for features in none python log-compat tracing-compat; do \
+		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
+		echo "# Lint Rust features: $$features"; \
+		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings; \
+	done
 
 markdownlint: ## Lint Markdown files
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT) --

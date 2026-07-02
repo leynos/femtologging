@@ -48,7 +48,9 @@ def read_expected_maturin_version(root: Path) -> str:
 
     Examples
     --------
-    >>> read_expected_maturin_version(repo_root())
+    Given a repository root, the helper returns the development dependency pin:
+
+    >>> read_expected_maturin_version(root)  # doctest: +SKIP
     '1.13.3'
 
     """
@@ -107,8 +109,10 @@ def read_maturin_pins(root: Path) -> dict[str, str]:
 
     Examples
     --------
-    >>> pins = read_maturin_pins(repo_root())
-    >>> sorted(pins)
+    Given a repository root, the helper returns each synchronized maturin pin:
+
+    >>> pins = read_maturin_pins(root)  # doctest: +SKIP
+    >>> sorted(pins)  # doctest: +SKIP
     ['build-system', 'dev-dependency', 'heavy-tests']
 
     """
@@ -149,7 +153,7 @@ def toolchain_available() -> bool:
     """
     if shutil.which("cargo") is None or shutil.which("rustc") is None:
         return False
-    result = subprocess.run(  # noqa: S603, RUF100
+    result = subprocess.run(  # noqa: S603, RUF100 - trusted interpreter/module probe; keep S603 narrow.
         [sys.executable, "-m", "maturin", "--version"],
         check=False,
         capture_output=True,
@@ -179,8 +183,11 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
 
     Examples
     --------
-    >>> wheel = build_native_wheel_artifact(repo_root(), tmp_path / "wheelhouse")
-    >>> wheel.suffix
+    Given a repository root and an output directory, the helper returns the
+    single wheel produced by maturin:
+
+    >>> wheel = build_native_wheel_artifact(root, out_dir)  # doctest: +SKIP
+    >>> wheel.suffix  # doctest: +SKIP
     '.whl'
 
     """
@@ -225,8 +232,10 @@ def wheel_build_snapshot(whl_path: Path) -> dict[str, typ.Any]:
 
     Examples
     --------
-    >>> snapshot = wheel_build_snapshot(wheel_path)
-    >>> snapshot["wheel"]["root_is_purelib"]
+    Given a wheel path, the helper returns stable metadata for snapshot tests:
+
+    >>> snapshot = wheel_build_snapshot(whl_path)  # doctest: +SKIP
+    >>> snapshot["wheel"]["root_is_purelib"]  # doctest: +SKIP
     'false'
 
     """
