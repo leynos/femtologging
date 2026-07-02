@@ -113,8 +113,9 @@ femtologging" bar chart, because the architecture is the variable that matters.
 | `picologging`  | `QueueHandler` + `QueueListener` | Fair queue-based comparison with picologging-native components.[^5]      |
 | `loguru`       | `enqueue=False`                  | Idiomatic direct-sink comparison.                                        |
 | `loguru`       | `enqueue=True`                   | Fair queue-based comparison; loguru queues before the sink.[^4]          |
-| `femtologging` | Default handler model            | The real product.                                                        |
-| `femtologging` | Tuned variants                   | Batch size, queue capacity, formatter, and socket/file settings.         |
+| `femtologging` | Queue-based handler              | The real asynchronous product path; caller-visible rows stop at enqueue. |
+| `femtologging` | Batched file worker              | Consumer-side batching path for drained throughput and syscall studies.  |
+| `femtologging` | Direct sink laboratory adapter   | Internal diagnostic baseline; not published as the user-facing default.  |
 
 _Table 1: Comparison targets, each labelled by architecture._
 
@@ -348,7 +349,7 @@ The `femtologging`-specific sweep varies the settings below.
 | Flush policy    | Per record, periodic, explicit only                             |
 | Formatter       | Minimal message, default formatter, structured, exception-heavy |
 | Timestamp mode  | Disabled, wall clock, high-resolution                           |
-| Overflow policy | Block, drop, or whatever `femtologging` exposes                 |
+| Overflow policy | Drop, block, timeout 1 ms, timeout 10 ms, and timeout 100 ms    |
 
 _Table 3: `femtologging`-specific configuration sweep._
 
@@ -359,7 +360,24 @@ in separate cases so a result points at one stage, not a blur of several.
 
 ## 7. Metrics and result schema
 
-Every benchmark emits structured JSON carrying at least the metrics below.
+Every benchmark emits structured JSON carrying role and architecture metadata
+before numeric measurements, so caller-visible, end-to-end, and diagnostic rows
+cannot be merged accidentally.
+
+The `architecture` field is one of `sync-direct`, `queue-listener`,
+`async-queue`, `batched-worker`, or `lab-direct`.
+
+| Field              | Meaning                                                              |
+| ------------------ | -------------------------------------------------------------------- |
+| `leaderboard_role` | `caller-visible`, `end-to-end`, or `diagnostic-internal`.            |
+| `architecture`     | Concrete concurrency and handler architecture.                       |
+| `framework`        | Package under test, such as `logging`, `picologging`, or `loguru`.   |
+| `mode`             | Concrete adapter mode, such as `enqueue=True` or `QueueHandler`.     |
+| `workload`         | Stable case identifier, such as `file_tmpfs_queue`.                  |
+
+_Table 4: Result schema identity fields._
+
+Every benchmark also carries at least the metrics below.
 
 | Metric                           | Meaning                                             |
 | -------------------------------- | --------------------------------------------------- |
@@ -378,7 +396,7 @@ Every benchmark emits structured JSON carrying at least the metrics below.
 | `context_switches`               | Useful for queue and batching tuning.               |
 | `syscalls_per_record`            | Critical for file and stream batching experiments.  |
 
-_Table 4: Result schema metrics. Memory peak draws on `pyperf`'s
+_Table 5: Result schema metrics. Memory peak draws on `pyperf`'s
 `tracemalloc_peak` metadata where the Python harness records it.[^7]_
 
 Correctness is part of the schema, not an afterthought. After every run the
@@ -591,7 +609,7 @@ difference is statistically significant under the `pyperf` t-test (§5.4).
 | Correctness mismatch               | Always fail.                            |
 | Configuration benchmarks           | Warn at >10%, fail at >20%.             |
 
-_Table 5: Regression gates by benchmark class._
+_Table 6: Regression gates by benchmark class._
 
 Baselines are per-machine class and rolling. The suite never compares laptop
 numbers with CI numbers, keeps raw JSON artefacts, and displays trend lines by
@@ -605,15 +623,15 @@ The summary carries compact tables, with a "benchmark meaning" note beside each
 one — for example, "caller latency excludes consumer drain; see the end-to-end
 table for total work" — so no reader compares across leaderboards by accident.
 
-| Case         | Framework      | Mode    | caller ns/call | drained records/s | p99 E2E µs | RSS MiB | drops |
-| ------------ | -------------- | ------- | -------------- | ----------------- | ---------- | ------- | ----- |
-| enabled file | `logging`      | sync    | …              | …                 | …          | …       | 0     |
-| enabled file | `logging`      | queue   | …              | …                 | …          | …       | 0     |
-| enabled file | `loguru`       | enqueue | …              | …                 | …          | …       | 0     |
-| enabled file | `picologging`  | sync    | …              | …                 | …          | …       | 0     |
-| enabled file | `femtologging` | async   | …              | …                 | …          | …       | 0     |
+| Role           | Architecture   | Case         | Framework      | Mode    | caller ns/call | drained records/s | p99 E2E µs | RSS MiB | drops |
+| -------------- | -------------- | ------------ | -------------- | ------- | -------------- | ----------------- | ---------- | ------- | ----- |
+| caller-visible | sync-direct    | enabled file | `logging`      | sync    | …              | …                 | …          | …       | 0     |
+| caller-visible | queue-listener | enabled file | `logging`      | queue   | …              | …                 | …          | …       | 0     |
+| caller-visible | async-queue    | enabled file | `loguru`       | enqueue | …              | …                 | …          | …       | 0     |
+| caller-visible | sync-direct    | enabled file | `picologging`  | sync    | …              | …                 | …          | …       | 0     |
+| caller-visible | async-queue    | enabled file | `femtologging` | async   | …              | …                 | …          | …       | 0     |
 
-_Table 6: Example summary layout for one workload across comparators._
+_Table 7: Example summary layout for one workload across comparators._
 
 ## 12. Verification
 
