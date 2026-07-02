@@ -114,8 +114,9 @@ femtologging" bar chart, because the architecture is the variable that matters.
 | `loguru`       | `enqueue=False`                  | Idiomatic direct-sink comparison.                                        |
 | `loguru`       | `enqueue=True`                   | Fair queue-based comparison; loguru queues before the sink.[^4]          |
 | `femtologging` | Queue-based handler              | The real asynchronous product path; caller-visible rows stop at enqueue. |
-| `femtologging` | Batched file worker              | Consumer-side batching path for drained throughput and syscall studies.  |
-| `femtologging` | Direct sink laboratory adapter   | Internal diagnostic baseline; not published as the user-facing default.  |
+| `femtologging` | Batched file worker              | File transport path for drained throughput, batching, and syscall study. |
+| `femtologging` | Socket transport worker          | Socket transport path for serialization, framing, and reconnect study.   |
+| `femtologging` | Direct sink laboratory adapter   | Diagnostic baseline; not published as the user-facing default.           |
 
 _Table 1: Comparison targets, each labelled by architecture._
 

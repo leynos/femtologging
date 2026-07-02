@@ -336,15 +336,18 @@ This step answers whether a single harness can drive every library through one
 fair protocol and emit a stable result schema. It unlocks every later step.
 
 - [ ] 6.1.1. Establish the `benchmarks/femtobench` package skeleton with
-  `pyproject.toml`, a pinned competitor lockfile (standard library,
-  `picologging`, `loguru`), and a `results/` artefact tree. Success: `uv run
-  python -m benchmarks.femtobench.runner --smoke` runs against a stub case. See
+  `pyproject.toml`, a pinned competitor lockfile for external packages such as
+  `picologging` and `loguru`, and a `results/` artefact tree. Track standard
+  library `logging` through the case matrix and Python runtime metadata rather
+  than the lockfile. Success: `uv run python -m benchmarks.femtobench.runner
+  --smoke` runs against a stub case. See
   [benchmarking design §5.1](./benchmarking-and-optimization-design.md#51-repository-structure).
 - [ ] 6.1.2. Define the result schema and metadata capture in `schema.py`: the
-  metrics of design §7 plus commit SHA, Python and package versions, operating
-  system, kernel, CPU model, frequency governor, Rust profile, feature flags,
-  `RUSTFLAGS`, and filesystem target. Success: the schema round-trips to JSON and
-  validates a sample record. See
+  metrics of design §7 plus `leaderboard_role`, comparator `architecture`,
+  commit SHA, Python and package versions, operating system, kernel, CPU model,
+  frequency governor, Rust profile, feature flags, `RUSTFLAGS`, and filesystem
+  target. Success: the schema round-trips to JSON and validates a sample record
+  whose measurement boundary and comparator architecture are explicit. See
   [benchmarking design §7](./benchmarking-and-optimization-design.md#7-metrics-and-result-schema)
    and
   [benchmarking design §8](./benchmarking-and-optimization-design.md#8-measurement-protocols).
@@ -371,7 +374,6 @@ fair protocol and emit a stable result schema. It unlocks every later step.
   [benchmarking design §5.1](./benchmarking-and-optimization-design.md#51-repository-structure)
    and
   [benchmarking design §11](./benchmarking-and-optimization-design.md#11-regression-policy-and-reporting).
-
 
 ### 6.2. Public comparison suite: v0 adapters and cases
 
