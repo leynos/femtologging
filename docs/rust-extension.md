@@ -1,9 +1,9 @@
 # Rust Extension
 
 This project includes a small Rust extension built with
-[PyO3](https://pyo3.rs/) (currently `^0.28.0`). Initially, it exposed only a
-trivial `hello()` function and the `FemtoLogger` class. It has since grown to
-provide the core handler implementations as well:
+[PyO3](https://pyo3.rs/) (currently pinned to `0.28.3`). Initially, it exposed
+only a trivial `hello()` function and the `FemtoLogger` class. It has since
+grown to provide the core handler implementations as well:
 
 - `FemtoStreamHandler` writes log records to `stdout` or `stderr` on a
   background thread.
@@ -155,9 +155,10 @@ Public API re-exports.
 | `FemtoStreamHandler`          | `stream_handler::FemtoStreamHandler`                    |
 | `StreamHandlerConfig`         | `stream_handler::HandlerConfig`                         |
 
-Packaging is handled by [maturin](https://maturin.rs/). Use version
-`>=1.9.1,<2.0.0` as declared in `pyproject.toml`. The `[tool.maturin]` section
-declares the extension module as `femtologging._femtologging_rs`, so running
+Packaging is handled by [maturin](https://maturin.rs/). Development and CI use
+maturin `1.13.3`, while the build-system requirement is bounded as
+`>=1.13.3,<2.0.0` in `pyproject.toml`. The `[tool.maturin]` section declares
+the extension module as `femtologging._femtologging_rs`, so running
 `pip install .` automatically builds the Rust code. Windows users may need the
 MSVC build tools installed, or may need to run maturin with
 `--compatibility windows` to build.
