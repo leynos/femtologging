@@ -9,7 +9,7 @@ across Python and Rust code.
 
 - `make check-fmt` – verify formatting without modifying files.
 
-- `make lint` – run `ruff check` and `cargo clippy` with
+- `make lint` – run the pinned Ruff checker and `cargo clippy` with
   `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0`.
 
 - `make typecheck` – run
@@ -26,9 +26,8 @@ across Python and Rust code.
 
 - `make clean` – remove build artifacts.
 
-- `make tools` – verify required commands like `ruff` and `ty` are installed. In
-  CI these tools are installed with `uv tool install` before formatting checks
-  run.
+- `make tools` – verify required commands like `uv`, `ty`, `cargo` and
+  `rustfmt` are installed.
 
 - `make test` – run formatting checks, clippy, cargo tests and pytest. This
   target depends on `make build`.
@@ -48,6 +47,13 @@ Pull-request CI uses a Python-version matrix in `.github/workflows/ci.yml`:
 
 All lanes run the same gates: `make check-fmt`, `make lint`, `make typecheck`,
 and `make test`.
+
+Ruff is pinned in the root `Makefile` with `RUFF_VERSION`; the `RUFF` variable
+uses `uvx ruff==$(RUFF_VERSION)` so formatting and linting use the same Ruff
+release locally and in CI. The CI workflow installs `uv` and `ty`, then relies
+on the Makefile targets to resolve the pinned Ruff version. Do not add a
+separate hard-coded Ruff installation to CI; update `RUFF_VERSION` in the
+Makefile when the project intentionally changes Ruff versions.
 
 ABI3 forward compatibility is disabled to simplify building for the currently
 supported Python versions. Producing a library that worked across multiple
