@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.metadata as im
 import pathlib as pth
-import shutil
 import sys
 
 import pytest
@@ -83,10 +82,11 @@ def test_maturin_pins_are_synchronized() -> None:
 
 def test_installed_maturin_matches_expected_pin() -> None:
     """The active maturin CLI matches the pinned development dependency."""
-    if shutil.which("maturin") is None:
+    try:
+        installed = im.version("maturin")
+    except im.PackageNotFoundError:
         pytest.skip()
     expected = read_expected_maturin_version(repo_root())
-    installed = im.version("maturin")
     assert installed == expected, (
         f"Expected maturin {expected}, but {installed} is installed"
     )

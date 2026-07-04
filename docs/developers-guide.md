@@ -29,6 +29,17 @@ with `$(which ruff) --version`, then update both `RUFF_VERSION` in `Makefile`
 and the `uv tool install ruff==…` line in the GitHub workflow
 `.github/workflows/ci.yml`.
 
+## Python test toolchain
+
+The Python test toolchain is pinned so local runs and CI use the same pytest
+release:
+
+- `pytest` is pinned to `8.4.2` in `pyproject.toml` and CI.
+- `pytest-bdd` is pinned to `8.1.0` in `pyproject.toml` and CI.
+
+Keep this policy in sync with `pyproject.toml` and the matching CI install
+steps where applicable.
+
 ## Rust extension build toolchain
 
 The Rust extension build toolchain is pinned so local builds, CI, and the
@@ -43,3 +54,8 @@ the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization
 test in `tests/test_maturin_build.py` verifies that the maturin pins stay
 aligned across `pyproject.toml` and `.github/workflows/heavy-tests.yml`.
+
+For `rust_extension/tests/compile_tests.rs`, use
+`TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
+changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
+fixtures.
