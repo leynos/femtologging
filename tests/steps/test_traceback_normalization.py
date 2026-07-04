@@ -12,8 +12,13 @@ Example:
 from __future__ import annotations
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
-from .conftest import normalize_traceback_output
+from tests.steps.conftest import (
+    _SYSTEM_EXIT_PYTEST_LINES,
+    normalize_traceback_output,
+)
 
 _PYTEST_COMPAT_CASES = (
     pytest.param(
@@ -244,6 +249,53 @@ class TestTracebackNormalization:
             f"{self.__class__.__name__}: normalize_traceback_output should "
             f"canonicalize pytest entrypoint calls ({description})"
         )
+
+    @staticmethod
+    @given(
+        segment=st.text(
+            alphabet=st.characters(
+                blacklist_characters='"\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029'
+            ),
+            max_size=120,
+        ),
+        line_no=st.integers(min_value=1, max_value=999_999),
+        entrypoint_line=st.sampled_from(sorted(_SYSTEM_EXIT_PYTEST_LINES)),
+    )
+    def test_normalize_traceback_output_canonicalizes_entrypoints_property(
+        segment: str,
+        line_no: int,
+        entrypoint_line: str,
+    ) -> None:
+        """Normalize pytest entrypoint frames across arbitrary source locations.
+
+        Parameters
+        ----------
+        segment : str
+            Generated path segment inserted into the synthetic traceback frame.
+        line_no : int
+            Generated source line number for the synthetic traceback frame.
+        entrypoint_line : str
+            Pytest entrypoint source line variant accepted by the normaliser.
+
+        Returns
+        -------
+        None
+            Asserts pytest entrypoint frames canonicalise their source line,
+            scrub concrete line numbers, and remain stable when normalised more
+            than once.
+
+        """
+        output = (
+            "Stack (most recent call last):\n"
+            f'  File "/tmp/{segment}/__main__.py", line {line_no}, in <module>\n'
+            f"    {entrypoint_line}\n"
+        )
+
+        normalized = normalize_traceback_output(output)
+
+        assert "sys.exit(console_main())" in normalized
+        assert f"line {line_no}" not in normalized
+        assert normalize_traceback_output(normalized) == normalized
 
     def test_normalize_traceback_output_keeps_non_launcher_main_frame(self) -> None:
         """Keep application main frames that are not runpy wrappers.
