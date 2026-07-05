@@ -46,6 +46,7 @@ _SYSTEM_EXIT_PYTEST_LINES: frozenset[str] = frozenset({
 })
 _PYTEST_MAIN_INVOCATION_PREFIX = "code = _main("
 _PYTEST_CMDLINE_MAIN_PREFIX = "ret: ExitCode | int = "
+_PYTEST_PREPARECONFIG_PREFIX = "config = prepareconfig("
 _SYSTEM_EXIT_MAIN_LINE = "raise SystemExit(main())"
 _RUNPY_INVOCATION_SNIPPET = "runpy.run_module("
 
@@ -174,9 +175,19 @@ def _normalize_frame_line(frame_line: str, frame_func: str, code_line: str) -> s
     """Normalize volatile traceback frame names to stable output."""
     if frame_func == "_console_main":
         return frame_line.removesuffix(" in _console_main") + " in console_main"
-    if frame_func == "_main" and code_line.startswith(_PYTEST_CMDLINE_MAIN_PREFIX):
+    if _is_pytest_command_main_frame(frame_func, code_line):
         return frame_line.removesuffix(" in _main") + " in main"
     return frame_line
+
+
+def _is_pytest_command_main_frame(frame_func: str, code_line: str) -> bool:
+    """Return whether a pytest command-line ``_main`` frame should be stable."""
+    if frame_func != "_main":
+        return False
+    return code_line.startswith((
+        _PYTEST_CMDLINE_MAIN_PREFIX,
+        _PYTEST_PREPARECONFIG_PREFIX,
+    ))
 
 
 def _is_runpy_launcher_path(frame_file: str) -> bool:
