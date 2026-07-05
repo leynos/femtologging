@@ -73,16 +73,16 @@ install. CI must not add a second hard-coded Ruff installation; update
 `RUFF_VERSION` when the project intentionally changes Ruff releases.
 
 The `ty` command remains an installed developer tool because `make typecheck`
-calls it directly. CI installs `uv` and `ty`, then delegates formatting, linting,
-type checking, and tests to Makefile targets.
+calls it directly. CI installs `uv` and `ty`, then delegates formatting,
+linting, type checking, and tests to Makefile targets.
 
 ## Benchmarking Documentation
 
 Benchmarking work is governed by
 [benchmarking-and-optimization-design.md](./benchmarking-and-optimization-design.md)
-and tracked in [roadmap.md](./roadmap.md). Keep those links intact when editing
-developer workflow notes so contributors can move from toolchain setup to the
-benchmarking phase design without losing context.
+and tracked in [roadmap.md](./roadmap.md). Keep those links intact when
+editing developer workflow notes so contributors can move from toolchain setup
+to the benchmarking phase design without losing context.
 
 ## Validation
 
@@ -99,6 +99,7 @@ make lint
 For documentation changes, also run:
 
 ```shell
+make fmt
 make markdownlint
 make nixie
 ```

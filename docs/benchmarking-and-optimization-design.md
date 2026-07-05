@@ -368,13 +368,13 @@ cannot be merged accidentally.
 The `architecture` field is one of `sync-direct`, `queue-listener`,
 `async-queue`, `batched-worker`, or `lab-direct`.
 
-| Field              | Meaning                                                              |
-| ------------------ | -------------------------------------------------------------------- |
-| `leaderboard_role` | `caller-visible`, `end-to-end`, or `diagnostic-internal`.            |
-| `architecture`     | Concrete concurrency and handler architecture.                       |
-| `framework`        | Package under test, such as `logging`, `picologging`, or `loguru`.   |
-| `mode`             | Concrete adapter mode, such as `enqueue=True` or `QueueHandler`.     |
-| `workload`         | Stable case identifier, such as `file_tmpfs_queue`.                  |
+| Field              | Meaning                                                            |
+| ------------------ | ------------------------------------------------------------------ |
+| `leaderboard_role` | `caller-visible`, `end-to-end`, or `diagnostic-internal`.          |
+| `architecture`     | Concrete concurrency and handler architecture.                     |
+| `framework`        | Package under test, such as `logging`, `picologging`, or `loguru`. |
+| `mode`             | Concrete adapter mode, such as `enqueue=True` or `QueueHandler`.   |
+| `workload`         | Stable case identifier, such as `file_tmpfs_queue`.                |
 
 _Table 4: Result schema identity fields._
 
@@ -586,11 +586,10 @@ optimization target; it is not a wishlist of features.
   interpreter lock (GIL); Python callback filters are a compatibility feature
   with an explicit cost.
 - **Memory grows under bursts.** Run a soak test: ten minutes, a fixed rate
-  below
-  drain capacity with periodic bursts above it, recording resident set size
-  every second and forcing a flush every few seconds, verifying no monotonic
-  unbounded growth. Record pooling stays a later, advanced move, consistent
-  with the design document's caution about its complexity.[^1]
+  below drain capacity with periodic bursts above it, recording resident set
+  size every second and forcing a flush every few seconds, verifying no
+  monotonic unbounded growth. Record pooling stays a later, advanced move,
+  consistent with the design document's caution about its complexity.[^1]
 
 ## 11. Regression policy and reporting
 
@@ -641,13 +640,12 @@ matters as much as the figures it reports. Three invariants define a correct
 run.
 
 - **Fairness invariant.** In parity mode, every comparator writes the same
-  record
-  content to the same class of sink with colours, prettification, and extra
-  context disabled. A run violates fairness if any adapter emits to its default
-  stderr sink, applies colourization, or performs caller introspection the case
-  did not request. The adapter base class enforces this by constructing sinks
-  explicitly and asserting that no default handler remains attached before the
-  measured loop begins.
+  record content to the same class of sink with colours, prettification, and
+  extra context disabled. A run violates fairness if any adapter emits to its
+  default stderr sink, applies colourization, or performs caller introspection
+  the case did not request. The adapter base class enforces this by
+  constructing sinks explicitly and asserting that no default handler remains
+  attached before the measured loop begins.
 - **Completeness invariant.** Every published row carries a correctness verdict:
   expected record count met, expected byte count met where applicable, zero
   unexpected drops, zero malformed socket frames, and a completed flush. The
