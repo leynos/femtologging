@@ -11,65 +11,127 @@ Example:
 
 from __future__ import annotations
 
+import pytest
+
 from .conftest import normalize_traceback_output
+
+_PYTEST_COMPAT_CASES = (
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/run.py", line 42, in <lambda>\n'
+            "    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <lambda>\n'
+            "    lambda: runtest_hook(...),\n"
+        ),
+        "normalize_traceback_output should strip pytest lambda kwargs and "
+        "normalize file/line markers",
+        id="strips_pytest_lambda_kwargs",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/run.py", line 9, in <lambda>\n'
+            "    lambda: runtest_hook( item=item, stage=stage, retry=retry ), "
+            "when=phase, reroute=reroute\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <lambda>\n'
+            "    lambda: runtest_hook(...),\n"
+        ),
+        "normalize_traceback_output should retain a stable runtest_hook "
+        "placeholder across spacing and keyword changes",
+        id="relaxes_runtest_hook_signature",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    sys.exit(_console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+            '  File "/tmp/pytest.py", line 30, in _main\n'
+            "    config = prepareconfig(args, plugins)\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+            '  File "<file>", line <N>, in main\n'
+            "    config = prepareconfig(args, plugins)\n"
+        ),
+        "normalize_traceback_output should keep pytest entrypoint snapshots "
+        "stable when the helper is private",
+        id="accepts_private_pytest_entrypoint",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    raise SystemExit(pytest._console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "normalize_traceback_output should normalize qualified private pytest "
+        "entrypoint calls",
+        id="accepts_qualified_private_pytest_entrypoint",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    raise SystemExit(_console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in <module>\n'
+            "    sys.exit(console_main())\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "normalize_traceback_output should normalize bare private pytest "
+        "entrypoint calls",
+        id="accepts_bare_private_pytest_entrypoint",
+    ),
+)
 
 
 class TestTracebackNormalization:
     """Grouped tests for traceback normalization behavior."""
 
-    def test_normalize_traceback_output_strips_pytest_lambda_kwargs(self) -> None:
-        """Normalize pytest lambda frames to a stable snapshot-friendly form.
+    @pytest.mark.parametrize(("output", "expected", "reason"), _PYTEST_COMPAT_CASES)
+    def test_normalize_traceback_output_pytest_compat_cases(
+        self,
+        output: str,
+        expected: str,
+        reason: str,
+    ) -> None:
+        """Normalize pytest compatibility frames to stable snapshot forms.
 
         Returns
         -------
         None
-            Asserts pytest lambda kwargs are normalized for stable snapshots.
+            Asserts pytest compatibility frames normalize for stable snapshots.
 
         """
         class_name = self.__class__.__name__
-        output = (
-            "Stack (most recent call last):\n"
-            '  File "/tmp/run.py", line 42, in <lambda>\n'
-            "    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise\n"
-        )
-        expected = (
-            "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in <lambda>\n'
-            "    lambda: runtest_hook(...),\n"
-        )
 
-        assert normalize_traceback_output(output) == expected, (
-            f"{class_name}: normalize_traceback_output should strip pytest "
-            "lambda kwargs and "
-            "normalize file/line markers"
-        )
-
-    def test_normalize_traceback_output_relaxes_runtest_hook_signature(self) -> None:
-        """Handle spacing and kwarg-name changes in runtest_hook renderings.
-
-        Returns
-        -------
-        None
-            Asserts runtest hook signatures normalize to a single stable form.
-
-        """
-        class_name = self.__class__.__name__
-        output = (
-            "Stack (most recent call last):\n"
-            '  File "/tmp/run.py", line 9, in <lambda>\n'
-            "    lambda: runtest_hook( item=item, stage=stage, retry=retry ), "
-            "when=phase, reroute=reroute\n"
-        )
-        expected = (
-            "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in <lambda>\n'
-            "    lambda: runtest_hook(...),\n"
-        )
-
-        assert normalize_traceback_output(output) == expected, (
-            f"{class_name}: normalize_traceback_output should retain a stable "
-            "runtest_hook placeholder across spacing and keyword changes"
-        )
+        assert normalize_traceback_output(output) == expected, f"{class_name}: {reason}"
 
     def test_normalize_traceback_output_strips_python_launcher_frames(self) -> None:
         """Drop volatile runpy/python launcher frames before pytest frames.

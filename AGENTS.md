@@ -115,8 +115,8 @@ management. Contributors should follow these best practices when working on the
 project:
 
 - Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
-  committing. These targets wrap `cargo fmt`, `cargo clippy`, type checking
-  with `ty`, and `cargo test` with the appropriate flags.
+  committing. These targets wrap `cargo fmt`, `cargo clippy`, type checking with
+  `ty`, and `cargo test` with the appropriate flags.
 - Clippy warnings MUST be disallowed.
 - Fix any warnings emitted during tests in the code itself rather than
   silencing them.
@@ -153,8 +153,8 @@ project:
 ### Dependency Management
 
 - **Mandate caret requirements for all dependencies.** All crate versions
-  specified in `Cargo.toml` must use SemVer-compatible caret requirements
-  (e.g., `some-crate = "1.2.3"`). This is Cargo's default and allows for safe,
+  specified in `Cargo.toml` must use SemVer-compatible caret requirements (e.g.,
+  `some-crate = "1.2.3"`). This is Cargo's default and allows for safe,
   non-breaking updates to minor and patch versions while preventing breaking
   changes from new major versions. This approach is critical for ensuring build
   stability and reproducibility.

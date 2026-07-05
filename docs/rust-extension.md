@@ -1,9 +1,9 @@
 # Rust Extension
 
 This project includes a small Rust extension built with
-[PyO3](https://pyo3.rs/) (currently `^0.28.0`). Initially, it exposed only a
-trivial `hello()` function and the `FemtoLogger` class. It has since grown to
-provide the core handler implementations as well:
+[PyO3](https://pyo3.rs/) (currently pinned to `0.28.3`). Initially, it exposed
+only a trivial `hello()` function and the `FemtoLogger` class. It has since
+grown to provide the core handler implementations as well:
 
 - `FemtoStreamHandler` writes log records to `stdout` or `stderr` on a
   background thread.
@@ -155,9 +155,10 @@ Public API re-exports.
 | `FemtoStreamHandler`          | `stream_handler::FemtoStreamHandler`                    |
 | `StreamHandlerConfig`         | `stream_handler::HandlerConfig`                         |
 
-Packaging is handled by [maturin](https://maturin.rs/). Use version
-`>=1.9.1,<2.0.0` as declared in `pyproject.toml`. The `[tool.maturin]` section
-declares the extension module as `femtologging._femtologging_rs`, so running
+Packaging is handled by [maturin](https://maturin.rs/). Development and CI use
+maturin `1.13.3`, while the build-system requirement is bounded as
+`>=1.13.3,<2.0.0` in `pyproject.toml`. The `[tool.maturin]` section declares
+the extension module as `femtologging._femtologging_rs`, so running
 `pip install .` automatically builds the Rust code. Windows users may need the
 MSVC build tools installed, or may need to run maturin with
 `--compatibility windows` to build.
@@ -475,19 +476,19 @@ Users building from source may disable tracing integration with
 layer constructor so they can compose femtologging with additional subscriber
 layers such as OpenTelemetry.
 
-`FemtoLogger` can now dispatch a record to multiple handlers. Handlers
-implement `FemtoHandlerTrait` and run their I/O on worker threads. The logger
-keeps its handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`,
-allowing handlers to be added through `&self`. Calling `add_handler()` pushes
-another reference into that list. When `log()` creates a `FemtoLogRecord`, it
-sends a clone to each configured handler, ensuring thread‑safe routing via the
+`FemtoLogger` can now dispatch a record to multiple handlers. Handlers implement
+`FemtoHandlerTrait` and run their I/O on worker threads. The logger keeps its
+handler list inside an `RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>`, allowing
+handlers to be added through `&self`. Calling `add_handler()` pushes another
+reference into that list. When `log()` creates a `FemtoLogRecord`, it sends a
+clone to each configured handler, ensuring thread‑safe routing via the
 handlers' MPSC queues.
 
 Handlers observe log records in the order they are attached. Adding a handler
 while other threads are logging is safe—new handlers only receive records
-logged after the addition completes. The `remove_handler()` method works
-through `&self` as well and detaches a handler so it no longer receives
-subsequent records.
+logged after the addition completes. The `remove_handler()` method works through
+`&self` as well and detaches a handler so it no longer receives subsequent
+records.
 
 Handlers manage worker threads; the logger simply forwards each record to every
 handler. Callers may invoke a handler's `flush()` method to ensure queued

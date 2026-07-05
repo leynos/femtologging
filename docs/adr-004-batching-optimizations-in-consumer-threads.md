@@ -192,8 +192,8 @@ traffic, it degrades gracefully to the current one-at-a-time behaviour.
 
 In the shipped Phase 1 plumbing, `recv_batch()` and `BatchConfig` let the file
 worker block once and then drain additional commands before dispatch. The file
-path still performs per-record writes through `WorkerState::handle_record()`
-and `super::io_utils::write_record()` in
+path still performs per-record writes through `WorkerState::handle_record()` and
+`super::io_utils::write_record()` in
 `rust_extension/src/handlers/file/worker.rs`, and the stream path still writes
 per record in `handle_record_command()` in
 `rust_extension/src/stream_handler.rs`. The contiguous-buffer `Vec<u8>` plus

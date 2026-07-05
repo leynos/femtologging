@@ -106,7 +106,8 @@ def _wait_for(condition: typ.Callable[[], bool], timeout: float = 1.0) -> None:
         if condition():
             return
         time.sleep(0.01)
-    pytest.fail("condition was not met before timeout")
+    msg = "condition was not met before timeout"
+    raise AssertionError(msg)
 
 
 def test_python_callback_filter_builder_persists_contextvar_enrichment() -> None:

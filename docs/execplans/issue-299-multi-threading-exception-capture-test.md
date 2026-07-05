@@ -93,8 +93,8 @@ asserts payload integrity.
   with project style.
 
 - Observation: Lint rules required abstracting `raise` to inner function.
-  Evidence: ruff TRY301 error for raising directly in try block. Impact:
-  Created `_raise_thread_error()` helper function.
+  Evidence: ruff TRY301 error for raising directly in try block. Impact: Created
+  `_raise_thread_error()` helper function.
 
 ## Decision Log
 

@@ -7,9 +7,9 @@ extensions built with Rust and PyO3 version 0.25.1. It is intended for an
 audience of experienced systems developers who are already proficient in Rust,
 Python, and the low-level CPython C API. As such, it presupposes a working
 knowledge of foundational concepts like the Global Interpreter Lock (GIL),
-Python's object model, and the manual reference counting
-(`Py_INCREF`/`Py_DECREF`) and GIL management
-(`PyGILState_Ensure`/`PyGILState_Release`) inherent to the C API.
+Python's object model, and the manual reference counting (`Py_INCREF`/
+`Py_DECREF`) and GIL management (`PyGILState_Ensure`/`PyGILState_Release`)
+inherent to the C API.
 
 The central thesis of this report is that PyO3 represents a paradigm shift in
 developing concurrent Python extensions. It moves beyond the runtime discipline
@@ -102,7 +102,7 @@ fn call_python_from_rust() -> PyResult<()> {
 
 This pattern is the safe, idiomatic Rust equivalent of a
 `PyGILState_STATE gstate = PyGILState_Ensure();...; PyGILState_Release(gstate);`
- block in C. It leverages Rust's RAII (Resource Acquisition Is Initialization)
+block in C. It leverages Rust's RAII (Resource Acquisition Is Initialization)
 pattern to guarantee the release of the GIL. Furthermore, if the
 `auto-initialize` feature is enabled in `Cargo.toml`, `Python::with_gil` will
 also handle the one-time initialization of the Python interpreter if it hasn't
@@ -110,8 +110,8 @@ been started yet.[^2]
 
 ### Unlocking Parallelism: Releasing the GIL with `py.allow_threads()`
 
-The most critical function for achieving true parallelism in a PyO3 extension
-is `py.allow_threads()`. This method takes a closure, releases the GIL before
+The most critical function for achieving true parallelism in a PyO3 extension is
+`py.allow_threads()`. This method takes a closure, releases the GIL before
 executing it, and re-acquires the GIL upon its completion.[^7] This allows
 other Python threads to run or, more importantly for CPU-bound tasks, allows
 other Rust threads to acquire the GIL if they are waiting.[^9]
@@ -203,11 +203,11 @@ This specialized lock function is aware of PyO3's internals and helps prevent
 deadlocks with the GIL or other global interpreter synchronization events.[^12]
 
 <!-- markdownlint-disable MD013 MD033 MD056 -->
-| PyO3 API                         | CPython C API Equivalent                                                | Core Function                           | Safety Guarantees in PyO3                                     |
-| -------------------------------- | ----------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------- |
-| `Python::with_gil`               | `PyGILState_STATE g = PyGILState_Ensure(); …; PyGILState_Release(g);`   | Acquire the GIL and run a closure       | RAII ensures the GIL is released even if the closure panics   |
-| `py.allow_threads`               | `Py_BEGIN_ALLOW_THREADS`…`Py_END_ALLOW_THREADS`                         | Run blocking code without the GIL       | Allows other Python threads to run while the closure executes |
-| `py` in `#[pyfunction]` argument | Implicit context                                                        | Access the GIL in callbacks from Python | Zero-cost token proving the GIL is held                       |
+| PyO3 API                         | CPython C API Equivalent                                              | Core Function                           | Safety Guarantees in PyO3                                     |
+| -------------------------------- | --------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------- |
+| `Python::with_gil`               | `PyGILState_STATE g = PyGILState_Ensure(); …; PyGILState_Release(g);` | Acquire the GIL and run a closure       | RAII ensures the GIL is released even if the closure panics   |
+| `py.allow_threads`               | `Py_BEGIN_ALLOW_THREADS`…`Py_END_ALLOW_THREADS`                       | Run blocking code without the GIL       | Allows other Python threads to run while the closure executes |
+| `py` in `#[pyfunction]` argument | Implicit context                                                      | Access the GIL in callbacks from Python | Zero-cost token proving the GIL is held                       |
 
 <!-- markdownlint-enable MD013 MD033 MD056 -->
 
@@ -463,8 +463,8 @@ fn search_parallel(py: Python<'_>, contents: String, needle: String) -> usize {
 
 This pattern effectively circumvents the GIL for the most intensive part of the
 operation, enabling true multicore parallelism and delivering performance far
-exceeding what is possible with Python's native `threading` module for
-CPU-bound work.[^7] The main performance consideration is the cost of data
+exceeding what is possible with Python's native `threading` module for CPU-bound
+work.[^7] The main performance consideration is the cost of data
 marshaling—the conversion between Python and Rust types at the function
 boundary. For this pattern to be effective, the computational work done in Rust
 should significantly outweigh this conversion overhead.

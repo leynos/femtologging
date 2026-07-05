@@ -41,8 +41,8 @@ your process exits.
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
   monitor pressure.
 - Record metadata tracks the logger name, level, message text, timestamps,
-  thread identity, and optional structured exception (`exc_info`) and call
-  stack (`stack_info`) payloads. The Python API does not yet expose other rich
+  thread identity, and optional structured exception (`exc_info`) and call stack
+  (`stack_info`) payloads. The Python API does not yet expose other rich
   `LogRecord` attributes such as `extra` or the calling module.
 
 ## Working with loggers
@@ -263,8 +263,8 @@ fields with safe defaults does not require a version bump.
 - Rotation runs on the worker thread. `backup_count == 0` keeps all timestamped
   backups instead of disabling rotation.
 - `TimedRotatingFileHandlerBuilder` mirrors the direct handler surface with
-  `.with_when()`, `.with_interval()`, `.with_backup_count()`, `.with_utc()`,
-  and `.with_at_time()`.
+  `.with_when()`, `.with_interval()`, `.with_backup_count()`, `.with_utc()`, and
+  `.with_at_time()`.
 
 ### FemtoSocketHandler
 
@@ -460,8 +460,8 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 **Limitations:**
 
 - `exc_info` is provided as pre-formatted text (`exc_text`), not as
-  the original `(type, value, traceback)` tuple.  Stdlib formatters that
-  inspect `record.exc_info` directly will not find a live traceback object.
+  the original `(type, value, traceback)` tuple.  Stdlib formatters that inspect
+  `record.exc_info` directly will not find a live traceback object.
 - `pathname` and `funcName` are set to defaults because femtologging does not
   capture these values.  `relativeCreated` is recomputed from
   `metadata.timestamp` when present, so elapsed-time values can be accurate.
@@ -645,7 +645,7 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
   and run on dedicated worker threads.  Existing stdlib `logging.Handler`
   subclasses can be reused via
   [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
-   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
+  which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
 - The `dictConfig` schema lacks incremental updates, handler filters,
   handler levels, and formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the

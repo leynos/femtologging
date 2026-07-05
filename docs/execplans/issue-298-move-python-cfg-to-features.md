@@ -260,8 +260,8 @@ Move to `common/python.rs`:
 - `set_formatter_from_py()` method
 - `extend_py_dict()` methods
 
-The `common/mod.rs` retains pure Rust types (`FormatterConfig`,
-`CommonBuilder`, `FileLikeBuilderState`) and gates the Python module:
+The `common/mod.rs` retains pure Rust types (`FormatterConfig`, `CommonBuilder`,
+`FileLikeBuilderState`) and gates the Python module:
 
     #[cfg(feature = "python")]
     mod python;

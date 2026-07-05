@@ -155,8 +155,8 @@ integration once those limitations are lifted.
 - **Systemd Journald Integration:** Enable applications using femtologging to
   log directly to the local systemd journal on Linux, with minimal
   configuration. Logs sent to journald should include appropriate severity
-  levels and, in future, structured metadata fields for optimal integration
-  with `journalctl` and monitoring tools.
+  levels and, in future, structured metadata fields for optimal integration with
+  `journalctl` and monitoring tools.
 
 - **OpenTelemetry Compatibility:** Provide a pathway for femtologging logs to
   enter OpenTelemetry pipelines. This includes allowing femtologging to accept

@@ -209,3 +209,4 @@ target/
 
 bin/act
 .grepai/
+.memdb/

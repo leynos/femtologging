@@ -182,14 +182,13 @@ All doc comments and user-facing strings now use `-ize` / `-ization` forms:
 
 ### Impact
 
-The spelling-standardization renames are **non-breaking**. The renamed
-functions (`serialize_url_encoded`, `serialize_json` in
-`http_handler/serialize.rs` and `serialize_record` in
-`socket_handler/serialize.rs`) are `pub` within their respective modules, but
-the `serialize` modules themselves are private (`mod serialize`, not
-`pub mod`), so these symbols are not accessible to downstream crates. No
-user-facing method signatures, class names, or parameter names were altered by
-this change.
+The spelling-standardization renames are **non-breaking**. The renamed functions
+(`serialize_url_encoded`, `serialize_json` in `http_handler/serialize.rs` and
+`serialize_record` in `socket_handler/serialize.rs`) are `pub` within their
+respective modules, but the `serialize` modules themselves are private
+(`mod serialize`, not `pub mod`), so these symbols are not accessible to
+downstream crates. No user-facing method signatures, class names, or parameter
+names were altered by this change.
 
 ______________________________________________________________________
 

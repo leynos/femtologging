@@ -124,10 +124,8 @@ across multiple operating systems and CPU architectures, a separate binary
 wheel must be compiled for each unique combination. For example, supporting
 Python versions 3.8 through 3.12 (5 versions) on Windows (x86_64), macOS
 (x86_64, arm64), and Linux (x86_64, aarch64) requires building and distributing
-`5 * (1
-
-- 2 + 2) = 25` distinct binary wheels. This represents a "huge cost" in terms of
-CI/CD resources, release management complexity, and storage.
+`5 * (1 + 2 + 2) = 25` distinct binary wheels. This represents a "huge cost" in
+terms of CI/CD resources, release management complexity, and storage.
 
 This complexity is further compounded because the ABI problem is not isolated
 to CPython. A native extension is a compiled artifact that links against a
@@ -671,14 +669,14 @@ lifecycle, from writing code to testing and distribution.
 The following table provides a comparative overview of the maintenance and
 distribution aspects.
 
-| Aspect              | Version-Specific Build                                         | abi3 Build                                           |
-| ------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
-| Build Matrix Size   | Large (N platforms × M Python versions)                        | Small (N platforms × 1 build)                        |
-| Test Matrix Size    | Large (N platforms × M Python versions)                        | Large (1 artifact × M Python versions per platform)  |
-| API Access          | Full, unrestricted CPython C API                               | Restricted to the "Limited API"                      |
-| Compatibility Logic | Compile-time (#[cfg]). Safer.                                  | Runtime (py.version_info()). More error-prone.       |
-| New Python Support  | Delayed (requires maintainer to build and release new wheels). | Immediate (forward-compatible).                      |
-| Distribution Burden | High.                                                          | Low.                                                 |
+| Aspect              | Version-Specific Build                                         | abi3 Build                                          |
+| ------------------- | -------------------------------------------------------------- | --------------------------------------------------- |
+| Build Matrix Size   | Large (N platforms × M Python versions)                        | Small (N platforms × 1 build)                       |
+| Test Matrix Size    | Large (N platforms × M Python versions)                        | Large (1 artifact × M Python versions per platform) |
+| API Access          | Full, unrestricted CPython C API                               | Restricted to the "Limited API"                     |
+| Compatibility Logic | Compile-time (#[cfg]). Safer.                                  | Runtime (py.version_info()). More error-prone.      |
+| New Python Support  | Delayed (requires maintainer to build and release new wheels). | Immediate (forward-compatible).                     |
+| Distribution Burden | High.                                                          | Low.                                                |
 
 ### Choosing the Right Strategy: A Decision Framework
 

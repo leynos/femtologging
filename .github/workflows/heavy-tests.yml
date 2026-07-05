@@ -35,7 +35,7 @@ jobs:
           # Cache wheels to avoid repeated downloads
           pip install \
             --cache-dir "${{ runner.tool_cache }}" \
-            "maturin>=1.9.1,<2.0.0" pytest==7.4.4
+            "maturin==1.13.3" pytest==8.4.2 pytest-bdd==8.1.0
       - name: Build editable extension
         run: |
           source .venv/bin/activate

@@ -1,9 +1,8 @@
 # Deliver richer runtime handler and filter mutation workflows
 
-This Execution Plan (ExecPlan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This Execution Plan (ExecPlan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
@@ -282,8 +281,8 @@ to `ConfigBuilder.build_and_init()`:
 
 The logger-side helpers should support efficient whole-collection replacement,
 not repeated clear/add loops. Add replacement helpers in a new logger submodule
-such as `rust_extension/src/logger/runtime_mutation.rs` and keep
-`FemtoLogger`’s hot-path behaviour unchanged.
+such as `rust_extension/src/logger/runtime_mutation.rs` and keep `FemtoLogger`
+’s hot-path behaviour unchanged.
 
 Acceptance for this stage:
 
@@ -450,9 +449,9 @@ Expected outcome:
 - Decision: a runtime replacement of an existing handler or filter ID updates
   every tracked logger that still references that ID, even if that logger was
   not named in the mutation request. Rationale: handler/filter IDs are shared
-  configuration identities, so replacing one must keep manager metadata and
-  live `Arc` attachments aligned across the logger graph. Date/Author:
-  2026-03-13 / Codex.
+  configuration identities, so replacing one must keep manager metadata and live
+  `Arc` attachments aligned across the logger graph. Date/Author: 2026-03-13 /
+  Codex.
 
 ## Outcomes & Retrospective
 

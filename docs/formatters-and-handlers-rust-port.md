@@ -152,11 +152,10 @@ The constructor enforces several invariants on the configuration:
 `FemtoStreamHandler` writes formatted records to `stdout` or `stderr`. The
 consumer thread receives `FemtoLogRecord` values, moves the writer and
 formatter into the worker thread, and writes directly without locking. This
-mirrors the design in
-[`concurrency-models-in-high-performance-logging.md`][cmhp-log]. The default
-bounded queue size is 1024 records, but `FemtoStreamHandler::with_capacity`
-lets callers configure a custom capacity when needed. Flushing is driven by a
-timeout measured in milliseconds.
+mirrors the design in [`concurrency-models-in-high-performance-logging.md`][
+cmhp-log]. The default bounded queue size is 1024 records, but
+`FemtoStreamHandler::with_capacity` lets callers configure a custom capacity
+when needed. Flushing is driven by a timeout measured in milliseconds.
 
 Dropping a handler closes its channel and waits briefly for the worker thread
 to finish flushing. If the thread does not exit within the configured flush

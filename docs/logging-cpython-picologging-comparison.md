@@ -33,7 +33,7 @@ Python types) for speed. It has analogous classes: `Logger`, `Handler`,
 and `_Placeholder` (for tree structure) exist in Python, but key operations
 occur in C. For example, `Logger` is a C-struct type (see
 [logger.hxx](https://github.com/microsoft/picologging/blob/%E2%80%A6/logger.hxx))
- with fixed fields (e.g.
+with fixed fields (e.g.
 `PyObject *name, unsigned short level, PyObject *handlers, bool propagate`,
 plus several boolean flags for fast level checks). A C++ `Handler` struct
 contains a `Filterer` object (for filters), a `std::recursive_mutex *lock`, and

@@ -38,8 +38,8 @@ locking.
   different destinations (e.g., one to a file, another to the console) do not
   contend with each other.
 
-A crucial detail of this implementation is the sequence of operations within
-the `handle` method: filtering occurs *before* the lock is acquired. This is an
+A crucial detail of this implementation is the sequence of operations within the
+`handle` method: filtering occurs *before* the lock is acquired. This is an
 important optimization, as it prevents the cost of filtering out a message from
 contributing to lock contention. However, the work of formatting the message
 via the `Formatter` occurs *inside* the locked region, as it is part of the

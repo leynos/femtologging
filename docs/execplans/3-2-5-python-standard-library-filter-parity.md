@@ -1,9 +1,8 @@
 # Deliver Python standard library filter parity for logger and root filters
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: Complete
 
@@ -47,7 +46,7 @@ Observable success after implementation:
 This plan implements roadmap items 3.2.5, 3.2.5.1, 3.2.5.2, and 3.2.5.3 as
 defined in `docs/roadmap.md`. The architectural direction is set by
 [Architectural Decision Record (ADR) 003](../adr-003-python-stdlib-filter-parity.md),
- which chose Option B: evaluate Python callback filters on the producer thread
+which chose Option B: evaluate Python callback filters on the producer thread
 and persist accepted enrichments into Rust-owned record metadata before
 queueing.
 
@@ -315,8 +314,8 @@ cb = ConfigBuilder()
 cb.with_filter("correlate", PythonCallbackFilterBuilder(my_filter))
 ```
 
-Register the new class in `rust_extension/src/python_module.rs` and add stubs
-to `femtologging/_femtologging_rs.pyi`.
+Register the new class in `rust_extension/src/python_module.rs` and add stubs to
+`femtologging/_femtologging_rs.pyi`.
 
 #### A.4. Rust unit tests for enrichment validation
 
@@ -380,8 +379,8 @@ acquires the GIL when a Python callback filter is actually configured.
 If a Python callback filter raises an exception:
 
 1. Catch the `PyErr`.
-2. Log a warning via the `log` crate: `"Python filter callback raised an
-   exception; record dropped: {err}"`.
+2. Log a warning via the `log` crate:
+   `"Python filter callback raised an exception; record dropped: {err}"`.
 3. Treat the record as rejected (return `false`).
 
 This matches the principle of deterministic error handling stated in ADR 003.
@@ -457,8 +456,9 @@ existing file is near the 400-line limit) covering:
 
 - Valid factory form: `{"()": "path.to.MyFilter"}` produces a working
   Python callback filter.
-- Factory with keyword arguments: `{"()": "path.to.MyFilter", "arg1":
-  "value1"}` passes `arg1` to the factory constructor.
+- Factory with keyword arguments:
+  `{"()": "path.to.MyFilter", "arg1": "value1"}` passes `arg1` to the factory
+  constructor.
 - Mixed form rejection: `{"()": "path.to.MyFilter", "level": "INFO"}`
   raises `ValueError`.
 - Mixed form rejection: `{"()": "path.to.MyFilter", "name": "app"}`

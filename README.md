@@ -19,7 +19,7 @@ documents in [`docs/`](./docs), especially
 <!-- markdownlint-disable-next-line MD013 -->
 
 [`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-multithreaded-logging-framework-for-python-design.md)
- and [`dependency-analysis.md`](docs/dependency-analysis.md).
+and [`dependency-analysis.md`](docs/dependency-analysis.md).
 
 ## Installation
 
@@ -91,4 +91,4 @@ details.
 For structured exception and stack payload compatibility rules (including
 schema version mismatch handling), see the
 [`Exception schema versioning`](docs/users-guide.md#exception-schema-versioning)
- section in the user guide.
+section in the user guide.
