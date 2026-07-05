@@ -294,13 +294,13 @@ class TestTracebackNormalization:
         line_no : int
             Generated source line number for the synthetic traceback frame.
         entrypoint_line : str
-            Pytest entrypoint source line variant accepted by the normaliser.
+            Pytest entrypoint source line variant accepted by the normalizer.
 
         Returns
         -------
         None
-            Asserts pytest entrypoint frames canonicalise their source line,
-            scrub concrete line numbers, and remain stable when normalised more
+            Asserts pytest entrypoint frames canonicalize their source line,
+            scrub concrete line numbers, and remain stable when normalized more
             than once.
 
         """
