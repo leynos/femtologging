@@ -318,7 +318,6 @@ where applicable.
   [dev workflow §commands](./dev-workflow.md#commands) and
   [rust extension](./rust-extension.md#rust-log-crate-bridge).
 
-
 ## 6. Performance benchmarking and optimization
 
 Phase idea: femtologging's queue-based architecture delivers lower
@@ -328,7 +327,6 @@ workloads, and the internal performance laboratory can localize and remove the
 dominant consumer-side costs. Each step below validates or falsifies one part of
 that hypothesis. See
 [benchmarking and optimization design](./benchmarking-and-optimization-design.md).
-
 
 ### 6.1. Benchmark harness foundations
 
@@ -409,7 +407,6 @@ cost and end-to-end completion across the core comparators. Requires 6.1.
   saturation case. Requires 6.2.1, 6.2.2, 6.2.3, 6.2.4. See
   [benchmarking design §9](./benchmarking-and-optimization-design.md#9-concrete-benchmark-groups).
 
-
 ### 6.3. Public comparison suite: full workload matrix
 
 This step extends coverage to the full dimension matrix and both run modes,
@@ -438,7 +435,6 @@ Requires 6.2.
   measurement-boundary caption and no table mixes caller latency with end-to-end
   work. See
   [benchmarking design §11.2](./benchmarking-and-optimization-design.md#112-reporting).
-
 
 ### 6.4. Internal performance laboratory
 
@@ -470,7 +466,6 @@ feature matrix. It may proceed in parallel with step 6.2.
   combined path. See
   [benchmarking design §9.5](./benchmarking-and-optimization-design.md#95-group-e-socket-handler).
 
-
 ### 6.5. Saturation, backpressure, and soak diagnostics
 
 This step characterizes tail behaviour and memory under stress, where pleasant
@@ -489,7 +484,6 @@ averages hide catastrophe. Requires 6.2.
   Success: `femtologging` shows no monotonic unbounded growth. See
   [benchmarking design §10.2](./benchmarking-and-optimization-design.md#102-playbook-by-failing-benchmark).
 
-
 ### 6.6. Regression gating and reporting
 
 This step makes regressions fail the build against rolling, per-machine
@@ -505,7 +499,6 @@ baselines. Requires 6.1 and 6.2.
 - [ ] 6.6.3. Publish trend lines by commit so that a slow creep is caught before
   it becomes a swamp. See
   [benchmarking design §11](./benchmarking-and-optimization-design.md#11-regression-policy-and-reporting).
-
 
 ### 6.7. Benchmark-guided optimization
 

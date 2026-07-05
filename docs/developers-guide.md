@@ -60,13 +60,6 @@ For `rust_extension/tests/compile_tests.rs`, use
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
 
-# Developer Guide
-
-This guide records contributor-facing development boundaries that sit above the
-command reference in [dev-workflow.md](./dev-workflow.md). Use the workflow
-guide for exact `make` targets and this guide for toolchain ownership rules.
-
-
 ## Toolchain Boundaries
 
 The root `Makefile` is the source of truth for local and CI tool commands. Keep
@@ -82,7 +75,6 @@ install. CI must not add a second hard-coded Ruff installation; update
 The `ty` command remains an installed developer tool because `make typecheck`
 calls it directly. CI installs `uv` and `ty`, then delegates formatting, linting,
 type checking, and tests to Makefile targets.
-
 
 ## Benchmarking Documentation
 
