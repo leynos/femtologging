@@ -7,6 +7,8 @@ libraries. Use the links below to explore each topic.
 
 - [dev-workflow.md](./dev-workflow.md)
   - Describes Makefile commands for building, linting, formatting and tests.
+- [developers-guide.md](./developers-guide.md)
+  - Records developer toolchain ownership and validation boundaries.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)

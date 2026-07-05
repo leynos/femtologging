@@ -227,10 +227,29 @@ class TestTracebackNormalization:
                     "    code = main()\n"
                 ),
             ),
+            (
+                "qualified private SystemExit entrypoint",
+                (
+                    "Stack (most recent call last):\n"
+                    '  File "/tmp/pytest/__main__.py", line 14, in <module>\n'
+                    "    raise SystemExit(pytest._console_main())\n"
+                    '  File "/tmp/_pytest/config/__init__.py", line 201, '
+                    "in _console_main\n"
+                    "    code = _main(prog=_get_prog_name(sys.argv))\n"
+                ),
+                (
+                    "Stack (most recent call last):\n"
+                    '  File "<file>", line <N>, in <module>\n'
+                    "    sys.exit(console_main())\n"
+                    '  File "<file>", line <N>, in console_main\n'
+                    "    code = main()\n"
+                ),
+            ),
         ],
         ids=[
             "qualified private entrypoint",
             "unqualified private entrypoint",
+            "qualified private SystemExit entrypoint",
         ],
     )
     def test_normalize_traceback_output_canonicalizes_pytest_entrypoint(

@@ -59,3 +59,58 @@ For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
+
+# Developer Guide
+
+This guide records contributor-facing development boundaries that sit above the
+command reference in [dev-workflow.md](./dev-workflow.md). Use the workflow
+guide for exact `make` targets and this guide for toolchain ownership rules.
+
+
+## Toolchain Boundaries
+
+The root `Makefile` is the source of truth for local and CI tool commands. Keep
+new developer tooling behind a Makefile variable or target so CI and local
+commands exercise the same path.
+
+Ruff is pinned by `RUFF_VERSION` in the `Makefile`. The `RUFF` variable invokes
+`uvx ruff==$(RUFF_VERSION)`, so `make fmt`, `make check-fmt`, and `make lint`
+resolve the same formatter and linter version without requiring a global Ruff
+install. CI must not add a second hard-coded Ruff installation; update
+`RUFF_VERSION` when the project intentionally changes Ruff releases.
+
+The `ty` command remains an installed developer tool because `make typecheck`
+calls it directly. CI installs `uv` and `ty`, then delegates formatting, linting,
+type checking, and tests to Makefile targets.
+
+
+## Benchmarking Documentation
+
+Benchmarking work is governed by
+[benchmarking-and-optimization-design.md](./benchmarking-and-optimization-design.md)
+and tracked in [roadmap.md](./roadmap.md). Keep those links intact when editing
+developer workflow notes so contributors can move from toolchain setup to the
+benchmarking phase design without losing context.
+
+## Validation
+
+Before committing, run the gates requested by the change. For code changes, the
+full local sequence is:
+
+```shell
+make check-fmt
+make test
+make typecheck
+make lint
+```
+
+For documentation changes, also run:
+
+```shell
+make markdownlint
+make nixie
+```
+
+These commands mirror the PR gates described in
+[dev-workflow.md](./dev-workflow.md) and keep CI behaviour aligned with local
+validation.
