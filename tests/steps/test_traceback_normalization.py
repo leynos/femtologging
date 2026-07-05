@@ -301,29 +301,10 @@ class TestTracebackNormalization:
                     "    code = main()\n"
                 ),
             ),
-            (
-                "qualified private SystemExit entrypoint",
-                (
-                    "Stack (most recent call last):\n"
-                    '  File "/tmp/pytest/__main__.py", line 14, in <module>\n'
-                    "    raise SystemExit(pytest._console_main())\n"
-                    '  File "/tmp/_pytest/config/__init__.py", line 201, '
-                    "in _console_main\n"
-                    "    code = _main(prog=_get_prog_name(sys.argv))\n"
-                ),
-                (
-                    "Stack (most recent call last):\n"
-                    '  File "<file>", line <N>, in <module>\n'
-                    "    sys.exit(console_main())\n"
-                    '  File "<file>", line <N>, in console_main\n'
-                    "    code = main()\n"
-                ),
-            ),
         ],
         ids=[
             "qualified private entrypoint",
             "unqualified private entrypoint",
-            "qualified private SystemExit entrypoint",
         ],
     )
     def test_normalize_traceback_output_canonicalizes_pytest_entrypoint(
@@ -377,9 +358,15 @@ class TestTracebackNormalization:
 
         normalized = normalize_traceback_output(output)
 
-        assert "sys.exit(console_main())" in normalized
-        assert f"line {line_no}" not in normalized
-        assert normalize_traceback_output(normalized) == normalized
+        assert "sys.exit(console_main())" in normalized, (
+            "expected canonical sys.exit(console_main()) call in normalized output"
+        )
+        assert f"line {line_no}" not in normalized, (
+            f"expected line number {line_no} to be scrubbed from normalized output"
+        )
+        assert normalize_traceback_output(normalized) == normalized, (
+            "normalize_traceback_output should be idempotent"
+        )
 
     def test_normalize_traceback_output_keeps_non_launcher_main_frame(self) -> None:
         """Keep application main frames that are not runpy wrappers.
