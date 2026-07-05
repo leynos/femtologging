@@ -12,13 +12,33 @@ Example:
 from __future__ import annotations
 
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from tests.steps.conftest import (
     _SYSTEM_EXIT_PYTEST_LINES,
     normalize_traceback_output,
 )
+
+try:
+    from hypothesis import given
+    from hypothesis import strategies as st
+except ImportError:
+    _ENTRYPOINT_PROPERTY_CASES = pytest.mark.skip(
+        reason=(
+            "Hypothesis has no CPython 3.15 distribution yet; "
+            "remove this skip with https://github.com/leynos/femtologging/issues/385"
+        )
+    )
+else:
+    _ENTRYPOINT_PROPERTY_CASES = given(
+        segment=st.text(
+            alphabet=st.characters(
+                blacklist_characters='"\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029'
+            ),
+            max_size=120,
+        ),
+        line_no=st.integers(min_value=1, max_value=999_999),
+        entrypoint_line=st.sampled_from(sorted(_SYSTEM_EXIT_PYTEST_LINES)),
+    )
 
 _PYTEST_COMPAT_CASES = (
     pytest.param(
@@ -270,16 +290,7 @@ class TestTracebackNormalization:
         )
 
     @staticmethod
-    @given(
-        segment=st.text(
-            alphabet=st.characters(
-                blacklist_characters='"\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029'
-            ),
-            max_size=120,
-        ),
-        line_no=st.integers(min_value=1, max_value=999_999),
-        entrypoint_line=st.sampled_from(sorted(_SYSTEM_EXIT_PYTEST_LINES)),
-    )
+    @_ENTRYPOINT_PROPERTY_CASES
     def test_normalize_traceback_output_canonicalizes_entrypoints_property(
         segment: str,
         line_no: int,
