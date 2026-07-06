@@ -10,7 +10,7 @@ import pytest
 
 from tests.steps.conftest import _SYSTEM_EXIT_PYTEST_LINES
 
-_PropertyDecorator = typ.Callable[
+type _PropertyDecorator = typ.Callable[
     [typ.Callable[..., object]], typ.Callable[..., object]
 ]
 

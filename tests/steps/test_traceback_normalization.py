@@ -234,6 +234,15 @@ class TestTracebackNormalization:
     ) -> None:
         """Handle pytest private entrypoint spelling used by newer versions.
 
+        Parameters
+        ----------
+        description : str
+            Human-readable label for the parameterized input variant.
+        output : str
+            Raw stack-info text to normalize.
+        expected : str
+            Stable stack-info text expected after normalization.
+
         Returns
         -------
         None
@@ -306,7 +315,7 @@ class TestTracebackNormalization:
         Parameters
         ----------
         description : str
-            Human-readable label for the parameterised input variant.
+            Human-readable label for the parameterized input variant.
         frame_name : str
             The frame function name (``main`` or ``_main``) under test.
         statement : str
