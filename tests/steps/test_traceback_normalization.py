@@ -321,6 +321,33 @@ class TestTracebackNormalization:
             "main frames"
         )
 
+    def test_normalize_traceback_output_keeps_non_pytest_main_frame(self) -> None:
+        """Keep application ``_main`` frames outside pytest launcher code.
+
+        Returns
+        -------
+        None
+            Asserts that non-pytest ``_main`` frames are preserved after
+            normalization.
+
+        """
+        class_name = self.__class__.__name__
+        output = (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/service/cli.py", line 42, in _main\n'
+            "    return application.run()\n"
+        )
+        expected = (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in _main\n'
+            "    return application.run()\n"
+        )
+
+        assert normalize_traceback_output(output) == expected, (
+            f"{class_name}: normalize_traceback_output should keep non-pytest "
+            "_main frames"
+        )
+
     def test_normalize_traceback_output_keeps_non_launcher_run_module_frame(
         self,
     ) -> None:

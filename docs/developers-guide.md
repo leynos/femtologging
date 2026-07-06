@@ -20,14 +20,14 @@ ruff 0.15.12
 ```
 
 The Makefile stores this value in `RUFF_VERSION` and invokes Ruff through the
-pinned `uvx ruff==$(RUFF_VERSION)` command. Pull-request CI installs
-`ruff==0.15.12` before running the same Makefile targets, so `make lint` and CI
-evaluate Python lint rules with the same Ruff release.
+pinned `uvx ruff==$(RUFF_VERSION)` command. Pull-request CI installs `uv` and
+`ty`, then runs the same Makefile targets, so `make lint` and CI evaluate
+Python lint rules with the same Ruff release through the Makefile.
 
 When updating Ruff, first install the intended new version locally, confirm it
-with `$(which ruff) --version`, then update both `RUFF_VERSION` in `Makefile`
-and the `uv tool install ruff==…` line in the GitHub workflow
-`.github/workflows/ci.yml`.
+with `$(which ruff) --version`, then update `RUFF_VERSION` in `Makefile`. CI
+does not install Ruff directly; it picks up the version from the Makefile's
+`uvx ruff==$(RUFF_VERSION)` invocation.
 
 ## Python test toolchain
 
