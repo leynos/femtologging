@@ -20,14 +20,14 @@ ruff 0.15.12
 ```
 
 The Makefile stores this value in `RUFF_VERSION` and invokes Ruff through the
-pinned `uvx ruff==$(RUFF_VERSION)` command. Pull-request CI installs
-`ruff==0.15.12` before running the same Makefile targets, so `make lint` and CI
-evaluate Python lint rules with the same Ruff release.
+pinned `uvx ruff==$(RUFF_VERSION)` command. Pull-request CI installs `uv` and
+`ty`, then runs the same Makefile targets, so `make lint` and CI evaluate
+Python lint rules with the same Ruff release through the Makefile.
 
 When updating Ruff, first install the intended new version locally, confirm it
-with `$(which ruff) --version`, then update both `RUFF_VERSION` in `Makefile`
-and the `uv tool install ruff==…` line in the GitHub workflow
-`.github/workflows/ci.yml`.
+with `$(which ruff) --version`, then update `RUFF_VERSION` in `Makefile`. CI
+does not install Ruff directly; it picks up the version from the Makefile's
+`uvx ruff==$(RUFF_VERSION)` invocation.
 
 ## Python test toolchain
 
@@ -59,3 +59,51 @@ For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
+
+## Toolchain Boundaries
+
+The root `Makefile` is the source of truth for local and CI tool commands. Keep
+new developer tooling behind a Makefile variable or target so CI and local
+commands exercise the same path.
+
+Ruff is pinned by `RUFF_VERSION` in the `Makefile`. The `RUFF` variable invokes
+`uvx ruff==$(RUFF_VERSION)`, so `make fmt`, `make check-fmt`, and `make lint`
+resolve the same formatter and linter version without requiring a global Ruff
+install. CI must not add a second hard-coded Ruff installation; update
+`RUFF_VERSION` when the project intentionally changes Ruff releases.
+
+The `ty` command remains an installed developer tool because `make typecheck`
+calls it directly. CI installs `uv` and `ty`, then delegates formatting,
+linting, type checking, and tests to Makefile targets.
+
+## Benchmarking Documentation
+
+Benchmarking work is governed by
+[benchmarking-and-optimization-design.md](./benchmarking-and-optimization-design.md)
+and tracked in [roadmap.md](./roadmap.md). Keep those links intact when
+editing developer workflow notes so contributors can move from toolchain setup
+to the benchmarking phase design without losing context.
+
+## Validation
+
+Before committing, run the gates requested by the change. For code changes, the
+full local sequence is:
+
+```shell
+make check-fmt
+make test
+make typecheck
+make lint
+```
+
+For documentation changes, also run:
+
+```shell
+make fmt
+make markdownlint
+make nixie
+```
+
+These commands mirror the PR gates described in
+[dev-workflow.md](./dev-workflow.md) and keep CI behaviour aligned with local
+validation.

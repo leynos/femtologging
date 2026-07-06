@@ -209,4 +209,6 @@ target/
 
 bin/act
 .grepai/
+
+# Memtrace daemon runtime artefacts (pid and state files)
 .memdb/

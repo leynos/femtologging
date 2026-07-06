@@ -56,9 +56,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
       - name: Install tools
-        run: |
-          uv tool install ruff==0.15.12
-          uv tool install ty
+        run: uv tool install ty
       - name: Install lxml build dependencies (experimental)
         if: matrix.experimental
         run: |
