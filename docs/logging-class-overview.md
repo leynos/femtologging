@@ -90,7 +90,7 @@ classDiagram
 - Core logging classes (`Logger`, `Manager`, `PlaceHolder`, `LogRecord`,
   `Formatter`, …) live in `logging/__init__.py`.
 
-- Most specialised handlers live in `logging/handlers.py`. The file defines the
+- Most specialized handlers live in `logging/handlers.py`. The file defines the
   rotating‐file family, network-oriented handlers, queue helpers, etc.; for
   instance `BaseRotatingHandler` and its subclasses
   ([github.com](https://github.com/python/cpython/raw/main/Lib/logging/handlers.py?plain=1)),

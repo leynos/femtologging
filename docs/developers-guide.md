@@ -40,6 +40,40 @@ release:
 Keep this policy in sync with `pyproject.toml` and the matching CI install
 steps where applicable.
 
+## Typos spelling checker
+
+Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)
+so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
+
+- `typos` is pinned to `1.48.0`. The pin lives in `TYPOS_VERSION` in the
+  `Makefile`, which is the single source of truth; any CI that shells out to the
+  `markdownlint` target reuses it, so the Makefile and CI cannot drift apart.
+- The `make markdownlint` target runs
+  `typos --config typos.toml --force-exclude` across the tracked Markdown files
+  after `markdownlint-cli2`.
+
+### Configuration
+
+`typos.toml` is generated, not hand-edited. The `en-gb` locale corrects
+American spellings to British ones but prefers the `-ise` family, so
+`scripts/generate_typos_config.py` restores Oxford `-ize` spelling: for each
+curated stem it emits an identity entry accepting the `-ize` inflection and an
+`-ise` to `-ize` correction. Words that only ever take `-yse` (analyse,
+paralyse) are left to the locale, and genuinely `-ise`-only words (advise,
+revise, supervise) are excluded from the stem list so they remain accepted.
+
+To add or change accepted vocabulary, edit the `STEMS` or
+`EXTRA_ACCEPTED_WORDS` tuples in `scripts/generate_typos_config.py` and
+regenerate the config rather than editing `typos.toml` by hand:
+
+```shell
+uv run scripts/generate_typos_config.py
+```
+
+When updating the pinned version, change `TYPOS_VERSION` in the `Makefile`,
+update any matching CI install step, and re-run `make markdownlint` to confirm
+the corpus still passes.
+
 ## Rust extension build toolchain
 
 The Rust extension build toolchain is pinned so local builds, CI, and the

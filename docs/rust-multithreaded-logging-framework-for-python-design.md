@@ -1867,7 +1867,7 @@ ease with which developers (especially those familiar with Python's `logging`)
 can adopt and use the library, its stability and reliability in highly
 concurrent applications, and its reception within the Rust community,
 particularly if developed as an open-source project. The proposed design
-positions `femtologging` favorably against these potential metrics by
+positions `femtologging` favourably against these potential metrics by
 prioritizing performance, safety, and a considered approach to API design and
 ecosystem integration.
 

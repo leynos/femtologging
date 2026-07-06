@@ -215,7 +215,7 @@ deadlocks with the GIL or other global interpreter synchronization events.[^12]
 
 Effective multithreading requires not just managing execution via the GIL, but
 also safely handling the data and objects that are shared between threads. PyO3
-provides a robust framework for this, centered on a distinction between
+provides a robust framework for this, centred on a distinction between
 GIL-dependent and GIL-independent object handles and strict, compile-time
 requirements for custom types.
 
@@ -465,7 +465,7 @@ This pattern effectively circumvents the GIL for the most intensive part of the
 operation, enabling true multicore parallelism and delivering performance far
 exceeding what is possible with Python's native `threading` module for CPU-bound
 work.[^7] The main performance consideration is the cost of data
-marshaling—the conversion between Python and Rust types at the function
+marshalling—the conversion between Python and Rust types at the function
 boundary. For this pattern to be effective, the computational work done in Rust
 should significantly outweigh this conversion overhead.
 
@@ -656,7 +656,7 @@ most critical rules for success can be summarized as follows:
 - **Rule 1: Trust the Type System.** Leverage PyO3's core abstractions. The
   compiler's enforcement of the `'py` lifetime, the `Send`/`Sync` bounds on
   `#[pyclass]`, and the `Ungil` trait on `allow_threads` are your primary
-  defense against concurrency errors. Design your code to satisfy these
+  defence against concurrency errors. Design your code to satisfy these
   constraints, rather than seeking ways to circumvent them.
 
 - **Rule 2: Release the GIL Before You Block.** The most common cause of

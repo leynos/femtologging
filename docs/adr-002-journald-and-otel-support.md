@@ -510,8 +510,8 @@ logs and context, completing the integration.
 - Use the OpenTelemetry crate's Logging API (if stable) or treat log records as
   span events on a dummy span. By Phase 4, the OpenTelemetry community may have
   solidified how logs are ingested (perhaps an official Rust log exporter
-  exists). That would be leveraged instead of crafting a custom OTLP marshaling
-  from scratch.
+  exists). That would be leveraged instead of crafting a custom OTLP
+  marshalling from scratch.
 
 - If implementing, this handler would require configuration (endpoint,
   credentials, resource attributes for the service, etc.) likely via

@@ -219,7 +219,7 @@ rotating several files at once), the `WorkerConfig` creation logic will need to
 expose this.
 
 Calling `flush()` sends a `Flush` command to the worker thread and then waits
-on a dedicated acknowledgment channel for confirmation. The worker responds
+on a dedicated acknowledgement channel for confirmation. The worker responds
 after flushing its writer, giving the caller a deterministic way to ensure all
 pending records are persisted. The wait is bounded by the handler's
 `flush_timeout_secs` setting (one second by default) to avoid indefinite

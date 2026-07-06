@@ -8,6 +8,10 @@ RUFF_VERSION ?= 0.15.12
 RUFF ?= uvx ruff==$(RUFF_VERSION)
 MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
+# Single source of truth for the typos version, keeping the Makefile and any
+# CI that shells out to this target from drifting apart.
+TYPOS_VERSION ?= 1.48.0
+TYPOS ?= uvx typos@$(TYPOS_VERSION)
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
 
@@ -59,8 +63,9 @@ lint-rust: ## Run Rust clippy across feature lanes
 		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings; \
 	done
 
-markdownlint: ## Lint Markdown files
+markdownlint: ## Lint Markdown files and enforce en-GB-oxendict spelling
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT) --
+	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(TYPOS) --config typos.toml --force-exclude
 
 nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)
