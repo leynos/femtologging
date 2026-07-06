@@ -22,7 +22,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "pytest==8.4.2",
+    "pytest==9.1.1",
     "pytest-timeout",
     "pytest-bdd==8.1.0",
     "syrupy",
