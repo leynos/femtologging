@@ -27,7 +27,7 @@ dev = [
     "pytest-bdd==8.1.0",
     "syrupy",
     # Keep in sync with the build-system requirement and CI workflows.
-    "maturin[patchelf]==1.13.3",
+    "maturin[patchelf]==1.14.1",
     "pytest-xdist",
 ]
 
