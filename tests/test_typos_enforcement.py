@@ -128,20 +128,52 @@ def test_committed_config_matches_generator(rendered_config: str) -> None:
     assert committed == rendered_config
 
 
+def _find_target_line(lines: list[str], prefix: str) -> int:
+    """Return the index of the first line starting with a prefix.
+
+    Args:
+        lines: The Makefile split into individual lines.
+        prefix: The target prefix to search for, such as ``markdownlint:``.
+
+    Returns:
+        The index of the first matching line, or ``-1`` if none matches.
+
+    """
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            return index
+    return -1
+
+
+def _collect_recipe_lines(lines: list[str], start: int) -> list[str]:
+    """Collect the tab-indented recipe lines of a Makefile target.
+
+    Args:
+        lines: The Makefile split into individual lines.
+        start: The index at which to begin collecting recipe lines.
+
+    Returns:
+        The stripped recipe lines, stopping at the first non-indented,
+        non-blank line.
+
+    """
+    recipe: list[str] = []
+    for line in lines[start:]:
+        if line.startswith("\t"):
+            recipe.append(line.strip())
+        elif line.strip():
+            break
+    return recipe
+
+
 def _markdownlint_recipe() -> str:
     """Return the recipe lines of the Makefile ``markdownlint`` target."""
-    makefile = (repo_root() / "Makefile").read_text(encoding="utf-8")
-    recipe: list[str] = []
-    in_target = False
-    for line in makefile.splitlines():
-        if line.startswith("markdownlint:"):
-            in_target = True
-            continue
-        if in_target:
-            if line.startswith("\t"):
-                recipe.append(line.strip())
-            elif line.strip():
-                break
+    lines = (repo_root() / "Makefile").read_text(encoding="utf-8").splitlines()
+    start = _find_target_line(lines, "markdownlint:")
+    if start == -1:
+        msg = "markdownlint target recipe not found in Makefile"
+        raise AssertionError(msg)
+    recipe = _collect_recipe_lines(lines, start + 1)
     if not recipe:
         msg = "markdownlint target recipe not found in Makefile"
         raise AssertionError(msg)
