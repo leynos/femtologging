@@ -131,11 +131,16 @@ def test_committed_config_matches_generator(rendered_config: str) -> None:
 def _find_target_line(lines: list[str], prefix: str) -> int:
     """Return the index of the first line starting with a prefix.
 
-    Args:
-        lines: The Makefile split into individual lines.
-        prefix: The target prefix to search for, such as ``markdownlint:``.
+    Parameters
+    ----------
+    lines : list[str]
+        The Makefile split into individual lines.
+    prefix : str
+        The target prefix to search for, such as ``markdownlint:``.
 
-    Returns:
+    Returns
+    -------
+    int
         The index of the first matching line, or ``-1`` if none matches.
 
     """
@@ -148,11 +153,16 @@ def _find_target_line(lines: list[str], prefix: str) -> int:
 def _collect_recipe_lines(lines: list[str], start: int) -> list[str]:
     """Collect the tab-indented recipe lines of a Makefile target.
 
-    Args:
-        lines: The Makefile split into individual lines.
-        start: The index at which to begin collecting recipe lines.
+    Parameters
+    ----------
+    lines : list[str]
+        The Makefile split into individual lines.
+    start : int
+        The index at which to begin collecting recipe lines.
 
-    Returns:
+    Returns
+    -------
+    list[str]
         The stripped recipe lines, stopping at the first non-indented,
         non-blank line.
 
