@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import importlib.util as ilu
 import pathlib as pth
+import re
+import shutil
+import subprocess  # noqa: S404 - tests invoke the generator and typos CLIs.
+import sys
 import typing as typ
 
 import pytest
 
 if typ.TYPE_CHECKING:
     import types
+
+_UVX_AVAILABLE = shutil.which("uvx") is not None
 
 
 def repo_root() -> pth.Path:
@@ -128,6 +134,35 @@ def test_committed_config_matches_generator(rendered_config: str) -> None:
     assert committed == rendered_config
 
 
+def test_generator_cli_writes_default_config(
+    generator: types.ModuleType,
+    tmp_path: pth.Path,
+) -> None:
+    """Running the generator as a script writes the config to its default path."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    source = repo_root() / "scripts" / "generate_typos_config.py"
+    script = scripts_dir / "generate_typos_config.py"
+    script.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    subprocess.run(  # noqa: S603 - trusted interpreter runs a copied script.
+        [sys.executable, str(script)],
+        check=True,
+    )
+
+    written = (tmp_path / "typos.toml").read_text(encoding="utf-8")
+    assert written == generator.render_config()
+
+
+def test_main_raises_when_parent_directory_missing(
+    generator: types.ModuleType,
+    tmp_path: pth.Path,
+) -> None:
+    """``main`` surfaces a filesystem error when the target directory is absent."""
+    with pytest.raises(FileNotFoundError):
+        generator.main(tmp_path / "absent" / "typos.toml")
+
+
 def _find_target_line(lines: list[str], prefix: str) -> int:
     """Return the index of the first line starting with a prefix.
 
@@ -201,3 +236,58 @@ def test_typos_version_is_pinned() -> None:
     makefile = (repo_root() / "Makefile").read_text(encoding="utf-8")
     assert "TYPOS_VERSION ?= 1.48.0" in makefile
     assert "TYPOS ?= uvx typos@$(TYPOS_VERSION)" in makefile
+
+
+def test_find_target_line_returns_negative_one_when_absent() -> None:
+    """The finder reports ``-1`` when no line starts with the prefix."""
+    assert _find_target_line(["all:", "\techo hi"], "markdownlint:") == -1
+
+
+def test_collect_recipe_lines_stops_at_next_target() -> None:
+    """Recipe collection halts at the next non-indented, non-blank line."""
+    lines = ["markdownlint:", "\tone", "\ttwo", "", "nixie:", "\tthree"]
+    assert _collect_recipe_lines(lines, 1) == ["one", "two"]
+
+
+def test_collect_recipe_lines_empty_without_recipe() -> None:
+    """A target with no indented lines yields an empty recipe."""
+    assert _collect_recipe_lines(["markdownlint:", "nixie:"], 1) == []
+
+
+def _pinned_typos_version() -> str:
+    """Return the ``typos`` version pinned by ``TYPOS_VERSION`` in the Makefile."""
+    makefile = (repo_root() / "Makefile").read_text(encoding="utf-8")
+    match = re.search(r"TYPOS_VERSION \?= (\S+)", makefile)
+    if match is None:
+        msg = "TYPOS_VERSION not found in Makefile"
+        raise AssertionError(msg)
+    return match.group(1)
+
+
+@pytest.mark.skipif(not _UVX_AVAILABLE, reason="uvx/typos CLI unavailable")
+def test_typos_cli_enforces_oxford_spelling(tmp_path: pth.Path) -> None:
+    """The ``typos`` CLI accepts Oxford ``-ize`` forms and rejects ``-ise`` forms."""
+    config = repo_root() / "typos.toml"
+    base = ["uvx", f"typos@{_pinned_typos_version()}", "--config", str(config)]
+
+    accepted = tmp_path / "accepted.md"
+    accepted.write_text("We organize and serialize tokens.\n", encoding="utf-8")
+    rejected = tmp_path / "rejected.md"
+    rejected.write_text("We organise and serialise tokens.\n", encoding="utf-8")
+
+    accept = subprocess.run(  # noqa: S603 - command list uses trusted local paths.
+        [*base, str(accepted)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    reject = subprocess.run(  # noqa: S603 - command list uses trusted local paths.
+        [*base, str(rejected)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert accept.returncode == 0, accept.stdout + accept.stderr
+    assert reject.returncode != 0
+    assert "organize" in reject.stdout + reject.stderr
