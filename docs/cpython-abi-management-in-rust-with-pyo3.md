@@ -128,7 +128,7 @@ Python versions 3.8 through 3.12 (5 versions) on Windows (x86_64), macOS
 terms of CI/CD resources, release management complexity, and storage.
 
 This complexity is further compounded because the ABI problem is not isolated
-to CPython. A native extension is a compiled artifact that links against a
+to CPython. A native extension is a compiled artefact that links against a
 stack of system libraries. A truly robust distribution strategy must account
 for the ABI of every component in this stack. This includes:
 
@@ -373,7 +373,7 @@ typically follows these steps:
 
    ```
 
-3. Analyze the Output Wheels: The command will produce a set of wheels in the
+3. Analyse the Output Wheels: The command will produce a set of wheels in the
    target/wheels/ directory. Each wheel's filename contains platform and
    Python- version-specific tags, as defined by PEP 425. For example, a build
    for CPython 3.10 on a manylinux2014 x86_64 system would produce a wheel
@@ -575,7 +575,7 @@ is a dangerous fallacy.
 The implications are clear: distributing `abi3` wheels imposes a significant
 testing burden. It is not sufficient to compile the wheel and assume it works.
 A robust CI pipeline must be implemented to test the *exact same* `abi3` *wheel
-artifact* against *every supported minor version of Python*. This is the only
+artefact* against *every supported minor version of Python*. This is the only
 way to gain confidence that the extension is truly forward-compatible and free
 of both syntactic and semantic ABI violations.
 
@@ -647,8 +647,8 @@ lifecycle, from writing code to testing and distribution.
 - **Build & Test Automation:** Version-specific builds necessitate a large CI
   build matrix, as a separate build must be run for each combination of OS,
   architecture, and Python version. `abi3` builds simplify the *build* step to
-  a single artifact per platform, but they complicate the *test* step, as that
-  single artifact must be validated against every supported Python version to
+  a single artefact per platform, but they complicate the *test* step, as that
+  single artefact must be validated against every supported Python version to
   ensure correctness.
 
 - **Code Maintenance and Correctness:** Version-specific builds use `#[cfg]`
@@ -672,7 +672,7 @@ distribution aspects.
 | Aspect              | Version-Specific Build                                         | abi3 Build                                          |
 | ------------------- | -------------------------------------------------------------- | --------------------------------------------------- |
 | Build Matrix Size   | Large (N platforms × M Python versions)                        | Small (N platforms × 1 build)                       |
-| Test Matrix Size    | Large (N platforms × M Python versions)                        | Large (1 artifact × M Python versions per platform) |
+| Test Matrix Size    | Large (N platforms × M Python versions)                        | Large (1 artefact × M Python versions per platform) |
 | API Access          | Full, unrestricted CPython C API                               | Restricted to the "Limited API"                     |
 | Compatibility Logic | Compile-time (#[cfg]). Safer.                                  | Runtime (py.version_info()). More error-prone.      |
 | New Python Support  | Delayed (requires maintainer to build and release new wheels). | Immediate (forward-compatible).                     |
@@ -747,7 +747,7 @@ project dependencies, build the Rust extension, and execute the test suite
 (e.g., using `pytest`). Using these tools is a critical best practice, as they
 faithfully emulate the clean-room environment of a CI server, preventing "it
 works on my machine" errors by ensuring the tests run against the packaged
-artifact in a fresh environment.
+artefact in a fresh environment.
 
 A sample `tox.ini` for a PyO3 project might look like this:
 
@@ -901,7 +901,7 @@ jobs:
 
 In this workflow, `CIBW_BUILD: "*-abi3"` ensures only one wheel is built per
 platform. The key is `CIBW_TEST_ALL: "auto"`, which instructs `cibuildwheel` to
-take that single artifact and run the test suite against it in separate
+take that single artefact and run the test suite against it in separate
 environments for every compatible Python version (e.g., a `cp38-abi3` wheel
 will be tested on Python 3.8, 3.9, 3.10, etc.). This is the automated
 implementation of the critical verification step required to confidently ship
@@ -934,8 +934,8 @@ and user experience.
   penalty, particularly for "chatty" FFI interfaces, and a more restricted API
   surface that requires careful navigation and runtime version checks.
 
-The PyO3 v0.25.1 ecosystem, centered around the `maturin` build tool, provides
-a powerful and mature toolchain for implementing either strategy. For version-
+The PyO3 v0.25.1 ecosystem, centred around the `maturin` build tool, provides a
+powerful and mature toolchain for implementing either strategy. For version-
 specific builds, `pyo3-build-config` enables elegant compile-time management of
 API differences. For `abi3` builds, PyO3 correctly handles the necessary C API
 restrictions, while tools like `maturin` generate correctly tagged wheels.
@@ -952,7 +952,7 @@ Regardless of the chosen path, a rigorous, automated testing strategy is non-
 negotiable. Tools like `tox`, `nox`, and `cibuildwheel` are essential for
 validating compatibility across the complex matrix of Python versions,
 operating systems, and architectures. For `abi3` wheels in particular, testing
-the single built artifact against all target Python versions is a critical step
+the single built artefact against all target Python versions is a critical step
 to ensure the promise of forward compatibility is actually met, safeguarding
 against the subtle but severe risks of ABI violations. By understanding the
 deep trade- offs and leveraging the modern toolchain, developers can

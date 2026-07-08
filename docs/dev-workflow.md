@@ -24,7 +24,7 @@ across Python and Rust code.
 
 - `make release` – build the extension with optimizations.
 
-- `make clean` – remove build artifacts.
+- `make clean` – remove build artefacts.
 
 - `make tools` – verify required commands like `uv`, `ty`, `cargo` and
   `rustfmt` are installed.
