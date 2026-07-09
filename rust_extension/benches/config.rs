@@ -9,13 +9,14 @@ use std::{
 use _femtologging_rs::{
     ConfigBuilder, FemtoLevel, LoggerConfigBuilder, StreamHandlerBuilder, manager,
 };
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use once_cell::sync::Lazy;
 use pyo3::{
     exceptions::PyKeyError,
     prelude::*,
     types::{PyAny, PyDict, PyList},
 };
+use std::hint::black_box;
 
 const DICT_SCHEMA_PY: &std::ffi::CStr = cr#"
 from femtologging import ConfigBuilder, LoggerConfigBuilder, StreamHandlerBuilder
