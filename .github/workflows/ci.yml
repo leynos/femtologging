@@ -33,7 +33,7 @@ jobs:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "0"
       WHITAKER_INSTALLER_VERSION: '0.2.5'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
