@@ -39,11 +39,12 @@ impl BlockingFlushWriter {
 
     /// Release all blocked flushes up to and including `flush_number`.
     fn release_flushes_through(&self, flush_number: usize) {
+        // Recover from poisoning: the counter is always valid data.
         let mut released = self
             .state
             .released_flushes
             .lock()
-            .expect("released flush counter must not be poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *released = flush_number;
         self.state.release_cvar.notify_all();
     }
@@ -56,41 +57,47 @@ impl BlockingFlushWriter {
 
 impl Write for BlockingFlushWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Recover from poisoning: the buffer contents remain valid data.
         let mut buffer = self
             .state
             .buffer
             .lock()
-            .expect("buffer mutex must not be poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         buffer.extend_from_slice(buf);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
         let flush_number = {
+            // Recover from poisoning: the counter is always valid data.
             let mut flush_calls = self
                 .state
                 .flush_calls
                 .lock()
-                .expect("flush counter must not be poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *flush_calls += 1;
             *flush_calls
         };
-        self.state
-            .started_tx
-            .send(flush_number)
-            .expect("flush start notification receiver must stay connected");
+        // Surface a disconnected test receiver as an I/O error so the
+        // calling test fails with context instead of panicking here.
+        self.state.started_tx.send(flush_number).map_err(|_| {
+            io::Error::new(
+                ErrorKind::BrokenPipe,
+                "flush start notification receiver disconnected",
+            )
+        })?;
 
         let mut released = self
             .state
             .released_flushes
             .lock()
-            .expect("released flush counter must not be poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         while *released < flush_number {
             released = self
                 .state
                 .release_cvar
                 .wait(released)
-                .expect("released flush counter must not be poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         Ok(())
     }
@@ -179,8 +186,8 @@ fn flush_waits_for_its_own_acknowledgement() {
         .expect("second flush worker thread must complete cleanly");
 
     writer.release_all_flushes();
-    let mut handler = Arc::try_unwrap(handler).unwrap_or_else(|_| {
-        panic!("flush test must release all handler references before shutdown")
-    });
+    let Ok(mut handler) = Arc::try_unwrap(handler) else {
+        panic!("flush test must release all handler references before shutdown");
+    };
     handler.close();
 }

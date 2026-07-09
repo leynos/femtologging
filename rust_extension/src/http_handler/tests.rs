@@ -1,6 +1,6 @@
 //! Integration tests for the HTTP handler.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
@@ -15,13 +15,12 @@ use crate::log_record::FemtoLogRecord;
 
 use super::FemtoHTTPHandler;
 use super::config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat};
-use super::worker::ResponseClass;
 
 /// Spawn a mock HTTP server that captures the first request.
 fn spawn_mock_server(
     listener: TcpListener,
     response_status: u16,
-) -> (SocketAddr, mpsc::Receiver<CapturedRequest>) {
+) -> io::Result<(SocketAddr, mpsc::Receiver<CapturedRequest>)> {
     spawn_retry_server(listener, vec![response_status])
 }
 
@@ -57,13 +56,13 @@ fn parse_header_line(line: &str) -> Option<(String, String)> {
 }
 
 /// Reads all headers from the request and returns them with the content length.
-fn read_headers(reader: &mut BufReader<TcpStream>) -> (Vec<(String, String)>, usize) {
+fn read_headers(reader: &mut BufReader<TcpStream>) -> io::Result<(Vec<(String, String)>, usize)> {
     let mut headers = Vec::new();
     let mut content_length = 0usize;
 
     loop {
         let mut line = String::new();
-        reader.read_line(&mut line).expect("read header");
+        reader.read_line(&mut line)?;
         if line.trim().is_empty() {
             break;
         }
@@ -76,45 +75,45 @@ fn read_headers(reader: &mut BufReader<TcpStream>) -> (Vec<(String, String)>, us
         headers.push((key, value));
     }
 
-    (headers, content_length)
+    Ok((headers, content_length))
 }
 
 /// Reads the request body given the content length.
-fn read_body(reader: &mut BufReader<TcpStream>, content_length: usize) -> String {
+fn read_body(reader: &mut BufReader<TcpStream>, content_length: usize) -> io::Result<String> {
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
-        reader.read_exact(&mut body).expect("read body");
+        reader.read_exact(&mut body)?;
     }
-    String::from_utf8_lossy(&body).to_string()
+    Ok(String::from_utf8_lossy(&body).to_string())
 }
 
-fn read_http_request(stream: &mut TcpStream) -> CapturedRequest {
+fn read_http_request(stream: &mut TcpStream) -> io::Result<CapturedRequest> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+    let mut reader = BufReader::new(stream.try_clone()?);
 
     // Read request line
     let mut request_line = String::new();
-    reader
-        .read_line(&mut request_line)
-        .expect("read request line");
+    reader.read_line(&mut request_line)?;
     let parts: Vec<&str> = request_line.trim().split(' ').collect();
     let method = parts.first().unwrap_or(&"").to_string();
     let path = parts.get(1).unwrap_or(&"").to_string();
 
-    let (headers, content_length) = read_headers(&mut reader);
-    let body = read_body(&mut reader, content_length);
+    let (headers, content_length) = read_headers(&mut reader)?;
+    let body = read_body(&mut reader, content_length)?;
 
-    CapturedRequest {
+    Ok(CapturedRequest {
         method,
         path,
         headers,
         body,
-    }
+    })
 }
 
+// The fixture arranges state, so it returns Result and leaves the verdict
+// to the calling test.
 #[fixture]
-fn tcp_listener() -> TcpListener {
-    TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral listener")
+fn tcp_listener() -> io::Result<TcpListener> {
+    TcpListener::bind(("127.0.0.1", 0))
 }
 
 fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
@@ -135,8 +134,9 @@ fn send_info_record(handler: &FemtoHTTPHandler, message: &str) {
 }
 
 #[rstest]
-fn sends_records_over_http(tcp_listener: TcpListener) {
-    let (addr, rx) = spawn_mock_server(tcp_listener, 200);
+fn sends_records_over_http(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let handler = build_http_handler(addr);
     send_info_record(&handler, "test message");
 
@@ -150,8 +150,9 @@ fn sends_records_over_http(tcp_listener: TcpListener) {
 }
 
 #[rstest]
-fn sends_json_format(tcp_listener: TcpListener) {
-    let (addr, rx) = spawn_mock_server(tcp_listener, 200);
+fn sends_json_format(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let url = format!("http://{}/log", addr);
     let config = HTTPHandlerConfig {
         url,
@@ -183,18 +184,23 @@ fn sends_json_format(tcp_listener: TcpListener) {
 /// - `configure_auth`: Closure to configure authentication on the builder
 /// - `verify_header`: Closure to verify the authorization header value
 /// - `message`: The test message to send
-fn test_auth_header<F, V>(listener: TcpListener, configure_auth: F, verify_header: V, message: &str)
+fn test_auth_header<F, V>(
+    listener: TcpListener,
+    configure_auth: F,
+    verify_header: V,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>>
 where
     F: FnOnce(HTTPHandlerBuilder) -> HTTPHandlerBuilder,
     V: FnOnce(&str),
 {
-    let (addr, rx) = spawn_mock_server(listener, 200);
+    let (addr, rx) = spawn_mock_server(listener, 200)?;
     let url = format!("http://{}/log", addr);
     let builder = HTTPHandlerBuilder::new().with_url(url);
-    let handler = configure_auth(builder).build_inner().expect("build");
+    let handler = configure_auth(builder).build_inner()?;
     send_info_record(&handler, message);
 
-    let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
+    let captured = rx.recv_timeout(Duration::from_secs(5))?;
     let auth = captured
         .headers
         .iter()
@@ -204,10 +210,12 @@ where
     verify_header(auth);
 
     drop(handler);
+    Ok(())
 }
 
 #[rstest]
-fn sends_basic_auth_header(tcp_listener: TcpListener) {
+fn sends_basic_auth_header(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     test_auth_header(
         tcp_listener,
         |builder| builder.with_basic_auth("user", "pass"),
@@ -217,11 +225,13 @@ fn sends_basic_auth_header(tcp_listener: TcpListener) {
             assert!(auth.contains("dXNlcjpwYXNz"));
         },
         "auth test",
-    );
+    )
+    .expect("auth header test must complete");
 }
 
 #[rstest]
-fn sends_bearer_token(tcp_listener: TcpListener) {
+fn sends_bearer_token(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     test_auth_header(
         tcp_listener,
         |builder| builder.with_bearer_token("my-secret-token"),
@@ -229,12 +239,14 @@ fn sends_bearer_token(tcp_listener: TcpListener) {
             assert_eq!(auth, "Bearer my-secret-token");
         },
         "bearer test",
-    );
+    )
+    .expect("bearer token test must complete");
 }
 
 #[rstest]
-fn handler_closes_gracefully(tcp_listener: TcpListener) {
-    let (addr, _rx) = spawn_mock_server(tcp_listener, 200);
+fn handler_closes_gracefully(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, _rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let mut handler = build_http_handler(addr);
     send_info_record(&handler, "close test");
     handler.close();
@@ -248,8 +260,8 @@ fn handler_closes_gracefully(tcp_listener: TcpListener) {
 fn spawn_retry_server(
     listener: TcpListener,
     statuses: Vec<u16>,
-) -> (SocketAddr, mpsc::Receiver<CapturedRequest>) {
-    let addr = listener.local_addr().expect("listener has address");
+) -> io::Result<(SocketAddr, mpsc::Receiver<CapturedRequest>)> {
+    let addr = listener.local_addr()?;
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
@@ -257,7 +269,11 @@ fn spawn_retry_server(
             let Ok((mut stream, _)) = listener.accept() else {
                 break;
             };
-            let captured = read_http_request(&mut stream);
+            // A malformed request means the test will time out on recv,
+            // which fails the test without panicking in this thread.
+            let Ok(captured) = read_http_request(&mut stream) else {
+                break;
+            };
             let response = format!(
                 "HTTP/1.1 {} {}\r\nContent-Length: 0\r\n\r\n",
                 status,
@@ -268,7 +284,7 @@ fn spawn_retry_server(
         }
     });
 
-    (addr, rx)
+    Ok((addr, rx))
 }
 
 /// Helper function for testing retry behaviour.
@@ -278,13 +294,18 @@ fn spawn_retry_server(
 /// - `statuses`: The sequence of HTTP status codes to return
 /// - `message`: The test message to send
 /// - `verify`: Closure to verify the captured requests
-fn test_retry_behaviour<F>(listener: TcpListener, statuses: Vec<u16>, message: &str, verify: F)
+fn test_retry_behaviour<F>(
+    listener: TcpListener,
+    statuses: Vec<u16>,
+    message: &str,
+    verify: F,
+) -> io::Result<()>
 where
     F: FnOnce(mpsc::Receiver<CapturedRequest>),
 {
     use crate::socket_handler::BackoffPolicy;
 
-    let (addr, rx) = spawn_retry_server(listener, statuses);
+    let (addr, rx) = spawn_retry_server(listener, statuses)?;
     let url = format!("http://{}/log", addr);
     let config = HTTPHandlerConfig {
         url,
@@ -305,6 +326,7 @@ where
     verify(rx);
 
     drop(handler);
+    Ok(())
 }
 
 /// Verifies that the expected number of requests are received, each containing the expected message fragment.
@@ -312,31 +334,35 @@ fn verify_requests_with_message(
     rx: mpsc::Receiver<CapturedRequest>,
     count: usize,
     expected_msg_fragment: &str,
-) {
+) -> Result<(), mpsc::RecvTimeoutError> {
     for _ in 0..count {
-        let request = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("expected request");
+        let request = rx.recv_timeout(Duration::from_secs(5))?;
         assert!(request.body.contains(expected_msg_fragment));
     }
+    Ok(())
 }
 
 #[rstest]
-fn retries_on_503_then_succeeds(tcp_listener: TcpListener) {
+fn retries_on_503_then_succeeds(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     test_retry_behaviour(tcp_listener, vec![503, 200], "retry test", |rx| {
-        verify_requests_with_message(rx, 2, "msg=retry+test");
-    });
+        verify_requests_with_message(rx, 2, "msg=retry+test").expect("expected request");
+    })
+    .expect("retry test must complete");
 }
 
 #[rstest]
-fn retries_on_429_then_succeeds(tcp_listener: TcpListener) {
+fn retries_on_429_then_succeeds(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     test_retry_behaviour(tcp_listener, vec![429, 200], "rate limit test", |rx| {
-        verify_requests_with_message(rx, 2, "msg=rate+limit+test");
-    });
+        verify_requests_with_message(rx, 2, "msg=rate+limit+test").expect("expected request");
+    })
+    .expect("retry test must complete");
 }
 
 #[rstest]
-fn does_not_retry_on_400(tcp_listener: TcpListener) {
+fn does_not_retry_on_400(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     test_retry_behaviour(tcp_listener, vec![400], "permanent error test", |rx| {
         // Should receive exactly one request
         let first = rx
@@ -346,28 +372,10 @@ fn does_not_retry_on_400(tcp_listener: TcpListener) {
 
         // No second request should come (give it a short timeout to confirm)
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
-    });
+    })
+    .expect("retry test must complete");
 }
 
 // Response classification tests (unit tests for the worker module)
-mod response_classification {
-    use super::*;
-
-    use crate::http_handler::worker::classify_status;
-
-    #[rstest]
-    #[case(200, ResponseClass::Success)]
-    #[case(201, ResponseClass::Success)]
-    #[case(204, ResponseClass::Success)]
-    #[case(400, ResponseClass::Permanent)]
-    #[case(401, ResponseClass::Permanent)]
-    #[case(403, ResponseClass::Permanent)]
-    #[case(404, ResponseClass::Permanent)]
-    #[case(429, ResponseClass::Retryable)]
-    #[case(500, ResponseClass::Retryable)]
-    #[case(502, ResponseClass::Retryable)]
-    #[case(503, ResponseClass::Retryable)]
-    fn status_classification(#[case] status: u16, #[case] expected: ResponseClass) {
-        assert_eq!(classify_status(status), expected);
-    }
-}
+#[path = "response_classification_tests.rs"]
+mod response_classification;

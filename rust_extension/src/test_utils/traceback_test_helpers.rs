@@ -15,34 +15,23 @@ use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_
 pub fn create_simple_namespace<'py>(
     py: Python<'py>,
     dict: &Bound<'py, PyDict>,
-) -> Bound<'py, PyAny> {
-    let types = py.import("types").expect("types module should exist");
-    types
-        .getattr("SimpleNamespace")
-        .expect("SimpleNamespace should exist")
+) -> PyResult<Bound<'py, PyAny>> {
+    py.import("types")?
+        .getattr("SimpleNamespace")?
         .call((), Some(dict))
-        .expect("SimpleNamespace creation should succeed")
 }
 
 /// Create a frame dict with locals for testing [`crate::traceback_frames::extract_locals_dict`].
 pub fn create_frame_dict_with_locals<'py>(
     py: Python<'py>,
     locals_dict: &Bound<'py, PyDict>,
-) -> Bound<'py, PyDict> {
+) -> PyResult<Bound<'py, PyDict>> {
     let frame_dict = PyDict::new(py);
-    frame_dict
-        .set_item("filename", "test.py")
-        .expect("set filename should succeed");
-    frame_dict
-        .set_item("lineno", 1)
-        .expect("set lineno should succeed");
-    frame_dict
-        .set_item("name", "func")
-        .expect("set name should succeed");
-    frame_dict
-        .set_item("locals", locals_dict)
-        .expect("set locals should succeed");
-    frame_dict
+    frame_dict.set_item("filename", "test.py")?;
+    frame_dict.set_item("lineno", 1)?;
+    frame_dict.set_item("name", "func")?;
+    frame_dict.set_item("locals", locals_dict)?;
+    Ok(frame_dict)
 }
 
 /// Builder for creating mock FrameSummary-like objects in tests.
@@ -111,38 +100,30 @@ impl MockFrameBuilder {
     }
 
     /// Build the mock frame as a Python `SimpleNamespace` object.
-    pub fn build<'py>(self, py: Python<'py>) -> Bound<'py, PyAny> {
+    pub fn build<'py>(self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
-        dict.set_item("filename", &self.filename)
-            .expect("set filename should succeed");
-        dict.set_item("lineno", self.lineno)
-            .expect("set lineno should succeed");
-        dict.set_item("name", &self.name)
-            .expect("set name should succeed");
+        dict.set_item("filename", &self.filename)?;
+        dict.set_item("lineno", self.lineno)?;
+        dict.set_item("name", &self.name)?;
 
         if let Some(v) = self.end_lineno {
-            dict.set_item("end_lineno", v)
-                .expect("set end_lineno should succeed");
+            dict.set_item("end_lineno", v)?;
         }
         if let Some(v) = self.colno {
-            dict.set_item("colno", v).expect("set colno should succeed");
+            dict.set_item("colno", v)?;
         }
         if let Some(v) = self.end_colno {
-            dict.set_item("end_colno", v)
-                .expect("set end_colno should succeed");
+            dict.set_item("end_colno", v)?;
         }
         if let Some(v) = &self.line {
-            dict.set_item("line", v).expect("set line should succeed");
+            dict.set_item("line", v)?;
         }
         if let Some(entries) = &self.locals {
             let locals_dict = PyDict::new(py);
             for (k, v) in entries {
-                locals_dict
-                    .set_item(k, v)
-                    .expect("set local entry should succeed");
+                locals_dict.set_item(k, v)?;
             }
-            dict.set_item("locals", locals_dict)
-                .expect("set locals should succeed");
+            dict.set_item("locals", locals_dict)?;
         }
 
         create_simple_namespace(py, &dict)
@@ -184,62 +165,69 @@ impl LocalEntry {
 /// Create a Python object whose `__repr__` raises an exception.
 ///
 /// Useful for testing repr failure handling in locals extraction.
-pub fn create_bad_repr_object<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
+pub fn create_bad_repr_object<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
     let globals = PyDict::new(py);
     py.run(
         c"class BadRepr:\n    def __repr__(self): raise ValueError('boom')",
         Some(&globals),
         None,
-    )
-    .expect("class definition should succeed");
+    )?;
     py.eval(c"BadRepr()", Some(&globals), None)
-        .expect("object creation should succeed")
 }
 
 /// Add a bad repr entry to the given dictionary.
 ///
 /// Creates a Python object whose `__repr__` raises an exception and inserts it
 /// with the given key.
-pub fn add_bad_repr_entry(locals_dict: &Bound<'_, PyDict>, key: &str) {
-    let bad_repr_obj = create_bad_repr_object(locals_dict.py());
-    locals_dict
-        .set_item(key, bad_repr_obj)
-        .expect("set bad repr entry should succeed");
+pub fn add_bad_repr_entry(locals_dict: &Bound<'_, PyDict>, key: &str) -> PyResult<()> {
+    let bad_repr_obj = create_bad_repr_object(locals_dict.py())?;
+    locals_dict.set_item(key, bad_repr_obj)
 }
 
 /// Assert that extracting a frame from the provided dict fails with an error
 /// containing the expected substring.
-pub fn assert_frame_extraction_error_contains(dict: &Bound<'_, PyDict>, expected_substr: &str) {
+/// Returns an error when the arrangement (namespace or list creation) fails;
+/// the assertion itself panics with the calling test's location.
+#[track_caller]
+pub fn assert_frame_extraction_error_contains(
+    dict: &Bound<'_, PyDict>,
+    expected_substr: &str,
+) -> PyResult<()> {
     let py = dict.py();
-    let frame = create_simple_namespace(py, dict);
-    let list = PyList::new(py, &[frame]).expect("list creation should succeed");
+    let frame = create_simple_namespace(py, dict)?;
+    let list = PyList::new(py, &[frame])?;
     let result = extract_frames_from_stack_summary(list.as_any());
-    let err = result.expect_err("frame extraction should fail");
+    let Err(err) = result else {
+        panic!("frame extraction should fail");
+    };
     let err_text = err.to_string();
 
     assert!(
         err_text.contains(expected_substr),
         "expected error containing {expected_substr:?}, got {err_text:?}"
     );
+    Ok(())
 }
 
 /// Assert the result of `extract_locals_dict` against expected entries.
 ///
 /// Builds a frame from the provided locals dict, calls `extract_locals_dict`,
 /// and verifies that the result matches the expected entries (or is `None`).
+/// Returns an error when the arrangement (frame construction) fails; the
+/// assertions themselves panic with the calling test's location.
+#[track_caller]
 pub fn assert_locals_extraction_result(
     locals_dict: &Bound<'_, PyDict>,
     expected: Option<&[(&str, &str)]>,
     description: &str,
-) {
+) -> PyResult<()> {
     let py = locals_dict.py();
-    let frame_dict = create_frame_dict_with_locals(py, locals_dict);
-    let frame = create_simple_namespace(py, &frame_dict);
+    let frame_dict = create_frame_dict_with_locals(py, locals_dict)?;
+    let frame = create_simple_namespace(py, &frame_dict)?;
 
     let result = extract_locals_dict(&frame);
-    match expected {
-        Some(expected_entries) => {
-            let locals = result.expect(description);
+    match (expected, result) {
+        (Some(expected_entries), Some(locals)) => {
             assert_eq!(locals.len(), expected_entries.len(), "{}", description);
             for (key, value) in expected_entries {
                 assert_eq!(
@@ -251,31 +239,33 @@ pub fn assert_locals_extraction_result(
                 );
             }
         }
-        None => {
+        (Some(_), None) => panic!("{description}: locals should be extracted"),
+        (None, result) => {
             assert!(result.is_none(), "{}", description);
         }
     }
+    Ok(())
 }
 
 /// Populate a PyDict with LocalEntry items, inserting integer keys for entries
 /// where `is_int_key()` returns true and the key successfully parses as `i32`.
 ///
 /// Falls back to inserting as a string key if parsing fails (e.g., overflow).
-pub fn populate_locals_dict_from_entries(locals_dict: &Bound<'_, PyDict>, entries: &[LocalEntry]) {
+pub fn populate_locals_dict_from_entries(
+    locals_dict: &Bound<'_, PyDict>,
+    entries: &[LocalEntry],
+) -> PyResult<()> {
     for entry in entries {
         if entry.is_int_key() {
             if let Ok(int_key) = entry.key().parse::<i32>() {
-                locals_dict
-                    .set_item(int_key, entry.value())
-                    .expect("set int key entry should succeed");
+                locals_dict.set_item(int_key, entry.value())?;
                 continue;
             }
         }
         // Fallback: insert as string key (either not an int key, or parsing failed)
-        locals_dict
-            .set_item(entry.key(), entry.value())
-            .expect("set string key entry should succeed");
+        locals_dict.set_item(entry.key(), entry.value())?;
     }
+    Ok(())
 }
 
 // --------------------------------

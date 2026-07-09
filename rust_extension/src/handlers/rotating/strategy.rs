@@ -122,32 +122,25 @@ impl FileRotationStrategy {
         original_file: File,
         capacity: usize,
     ) -> io::Result<Option<String>> {
-        let mut original_file = Some(original_file);
+        // Ownership of `original_file` moves along exactly one failure path,
+        // so the borrow checker guarantees it is reinstated at most once.
         if let Err(err) = Self::rename_file_if_exists(&self.path, &self.backup_path(1)) {
-            let file = original_file
-                .take()
-                .expect("original log file already consumed during rotation");
-            *writer = BufWriter::with_capacity(capacity, file);
+            *writer = BufWriter::with_capacity(capacity, original_file);
             return Err(err);
         }
 
         match Self::open_fresh_writer(&self.path, capacity) {
             Ok(fresh_writer) => {
-                let _ = original_file.take();
                 *writer = fresh_writer;
                 Ok(None)
             }
             Err(fresh_err) => match Self::open_append_file(&self.path) {
                 Ok(fallback_file) => {
-                    let _ = original_file.take();
                     *writer = BufWriter::with_capacity(capacity, fallback_file);
                     Ok(Some(fresh_err.to_string()))
                 }
                 Err(fallback_err) => {
-                    let file = original_file
-                        .take()
-                        .expect("original log file already consumed during rotation");
-                    *writer = BufWriter::with_capacity(capacity, file);
+                    *writer = BufWriter::with_capacity(capacity, original_file);
                     Err(io::Error::new(
                         fresh_err.kind(),
                         format!(

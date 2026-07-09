@@ -1,3 +1,6 @@
+//! Core handler trait and error types shared by every handler
+//! implementation.
+
 use crate::log_record::FemtoLogRecord;
 use pyo3::prelude::*;
 use std::{any::Any, time::Duration};

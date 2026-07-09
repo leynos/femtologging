@@ -40,8 +40,12 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
+// Re-exported for the parameterised tests in `logger_tests_python.rs`;
+// production code reaches it through `capture_exception_payload`.
 #[cfg(feature = "python")]
-pub use python_helpers::should_capture_exc_info;
+use python_helpers::capture_exception_payload;
+#[cfg(all(feature = "python", test))]
+pub(crate) use python_helpers::should_capture_exc_info;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
@@ -176,10 +180,7 @@ impl FemtoLogger {
 
         // Capture exception payload if exc_info is provided and truthy
         #[cfg(feature = "python")]
-        if let Some(exc) = exc_info
-            && should_capture_exc_info(exc)?
-            && let Some(payload) = traceback_capture::capture_exception(py, exc)?
-        {
+        if let Some(payload) = capture_exception_payload(py, exc_info)? {
             record.set_exception_payload(payload);
         }
 

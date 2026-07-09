@@ -100,6 +100,8 @@ impl Default for RateLimitedWarner {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for rate-limited warning emission.
+
     use super::*;
     use rstest::*;
     use std::sync::atomic::AtomicU64;

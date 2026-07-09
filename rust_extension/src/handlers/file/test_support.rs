@@ -27,7 +27,10 @@ impl Log for TestLogger {
     fn log(&self, record: &Record<'_>) {
         if self.enabled(record.metadata()) {
             let logs = LOGS.get_or_init(|| Mutex::new(Vec::new()));
-            let mut guard = logs.lock().expect("logger mutex poisoned");
+            // Recover from poisoning: captured logs remain valid data.
+            let mut guard = logs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.push(CapturedLog {
                 level: record.level(),
                 message: record.args().to_string(),
@@ -40,20 +43,30 @@ impl Log for TestLogger {
 
 pub(crate) fn install_test_logger() {
     INIT.call_once(|| {
-        log::set_logger(&LOGGER).expect("set test logger");
-        log::set_max_level(LevelFilter::Trace);
+        // `Once` guarantees a single installation, so a failure here means
+        // another logger was installed outside this helper; that breaks the
+        // capture contract and is ignored deliberately (assertions on
+        // captured logs will then fail with context).
+        if log::set_logger(&LOGGER).is_ok() {
+            log::set_max_level(LevelFilter::Trace);
+        }
     });
     clear_logs();
 }
 
 pub(crate) fn take_logged_messages() -> Vec<CapturedLog> {
     let logs = LOGS.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = logs.lock().expect("logger mutex poisoned");
+    // Recover from poisoning: captured logs remain valid data.
+    let mut guard = logs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     guard.drain(..).collect()
 }
 
 pub(crate) fn clear_logs() {
     if let Some(logs) = LOGS.get() {
-        logs.lock().expect("logger mutex poisoned").clear();
+        logs.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 }

@@ -16,24 +16,24 @@ fn create_py_exception<'py>(
     py: Python<'py>,
     exc_type: &str,
     message: &str,
-) -> pyo3::Bound<'py, pyo3::PyAny> {
-    py.import("builtins")
-        .expect("builtins module should exist")
-        .getattr(exc_type)
-        .expect("exception type should exist in builtins")
-        .call1((message,))
-        .expect("exception constructor should succeed")
+) -> PyResult<pyo3::Bound<'py, pyo3::PyAny>> {
+    py.import("builtins")?.getattr(exc_type)?.call1((message,))
 }
 
 /// Assert that output contains the base log message and all expected substrings.
-fn assert_output_contains(output: Option<String>, expected_substrings: &[&str]) {
-    let text = output.expect("Should produce output");
-    for substring in expected_substrings {
-        assert!(
-            text.contains(substring),
-            "Output should contain '{substring}', got: {text}"
-        );
-    }
+///
+/// A macro rather than a function so the panic points at the calling test
+/// and the expect lint sees the unwrap inside a recognised test body.
+macro_rules! assert_output_contains {
+    ($output:expr, $expected_substrings:expr) => {{
+        let text = $output.expect("Should produce output");
+        for substring in $expected_substrings {
+            assert!(
+                text.contains(substring),
+                "Output should contain '{substring}', got: {text}"
+            );
+        }
+    }};
 }
 
 /// Test inputs for `should_capture_exc_info` parameterised testing.
@@ -116,11 +116,13 @@ fn should_capture_exc_info_cases(
                 should_capture_exc_info(none.bind(py))
             }
             ExcInfoInput::ExceptionInstance => {
-                let exc = create_py_exception(py, "ValueError", "test error");
+                let exc = create_py_exception(py, "ValueError", "test error")
+                    .expect("exception construction should succeed");
                 should_capture_exc_info(&exc)
             }
             ExcInfoInput::Tuple3 => {
-                let exc_value = create_py_exception(py, "KeyError", "key");
+                let exc_value = create_py_exception(py, "KeyError", "key")
+                    .expect("exception construction should succeed");
                 let exc_type = exc_value.get_type();
                 let exc_tb = py.None();
                 let tuple = PyTuple::new(
@@ -211,9 +213,10 @@ fn py_log_exc_info_variation_cases(
         let exc_info: Option<pyo3::Bound<'_, pyo3::PyAny>> = match &input {
             PyLogExcInfoInput::BoolFalse => Some(PyBool::new(py, false).to_owned().into_any()),
             PyLogExcInfoInput::PythonNone => Some(py.None().into_bound(py)),
-            PyLogExcInfoInput::ExceptionInstance { exc_type, exc_msg } => {
-                Some(create_py_exception(py, exc_type, exc_msg))
-            }
+            PyLogExcInfoInput::ExceptionInstance { exc_type, exc_msg } => Some(
+                create_py_exception(py, exc_type, exc_msg)
+                    .expect("exception construction should succeed"),
+            ),
         };
 
         let result = logger
@@ -231,7 +234,7 @@ fn py_log_exc_info_variation_cases(
         if expected_parts.len() == 1 {
             assert_eq!(result, Some(expected.to_string()));
         } else {
-            assert_output_contains(result, &expected_parts);
+            assert_output_contains!(result, &expected_parts);
         }
     });
 }
@@ -255,6 +258,6 @@ fn py_log_with_stack_info_true() {
             .py_log(py, FemtoLevel::Info, "with stack", None, Some(true))
             .expect("py_log should not fail with stack_info=true");
 
-        assert_output_contains(result, &["test [INFO] with stack", "Stack"]);
+        assert_output_contains!(result, &["test [INFO] with stack", "Stack"]);
     });
 }

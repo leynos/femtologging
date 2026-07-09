@@ -174,13 +174,13 @@ where
 
         let captured = visitor::capture_record(values);
         let mut extensions = span.extensions_mut();
-        if extensions.get_mut::<StoredSpanFields>().is_none() {
-            extensions.insert(StoredSpanFields::default());
+        if let Some(stored) = extensions.get_mut::<StoredSpanFields>() {
+            stored.fields.extend(captured.key_values);
+        } else {
+            extensions.insert(StoredSpanFields {
+                fields: captured.key_values,
+            });
         }
-        let stored = extensions
-            .get_mut::<StoredSpanFields>()
-            .expect("stored span fields must exist after insertion");
-        stored.fields.extend(captured.key_values);
     }
 
     /// Process a tracing event and dispatch it to the femtologging handler pipeline.

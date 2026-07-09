@@ -21,7 +21,7 @@ fn handler_ptrs(logger: &crate::logger::FemtoLogger) -> Vec<usize> {
 }
 
 #[fixture]
-fn configured_core_logger(_gil_and_clean_manager: ()) {
+fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Debug);
     let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
     ConfigBuilder::new()
@@ -35,12 +35,12 @@ fn configured_core_logger(_gil_and_clean_manager: ()) {
                 .with_filters(["lvl"]),
         )
         .build_and_init()
-        .expect("initial build should succeed");
 }
 
 #[rstest]
 #[serial]
-fn append_handler_preserves_existing_handler_arc(_configured_core_logger: ()) {
+fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<(), ConfigError>) {
+    configured_core_logger.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         let before = handler_ptrs(&logger.borrow(py));
@@ -65,7 +65,8 @@ fn append_handler_preserves_existing_handler_arc(_configured_core_logger: ()) {
 
 #[rstest]
 #[serial]
-fn replace_filters_changes_live_filtering(_configured_core_logger: ()) {
+fn replace_filters_changes_live_filtering(configured_core_logger: Result<(), ConfigError>) {
+    configured_core_logger.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         assert!(
@@ -100,7 +101,10 @@ fn replace_filters_changes_live_filtering(_configured_core_logger: ()) {
 
 #[rstest]
 #[serial]
-fn unknown_removed_handler_preserves_existing_state(_configured_core_logger: ()) {
+fn unknown_removed_handler_preserves_existing_state(
+    configured_core_logger: Result<(), ConfigError>,
+) {
+    configured_core_logger.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         let before = handler_ptrs(&logger.borrow(py));

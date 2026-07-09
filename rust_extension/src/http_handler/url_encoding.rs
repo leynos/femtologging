@@ -63,6 +63,8 @@ pub(super) fn url_encode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for URL encoding of record payloads.
+
     use super::*;
 
     #[test]

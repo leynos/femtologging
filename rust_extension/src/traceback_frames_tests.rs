@@ -19,7 +19,8 @@ fn frame_with_all_optional_fields_present() {
             .end_colno(20)
             .line("    result = compute(x)")
             .locals(&[("x", "10"), ("result", "None")])
-            .build(py);
+            .build(py)
+            .expect("mock frame should build");
 
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
         let frames =
@@ -68,7 +69,7 @@ fn frame_with_missing_optional_fields(
         if let Some(v) = line {
             builder = builder.line(v);
         }
-        let frame = builder.build(py);
+        let frame = builder.build(py).expect("mock frame should build");
 
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
         let frames =
@@ -126,7 +127,8 @@ fn frame_missing_required_field_returns_error(
             }
         }
 
-        assert_frame_extraction_error_contains(&dict, expected_error_substr);
+        assert_frame_extraction_error_contains(&dict, expected_error_substr)
+            .expect("frame arrangement should succeed");
     });
 }
 
@@ -141,7 +143,8 @@ fn frame_with_wrong_type_lineno_returns_error() {
         dict.set_item("name", "func")
             .expect("set name should succeed");
 
-        assert_frame_extraction_error_contains(&dict, "integer");
+        assert_frame_extraction_error_contains(&dict, "integer")
+            .expect("frame arrangement should succeed");
     });
 }
 
@@ -193,16 +196,22 @@ fn extract_locals_handles_mixed_entries(
 ) {
     Python::attach(|py| {
         let locals_dict = PyDict::new(py);
-        populate_locals_dict_from_entries(&locals_dict, entries);
-        assert_locals_extraction_result(&locals_dict, expected, description);
+        populate_locals_dict_from_entries(&locals_dict, entries)
+            .expect("locals dict should populate");
+        assert_locals_extraction_result(&locals_dict, expected, description)
+            .expect("frame arrangement should succeed");
     });
 }
 
 #[test]
 fn extract_frames_from_stack_summary_converts_list() {
     Python::attach(|py| {
-        let frame1 = MockFrameBuilder::new("a.py", 1, "func_a").build(py);
-        let frame2 = MockFrameBuilder::new("b.py", 2, "func_b").build(py);
+        let frame1 = MockFrameBuilder::new("a.py", 1, "func_a")
+            .build(py)
+            .expect("mock frame should build");
+        let frame2 = MockFrameBuilder::new("b.py", 2, "func_b")
+            .build(py)
+            .expect("mock frame should build");
 
         let list = PyList::new(py, &[frame1, frame2]).expect("list creation should succeed");
 
@@ -271,18 +280,18 @@ fn extract_locals_with_skip_reasons_returns_partial(
         // Add scenario-specific invalid entries
         match scenario {
             SkipScenario::ReprFailure => {
-                add_bad_repr_entry(&locals_dict, "bad");
+                add_bad_repr_entry(&locals_dict, "bad").expect("bad repr entry should insert");
             }
             SkipScenario::MixedSkipReasons => {
                 locals_dict
                     .set_item(42, "int_key_value")
                     .expect("set int key entry should succeed");
-                add_bad_repr_entry(&locals_dict, "bad_repr");
+                add_bad_repr_entry(&locals_dict, "bad_repr").expect("bad repr entry should insert");
             }
             SkipScenario::AllFailMixed => {
                 // Add multiple entries with failing repr
                 for name in ["bad1", "bad2", "bad3"] {
-                    add_bad_repr_entry(&locals_dict, name);
+                    add_bad_repr_entry(&locals_dict, name).expect("bad repr entry should insert");
                 }
                 // Also add a non-string key
                 locals_dict
@@ -297,6 +306,7 @@ fn extract_locals_with_skip_reasons_returns_partial(
             &locals_dict,
             expected_slice,
             "should handle skip scenario correctly",
-        );
+        )
+        .expect("frame arrangement should succeed");
     });
 }

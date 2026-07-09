@@ -11,14 +11,14 @@ use serial_test::serial;
 use std::fs;
 use tempfile::NamedTempFile;
 
-fn new_root_file_handler() -> (FileHandlerBuilder, NamedTempFile) {
-    let file = NamedTempFile::new().expect("create temp log file");
+fn new_root_file_handler() -> std::io::Result<(FileHandlerBuilder, NamedTempFile)> {
+    let file = NamedTempFile::new()?;
     let builder = FileHandlerBuilder::new(file.path());
-    (builder, file)
+    Ok((builder, file))
 }
 
-fn read_log_file(file: &NamedTempFile) -> String {
-    fs::read_to_string(file.path()).expect("test log file must be readable")
+fn read_log_file(file: &NamedTempFile) -> std::io::Result<String> {
+    fs::read_to_string(file.path())
 }
 
 fn flush_logger_and_assert(py: Python<'_>, logger: &Py<FemtoLogger>, name: &str) {
@@ -32,7 +32,7 @@ fn flush_logger_and_assert(py: Python<'_>, logger: &Py<FemtoLogger>, name: &str)
 #[serial]
 fn propagate_flag_applied(_gil_and_clean_manager: ()) {
     Python::attach(|py| {
-        let (root_handler, file) = new_root_file_handler();
+        let (root_handler, file) = new_root_file_handler().expect("create temp log file");
         let root = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
             .with_handlers(["h"]);
@@ -51,7 +51,9 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
         flush_logger_and_assert(py, &child, "child");
         flush_logger_and_assert(py, &root, "root");
         assert!(
-            read_log_file(&file).is_empty(),
+            read_log_file(&file)
+                .expect("test log file must be readable")
+                .is_empty(),
             "root handler should receive no records"
         );
     });
@@ -61,7 +63,7 @@ fn propagate_flag_applied(_gil_and_clean_manager: ()) {
 #[serial]
 fn record_propagates_to_root(_gil_and_clean_manager: ()) {
     Python::attach(|py| {
-        let (root_handler, file) = new_root_file_handler();
+        let (root_handler, file) = new_root_file_handler().expect("create temp log file");
         let root = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
             .with_handlers(["h"]);
@@ -76,7 +78,7 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
         let root = manager::get_logger(py, "root").expect("root logger should exist");
         flush_logger_and_assert(py, &child, "child");
         flush_logger_and_assert(py, &root, "root");
-        let contents = read_log_file(&file);
+        let contents = read_log_file(&file).expect("test log file must be readable");
         assert!(
             contents.contains("msg"),
             "root handler should receive one record"
@@ -88,7 +90,7 @@ fn record_propagates_to_root(_gil_and_clean_manager: ()) {
 #[serial]
 fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
     Python::attach(|py| {
-        let (root_handler, file) = new_root_file_handler();
+        let (root_handler, file) = new_root_file_handler().expect("create temp log file");
         let root = LoggerConfigBuilder::new()
             .with_level(FemtoLevel::Info)
             .with_handlers(["h"]);
@@ -105,7 +107,9 @@ fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
         flush_logger_and_assert(py, &child, "child");
         flush_logger_and_assert(py, &root, "root");
         assert!(
-            !read_log_file(&file).contains("one"),
+            !read_log_file(&file)
+                .expect("test log file must be readable")
+                .contains("one"),
             "records should not propagate when disabled"
         );
         child.borrow(py).set_propagate(true);
@@ -113,7 +117,9 @@ fn propagate_toggle_runtime(_gil_and_clean_manager: ()) {
         flush_logger_and_assert(py, &child, "child");
         flush_logger_and_assert(py, &root, "root");
         assert!(
-            read_log_file(&file).contains("two"),
+            read_log_file(&file)
+                .expect("test log file must be readable")
+                .contains("two"),
             "record should propagate after enabling"
         );
     });

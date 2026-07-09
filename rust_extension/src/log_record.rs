@@ -197,6 +197,8 @@ impl fmt::Display for FemtoLogRecord {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for log record construction and payload attachment.
+
     use super::*;
     use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
     use rstest::rstest;

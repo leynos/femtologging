@@ -182,18 +182,7 @@ fn filter_stack_payload(
     // Clone all keys from the original payload
     let result = payload.copy()?;
 
-    // Update frames only if the original had them, or always set if filtering produced frames
-    // Match the Rust serde behaviour: skip_serializing_if = "Vec::is_empty"
-    if had_frames_key {
-        if filtered.is_empty() {
-            // Remove empty frames to match serialization semantics
-            result.del_item("frames").ok();
-        } else {
-            result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
-        }
-    } else if !filtered.is_empty() {
-        result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
-    }
+    update_frames_item(py, &result, had_frames_key, &filtered)?;
 
     Ok(result.into())
 }
@@ -214,38 +203,61 @@ fn filter_exception_payload(
     // Clone all keys from the original payload (preserves unknown keys)
     let result = payload.copy()?;
 
-    // Update frames only if the original had them
-    // Match the Rust serde behaviour: skip_serializing_if = "Vec::is_empty"
-    if had_frames_key {
-        if filtered.is_empty() {
+    update_frames_item(py, &result, had_frames_key, &filtered)?;
+    filter_nested_exception(py, payload, &result, "cause", opts)?;
+    filter_nested_exception(py, payload, &result, "context", opts)?;
+    filter_exception_group(py, payload, &result, opts)?;
+
+    Ok(result.into())
+}
+
+/// Replace, retain, or remove the `frames` item to mirror serde semantics.
+///
+/// Matches the Rust serde behaviour (`skip_serializing_if = "Vec::is_empty"`):
+/// empty filtered frames are removed when the original payload carried a
+/// `frames` key, and non-empty frames are always written.
+fn update_frames_item(
+    py: Python<'_>,
+    result: &Bound<'_, PyDict>,
+    had_frames_key: bool,
+    filtered: &[StackFrame],
+) -> PyResult<()> {
+    if filtered.is_empty() {
+        if had_frames_key {
             // Remove empty frames to match serialization semantics
             result.del_item("frames").ok();
-        } else {
-            result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
         }
-    } else if !filtered.is_empty() {
-        result.set_item("frames", frames_to_py_list(py, &filtered)?)?;
+    } else {
+        result.set_item("frames", frames_to_py_list(py, filtered)?)?;
     }
+    Ok(())
+}
 
-    // Recursively filter cause
-    if let Some(cause) = payload.get_item("cause")? {
-        let cause_dict = cause
+/// Recursively filter a nested exception payload stored under `key`.
+fn filter_nested_exception(
+    py: Python<'_>,
+    payload: &Bound<'_, PyDict>,
+    result: &Bound<'_, PyDict>,
+    key: &str,
+    opts: &FilterOptions<'_>,
+) -> PyResult<()> {
+    if let Some(nested) = payload.get_item(key)? {
+        let nested_dict = nested
             .cast::<PyDict>()
-            .map_err(|_| PyTypeError::new_err("'cause' must be a dict"))?;
-        let filtered_cause = filter_exception_payload(py, cause_dict, opts)?;
-        result.set_item("cause", filtered_cause)?;
+            .map_err(|_| PyTypeError::new_err(format!("'{key}' must be a dict")))?;
+        let filtered_nested = filter_exception_payload(py, nested_dict, opts)?;
+        result.set_item(key, filtered_nested)?;
     }
+    Ok(())
+}
 
-    // Recursively filter context
-    if let Some(context) = payload.get_item("context")? {
-        let context_dict = context
-            .cast::<PyDict>()
-            .map_err(|_| PyTypeError::new_err("'context' must be a dict"))?;
-        let filtered_context = filter_exception_payload(py, context_dict, opts)?;
-        result.set_item("context", filtered_context)?;
-    }
-
-    // Recursively filter exception group members
+/// Recursively filter the members of an exception group, if present.
+fn filter_exception_group(
+    py: Python<'_>,
+    payload: &Bound<'_, PyDict>,
+    result: &Bound<'_, PyDict>,
+    opts: &FilterOptions<'_>,
+) -> PyResult<()> {
     if let Some(exceptions) = payload.get_item("exceptions")? {
         let exceptions_list = exceptions
             .cast::<PyList>()
@@ -260,8 +272,7 @@ fn filter_exception_payload(
         }
         result.set_item("exceptions", filtered_list)?;
     }
-
-    Ok(result.into())
+    Ok(())
 }
 
 /// Detect whether a payload is an exception payload or stack payload.

@@ -129,11 +129,7 @@ pub(crate) fn extract_supported_value(
     if value.is_none() {
         return Ok("None".to_owned());
     }
-    if value.is_instance_of::<PyBool>()
-        || value.is_instance_of::<PyString>()
-        || value.is_instance_of::<PyInt>()
-        || value.is_instance_of::<PyFloat>()
-    {
+    if is_supported_scalar(value) {
         return Ok(value
             .str()
             .map_err(|_| unsupported())?
@@ -143,4 +139,16 @@ pub(crate) fn extract_supported_value(
     }
 
     Err(unsupported())
+}
+
+/// Report whether the value is one of the scalar Python types accepted by
+/// enrichment (bool, str, int, or float).
+fn is_supported_scalar(value: &Bound<'_, PyAny>) -> bool {
+    [
+        value.is_instance_of::<PyBool>(),
+        value.is_instance_of::<PyString>(),
+        value.is_instance_of::<PyInt>(),
+        value.is_instance_of::<PyFloat>(),
+    ]
+    .contains(&true)
 }

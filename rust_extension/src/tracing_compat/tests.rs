@@ -14,35 +14,37 @@ use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
 
-fn attach_collecting_handler(logger_name: &str) -> Arc<CollectingHandler> {
+fn attach_collecting_handler(logger_name: &str) -> pyo3::PyResult<Arc<CollectingHandler>> {
     let handler = Arc::new(CollectingHandler::default());
-    Python::attach(|py| {
-        let logger = manager::get_logger(py, logger_name).expect("logger created");
+    Python::attach(|py| -> pyo3::PyResult<()> {
+        let logger = manager::get_logger(py, logger_name)?;
         logger.borrow(py).clear_handlers();
         logger
             .borrow(py)
             .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    });
-    handler
+        Ok(())
+    })?;
+    Ok(handler)
 }
 
 /// Run the standard single-event bridge scaffold and return the collected records.
-fn run_bridged_event_test<F>(logger_name: &str, emit: F) -> Vec<FemtoLogRecord>
+fn run_bridged_event_test<F>(logger_name: &str, emit: F) -> pyo3::PyResult<Vec<FemtoLogRecord>>
 where
     F: FnOnce(),
 {
     manager::reset_manager();
-    let handler = attach_collecting_handler(logger_name);
+    let handler = attach_collecting_handler(logger_name)?;
     let subscriber = tracing_subscriber::registry().with(FemtoTracingLayer);
     tracing::subscriber::with_default(subscriber, emit);
-    Python::attach(|py| {
-        let logger = manager::get_logger(py, logger_name).expect("logger created");
+    Python::attach(|py| -> pyo3::PyResult<()> {
+        let logger = manager::get_logger(py, logger_name)?;
         assert!(
             logger.borrow(py).flush_handlers(),
             "flush should drain the queue"
         );
-    });
-    handler.collected()
+        Ok(())
+    })?;
+    Ok(handler.collected())
 }
 
 #[rstest]
@@ -68,7 +70,8 @@ fn events_are_forwarded_with_structured_fields() {
             payload = ?vec!["a", "b"],
             "hello from tracing"
         );
-    });
+    })
+    .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
     let record = &records[0];
     assert_eq!(record.logger(), logger_name);
@@ -85,7 +88,8 @@ fn events_are_forwarded_with_structured_fields() {
 fn invalid_targets_fall_back_to_root() {
     let records = run_bridged_event_test("root", || {
         tracing::info!(target: "invalid..target", request_id = "abc-123");
-    });
+    })
+    .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].logger(), "root");
     assert_eq!(records[0].message(), "tracing event (request_id=abc-123)");
@@ -99,7 +103,8 @@ fn event_without_message_uses_stable_fallback() {
         // No explicit message, but one structured field: this should trigger the
         // stable formatting "tracing event (request_id=abc-123)".
         tracing::info!(target: "tracing.bridge.fallback", request_id = "abc-123");
-    });
+    })
+    .expect("bridged event test must succeed");
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
@@ -116,7 +121,8 @@ fn event_without_message_or_fields_uses_pure_fallback() {
         // Emit an event with no message and no fields by using an empty message string.
         // The tracing macro strips empty messages, exercising the pure FALLBACK_EVENT_MESSAGE path.
         tracing::info!(target: "tracing.bridge.fallback", "");
-    });
+    })
+    .expect("bridged event test must succeed");
 
     assert_eq!(records.len(), 1);
     let record = &records[0];
@@ -134,7 +140,7 @@ fn event_without_message_or_fields_uses_pure_fallback() {
 fn logger_thresholds_still_apply() {
     manager::reset_manager();
     let logger_name = "tracing.bridge.threshold";
-    let handler = attach_collecting_handler(logger_name);
+    let handler = attach_collecting_handler(logger_name).expect("collecting handler must attach");
     Python::attach(|py| {
         let logger = manager::get_logger(py, logger_name).expect("logger created");
         logger.borrow(py).set_level(FemtoLevel::Warn);
@@ -163,7 +169,7 @@ fn logger_thresholds_still_apply() {
 #[serial]
 fn femtologging_targets_are_ignored() {
     manager::reset_manager();
-    let handler = attach_collecting_handler("root");
+    let handler = attach_collecting_handler("root").expect("collecting handler must attach");
     let subscriber = tracing_subscriber::registry().with(FemtoTracingLayer);
 
     tracing::subscriber::with_default(subscriber, || {
@@ -187,7 +193,8 @@ fn active_span_fields_are_merged_into_event_metadata() {
         let inner = tracing::info_span!(target: "tracing.bridge.span", "step", attempt = 2_u64);
         let _inner_guard = inner.enter();
         tracing::info!(target: "tracing.bridge.span", success = true, "inside span");
-    });
+    })
+    .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
     let key_values = &records[0].metadata().key_values;
     assert_eq!(key_values["span.0.name"], "request");
@@ -203,7 +210,8 @@ fn events_outside_spans_do_not_gain_span_metadata() {
     let logger_name = "tracing.bridge.outside";
     let records = run_bridged_event_test(logger_name, || {
         tracing::info!(target: "tracing.bridge.outside", "outside span");
-    });
+    })
+    .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
     assert!(
         records[0]

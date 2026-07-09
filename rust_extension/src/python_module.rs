@@ -242,14 +242,15 @@ mod tests {
         }
     }
 
-    fn assert_string_attr(module: &Bound<'_, PyModule>, attr_name: &str, expected: &str) {
-        let attr = module
-            .getattr(attr_name)
-            .unwrap_or_else(|_| panic!("{attr_name} not found"));
-        let value: &str = attr
-            .extract()
-            .unwrap_or_else(|_| panic!("failed to extract {attr_name} as str"));
+    fn assert_string_attr(
+        module: &Bound<'_, PyModule>,
+        attr_name: &str,
+        expected: &str,
+    ) -> PyResult<()> {
+        let attr = module.getattr(attr_name)?;
+        let value: &str = attr.extract()?;
         assert_eq!(value, expected);
+        Ok(())
     }
 
     #[rstest]
@@ -268,10 +269,12 @@ mod tests {
                     .expect("attribute is not a Python type");
             }
             if let Some(expected) = case_data.expected_rotation_validation_msg {
-                assert_string_attr(&module, "ROTATION_VALIDATION_MSG", expected);
+                assert_string_attr(&module, "ROTATION_VALIDATION_MSG", expected)
+                    .expect("rotation validation message must match");
             }
             if let Some(expected) = case_data.expected_timed_rotation_validation_msg {
-                assert_string_attr(&module, "TIMED_ROTATION_VALIDATION_MSG", expected);
+                assert_string_attr(&module, "TIMED_ROTATION_VALIDATION_MSG", expected)
+                    .expect("timed rotation validation message must match");
             }
         });
     }

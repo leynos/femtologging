@@ -176,6 +176,8 @@ pub fn serialize_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 
 #[cfg(test)]
 mod tests {
+    //! Tests for HTTP record serialization.
+
     use super::*;
     use crate::level::FemtoLevel;
     use crate::log_record::RecordMetadata;

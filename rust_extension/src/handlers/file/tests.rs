@@ -10,10 +10,10 @@ use log::Level;
 use rstest::rstest;
 use serial_test::serial;
 use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Default)]
 struct SharedBuf {
@@ -22,18 +22,32 @@ struct SharedBuf {
 
 impl SharedBuf {
     /// Return the UTF-8 contents of the buffer.
-    fn contents(&self) -> String {
-        String::from_utf8(self.buffer.lock().expect("lock").clone()).expect("invalid UTF-8")
+    ///
+    /// Returns an error for invalid UTF-8 so the calling test decides the
+    /// verdict. Recovers from lock poisoning: the bytes remain valid data.
+    fn contents(&self) -> Result<String, std::string::FromUtf8Error> {
+        let buffer = self
+            .buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        String::from_utf8(buffer.clone())
     }
 }
 
 impl Write for SharedBuf {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer.lock().expect("lock").write(buf)
+        // Recover from poisoning: the buffer contents remain valid data.
+        self.buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.buffer.lock().expect("lock").flush()
+        self.buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .flush()
     }
 }
 
@@ -141,7 +155,8 @@ fn build_from_worker_invokes_rotation_strategy() {
     handler.close();
 
     assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert_eq!(buffer.contents(), "core [INFO] one\ncore [INFO] two\n");
+    let contents = buffer.contents().expect("buffer must be valid UTF-8");
+    assert_eq!(contents, "core [INFO] one\ncore [INFO] two\n");
 }
 
 fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, FemtoFileHandler) {
@@ -156,18 +171,21 @@ fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, Femt
     (buffer, start_barrier, handler)
 }
 
+type RecordOutcomeRx = mpsc::Receiver<Result<(), HandlerError>>;
+
 fn spawn_record_thread(
     handler: Arc<FemtoFileHandler>,
     record: FemtoLogRecord,
-) -> (Arc<Barrier>, mpsc::Receiver<()>, thread::JoinHandle<()>) {
+) -> (Arc<Barrier>, RecordOutcomeRx, thread::JoinHandle<()>) {
     let (done_tx, done_rx) = mpsc::channel();
     let send_barrier = Arc::new(Barrier::new(2));
     let h = Arc::clone(&handler);
     let sb = Arc::clone(&send_barrier);
     let handle = thread::spawn(move || {
         sb.wait();
-        h.handle(record).expect("record send");
-        done_tx.send(()).expect("send done");
+        // Deliver the outcome to the test; a dropped receiver means the
+        // test has already failed, so the send error is ignored.
+        let _ = done_tx.send(h.handle(record));
     });
     (send_barrier, done_rx, handle)
 }
@@ -228,12 +246,15 @@ fn build_from_worker_wires_handler_components() {
     );
     handle.join().expect("worker thread");
 
-    assert_eq!(buffer.contents(), "core [INFO] test\n");
+    let contents = buffer.contents().expect("buffer must be valid UTF-8");
+    assert_eq!(contents, "core [INFO] test\n");
 }
 
+// `#[serial]` wraps the test bodies below, so the expect lint cannot
+// recognise them as tests; errors are propagated instead.
 #[test]
 #[serial]
-fn worker_writes_record_when_rotation_fails() {
+fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::Error>> {
     struct FailingRotation;
 
     impl RotationStrategy<SharedBuf> for FailingRotation {
@@ -257,13 +278,11 @@ fn worker_writes_record_when_rotation_fails() {
     let mut handler =
         FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
 
-    handler
-        .handle(FemtoLogRecord::new(
-            "core",
-            FemtoLevel::Info,
-            "after rotation failure",
-        ))
-        .expect("record queued after rotation warning");
+    handler.handle(FemtoLogRecord::new(
+        "core",
+        FemtoLevel::Info,
+        "after rotation failure",
+    ))?;
     assert!(
         handler.flush(),
         "flush should succeed even if rotation reported an error",
@@ -281,7 +300,8 @@ fn worker_writes_record_when_rotation_fails() {
         "rotation error should be logged"
     );
 
-    assert_eq!(buffer.contents(), "core [INFO] after rotation failure\n");
+    assert_eq!(buffer.contents()?, "core [INFO] after rotation failure\n");
+    Ok(())
 }
 
 #[test]
@@ -329,20 +349,17 @@ fn femto_file_handler_rejects_zero_flush_interval(
 
 #[test]
 #[serial]
-fn femto_file_handler_queue_overflow_drop_policy() {
+fn femto_file_handler_queue_overflow_drop_policy() -> Result<(), Box<dyn std::error::Error>> {
     let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Drop);
 
-    handler
-        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
-        .expect("first record queued");
-    let err = handler
-        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
-        .expect_err("second record should overflow");
-    assert_eq!(err, HandlerError::QueueFull);
+    handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))?;
+    let second = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+    assert_eq!(second, Err(HandlerError::QueueFull));
     start_barrier.wait();
     drop(handler);
 
-    assert_eq!(buffer.contents(), "core [INFO] first\n");
+    assert_eq!(buffer.contents()?, "core [INFO] first\n");
+    Ok(())
 }
 
 #[test]
@@ -363,11 +380,12 @@ fn femto_file_handler_queue_overflow_block_policy() {
     start_barrier.wait();
     done_rx
         .recv_timeout(Duration::from_secs(2))
-        .expect("worker did not finish");
+        .expect("worker did not finish")
+        .expect("record send");
     t.join().expect("join thread");
     drop(handler);
 
-    let out = buffer.contents();
+    let out = buffer.contents().expect("buffer must be valid UTF-8");
     assert!(out.contains("core [INFO] first"));
     assert!(out.contains("core [INFO] second"));
     let first_idx = out.find("core [INFO] first").expect("first log not found");
@@ -378,137 +396,4 @@ fn femto_file_handler_queue_overflow_block_policy() {
         first_idx < second_idx,
         "\"core [INFO] first\" does not appear before \"core [INFO] second\" in output",
     );
-}
-
-#[test]
-fn femto_file_handler_worker_thread_failure() {
-    #[derive(Clone)]
-    struct BlockingWriter {
-        buf: Arc<Mutex<Vec<u8>>>,
-        barrier: Arc<Barrier>,
-    }
-
-    impl Write for BlockingWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buf.lock().unwrap().write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.barrier.wait();
-            self.buf.lock().unwrap().flush()
-        }
-    }
-
-    impl Seek for BlockingWriter {
-        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-            Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "seek unsupported for BlockingWriter",
-            ))
-        }
-    }
-
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let barrier = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(
-        BlockingWriter {
-            buf: Arc::clone(&buffer),
-            barrier: Arc::clone(&barrier),
-        },
-        DefaultFormatter,
-    );
-    cfg.capacity = 1;
-    cfg.flush_interval = 1;
-    let handler = FemtoFileHandler::with_writer_for_test(cfg);
-    handler
-        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "slow"))
-        .expect("record queued");
-    let start = Instant::now();
-    drop(handler);
-    assert!(start.elapsed() < Duration::from_millis(1500));
-    barrier.wait();
-}
-
-#[test]
-fn femto_file_handler_flush_and_close_idempotency() {
-    struct TestWriter {
-        flushed: Arc<AtomicU32>,
-        closed: Arc<AtomicU32>,
-    }
-
-    impl Write for TestWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.flushed.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }
-    }
-
-    impl Seek for TestWriter {
-        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-            Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "seek unsupported for TestWriter",
-            ))
-        }
-    }
-
-    impl Drop for TestWriter {
-        fn drop(&mut self) {
-            self.closed.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    let flushed = Arc::new(AtomicU32::new(0));
-    let closed = Arc::new(AtomicU32::new(0));
-    let writer = TestWriter {
-        flushed: Arc::clone(&flushed),
-        closed: Arc::clone(&closed),
-    };
-
-    // Disable periodic flushing to ensure deterministic counter checks.
-    let handler_cfg = HandlerConfig {
-        capacity: 10,
-        flush_interval: 0,
-        overflow_policy: OverflowPolicy::Block,
-    };
-    let mut handler = FemtoFileHandler::build_from_worker(
-        writer,
-        DefaultFormatter,
-        handler_cfg,
-        BuilderOptions::<TestWriter>::default(),
-    );
-
-    assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::Relaxed), 1);
-
-    assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::Relaxed), 2);
-
-    handler.close();
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-    // Expect two manual flushes plus one triggered during shutdown
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-
-    handler.close();
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-
-    assert!(
-        !handler.flush(),
-        "flush after close should be a no-op and report failure"
-    );
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-
-    assert!(!handler.flush());
-    // Ensure counters remain unchanged after the no-op flush
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-
-    drop(handler);
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
 }

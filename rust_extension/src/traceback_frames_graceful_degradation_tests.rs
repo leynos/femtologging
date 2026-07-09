@@ -28,7 +28,7 @@ fn frame_with_wrong_type_optional_field_degrades_to_none() {
         dict.set_item("colno", PyList::empty(py))
             .expect("set colno should succeed");
 
-        let frame = create_simple_namespace(py, &dict);
+        let frame = create_simple_namespace(py, &dict).expect("namespace should build");
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
 
         let frames =
@@ -65,7 +65,7 @@ fn frame_with_explicit_none_optional_fields_degrades_to_none() {
         dict.set_item("locals", py.None())
             .expect("set locals should succeed");
 
-        let frame = create_simple_namespace(py, &dict);
+        let frame = create_simple_namespace(py, &dict).expect("namespace should build");
         let list = PyList::new(py, &[frame]).expect("list creation should succeed");
 
         let frames =
@@ -110,8 +110,9 @@ unrepr_obj = UnreprAble()
             .set_item("another_good", 42)
             .expect("set another_good should succeed");
 
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
+        let frame_dict =
+            create_frame_dict_with_locals(py, &locals_dict).expect("frame dict should build");
+        let frame = create_simple_namespace(py, &frame_dict).expect("namespace should build");
 
         let result = extract_locals_dict(&frame);
         let locals = result.expect("should return partial locals");
@@ -145,7 +146,7 @@ fn extract_locals_with_non_mapping_locals_degrades_gracefully() {
             .set_item("locals", non_mapping_locals)
             .expect("set locals should succeed");
 
-        let frame = create_simple_namespace(py, &frame_dict);
+        let frame = create_simple_namespace(py, &frame_dict).expect("namespace should build");
 
         // extract_locals_dict should not panic or error; it should return None
         let result = extract_locals_dict(&frame);
@@ -170,8 +171,9 @@ fn extract_locals_with_non_string_keys_degrades_gracefully() {
             .set_item(2, "another-int-key-value")
             .expect("set another int key should succeed");
 
-        let frame_dict = create_frame_dict_with_locals(py, &locals_dict);
-        let frame = create_simple_namespace(py, &frame_dict);
+        let frame_dict =
+            create_frame_dict_with_locals(py, &locals_dict).expect("frame dict should build");
+        let frame = create_simple_namespace(py, &frame_dict).expect("namespace should build");
 
         // extract_locals_dict should not error; non-string keys are skipped
         let result = extract_locals_dict(&frame);

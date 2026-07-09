@@ -185,6 +185,8 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the file handler builder.
+
     use super::super::test_helpers::assert_build_err;
     use super::*;
     use rstest::rstest;

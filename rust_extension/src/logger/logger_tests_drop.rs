@@ -4,7 +4,7 @@
 use super::logger_tests_helpers::HandlePtr;
 use super::*;
 
-fn setup_logger_for_drop_test() -> FemtoLogger {
+fn setup_logger_for_drop_test() -> Result<FemtoLogger, String> {
     let mut logger = FemtoLogger::new("drop-lock".to_string());
     if let Some(shutdown_tx) = logger.shutdown_tx.take() {
         let _ = shutdown_tx.send(());
@@ -12,9 +12,11 @@ fn setup_logger_for_drop_test() -> FemtoLogger {
     logger.tx.take();
     let original_handle = { logger.handle.lock().take() };
     if let Some(handle) = original_handle {
-        handle.join().expect("Initial worker thread panicked");
+        handle
+            .join()
+            .map_err(|_| "initial worker thread panicked".to_string())?;
     }
-    logger
+    Ok(logger)
 }
 
 fn spawn_lock_attempt_worker(
@@ -26,9 +28,11 @@ fn spawn_lock_attempt_worker(
     std::thread::spawn(move || {
         use std::time::{Duration, Instant};
 
-        start_signal
-            .recv()
-            .expect("Failed to receive lock attempt signal");
+        // A closed channel means the test has already failed, so the worker
+        // exits quietly and the test times out with context.
+        if start_signal.recv().is_err() {
+            return;
+        }
         // SAFETY: The logger outlives the worker, and the mutex guards access.
         let handle_mutex = unsafe { handle_ptr.as_ref() };
         let start = Instant::now();
@@ -40,12 +44,8 @@ fn spawn_lock_attempt_worker(
             }
             std::thread::yield_now();
         }
-        result_tx
-            .send(acquired)
-            .expect("Failed to report lock result");
-        release_signal
-            .recv()
-            .expect("Failed to receive release signal");
+        let _ = result_tx.send(acquired);
+        let _ = release_signal.recv();
     })
 }
 
@@ -71,7 +71,8 @@ fn drop_releases_handle_lock_before_join() {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    let logger = Box::new(setup_logger_for_drop_test());
+    let logger =
+        Box::new(setup_logger_for_drop_test().expect("drop-test logger arrangement must succeed"));
 
     let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
 

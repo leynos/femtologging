@@ -112,6 +112,8 @@ pub(crate) fn parse_policy_string(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for overflow policy parsing.
+
     use super::*;
 
     #[test]

@@ -165,14 +165,19 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         self.validate()?;
         let cfg = self.common.handler_config();
-        let rotation = match self.max_bytes {
-            Some(max_bytes) => RotationConfig::new(
-                max_bytes.get(),
-                self.backup_count
-                    .expect("validation ensures backup_count is set when max_bytes is set")
-                    .get(),
-            ),
-            None => RotationConfig::disabled(),
+        let rotation = match (self.max_bytes, self.backup_count) {
+            (Some(max_bytes), Some(backup_count)) => {
+                RotationConfig::new(max_bytes.get(), backup_count.get())
+            }
+            // `validate` guarantees backup_count accompanies max_bytes, but
+            // surface a build error rather than panicking if that invariant
+            // is ever broken.
+            (Some(_), None) => {
+                return Err(HandlerBuildError::InvalidConfig(
+                    "backup_count must be set when max_bytes is set".to_string(),
+                ));
+            }
+            (None, _) => RotationConfig::disabled(),
         };
         match self.common.formatter() {
             Some(FormatterConfig::Instance(fmt)) => {
@@ -190,6 +195,8 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the rotating file handler builder.
+
     use super::super::test_helpers::assert_build_err;
     use super::*;
     use rstest::rstest;

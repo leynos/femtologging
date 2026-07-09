@@ -14,46 +14,68 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
+/// Enqueue a record without blocking, dropping it when the queue is full.
+fn send_dropping(
+    tx: &crossbeam_channel::Sender<FileCommand>,
+    command: FileCommand,
+) -> Result<(), HandlerError> {
+    match tx.try_send(command) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => {
+            log::warn!("FemtoFileHandler (Drop): queue full, dropping record");
+            Err(HandlerError::QueueFull)
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            log::warn!("FemtoFileHandler (Drop): queue closed, dropping record");
+            Err(HandlerError::Closed)
+        }
+    }
+}
+
+/// Enqueue a record, blocking until the worker accepts it.
+fn send_blocking(
+    tx: &crossbeam_channel::Sender<FileCommand>,
+    command: FileCommand,
+) -> Result<(), HandlerError> {
+    match tx.send(command) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            log::warn!("FemtoFileHandler (Block): channel disconnected or shutting down");
+            Err(HandlerError::Closed)
+        }
+    }
+}
+
+/// Enqueue a record, giving up after the configured timeout elapses.
+fn send_with_timeout(
+    tx: &crossbeam_channel::Sender<FileCommand>,
+    command: FileCommand,
+    dur: std::time::Duration,
+) -> Result<(), HandlerError> {
+    match tx.send_timeout(command, dur) {
+        Ok(()) => Ok(()),
+        Err(SendTimeoutError::Timeout(_)) => {
+            log::warn!("FemtoFileHandler (Timeout): timed out waiting for queue, dropping record");
+            Err(HandlerError::Timeout(dur))
+        }
+        Err(SendTimeoutError::Disconnected(_)) => {
+            log::warn!("FemtoFileHandler (Timeout): queue closed, dropping record");
+            Err(HandlerError::Closed)
+        }
+    }
+}
+
 impl FemtoHandlerTrait for FemtoFileHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = &self.tx else {
             log::warn!("FemtoFileHandler: handle called after close");
             return Err(HandlerError::Closed);
         };
+        let command = FileCommand::Record(Box::new(record));
         match self.overflow_policy {
-            OverflowPolicy::Drop => match tx.try_send(FileCommand::Record(Box::new(record))) {
-                Ok(()) => Ok(()),
-                Err(TrySendError::Full(_)) => {
-                    log::warn!("FemtoFileHandler (Drop): queue full, dropping record");
-                    Err(HandlerError::QueueFull)
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    log::warn!("FemtoFileHandler (Drop): queue closed, dropping record");
-                    Err(HandlerError::Closed)
-                }
-            },
-            OverflowPolicy::Block => match tx.send(FileCommand::Record(Box::new(record))) {
-                Ok(()) => Ok(()),
-                Err(_) => {
-                    log::warn!("FemtoFileHandler (Block): channel disconnected or shutting down");
-                    Err(HandlerError::Closed)
-                }
-            },
-            OverflowPolicy::Timeout(dur) => {
-                match tx.send_timeout(FileCommand::Record(Box::new(record)), dur) {
-                    Ok(()) => Ok(()),
-                    Err(SendTimeoutError::Timeout(_)) => {
-                        log::warn!(
-                            "FemtoFileHandler (Timeout): timed out waiting for queue, dropping record"
-                        );
-                        Err(HandlerError::Timeout(dur))
-                    }
-                    Err(SendTimeoutError::Disconnected(_)) => {
-                        log::warn!("FemtoFileHandler (Timeout): queue closed, dropping record");
-                        Err(HandlerError::Closed)
-                    }
-                }
-            }
+            OverflowPolicy::Drop => send_dropping(tx, command),
+            OverflowPolicy::Block => send_blocking(tx, command),
+            OverflowPolicy::Timeout(dur) => send_with_timeout(tx, command, dur),
         }
     }
 

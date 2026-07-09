@@ -37,7 +37,7 @@ fn reject_at_time_for_hourly_rotation() {
         TimedRotationWhen::Hours,
         1,
         true,
-        Some(naive_time(3, 15, 0)),
+        Some(naive_time!(3, 15, 0)),
     )
     .expect_err("hourly rotation must reject at_time");
     assert_eq!(
@@ -58,34 +58,34 @@ fn reject_weekday_interval_other_than_one() {
 fn next_hourly_rollover_uses_fixed_duration() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 2, true, None)
         .expect("hourly schedule must validate");
-    let now = utc_datetime("2026-03-11T08:30:00Z");
+    let now = utc_datetime!("2026-03-11T08:30:00Z");
 
     let next = schedule.next_rollover(now);
 
-    assert_eq!(next, utc_datetime("2026-03-11T10:30:00Z"));
+    assert_eq!(next, utc_datetime!("2026-03-11T10:30:00Z"));
 }
 
 #[rstest]
 fn next_midnight_rollover_uses_start_of_day() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None)
         .expect("midnight schedule must validate");
-    let now = utc_datetime("2026-03-11T23:30:00Z");
+    let now = utc_datetime!("2026-03-11T23:30:00Z");
 
     let next = schedule.next_rollover(now);
 
-    assert_eq!(next, utc_datetime("2026-03-12T00:00:00Z"));
+    assert_eq!(next, utc_datetime!("2026-03-12T00:00:00Z"));
 }
 
 #[rstest]
 #[case(
     TimedRotationWhen::Days,
-    naive_time(9, 30, 0),
+    naive_time!(9, 30, 0),
     "2026-03-11T08:00:00Z",
     "2026-03-11T09:30:00Z"
 )]
 #[case(
     TimedRotationWhen::Weekday(Weekday::Fri),
-    naive_time(6, 0, 0),
+    naive_time!(6, 0, 0),
     "2026-03-11T12:00:00Z",
     "2026-03-13T06:00:00Z"
 )]
@@ -98,8 +98,8 @@ fn next_rollover_with_at_time(
     let schedule = TimedRotationSchedule::new(when, 1, true, Some(at_time))
         .expect("schedule with at_time must validate");
     assert_eq!(
-        schedule.next_rollover(utc_datetime(now)),
-        utc_datetime(expected),
+        schedule.next_rollover(utc_datetime!(now)),
+        utc_datetime!(expected),
     );
 }
 
@@ -107,7 +107,7 @@ fn next_rollover_with_at_time(
 fn next_hourly_rollover_local_time() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, false, None)
         .expect("hourly local schedule must validate");
-    let now = utc_datetime("2026-03-11T08:00:00Z");
+    let now = utc_datetime!("2026-03-11T08:00:00Z");
 
     let next = schedule.next_rollover(now);
 
@@ -118,21 +118,21 @@ fn next_hourly_rollover_local_time() {
 
 #[rstest]
 fn midnight_with_explicit_at_time() {
-    let at_time = naive_time(2, 30, 0);
+    let at_time = naive_time!(2, 30, 0);
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, Some(at_time))
         .expect("midnight schedule with at_time must validate");
-    let now = utc_datetime("2026-03-11T01:00:00Z");
+    let now = utc_datetime!("2026-03-11T01:00:00Z");
 
     let next = schedule.next_rollover(now);
 
-    assert_eq!(next, utc_datetime("2026-03-11T02:30:00Z"));
+    assert_eq!(next, utc_datetime!("2026-03-11T02:30:00Z"));
 }
 
 #[rstest]
 fn midnight_suffix_is_date_only() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Midnight, 1, true, None)
         .expect("midnight schedule must validate");
-    let rollover_at = utc_datetime("2026-03-12T00:00:00Z");
+    let rollover_at = utc_datetime!("2026-03-12T00:00:00Z");
 
     let suffix = schedule.suffix_for(rollover_at);
 
@@ -143,7 +143,7 @@ fn midnight_suffix_is_date_only() {
 fn second_suffix_includes_full_timestamp() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
         .expect("seconds schedule must validate");
-    let rollover_at = utc_datetime("2026-03-12T07:08:09Z");
+    let rollover_at = utc_datetime!("2026-03-12T07:08:09Z");
 
     let suffix = schedule.suffix_for(rollover_at);
 

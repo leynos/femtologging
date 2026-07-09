@@ -98,30 +98,29 @@ impl CollectionMutation {
     /// Returns a [`Py<PyAny>`] for Python interop.
     pub(crate) fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
-        let set_ids = |ids: &[String]| -> PyResult<()> {
+        dict.set_item("mode", self.mode_name())?;
+        if let Some(ids) = self.ids() {
             dict.set_item("ids", PyList::new(py, ids.iter())?)?;
-            Ok(())
-        };
-        match self {
-            Self::Unchanged => {
-                dict.set_item("mode", "unchanged")?;
-            }
-            Self::Replace(ids) => {
-                dict.set_item("mode", "replace")?;
-                set_ids(ids)?;
-            }
-            Self::Append(ids) => {
-                dict.set_item("mode", "append")?;
-                set_ids(ids)?;
-            }
-            Self::Remove(ids) => {
-                dict.set_item("mode", "remove")?;
-                set_ids(ids)?;
-            }
-            Self::Clear => {
-                dict.set_item("mode", "clear")?;
-            }
         }
         Ok(dict.unbind().into())
+    }
+
+    /// Returns the serialized `"mode"` value for this mutation.
+    fn mode_name(&self) -> &'static str {
+        match self {
+            Self::Unchanged => "unchanged",
+            Self::Replace(_) => "replace",
+            Self::Append(_) => "append",
+            Self::Remove(_) => "remove",
+            Self::Clear => "clear",
+        }
+    }
+
+    /// Returns the IDs carried by this mutation, if the variant has any.
+    fn ids(&self) -> Option<&[String]> {
+        match self {
+            Self::Replace(ids) | Self::Append(ids) | Self::Remove(ids) => Some(ids),
+            Self::Unchanged | Self::Clear => None,
+        }
     }
 }

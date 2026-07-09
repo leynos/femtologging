@@ -202,6 +202,8 @@ fn format_exception_body(payload: &ExceptionPayload) -> String {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for exception and stack trace formatting.
+
     use super::*;
 
     #[test]

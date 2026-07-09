@@ -27,10 +27,16 @@ pub(crate) fn fq_py_type(obj: &Bound<'_, PyAny>) -> String {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for fully-qualified Python type-name resolution.
+
     use super::*;
     use pyo3::types::{PyList, PyModule};
     use serial_test::serial;
     use std::ffi::CString;
+
+    /// `#[serial]` wraps the test body, so errors are propagated rather than
+    /// unwrapped to satisfy the expect lint.
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     #[serial]
@@ -44,32 +50,28 @@ mod tests {
 
     #[test]
     #[serial]
-    fn returns_user_defined_fq_name() {
-        Python::attach(|py| {
-            let code = CString::new("class Foo: pass\n").expect("valid Python code");
-            let filename = CString::new("mymod.py").expect("valid filename");
-            let module_name = CString::new("mymod").expect("valid module name");
+    fn returns_user_defined_fq_name() -> TestResult {
+        Python::attach(|py| -> TestResult {
+            let code = CString::new("class Foo: pass\n")?;
+            let filename = CString::new("mymod.py")?;
+            let module_name = CString::new("mymod")?;
             let module = PyModule::from_code(
                 py,
                 code.as_c_str(),
                 filename.as_c_str(),
                 module_name.as_c_str(),
-            )
-            .expect("module creation succeeds");
-            let obj = module
-                .getattr("Foo")
-                .expect("Foo class exists")
-                .call0()
-                .expect("Foo() call succeeds");
+            )?;
+            let obj = module.getattr("Foo")?.call0()?;
             let name = fq_py_type(&obj);
             assert_eq!(name, "mymod.Foo");
-        });
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
-    fn falls_back_when_attrs_missing() {
-        Python::attach(|py| {
+    fn falls_back_when_attrs_missing() -> TestResult {
+        Python::attach(|py| -> TestResult {
             let code = CString::new(concat!(
                 "class Meta(type):\n",
                 "    def __getattribute__(cls, name):\n",
@@ -79,24 +81,19 @@ mod tests {
                 "\n",
                 "class Bar(metaclass=Meta):\n",
                 "    pass\n",
-            ))
-            .expect("valid Python code");
-            let filename = CString::new("mymod.py").expect("valid filename");
-            let module_name = CString::new("mymod").expect("valid module name");
+            ))?;
+            let filename = CString::new("mymod.py")?;
+            let module_name = CString::new("mymod")?;
             let module = PyModule::from_code(
                 py,
                 code.as_c_str(),
                 filename.as_c_str(),
                 module_name.as_c_str(),
-            )
-            .expect("module creation succeeds");
-            let obj = module
-                .getattr("Bar")
-                .expect("Bar class exists")
-                .call0()
-                .expect("Bar() call succeeds");
+            )?;
+            let obj = module.getattr("Bar")?.call0()?;
             let name = fq_py_type(&obj);
             assert_eq!(name, "<unknown>.<unknown>");
-        });
+            Ok(())
+        })
     }
 }

@@ -1,7 +1,7 @@
 //! Tests for the socket handler implementation.
 
 use std::{
-    io::Read,
+    io::{self, Read},
     net::{SocketAddr, TcpListener},
     sync::{Arc, Barrier, mpsc},
     thread,
@@ -12,7 +12,7 @@ use rstest::{fixture, rstest};
 use serde::Deserialize;
 
 use crate::{
-    handler::FemtoHandlerTrait,
+    handler::{FemtoHandlerTrait, HandlerError},
     handlers::{HandlerBuildError, HandlerBuilderTrait, socket_builder::SocketHandlerBuilder},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
@@ -26,30 +26,41 @@ use super::{
     transport::{SocketTransport, TcpTransport, TlsOptions, connect_transport},
 };
 
+// Fixtures and helpers arrange state, so they return Result and leave the
+// verdict to the calling test.
 #[fixture]
-fn tcp_listener() -> TcpListener {
-    TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral listener")
+fn tcp_listener() -> io::Result<TcpListener> {
+    TcpListener::bind(("127.0.0.1", 0))
 }
+
+type FrameRx = mpsc::Receiver<io::Result<Vec<u8>>>;
 
 fn spawn_single_frame_server(
     listener: TcpListener,
     gate: Option<Arc<Barrier>>,
-) -> (SocketAddr, mpsc::Receiver<Vec<u8>>) {
-    let addr = listener.local_addr().expect("listener has address");
+) -> io::Result<(SocketAddr, FrameRx)> {
+    let addr = listener.local_addr()?;
     let (notify_tx, notify_rx) = mpsc::channel();
     thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept connection");
-        if let Some(barrier) = gate {
-            barrier.wait();
-        }
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).expect("read frame len");
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        stream.read_exact(&mut payload).expect("read payload");
-        notify_tx.send(payload).expect("send payload");
+        // Deliver the outcome to the test; a dropped receiver means the
+        // test has already failed, so the send error is ignored.
+        let _ = notify_tx.send(read_single_frame(&listener, gate));
     });
-    (addr, notify_rx)
+    Ok((addr, notify_rx))
+}
+
+/// Accept one connection and read a single length-prefixed frame.
+fn read_single_frame(listener: &TcpListener, gate: Option<Arc<Barrier>>) -> io::Result<Vec<u8>> {
+    let (mut stream, _) = listener.accept()?;
+    if let Some(barrier) = gate {
+        barrier.wait();
+    }
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf)?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    let mut payload = vec![0u8; len];
+    stream.read_exact(&mut payload)?;
+    Ok(payload)
 }
 
 #[rstest]
@@ -88,33 +99,35 @@ struct Payload {
     message: String,
 }
 
-fn build_tcp_handler(addr: SocketAddr) -> FemtoSocketHandler {
+fn build_tcp_handler(addr: SocketAddr) -> Result<FemtoSocketHandler, HandlerBuildError> {
     SocketHandlerBuilder::new()
         .with_tcp(addr.ip().to_string(), addr.port())
         .build_inner()
-        .expect("build handler")
 }
 
-fn send_info_record(handler: &mut FemtoSocketHandler, message: &str) {
-    handler
-        .handle(FemtoLogRecord::new("test", FemtoLevel::Info, message))
-        .expect("send record");
+fn send_info_record(handler: &mut FemtoSocketHandler, message: &str) -> Result<(), HandlerError> {
+    handler.handle(FemtoLogRecord::new("test", FemtoLevel::Info, message))
 }
 
-fn recv_payload(notify_rx: &mpsc::Receiver<Vec<u8>>, expectation: &str) -> Payload {
+fn recv_payload(
+    notify_rx: &FrameRx,
+    expectation: &str,
+) -> Result<Payload, Box<dyn std::error::Error>> {
     let payload = notify_rx
         .recv_timeout(Duration::from_secs(2))
-        .expect(expectation);
-    rmp_serde::from_slice(&payload).expect("decode payload")
+        .map_err(|err| format!("{expectation}: {err}"))??;
+    Ok(rmp_serde::from_slice(&payload)?)
 }
 
 #[rstest]
-fn sends_records_over_tcp(tcp_listener: TcpListener) {
-    let (addr, notify_rx) = spawn_single_frame_server(tcp_listener, None);
-    let mut handler = build_tcp_handler(addr);
-    send_info_record(&mut handler, "message");
+fn sends_records_over_tcp(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, notify_rx) =
+        spawn_single_frame_server(tcp_listener, None).expect("spawn frame server");
+    let mut handler = build_tcp_handler(addr).expect("build handler");
+    send_info_record(&mut handler, "message").expect("send record");
 
-    let decoded = recv_payload(&notify_rx, "payload received");
+    let decoded = recv_payload(&notify_rx, "payload received").expect("decode payload");
     assert_eq!(decoded.logger, "test");
     assert_eq!(decoded.level, "INFO");
     assert_eq!(decoded.message, "message");
@@ -123,22 +136,25 @@ fn sends_records_over_tcp(tcp_listener: TcpListener) {
 }
 
 #[rstest]
-fn handler_flushes_pending_records_on_close(tcp_listener: TcpListener) {
+fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let barrier = Arc::new(Barrier::new(2));
-    let (addr, notify_rx) = spawn_single_frame_server(tcp_listener, Some(barrier.clone()));
-    let mut handler = build_tcp_handler(addr);
-    send_info_record(&mut handler, "close");
+    let (addr, notify_rx) =
+        spawn_single_frame_server(tcp_listener, Some(barrier.clone())).expect("spawn frame server");
+    let mut handler = build_tcp_handler(addr).expect("build handler");
+    send_info_record(&mut handler, "close").expect("send record");
 
     handler.close();
     barrier.wait();
 
-    let decoded = recv_payload(&notify_rx, "payload received after close");
+    let decoded = recv_payload(&notify_rx, "payload received after close").expect("decode payload");
     assert_eq!(decoded.message, "close");
 }
 
 #[rstest]
-fn tls_handshake_respects_timeout(tcp_listener: TcpListener) {
-    let addr = tcp_listener.local_addr().unwrap();
+fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let addr = tcp_listener.local_addr().expect("listener has address");
     let (accepted_tx, accepted_rx) = mpsc::channel();
     thread::spawn(move || {
         let (stream, _) = tcp_listener.accept().expect("accept connection");

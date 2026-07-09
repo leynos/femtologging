@@ -23,6 +23,8 @@ impl RotationClock for SystemClock {
 
 #[cfg(feature = "python")]
 mod injected {
+    //! Injected-time queue used by tests to make rotation deterministic.
+
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
