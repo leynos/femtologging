@@ -40,7 +40,7 @@ log-compat = ["python"]
 tracing-compat = ["python", "tracing", "tracing-subscriber"]
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 rstest = "0.26"
 logtest = "2.0"
 proptest = "1.0.0"
