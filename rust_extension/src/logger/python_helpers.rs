@@ -30,3 +30,21 @@ pub fn should_capture_exc_info(exc_info: &Bound<'_, PyAny>) -> PyResult<bool> {
     // capture attempt. Invalid types will fail in capture_exception.
     Ok(true)
 }
+
+/// Capture an exception payload when `exc_info` is provided and truthy.
+///
+/// Returns `Ok(None)` when `exc_info` is absent, falsy, or yields no
+/// captured exception.
+#[cfg(feature = "python")]
+pub(super) fn capture_exception_payload(
+    py: Python<'_>,
+    exc_info: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<crate::ExceptionPayload>> {
+    let Some(exc) = exc_info else {
+        return Ok(None);
+    };
+    if !should_capture_exc_info(exc)? {
+        return Ok(None);
+    }
+    crate::traceback_capture::capture_exception(py, exc)
+}

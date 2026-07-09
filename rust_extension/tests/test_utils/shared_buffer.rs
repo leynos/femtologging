@@ -4,6 +4,8 @@
 //! log output in both standard and loom-based scenarios.
 
 pub mod std {
+    //! Shared buffer backed by std synchronization primitives.
+
     use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 
     pub type Arc<T> = std::sync::Arc<T>;
@@ -77,6 +79,8 @@ pub mod std {
 
 #[allow(dead_code)]
 pub mod loom {
+    //! Shared buffer backed by loom synchronization primitives for model checking.
+
     use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 
     pub type Arc<T> = loom::sync::Arc<T>;

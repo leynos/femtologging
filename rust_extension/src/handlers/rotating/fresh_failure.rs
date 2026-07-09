@@ -28,19 +28,22 @@ impl FreshFailureState {
     #[cfg(feature = "python")]
     fn set_forced(&self, count: usize, reason: String) {
         self.remaining.store(count, Ordering::SeqCst);
+        // Recover from poisoning: the stored reason is always valid data, so
+        // a panicking writer cannot leave it in a corrupt state.
         *self
             .reason
             .lock()
-            .expect("fresh failure reason mutex poisoned") = Some(reason);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
     }
 
     #[cfg(feature = "python")]
     fn clear_forced(&self) {
         self.remaining.store(0, Ordering::SeqCst);
+        // Recover from poisoning: see `set_forced`.
         *self
             .reason
             .lock()
-            .expect("fresh failure reason mutex poisoned") = None;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 
     /// Attempts to consume one forced fresh-file-open failure.
@@ -60,10 +63,11 @@ impl FreshFailureState {
         #[cfg(test)]
         {
             let current_thread = thread::current().id();
+            // Recover from poisoning: see `set_forced`.
             let owner = *self
                 .owner
                 .lock()
-                .expect("fresh failure owner mutex poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(owner_thread) = owner {
                 if owner_thread != current_thread {
                     return None;
@@ -81,10 +85,11 @@ impl FreshFailureState {
             })
             .ok()?;
 
+        // Recover from poisoning: see `set_forced`.
         let mut guard = self
             .reason
             .lock()
-            .expect("fresh failure reason mutex poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let reason = guard.clone();
         if previous == 1 {
             *guard = None;
@@ -176,16 +181,18 @@ impl ForcedFreshFailureGuard {
     /// * `reason` - Failure message to report.
     fn new(count: usize, reason: String) -> Self {
         let previous_count = FRESH_FAILURE_STATE.remaining.swap(count, Ordering::SeqCst);
+        // Recover from poisoning: see `set_forced`.
         let mut guard = FRESH_FAILURE_STATE
             .reason
             .lock()
-            .expect("fresh failure reason mutex poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let previous_reason = guard.replace(reason);
         let previous_owner = {
+            // Recover from poisoning: see `set_forced`.
             let mut owner_guard = FRESH_FAILURE_STATE
                 .owner
                 .lock()
-                .expect("fresh failure owner mutex poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             owner_guard.replace(thread::current().id())
         };
         Self {
@@ -203,16 +210,18 @@ impl Drop for ForcedFreshFailureGuard {
         FRESH_FAILURE_STATE
             .remaining
             .store(self.previous_count, Ordering::SeqCst);
+        // Recover from poisoning: see `set_forced`.
         let mut guard = FRESH_FAILURE_STATE
             .reason
             .lock()
-            .expect("fresh failure reason mutex poisoned");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = self.previous_reason.take();
         {
+            // Recover from poisoning: see `set_forced`.
             let mut owner_guard = FRESH_FAILURE_STATE
                 .owner
                 .lock()
-                .expect("fresh failure owner mutex poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *owner_guard = self.previous_owner;
         }
     }

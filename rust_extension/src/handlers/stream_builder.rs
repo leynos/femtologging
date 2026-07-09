@@ -239,6 +239,8 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the stream handler builder.
+
     use super::super::test_helpers::assert_build_err;
     use super::*;
     #[cfg(feature = "python")]
@@ -273,10 +275,11 @@ mod tests {
 
     impl Write for TestWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            // Recover from poisoning: the buffer contents remain valid data.
             let mut guard = self
                 .buffer
                 .lock()
-                .expect("buffer mutex must not be poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.extend_from_slice(buf);
             Ok(buf.len())
         }

@@ -50,6 +50,8 @@ pub(crate) fn validate_params(capacity: isize, flush_interval: isize) -> PyResul
 
 #[cfg(test)]
 mod tests {
+    //! Tests for file handler configuration validation.
+
     use super::*;
     use rstest::rstest;
 

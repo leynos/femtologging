@@ -71,6 +71,8 @@ py_setters!(LevelFilterBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the level filter builder.
+
     use super::*;
     use crate::filters::FilterBuilderTrait;
     use rstest::rstest;

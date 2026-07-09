@@ -194,6 +194,8 @@ impl AsPyDict for SocketHandlerBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the socket handler builder Python bindings.
+
     use pyo3::PyErr;
     use pyo3::Python;
     use pyo3::types::PyAnyMethods;
@@ -212,17 +214,28 @@ mod tests {
     }
 
     /// Assert all backoff fields in a PyDict match expected values.
-    fn assert_backoff_dict_fields(dict: &pyo3::Bound<'_, PyDict>, expected: &BackoffOverrides) {
-        let get_field = |key: &str| -> Option<u64> {
-            dict.get_item(key)
-                .expect("dict.get_item should succeed in test")
-                .map(|v| v.extract().expect("field should extract to u64 in test"))
-        };
+    ///
+    /// Returns an error when a field is missing or fails to extract, so the
+    /// calling test decides the verdict.
+    fn assert_backoff_dict_fields(
+        dict: &pyo3::Bound<'_, PyDict>,
+        expected: &BackoffOverrides,
+    ) -> pyo3::PyResult<()> {
+        fn get_field(dict: &pyo3::Bound<'_, PyDict>, key: &str) -> pyo3::PyResult<Option<u64>> {
+            dict.get_item(key)?.map(|v| v.extract()).transpose()
+        }
 
-        assert_eq!(get_field("backoff_base_ms"), expected.base_ms);
-        assert_eq!(get_field("backoff_cap_ms"), expected.cap_ms);
-        assert_eq!(get_field("backoff_reset_after_ms"), expected.reset_after_ms);
-        assert_eq!(get_field("backoff_deadline_ms"), expected.deadline_ms);
+        assert_eq!(get_field(dict, "backoff_base_ms")?, expected.base_ms);
+        assert_eq!(get_field(dict, "backoff_cap_ms")?, expected.cap_ms);
+        assert_eq!(
+            get_field(dict, "backoff_reset_after_ms")?,
+            expected.reset_after_ms
+        );
+        assert_eq!(
+            get_field(dict, "backoff_deadline_ms")?,
+            expected.deadline_ms
+        );
+        Ok(())
     }
 
     #[test]
@@ -238,7 +251,7 @@ mod tests {
                 .extend_dict(&d)
                 .expect("dict serialization succeeds");
 
-            assert_backoff_dict_fields(&d, &expected);
+            assert_backoff_dict_fields(&d, &expected).expect("backoff dict fields must match");
         });
     }
 
@@ -267,19 +280,17 @@ mod tests {
     }
 
     impl BackoffErrorKind {
-        fn setup_dict(self, d: &pyo3::Bound<'_, PyDict>) {
+        fn setup_dict(self, d: &pyo3::Bound<'_, PyDict>) -> pyo3::PyResult<()> {
             match self {
                 BackoffErrorKind::UnknownKey => {
-                    d.set_item("base_ms", 50_u64)
-                        .expect("set_item should succeed in test");
-                    d.set_item("typo_ms", 1_u64)
-                        .expect("set_item should succeed in test");
+                    d.set_item("base_ms", 50_u64)?;
+                    d.set_item("typo_ms", 1_u64)?;
                 }
                 BackoffErrorKind::InvalidType => {
-                    d.set_item("base_ms", "not-an-int")
-                        .expect("set_item should succeed in test");
+                    d.set_item("base_ms", "not-an-int")?;
                 }
             }
+            Ok(())
         }
 
         fn check_error(self, py: Python, err: PyErr) {
@@ -306,7 +317,8 @@ mod tests {
     fn backoff_config_new_rejects_errors(#[case] kind: BackoffErrorKind) {
         Python::attach(|py| {
             let d = PyDict::new(py);
-            kind.setup_dict(&d);
+            kind.setup_dict(&d)
+                .expect("set_item should succeed in test");
             let err = BackoffOverrides::py_new(Some(d))
                 .expect_err("config with validation errors should fail");
             kind.check_error(py, err);
@@ -348,7 +360,7 @@ mod tests {
             builder_ref
                 .extend_dict(&d)
                 .expect("dict serialization succeeds");
-            assert_backoff_dict_fields(&d, &expected);
+            assert_backoff_dict_fields(&d, &expected).expect("backoff dict fields must match");
         });
     }
 
@@ -370,7 +382,7 @@ mod tests {
                 .expect("dict serialization succeeds");
 
             let expected = BackoffOverrides::from_options(Some(5), Some(25), None, None);
-            assert_backoff_dict_fields(&out, &expected);
+            assert_backoff_dict_fields(&out, &expected).expect("backoff dict fields must match");
         });
     }
 }

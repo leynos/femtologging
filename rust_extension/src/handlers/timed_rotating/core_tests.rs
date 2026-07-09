@@ -55,7 +55,7 @@ fn rotation_and_pruning_behavior(
     let notes_path = dir.path().join("timed.log.notes");
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
         .expect("seconds schedule must validate");
-    let start = utc_datetime("2026-03-12T00:00:00Z");
+    let start = utc_datetime!("2026-03-12T00:00:00Z");
     let clock = SequenceClock::new([
         start,
         start,
@@ -126,9 +126,9 @@ fn midnight_schedule_is_preserved() {
     )
     .expect("midnight schedule must validate");
 
-    let next = schedule.next_rollover(utc_datetime("2026-03-11T23:59:59Z"));
+    let next = schedule.next_rollover(utc_datetime!("2026-03-11T23:59:59Z"));
 
-    assert_eq!(next, utc_datetime("2026-03-12T00:00:00Z"));
+    assert_eq!(next, utc_datetime!("2026-03-12T00:00:00Z"));
 }
 
 #[rstest]
@@ -138,8 +138,8 @@ fn seed_rollover_from_overrides_initial_rollover() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
         .expect("hourly schedule must validate");
 
-    let now = utc_datetime("2026-03-12T10:00:00Z");
-    let mtime = utc_datetime("2026-03-12T08:00:00Z");
+    let now = utc_datetime!("2026-03-12T10:00:00Z");
+    let mtime = utc_datetime!("2026-03-12T08:00:00Z");
     let clock = SequenceClock::new([now]);
     let mut strategy = TimedFileRotationStrategy::new_with_clock(path, schedule.clone(), 1, clock);
 
@@ -166,7 +166,7 @@ fn new_with_clock_uses_clock_time() {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
         .expect("hourly schedule must validate");
 
-    let now = utc_datetime("2026-03-12T10:00:00Z");
+    let now = utc_datetime!("2026-03-12T10:00:00Z");
     let clock = SequenceClock::new([now]);
     let strategy = TimedFileRotationStrategy::new_with_clock(path, schedule.clone(), 1, clock);
 
@@ -185,7 +185,7 @@ fn production_handler_seeds_rollover_from_file_mtime() {
 
     // Create the log file and set its mtime to a past time
     fs::write(&path, "initial content\n").expect("log file must be created");
-    let mtime_datetime = utc_datetime("2026-03-12T08:00:00Z");
+    let mtime_datetime = utc_datetime!("2026-03-12T08:00:00Z");
     let mtime_systime =
         SystemTime::UNIX_EPOCH + StdDuration::from_secs(mtime_datetime.timestamp() as u64);
     let file_time = FileTime::from_system_time(mtime_systime);

@@ -47,11 +47,13 @@ impl HttpSerializableRecord<'_> {
 impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
     fn from(record: &'a FemtoLogRecord) -> Self {
         let metadata = record.metadata();
+        // Clamp pre-epoch timestamps (e.g. a skewed clock) to zero rather
+        // than panicking inside the logging pipeline.
         let created = metadata
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("timestamp must be after UNIX epoch")
-            .as_secs_f64();
+            .map(|duration| duration.as_secs_f64())
+            .unwrap_or_default();
 
         Self {
             name: record.logger(),

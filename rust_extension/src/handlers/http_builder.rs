@@ -272,6 +272,8 @@ mod python_bindings;
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the HTTP handler builder.
+
     use super::*;
 
     #[test]

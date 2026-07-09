@@ -94,16 +94,9 @@ impl CommonBuilder {
     /// stored [`NonZeroUsize`]. Callers rely on [`is_capacity_valid`] to surface
     /// the configuration error when `build` is invoked.
     pub(crate) fn set_capacity(&mut self, capacity: usize) {
-        if capacity == 0 {
-            self.capacity = None;
-            self.capacity_set = true;
-            return;
-        }
-
-        self.capacity = Some(
-            NonZeroUsize::new(capacity)
-                .expect("NonZeroUsize::new must succeed for non-zero capacity"),
-        );
+        // `NonZeroUsize::new` returns `None` for zero, which records the
+        // invalid capacity for later validation without panicking.
+        self.capacity = NonZeroUsize::new(capacity);
         self.capacity_set = true;
     }
 
@@ -148,6 +141,8 @@ impl CommonBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the shared builder state helpers.
+
     use super::*;
 
     #[test]

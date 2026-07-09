@@ -220,6 +220,8 @@ impl AsPyDict for HTTPHandlerBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the HTTP handler builder Python bindings.
+
     use pyo3::Python;
     use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods};
 

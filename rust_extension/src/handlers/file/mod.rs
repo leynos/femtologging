@@ -314,4 +314,6 @@ impl FemtoFileHandler {
 #[cfg(test)]
 mod flush_ack_tests;
 #[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
 mod tests;

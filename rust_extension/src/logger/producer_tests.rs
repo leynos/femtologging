@@ -75,7 +75,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
 
     if expected_result {
         assert_eq!(result.as_deref(), Some("producer [INFO] hello"));
-        wait_for_record_signal(&record_rx);
+        wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
         let collected = collecting_handler.collected();
         assert_eq!(
             collected[0]
@@ -133,7 +133,7 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
         RecordMetadata::default(),
     );
 
-    wait_for_record_signal(&record_rx);
+    wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
     let collected = collecting_handler.collected();
     assert_eq!(first_calls.load(Ordering::SeqCst), 1);
     assert_eq!(second_calls.load(Ordering::SeqCst), 1);
@@ -157,7 +157,7 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
 
     logger.dispatch_to_handlers(FemtoLogRecord::new("producer", FemtoLevel::Info, "queued"));
 
-    wait_for_record_signal(&record_rx);
+    wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
     let collected = collecting_handler.collected();
     assert_eq!(collected.len(), 1);
     assert_eq!(collected[0].logger(), "producer");

@@ -65,10 +65,10 @@ impl FemtoHandlerTrait for SignallingCollectingHandler {
     }
 }
 
-pub(super) fn wait_for_record_signal(record_rx: &Receiver<()>) {
-    record_rx
-        .recv_timeout(RECORD_WAIT_TIMEOUT)
-        .expect("timed out waiting for queued record");
+pub(super) fn wait_for_record_signal(
+    record_rx: &Receiver<()>,
+) -> Result<(), crossbeam_channel::RecvTimeoutError> {
+    record_rx.recv_timeout(RECORD_WAIT_TIMEOUT)
 }
 
 #[derive(Clone, Default)]

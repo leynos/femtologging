@@ -25,12 +25,17 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
     (builder, root)
 }
 
-fn assert_handler_count(py: Python<'_>, name: &str, expected: usize, reason: &str) {
+fn assert_handler_count(
+    py: Python<'_>,
+    name: &str,
+    expected: usize,
+    reason: &str,
+) -> pyo3::PyResult<()> {
     // Fetch a logger and assert it exposes the expected number of handlers.
-    let msg = format!("get_logger('{name}') should succeed");
-    let logger = manager::get_logger(py, name).expect(&msg);
+    let logger = manager::get_logger(py, name)?;
     let count = logger.borrow(py).handlers_for_test().len();
     assert_eq!(count, expected, "{}", reason);
+    Ok(())
 }
 
 #[rstest]
@@ -224,14 +229,16 @@ fn disable_existing_loggers_clears_unmentioned(
             .build_and_init()
             .expect("initial build should succeed");
 
-        assert_handler_count(py, "stale", 1, "stale logger should start active");
+        assert_handler_count(py, "stale", 1, "stale logger should start active")
+            .expect("get_logger should succeed");
 
         let rebuild = ConfigBuilder::new()
             .with_root_logger(root)
             .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
 
-        assert_handler_count(py, "stale", 0, "stale logger should be disabled");
+        assert_handler_count(py, "stale", 0, "stale logger should be disabled")
+            .expect("get_logger should succeed");
     });
 }
 
@@ -256,7 +263,8 @@ fn disable_existing_loggers_keeps_ancestors(
             .expect("initial build should succeed");
 
         for name in ancestor_names {
-            assert_handler_count(py, name, 1, "ancestor logger should start active");
+            assert_handler_count(py, name, 1, "ancestor logger should start active")
+                .expect("get_logger should succeed");
         }
 
         let child_name = format!(
@@ -269,9 +277,11 @@ fn disable_existing_loggers_keeps_ancestors(
         rebuild.build_and_init().expect("rebuild should succeed");
 
         for name in ancestor_names {
-            assert_handler_count(py, name, 1, "ancestor logger should remain active");
+            assert_handler_count(py, name, 1, "ancestor logger should remain active")
+                .expect("get_logger should succeed");
         }
-        assert_handler_count(py, &child_name, 1, "child logger should retain its handler");
+        assert_handler_count(py, &child_name, 1, "child logger should retain its handler")
+            .expect("get_logger should succeed");
         // femtologging does not mutate Python's standard `logging` module state.
     });
 }

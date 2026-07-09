@@ -81,6 +81,8 @@ py_setters!(NameFilterBuilder {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the name filter builder.
+
     use super::*;
     use crate::filters::{FilterBuildError, FilterBuilderTrait};
     use rstest::rstest;

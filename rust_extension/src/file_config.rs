@@ -148,7 +148,10 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for fileConfig parsing and decoding.
+
     use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
+
     use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyUnicodeDecodeError};
     use pyo3::prelude::*;
     use pyo3::types::PyAnyMethods;

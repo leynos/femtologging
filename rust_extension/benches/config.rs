@@ -9,14 +9,16 @@ use std::{
 use _femtologging_rs::{
     ConfigBuilder, FemtoLevel, LoggerConfigBuilder, StreamHandlerBuilder, manager,
 };
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use once_cell::sync::Lazy;
 use pyo3::{
+    exceptions::PyKeyError,
     prelude::*,
     types::{PyAny, PyDict, PyList},
 };
+use std::hint::black_box;
 
-const DICT_SCHEMA_PY: &str = r#"
+const DICT_SCHEMA_PY: &std::ffi::CStr = cr#"
 from femtologging import ConfigBuilder, LoggerConfigBuilder, StreamHandlerBuilder
 
 _schema_builder = (
@@ -32,8 +34,13 @@ schema = _schema_builder.as_dict()
 "#;
 
 static PY_APIS: Lazy<PythonApis> = Lazy::new(|| {
-    pyo3::prepare_freethreaded_python();
-    Python::attach(|py| PythonApis::new(py))
+    Python::initialize();
+    // A bench has no harness to report a Result to, so surface setup failure
+    // with an explicit panic at this single boundary.
+    match Python::attach(PythonApis::new) {
+        Ok(apis) => apis,
+        Err(err) => panic!("failed to initialize Python benchmark APIs: {err}"),
+    }
 });
 
 struct PythonApis {
@@ -45,89 +52,72 @@ struct PythonApis {
 }
 
 impl PythonApis {
-    fn new(py: Python<'_>) -> Self {
-        let (reset_manager, basic_config, dict_config, stdout) = init_python_imports(py);
-        let dict_schema = build_dict_schema(py);
-        Self {
+    fn new(py: Python<'_>) -> PyResult<Self> {
+        let (reset_manager, basic_config, dict_config, stdout) = init_python_imports(py)?;
+        let dict_schema = build_dict_schema(py)?;
+        Ok(Self {
             reset_manager,
             basic_config,
             dict_config,
             stdout,
             dict_schema,
-        }
+        })
     }
 
-    fn reset(&self, py: Python<'_>) {
-        self.reset_manager.call0(py).expect("reset_manager()");
+    fn reset(&self, py: Python<'_>) -> PyResult<()> {
+        self.reset_manager.call0(py)?;
+        Ok(())
     }
 
-    fn run_basic_config(&self, py: Python<'_>) {
-        let kwargs = PyDict::new_bound(py);
-        kwargs
-            .set_item("level", "INFO")
-            .expect("set level for basicConfig");
+    fn run_basic_config(&self, py: Python<'_>) -> PyResult<()> {
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("level", "INFO")?;
         let stdout = self.stdout.bind(py);
-        kwargs.set_item("stream", stdout).expect("set stream");
-        kwargs
-            .set_item("force", true)
-            .expect("set force for basicConfig");
-        self.basic_config
-            .call(py, (), Some(&kwargs))
-            .expect("basicConfig()");
+        kwargs.set_item("stream", stdout)?;
+        kwargs.set_item("force", true)?;
+        self.basic_config.call(py, (), Some(&kwargs))?;
+        Ok(())
     }
 
-    fn run_dict_config(&self, py: Python<'_>) {
-        let schema_copy = self
-            .dict_schema
-            .call_method0(py, "copy")
-            .expect("schema.copy()");
-        self.dict_config
-            .call1(py, (schema_copy,))
-            .expect("dictConfig()");
+    fn run_dict_config(&self, py: Python<'_>) -> PyResult<()> {
+        let schema_copy = self.dict_schema.call_method0(py, "copy")?;
+        self.dict_config.call1(py, (schema_copy,))?;
+        Ok(())
     }
 }
 
-fn init_python_imports(py: Python<'_>) -> (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>) {
-    let sys = py.import("sys").expect("import sys");
+fn init_python_imports(py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+    let sys = py.import("sys")?;
     let sys_any = sys.as_any();
-    inject_repo_to_path(&sys_any);
-    let femto = py.import("femtologging").expect("import femtologging");
-    let config_mod = py
-        .import("femtologging.config")
-        .expect("import femtologging.config");
-    let reset_manager = femto
-        .getattr("reset_manager")
-        .expect("femtologging.reset_manager attr")
-        .unbind();
-    let basic_config = femto
-        .getattr("basicConfig")
-        .expect("femtologging.basicConfig attr")
-        .unbind();
-    let dict_config = config_mod
-        .getattr("dictConfig")
-        .expect("femtologging.config.dictConfig attr")
-        .unbind();
-    let stdout = sys.getattr("stdout").expect("sys.stdout attr").unbind();
-    (reset_manager, basic_config, dict_config, stdout)
+    inject_repo_to_path(&sys_any)?;
+    let femto = py.import("femtologging")?;
+    let config_mod = py.import("femtologging.config")?;
+    let reset_manager = femto.getattr("reset_manager")?.unbind();
+    let basic_config = femto.getattr("basicConfig")?.unbind();
+    let dict_config = config_mod.getattr("dictConfig")?.unbind();
+    let stdout = sys.getattr("stdout")?.unbind();
+    Ok((reset_manager, basic_config, dict_config, stdout))
 }
 
-fn inject_repo_to_path(sys: &Bound<'_, PyAny>) {
-    let path = sys.getattr("path").expect("sys.path attribute");
-    let path: Bound<'_, PyList> = path.downcast().expect("sys.path should downcast to PyList");
+fn inject_repo_to_path(sys: &Bound<'_, PyAny>) -> PyResult<()> {
+    let path = sys.getattr("path")?;
+    let path = path.cast::<PyList>()?;
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("workspace root")
-        .to_path_buf();
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| PyKeyError::new_err("manifest dir has no parent"))?;
     let repo_str = repo_root.to_string_lossy().into_owned();
-    path.insert(0, repo_str.as_str())
-        .expect("insert workspace root into sys.path");
+    path.insert(0, repo_str.as_str())?;
+    Ok(())
 }
 
-fn build_dict_schema(py: Python<'_>) -> Py<PyAny> {
+fn build_dict_schema(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let locals = PyDict::new(py);
-    py.run(DICT_SCHEMA_PY, None, Some(locals))
-        .expect("build dictConfig schema");
-    locals.get_item("schema").unwrap().to_object(py)
+    py.run(DICT_SCHEMA_PY, None, Some(&locals))?;
+    locals
+        .get_item("schema")?
+        .ok_or_else(|| PyKeyError::new_err("schema must be defined by the setup script"))
+        .map(pyo3::Bound::unbind)
 }
 
 fn sample_builder() -> ConfigBuilder {
@@ -145,6 +135,17 @@ fn sample_builder() -> ConfigBuilder {
         )
 }
 
+/// Consume a benchmark-iteration Result, panicking with context on failure.
+///
+/// Criterion closures cannot propagate errors, so this is the sanctioned
+/// panic boundary for the bench.
+fn expect_bench<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => panic!("{context}: {err}"),
+    }
+}
+
 fn config_benchmarks(c: &mut Criterion) {
     manager::reset_manager();
     let apis = &*PY_APIS;
@@ -157,9 +158,10 @@ fn config_benchmarks(c: &mut Criterion) {
                 manager::reset_manager();
                 let start = Instant::now();
                 let builder = sample_builder();
-                black_box(&builder)
-                    .build_and_init()
-                    .expect("builder build_and_init()");
+                expect_bench(
+                    black_box(&builder).build_and_init(),
+                    "builder build_and_init()",
+                );
                 total += start.elapsed();
             }
             total
@@ -169,8 +171,8 @@ fn config_benchmarks(c: &mut Criterion) {
     group.bench_function("basicConfig_stream_stdout", |b| {
         b.iter(|| {
             Python::attach(|py| {
-                apis.reset(py);
-                apis.run_basic_config(py);
+                expect_bench(apis.reset(py), "reset_manager()");
+                expect_bench(apis.run_basic_config(py), "basicConfig()");
             });
         });
     });
@@ -178,8 +180,8 @@ fn config_benchmarks(c: &mut Criterion) {
     group.bench_function("dictConfig_round_trip", |b| {
         b.iter(|| {
             Python::attach(|py| {
-                apis.reset(py);
-                apis.run_dict_config(py);
+                expect_bench(apis.reset(py), "reset_manager()");
+                expect_bench(apis.run_dict_config(py), "dictConfig()");
             });
         });
     });

@@ -15,37 +15,25 @@ use crate::traceback_capture::capture_exception;
 // --------------------------------
 
 /// Create a ValueError instance with the given message.
-fn create_value_error<'py>(py: Python<'py>, message: &str) -> Bound<'py, PyAny> {
-    let builtins = py.import("builtins").expect("builtins module should exist");
-    builtins
-        .getattr("ValueError")
-        .expect("ValueError should exist")
+fn create_value_error<'py>(py: Python<'py>, message: &str) -> PyResult<Bound<'py, PyAny>> {
+    py.import("builtins")?
+        .getattr("ValueError")?
         .call1((message,))
-        .expect("ValueError constructor should succeed")
 }
 
 /// Create a BaseException instance with no arguments.
-fn create_base_exception<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
-    let builtins = py.import("builtins").expect("builtins module should exist");
-    builtins
-        .getattr("BaseException")
-        .expect("BaseException should exist")
-        .call0()
-        .expect("BaseException constructor should succeed")
+fn create_base_exception<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    py.import("builtins")?.getattr("BaseException")?.call0()
 }
 
 /// Check if Python supports add_note() via capability check (Python 3.11+).
 ///
 /// Uses `hasattr(BaseException, "add_note")` to detect support, which is more
 /// robust than version parsing and handles interpreter variants gracefully.
-fn supports_add_note(py: Python<'_>) -> bool {
-    let builtins = py.import("builtins").expect("builtins module should exist");
-    let base_exception = builtins
-        .getattr("BaseException")
-        .expect("BaseException should exist");
-    base_exception
+fn supports_add_note(py: Python<'_>) -> PyResult<bool> {
+    py.import("builtins")?
+        .getattr("BaseException")?
         .hasattr("add_note")
-        .expect("hasattr should succeed")
 }
 
 /// Assert that a chained exception payload has the expected structure.
@@ -74,7 +62,9 @@ fn assert_chained_exception_structure(
         "outer exception should have args_repr"
     );
 
-    let cause = payload.cause.as_ref().expect("cause should be present");
+    let Some(cause) = payload.cause.as_ref() else {
+        panic!("cause should be present");
+    };
     assert_eq!(
         cause.type_name, cause_type,
         "chained exception type should match"
@@ -94,7 +84,7 @@ fn capture_exception_without_notes_returns_empty_notes() {
     // Standard exceptions without __notes__ should return empty notes vector.
     // This tests the get_optional_attr degradation path for missing attributes.
     Python::attach(|py| {
-        let exc = create_value_error(py, "test error");
+        let exc = create_value_error(py, "test error").expect("exception should build");
 
         // Do not assert CPython internals/version-specific defaults for __notes__.
         // Only assert the capture output degrades to an empty notes vector.
@@ -115,7 +105,7 @@ fn capture_exception_with_empty_args_tuple() {
     // Exception with empty args tuple should produce empty args_repr.
     Python::attach(|py| {
         // BaseException() with no arguments has args = ()
-        let exc = create_base_exception(py);
+        let exc = create_base_exception(py).expect("exception should build");
 
         let payload = capture_exception(py, &exc)
             .expect("capture_exception should succeed")
@@ -136,7 +126,7 @@ fn capture_exception_chained_cause_has_empty_notes_and_args() {
     // should have empty notes and args_repr because those require the original instance.
     Python::attach(|py| {
         // Skip test if Python version doesn't support add_note()
-        if !supports_add_note(py) {
+        if !supports_add_note(py).expect("capability check should succeed") {
             // On Python < 3.11, run a simpler version without add_note()
             let code = c"
 cause = ValueError('original error')
@@ -190,7 +180,7 @@ fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
     // Exceptions with a non-iterable __notes__ attribute should degrade gracefully.
     // This tests the type-mismatch degradation path for __notes__.
     Python::attach(|py| {
-        let exc = create_value_error(py, "test error");
+        let exc = create_value_error(py, "test error").expect("exception should build");
 
         // Set a malformed, non-iterable __notes__ value (integer instead of list)
         exc.setattr("__notes__", 123_i32)
@@ -217,7 +207,7 @@ fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
     // Per ADR "partial extraction of collections" rule: non-string entries are
     // dropped/ignored but valid strings are preserved.
     Python::attach(|py| {
-        let exc = create_value_error(py, "test error");
+        let exc = create_value_error(py, "test error").expect("exception should build");
 
         // Create a list with mixed types: valid string, integer, bytes, None
         let code = c"
@@ -271,7 +261,7 @@ class BadRepr:
         let bad_repr_instance = bad_repr_cls.call0().expect("BadRepr() should succeed");
 
         // Create an exception and manually set args to include a failing repr
-        let exc = create_value_error(py, "test error");
+        let exc = create_value_error(py, "test error").expect("exception should build");
         let args_tuple = pyo3::types::PyTuple::new(
             py,
             [

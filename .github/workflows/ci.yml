@@ -31,6 +31,7 @@ jobs:
       CARGO_TERM_COLOR: always
       BUILD_PROFILE: debug
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "0"
+      WHITAKER_INSTALLER_VERSION: '0.2.5'
     steps:
       - uses: actions/checkout@v5
       - name: Set up Python
@@ -64,6 +65,24 @@ jobs:
           sudo apt-get install --yes libxml2-dev libxslt1-dev
       - name: Check format
         run: make check-fmt
+      - name: Cache Whitaker installer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/whitaker-installer
+            ~/.cache/cargo-binstall
+          key: whitaker-installer-${{ runner.os }}-${{ runner.arch }}-${{ env.WHITAKER_INSTALLER_VERSION }}
+      - name: Install Whitaker
+        run: |
+          if ! command -v whitaker-installer >/dev/null 2>&1; then
+            if cargo binstall --version >/dev/null 2>&1; then
+              cargo binstall --no-confirm --locked "whitaker-installer@${WHITAKER_INSTALLER_VERSION}"
+            else
+              echo "cargo-binstall unavailable; building whitaker-installer from crates.io"
+              cargo install --locked whitaker-installer --version "${WHITAKER_INSTALLER_VERSION}"
+            fi
+          fi
+          whitaker-installer
       - name: Lint
         run: make lint
       - name: Typecheck

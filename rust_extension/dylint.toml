@@ -1,0 +1,25 @@
+# Whitaker lint configuration.
+#
+# Crates excluded from the no_std_fs_operations lint because they legitimately
+# require ambient std::fs access:
+# - femtologging_rs: the library's public contract mirrors CPython's logging
+#   module, so file, rotating, and timed-rotating handlers (and fileConfig
+#   parsing) open, rename, scan, and delete log files at arbitrary ambient
+#   paths supplied as strings by Python callers. The lint also flags every
+#   mention of the std::fs::File type, which is threaded through
+#   BufWriter<File>, RotationStrategy<BufWriter<File>>, and the tempfile
+#   crate's API, so confining the ambient operations to a boundary crate
+#   would require wrapping the File type across the whole handler I/O layer.
+#   In-source allow/expect attributes are ignored by the lint
+#   (whitaker bug #270), leaving this crate-level exclusion as the only
+#   workable suppression. A cap-std migration for the handler I/O layer can
+#   revisit this entry.
+# - file_handler_tests: integration test crate whose fixtures stage and
+#   inspect log files with ambient tempdir access, matching the "test
+#   support utilities" exclusion in the Whitaker user's guide. Add new test
+#   crates here deliberately when they need ambient fixture I/O.
+[no_std_fs_operations]
+excluded_crates = [
+    "_femtologging_rs",
+    "file_handler_tests",
+]

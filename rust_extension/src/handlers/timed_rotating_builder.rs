@@ -37,7 +37,7 @@ impl TimedRotatingFileHandlerBuilder {
             path: path.into(),
             common: FileLikeBuilderState::default(),
             when: TimedRotationWhen::Hours,
-            interval: NonZeroU64::new(1).expect("1 is non-zero"),
+            interval: NonZeroU64::MIN,
             backup_count: 0,
             use_utc: false,
             at_time: None,
