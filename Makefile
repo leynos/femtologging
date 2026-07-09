@@ -12,6 +12,7 @@ NIXIE ?= nixie
 # CI that shells out to this target from drifting apart.
 TYPOS_VERSION ?= 1.48.0
 TYPOS ?= uvx typos@$(TYPOS_VERSION)
+WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
 
@@ -56,12 +57,13 @@ lint: ## Run linters
 	$(RUFF) check
 	$(MAKE) lint-rust
 
-lint-rust: ## Run Rust clippy across feature lanes
+lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	@for features in none python log-compat tracing-compat; do \
 		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
 		echo "# Lint Rust features: $$features"; \
 		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings; \
 	done
+	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: ## Lint Markdown files and enforce en-GB-oxendict spelling
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT) --
