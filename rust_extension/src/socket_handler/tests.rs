@@ -119,13 +119,24 @@ fn recv_payload(
     Ok(rmp_serde::from_slice(&payload)?)
 }
 
+/// Arrange a single-frame server plus a connected TCP handler that has
+/// already queued one record with the given message.
+fn arrange_sent_record(
+    listener: TcpListener,
+    gate: Option<Arc<Barrier>>,
+    message: &str,
+) -> Result<(FemtoSocketHandler, FrameRx), Box<dyn std::error::Error>> {
+    let (addr, notify_rx) = spawn_single_frame_server(listener, gate)?;
+    let mut handler = build_tcp_handler(addr)?;
+    send_info_record(&mut handler, message)?;
+    Ok((handler, notify_rx))
+}
+
 #[rstest]
 fn sends_records_over_tcp(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, notify_rx) =
-        spawn_single_frame_server(tcp_listener, None).expect("spawn frame server");
-    let mut handler = build_tcp_handler(addr).expect("build handler");
-    send_info_record(&mut handler, "message").expect("send record");
+    let (mut handler, notify_rx) =
+        arrange_sent_record(tcp_listener, None, "message").expect("arrange handler and record");
 
     let decoded = recv_payload(&notify_rx, "payload received").expect("decode payload");
     assert_eq!(decoded.logger, "test");
@@ -139,10 +150,9 @@ fn sends_records_over_tcp(tcp_listener: io::Result<TcpListener>) {
 fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let barrier = Arc::new(Barrier::new(2));
-    let (addr, notify_rx) =
-        spawn_single_frame_server(tcp_listener, Some(barrier.clone())).expect("spawn frame server");
-    let mut handler = build_tcp_handler(addr).expect("build handler");
-    send_info_record(&mut handler, "close").expect("send record");
+    let (mut handler, notify_rx) =
+        arrange_sent_record(tcp_listener, Some(barrier.clone()), "close")
+            .expect("arrange handler and record");
 
     handler.close();
     barrier.wait();

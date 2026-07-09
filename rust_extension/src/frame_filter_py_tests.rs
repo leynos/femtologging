@@ -57,6 +57,24 @@ fn filter_and_extract_frames<'py>(
     Ok(frames.cast::<PyList>()?.clone())
 }
 
+/// Assert the `filename` of the frame at `index` within a frames list.
+///
+/// A macro rather than a helper function so panic line numbers point at the
+/// calling test.
+macro_rules! assert_frame_filename {
+    ($frames_list:expr, $index:expr, $expected:expr) => {{
+        let frame = $frames_list.get_item($index).expect("failed to get frame");
+        let frame_dict = frame.cast::<PyDict>().expect("frame is not a dict");
+        let filename: String = frame_dict
+            .get_item("filename")
+            .expect("failed to get filename key")
+            .expect("filename key is None")
+            .extract()
+            .expect("failed to extract filename");
+        assert_eq!(filename, $expected);
+    }};
+}
+
 #[rstest]
 #[serial]
 fn filter_stack_payload_exclude_logging() {
@@ -75,15 +93,7 @@ fn filter_stack_payload_exclude_logging() {
             .expect("filter should succeed");
 
         assert_eq!(frames_list.len(), 1);
-        let frame = frames_list.get_item(0).expect("failed to get first frame");
-        let frame_dict = frame.cast::<PyDict>().expect("frame is not a dict");
-        let filename: String = frame_dict
-            .get_item("filename")
-            .expect("failed to get filename key")
-            .expect("filename key is None")
-            .extract()
-            .expect("failed to extract filename");
-        assert_eq!(filename, "myapp/main.py");
+        assert_frame_filename!(frames_list, 0, "myapp/main.py");
     });
 }
 
@@ -123,15 +133,7 @@ fn filter_stack_payload_max_depth() {
 
         assert_eq!(frames_list.len(), 2);
         // Should be the last 2 frames (d.py, e.py)
-        let frame0 = frames_list.get_item(0).expect("failed to get first frame");
-        let frame0_dict = frame0.cast::<PyDict>().expect("frame is not a dict");
-        let filename0: String = frame0_dict
-            .get_item("filename")
-            .expect("failed to get filename key")
-            .expect("filename key is None")
-            .extract()
-            .expect("failed to extract filename");
-        assert_eq!(filename0, "d.py");
+        assert_frame_filename!(frames_list, 0, "d.py");
     });
 }
 
