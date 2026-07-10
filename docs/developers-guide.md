@@ -54,17 +54,14 @@ so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
 
 ### Configuration
 
-`typos.toml` is generated, not hand-edited. The `en-gb` locale corrects
-American spellings to British ones but prefers the `-ise` family, so
-`scripts/generate_typos_config.py` restores Oxford `-ize` spelling: for each
-curated stem it emits an identity entry accepting the `-ize` inflection and an
-`-ise` to `-ize` correction. Words that only ever take `-yse` (analyse,
-paralyse) are left to the locale, and genuinely `-ise`-only words (advise,
-revise, supervise) are excluded from the stem list so they remain accepted.
+`typos.toml` is generated, not hand-edited. The generator refreshes the shared
+dictionary from `leynos/agent-helper-scripts` into an untracked local cache
+only when the authoritative copy is newer. It can reuse a valid cache while
+offline, and a clean checkout with an unavailable network retains the reviewed,
+tracked `typos.toml` policy.
 
-To add or change accepted vocabulary, edit the `STEMS` or
-`EXTRA_ACCEPTED_WORDS` tuples in `scripts/generate_typos_config.py` and
-regenerate the config rather than editing `typos.toml` by hand:
+Put only repository-specific proper nouns, quoted upstream titles, fixtures,
+stems or exclusions in `typos.local.toml`, then regenerate the merged config:
 
 ```shell
 uv run scripts/generate_typos_config.py
