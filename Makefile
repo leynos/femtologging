@@ -1,5 +1,5 @@
 .PHONY: help all clean build release lint lint-rust fmt check-fmt \
-markdownlint tools nixie test typecheck
+markdownlint tools nixie spelling spelling-helper-test test typecheck
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -11,12 +11,13 @@ NIXIE ?= nixie
 # Single source of truth for the typos version, keeping the Makefile and any
 # CI that shells out to this target from drifting apart.
 TYPOS_VERSION ?= 1.48.0
-TYPOS ?= uvx typos@$(TYPOS_VERSION)
+UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
+TYPOS ?= $(UV_ENV) uv tool run typos@$(TYPOS_VERSION)
 WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
 
-all: release ## Build the release artifact
+all: release spelling ## Build the release artifact and enforce spelling
 
 build: ## Build dev artifact and install into venv
 	UV_VENV_CLEAR=1 uv venv
@@ -65,9 +66,30 @@ lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	done
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
-markdownlint: ## Lint Markdown files and enforce en-GB-oxendict spelling
+markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT) --
-	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(TYPOS) --config typos.toml --force-exclude
+
+spelling: spelling-helper-test ## Enforce en-GB-oxendict spelling in Markdown prose
+	@$(UV_ENV) uv run scripts/generate_typos_config.py
+	@git ls-files -z '*.md' | \
+		xargs -0 -r env $(UV_ENV) uv tool run typos@$(TYPOS_VERSION) \
+		--config typos.toml --force-exclude
+
+spelling-helper-test: ## Validate the shared spelling-policy integration
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
+		--target-version py313 --check scripts/generate_typos_config.py \
+		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
+		scripts/tests/test_typos_rollout.py
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
+		--target-version py313 scripts/generate_typos_config.py \
+		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
+		scripts/tests/test_typos_rollout.py
+	@PYTHONPATH=scripts $(UV_ENV) uv run --no-project --python 3.13 \
+		--with pytest==9.0.2 --with pytest-cov==7.0.0 \
+		python -m pytest scripts/tests/test_typos_rollout.py \
+		-c /dev/null --rootdir=. -p no:cacheprovider \
+		--cov=generate_typos_config --cov=typos_rollout \
+		--cov=typos_rollout_cache --cov-fail-under=90
 
 nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)

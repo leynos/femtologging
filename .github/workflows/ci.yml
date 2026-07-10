@@ -85,6 +85,8 @@ jobs:
           whitaker-installer
       - name: Lint
         run: make lint
+      - name: Spelling
+        run: make spelling
       - name: Typecheck
         run: make typecheck
       - name: Test Rust (no default features)
