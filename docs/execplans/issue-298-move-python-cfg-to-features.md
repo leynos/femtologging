@@ -428,7 +428,7 @@ a step breaks the build:
 The Makefile changes are additive (new test targets) and do not break existing
 behaviour.
 
-## Artifacts and Notes
+## Artefacts and Notes
 
 **Existing good patterns to follow:**
 

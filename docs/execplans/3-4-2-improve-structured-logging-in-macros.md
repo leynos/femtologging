@@ -329,7 +329,7 @@ Quality criteria:
 - Keep `/tmp/3-4-2-*.log` files as validation evidence until the change is
   merged.
 
-## Artifacts and Notes
+## Artefacts and Notes
 
 Implementation should produce:
 

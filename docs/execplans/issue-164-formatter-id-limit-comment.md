@@ -176,7 +176,7 @@ Acceptance:
 This change is idempotent. If the comment already exists, the edit will be a
 no-op. If the edit fails partway, simply retry from step 2.
 
-## Artifacts and notes
+## Artefacts and notes
 
 Expected final module docstring (lines 1-12):
 
