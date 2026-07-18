@@ -253,7 +253,7 @@ Quality criteria:
   non-blocking and escalate with alternatives (`3.15-dev` pin or temporary
   disable) rather than changing required lanes.
 
-## Artifacts and notes
+## Artefacts and notes
 
 Proposed matrix fragment for `ci.yml` (illustrative):
 

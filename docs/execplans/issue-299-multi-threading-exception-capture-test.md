@@ -320,7 +320,7 @@ The test is fully idempotent. It creates no persistent state. If the test
 fails, simply re-run it. The barriers ensure deterministic synchronization
 regardless of thread scheduling.
 
-## Artifacts and Notes
+## Artefacts and Notes
 
 Example expected test output:
 

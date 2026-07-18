@@ -399,7 +399,7 @@ in `deep_cause_chain_100_levels_serializes` explicitly validates this.
 All steps are idempotent. Tests can be re-run safely. If a test fails, fix the
 code and re-run. No destructive operations are involved.
 
-## Artifacts and Notes
+## Artefacts and Notes
 
 Expected test output (abbreviated):
 
