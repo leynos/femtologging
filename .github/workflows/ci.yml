@@ -47,7 +47,7 @@ jobs:
         with:
           shared-key: python-${{ matrix.python-version }}
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -68,7 +68,7 @@ jobs:
       - name: Check format
         run: make check-fmt
       - name: Cache Whitaker installer
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/whitaker-installer
