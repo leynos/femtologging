@@ -1,5 +1,8 @@
 # femtologging
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](
+https://deepwiki.com/leynos/femtologging)
+
 **femtologging** is an experiment in building a fast, thread-friendly logging
 library for Python using Rust. The project ports core ideas from [picologging]
 (<https://github.com/microsoft/picologging>) and exposes them through a small
