@@ -36,18 +36,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.experimental }}
       - name: Install rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
+        uses: leynos/shared-actions/.github/actions/setup-rust@19a7f5d1b8d5c1b2236c39720a5744492b3fc129
       - name: Cache ~/.cargo and target/
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           shared-key: python-${{ matrix.python-version }}
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -57,7 +57,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ env.BUILD_PROFILE }}-${{ matrix.python-version }}-
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v9.0.0
       - name: Install tools
         run: uv tool install ty
       - name: Install lxml build dependencies (experimental)
@@ -68,7 +68,7 @@ jobs:
       - name: Check format
         run: make check-fmt
       - name: Cache Whitaker installer
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/whitaker-installer
@@ -96,7 +96,7 @@ jobs:
       - name: Test Rust (log-compat feature)
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
       - name: Test and measure coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
+        uses: leynos/shared-actions/.github/actions/generate-coverage@19a7f5d1b8d5c1b2236c39720a5744492b3fc129
         with:
           output-path: coverage.xml
           format: cobertura
