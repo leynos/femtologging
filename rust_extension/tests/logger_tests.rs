@@ -215,6 +215,8 @@ fn drop_with_sender_clone_exits() {
         let res = tx.send(QueuedRecord {
             record: FemtoLogRecord::new("clone", FemtoLevel::Info, "late"),
             handlers: Vec::new(),
+            #[cfg(feature = "python")]
+            context: None,
         });
         assert!(
             res.is_err(),

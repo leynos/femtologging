@@ -17,12 +17,11 @@ mod worker;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
-use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
@@ -40,6 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
+pub use worker::QueuedRecord;
 // Re-exported for the parameterised tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
 #[cfg(feature = "python")]
@@ -49,34 +49,6 @@ pub(crate) use python_helpers::should_capture_exc_info;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
-
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-}
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -91,6 +63,7 @@ pub struct FemtoLogger {
     propagate: AtomicBool,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    has_python_handlers: AtomicBool,
     dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
@@ -248,6 +221,10 @@ impl FemtoLogger {
             };
             if let Some(pos) = handlers.iter().position(matches_handler) {
                 handlers.remove(pos);
+                self.has_python_handlers.store(
+                    handlers.iter().any(|handler| handler.is_python_backed()),
+                    Ordering::Release,
+                );
                 true
             } else {
                 false
@@ -311,7 +288,11 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
+        let is_python_backed = handler.is_python_backed();
         self.handlers.write().push(handler);
+        if is_python_backed {
+            self.has_python_handlers.store(true, Ordering::Release);
+        }
     }
 
     /// Attach a filter to this logger.
@@ -324,6 +305,10 @@ impl FemtoLogger {
         let mut handlers = self.handlers.write();
         if let Some(pos) = handlers.iter().position(|h| Arc::ptr_eq(h, handler)) {
             handlers.remove(pos);
+            self.has_python_handlers.store(
+                handlers.iter().any(|handler| handler.is_python_backed()),
+                Ordering::Release,
+            );
             true
         } else {
             false
@@ -337,6 +322,7 @@ impl FemtoLogger {
     /// dispatched to those handlers.
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
+        self.has_python_handlers.store(false, Ordering::Release);
     }
 
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
