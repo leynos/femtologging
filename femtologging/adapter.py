@@ -247,6 +247,12 @@ class StdlibHandlerAdapter:
     the wrapped handler's ``handle()`` method so that attached filters
     and I/O locking are applied.
 
+    Femtologging invokes ``handle_record`` on a dedicated worker thread.
+    Before queueing the record, it captures the producer's ``contextvars``
+    context and runs the wrapped handler's filters and formatters inside that
+    captured context. Other thread-local state, such as ``threading.local``,
+    remains associated with the worker thread.
+
     Parameters
     ----------
     handler
