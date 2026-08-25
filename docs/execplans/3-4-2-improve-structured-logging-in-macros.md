@@ -85,6 +85,11 @@ as explicit Python/Rust errors, and `make fmt`, `make check-fmt`,
   known performance improvement for future work (referenced in roadmap item
   3.4.2 note and design §6.2, §8.3).
 
+- **Future Work**: Python scoped context is thread-local. A `contextvars`-
+  backed, per-task context stack would prevent ambient fields from leaking
+  between asyncio tasks that hold a scope across an `await`. Until then,
+  per-call Python fields should use `FemtoLogger`'s `extra` mapping.
+
 ## Progress
 
 - [x] (2026-03-04T00:00Z) Gather roadmap/design/testing context and draft this
