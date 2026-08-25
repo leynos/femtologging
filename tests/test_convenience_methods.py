@@ -288,6 +288,61 @@ def test_get_logger_info_preserves_context_at_root_handler() -> None:
     assert key_values == [{}, {"correlation_id": "abc123"}], (
         f"unexpected root-handler key-values: {key_values!r}"
     )
+
+def test_logger_info_extra_merges_and_overrides_scoped_context() -> None:
+    """Inline ``extra`` fields should override active scoped context values."""
+
+    class RecordCollector:
+        def __init__(self) -> None:
+            self.records: list[dict[str, object]] = []
+
+        def handle(self, logger: str, level: str, message: str) -> None:
+            _ = (self.records, logger, level, message)
+
+        def handle_record(self, record: dict[str, object]) -> None:
+            self.records.append(record)
+
+        def flush(self) -> bool:
+            _ = self.records
+            return True
+
+    logger = FemtoLogger("ctx.inline")
+    logger.set_level("INFO")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    with log_context(request_id="outer", user="alice"):
+        output = logger.info(
+            "inside context",
+            extra={"request_id": "inline", "attempt": 2},
+        )
+    assert output is not None, "info() should emit at INFO level"
+    for _ in range(20):
+        if collector.records:
+            break
+        logger.flush_handlers()
+        time.sleep(0.01)
+    assert collector.records, "expected at least one captured record"
+
+    metadata = typ.cast("dict[str, object]", collector.records[-1]["metadata"])
+    assert metadata["key_values"] == {
+        "attempt": "2",
+        "request_id": "inline",
+        "user": "alice",
+    }
+
+def test_logger_info_rejects_invalid_extra_value() -> None:
+    """Inline ``extra`` values should use scoped-context validation errors."""
+    logger = FemtoLogger("ctx.invalid-extra")
+
+    with pytest.raises(TypeError, match="context values must be"):
+        logger.info(
+            "invalid",
+            extra=typ.cast(
+                "dict[str, str | int | float | bool | None]",
+                {"request_id": {"nested": "value"}},
+            ),
+        )
 def test_exception_captures_active_exception() -> None:
     """``exception()`` should produce output with an active exception context."""
     logger = FemtoLogger("exc.auto")

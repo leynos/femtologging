@@ -154,7 +154,7 @@ fn py_log_basic_message() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
-            .py_log(py, FemtoLevel::Info, "hello", None, None)
+            .py_log(py, FemtoLevel::Info, "hello", None, None, None)
             .expect("py_log should not fail");
         assert_eq!(result, Some("test [INFO] hello".to_string()));
     });
@@ -166,7 +166,7 @@ fn py_log_filtered_by_level() {
         let logger = FemtoLogger::new("test".to_string());
         logger.set_level(FemtoLevel::Error);
         let result = logger
-            .py_log(py, FemtoLevel::Info, "ignored", None, None)
+            .py_log(py, FemtoLevel::Info, "ignored", None, None, None)
             .expect("py_log should not fail");
         assert!(
             result.is_none(),
@@ -224,6 +224,7 @@ fn py_log_exc_info_variation_cases(
                 message,
                 exc_info.as_ref(),
                 stack_info,
+                None,
             )
             .expect("py_log should succeed");
 
@@ -242,7 +243,7 @@ fn py_log_with_stack_info_false() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
-            .py_log(py, FemtoLevel::Info, "no stack", None, Some(false))
+            .py_log(py, FemtoLevel::Info, "no stack", None, Some(false), None)
             .expect("py_log should not fail with stack_info=false");
         assert_eq!(result, Some("test [INFO] no stack".to_string()));
     });
@@ -253,7 +254,7 @@ fn py_log_with_stack_info_true() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let result = logger
-            .py_log(py, FemtoLevel::Info, "with stack", None, Some(true))
+            .py_log(py, FemtoLevel::Info, "with stack", None, Some(true), None)
             .expect("py_log should not fail with stack_info=true");
 
         assert_output_contains!(result, &["test [INFO] with stack", "Stack"]);

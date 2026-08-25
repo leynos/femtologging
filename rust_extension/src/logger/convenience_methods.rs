@@ -9,12 +9,90 @@
 //! string rather than `*args` / `**kwargs` lazy formatting.
 
 use pyo3::PyAny;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
+#[cfg(not(feature = "python"))]
+use std::collections::BTreeMap;
 
 use crate::level::FemtoLevel;
+use crate::log_context;
+use crate::log_record::{FemtoLogRecord, RecordMetadata};
+#[cfg(feature = "python")]
+use crate::traceback_capture;
 
 use super::FemtoLogger;
+#[cfg(feature = "python")]
+use super::python_helpers::capture_exception_payload;
+
+#[pymethods]
+impl FemtoLogger {
+    /// Format a message at the provided level and return it.
+    ///
+    /// Inline `extra` fields override scoped context fields with the same key.
+    #[pyo3(
+        name = "log",
+        signature = (level, message, /, *, exc_info=None, stack_info=false, extra=None),
+        text_signature = "(self, level, message, /, *, exc_info=None, stack_info=False, extra=None)"
+    )]
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(
+            unused_variables,
+            reason = "py parameter is only used when python feature is enabled"
+        )
+    )]
+    #[cfg_attr(
+        not(feature = "python"),
+        expect(
+            unused_mut,
+            reason = "record is only mutated when python feature is enabled"
+        )
+    )]
+    pub fn py_log(
+        &self,
+        py: Python<'_>,
+        level: FemtoLevel,
+        message: &str,
+        exc_info: Option<&Bound<'_, PyAny>>,
+        stack_info: Option<bool>,
+        extra: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<String>> {
+        #[cfg(feature = "python")]
+        let explicit_key_values = extra
+            .map(log_context::extract_python_context_map)
+            .transpose()?
+            .unwrap_or_default();
+        #[cfg(not(feature = "python"))]
+        let explicit_key_values = BTreeMap::new();
+        let merged_key_values = log_context::merge_context_values(&explicit_key_values)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        if !self.is_enabled_for(level) {
+            return Ok(None);
+        }
+        let mut record = FemtoLogRecord::with_metadata(
+            &self.name,
+            level,
+            message,
+            RecordMetadata {
+                key_values: merged_key_values,
+                ..Default::default()
+            },
+        );
+
+        #[cfg(feature = "python")]
+        if let Some(payload) = capture_exception_payload(py, exc_info)? {
+            record.set_exception_payload(payload);
+        }
+
+        #[cfg(feature = "python")]
+        if stack_info.unwrap_or(false) {
+            record.set_stack_payload(traceback_capture::capture_stack(py)?);
+        }
+
+        Ok(self.log_record(record))
+    }
+}
 
 /// Generate a convenience logging method that delegates to `py_log` with a
 /// fixed level.
@@ -29,8 +107,8 @@ macro_rules! log_method {
             #[doc = $doc]
             #[pyo3(
                         name = $py_name,
-                        signature = (message, /, *, exc_info=None, stack_info=false),
-                        text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
+                        signature = (message, /, *, exc_info=None, stack_info=false, extra=None),
+                        text_signature = "(self, message, /, *, exc_info=None, stack_info=False, extra=None)"
                     )]
             pub fn $fn_name(
                 &self,
@@ -38,8 +116,9 @@ macro_rules! log_method {
                 message: &str,
                 exc_info: Option<&Bound<'_, PyAny>>,
                 stack_info: Option<bool>,
+                extra: Option<&Bound<'_, PyAny>>,
             ) -> PyResult<Option<String>> {
-                self.py_log(py, $level, message, exc_info, stack_info)
+                self.py_log(py, $level, message, exc_info, stack_info, extra)
             }
         }
     };
@@ -190,9 +269,16 @@ impl FemtoLogger {
         match exc_info {
             None => {
                 let py_true = PyBool::new(py, true).to_owned().into_any();
-                self.py_log(py, FemtoLevel::Error, message, Some(&py_true), stack_info)
+                self.py_log(
+                    py,
+                    FemtoLevel::Error,
+                    message,
+                    Some(&py_true),
+                    stack_info,
+                    None,
+                )
             }
-            Some(val) => self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info),
+            Some(val) => self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info, None),
         }
     }
 }
