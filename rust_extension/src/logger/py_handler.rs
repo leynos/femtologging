@@ -10,7 +10,13 @@ use std::any::Any;
 #[cfg(feature = "python")]
 use crate::formatter::python::record_to_dict;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(feature = "python")]
+use crate::handlers::{
+    rotating::PyRotatingFileHandler, timed_rotating::PyTimedRotatingFileHandler,
+};
 use crate::log_record::FemtoLogRecord;
+#[cfg(feature = "python")]
+use crate::{FemtoFileHandler, FemtoStreamHandler};
 use log::warn;
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
@@ -92,6 +98,61 @@ pub struct PyHandler {
     pub obj: Py<PyAny>,
     /// Whether this handler has a `handle_record` method for structured payloads.
     has_handle_record: bool,
+    /// Built-in Rust handler wrapped by a Python object, if applicable.
+    native_handler: Option<NativeHandlerKind>,
+}
+
+/// Built-in handlers that can retain the original Rust record across Python registration.
+#[derive(Clone, Copy)]
+#[cfg(feature = "python")]
+enum NativeHandlerKind {
+    Stream,
+    File,
+    RotatingFile,
+    TimedRotatingFile,
+}
+
+#[cfg(feature = "python")]
+impl NativeHandlerKind {
+    fn from_object(obj: &Bound<'_, PyAny>) -> Option<Self> {
+        if obj.is_instance_of::<FemtoStreamHandler>() {
+            Some(Self::Stream)
+        } else if obj.is_instance_of::<FemtoFileHandler>() {
+            Some(Self::File)
+        } else if obj.is_instance_of::<PyRotatingFileHandler>() {
+            Some(Self::RotatingFile)
+        } else if obj.is_instance_of::<PyTimedRotatingFileHandler>() {
+            Some(Self::TimedRotatingFile)
+        } else {
+            None
+        }
+    }
+
+    fn handle(
+        self,
+        py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+        record: FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
+        match self {
+            Self::Stream => obj
+                .extract::<PyRef<'_, FemtoStreamHandler>>()
+                .map_err(|err| map_py_err(py, err.into(), "extract FemtoStreamHandler"))
+                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+            Self::File => obj
+                .extract::<PyRef<'_, FemtoFileHandler>>()
+                .map_err(|err| map_py_err(py, err.into(), "extract FemtoFileHandler"))
+                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+            Self::RotatingFile => obj
+                .extract::<PyRef<'_, PyRotatingFileHandler>>()
+                .map_err(|err| map_py_err(py, err.into(), "extract FemtoRotatingFileHandler"))
+                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+            Self::TimedRotatingFile => obj
+                .extract::<PyRef<'_, PyTimedRotatingFileHandler>>()
+                .map_err(|err| map_py_err(py, err.into(), "extract FemtoTimedRotatingFileHandler"))
+                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+        }
+    }
 }
 
 #[cfg(feature = "python")]
@@ -131,6 +192,7 @@ impl PyHandler {
     /// aligns with the standard library `logging.Handler` expectation that
     /// handlers are fully configured before use.
     pub fn new(py: Python<'_>, obj: Py<PyAny>) -> Self {
+        let native_handler = NativeHandlerKind::from_object(obj.bind(py));
         let has_handle_record = obj
             .getattr(py, "handle_record")
             .map(|attr| attr.bind(py).is_callable())
@@ -138,6 +200,7 @@ impl PyHandler {
         Self {
             obj,
             has_handle_record,
+            native_handler,
         }
     }
 
@@ -177,6 +240,9 @@ impl PyHandler {
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         Python::attach(|py| {
+            if let Some(native_handler) = self.native_handler {
+                return native_handler.handle(py, self.obj.bind(py), record);
+            }
             if self.has_handle_record {
                 return self.call_handle_record(py, &record);
             }

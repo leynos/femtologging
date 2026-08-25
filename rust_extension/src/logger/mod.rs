@@ -15,6 +15,7 @@ mod python_helpers;
 mod runtime_mutation;
 mod worker;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
@@ -161,13 +162,8 @@ impl FemtoLogger {
             return Ok(None);
         }
         let explicit_key_values = BTreeMap::new();
-        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
-            Ok(key_values) => key_values,
-            Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return Ok(None);
-            }
-        };
+        let merged_key_values = log_context::merge_context_values(&explicit_key_values)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         let mut record = FemtoLogRecord::with_metadata(
             &self.name,
             level,

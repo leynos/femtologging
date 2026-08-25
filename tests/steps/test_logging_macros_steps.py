@@ -126,6 +126,16 @@ def given_record_collecting_logger(name: str, level: str) -> None:
     """Configure a named logger used by context metadata scenarios."""
     _init_logger(name, level)
 
+@given("a root record collector", target_fixture="root_context_collector")
+def given_root_record_collector() -> _RecordCollector:
+    """Attach a structured collector to the root logger for propagation checks."""
+    root = get_logger("root")
+    root.clear_handlers()
+    assert root.flush_handlers(), "root logger worker did not flush before capture"
+    collector = _RecordCollector()
+    root.add_handler(collector)
+    return collector
+
 
 # ---------------------------------------------------------------------------
 # When steps
@@ -248,12 +258,36 @@ def push_invalid_context_value() -> ErrorPayload:
         message = str(exc)
     return {"value": message}
 
-
-# ---------------------------------------------------------------------------
-# Then steps
-# ---------------------------------------------------------------------------
-
-
+@when(
+    parsers.parse(
+        'I emit messages through get_logger "{name}" inside context "{key}"="{value}"'
+    ),
+    target_fixture="context_record_payload",
+)
+def emit_get_logger_messages_with_context(
+    root_context_collector: _RecordCollector,
+    name: str,
+    key: str,
+    value: str,
+) -> _ContextRecordPayload:
+    """Emit records on either side of scoped context through ``get_logger``."""
+    logger = get_logger(name)
+    logger.info("outside")
+    with log_context(**{key: value}):
+        logger.info("inside")
+    for _ in range(20):
+        if len(root_context_collector.records) == 2:
+            break
+        time.sleep(0.01)
+    assert len(root_context_collector.records) == 2, (
+        f"expected two propagated records, got {root_context_collector.records!r}"
+    )
+    return {
+        "value": [
+            record["metadata"]["key_values"]
+            for record in root_context_collector.records
+        ]
+    }
 @then("the result is not None")
 def result_is_not_none(log_result: LogResultPayload) -> None:
     """Assert that the log result is not None (record was emitted).
@@ -372,3 +406,18 @@ def key_values_match_snapshot(
         f"metadata payload key_values {metadata_payload['value']!r} "
         f"did not match snapshot"
     )
+
+@then("the ancestor records preserve empty and scoped key-values")
+def ancestor_records_preserve_context(
+    context_record_payload: _ContextRecordPayload,
+) -> None:
+    """Assert that propagation keeps both empty and scoped metadata intact."""
+    assert context_record_payload["value"] == [
+        {},
+        {"correlation_id": "abc123"},
+    ], f"unexpected propagated key-values: {context_record_payload['value']!r}"
+
+class _ContextRecordPayload(typ.TypedDict):
+    """Key-values captured for records emitted inside and outside a context."""
+
+    value: list[dict[str, object]]
