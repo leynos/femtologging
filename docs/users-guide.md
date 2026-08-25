@@ -41,9 +41,10 @@ your process exits.
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
   monitor pressure.
 - Record metadata tracks the logger name, level, message text, timestamps,
-  thread identity, and optional structured exception (`exc_info`) and call stack
-  (`stack_info`) payloads. The Python API does not yet expose other rich
-  `LogRecord` attributes such as `extra` or the calling module.
+  thread identity, optional structured exception (`exc_info`) and call stack
+  (`stack_info`) payloads, and validated inline structured fields (`extra`).
+  The Python API does not expose other rich `LogRecord` attributes such as the
+  calling module.
 
 ## Working with loggers
 
@@ -74,8 +75,11 @@ your process exits.
   `*args` / `**kwargs` lazy formatting is not supported — build the final
   message string before calling these methods. `exception()` behaves like
   `error()` but defaults `exc_info` to `True`.
-- `log()` accepts the keyword-only arguments `exc_info` and `stack_info`
-  for capturing exception tracebacks and call stacks alongside the log message.
+- `log()` and the convenience methods accept the keyword-only argument `extra`
+  for validated inline structured fields. `extra` must be a mapping with string
+  keys and `str`, `int`, `float`, `bool`, or `None` values.
+- `log()` accepts the keyword-only arguments `exc_info` and `stack_info` for
+  capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:
   - `True` — capture the current exception via `sys.exc_info()`.
   - An exception instance — capture that exception's traceback.
@@ -716,8 +720,9 @@ current, tested surface area of femtologging.
 
 ## Scoped structured context
 
-Use `log_context(...)` to add structured key-values to every record emitted on
-the current thread while the context is active:
+Use `log_context(...)` to add structured key-values to records emitted through
+`FemtoLogger` methods, including a logger returned by `get_logger()`, on the
+calling thread while the context is active:
 
 ```python
 import femtologging
@@ -730,7 +735,8 @@ with femtologging.log_context(request_id=42, user="alice"):
 Behavioural guarantees:
 
 - Context values are merged on the producer thread before queueing.
-- Inline structured fields emitted by Rust macros override outer context keys.
+- Inline `extra` fields override scoped context keys with the same name.
+- Rust `tracing`-bridge events use span fields rather than this scoped context.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
 - Callback-filter enrichment uses the same scalar contract: keys must be
   non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
@@ -740,6 +746,18 @@ Behavioural guarantees:
 - Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
   1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
   enrichment per record.
+
+Pass per-call fields with `extra` when fields are not shared across a scope:
+
+```python
+logger.info("request accepted", extra={"request_id": 42, "user": "alice"})
+```
+
+The `extra` mapping uses the same scalar types and size bounds as scoped
+context. Because `log_context` uses thread-local storage, holding it across an
+`await` in a single-threaded event loop can share fields with concurrently
+in-flight tasks. Use `extra` for per-call asyncio fields; task-local scoped
+context backed by `contextvars` remains future work.
 
 ### Callback enrichment validation
 
