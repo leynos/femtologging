@@ -21,6 +21,8 @@ fn handle_log_record_dispatches() {
             h1.clone() as Arc<dyn FemtoHandlerTrait>,
             h2.clone() as Arc<dyn FemtoHandlerTrait>,
         ],
+        #[cfg(feature = "python")]
+        context: None,
     };
 
     FemtoLogger::handle_log_record(record);
@@ -87,6 +89,8 @@ fn worker_thread_loop_shutdown_exits_under_load() {
             let record = QueuedRecord {
                 record: FemtoLogRecord::new("core", FemtoLevel::Info, "load"),
                 handlers: vec![producer_handler.clone()],
+                #[cfg(feature = "python")]
+                context: None,
             };
             match tx.try_send(record) {
                 Ok(()) => {}

@@ -32,6 +32,8 @@ fn handle_log_record_continues_after_handler_errors() {
     FemtoLogger::handle_log_record(QueuedRecord {
         record: FemtoLogRecord::new("worker", FemtoLevel::Info, "survives"),
         handlers: vec![failing, collecting],
+        #[cfg(feature = "python")]
+        context: None,
     });
 
     let collected = collecting_handler.collected();

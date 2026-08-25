@@ -32,6 +32,21 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// Dispatch a log record for handling.
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
 
+    /// Return whether this handler invokes Python while dispatching records.
+    fn is_python_backed(&self) -> bool {
+        false
+    }
+
+    /// Dispatch a record inside a captured Python context when applicable.
+    #[cfg(feature = "python")]
+    fn handle_with_context(
+        &self,
+        record: FemtoLogRecord,
+        _context: Option<&Py<PyAny>>,
+    ) -> Result<(), HandlerError> {
+        self.handle(record)
+    }
+
     /// Flush any pending log records.
     ///
     /// Returning `true` signals the flush completed successfully. Implementations
