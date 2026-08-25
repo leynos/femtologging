@@ -39,8 +39,17 @@ import typing as typ
 
 import pytest
 
-from femtologging import FemtoLogger, get_logger, getLogger, log_context
+from femtologging import (
+    FemtoLogger,
+    StreamHandlerBuilder,
+    basicConfig,
+    get_logger,
+    getLogger,
+    log_context,
+)
 from tests.logger_support import assert_output_contains
+
+# -- getLogger alias ----------------------------------------------------------
 
 
 def _raise_for_capture(error: Exception) -> typ.NoReturn:
@@ -250,10 +259,35 @@ def test_direct_logger_info_merges_scoped_log_context() -> None:
         f"unexpected key_values: {key_values!r}"
     )
 
+def test_get_logger_info_preserves_context_at_root_handler() -> None:
+    """``get_logger`` records retain context through root-handler propagation."""
+    records: list[dict[str, object]] = []
 
-# -- exception() --------------------------------------------------------------
+    def capture(record: dict[str, object]) -> str:
+        records.append(record)
+        return "captured"
 
+    handler = StreamHandlerBuilder.stderr().with_formatter(capture).build()
+    basicConfig(level="INFO", force=True, handlers=[handler])
+    logger = get_logger("probe")
 
+    logger.info("outside")
+    with log_context(correlation_id="abc123"):
+        logger.info("inside")
+    assert logger.flush_handlers(), "child logger worker did not flush"
+    for _ in range(20):
+        if len(records) == 2:
+            break
+        time.sleep(0.01)
+    assert len(records) == 2, f"expected two root-handler records, got {records!r}"
+
+    key_values = [
+        typ.cast("dict[str, object]", record["metadata"])["key_values"]
+        for record in records
+    ]
+    assert key_values == [{}, {"correlation_id": "abc123"}], (
+        f"unexpected root-handler key-values: {key_values!r}"
+    )
 def test_exception_captures_active_exception() -> None:
     """``exception()`` should produce output with an active exception context."""
     logger = FemtoLogger("exc.auto")
