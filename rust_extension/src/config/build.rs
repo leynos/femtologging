@@ -37,6 +37,11 @@ impl ConfigBuilder {
         if self.root_logger().is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
+        let built_formatters = self
+            .formatter_builders()
+            .iter()
+            .map(|(id, builder)| (id.clone(), builder.build()))
+            .collect::<BTreeMap<_, _>>();
         let built_filters = Self::build_map(
             self.filter_builders(),
             |b| b.build(),
@@ -44,7 +49,7 @@ impl ConfigBuilder {
         )?;
         let built_handlers = Self::build_map(
             self.handler_builders(),
-            |b| b.build(),
+            |b| b.build_with_formatters(&built_formatters),
             |id, source| ConfigError::HandlerBuild { id, source },
         )?;
         let handler_filters = self

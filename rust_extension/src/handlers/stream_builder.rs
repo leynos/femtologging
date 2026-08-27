@@ -29,21 +29,9 @@ use crate::{
     stream_handler::FemtoStreamHandler,
 };
 
-#[derive(Clone, Copy, Debug)]
-enum StreamTarget {
-    Stdout,
-    Stderr,
-}
+mod target;
 
-impl StreamTarget {
-    #[cfg(feature = "python")]
-    fn as_str(&self) -> &'static str {
-        match self {
-            StreamTarget::Stdout => "stdout",
-            StreamTarget::Stderr => "stderr",
-        }
-    }
-}
+use target::StreamTarget;
 
 /// Builder for constructing [`FemtoStreamHandler`] instances.
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
@@ -87,6 +75,15 @@ impl StreamHandlerBuilder {
     {
         self.common.set_filter_ids(filter_ids);
         self
+    }
+
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &std::collections::BTreeMap<String, crate::formatter::SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        self.common.resolve_formatter(formatters)
     }
 
     /// Return the configured handler filter identifiers.
