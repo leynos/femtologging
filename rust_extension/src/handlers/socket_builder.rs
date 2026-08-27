@@ -7,15 +7,13 @@
 use std::{path::PathBuf, time::Duration};
 
 #[cfg(feature = "python")]
-use pyo3::{Bound, prelude::*, types::PyDict};
+use pyo3::prelude::*;
 
 use crate::socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
     TlsOptions, UnixTransport,
 };
 
-#[cfg(feature = "python")]
-use super::builder_macros::dict_set;
 use super::builder_macros::ensure_positive;
 use super::{HandlerBuildError, HandlerBuilderTrait};
 
@@ -163,6 +161,7 @@ pub struct SocketHandlerBuilder {
     transport: Option<TransportConfig>,
     tls: Option<TlsConfig>,
     backoff: BackoffOverrides,
+    filters: Vec<String>,
 }
 
 impl SocketHandlerBuilder {
@@ -224,6 +223,23 @@ impl SocketHandlerBuilder {
     pub fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
         self.backoff = overrides;
         self
+    }
+
+    /// Attach filters by identifier.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.filters =
+            crate::config::normalize_vec(filter_ids.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filters
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -332,51 +348,6 @@ impl SocketHandlerBuilder {
                 insecure_skip_verify: tls_cfg.insecure,
             }
         })
-    }
-
-    #[cfg(feature = "python")]
-    fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
-        dict_set!(d, "capacity", self.capacity);
-        dict_set!(d, "connect_timeout_ms", self.connect_timeout_ms);
-        dict_set!(d, "write_timeout_ms", self.write_timeout_ms);
-        dict_set!(d, "max_frame_size", self.max_frame_size);
-        self.extend_dict_with_transport(d)?;
-        dict_set!(d, "backoff_base_ms", self.backoff.base_ms);
-        dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms);
-        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms);
-        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms);
-        Ok(())
-    }
-
-    /// Serialize the configured transport (and any TLS options) into the dict.
-    #[cfg(feature = "python")]
-    fn extend_dict_with_transport(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
-        match &self.transport {
-            Some(TransportConfig::Tcp { host, port }) => {
-                d.set_item("transport", "tcp")?;
-                d.set_item("host", host)?;
-                d.set_item("port", *port)?;
-                self.extend_dict_with_tls(d)
-            }
-            Some(TransportConfig::Unix { path }) => {
-                d.set_item("transport", "unix")?;
-                d.set_item("path", path.display().to_string())
-            }
-            None => Ok(()),
-        }
-    }
-
-    /// Serialize the TLS options for a TCP transport into the dict.
-    #[cfg(feature = "python")]
-    fn extend_dict_with_tls(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
-        let Some(tls_cfg) = &self.tls else {
-            return d.set_item("tls", false);
-        };
-        d.set_item("tls", true)?;
-        if let Some(domain) = &tls_cfg.domain {
-            d.set_item("tls_domain", domain)?;
-        }
-        d.set_item("tls_insecure", tls_cfg.insecure)
     }
 }
 

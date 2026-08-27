@@ -14,6 +14,7 @@ mod types;
 )]
 #[cfg(feature = "python")]
 pub use runtime_mutation::{LoggerMutationBuilder, RuntimeConfigBuilder};
+pub(crate) use types::normalize_vec;
 #[cfg_attr(
     not(feature = "python"),
     expect(unused_imports, reason = "public re-exports for external consumers")

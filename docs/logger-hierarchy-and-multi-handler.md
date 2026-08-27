@@ -66,6 +66,10 @@ is implementing hierarchical configuration using dotted names with propagation.
   guaranteed, but records emitted by a single logger should appear in the order
   they were produced. Tests must also check for duplicate records when a
   handler is shared across threads.
+- Logger filters run only for the logger receiving a logging call; they do not
+  cascade to descendants or propagated records, matching CPython. Attach a
+  handler filter for cross-cutting enrichment because it runs for every record
+  routed to that handler, including through propagation.
 
 ## Architecture Diagrams
 

@@ -14,6 +14,8 @@ use crate::socket_handler::FemtoSocketHandler;
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
 
+mod serialization;
+
 /// Extract an optional `u64` value from a Python dictionary.
 ///
 /// Returns `Ok(None)` if the key is missing or explicitly set to Python `None`.
@@ -167,6 +169,16 @@ impl SocketHandlerBuilder {
         config: BackoffOverrides,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let updated = slf.clone().with_backoff(config);
+        *slf = updated;
+        Ok(slf)
+    }
+
+    #[pyo3(name = "with_filters")]
+    fn py_with_filters<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        filter_ids: Vec<String>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let updated = slf.clone().with_filters(filter_ids);
         *slf = updated;
         Ok(slf)
     }
