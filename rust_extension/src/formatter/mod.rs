@@ -10,11 +10,15 @@ use std::{fmt, sync::Arc};
 use crate::log_record::FemtoLogRecord;
 
 mod exception;
+#[cfg(feature = "python")]
+mod percent;
 
 #[cfg(feature = "python")]
 pub mod python;
 
 pub use exception::{ExceptionFormat, format_exception_payload, format_stack_payload};
+#[cfg(feature = "python")]
+pub use percent::PercentFormatter;
 
 /// Trait for formatting log records into strings.
 ///

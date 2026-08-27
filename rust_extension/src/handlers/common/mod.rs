@@ -7,6 +7,9 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
 };
 
+#[cfg(feature = "python")]
+use std::collections::BTreeMap;
+
 use super::{
     FormatterId, HandlerBuildError,
     file::{HandlerConfig, OverflowPolicy},
@@ -106,6 +109,22 @@ impl CommonBuilder {
         F: IntoFormatterConfig,
     {
         self.formatter = Some(formatter.into_formatter_config());
+    }
+
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &BTreeMap<String, SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        let Some(FormatterConfig::Id(FormatterId::Custom(id))) = &self.formatter else {
+            return Ok(());
+        };
+        let formatter = formatters.get(id).cloned().ok_or_else(|| {
+            HandlerBuildError::InvalidConfig(format!("unknown formatter id: {id}"))
+        })?;
+        self.formatter = Some(FormatterConfig::Instance(formatter));
+        Ok(())
     }
 
     /// Replace the handler filter identifiers.
@@ -242,6 +261,15 @@ impl FileLikeBuilderState {
         F: IntoFormatterConfig,
     {
         self.common.set_formatter(formatter);
+    }
+
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &BTreeMap<String, SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        self.common.resolve_formatter(formatters)
     }
 
     /// Replace the handler filter identifiers.
