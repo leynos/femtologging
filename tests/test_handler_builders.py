@@ -13,6 +13,8 @@ from femtologging import (
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
+    SocketHandlerBuilder,
+    HTTPHandlerBuilder,
 )
 from tests.helpers import poll_file_for_text
 
@@ -36,6 +38,30 @@ else:
         interval=st.integers(min_value=1, max_value=2**64 - 1)
     )
 
+# The builders record configuration eagerly but only touch the filesystem at
+# ``build()``, so configuration-only tests can use a fixed placeholder path.
+_CONFIG_ONLY_LOG_PATH = "config_only.log"
+
+
+import sys
+
+"""Unit tests for handler builders (file, rotating, stream)."""
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    from pathlib import Path
+try:
+    from hypothesis import given
+    from hypothesis import strategies as st
+except ImportError:  # pragma: no cover - only on interpreters lacking Hypothesis
+    # Every supported interpreter ships Hypothesis; this fallback only covers
+    # environments that deliberately install without the dev dependency group.
+    _FLUSH_INTERVAL_PROPERTY = pytest.mark.skip(
+        reason="Hypothesis is unavailable on this interpreter"
+else:
+    # The Rust builders extract flush parameters as u64, so the whole u64
+    # range must round-trip through ``as_dict``.
+    _FLUSH_INTERVAL_PROPERTY = given(
+        interval=st.integers(min_value=1, max_value=2**64 - 1)
 # The builders record configuration eagerly but only touch the filesystem at
 # ``build()``, so configuration-only tests can use a fixed placeholder path.
 _CONFIG_ONLY_LOG_PATH = "config_only.log"
@@ -334,8 +360,10 @@ class _FilterableHandlerBuilder(typ.Protocol):
         lambda path: FileHandlerBuilder(str(path / "filters.log")),
         lambda path: RotatingFileHandlerBuilder(str(path / "filters-rotating.log")),
         lambda path: TimedRotatingFileHandlerBuilder(str(path / "filters-timed.log")),
+        lambda path: SocketHandlerBuilder(),
+        lambda path: HTTPHandlerBuilder(),
     ],
-    ids=["stream", "file", "rotating", "timed-rotating"],
+    ids=["stream", "file", "rotating", "timed-rotating", "socket", "http"],
 )
 def test_handler_builders_accept_filters(
     tmp_path: Path,

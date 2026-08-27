@@ -63,6 +63,15 @@ impl RotatingFileHandlerBuilder {
         self
     }
 
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &std::collections::BTreeMap<String, crate::formatter::SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        self.common.resolve_formatter(formatters)
+    }
+
     /// Return the configured handler filter identifiers.
     #[cfg(feature = "python")]
     pub(crate) fn filter_ids(&self) -> &[String] {

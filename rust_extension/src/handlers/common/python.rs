@@ -36,6 +36,7 @@ pub(crate) fn py_flush_after_records_to_nonzero(interval: u64) -> PyResult<NonZe
 }
 
 use super::{CommonBuilder, FileLikeBuilderState, FormatterConfig};
+use crate::config::FormatterBuilder;
 use crate::handlers::file::OverflowPolicy;
 
 /// Format an [`OverflowPolicy`] for Python `__repr__`.
@@ -132,6 +133,11 @@ impl CommonBuilder {
         // Try string identifier first
         if let Ok(py_str) = formatter.cast::<PyString>() {
             self.set_formatter(py_str.to_str()?.to_owned());
+            return Ok(());
+        }
+
+        if let Ok(builder) = formatter.extract::<PyRef<'_, FormatterBuilder>>() {
+            self.formatter = Some(FormatterConfig::Instance(builder.build()));
             return Ok(());
         }
 

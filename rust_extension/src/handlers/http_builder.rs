@@ -151,6 +151,12 @@ impl HTTPHandlerBuilder {
         self
     }
 
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filters
+    }
+
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.validate_url()?;
         self.validate_capacity()?;

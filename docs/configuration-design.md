@@ -531,11 +531,9 @@ reset-after, deadline) tune the reconnection strategy. The `as_dict()` helper
 surfaced through PyO3 keeps snapshot tests deterministic and documents the
 resolved configuration.
 
-Formatter support for `RotatingFileHandlerBuilder` is intentionally narrow.
-Only the default formatter can be selected today; providing a custom identifier
-causes `build()` to return `HandlerConfigError`. Once the rotation pipeline can
-serialize custom formatters, support for custom formatters will be added to the
-builder.
+`RotatingFileHandlerBuilder` accepts formatter callables, a direct
+`FormatterBuilder`, or a named formatter registered through `ConfigBuilder`.
+Named formatter IDs resolve while `build_and_init()` constructs the handler.
 
 #### Overflow policy options
 
