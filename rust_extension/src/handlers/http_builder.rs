@@ -162,6 +162,12 @@ impl HTTPHandlerBuilder {
         self
     }
 
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filters
+    }
+
     /// Checks all builder values before creating worker-owned HTTP state.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.validate_url()?;
