@@ -225,6 +225,12 @@ where applicable.
     [ADR 003 phase 3](./adr-003-python-stdlib-filter-parity.md#phase-3-conformance-and-hardening)
     and
     [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
+  - [x] 3.2.5.4. Add handler-level filter attachment with producer-thread
+    evaluation for direct and propagated records. Completion criteria: one
+    shared handler filter can enrich records from differently named loggers
+    without introducing Python work on handler threads. See
+    [ADR 003 handler follow-on](./adr-003-python-stdlib-filter-parity.md#accepted-follow-on-handler-filters)
+    and [configuration design §1.1.1](./configuration-design.md#111-filters).
 
 ### 3.3. Rust ecosystem integration
 

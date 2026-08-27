@@ -17,6 +17,7 @@ from femtologging import (
     StreamHandlerBuilder,
     get_logger,
     reset_manager,
+    PythonCallbackFilterBuilder,
 )
 
 if typ.TYPE_CHECKING:
@@ -26,6 +27,14 @@ if typ.TYPE_CHECKING:
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
+scenarios(str(FEATURES / "filters.feature"))
+
+
+"""BDD steps for filter configuration and evaluation scenarios."""
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    from syrupy import SnapshotAssertion
+FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "filters.feature"))
 
 
@@ -63,7 +72,32 @@ def add_name_filter(config_builder: ConfigBuilder, fid: str, prefix: str) -> Non
     filt = NameFilterBuilder().with_prefix(prefix)
     config_builder.with_filter(fid, filt)
 
+@given(
+    parsers.parse('a callback filter "{fid}" that records logger names'),
+    target_fixture="handler_filter_observed",
+)
+def add_callback_filter(config_builder: ConfigBuilder, fid: str) -> list[str]:
+    """Attach a callback filter that records each producer-thread logger name."""
+    observed: list[str] = []
 
+    def record_logger_name(record: object) -> bool:
+        record_attributes = vars(record)
+        observed.append(typ.cast("str", record_attributes["name"]))
+        record_attributes["correlation_id"] = "REQ-99"
+        return True
+
+    config_builder.with_filter(fid, PythonCallbackFilterBuilder(record_logger_name))
+    return observed
+
+@when(parsers.parse('I add stream handler "{hid}" with filter "{filter_id}"'))
+def add_stream_handler_with_filter(
+    config_builder: ConfigBuilder, hid: str, filter_id: str
+) -> None:
+    """Attach one configured filter to a shared handler."""
+    config_builder.with_handler(
+        hid,
+        StreamHandlerBuilder.stderr().with_filters([filter_id]),
+    )
 @when(
     parsers.parse(
         'I add logger "{name}" with handler "{handler}" and filter "{filter_id}"'
@@ -89,7 +123,13 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
     root = LoggerConfigBuilder().with_level(level)
     config_builder.with_root_logger(root)
 
-
+@when(parsers.parse('I set root logger with level "{level}" and handler "{handler}"'))
+def set_root_with_handler(
+    config_builder: ConfigBuilder, level: str, handler: str
+) -> None:
+    """Configure a root logger that routes records through one handler."""
+    root = LoggerConfigBuilder().with_level(level).with_handlers([handler])
+    config_builder.with_root_logger(root)
 @then("the configuration matches snapshot")
 def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
@@ -118,6 +158,13 @@ def logger_suppresses(name: str, level: str) -> None:
     assert logger.log(level, "msg") is None, (
         f"configured filters must suppress level '{level}' on logger '{name}'"
     )
+
+@then(parsers.parse('the callback filter observed "{first}" and "{second}"'))
+def callback_filter_observed_loggers(
+    handler_filter_observed: list[str], first: str, second: str
+) -> None:
+    """Verify a shared handler filter ran for both direct and propagated records."""
+    assert handler_filter_observed == [first, second]
 
 
 def _assert_build_error_mentions(
