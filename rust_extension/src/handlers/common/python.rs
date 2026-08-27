@@ -183,6 +183,9 @@ impl CommonBuilder {
                 }
             }
         }
+        if !self.filters.is_empty() {
+            d.set_item("filters", self.filters.clone())?;
+        }
         Ok(())
     }
 }

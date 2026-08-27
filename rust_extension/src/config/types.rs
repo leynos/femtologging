@@ -63,6 +63,18 @@ impl HandlerBuilder {
                 .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
         }
     }
+
+    /// Return filter identifiers configured on this handler.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        match self {
+            Self::Stream(builder) => builder.filter_ids(),
+            Self::File(builder) => builder.filter_ids(),
+            Self::Rotating(builder) => builder.filter_ids(),
+            Self::TimedRotating(builder) => builder.filter_ids(),
+            Self::Socket(builder) => builder.filter_ids(),
+        }
+    }
 }
 
 impl From<StreamHandlerBuilder> for HandlerBuilder {

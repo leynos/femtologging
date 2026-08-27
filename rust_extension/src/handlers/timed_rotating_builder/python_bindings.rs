@@ -254,6 +254,17 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
+    #[pyo3(name = "with_filters")]
+    fn py_with_filters<'py>(
+        slf: PyRefMut<'py, Self>,
+        filter_ids: Vec<String>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        apply_builder_update(slf, |builder| {
+            builder.common.set_filter_ids(filter_ids);
+            Ok(())
+        })
+    }
+
     fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_pydict(py)
     }

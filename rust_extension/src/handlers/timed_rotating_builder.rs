@@ -59,6 +59,22 @@ impl TimedRotatingFileHandlerBuilder {
         self
     }
 
+    /// Attach filters by identifier.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.common.set_filter_ids(filter_ids);
+        self
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        self.common.filter_ids()
+    }
+
     /// Set the bounded channel capacity.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.common.set_capacity(capacity);

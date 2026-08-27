@@ -552,6 +552,12 @@ builder.build_and_init()
   on the producer thread and may either return a truthy/falsy value directly or
   expose a stdlib-style `filter(record)` method. Filters are applied in the
   order they are declared in each `LoggerConfigBuilder`.
+- Logger filters apply only to the logger receiving the logging call. They do
+  not run for descendants or records propagated from descendants, matching
+  CPython. For application-wide enrichment, attach a filter to the shared
+  handler with `.with_filters(["request_context"])`; handler filters run on the
+  producer thread for every record routed to that handler, including propagated
+  records.
 - Formatter registration (`with_formatter(id, FormatterBuilder)`) is currently
   a placeholder. Registered formatters are stored in the serialized config, but
   handlers still treat any string other than `"default"` as unknown and raise
@@ -575,12 +581,12 @@ builder.build_and_init()
   `"()"` syntax such as `{"()": "pkg.module.FilterFactory", "prefix": "svc"}`.
   The factory target may be a dotted path or a direct callable, and is
   instantiated with the remaining keys as keyword arguments. Mixing `"()"` with
-  `level` or `name` is rejected. Loggers and the root logger accept a `filters`
-  list of filter IDs.
+  `level` or `name` is rejected. Loggers, handlers, and the root logger accept a
+  `filters` list of filter IDs.
 - Unsupported stdlib features raise `ValueError`: incremental updates,
-  handler `level`, handler `filters`, and handler formatters. Although the
-  schema accepts a `formatters` section, referencing a formatter from a handler
-  currently results in `ValueError("unknown formatter id")`.
+  handler `level`, and handler formatters. Although the schema accepts a
+  `formatters` section, referencing a formatter from a handler currently
+  results in `ValueError("unknown formatter id")`.
 - A `root` section is mandatory. Named loggers support `level`,
   `handlers`, `filters`, and `propagate` (bool).
 - The parsed configuration is passed to `ConfigBuilder.build_and_init()`, so
@@ -628,9 +634,9 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   will connect `FormatterBuilder` and handler formatter IDs, but this is not
   yet implemented.
 - Filters are available through both `ConfigBuilder` and `dictConfig`.
-  `fileConfig` does not yet support filter declarations. Handler-level
-  `filters` and `level` attributes remain unsupported, as these require Rust
-  infrastructure changes outside the current scope.
+  `fileConfig` does not yet support filter declarations. Handler filters use
+  the same filter ID registry as logger filters; handler `level` remains
+  unsupported.
 - Python callback filters receive a mutable `logging.LogRecord` view on the
   producer thread. When they accept the record, any new supported attributes
   they add are copied into `metadata.key_values` before the record enters the
@@ -667,8 +673,8 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
   subclasses can be reused via
   [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
-- The `dictConfig` schema lacks incremental updates, handler filters,
-  handler levels, and formatter attachment. `fileConfig` is likewise cut down.
+- The `dictConfig` schema lacks incremental updates, handler levels, and
+  formatter attachment. `fileConfig` is likewise cut down.
 - Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
   emitting thread; femtologging drops records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final

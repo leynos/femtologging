@@ -15,7 +15,9 @@ use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
-use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{
+    FemtoLogger, FlushAckHandler, HandlerAttachment, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord,
+};
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -138,6 +140,14 @@ impl FemtoLogger {
     /// If no filters are configured, the record passes.
     fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
         let filters = self.filters.read().clone();
+        Self::apply_filter_chain(record, &filters)
+    }
+
+    /// Apply one filter chain to a record on the producer thread.
+    fn apply_filter_chain(
+        record: &mut FemtoLogRecord,
+        filters: &[std::sync::Arc<dyn crate::filters::FemtoFilter>],
+    ) -> bool {
         let mut context = FilterContext::default();
         for filter in filters {
             let decision = filter.decision(record, &mut context);
@@ -164,11 +174,15 @@ impl FemtoLogger {
         });
     }
 
-    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
+    fn send_to_local_handlers(&self, mut record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
         };
         let handlers = self.handlers.read().clone();
+        let handlers = Self::filter_handlers(&mut record, handlers)
+            .into_iter()
+            .map(|attachment| attachment.handler)
+            .collect();
         if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
             return;
         }
@@ -178,6 +192,17 @@ impl FemtoLogger {
         self.drop_warner.warn_if_due(|count| {
             warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
         });
+    }
+
+    /// Retain handlers whose producer-thread filter chains accept the record.
+    fn filter_handlers(
+        record: &mut FemtoLogRecord,
+        handlers: Vec<HandlerAttachment>,
+    ) -> Vec<HandlerAttachment> {
+        handlers
+            .into_iter()
+            .filter(|attachment| Self::apply_filter_chain(record, &attachment.filters))
+            .collect()
     }
 
     pub(super) fn flush_handlers_blocking(&self) -> bool {
@@ -207,7 +232,10 @@ impl FemtoLogger {
     }
 
     fn flush_configured_handlers(&self) -> bool {
-        self.handlers.read().iter().all(|handler| handler.flush())
+        self.handlers
+            .read()
+            .iter()
+            .all(|attachment| attachment.handler.flush())
     }
 
     /// Dispatch a record to the logger's handlers via the background queue.

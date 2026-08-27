@@ -79,6 +79,22 @@ impl StreamHandlerBuilder {
         self
     }
 
+    /// Attach filters by identifier.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.common.set_filter_ids(filter_ids);
+        self
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        self.common.filter_ids()
+    }
+
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()
     }
@@ -190,6 +206,15 @@ builder_methods! {
             ) -> PyResult<PyRefMut<'py, Self>> {
                 slf.common.set_formatter_from_py(&formatter)?;
                 Ok(slf)
+            }
+
+            #[pyo3(name = "with_filters")]
+            fn py_with_filters<'py>(
+                mut slf: PyRefMut<'py, Self>,
+                filter_ids: Vec<String>,
+            ) -> PyRefMut<'py, Self> {
+                slf.common.set_filter_ids(filter_ids);
+                slf
             }
 
             /// Return a dictionary describing the builder configuration.
