@@ -4,15 +4,14 @@ use pyo3::prelude::*;
 use std::sync::Arc;
 
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
-
-use super::FemtoLogger;
+use super::{FemtoLogger, HandlerAttachment};
 
 impl FemtoLogger {
     /// Replace the complete handler collection while holding its write lock.
     /// Records queued before this call retain their captured handler snapshot;
     /// subsequent records observe the replacement.
     pub(crate) fn replace_handlers(&self, handlers: Vec<Arc<dyn FemtoHandlerTrait>>) {
-        *self.handlers.write() = handlers;
+        *self.handlers.write() = handlers.into_iter().map(HandlerAttachment::new).collect();
     }
 
     /// Replace the complete filter collection while holding its write lock.

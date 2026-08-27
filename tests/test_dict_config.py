@@ -19,9 +19,22 @@ from femtologging import (
     dictConfig,
     get_logger,
     reset_manager,
+    LoggerConfigBuilder,
+    ConfigBuilder,
+    PythonCallbackFilterBuilder,
+    FileHandlerBuilder,
 )
 from tests.helpers import poll_file_for_text
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    from pathlib import Path
+
+
+"""Tests for handler construction and schema validation in ``dictConfig``.
+Filter-section behaviour and validation live in
+``tests/test_dict_config_filters.py``.
+"""
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
@@ -167,14 +180,18 @@ def test_dict_config_timed_rotating_handler(
         ),
         ({"args": 1}, "handler 'h' args must be a sequence", TypeError),
         ({"kwargs": []}, "handler 'h' kwargs must be a mapping", TypeError),
-        ({"filters": []}, "handler filters are not supported", ValueError),
+        (
+            {"filters": "context"},
+            "handler filters must be a list or tuple of strings",
+            TypeError,
+        ),
     ],
     ids=[
         "args-bytes",
         "kwargs-bytes",
         "args-type",
         "kwargs-type",
-        "filters-unsupported",
+        "filters-must-be-a-string-list",
     ],
 )
 def test_dict_config_handler_validation_errors(
@@ -192,7 +209,46 @@ def test_dict_config_handler_validation_errors(
     with pytest.raises(expected_exc, match=expected_error):
         dictConfig(cfg)
 
+def test_handler_filter_enriches_records_from_propagated_loggers(
+    tmp_path: Path,
+) -> None:
+    """A root handler filter must run for every logger that propagates to it."""
+    reset_manager()
+    path = tmp_path / "handler-filter.log"
+    observed_logger_names: list[str] = []
 
+    def add_correlation_id(record: object) -> bool:
+        record_attributes = vars(record)
+        observed_logger_names.append(typ.cast("str", record_attributes["name"]))
+        record_attributes["correlation_id"] = "REQ-99"
+        return True
+
+    handler = (
+        FileHandlerBuilder(str(path))
+        .with_flush_after_records(1)
+        .with_filters(["context"])
+        .with_formatter(lambda record: repr(record["metadata"]["key_values"]))
+    )
+    config = (
+        ConfigBuilder()
+        .with_version(1)
+        .with_filter("context", PythonCallbackFilterBuilder(add_correlation_id))
+        .with_handler("output", handler)
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["output"])
+        )
+    )
+
+    try:
+        config.build_and_init()
+        get_logger("episodic.api.authorization").info("authorised")
+        get_logger("episodic.worker").info("processed")
+        poll_file_for_text(path, "'correlation_id': 'REQ-99'", timeout=1.0)
+    finally:
+        reset_manager()
+
+    assert observed_logger_names == ["episodic.api.authorization", "episodic.worker"]
+    assert path.read_text().count("'correlation_id': 'REQ-99'") == 2
 @pytest.mark.parametrize(
     ("config", "msg", "expected_exc"),
     [

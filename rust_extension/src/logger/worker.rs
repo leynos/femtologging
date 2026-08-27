@@ -6,8 +6,6 @@
 use log::warn;
 #[cfg(not(loom))]
 use pyo3::Python;
-#[cfg(feature = "python")]
-use pyo3::{Py, PyAny};
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
@@ -23,14 +21,7 @@ use crate::sync::{
 #[cfg(feature = "python")]
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
-
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-    #[cfg(feature = "python")]
-    pub context: Option<Py<PyAny>>,
-}
+use super::queue::QueuedRecord;
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
@@ -63,7 +54,7 @@ impl FemtoLogger {
         #[cfg(feature = "python")] context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
     ) -> Self {
         let formatter = SharedFormatter::new(DefaultFormatter);
-        let handlers: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoHandlerTrait>>>> =
+        let handlers: std::sync::Arc<RwLock<Vec<super::HandlerAttachment>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
         let filters: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoFilter>>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
@@ -235,6 +226,8 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
         warn!("FemtoLogger: worker thread panicked");
     }
 }
+
+
 
 /// Join the logger's worker with the GIL released.
 ///

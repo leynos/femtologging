@@ -146,6 +146,14 @@ impl RotatingFileHandlerBuilder {
         apply_builder_update(slf, |builder| builder.with_formatter_from_py(&formatter))
     }
 
+    #[pyo3(name = "with_filters")]
+    fn py_with_filters<'py>(
+        slf: PyRefMut<'py, Self>,
+        filter_ids: Vec<String>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        apply_builder_update(slf, |builder| Ok(builder.with_filters(filter_ids)))
+    }
+
     /// Return a dictionary describing the builder configuration.
     fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_pydict(py)

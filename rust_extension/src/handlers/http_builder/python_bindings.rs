@@ -210,6 +210,17 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Attach filters to this handler by configured filter identifier.
+    #[pyo3(name = "with_filters")]
+    fn py_with_filters<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        filter_ids: Vec<String>,
+    ) -> PyRefMut<'py, Self> {
+        let updated = slf.clone().with_filters(filter_ids);
+        *slf = updated;
+        slf
+    }
+
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "as_dict")]
     fn py_as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {

@@ -3,20 +3,19 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
-use std::any::Any;
 use std::time::Duration;
 
 use log::warn;
 
 use crate::filters::FilterContext;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
-use crate::sync::{Sender, bounded};
+use crate::sync::bounded;
 
-use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{FemtoLogger, FlushAckHandler, HandlerAttachment, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
 /// Classifies a handler snapshot for tracing metadata without retaining it.
 #[cfg(feature = "tracing-compat")]
@@ -28,30 +27,6 @@ fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static 
         (true, false) => "python",
         (false, true) => "native",
         (false, false) => "none",
-    }
-}
-
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    /// One-shot channel notified when the worker reaches the flush marker.
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    /// Build the marker handler that acknowledges delivery of its queued record.
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -180,6 +155,14 @@ impl FemtoLogger {
     /// If no filters are configured, the record passes.
     fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
         let filters = self.filters.read().clone();
+        Self::apply_filter_chain(record, &filters)
+    }
+
+    /// Apply one filter chain to a record on the producer thread.
+    fn apply_filter_chain(
+        record: &mut FemtoLogRecord,
+        filters: &[std::sync::Arc<dyn crate::filters::FemtoFilter>],
+    ) -> bool {
         let mut context = FilterContext::default();
         for filter in filters {
             let decision = filter.decision(record, &mut context);
@@ -213,11 +196,18 @@ impl FemtoLogger {
     /// Context capture is attempted only when this exact handler snapshot
     /// contains a Python-backed handler; capture failures use a separate
     /// counter from queue-full drops.
-    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
+    fn send_to_local_handlers(&self, mut record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
         };
-        let handlers = self.handlers.read().clone();
+        let handlers = Self::filter_handlers(&mut record, self.handlers.read().clone());
+        if handlers.is_empty() {
+            return;
+        }
+        let handlers = handlers
+            .into_iter()
+            .map(|attachment| attachment.handler)
+            .collect::<Vec<_>>();
         #[cfg(feature = "tracing-compat")]
         let handler_kind = handler_kind(&handlers);
         #[cfg(feature = "python")]
@@ -317,6 +307,17 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
+    /// Retain handlers whose producer-thread filter chains accept the record.
+    fn filter_handlers(
+        record: &mut FemtoLogRecord,
+        handlers: Vec<HandlerAttachment>,
+    ) -> Vec<HandlerAttachment> {
+        handlers
+            .into_iter()
+            .filter(|attachment| Self::apply_filter_chain(record, &attachment.filters))
+            .collect()
+    }
+
     /// Acknowledge the worker reaching a queue marker, then flush current handlers.
     ///
     /// The acknowledgement orders flushing after all records already queued;
@@ -352,7 +353,10 @@ impl FemtoLogger {
 
     /// Flush handlers visible under the read lock after queue delivery is idle.
     fn flush_configured_handlers(&self) -> bool {
-        self.handlers.read().iter().all(|handler| handler.flush())
+        self.handlers
+            .read()
+            .iter()
+            .all(|attachment| attachment.handler.flush())
     }
 
     /// Dispatch a record to the logger's handlers via the background queue.

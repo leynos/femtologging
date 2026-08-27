@@ -88,6 +88,7 @@ pub struct CommonBuilder {
     pub(crate) flush_after_ms: Option<NonZeroU64>,
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) formatter: Option<FormatterConfig>,
+    pub(crate) filters: Vec<String>,
 }
 
 impl CommonBuilder {
@@ -112,6 +113,22 @@ impl CommonBuilder {
         F: IntoFormatterConfig,
     {
         self.formatter = Some(formatter.into_formatter_config());
+    }
+
+    /// Replace the handler filter identifiers.
+    pub(crate) fn set_filter_ids<I, S>(&mut self, filter_ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.filters =
+            crate::config::normalize_vec(filter_ids.into_iter().map(Into::into).collect());
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filters
     }
 
     /// Validate that an optional numeric field (if provided) is greater than zero.
@@ -236,6 +253,21 @@ impl FileLikeBuilderState {
         F: IntoFormatterConfig,
     {
         self.common.set_formatter(formatter);
+    }
+
+    /// Replace the handler filter identifiers.
+    pub(crate) fn set_filter_ids<I, S>(&mut self, filter_ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.common.set_filter_ids(filter_ids);
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        self.common.filter_ids()
     }
 
     /// Update the overflow policy in place.
