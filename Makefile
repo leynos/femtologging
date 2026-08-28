@@ -108,7 +108,9 @@ test: build ## Run tests
 	uv run pytest -v
 
 typecheck: build ## Static type analysis
-	ty check
+	# Pass the environment explicitly: ty 0.0.75 ignores the equivalent
+	# `[tool.ty.environment]` settings, and CI installs ty unpinned.
+	ty check --python ./.venv --extra-search-path scripts
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
