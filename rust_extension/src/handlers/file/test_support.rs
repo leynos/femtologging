@@ -70,3 +70,26 @@ pub(crate) fn clear_logs() {
             .clear();
     }
 }
+
+/// Implement [`std::io::Seek`] for a test double whose writer stands in for
+/// something unseekable (e.g. an in-memory buffer or channel-backed stub).
+///
+/// Every rotation-capable writer must implement `Seek`, but most test
+/// doubles never need real seek support; they exist only to observe writes.
+/// This macro provides a single `seek` implementation that always reports
+/// [`std::io::ErrorKind::Unsupported`], so each test double states its type
+/// name once instead of hand-writing the same stub repeatedly.
+macro_rules! impl_unsupported_seek {
+    ($ty:ty) => {
+        impl std::io::Seek for $ty {
+            fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    concat!("seek unsupported for ", stringify!($ty)),
+                ))
+            }
+        }
+    };
+}
+
+pub(crate) use impl_unsupported_seek;

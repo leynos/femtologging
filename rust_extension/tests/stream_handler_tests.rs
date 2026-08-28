@@ -15,53 +15,11 @@ use serial_test::serial;
 
 #[path = "test_utils/mod.rs"]
 mod test_utils;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
+use test_utils::HandleExpect;
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
 use test_utils::shared_buffer::std::read_output;
 use test_utils::std::SharedBuf;
-
-trait HandleExpect {
-    fn expect_handle(&self, record: FemtoLogRecord);
-}
-
-impl HandleExpect for FemtoStreamHandler {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoStreamHandler to accept record");
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for &T {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
-
-impl HandleExpect for dyn FemtoHandlerTrait {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoHandlerTrait object to accept record");
-    }
-}
-
-impl HandleExpect for dyn FemtoHandlerTrait + Send + Sync {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoHandlerTrait object to accept record");
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for Box<T> {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
 
 #[derive(Clone)]
 struct BlockingBuf {
@@ -70,14 +28,23 @@ struct BlockingBuf {
 }
 
 impl Write for BlockingBuf {
+    // This test double is driven from the handler's worker thread, so a
+    // poisoned lock must be recovered rather than turned into a second panic
+    // that would obscure the original failure.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buf.lock().unwrap().write(buf)
+        self.buf
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         // Block until the test thread releases the barrier
         self.barrier.wait();
-        self.buf.lock().unwrap().flush()
+        self.buf
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .flush()
     }
 }
 
@@ -177,7 +144,7 @@ fn stream_handler_concurrent_usage(
         }));
     }
     for h in handles {
-        h.join().unwrap();
+        h.join().expect("producer thread panicked");
     }
     drop(handler);
 
@@ -207,7 +174,7 @@ fn stream_handler_poisoned_mutex(
     {
         let b = Arc::clone(&buffer);
         let _ = std::panic::catch_unwind(move || {
-            let _guard = b.lock().unwrap();
+            let _guard = b.lock().expect("buffer mutex should not yet be poisoned");
             panic!("poison");
         });
     }

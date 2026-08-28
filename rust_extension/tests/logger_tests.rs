@@ -1,3 +1,6 @@
+//! Behavioural tests for `FemtoLogger`: message formatting, level filtering,
+//! handler attachment and removal, and the thread-safety of both.
+
 use _femtologging_rs::FemtoLogger;
 use _femtologging_rs::QueuedRecord; // needed for clone_sender test
 use _femtologging_rs::{
@@ -8,8 +11,22 @@ use rstest::{fixture, rstest};
 #[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex};
+use test_utils::fixtures::{handler_tuple, stream_handler_for};
 use test_utils::shared_buffer::std::read_output;
 use test_utils::std::SharedBuf;
+
+/// A shared in-memory buffer paired with the handler writing into it.
+type HandlerTuple = (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler);
+
+/// Every level a logger may be set to, ordered from most to least verbose.
+const ALL_LEVELS: [FemtoLevel; 6] = [
+    FemtoLevel::Trace,
+    FemtoLevel::Debug,
+    FemtoLevel::Info,
+    FemtoLevel::Warn,
+    FemtoLevel::Error,
+    FemtoLevel::Critical,
+];
 
 #[fixture]
 fn dual_handler_setup() -> (
@@ -83,14 +100,7 @@ fn logger_filters_levels() {
 #[test]
 fn level_parsing_and_filtering() {
     let logger = FemtoLogger::new("core".to_string());
-    for lvl in [
-        FemtoLevel::Trace,
-        FemtoLevel::Debug,
-        FemtoLevel::Info,
-        FemtoLevel::Warn,
-        FemtoLevel::Error,
-        FemtoLevel::Critical,
-    ] {
+    for lvl in ALL_LEVELS {
         logger.set_level(lvl);
         assert!(logger.log(lvl, "ok").is_some());
     }
@@ -119,13 +129,9 @@ fn logger_routes_to_multiple_handlers(
     assert_eq!(read_output(&buf2), "core [INFO] hello\n");
 }
 
-#[test]
-fn shared_handler_across_loggers() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = Arc::new(FemtoStreamHandler::new(
-        SharedBuf::new(Arc::clone(&buffer)),
-        DefaultFormatter,
-    ));
+#[rstest]
+fn shared_handler_across_loggers(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
+    let handler = Arc::new(handler);
     let l1 = FemtoLogger::new("a".to_string());
     let l2 = FemtoLogger::new("b".to_string());
     l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
@@ -140,13 +146,11 @@ fn shared_handler_across_loggers() {
     assert!(out.contains("b [INFO] two"));
 }
 
-#[test]
-fn adding_same_handler_multiple_times_duplicates_output() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
-        SharedBuf::new(Arc::clone(&buffer)),
-        DefaultFormatter,
-    ));
+#[rstest]
+fn adding_same_handler_multiple_times_duplicates_output(
+    #[from(handler_tuple)] (buffer, handler): HandlerTuple,
+) {
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = FemtoLogger::new("dup".to_string());
     logger.add_handler(handler.clone());
     logger.add_handler(handler.clone());
@@ -179,13 +183,9 @@ fn handler_added_after_logging_only_sees_future_records(
     );
     assert_eq!(read_output(&buf2), "core [INFO] after\n");
 }
-#[test]
-fn handler_can_be_removed() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
-        SharedBuf::new(Arc::clone(&buffer)),
-        DefaultFormatter,
-    ));
+#[rstest]
+fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = FemtoLogger::new("core".to_string());
     logger.add_handler(Arc::clone(&handler));
     logger.log(FemtoLevel::Info, "one");
@@ -224,13 +224,9 @@ fn drop_with_sender_clone_exits() {
     t.join().expect("Worker thread panicked");
 }
 
-#[test]
-fn logger_drains_records_on_drop() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let handler = Arc::new(FemtoStreamHandler::new(
-        SharedBuf::new(Arc::clone(&buffer)),
-        DefaultFormatter,
-    ));
+#[rstest]
+fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
+    let handler = Arc::new(handler);
     let logger = FemtoLogger::new("core".to_string());
     logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
     logger.log(FemtoLevel::Info, "one");
@@ -248,13 +244,10 @@ fn logger_drains_records_on_drop() {
 fn add_handler_is_thread_safe() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let logger = Arc::new(FemtoLogger::new("core".to_string()));
+    // All four handlers deliberately share one buffer so the test can count
+    // the lines emitted by the whole handler set.
     let new_handlers: Vec<_> = (0..4)
-        .map(|_| {
-            Arc::new(FemtoStreamHandler::new(
-                SharedBuf::new(Arc::clone(&buffer)),
-                DefaultFormatter,
-            )) as Arc<dyn FemtoHandlerTrait>
-        })
+        .map(|_| Arc::new(stream_handler_for(&buffer)) as Arc<dyn FemtoHandlerTrait>)
         .collect();
 
     let start = Arc::new(std::sync::Barrier::new(new_handlers.len() + 1));
@@ -288,14 +281,7 @@ fn add_handler_is_thread_safe() {
 #[test]
 fn get_level_returns_current_level() {
     let logger = FemtoLogger::new("core".to_string());
-    for lvl in [
-        FemtoLevel::Trace,
-        FemtoLevel::Debug,
-        FemtoLevel::Info,
-        FemtoLevel::Warn,
-        FemtoLevel::Error,
-        FemtoLevel::Critical,
-    ] {
+    for lvl in ALL_LEVELS {
         logger.set_level(lvl);
         assert_eq!(logger.get_level(), lvl);
     }
@@ -307,16 +293,9 @@ fn set_level_is_thread_safe() {
     use std::thread;
 
     let logger = Arc::new(FemtoLogger::new("concurrent".to_string()));
-    let levels = [
-        FemtoLevel::Trace,
-        FemtoLevel::Debug,
-        FemtoLevel::Info,
-        FemtoLevel::Warn,
-        FemtoLevel::Error,
-    ];
-    let barrier = Arc::new(Barrier::new(levels.len()));
+    let barrier = Arc::new(Barrier::new(ALL_LEVELS.len()));
 
-    let threads: Vec<_> = levels
+    let threads: Vec<_> = ALL_LEVELS
         .into_iter()
         .map(|lvl| {
             let lg = Arc::clone(&logger);
@@ -336,47 +315,81 @@ fn set_level_is_thread_safe() {
 
     let final_level = logger.get_level();
     assert!(
-        [
-            FemtoLevel::Trace,
-            FemtoLevel::Debug,
-            FemtoLevel::Info,
-            FemtoLevel::Warn,
-            FemtoLevel::Error,
-            FemtoLevel::Critical,
-        ]
-        .contains(&final_level),
+        ALL_LEVELS.contains(&final_level),
         "Final level should be a valid FemtoLevel variant"
     );
 }
 
-#[test]
-fn logging_during_level_change() {
+/// Number of records the producer thread emits while levels are being changed.
+const RACE_RECORD_COUNT: usize = 1000;
+
+#[rstest]
+fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
     use std::sync::Barrier;
     use std::thread;
 
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = Arc::new(FemtoLogger::new("race".to_string()));
+    logger.add_handler(Arc::clone(&handler));
     let barrier = Arc::new(Barrier::new(2));
 
     let lg = Arc::clone(&logger);
     let b = Arc::clone(&barrier);
     let producer = thread::spawn(move || {
         b.wait();
-        for _ in 0..1000 {
-            let _ = lg.log(FemtoLevel::Info, "msg");
-        }
+        // Count the records that passed the level filter so the handler
+        // output can be checked against them.
+        (0..RACE_RECORD_COUNT)
+            .filter(|_| lg.log(FemtoLevel::Info, "msg").is_some())
+            .count()
     });
 
     barrier.wait();
-    let levels = [
-        FemtoLevel::Error,
-        FemtoLevel::Trace,
-        FemtoLevel::Info,
-        FemtoLevel::Warn,
-    ];
-    for lvl in levels.iter().cycle().take(1000) {
+    for lvl in ALL_LEVELS.iter().cycle().take(RACE_RECORD_COUNT) {
         logger.set_level(*lvl);
     }
 
-    producer.join().expect("producer thread panicked");
-    // No panic means atomicity is preserved; records are either filtered or passed
+    let accepted = producer.join().expect("producer thread panicked");
+    assert!(accepted <= RACE_RECORD_COUNT);
+
+    // Only this thread writes the level, so the last value written must win:
+    // a torn or lost update would leave some other variant behind.
+    let expected_final = ALL_LEVELS[(RACE_RECORD_COUNT - 1) % ALL_LEVELS.len()];
+    assert_eq!(
+        logger.get_level(),
+        expected_final,
+        "the final set_level must be observable after the race",
+    );
+
+    // The logger must still filter correctly once the race has finished.
+    logger.set_level(FemtoLevel::Trace);
+    assert!(
+        logger.log(FemtoLevel::Info, "after").is_some(),
+        "logger should remain usable after concurrent level changes",
+    );
+    logger.set_level(FemtoLevel::Critical);
+    assert!(
+        logger.log(FemtoLevel::Info, "suppressed").is_none(),
+        "logger should still suppress records below its level",
+    );
+
+    drop(logger);
+    drop(handler);
+
+    // Records may be dropped when the logger's queue is full, but none may be
+    // fabricated, duplicated or truncated: every line must be a well-formed
+    // record that the producer actually accepted.
+    let output = read_output(&buffer);
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(
+        lines.len() <= accepted + 1,
+        "handler saw {} lines but only {accepted} records (plus one post-race record) were accepted",
+        lines.len(),
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| *line == "race [INFO] msg" || *line == "race [INFO] after"),
+        "unexpected line in handler output: {lines:?}",
+    );
 }

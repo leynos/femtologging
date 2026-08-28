@@ -14,9 +14,7 @@ fn frame_with_wrong_type_optional_field_degrades_to_none() {
     // Optional fields with wrong types should degrade to None, not error.
     // This tests the graceful degradation behaviour of get_optional_attr.
     Python::attach(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("filename", "test.py")
-            .expect("set filename should succeed");
+        let dict = base_frame_dict(py).expect("base frame dict should build");
         dict.set_item("lineno", 42)
             .expect("set lineno should succeed");
         dict.set_item("name", "test_func")
@@ -46,9 +44,7 @@ fn frame_with_wrong_type_optional_field_degrades_to_none() {
 fn frame_with_explicit_none_optional_fields_degrades_to_none() {
     // Optional fields explicitly set to Python None should become Rust None.
     Python::attach(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("filename", "test.py")
-            .expect("set filename should succeed");
+        let dict = base_frame_dict(py).expect("base frame dict should build");
         dict.set_item("lineno", 10)
             .expect("set lineno should succeed");
         dict.set_item("name", "my_func")
@@ -130,16 +126,7 @@ fn extract_locals_with_non_mapping_locals_degrades_gracefully() {
     // A locals attribute that is not a mapping (list instead of dict)
     // should degrade gracefully to None, not error.
     Python::attach(|py| {
-        let frame_dict = PyDict::new(py);
-        frame_dict
-            .set_item("filename", "test.py")
-            .expect("set filename should succeed");
-        frame_dict
-            .set_item("lineno", 1)
-            .expect("set lineno should succeed");
-        frame_dict
-            .set_item("name", "func")
-            .expect("set name should succeed");
+        let frame_dict = base_frame_dict(py).expect("base frame dict should build");
         // Set locals to a list instead of a dict
         let non_mapping_locals = PyList::new(py, &[1, 2, 3]).expect("list creation should succeed");
         frame_dict

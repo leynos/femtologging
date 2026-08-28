@@ -7,7 +7,9 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::logger_tests_helpers::{CollectingHandler, CountingHandler};
+use super::logger_tests_helpers::{
+    CollectingHandler, CountingHandler, collected_messages, enqueue_records,
+};
 
 #[test]
 fn handle_log_record_dispatches() {
@@ -35,20 +37,13 @@ fn handle_log_record_dispatches() {
 fn drain_remaining_records_pulls_all() {
     let (tx, rx) = crossbeam_channel::bounded(4);
     let h = Arc::new(CollectingHandler::new());
-    for i in 0..3 {
-        tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", FemtoLevel::Info, &format!("{i}")),
-            handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
-        })
-        .expect("Failed to send test record");
-    }
+    let handler = h.clone() as Arc<dyn FemtoHandlerTrait>;
+    enqueue_records(&tx, &handler, &["0", "1", "2"]).expect("Failed to send test record");
     drop(tx);
 
     FemtoLogger::drain_remaining_records(&rx);
 
-    let collected = h.collected();
-    let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
-    assert_eq!(msgs, vec!["0", "1", "2"]);
+    assert_eq!(collected_messages(&h), vec!["0", "1", "2"]);
 }
 
 #[test]
@@ -61,24 +56,14 @@ fn worker_thread_loop_processes_and_drains() {
         FemtoLogger::worker_thread_loop(rx, shutdown_rx);
     });
 
-    tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", FemtoLevel::Info, "one"),
-        handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
-    })
-    .expect("Failed to send first test record");
-    tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", FemtoLevel::Info, "two"),
-        handlers: vec![h.clone() as Arc<dyn FemtoHandlerTrait>],
-    })
-    .expect("Failed to send second test record");
+    let handler = h.clone() as Arc<dyn FemtoHandlerTrait>;
+    enqueue_records(&tx, &handler, &["one", "two"]).expect("Failed to send test records");
     shutdown_tx
         .send(())
         .expect("Failed to send shutdown signal");
     thread.join().expect("Worker thread panicked");
 
-    let collected = h.collected();
-    let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
-    assert_eq!(msgs, vec!["one", "two"]);
+    assert_eq!(collected_messages(&h), vec!["one", "two"]);
 }
 
 #[test]

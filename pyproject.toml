@@ -36,6 +36,9 @@ dev = [
 line-length = 88
 preview = true
 extend-exclude = [
+    # Python source fixtures embedded in Rust tests via include_str!; their
+    # shape (line numbers, minimal bodies) is part of the test data.
+    "rust_extension/src/test_fixtures",
     "scripts/generate_typos_config.py",
     "scripts/typos_rollout.py",
     "scripts/typos_rollout_cache.py",

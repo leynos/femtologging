@@ -4,6 +4,7 @@ use super::*;
 use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
 use crate::log_record::RecordMetadata;
+use crate::logger::FemtoLogger;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use pyo3::types::PyDict;
 use rstest::{fixture, rstest};
@@ -19,6 +20,22 @@ fn unique_logger_name() -> String {
     format!("conv.test.{suffix}")
 }
 
+/// Fetch `name`'s logger and attach a fresh [`CollectingHandler`] to it.
+///
+/// This cannot be an rstest fixture because the logger is GIL-bound, so it is a
+/// plain fallible helper invoked from inside `Python::attach`.
+fn logger_with_collecting_handler(
+    py: Python<'_>,
+    name: &str,
+) -> PyResult<(Py<FemtoLogger>, Arc<CollectingHandler>)> {
+    let logger = manager::get_logger(py, name)?;
+    let handler = Arc::new(CollectingHandler::default());
+    logger
+        .borrow(py)
+        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    Ok((logger, handler))
+}
+
 #[rstest]
 #[case::debug(FemtoLevel::Debug, "DEBUG", "debug msg", true)]
 #[case::info(FemtoLevel::Info, "INFO", "info msg", false)]
@@ -32,15 +49,11 @@ fn log_dispatches_at_specified_level(
     #[case] set_debug_level: bool,
 ) {
     Python::attach(|py| {
-        let logger =
-            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
+        let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
+            .expect("logger should be created");
         if set_debug_level {
             logger.borrow(py).set_level(FemtoLevel::Debug);
         }
-        let handler = Arc::new(CollectingHandler::default());
-        logger
-            .borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
 
         let result =
             log_at_level(py, level, message, Some(&unique_logger_name)).expect("should not error");
@@ -57,10 +70,8 @@ fn log_dispatches_at_specified_level(
 #[rstest]
 fn default_logger_is_root() {
     Python::attach(|py| {
-        let root = manager::get_logger(py, "root").expect("root logger should exist");
-        let handler = Arc::new(CollectingHandler::default());
-        root.borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (root, handler) =
+            logger_with_collecting_handler(py, "root").expect("root logger should exist");
 
         let result =
             log_at_level(py, FemtoLevel::Info, "root msg", None).expect("should not error");
@@ -95,12 +106,8 @@ fn source_location_falls_back_gracefully(unique_logger_name: String) {
     // retrieve source location.  The fallback should produce empty/zero
     // metadata rather than raising an error.
     Python::attach(|py| {
-        let logger =
-            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
-        let handler = Arc::new(CollectingHandler::default());
-        logger
-            .borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
+            .expect("logger should be created");
 
         let _result = log_at_level(py, FemtoLevel::Info, "located", Some(&unique_logger_name))
             .expect("should not error");
@@ -126,12 +133,8 @@ fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
     }
 
     Python::attach(|py| {
-        let logger =
-            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
-        let handler = Arc::new(CollectingHandler::default());
-        logger
-            .borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
+            .expect("logger should be created");
 
         let ctx = PyDict::new(py);
         ctx.set_item("request_id", 42).expect("set request_id");
@@ -174,12 +177,8 @@ fn context_rejects_invalid_value_type() {
 #[rstest]
 fn invalid_merged_context_drops_record(unique_logger_name: String) {
     Python::attach(|py| {
-        let logger =
-            manager::get_logger(py, &unique_logger_name).expect("logger should be created");
-        let handler = Arc::new(CollectingHandler::default());
-        logger
-            .borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
+            .expect("logger should be created");
 
         let mut invalid_key_values = BTreeMap::new();
         invalid_key_values.insert(String::from("oversize"), "x".repeat(1_025));

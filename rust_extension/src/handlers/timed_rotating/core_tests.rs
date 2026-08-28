@@ -4,12 +4,13 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::time::{Duration as StdDuration, SystemTime};
 
-use chrono::{Duration, NaiveTime};
+use chrono::{Duration, NaiveTime, Utc};
 use filetime::FileTime;
 use rstest::rstest;
 use tempfile::tempdir;
 
 use crate::formatter::DefaultFormatter;
+use crate::handler::FemtoHandlerTrait;
 use crate::handlers::{
     file::{HandlerConfig, OverflowPolicy, RotationStrategy},
     timed_rotating::{
@@ -17,6 +18,8 @@ use crate::handlers::{
         schedule::TimedRotationWhen,
     },
 };
+use crate::level::FemtoLevel;
+use crate::log_record::FemtoLogRecord;
 
 use super::core::TimedFileRotationStrategy;
 use super::schedule::TimedRotationSchedule;
@@ -183,11 +186,16 @@ fn production_handler_seeds_rollover_from_file_mtime() {
     let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("timed.log");
 
-    // Create the log file and set its mtime to a past time
+    // Create the log file and set its mtime well in the past (relative to
+    // the real clock the production handler uses) so the rollover deadline
+    // seeded from that mtime (mtime + 1h) has already elapsed. If the
+    // handler seeded `next_rollover_at` from `now` instead of the file's
+    // mtime, the first write below would not trigger a rotation.
     fs::write(&path, "initial content\n").expect("log file must be created");
-    let mtime_datetime = utc_datetime!("2026-03-12T08:00:00Z");
-    let mtime_systime =
-        SystemTime::UNIX_EPOCH + StdDuration::from_secs(mtime_datetime.timestamp() as u64);
+    let mtime_datetime = Utc::now() - Duration::hours(3);
+    let mtime_secs = u64::try_from(mtime_datetime.timestamp())
+        .expect("mtime timestamp must be after the Unix epoch");
+    let mtime_systime = SystemTime::UNIX_EPOCH + StdDuration::from_secs(mtime_secs);
     let file_time = FileTime::from_system_time(mtime_systime);
     filetime::set_file_mtime(&path, file_time).expect("mtime must be set");
 
@@ -196,14 +204,14 @@ fn production_handler_seeds_rollover_from_file_mtime() {
         .expect("hourly schedule must validate");
     let config = HandlerConfig {
         capacity: 1024,
-        flush_interval: 0,
+        flush_interval: 1,
         overflow_policy: OverflowPolicy::Block,
     };
     let rotation_config = TimedRotationConfig {
         schedule: schedule.clone(),
         backup_count: 1,
     };
-    let _handler = FemtoTimedRotatingFileHandler::with_capacity_flush_policy(
+    let handler = FemtoTimedRotatingFileHandler::with_capacity_flush_policy(
         &path,
         DefaultFormatter,
         config,
@@ -211,9 +219,33 @@ fn production_handler_seeds_rollover_from_file_mtime() {
     )
     .expect("handler must be created");
 
-    // The handler construction succeeded, which validates that the mtime-based
-    // seeding logic runs without error. Direct verification would require
-    // exposing the rotation strategy's next_rollover_at, which is not public.
-    // The existing unit tests for TimedFileRotationStrategy::seed_rollover_from
-    // and the integration behavior during rotation already provide coverage.
+    handler
+        .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "after seed"))
+        .expect("record must be queued");
+    // Dropping the handler waits for the worker thread to drain the queue,
+    // flush, and shut down, so the rotation triggered by the first write is
+    // guaranteed to be visible on disk afterwards.
+    drop(handler);
+
+    let expected_rollover = schedule.next_rollover(mtime_datetime);
+    let backup_path = path.with_file_name(format!(
+        "timed.log.{}",
+        schedule.suffix_for(expected_rollover)
+    ));
+    assert!(
+        backup_path.exists(),
+        "rollover seeded from the file mtime should trigger an immediate \
+         rotation, producing {backup_path:?}",
+    );
+    let backup_contents = fs::read_to_string(&backup_path).expect("backup file must be readable");
+    assert_eq!(
+        backup_contents, "initial content\n",
+        "rotated backup must contain the pre-existing content",
+    );
+
+    let primary_contents = fs::read_to_string(&path).expect("primary log file must be readable");
+    assert!(
+        primary_contents.contains("after seed"),
+        "primary log file must contain the new record after rotation: {primary_contents:?}",
+    );
 }

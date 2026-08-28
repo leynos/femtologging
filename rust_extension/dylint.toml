@@ -18,8 +18,12 @@
 #   inspect log files with ambient tempdir access, matching the "test
 #   support utilities" exclusion in the Whitaker user's guide. Add new test
 #   crates here deliberately when they need ambient fixture I/O.
+# - heavy: loom and proptest concurrency test crate; its file-flush model
+#   inspects a tempdir-staged log file with ambient std::fs reads, matching
+#   the same test-support exclusion as file_handler_tests.
 [no_std_fs_operations]
 excluded_crates = [
     "_femtologging_rs",
     "file_handler_tests",
+    "heavy",
 ]

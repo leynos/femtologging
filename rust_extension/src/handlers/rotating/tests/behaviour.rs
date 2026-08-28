@@ -12,7 +12,7 @@ use crate::log_record::FemtoLogRecord;
 use rstest::rstest;
 use serial_test::serial;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use tempfile::tempdir;
 
 #[rstest]
@@ -38,125 +38,157 @@ fn rotation_predicate_respects_byte_lengths(
     #[case] max_bytes: u64,
     #[case] should_rotate: bool,
     #[case] backup_count: usize,
-) -> io::Result<()> {
-    let dir = tempdir()?;
+) {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("rotating.log");
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(&path)?;
-    file.write_all(initial.as_bytes())?;
-    file.flush()?;
+        .open(&path)
+        .expect("log file must open for initial seed content");
+    file.write_all(initial.as_bytes())
+        .expect("initial seed content must be written");
+    file.flush().expect("initial seed content must flush");
     drop(file);
 
-    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("log file must reopen for buffered content");
     let mut writer = BufWriter::new(file);
-    writer.write_all(buffered.as_bytes())?;
+    writer
+        .write_all(buffered.as_bytes())
+        .expect("buffered content must be written");
 
     let mut strategy = FileRotationStrategy::new(path.clone(), max_bytes, backup_count);
     let next_bytes = FileRotationStrategy::next_record_bytes(message);
     assert_eq!(
-        strategy.should_rotate(&writer, next_bytes)?,
+        strategy
+            .should_rotate(&writer, next_bytes)
+            .expect("rotation predicate must succeed"),
         should_rotate,
         "rotation decision mismatch for message {message:?}"
     );
 
     if should_rotate {
-        strategy.rotate(&mut writer)?;
-        writer.flush()?;
-        let mut reopened = OpenOptions::new().read(true).open(&path)?;
+        strategy.rotate(&mut writer).expect("rotation must succeed");
+        writer.flush().expect("post-rotation flush must succeed");
+        let mut reopened = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .expect("rotated log file must reopen for reading");
         let mut contents = String::new();
-        reopened.read_to_string(&mut contents)?;
+        reopened
+            .read_to_string(&mut contents)
+            .expect("rotated log file must be readable");
         assert!(contents.is_empty(), "rotated file should be truncated");
     }
-
-    Ok(())
 }
 
 #[rstest]
-fn rotate_promotes_existing_backups() -> io::Result<()> {
-    let dir = tempdir()?;
+fn rotate_promotes_existing_backups() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("rotating.log");
-    fs::write(path.with_extension("log.1"), "old backup")?;
-    fs::write(&path, "seed")?;
+    fs::write(path.with_extension("log.1"), "old backup")
+        .expect("existing backup file must be seeded");
+    fs::write(&path, "seed").expect("primary log file must be seeded");
 
-    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("primary log file must open");
     let mut writer = BufWriter::new(file);
     let mut strategy = FileRotationStrategy::new(path.clone(), 1, 2);
-    strategy.rotate(&mut writer)?;
-    writer.flush()?;
+    strategy.rotate(&mut writer).expect("rotation must succeed");
+    writer.flush().expect("post-rotation flush must succeed");
 
-    let promoted = fs::read_to_string(path.with_extension("log.2"))?;
+    let promoted = fs::read_to_string(path.with_extension("log.2"))
+        .expect("promoted backup file must be readable");
     assert_eq!(promoted, "old backup");
-    let newest = fs::read_to_string(path.with_extension("log.1"))?;
+    let newest = fs::read_to_string(path.with_extension("log.1"))
+        .expect("newest backup file must be readable");
     assert_eq!(newest, "seed");
-
-    Ok(())
 }
 
 #[test]
-fn rotation_truncates_in_place_when_no_backups() -> io::Result<()> {
-    let dir = tempdir()?;
+fn rotation_truncates_in_place_when_no_backups() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("rotating.log");
 
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(&path)?;
+        .open(&path)
+        .expect("log file must open for seed content");
     let mut writer = BufWriter::new(file);
-    writer.write_all(b"before\n")?;
-    writer.flush()?;
+    writer
+        .write_all(b"before\n")
+        .expect("seed content must be written");
+    writer.flush().expect("seed content must flush");
 
-    let mut reader = OpenOptions::new().read(true).open(&path)?;
+    let mut reader = OpenOptions::new()
+        .read(true)
+        .open(&path)
+        .expect("log file must open for reading");
     let mut strategy = FileRotationStrategy::new(path.clone(), 1, 0);
-    strategy.rotate(&mut writer)?;
+    strategy.rotate(&mut writer).expect("rotation must succeed");
 
-    writer.write_all(b"after\n")?;
-    writer.flush()?;
+    writer
+        .write_all(b"after\n")
+        .expect("post-rotation content must be written");
+    writer.flush().expect("post-rotation content must flush");
 
-    reader.seek(SeekFrom::Start(0))?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .expect("reader must seek back to the start");
     let mut observed = String::new();
-    reader.read_to_string(&mut observed)?;
+    reader
+        .read_to_string(&mut observed)
+        .expect("rotated log file must be readable");
     assert_eq!(observed, "after\n");
-
-    Ok(())
 }
 
 #[rstest]
-fn rotate_prunes_excess_backups_when_limit_lowered() -> io::Result<()> {
-    let dir = tempdir()?;
+fn rotate_prunes_excess_backups_when_limit_lowered() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("rotating.log");
-    fs::write(path.with_extension("log.1"), "keep")?;
-    fs::write(path.with_extension("log.2"), "prune one")?;
-    fs::write(path.with_extension("log.3"), "prune two")?;
-    fs::write(&path, "seed")?;
+    fs::write(path.with_extension("log.1"), "keep").expect("backup 1 must be seeded");
+    fs::write(path.with_extension("log.2"), "prune one").expect("backup 2 must be seeded");
+    fs::write(path.with_extension("log.3"), "prune two").expect("backup 3 must be seeded");
+    fs::write(&path, "seed").expect("primary log file must be seeded");
 
-    let file = OpenOptions::new().read(true).write(true).open(&path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("primary log file must open");
     let mut writer = BufWriter::new(file);
     let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
-    strategy.rotate(&mut writer)?;
-    writer.flush()?;
+    strategy.rotate(&mut writer).expect("rotation must succeed");
+    writer.flush().expect("post-rotation flush must succeed");
 
     assert!(!path.with_extension("log.2").exists());
     assert!(!path.with_extension("log.3").exists());
-    let newest = fs::read_to_string(path.with_extension("log.1"))?;
+    let newest = fs::read_to_string(path.with_extension("log.1"))
+        .expect("newest backup file must be readable");
     assert_eq!(newest, "seed");
-
-    Ok(())
 }
 
 #[rstest]
-fn rotating_handler_performs_size_based_rotation() -> io::Result<()> {
-    let dir = tempdir()?;
+fn rotating_handler_performs_size_based_rotation() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("rotating.log");
     let handler = FemtoRotatingFileHandler::with_capacity_flush_policy(
         &path,
         DefaultFormatter,
         HandlerConfig::default(),
         RotationConfig::new(20, 2),
-    )?;
+    )
+    .expect("rotating handler must be created");
     handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
         .expect("first record queued");
@@ -165,39 +197,27 @@ fn rotating_handler_performs_size_based_rotation() -> io::Result<()> {
         .expect("second record queued");
     drop(handler);
 
-    let primary = fs::read_to_string(&path)?;
+    let primary = fs::read_to_string(&path).expect("primary log file must be readable");
     assert!(primary.contains("second"));
     let backup = path.with_extension("log.1");
     assert!(backup.exists(), "expected first backup file");
-    let backup_contents = fs::read_to_string(backup)?;
+    let backup_contents = fs::read_to_string(backup).expect("backup file must be readable");
     assert!(backup_contents.contains("first"));
-
-    Ok(())
 }
 
 #[rstest]
 fn rotating_handler_respects_test_builder_defaults() {
-    struct NoopWriter;
-    impl Write for NoopWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
+    let dir = tempdir().expect("tempdir must create a temporary directory");
+    let path = dir.path().join("builder_defaults.log");
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .read(true)
+        .truncate(true)
+        .open(&path)
+        .expect("log file must open");
 
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl Seek for NoopWriter {
-        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-            Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "seek unsupported for NoopWriter",
-            ))
-        }
-    }
-
-    let mut cfg = TestConfig::new(NoopWriter, DefaultFormatter);
+    let mut cfg = TestConfig::new(file, DefaultFormatter);
     cfg.capacity = 2;
     cfg.flush_interval = 1;
 
@@ -206,8 +226,21 @@ fn rotating_handler_respects_test_builder_defaults() {
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"))
         .expect("record queued");
     drop(handler);
+
+    let contents = fs::read_to_string(&path).expect("log file must be readable");
+    assert_eq!(
+        contents, "core [INFO] message\n",
+        "default builder options (NoRotation) must write the record without rotating"
+    );
+    assert!(
+        !path.with_extension("log.1").exists(),
+        "default builder options must not create a rotated backup file"
+    );
 }
 
+// `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
+// so these tests are not recognised as test-only code and must propagate
+// errors with `?` rather than `.expect(...)`.
 #[serial(rotating_fresh_failure)]
 #[test]
 fn before_write_reports_rotation_outcome() -> io::Result<()> {
@@ -243,6 +276,9 @@ fn before_write_reports_rotation_outcome() -> io::Result<()> {
     Ok(())
 }
 
+// `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
+// so this test is not recognised as test-only code and must propagate
+// errors with `?` rather than `.expect(...)`.
 #[serial(rotating_fresh_failure)]
 #[test]
 fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {

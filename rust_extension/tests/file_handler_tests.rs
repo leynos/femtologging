@@ -18,40 +18,26 @@ use tempfile::NamedTempFile;
 #[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex};
+use test_utils::HandleExpect;
+use test_utils::shared_buffer::std::read_output;
 use test_utils::std::SharedBuf;
-
-trait HandleExpect {
-    fn expect_handle(&self, record: FemtoLogRecord);
-}
-
-impl HandleExpect for FemtoFileHandler {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoFileHandler to accept record");
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for &T {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
-
-impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
-}
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
 ///
-/// `capacity` is forwarded to `FemtoFileHandler::with_capacity`.
-fn with_temp_file_handler_generic<F>(capacity: usize, flush_interval: usize, f: F) -> String
+/// Setup failures are propagated rather than panicking, so the calling test
+/// decides how to report them.
+///
+/// `capacity` is forwarded to `FemtoFileHandler::with_capacity_flush_policy`.
+fn with_temp_file_handler_generic<F>(
+    capacity: usize,
+    flush_interval: usize,
+    f: F,
+) -> io::Result<String>
 where
     F: FnOnce(&FemtoFileHandler),
 {
-    let tmp = NamedTempFile::new().expect("failed to create temp file");
+    let tmp = NamedTempFile::new()?;
     let path = tmp.path().to_path_buf();
     {
         let cfg = HandlerConfig {
@@ -59,32 +45,75 @@ where
             flush_interval,
             overflow_policy: OverflowPolicy::Drop,
         };
-        let handler = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg)
-            .expect("failed to create file handler");
+        let handler = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg)?;
         f(&handler);
     }
-    fs::read_to_string(&path).expect("failed to read log output")
+    fs::read_to_string(&path)
 }
 
-pub fn with_temp_file_handler<F>(capacity: usize, f: F) -> String
+/// Run `f` against a temporary-file handler that flushes after every record.
+fn with_temp_file_handler<F>(capacity: usize, f: F) -> io::Result<String>
 where
     F: FnOnce(&FemtoFileHandler),
 {
     with_temp_file_handler_generic(capacity, 1, f)
 }
 
-pub fn with_temp_file_handler_flush<F>(capacity: usize, flush_interval: usize, f: F) -> String
+/// Run `f` against a temporary-file handler with an explicit flush interval.
+fn with_temp_file_handler_flush<F>(
+    capacity: usize,
+    flush_interval: usize,
+    f: F,
+) -> io::Result<String>
 where
     F: FnOnce(&FemtoFileHandler),
 {
     with_temp_file_handler_generic(capacity, flush_interval, f)
 }
 
+/// A handler wired to an in-memory buffer whose worker thread is gated on a
+/// barrier, so a test can saturate the queue before any record is drained.
+///
+/// This makes the overflow policies observable: without the barrier the worker
+/// would drain records as fast as they are queued and the queue would never
+/// fill.
+struct OverflowHarness {
+    buffer: Arc<Mutex<Vec<u8>>>,
+    /// Released by the test to let the worker thread begin draining.
+    start: Arc<Barrier>,
+    handler: FemtoFileHandler,
+}
+
+impl OverflowHarness {
+    /// Build a harness with the given queue `capacity` and overflow `policy`.
+    fn new(capacity: usize, policy: OverflowPolicy) -> Self {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let start = Arc::new(Barrier::new(2));
+        let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
+        cfg.capacity = capacity;
+        cfg.flush_interval = 1;
+        cfg.overflow_policy = policy;
+        cfg.start_barrier = Some(Arc::clone(&start));
+        let handler = FemtoFileHandler::with_writer_for_test(cfg);
+        Self {
+            buffer,
+            start,
+            handler,
+        }
+    }
+
+    /// Return everything the worker thread has written so far.
+    fn output(&self) -> String {
+        read_output(&self.buffer)
+    }
+}
+
 #[test]
 fn file_handler_writes_to_file() {
     let output = with_temp_file_handler(10, |h| {
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
-    });
+    })
+    .expect("temporary file handler setup failed");
 
     assert_eq!(output, "core [INFO] hello\n");
 }
@@ -95,7 +124,8 @@ fn multiple_records_are_serialized() {
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Warn, "second"));
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Error, "third"));
-    });
+    })
+    .expect("temporary file handler setup failed");
 
     assert_eq!(
         output,
@@ -105,19 +135,13 @@ fn multiple_records_are_serialized() {
 
 #[test]
 fn queue_overflow_drops_excess_records() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let start = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
-    cfg.capacity = 3;
-    cfg.flush_interval = 1;
-    cfg.overflow_policy = OverflowPolicy::Drop;
-    cfg.start_barrier = Some(Arc::clone(&start));
-    let handler = FemtoFileHandler::with_writer_for_test(cfg);
+    let harness = OverflowHarness::new(3, OverflowPolicy::Drop);
 
     for i in 0..10 {
         // Intentionally ignore errors; overflow testing expects some records
         // to be dropped.
-        let _ = handler
+        let _ = harness
+            .handler
             .handle(FemtoLogRecord::new(
                 "core",
                 FemtoLevel::Info,
@@ -126,16 +150,14 @@ fn queue_overflow_drops_excess_records() {
             .ok();
     }
     // Allow the worker thread to start processing after all records are queued.
-    start.wait();
+    harness.start.wait();
+    let OverflowHarness {
+        buffer, handler, ..
+    } = harness;
     drop(handler);
 
-    let output = {
-        let buf = buffer.lock().unwrap();
-        String::from_utf8_lossy(&buf).to_string()
-    };
-
     assert_eq!(
-        output,
+        read_output(&buffer),
         "core [INFO] msg0\ncore [INFO] msg1\ncore [INFO] msg2\n",
     );
 }
@@ -178,7 +200,8 @@ fn file_handler_custom_flush_interval() {
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "third"));
-    });
+    })
+    .expect("temporary file handler setup failed");
 
     assert_eq!(
         output,
@@ -207,20 +230,15 @@ fn file_handler_flush_interval_zero() {
 fn file_handler_flush_interval_one() {
     let output = with_temp_file_handler_flush(8, 1, |h| {
         h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"));
-    });
+    })
+    .expect("temporary file handler setup failed");
     assert_eq!(output, "core [INFO] message\n");
 }
 
 #[test]
 fn blocking_policy_waits_for_space() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let start = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
-    cfg.capacity = 1;
-    cfg.flush_interval = 1;
-    cfg.overflow_policy = OverflowPolicy::Block;
-    cfg.start_barrier = Some(Arc::clone(&start));
-    let handler = Arc::new(FemtoFileHandler::with_writer_for_test(cfg));
+    let harness = OverflowHarness::new(1, OverflowPolicy::Block);
+    let handler = Arc::new(harness.handler);
 
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
     let h = Arc::clone(&handler);
@@ -229,36 +247,42 @@ fn blocking_policy_waits_for_space() {
     });
     thread::sleep(Duration::from_millis(50));
     assert!(!t.is_finished());
-    start.wait();
-    t.join().unwrap();
+    harness.start.wait();
+    t.join().expect("blocked producer thread panicked");
     assert!(handler.flush());
 
-    let buf = buffer.lock().unwrap();
-    let output = String::from_utf8_lossy(&buf);
+    let output = read_output(&harness.buffer);
     assert!(output.contains("core [INFO] first"));
     assert!(output.contains("core [INFO] second"));
-    let first_idx = output.find("core [INFO] first").unwrap();
-    let second_idx = output.find("core [INFO] second").unwrap();
+    let first_idx = output
+        .find("core [INFO] first")
+        .expect("first record missing from output");
+    let second_idx = output
+        .find("core [INFO] second")
+        .expect("second record missing from output");
     assert!(first_idx < second_idx);
 }
 
 #[test]
 fn timeout_policy_gives_up() {
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let start = Arc::new(Barrier::new(2));
-    let mut cfg = TestConfig::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
-    cfg.capacity = 1;
-    cfg.flush_interval = 1;
-    cfg.overflow_policy = OverflowPolicy::Timeout(Duration::from_millis(50));
-    cfg.start_barrier = Some(Arc::clone(&start));
-    let handler = FemtoFileHandler::with_writer_for_test(cfg);
+    let harness = OverflowHarness::new(1, OverflowPolicy::Timeout(Duration::from_millis(50)));
 
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+    harness
+        .handler
+        .expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
     let start_time = Instant::now();
-    let err = handler
+    let err = harness
+        .handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
         .expect_err("second record should time out");
     assert_eq!(err, HandlerError::Timeout(Duration::from_millis(50)));
     assert!(start_time.elapsed() >= Duration::from_millis(50));
-    start.wait();
+    harness.start.wait();
+    // Flushing waits for the worker to acknowledge, so the queued record is
+    // guaranteed to have reached the buffer by the time this returns.
+    assert!(harness.handler.flush());
+    assert!(
+        harness.output().contains("core [INFO] first"),
+        "the queued record should still be written once the worker resumes",
+    );
 }

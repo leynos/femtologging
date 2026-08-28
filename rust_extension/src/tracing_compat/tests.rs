@@ -14,6 +14,15 @@ use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
 
+/// Assert that flushing the logger bound to `$logger` (via `$py`) succeeds,
+/// panicking with a message from the caller's line on failure.
+macro_rules! assert_flush {
+    ($py:expr, $logger:expr) => {{
+        let flushed = $logger.borrow($py).flush_handlers();
+        assert!(flushed, "flush should drain the queue");
+    }};
+}
+
 fn attach_collecting_handler(logger_name: &str) -> pyo3::PyResult<Arc<CollectingHandler>> {
     let handler = Arc::new(CollectingHandler::default());
     Python::attach(|py| -> pyo3::PyResult<()> {
@@ -38,10 +47,7 @@ where
     tracing::subscriber::with_default(subscriber, emit);
     Python::attach(|py| -> pyo3::PyResult<()> {
         let logger = manager::get_logger(py, logger_name)?;
-        assert!(
-            logger.borrow(py).flush_handlers(),
-            "flush should drain the queue"
-        );
+        assert_flush!(py, logger);
         Ok(())
     })?;
     Ok(handler.collected())
@@ -154,10 +160,7 @@ fn logger_thresholds_still_apply() {
 
     Python::attach(|py| {
         let logger = manager::get_logger(py, logger_name).expect("logger created");
-        assert!(
-            logger.borrow(py).flush_handlers(),
-            "flush should drain the queue"
-        );
+        assert_flush!(py, logger);
     });
     let records = handler.collected();
     assert_eq!(records.len(), 1);

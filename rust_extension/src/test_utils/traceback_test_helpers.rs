@@ -4,12 +4,16 @@
 //! values so unit tests can exercise the conversion logic in
 //! [`crate::traceback_frames`].
 
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeMap;
 
-use crate::exception_schema::StackFrame;
 use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
+
+// Re-exported so `use crate::test_utils::traceback_test_helpers::*;` continues
+// to bring the frame assertion helpers into scope.
+pub use crate::test_utils::frame_assertion_helpers::*;
 
 /// Create a `types.SimpleNamespace` object from a [`PyDict`].
 pub fn create_simple_namespace<'py>(
@@ -21,15 +25,51 @@ pub fn create_simple_namespace<'py>(
         .call((), Some(dict))
 }
 
+/// Look up a name in the `builtins` module, such as an exception type.
+pub fn builtin_type<'py>(py: Python<'py>, type_name: &str) -> PyResult<Bound<'py, PyAny>> {
+    py.import("builtins")?.getattr(type_name)
+}
+
+/// Create a built-in exception instance from `type_name` with the given arguments.
+///
+/// Useful where a test needs an exception type other than `ValueError`, such as
+/// `KeyError`, without repeating the `builtins` lookup at every call site.
+pub fn create_builtin_exception<'py>(
+    py: Python<'py>,
+    type_name: &str,
+    args: impl pyo3::call::PyCallArgs<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    builtin_type(py, type_name)?.call1(args)
+}
+
+/// Create a `ValueError` instance carrying the given message.
+pub fn create_value_error<'py>(py: Python<'py>, message: &str) -> PyResult<Bound<'py, PyAny>> {
+    create_builtin_exception(py, "ValueError", (message,))
+}
+
+/// Create a `BaseException` instance with no arguments.
+pub fn create_base_exception<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    builtin_type(py, "BaseException")?.call0()
+}
+
+/// Create a frame dict pre-populated with the three required frame fields.
+///
+/// Tests that only care about optional or malformed fields can start from this
+/// dict and override or add entries as needed.
+pub fn base_frame_dict(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let frame_dict = PyDict::new(py);
+    frame_dict.set_item("filename", "test.py")?;
+    frame_dict.set_item("lineno", 1)?;
+    frame_dict.set_item("name", "func")?;
+    Ok(frame_dict)
+}
+
 /// Create a frame dict with locals for testing [`crate::traceback_frames::extract_locals_dict`].
 pub fn create_frame_dict_with_locals<'py>(
     py: Python<'py>,
     locals_dict: &Bound<'py, PyDict>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let frame_dict = PyDict::new(py);
-    frame_dict.set_item("filename", "test.py")?;
-    frame_dict.set_item("lineno", 1)?;
-    frame_dict.set_item("name", "func")?;
+    let frame_dict = base_frame_dict(py)?;
     frame_dict.set_item("locals", locals_dict)?;
     Ok(frame_dict)
 }
@@ -184,29 +224,92 @@ pub fn add_bad_repr_entry(locals_dict: &Bound<'_, PyDict>, key: &str) -> PyResul
     locals_dict.set_item(key, bad_repr_obj)
 }
 
+/// Arrange a single-frame stack summary from `dict` and return the error that
+/// frame extraction raises for it.
+///
+/// Returns an error when the arrangement (namespace or list creation) fails, or
+/// when extraction unexpectedly succeeds.
+pub fn frame_extraction_error(dict: &Bound<'_, PyDict>) -> PyResult<PyErr> {
+    let py = dict.py();
+    let frame = create_simple_namespace(py, dict)?;
+    let list = PyList::new(py, &[frame])?;
+    match extract_frames_from_stack_summary(list.as_any()) {
+        Ok(frames) => Err(PyRuntimeError::new_err(format!(
+            "frame extraction should fail, but yielded {} frame(s)",
+            frames.len()
+        ))),
+        Err(err) => Ok(err),
+    }
+}
+
+/// Assert that an error's rendered message contains the expected substring.
+#[track_caller]
+pub fn assert_error_message_contains(err: &PyErr, expected_substr: &str) {
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains(expected_substr),
+        "expected error containing {expected_substr:?}, got {err_text:?}"
+    );
+}
+
 /// Assert that extracting a frame from the provided dict fails with an error
 /// containing the expected substring.
-/// Returns an error when the arrangement (namespace or list creation) fails;
-/// the assertion itself panics with the calling test's location.
+///
+/// Returns an error when the arrangement fails; the assertion itself panics
+/// with the calling test's location.
 #[track_caller]
 pub fn assert_frame_extraction_error_contains(
     dict: &Bound<'_, PyDict>,
     expected_substr: &str,
 ) -> PyResult<()> {
-    let py = dict.py();
-    let frame = create_simple_namespace(py, dict)?;
-    let list = PyList::new(py, &[frame])?;
-    let result = extract_frames_from_stack_summary(list.as_any());
-    let Err(err) = result else {
-        panic!("frame extraction should fail");
-    };
-    let err_text = err.to_string();
-
-    assert!(
-        err_text.contains(expected_substr),
-        "expected error containing {expected_substr:?}, got {err_text:?}"
-    );
+    let err = frame_extraction_error(dict)?;
+    assert_error_message_contains(&err, expected_substr);
     Ok(())
+}
+
+/// Extracted locals for a frame built around `locals_dict`.
+///
+/// Arranges the frame dict and namespace, then calls
+/// [`crate::traceback_frames::extract_locals_dict`], propagating arrangement
+/// failures to the caller.
+pub fn extract_locals_for_dict(
+    locals_dict: &Bound<'_, PyDict>,
+) -> PyResult<Option<BTreeMap<String, String>>> {
+    let py = locals_dict.py();
+    let frame_dict = create_frame_dict_with_locals(py, locals_dict)?;
+    let frame = create_simple_namespace(py, &frame_dict)?;
+    Ok(extract_locals_dict(&frame))
+}
+
+/// Compare extracted locals against the expected entries.
+///
+/// Returns `Err` with a human-readable explanation when the two disagree. This
+/// is a pure query over already-extracted data, so it never panics.
+pub fn compare_locals(
+    actual: Option<&BTreeMap<String, String>>,
+    expected: Option<&[(&str, &str)]>,
+) -> Result<(), String> {
+    match (expected, actual) {
+        (Some(expected_entries), Some(locals)) => {
+            if locals.len() != expected_entries.len() {
+                return Err(format!(
+                    "expected {} locals entries, found {} ({locals:?})",
+                    expected_entries.len(),
+                    locals.len()
+                ));
+            }
+            for (key, value) in expected_entries {
+                let found = locals.get(*key).map(String::as_str);
+                if found != Some(*value) {
+                    return Err(format!("key {key:?} should be {value:?}, found {found:?}"));
+                }
+            }
+            Ok(())
+        }
+        (Some(_), None) => Err("locals should be extracted, found None".to_string()),
+        (None, Some(locals)) => Err(format!("locals should be None, found {locals:?}")),
+        (None, None) => Ok(()),
+    }
 }
 
 /// Assert the result of `extract_locals_dict` against expected entries.
@@ -214,35 +317,16 @@ pub fn assert_frame_extraction_error_contains(
 /// Builds a frame from the provided locals dict, calls `extract_locals_dict`,
 /// and verifies that the result matches the expected entries (or is `None`).
 /// Returns an error when the arrangement (frame construction) fails; the
-/// assertions themselves panic with the calling test's location.
+/// assertion itself panics with the calling test's location.
 #[track_caller]
 pub fn assert_locals_extraction_result(
     locals_dict: &Bound<'_, PyDict>,
     expected: Option<&[(&str, &str)]>,
     description: &str,
 ) -> PyResult<()> {
-    let py = locals_dict.py();
-    let frame_dict = create_frame_dict_with_locals(py, locals_dict)?;
-    let frame = create_simple_namespace(py, &frame_dict)?;
-
-    let result = extract_locals_dict(&frame);
-    match (expected, result) {
-        (Some(expected_entries), Some(locals)) => {
-            assert_eq!(locals.len(), expected_entries.len(), "{}", description);
-            for (key, value) in expected_entries {
-                assert_eq!(
-                    locals.get(*key).map(String::as_str),
-                    Some(*value),
-                    "{}: key '{}' should have expected value",
-                    description,
-                    key
-                );
-            }
-        }
-        (Some(_), None) => panic!("{description}: locals should be extracted"),
-        (None, result) => {
-            assert!(result.is_none(), "{}", description);
-        }
+    let actual = extract_locals_for_dict(locals_dict)?;
+    if let Err(mismatch) = compare_locals(actual.as_ref(), expected) {
+        panic!("{description}: {mismatch}");
     }
     Ok(())
 }
@@ -266,127 +350,4 @@ pub fn populate_locals_dict_from_entries(
         locals_dict.set_item(entry.key(), entry.value())?;
     }
     Ok(())
-}
-
-// --------------------------------
-// Frame field assertion helpers
-// --------------------------------
-
-/// Assert that a locals map contains the expected key-value pair.
-///
-/// # Arguments
-///
-/// * `locals` - The locals map to check
-/// * `key` - The key that should be present in the map
-/// * `expected` - The expected value for the key
-///
-/// # Panics
-///
-/// Panics if `key` is not present in `locals` or if its value differs from `expected`.
-#[track_caller]
-pub fn assert_local_equals(locals: &BTreeMap<String, String>, key: &str, expected: &str) {
-    assert_eq!(
-        locals.get(key).map(String::as_str),
-        Some(expected),
-        "locals[{key:?}] should equal {expected:?}"
-    );
-}
-
-/// Assert that a locals map does not contain the specified key.
-///
-/// # Arguments
-///
-/// * `locals` - The locals map to check
-/// * `key` - The key that should be absent from the map
-/// * `reason` - A description of why the key should be absent (used in the assertion message)
-///
-/// # Panics
-///
-/// Panics if `key` is present in `locals`.
-#[track_caller]
-pub fn assert_local_absent(locals: &BTreeMap<String, String>, key: &str, reason: &str) {
-    assert!(locals.get(key).is_none(), "{}", reason);
-}
-
-/// Assert that a stack frame has the expected required fields.
-///
-/// Verifies that the frame's `filename`, `lineno`, and `function` fields match
-/// the expected values. These are the three required fields for every stack frame
-/// per the exception schema.
-///
-/// # Arguments
-///
-/// * `frame` - The stack frame to verify
-/// * `filename` - Expected filename for the frame
-/// * `lineno` - Expected line number (1-indexed)
-/// * `function` - Expected function name
-///
-/// # Panics
-///
-/// Panics if any of the required fields do not match the expected values.
-#[track_caller]
-pub fn assert_frame_required_fields(
-    frame: &StackFrame,
-    filename: &str,
-    lineno: u32,
-    function: &str,
-) {
-    assert_eq!(frame.filename, filename, "filename should match");
-    assert_eq!(frame.lineno, lineno, "lineno should match");
-    assert_eq!(frame.function, function, "function should match");
-}
-
-/// Expected values for optional frame fields in test assertions.
-///
-/// This struct provides a convenient way to specify expected values for
-/// optional [`StackFrame`] fields. Use [`Default::default()`] when all
-/// optional fields should be `None`.
-///
-/// # Fields
-///
-/// * `end_lineno` - Expected end line number, or `None` if absent
-/// * `colno` - Expected column offset, or `None` if absent
-/// * `end_colno` - Expected end column offset, or `None` if absent
-/// * `source_line` - Expected source line text, or `None` if absent
-#[derive(Default)]
-pub struct ExpectedOptionalFields<'a> {
-    /// Expected end line number for the frame.
-    pub end_lineno: Option<u32>,
-    /// Expected column offset for the frame.
-    pub colno: Option<u32>,
-    /// Expected end column offset for the frame.
-    pub end_colno: Option<u32>,
-    /// Expected source line text for the frame.
-    pub source_line: Option<&'a str>,
-}
-
-/// Helper to assert that a frame's optional fields match expected values.
-///
-/// Compares each optional field of the [`StackFrame`] against the expected
-/// values provided in [`ExpectedOptionalFields`].
-///
-/// # Arguments
-///
-/// * `frame` - The stack frame to verify
-/// * `expected` - The expected values for optional fields
-///
-/// # Panics
-///
-/// Panics if any optional field does not match the expected value.
-#[track_caller]
-pub fn assert_frame_optional_fields(frame: &StackFrame, expected: ExpectedOptionalFields<'_>) {
-    assert_eq!(
-        frame.end_lineno, expected.end_lineno,
-        "end_lineno should match"
-    );
-    assert_eq!(frame.colno, expected.colno, "colno should match");
-    assert_eq!(
-        frame.end_colno, expected.end_colno,
-        "end_colno should match"
-    );
-    assert_eq!(
-        frame.source_line.as_deref(),
-        expected.source_line,
-        "source_line should match"
-    );
 }

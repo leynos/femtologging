@@ -57,6 +57,24 @@ fn filter_and_extract_frames<'py>(
     Ok(frames.cast::<PyList>()?.clone())
 }
 
+/// Extract `$dict[$key]` as `$ty`, panicking with a key-specific message at
+/// each step of the lookup.
+///
+/// A macro rather than a helper function so panic line numbers point at the
+/// calling test.
+macro_rules! extract_dict_value {
+    ($dict:expr, $key:expr, $ty:ty) => {{
+        let key = $key;
+        let value: $ty = $dict
+            .get_item(key)
+            .unwrap_or_else(|err| panic!("failed to get {key} key: {err}"))
+            .unwrap_or_else(|| panic!("{key} key is None"))
+            .extract()
+            .unwrap_or_else(|err| panic!("failed to extract {key}: {err}"));
+        value
+    }};
+}
+
 /// Assert the `filename` of the frame at `index` within a frames list.
 ///
 /// A macro rather than a helper function so panic line numbers point at the
@@ -65,12 +83,7 @@ macro_rules! assert_frame_filename {
     ($frames_list:expr, $index:expr, $expected:expr) => {{
         let frame = $frames_list.get_item($index).expect("failed to get frame");
         let frame_dict = frame.cast::<PyDict>().expect("frame is not a dict");
-        let filename: String = frame_dict
-            .get_item("filename")
-            .expect("failed to get filename key")
-            .expect("filename key is None")
-            .extract()
-            .expect("failed to extract filename");
+        let filename = extract_dict_value!(frame_dict, "filename", String);
         assert_eq!(filename, $expected);
     }};
 }
@@ -154,12 +167,7 @@ fn filter_exception_payload_detects_type() {
             .expect("result is not a dict");
 
         // Should preserve exception fields
-        let type_name: String = result_dict
-            .get_item("type_name")
-            .expect("failed to get type_name key")
-            .expect("type_name key is None")
-            .extract()
-            .expect("failed to extract type_name");
+        let type_name = extract_dict_value!(result_dict, "type_name", String);
         assert_eq!(type_name, "ValueError");
 
         let frames = result_dict
@@ -287,12 +295,7 @@ fn filter_exception_payload_exclude_functions() {
             .expect("result is not a dict");
 
         // Should preserve exception fields
-        let type_name: String = result_dict
-            .get_item("type_name")
-            .expect("failed to get type_name key")
-            .expect("type_name key is None")
-            .extract()
-            .expect("failed to extract type_name");
+        let type_name = extract_dict_value!(result_dict, "type_name", String);
         assert_eq!(type_name, "ValueError");
 
         let frames = result_dict
@@ -377,20 +380,10 @@ fn filter_exception_payload_preserves_extra_keys() {
             .expect("result is not a dict");
 
         // Check custom fields are preserved
-        let custom_field: String = result_dict
-            .get_item("custom_field")
-            .expect("failed to get custom_field key")
-            .expect("custom_field key is None")
-            .extract()
-            .expect("failed to extract custom_field");
+        let custom_field = extract_dict_value!(result_dict, "custom_field", String);
         assert_eq!(custom_field, "preserved_value");
 
-        let thread_id: i32 = result_dict
-            .get_item("thread_id")
-            .expect("failed to get thread_id key")
-            .expect("thread_id key is None")
-            .extract()
-            .expect("failed to extract thread_id");
+        let thread_id = extract_dict_value!(result_dict, "thread_id", i32);
         assert_eq!(thread_id, 12345);
     });
 }

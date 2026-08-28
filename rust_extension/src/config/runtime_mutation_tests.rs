@@ -127,88 +127,44 @@ fn unknown_removed_handler_preserves_existing_state(
 }
 
 #[rstest]
-#[serial]
-fn append_handler_requires_runtime_metadata(_gil_and_clean_manager: ()) {
-    Python::attach(|py| {
-        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
-
-        let err = RuntimeConfigBuilder::new()
-            .with_handler("stdout", StreamHandlerBuilder::stdout())
-            .with_logger(
-                "orphan",
-                LoggerMutationBuilder::new().append_handlers(["stdout"]),
-            )
-            .apply()
-            .expect_err("append should reject loggers without runtime metadata");
-
-        assert!(matches!(
-            err,
-            ConfigError::InvalidMutation(message)
-                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
-        ));
-    });
-}
-
-#[rstest]
-#[serial]
-fn remove_handler_requires_runtime_metadata(_gil_and_clean_manager: ()) {
-    Python::attach(|py| {
-        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
-
-        let err = RuntimeConfigBuilder::new()
-            .with_logger(
-                "orphan",
-                LoggerMutationBuilder::new().remove_handlers(["stdout"]),
-            )
-            .apply()
-            .expect_err("remove should reject loggers without runtime metadata");
-
-        assert!(matches!(
-            err,
-            ConfigError::InvalidMutation(message)
-                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
-        ));
-    });
-}
-
-#[rstest]
-#[serial]
-fn append_filter_requires_runtime_metadata(_gil_and_clean_manager: ()) {
+#[case::append_handler("append handler", |b: RuntimeConfigBuilder| {
+    b.with_handler("stdout", StreamHandlerBuilder::stdout())
+        .with_logger(
+            "orphan",
+            LoggerMutationBuilder::new().append_handlers(["stdout"]),
+        )
+})]
+#[case::remove_handler("remove handler", |b: RuntimeConfigBuilder| {
+    b.with_logger(
+        "orphan",
+        LoggerMutationBuilder::new().remove_handlers(["stdout"]),
+    )
+})]
+#[case::append_filter("append filter", |b: RuntimeConfigBuilder| {
     let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
-
-    Python::attach(|py| {
-        let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
-
-        let err = RuntimeConfigBuilder::new()
-            .with_filter("lvl", FilterBuilder::Level(filter))
-            .with_logger(
-                "orphan",
-                LoggerMutationBuilder::new().append_filters(["lvl"]),
-            )
-            .apply()
-            .expect_err("append should reject filters without runtime metadata");
-
-        assert!(matches!(
-            err,
-            ConfigError::InvalidMutation(message)
-                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
-        ));
-    });
-}
-
-#[rstest]
+    b.with_filter("lvl", FilterBuilder::Level(filter)).with_logger(
+        "orphan",
+        LoggerMutationBuilder::new().append_filters(["lvl"]),
+    )
+})]
+#[case::remove_filter("remove filter", |b: RuntimeConfigBuilder| {
+    b.with_logger(
+        "orphan",
+        LoggerMutationBuilder::new().remove_filters(["lvl"]),
+    )
+})]
 #[serial]
-fn remove_filter_requires_runtime_metadata(_gil_and_clean_manager: ()) {
+fn mutation_requires_runtime_metadata(
+    _gil_and_clean_manager: (),
+    #[case] _kind: &str,
+    #[case] mutate: fn(RuntimeConfigBuilder) -> RuntimeConfigBuilder,
+) {
     Python::attach(|py| {
         let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
 
-        let err = RuntimeConfigBuilder::new()
-            .with_logger(
-                "orphan",
-                LoggerMutationBuilder::new().remove_filters(["lvl"]),
-            )
+        let err = mutate(RuntimeConfigBuilder::new())
             .apply()
-            .expect_err("remove should reject filters without runtime metadata");
+            .expect_err("mutation should reject entities without runtime metadata");
 
         assert!(matches!(
             err,

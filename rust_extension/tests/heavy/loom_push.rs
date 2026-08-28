@@ -3,33 +3,35 @@
 //! These tests model concurrent logging via the `FemtoStreamHandler` to ensure
 //! there are no race conditions when multiple threads push records.
 
-#[path = "../test_utils/mod.rs"]
-mod test_utils;
-use test_utils::shared_buffer::loom::read_output;
-use test_utils::shared_buffer::loom::SharedBuf as LoomBuf;
 use loom::sync::{Arc, Mutex};
 use loom::thread;
-use std::io::{self, Write};
 
 use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
 
-#[test]
-#[ignore]
+use crate::test_utils::HandleExpect;
+use crate::test_utils::shared_buffer::loom::SharedBuf as LoomBuf;
+use crate::test_utils::shared_buffer::loom::read_output;
+
+// Registered as a test only under `--cfg loom`: see the module documentation
+// for why these models cannot run against the current handler implementation.
+#[cfg_attr(loom, test)]
+#[allow(dead_code)]
 fn loom_stream_push_delivery() {
     loom::model(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let handler = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buffer)),
+            LoomBuf::new(Arc::clone(&buffer)),
             DefaultFormatter,
         ));
         let h = Arc::clone(&handler);
         let t = thread::spawn(move || {
-            h.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg"));
+            h.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg"));
         });
-        handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg2"));
+        handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg2"));
         t.join().expect("Thread panicked");
         drop(handler);
-        let mut lines: Vec<_> = read_output(&buffer).lines().collect();
+        let output = read_output(&buffer);
+        let mut lines: Vec<_> = output.lines().collect();
         lines.sort();
         assert_eq!(lines, vec!["core [INFO] msg", "core [INFO] msg2"]);
     });

@@ -8,23 +8,12 @@ use pyo3::types::PyDict;
 use rstest::rstest;
 
 use crate::exception_schema::ExceptionPayload;
+use crate::test_utils::traceback_test_helpers::{create_base_exception, create_value_error};
 use crate::traceback_capture::capture_exception;
 
 // --------------------------------
 // Helper functions for common setup
 // --------------------------------
-
-/// Create a ValueError instance with the given message.
-fn create_value_error<'py>(py: Python<'py>, message: &str) -> PyResult<Bound<'py, PyAny>> {
-    py.import("builtins")?
-        .getattr("ValueError")?
-        .call1((message,))
-}
-
-/// Create a BaseException instance with no arguments.
-fn create_base_exception<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-    py.import("builtins")?.getattr("BaseException")?.call0()
-}
 
 /// Check if Python supports add_note() via capability check (Python 3.11+).
 ///
@@ -36,23 +25,17 @@ fn supports_add_note(py: Python<'_>) -> PyResult<bool> {
         .hasattr("add_note")
 }
 
-/// Assert that a chained exception payload has the expected structure.
+/// Borrow the chained cause of a payload, if one was captured.
 ///
-/// Verifies that the outer exception has the expected type and non-empty args_repr,
-/// and that the chained cause has the expected type but empty notes and args_repr
-/// (because we don't have direct access to the chained exception instance).
-///
-/// # Arguments
-///
-/// * `payload` - The exception payload to verify
-/// * `outer_type` - Expected type name of the outer exception
-/// * `cause_type` - Expected type name of the chained cause
+/// A pure query over already-captured data; the absence of a cause is reported
+/// to the caller rather than panicking here.
+fn chained_cause(payload: &ExceptionPayload) -> Option<&ExceptionPayload> {
+    payload.cause.as_deref()
+}
+
+/// Assert that the outer exception of a chained payload looks as expected.
 #[track_caller]
-fn assert_chained_exception_structure(
-    payload: &ExceptionPayload,
-    outer_type: &str,
-    cause_type: &str,
-) {
+fn assert_outer_exception(payload: &ExceptionPayload, outer_type: &str) {
     assert_eq!(
         payload.type_name, outer_type,
         "outer exception type should match"
@@ -61,10 +44,14 @@ fn assert_chained_exception_structure(
         !payload.args_repr.is_empty(),
         "outer exception should have args_repr"
     );
+}
 
-    let Some(cause) = payload.cause.as_ref() else {
-        panic!("cause should be present");
-    };
+/// Assert that a chained cause has the expected type and no instance-derived data.
+///
+/// Notes and `args_repr` require the original exception instance, which is
+/// unavailable for chained exceptions reached through `TracebackException`.
+#[track_caller]
+fn assert_chained_cause(cause: &ExceptionPayload, cause_type: &str) {
     assert_eq!(
         cause.type_name, cause_type,
         "chained exception type should match"
@@ -77,6 +64,25 @@ fn assert_chained_exception_structure(
         cause.args_repr.is_empty(),
         "chained exception args_repr should be empty (no instance access)"
     );
+}
+
+/// Assert that a chained exception payload has the expected structure.
+///
+/// A macro rather than a helper function so the missing-cause panic expands
+/// inside the calling test and reports that test's location.
+///
+/// # Arguments
+///
+/// * `$payload` - The exception payload to verify
+/// * `$outer_type` - Expected type name of the outer exception
+/// * `$cause_type` - Expected type name of the chained cause
+macro_rules! assert_chained_exception_structure {
+    ($payload:expr, $outer_type:expr, $cause_type:expr) => {{
+        let payload: &ExceptionPayload = $payload;
+        assert_outer_exception(payload, $outer_type);
+        let cause = chained_cause(payload).expect("cause should be present");
+        assert_chained_cause(cause, $cause_type);
+    }};
 }
 
 #[rstest]
@@ -146,7 +152,7 @@ except ValueError as e:
                 .expect("capture_exception should succeed")
                 .expect("payload should be Some");
 
-            assert_chained_exception_structure(&payload, "RuntimeError", "ValueError");
+            assert_chained_exception_structure!(&payload, "RuntimeError", "ValueError");
             return;
         }
 
@@ -171,7 +177,7 @@ except ValueError as e:
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 
-        assert_chained_exception_structure(&payload, "RuntimeError", "ValueError");
+        assert_chained_exception_structure!(&payload, "RuntimeError", "ValueError");
     });
 }
 

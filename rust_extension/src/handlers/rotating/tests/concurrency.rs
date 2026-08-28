@@ -62,9 +62,10 @@ impl RotationStrategy<BufWriter<File>> for ObservedStrategy {
                 thread::sleep(delay);
             }
             self.inner.rotate(writer)?;
+            // Recover from poisoning: the recorded thread IDs remain valid data.
             self.rotations
                 .lock()
-                .expect("rotation observer lock poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(thread::current().id());
             Ok(true)
         } else {
@@ -102,8 +103,8 @@ fn attempt_non_blocking_writes(handler: &FemtoRotatingFileHandler, count: usize)
 }
 
 #[test]
-fn rotation_runs_on_worker_thread() -> io::Result<()> {
-    let dir = tempdir()?;
+fn rotation_runs_on_worker_thread() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("worker.log");
     let rotations = Arc::new(Mutex::new(Vec::new()));
     let strategy = ObservedStrategy::new(
@@ -114,7 +115,8 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
         .create(true)
         .write(true)
         .append(true)
-        .open(&path)?;
+        .open(&path)
+        .expect("log file must open");
     let writer = BufWriter::new(file);
     let handler_cfg = HandlerConfig {
         capacity: 4,
@@ -141,13 +143,11 @@ fn rotation_runs_on_worker_thread() -> io::Result<()> {
         "expected at least one rotation to be recorded"
     );
     assert!(recorded.iter().all(|id| *id != producer_id));
-
-    Ok(())
 }
 
 #[test]
-fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
-    let dir = tempdir()?;
+fn rotation_keeps_producers_non_blocking() {
+    let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("non_blocking.log");
     let rotations = Arc::new(Mutex::new(Vec::new()));
     let started = Arc::new(AtomicBool::new(false));
@@ -161,7 +161,8 @@ fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
         .create(true)
         .write(true)
         .append(true)
-        .open(&path)?;
+        .open(&path)
+        .expect("log file must open");
     let writer = BufWriter::new(file);
     let handler_cfg = HandlerConfig {
         capacity: 2,
@@ -196,6 +197,4 @@ fn rotation_keeps_producers_non_blocking() -> io::Result<()> {
         !recorded.is_empty(),
         "expected rotation to complete while producers kept writing"
     );
-
-    Ok(())
 }
