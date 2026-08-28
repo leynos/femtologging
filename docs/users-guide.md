@@ -75,9 +75,10 @@ your process exits.
   `*args` / `**kwargs` lazy formatting is not supported — build the final
   message string before calling these methods. `exception()` behaves like
   `error()` but defaults `exc_info` to `True`.
-- `log()` and the convenience methods accept the keyword-only argument `extra`
-  for validated inline structured fields. `extra` must be a mapping with string
-  keys and `str`, `int`, `float`, `bool`, or `None` values.
+- `log()` and the `debug`, `info`, `warning`, `error`, and `critical`
+  convenience methods accept the keyword-only argument `extra` for validated
+  inline structured fields. `extra` must be a mapping with string keys and
+  `str`, `int`, `float`, `bool`, or `None` values.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info` for
   capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:
@@ -105,8 +106,8 @@ your process exits.
   should be skipped when the level is filtered out.
 - `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
   compatibility with code written against `logging.getLogger`.
-- There is no equivalent to `extra` or lazy formatting. Build the final
-  message string before calling `log()`.
+- There is no lazy formatting. Build the final message string before calling
+  `log()`.
 
 ### Exception schema versioning
 
