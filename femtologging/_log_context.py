@@ -20,9 +20,9 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
     **fields : object
         Arbitrary key-value pairs to attach as structured metadata to records
         emitted through ``FemtoLogger`` methods, including loggers returned by
-        ``get_logger()``, on the calling thread. Keys must be valid Python
-        identifiers. Values must be `str`, `int`, `float`, `bool`, or `None`.
-        Duplicate keys override outer context values.
+        ``get_logger()``, on the calling thread. Keys must be strings no
+        longer than 64 UTF-8 bytes. Values must be `str`, `int`, `float`,
+        `bool`, or `None`. Duplicate keys override outer context values.
 
     Yields
     ------
@@ -33,7 +33,7 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
     Raises
     ------
     ValueError
-        If a key is invalid (empty, too long, or not a valid identifier).
+        If the context exceeds a key-count or byte-size limit.
     TypeError
         If a value has an unsupported type (not str/int/float/bool/None).
 
