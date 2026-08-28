@@ -957,6 +957,44 @@ Implemented baseline (roadmap item 3.4.2):
 - Merged key-values are persisted into `RecordMetadata.key_values` before the
   record is queued to consumer threads.
 
+For screen readers: this sequence diagram shows that `FemtoLogger` merges
+explicit key-values with active scoped context, records the merged values in
+`FemtoLogRecord` metadata, and passes that same record through `PyHandler` to
+the built-in handler before the result returns to the logger.
+
+```mermaid
+sequenceDiagram
+    participant Logger as FemtoLogger
+    participant Context as log_context
+    participant Bridge as PyHandler
+    participant Native as BuiltInHandler
+    participant Record as FemtoLogRecord
+
+    Logger->>Context: merge_context_values(explicit_key_values)
+    Context-->>Logger: merged_key_values
+    Logger->>Record: with_metadata(merged_key_values)
+    Logger->>Bridge: handle(record)
+    Bridge->>Native: handle(record)
+    Native-->>Bridge: Result
+    Bridge-->>Logger: Result
+```
+
+For screen readers: this sequence diagram shows an invalid logging context
+causing `merge_context_values` to return an error, which `FemtoLogger` exposes
+to the Python caller as `PyValueError`.
+
+```mermaid
+sequenceDiagram
+    participant Caller as PythonCaller
+    participant Logger as FemtoLogger
+    participant Context as log_context
+
+    Caller->>Logger: emit log record
+    Logger->>Context: merge_context_values(explicit_key_values)
+    Context-->>Logger: Err
+    Logger-->>Caller: PyValueError
+```
+
 Inspired by `tracing::span!`,
 
 femtologging could also offer span-like macros for logging the entry and exit
