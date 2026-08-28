@@ -141,4 +141,7 @@ def output_matches_snapshot(
     output = logger_fixture["output"]
     # Normalize paths and line numbers for snapshot stability
     normalized = normalize_traceback_output(output)
-    assert normalized == snapshot
+    assert normalized == snapshot, (
+        "normalized stack/exception output must match the recorded snapshot; "
+        f"got {normalized!r}"
+    )

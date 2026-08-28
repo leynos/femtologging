@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import typing as typ
-from contextlib import contextmanager
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from femtologging import (
     ROTATION_VALIDATION_MSG,
@@ -15,7 +16,17 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import pathlib
+
+    type RotatingHandlerFactory = cabc.Callable[
+        [HandlerOptions | None], FemtoRotatingFileHandler
+    ]
+
+
+def _is_paired(max_bytes: int, backup_count: int) -> bool:
+    """Return whether the rotation thresholds are both set or both omitted."""
+    return (max_bytes > 0) == (backup_count > 0)
 
 
 @pytest.fixture(name="log_path")
@@ -24,37 +35,41 @@ def fixture_log_path(tmp_path: pathlib.Path) -> pathlib.Path:
     return tmp_path / "rotating.log"
 
 
-@contextmanager
-def rotating_handler(
-    path: str,
-    *,
-    max_bytes: int = 0,
-    backup_count: int = 0,
-    options: HandlerOptions | None = None,
-) -> typ.Iterator[FemtoRotatingFileHandler]:
-    """Context manager for rotating handler lifecycle."""
-    derived_options = options
-    if derived_options is None:
-        derived_options = HandlerOptions(rotation=(max_bytes, backup_count))
-    elif max_bytes or backup_count:
-        msg = "rotating_handler options already provided; do not pass rotation"
-        raise ValueError(msg)
+@pytest.fixture(name="open_rotating_handler")
+def fixture_open_rotating_handler(
+    log_path: pathlib.Path,
+) -> cabc.Iterator[RotatingHandlerFactory]:
+    """Open rotating handlers on the test log path and close them afterwards."""
+    handlers: list[FemtoRotatingFileHandler] = []
 
-    handler = FemtoRotatingFileHandler(path, options=derived_options)
+    def open_handler(
+        options: HandlerOptions | None = None,
+    ) -> FemtoRotatingFileHandler:
+        handler = FemtoRotatingFileHandler(
+            str(log_path),
+            options=options if options is not None else HandlerOptions(),
+        )
+        handlers.append(handler)
+        return handler
+
     try:
-        yield handler
+        yield open_handler
     finally:
-        handler.close()
+        for handler in handlers:
+            handler.close()
 
 
-def test_rotating_handler_defaults(log_path: pathlib.Path) -> None:
+def test_rotating_handler_defaults(
+    open_rotating_handler: RotatingHandlerFactory,
+) -> None:
     """Constructing with defaults should disable rotation thresholds."""
-    with rotating_handler(str(log_path)) as handler:
-        assert handler.max_bytes == 0, "defaults must disable rollover"
-        assert handler.backup_count == 0, "defaults must disable backups"
+    handler = open_rotating_handler(None)
+
+    assert handler.max_bytes == 0, "defaults must disable rollover"
+    assert handler.backup_count == 0, "defaults must disable backups"
 
 
-def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
+def test_rotating_handler_invalid_policy() -> None:
     """Supplying an invalid policy value should raise an error at construction."""
     # Policy validation now occurs in HandlerOptions constructor (not handler).
     invalid_policy_value = typ.cast(
@@ -76,60 +91,114 @@ def test_rotating_handler_invalid_policy(log_path: pathlib.Path) -> None:
         )
 
 
-def test_rotating_handler_missing_policy(log_path: pathlib.Path) -> None:
+def test_rotating_handler_missing_policy(
+    open_rotating_handler: RotatingHandlerFactory,
+) -> None:
     """Omitting policy should use defaults and preserve rotation settings."""
-    options = HandlerOptions(
-        capacity=32,
-        flush_interval=2,
-        rotation=(1024, 3),
+    handler = open_rotating_handler(
+        HandlerOptions(capacity=32, flush_interval=2, rotation=(1024, 3))
     )
 
-    with rotating_handler(str(log_path), options=options) as handler:
-        assert handler.max_bytes == 1024, "rotation max_bytes should still apply"
-        assert handler.backup_count == 3, "rotation backup_count should still apply"
+    assert handler.max_bytes == 1024, "rotation max_bytes should still apply"
+    assert handler.backup_count == 3, "rotation backup_count should still apply"
 
 
-def test_rotating_handler_accepts_options(log_path: pathlib.Path) -> None:
+def test_rotating_handler_accepts_options(
+    open_rotating_handler: RotatingHandlerFactory,
+) -> None:
     """Supplying HandlerOptions should configure queue behaviour."""
-    options = HandlerOptions(
-        capacity=32,
-        flush_interval=2,
-        policy="block",
-        rotation=(1024, 3),
+    handler = open_rotating_handler(
+        HandlerOptions(
+            capacity=32,
+            flush_interval=2,
+            policy="block",
+            rotation=(1024, 3),
+        )
     )
-    with rotating_handler(str(log_path), options=options) as handler:
-        assert handler.max_bytes == 1024, "max_bytes setter must persist"
-        assert handler.backup_count == 3, "backup_count setter must persist"
-        handler.handle("rotating", "INFO", "probe message")
-        assert isinstance(handler.flush(), bool), "flush must return a boolean"
+
+    assert handler.max_bytes == 1024, "max_bytes setter must persist"
+    assert handler.backup_count == 3, "backup_count setter must persist"
+    handler.handle("rotating", "INFO", "probe message")
+    assert isinstance(handler.flush(), bool), "flush must return a boolean"
 
 
 @pytest.mark.parametrize(
-    ("max_bytes", "backup_count", "should_error"),
+    ("max_bytes", "backup_count"),
     [
-        (1024, 0, True),
-        (512, 0, True),
-        (0, 3, True),
-        (0, 1, True),
-        (0, 0, False),
+        pytest.param(1024, 0, id="size-without-backups"),
+        pytest.param(512, 0, id="small-size-without-backups"),
+        pytest.param(0, 3, id="backups-without-size"),
+        pytest.param(0, 1, id="single-backup-without-size"),
     ],
 )
-def test_rotating_handler_threshold_validation(
+def test_rotating_handler_rejects_unpaired_thresholds(
     log_path: pathlib.Path,
     max_bytes: int,
     backup_count: int,
-    should_error: bool,  # noqa: FBT001
 ) -> None:
-    """Rotation thresholds must be paired or omitted entirely."""
-    if should_error:
-        with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
-            FemtoRotatingFileHandler(
-                str(log_path),
-                options=HandlerOptions(rotation=(max_bytes, backup_count)),
-            )
-    else:
-        with rotating_handler(
+    """Setting only one rotation threshold must fail fast."""
+    with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
+        FemtoRotatingFileHandler(
             str(log_path),
             options=HandlerOptions(rotation=(max_bytes, backup_count)),
-        ):
-            pass
+        )
+
+
+@pytest.mark.parametrize(
+    ("max_bytes", "backup_count"),
+    [
+        pytest.param(0, 0, id="rotation-disabled"),
+        pytest.param(1024, 3, id="rotation-enabled"),
+    ],
+)
+def test_rotating_handler_accepts_paired_thresholds(
+    open_rotating_handler: RotatingHandlerFactory,
+    max_bytes: int,
+    backup_count: int,
+) -> None:
+    """Rotation thresholds that are both set or both omitted are accepted."""
+    handler = open_rotating_handler(HandlerOptions(rotation=(max_bytes, backup_count)))
+
+    assert (handler.max_bytes, handler.backup_count) == (max_bytes, backup_count), (
+        "paired rotation thresholds must round-trip unchanged, but "
+        f"({max_bytes}, {backup_count}) became "
+        f"({handler.max_bytes}, {handler.backup_count})"
+    )
+
+
+# Handler construction touches the filesystem and spawns a worker thread, so
+# this property samples the threshold space sparsely; the named cases above
+# remain the regression record.
+@settings(max_examples=25, deadline=None)
+@given(
+    max_bytes=st.integers(min_value=0, max_value=1 << 20),
+    backup_count=st.integers(min_value=0, max_value=16),
+)
+def test_rotating_handler_threshold_pairing_is_the_only_rule(
+    tmp_path_factory: pytest.TempPathFactory,
+    max_bytes: int,
+    backup_count: int,
+) -> None:
+    """Validation depends only on whether both thresholds are non-zero."""
+    path = tmp_path_factory.mktemp("rotating") / "rotating.log"
+
+    if _is_paired(max_bytes, backup_count):
+        options = HandlerOptions(rotation=(max_bytes, backup_count))
+        handler = FemtoRotatingFileHandler(str(path), options=options)
+        try:
+            assert (handler.max_bytes, handler.backup_count) == (
+                max_bytes,
+                backup_count,
+            ), (
+                f"paired thresholds ({max_bytes}, {backup_count}) must be "
+                "accepted verbatim, but the handler reported "
+                f"({handler.max_bytes}, {handler.backup_count})"
+            )
+        finally:
+            handler.close()
+    else:
+        with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
+            FemtoRotatingFileHandler(
+                str(path),
+                options=HandlerOptions(rotation=(max_bytes, backup_count)),
+            )

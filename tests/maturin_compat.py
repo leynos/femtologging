@@ -5,7 +5,7 @@ from __future__ import annotations
 import email.parser
 import re
 import shutil
-import subprocess  # noqa: S404 - tests invoke pinned maturin build commands.
+import subprocess  # ruff: ignore[suspicious-subprocess-import] tests shell out to a pinned maturin.
 import sys
 import typing as typ
 import zipfile
@@ -153,7 +153,9 @@ def toolchain_available() -> bool:
     """
     if shutil.which("cargo") is None or shutil.which("rustc") is None:
         return False
-    result = subprocess.run(  # noqa: S603, RUF100 - trusted interpreter/module probe; keep S603 narrow.
+    # The argument vector is a fixed probe of the running interpreter, so no
+    # untrusted input reaches the subprocess.
+    result = subprocess.run(
         [sys.executable, "-m", "maturin", "--version"],
         check=False,
         capture_output=True,
@@ -205,7 +207,9 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
         "--features",
         "python,test-util",
     ]
-    subprocess.run(  # noqa: S603 - command list uses trusted paths and pinned maturin.
+    # ruff: ignore[subprocess-without-shell-equals-true] the command vector is
+    # built from repository-local paths and the pinned maturin module only.
+    subprocess.run(
         command,
         check=True,
         cwd=root,

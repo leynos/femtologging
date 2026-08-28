@@ -20,7 +20,7 @@ from .config import (
     _build_formatter,
     _build_handler_from_dict,
     _build_logger_from_dict,
-    _validate_section_mapping,
+    _validate_mapping_type,
     _validate_string_keys,
 )
 
@@ -53,8 +53,13 @@ def _iter_section_items(
     tuple[str, cabc.Mapping[str, object]]
         (id, config) pairs for each item in the section.
 
+    Raises
+    ------
+    TypeError
+        If a section key is not a string.
+
     """
-    mapping = _validate_section_mapping(config.get(section, {}), section)
+    mapping = _validate_mapping_type(config.get(section, {}), section)
     base_err_tmpl = key_err_tmpl or f"{item_name} ids must be strings"
 
     for key, cfg in mapping.items():
@@ -63,7 +68,7 @@ def _iter_section_items(
         yield (
             key,
             _validate_string_keys(
-                _validate_section_mapping(cfg, f"{item_name} config"),
+                _validate_mapping_type(cfg, f"{item_name} config"),
                 f"{item_name} config",
             ),
         )

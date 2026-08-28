@@ -12,19 +12,51 @@ from femtologging import (
     LoggerConfigBuilder,
     NameFilterBuilder,
     get_logger,
-    reset_manager,
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
+    from femtologging import FemtoLogger
 
 
-@pytest.fixture(autouse=True)
-def reset_logger_state() -> cabc.Iterator[None]:
-    """Reset the global logging manager around each test."""
-    reset_manager()
-    yield
-    reset_manager()
+def assert_emitted(logger: FemtoLogger, level: str, message: str, context: str) -> None:
+    """Assert that ``logger`` emits a record for the given level and message.
+
+    Parameters
+    ----------
+    logger:
+        Logger under test.
+    level:
+        Level name passed to :meth:`FemtoLogger.log`.
+    message:
+        Message passed to :meth:`FemtoLogger.log`.
+    context:
+        Short description of the filtering expectation, used on failure.
+    """
+    assert logger.log(level, message) is not None, (
+        f"{context}: {level} record {message!r} should pass the active filters"
+    )
+
+
+def assert_suppressed(
+    logger: FemtoLogger, level: str, message: str, context: str
+) -> None:
+    """Assert that ``logger`` drops a record for the given level and message.
+
+    Parameters
+    ----------
+    logger:
+        Logger under test.
+    level:
+        Level name passed to :meth:`FemtoLogger.log`.
+    message:
+        Message passed to :meth:`FemtoLogger.log`.
+    context:
+        Short description of the filtering expectation, used on failure.
+    """
+    assert logger.log(level, message) is None, (
+        f"{context}: {level} record {message!r} should be rejected by the "
+        "active filters"
+    )
 
 
 def test_logger_with_multiple_filters() -> None:
@@ -41,27 +73,25 @@ def test_logger_with_multiple_filters() -> None:
     )
     cb.build_and_init()
     logger = get_logger("multi")
-    assert logger.log("INFO", "emit") is not None
-    assert logger.log("DEBUG", "suppress") is None
+    assert_emitted(logger, "INFO", "emit", "level and name filters both satisfied")
+    assert_suppressed(logger, "DEBUG", "suppress", "record below the configured level")
 
 
 @pytest.mark.parametrize(
-    ("_scenario", "first_filter", "second_filter"),
+    ("first_filter", "second_filter"),
     [
         (
-            "remove_all_filters",
             ("lvl", LevelFilterBuilder().with_max_level("DEBUG")),
             None,
         ),
         (
-            "replace_with_name_filter",
             ("lvl", LevelFilterBuilder().with_max_level("DEBUG")),
             ("name", NameFilterBuilder().with_prefix("core")),
         ),
     ],
+    ids=["remove_all_filters", "replace_with_name_filter"],
 )
 def test_reconfig_replaces_filters(
-    _scenario: str,
     first_filter: tuple[str, LevelFilterBuilder],
     second_filter: tuple[str, NameFilterBuilder] | None,
 ) -> None:
@@ -74,7 +104,7 @@ def test_reconfig_replaces_filters(
     )
     cb.build_and_init()
     logger = get_logger("core")
-    assert logger.log("ERROR", "drop") is None
+    assert_suppressed(logger, "ERROR", "drop", "initial max-level DEBUG filter")
 
     reconfig = ConfigBuilder().with_root_logger(
         LoggerConfigBuilder().with_level("DEBUG")
@@ -87,8 +117,12 @@ def test_reconfig_replaces_filters(
         reconfig = reconfig.with_logger("core", LoggerConfigBuilder())
     reconfig.build_and_init()
 
-    logger_after = get_logger("core")
-    assert logger_after.log("ERROR", "emit") is not None
+    assert_emitted(
+        get_logger("core"),
+        "ERROR",
+        "emit",
+        "reconfiguration must discard the previous max-level filter",
+    )
 
 
 def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
@@ -101,7 +135,7 @@ def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
     )
     cb.build_and_init()
     logger = get_logger("core")
-    assert logger.log("ERROR", "drop") is None
+    assert_suppressed(logger, "ERROR", "drop", "initial max-level DEBUG filter")
 
     bad = (
         ConfigBuilder()
@@ -111,8 +145,12 @@ def test_reconfig_with_unknown_filter_preserves_previous_filters() -> None:
     with pytest.raises(KeyError, match="missing"):
         bad.build_and_init()
 
-    logger_after = get_logger("core")
-    assert logger_after.log("ERROR", "still drop") is None
+    assert_suppressed(
+        get_logger("core"),
+        "ERROR",
+        "still drop",
+        "a rejected configuration must not disturb the installed filters",
+    )
 
 
 def test_filter_clearing() -> None:
@@ -125,9 +163,9 @@ def test_filter_clearing() -> None:
     )
     cb.build_and_init()
     logger = get_logger("core")
-    assert logger.log("INFO", "drop") is None
+    assert_suppressed(logger, "INFO", "drop", "max-level DEBUG filter is installed")
     logger.clear_filters()
-    assert logger.log("INFO", "emit") is not None
+    assert_emitted(logger, "INFO", "emit", "filters cleared at runtime")
 
 
 def test_multiple_filters_clearing() -> None:
@@ -144,8 +182,8 @@ def test_multiple_filters_clearing() -> None:
     )
     cb.build_and_init()
     logger = get_logger("core")
-    assert logger.log("ERROR", "blocked by level filter") is None
-    assert logger.log("DEBUG", "blocked by name") is None
+    assert_suppressed(logger, "ERROR", "blocked by level filter", "max-level DEBUG")
+    assert_suppressed(logger, "DEBUG", "blocked by name", "name prefix 'other'")
     logger.clear_filters()
-    assert logger.log("ERROR", "allowed now") is not None
-    assert logger.log("DEBUG", "also allowed") is not None
+    assert_emitted(logger, "ERROR", "allowed now", "both filters cleared")
+    assert_emitted(logger, "DEBUG", "also allowed", "both filters cleared")

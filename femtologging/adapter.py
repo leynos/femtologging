@@ -109,9 +109,12 @@ _FEMTO_LEVEL_NAMES: types.MappingProxyType[str, int] = types.MappingProxyType({
 def _stdlib_levelno(record: FemtoRecord) -> int:
     """Derive the stdlib numeric level from a femtologging record.
 
-    Tries the numeric ``levelno`` first, falling back to the string
-    ``level`` name.  Returns ``logging.WARNING`` if neither can be
-    resolved.
+    Returns
+    -------
+    int
+        The level mapped from the numeric ``levelno``, else from the
+        ``level`` name, else ``logging.WARNING`` when neither resolves.
+
     """
     levelno = record.get("levelno")
     if isinstance(levelno, int) and levelno in _FEMTO_TO_STDLIB_LEVEL:
@@ -324,7 +327,9 @@ class StdlibHandlerAdapter:
         self._handler.handle(log_record)
 
     # -- delegation -------------------------------------------------------
-
+    # The forwarders below are part of the femtologging handler protocol, so
+    # they must stay callable on the adapter; there is no call site to inline.
+    # pylint: disable=unknown-option-value, trivial-attribute-wrapper
     def flush(self) -> None:
         """Flush the wrapped handler."""
         self._handler.flush()

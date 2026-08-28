@@ -14,72 +14,126 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
+    type TimedHandlerFactory = cabc.Callable[
+        [TimedHandlerOptions | None], FemtoTimedRotatingFileHandler
+    ]
 
-def test_timed_rotating_handler_defaults(tmp_path: Path) -> None:
-    """Constructing with defaults should preserve the default schedule."""
-    path = tmp_path / "timed.log"
-    handler = FemtoTimedRotatingFileHandler(str(path))
-    try:
-        assert handler.when == "H", "default cadence must be hourly"
-        assert handler.interval == 1, "default interval must be one"
-        assert handler.backup_count == 0, "default retention must keep all backups"
-        assert handler.utc is False, "default schedule must use local time"
-        assert handler.at_time is None, "hourly rotation must not carry at_time"
-    finally:
-        handler.close()
+# The rotation schedule attributes exposed on the handler, in a stable order.
+SCHEDULE_ATTRIBUTES = ("when", "interval", "backup_count", "utc", "at_time")
 
 
-def test_timed_rotating_handler_accepts_options(tmp_path: Path) -> None:
-    """Timed handler options configure schedule and queue settings."""
-    path = tmp_path / "timed.log"
-    options = TimedHandlerOptions(
-        capacity=32,
-        flush_interval=2,
-        policy="block",
-        when="MIDNIGHT",
-        interval=1,
-        backup_count=3,
-        utc=True,
-        at_time=dt.time(6, 30, 0),
-    )
-    handler = FemtoTimedRotatingFileHandler(str(path), options=options)
-    try:
-        assert handler.when == "MIDNIGHT", "when must round-trip"
-        assert handler.interval == 1, "interval must round-trip"
-        assert handler.backup_count == 3, "backup_count must round-trip"
-        assert handler.utc is True, "utc flag must round-trip"
-        assert handler.at_time == "06:30:00", "at_time must format consistently"
-        handler.handle("timed", "INFO", "probe message")
-        assert handler.flush() is True, "flush must return True"
-    finally:
-        handler.close()
-
-
-def test_timed_rotating_handler_rejects_invalid_when(
+@pytest.fixture(name="open_timed_handler")
+def fixture_open_timed_handler(
     tmp_path: Path,
+) -> cabc.Iterator[TimedHandlerFactory]:
+    """Open timed rotating handlers and close them once the test finishes."""
+    handlers: list[FemtoTimedRotatingFileHandler] = []
+
+    def open_handler(
+        options: TimedHandlerOptions | None = None,
+    ) -> FemtoTimedRotatingFileHandler:
+        path = str(tmp_path / "timed.log")
+        handler = (
+            FemtoTimedRotatingFileHandler(path)
+            if options is None
+            else FemtoTimedRotatingFileHandler(path, options=options)
+        )
+        handlers.append(handler)
+        return handler
+
+    try:
+        yield open_handler
+    finally:
+        for handler in handlers:
+            handler.close()
+
+
+def _assert_schedule(
+    handler: FemtoTimedRotatingFileHandler,
+    expected: dict[str, object],
+    context: str,
 ) -> None:
+    """Assert every schedule attribute of *handler* matches *expected*."""
+    actual = {name: getattr(handler, name) for name in SCHEDULE_ATTRIBUTES}
+    assert actual == expected, (
+        f"{context}: the rotation schedule must match the requested "
+        f"configuration; expected {expected}, got {actual}"
+    )
+
+
+def test_timed_rotating_handler_defaults(
+    open_timed_handler: TimedHandlerFactory,
+) -> None:
+    """Constructing with defaults should preserve the default schedule."""
+    handler = open_timed_handler(None)
+
+    _assert_schedule(
+        handler,
+        {
+            "when": "H",
+            "interval": 1,
+            "backup_count": 0,
+            "utc": False,
+            "at_time": None,
+        },
+        "an unconfigured handler rotates hourly in local time, keeping all backups",
+    )
+
+
+def test_timed_rotating_handler_accepts_options(
+    open_timed_handler: TimedHandlerFactory,
+) -> None:
+    """Timed handler options configure schedule and queue settings."""
+    handler = open_timed_handler(
+        TimedHandlerOptions(
+            capacity=32,
+            flush_interval=2,
+            policy="block",
+            when="MIDNIGHT",
+            interval=1,
+            backup_count=3,
+            utc=True,
+            at_time=dt.time(6, 30, 0),
+        )
+    )
+
+    _assert_schedule(
+        handler,
+        {
+            "when": "MIDNIGHT",
+            "interval": 1,
+            "backup_count": 3,
+            "utc": True,
+            "at_time": "06:30:00",
+        },
+        "TimedHandlerOptions must round-trip onto the handler",
+    )
+    handler.handle("timed", "INFO", "probe message")
+    assert handler.flush() is True, (
+        "flush must report success after a record has been queued"
+    )
+
+
+def test_timed_rotating_handler_rejects_invalid_when(tmp_path: Path) -> None:
     """Unsupported schedule values should fail fast."""
-    path = tmp_path / "timed.log"
     with pytest.raises(ValueError, match=TIMED_ROTATION_VALIDATION_MSG):
         FemtoTimedRotatingFileHandler(
-            str(path),
+            str(tmp_path / "timed.log"),
             options=TimedHandlerOptions(when="fortnight"),
         )
 
 
-def test_timed_rotating_handler_rejects_at_time_for_hourly(
-    tmp_path: Path,
-) -> None:
+def test_timed_rotating_handler_rejects_at_time_for_hourly(tmp_path: Path) -> None:
     """Hour-based rotation should reject at_time."""
-    path = tmp_path / "timed.log"
     with pytest.raises(
         ValueError,
-        match=("at_time is only supported for daily, midnight, and weekday rotation"),
+        match="at_time is only supported for daily, midnight, and weekday rotation",
     ):
         FemtoTimedRotatingFileHandler(
-            str(path),
+            str(tmp_path / "timed.log"),
             options=TimedHandlerOptions(when="H", at_time=dt.time(8, 15, 0)),
         )
 

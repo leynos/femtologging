@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import typing as typ
 
-from . import _femtologging_rs as rust
+from ._femtologging_rs import (
+    LevelFilterBuilder,
+    NameFilterBuilder,
+    PythonCallbackFilterBuilder,
+)
 from ._filter_factory import resolve_factory
-
-Any = typ.Any
-cast = typ.cast
-
-LevelFilterBuilder = rust.LevelFilterBuilder
-NameFilterBuilder = rust.NameFilterBuilder
-PythonCallbackFilterBuilder = rust.PythonCallbackFilterBuilder
 
 _DECLARATIVE_KEYS: frozenset[str] = frozenset({"level", "name"})
 
@@ -62,7 +59,9 @@ def _build_factory_filter(fid: str, data: dict[str, object]) -> object:
         msg = f"filter {fid!r} factory must be callable"
         raise TypeError(msg)
     kwargs = {key: value for key, value in data.items() if key != "()"}
-    built = cast("Any", factory)(**kwargs)  # pyright: ignore[reportCallIssue]
+    # The factory comes from user configuration, so its signature is unknown;
+    # widening to Any is the only way to forward arbitrary keyword arguments.
+    built = typ.cast("typ.Any", factory)(**kwargs)
     return PythonCallbackFilterBuilder(built)
 
 

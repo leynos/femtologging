@@ -1,8 +1,11 @@
 """Unit tests covering ConfigBuilder and related builder utilities."""
 
+import collections.abc as cabc
 import pathlib
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 import femtologging
 from femtologging import (
@@ -14,6 +17,104 @@ from femtologging import (
     TimedRotatingFileHandlerBuilder,
     get_logger,
 )
+from femtologging import config as config_module
+
+type BuilderFactory = cabc.Callable[[], ConfigBuilder]
+
+# Identifier used for the shared stderr handler in reconfiguration tests.
+HANDLER_ID = "h"
+
+# Every level spelling accepted by the Rust parser, mapped to its canonical
+# rendering in the emitted configuration dictionary.
+LEVEL_ALIASES = {
+    "TRACE": "TRACE",
+    "DEBUG": "DEBUG",
+    "INFO": "INFO",
+    "WARN": "WARN",
+    "WARNING": "WARN",
+    "ERROR": "ERROR",
+    "CRITICAL": "CRITICAL",
+}
+
+# Builder classes that must be re-exported from the top-level package.
+PACKAGE_BUILDER_EXPORTS = {
+    "ConfigBuilder": ConfigBuilder,
+    "FormatterBuilder": FormatterBuilder,
+    "LoggerConfigBuilder": LoggerConfigBuilder,
+    "RotatingFileHandlerBuilder": RotatingFileHandlerBuilder,
+    "StreamHandlerBuilder": StreamHandlerBuilder,
+    "TimedRotatingFileHandlerBuilder": TimedRotatingFileHandlerBuilder,
+}
+
+# Subset of the above that ``femtologging.config`` must also expose directly.
+CONFIG_MODULE_EXPORTS = ("ConfigBuilder", "LoggerConfigBuilder")
+
+
+@pytest.fixture
+def new_info_stderr_builder() -> BuilderFactory:
+    """Return a factory for builders with an INFO root logger and stderr handler.
+
+    A factory rather than a single builder is returned because several tests
+    need a second, independent configuration to reconfigure the manager with.
+
+    Returns
+    -------
+    BuilderFactory
+        Callable returning a freshly configured :class:`ConfigBuilder`.
+    """
+
+    def factory() -> ConfigBuilder:
+        return (
+            ConfigBuilder()
+            .with_handler(HANDLER_ID, StreamHandlerBuilder.stderr())
+            .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        )
+
+    return factory
+
+
+def assert_handler_fields(
+    handler: cabc.Mapping[str, object],
+    expected: cabc.Mapping[str, object],
+    context: str,
+) -> None:
+    """Assert that a serialized handler carries the expected configuration.
+
+    Parameters
+    ----------
+    handler:
+        Serialized handler entry taken from ``ConfigBuilder.as_dict()``.
+    expected:
+        Field values the builder was asked to record.
+    context:
+        Short description of the handler under test, used in failure messages.
+    """
+    for key, value in expected.items():
+        actual = handler.get(key)
+        assert actual == value, (
+            f"{context}: builder should record {key!r} as {value!r}, got {actual!r}"
+        )
+
+
+def assign_root_levels(first: str, second: str) -> str:
+    """Assign the root logger twice and return the level that survives.
+
+    Parameters
+    ----------
+    first:
+        Level for the discarded first root logger assignment.
+    second:
+        Level for the final root logger assignment.
+
+    Returns
+    -------
+    str
+        Root level recorded in the serialized configuration.
+    """
+    builder = ConfigBuilder()
+    builder.with_root_logger(LoggerConfigBuilder().with_level(first))
+    builder.with_root_logger(LoggerConfigBuilder().with_level(second))
+    return builder.as_dict()["root"]["level"]
 
 
 def test_duplicate_formatter_overwrites() -> None:
@@ -41,7 +142,7 @@ def test_duplicate_handler_overwrites() -> None:
     builder.with_root_logger(LoggerConfigBuilder().with_level("INFO"))
     config = builder.as_dict()
     assert config["handlers"]["console"]["target"] == "stdout", (
-        "Later handler should overwrite earlier one",
+        "Later handler should overwrite earlier one"
     )
 
 
@@ -60,10 +161,11 @@ def test_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
 
     # Building should succeed and preserve the rotating handler configuration.
     builder.build_and_init()
-    config = builder.as_dict()
-    assert config["handlers"]["rot"]["path"] == str(log_path)
-    assert config["handlers"]["rot"]["max_bytes"] == 1024
-    assert config["handlers"]["rot"]["backup_count"] == 3
+    assert_handler_fields(
+        builder.as_dict()["handlers"]["rot"],
+        {"path": str(log_path), "max_bytes": 1024, "backup_count": 3},
+        "rotating file handler",
+    )
 
 
 def test_timed_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
@@ -82,12 +184,21 @@ def test_timed_rotating_handler_supported(tmp_path: pathlib.Path) -> None:
     builder.with_root_logger(LoggerConfigBuilder().with_handlers(["timed"]))
 
     builder.build_and_init()
-    config = builder.as_dict()
-    assert config["handlers"]["timed"]["path"] == str(log_path)
-    assert config["handlers"]["timed"]["when"] == "MIDNIGHT"
-    assert config["handlers"]["timed"]["interval"] == 2
-    assert config["handlers"]["timed"]["backup_count"] == 4
-    assert config["handlers"]["timed"]["utc"] is True
+    handler = builder.as_dict()["handlers"]["timed"]
+    assert_handler_fields(
+        handler,
+        {
+            "path": str(log_path),
+            "when": "MIDNIGHT",
+            "interval": 2,
+            "backup_count": 4,
+        },
+        "timed rotating file handler",
+    )
+    assert handler["utc"] is True, (
+        "timed rotating file handler should record UTC as a true boolean, "
+        f"got {handler['utc']!r}"
+    )
 
 
 def test_duplicate_logger_overwrites() -> None:
@@ -133,7 +244,7 @@ def test_logger_config_builder_optional_fields_omitted() -> None:
     assert "handlers" not in config, "Handlers should be omitted when not set"
 
 
-def test_no_root_logger_behavior() -> None:
+def test_build_without_root_logger_raises() -> None:
     """Test that building without a root logger raises ValueError."""
     builder = ConfigBuilder()
     with pytest.raises(ValueError, match="root logger configuration"):
@@ -150,25 +261,13 @@ def test_unknown_handler_id_raises_key_error() -> None:
         builder.build_and_init()
 
 
-def make_info_stderr_builder() -> ConfigBuilder:
-    """Create a builder with an INFO root logger and stderr handler."""
-    return (
-        ConfigBuilder()
-        .with_handler("h", StreamHandlerBuilder.stderr())
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-    )
-
-
-def make_builder_with_logger(logger_name: str) -> ConfigBuilder:
-    """Create a builder with INFO root logger, stderr handler, and a named logger."""
-    return make_info_stderr_builder().with_logger(
-        logger_name, LoggerConfigBuilder().with_handlers(["h"])
-    )
-
-
-def test_disable_existing_loggers_clears_unmentioned() -> None:
+def test_disable_existing_loggers_clears_unmentioned(
+    new_info_stderr_builder: BuilderFactory,
+) -> None:
     """Loggers not present in new config are disabled."""
-    builder = make_builder_with_logger("stale")
+    builder = new_info_stderr_builder().with_logger(
+        "stale", LoggerConfigBuilder().with_handlers([HANDLER_ID])
+    )
     builder.build_and_init()
 
     stale = get_logger("stale")
@@ -183,7 +282,9 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
     rebuild.build_and_init()
 
     stale = get_logger("stale")
-    assert stale.handler_ptrs_for_test() == [], "stale logger should be disabled"
+    assert not stale.handler_ptrs_for_test(), (
+        "stale logger should be disabled once it is absent from the new config"
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,11 +295,15 @@ def test_disable_existing_loggers_clears_unmentioned() -> None:
     ],
     ids=["parent", "grandparent"],
 )
-def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
+def test_disable_existing_loggers_keeps_ancestors(
+    new_info_stderr_builder: BuilderFactory, ancestors: list[str]
+) -> None:
     """Ancestor loggers remain active when their descendants are configured."""
-    builder = make_info_stderr_builder()
+    builder = new_info_stderr_builder()
     for name in ancestors:
-        builder = builder.with_logger(name, LoggerConfigBuilder().with_handlers(["h"]))
+        builder = builder.with_logger(
+            name, LoggerConfigBuilder().with_handlers([HANDLER_ID])
+        )
     builder.build_and_init()
 
     initial_handlers = {
@@ -208,17 +313,20 @@ def test_disable_existing_loggers_keeps_ancestors(ancestors: list[str]) -> None:
     child_name = f"{ancestors[-1]}.child"
     disable_existing = True
     rebuild = (
-        make_info_stderr_builder()
-        .with_logger(child_name, LoggerConfigBuilder().with_handlers(["h"]))
+        new_info_stderr_builder()
+        .with_logger(child_name, LoggerConfigBuilder().with_handlers([HANDLER_ID]))
         .with_disable_existing_loggers(disable_existing)
     )
     rebuild.build_and_init()
 
     child = get_logger(child_name)
-    assert len(child.handler_ptrs_for_test()) == 1, "child should have one handler"
+    assert len(child.handler_ptrs_for_test()) == 1, (
+        f"newly configured logger {child_name!r} should have exactly one handler"
+    )
     for name in ancestors:
         assert get_logger(name).handler_ptrs_for_test() == initial_handlers[name], (
-            "ancestor logger should retain its handler"
+            f"ancestor logger {name!r} should retain its handler when a "
+            "descendant is configured"
         )
 
 
@@ -236,26 +344,37 @@ def test_root_logger_last_assignment_wins(
     first: str, second: str, expected: str
 ) -> None:
     """Verify last-write-wins semantics when assigning the root logger."""
-    builder = ConfigBuilder()
-    builder.with_root_logger(LoggerConfigBuilder().with_level(first))
-    builder.with_root_logger(LoggerConfigBuilder().with_level(second))
-    config = builder.as_dict()
-    assert config["root"]["level"] == expected, (
+    assert assign_root_levels(first, second) == expected, (
         f"Last root logger assignment wins: {first}→{second}"
     )
 
 
-def test_builder_symbols_exposed_publicly() -> None:
-    """Builder classes must be reachable from both package and module namespaces."""
-    import femtologging.config as config_module
-
-    assert femtologging.ConfigBuilder is ConfigBuilder
-    assert femtologging.LoggerConfigBuilder is LoggerConfigBuilder
-    assert femtologging.FormatterBuilder is FormatterBuilder
-    assert femtologging.StreamHandlerBuilder is StreamHandlerBuilder
-    assert femtologging.RotatingFileHandlerBuilder is RotatingFileHandlerBuilder
-    assert (
-        femtologging.TimedRotatingFileHandlerBuilder is TimedRotatingFileHandlerBuilder
+@given(
+    first=st.sampled_from(sorted(LEVEL_ALIASES)),
+    second=st.sampled_from(sorted(LEVEL_ALIASES)),
+)
+def test_root_logger_last_assignment_wins_for_any_level_pair(
+    first: str, second: str
+) -> None:
+    """Last-write-wins should hold for every accepted level spelling."""
+    expected = LEVEL_ALIASES[second]
+    assert assign_root_levels(first, second) == expected, (
+        f"Root level after {first}→{second} should be the canonical form of "
+        f"the last assignment ({expected})"
     )
-    assert config_module.ConfigBuilder is ConfigBuilder
-    assert config_module.LoggerConfigBuilder is LoggerConfigBuilder
+
+
+@pytest.mark.parametrize("name", sorted(PACKAGE_BUILDER_EXPORTS))
+def test_builder_symbol_exposed_on_package(name: str) -> None:
+    """Builder classes must be reachable from the top-level package namespace."""
+    assert getattr(femtologging, name, None) is PACKAGE_BUILDER_EXPORTS[name], (
+        f"femtologging.{name} must be the builder class importable from the package"
+    )
+
+
+@pytest.mark.parametrize("name", CONFIG_MODULE_EXPORTS)
+def test_builder_symbol_exposed_on_config_module(name: str) -> None:
+    """Core builder classes must also be reachable from ``femtologging.config``."""
+    assert getattr(config_module, name, None) is PACKAGE_BUILDER_EXPORTS[name], (
+        f"femtologging.config.{name} must be the same object as femtologging.{name}"
+    )

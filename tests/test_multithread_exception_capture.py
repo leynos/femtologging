@@ -11,7 +11,7 @@ It spawns N threads, raises exceptions in each, captures payloads, and asserts:
 The test uses threading.Barrier for deterministic synchronization, avoiding
 flaky timing assumptions.
 
-Related to: https://github.com/leynos/femtologging/issues/299
+Related to: leynos/femtologging issue 299.
 """
 
 from __future__ import annotations
@@ -165,6 +165,10 @@ def thread_worker(
 ) -> None:
     """Execute a worker that raises and logs a thread-specific exception.
 
+    Barrier waits are bounded by ``BARRIER_TIMEOUT_SECONDS``; a timed-out or
+    broken barrier surfaces as ``threading.BrokenBarrierError`` propagated from
+    ``threading.Barrier.wait`` rather than a permanent hang.
+
     Parameters
     ----------
     thread_index : int
@@ -175,11 +179,6 @@ def thread_worker(
         Barrier to synchronize thread completion.
     logger : FemtoLogger
         Logger instance to use for exception capture.
-
-    Raises
-    ------
-    threading.BrokenBarrierError
-        If a barrier wait times out or is broken.
 
     """
     # Wait for all threads to be ready (timeout prevents permanent hang)
@@ -238,7 +237,7 @@ class TestMultithreadExceptionCapture:
     """Test suite for multi-threaded exception capture validation."""
 
     @pytest.mark.parametrize("thread_count", [2, 10, 50])
-    def test_multithread_exception_capture(  # noqa: PLR6301 - method in class per test guidelines
+    def test_multithread_exception_capture(
         self,
         thread_count: int,
     ) -> None:

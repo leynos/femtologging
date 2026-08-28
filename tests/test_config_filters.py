@@ -110,7 +110,11 @@ def test_build_filter_from_dict_builds_declarative_filters(
     monkeypatch.setattr(config_filters, "LevelFilterBuilder", FakeLevelFilterBuilder)
     monkeypatch.setattr(config_filters, "NameFilterBuilder", FakeNameFilterBuilder)
 
-    assert config_filters.build_filter_from_dict("f", data) == expected
+    built = config_filters.build_filter_from_dict("f", data)
+    assert built == expected, (
+        f"declarative entry {data!r} should be routed to the matching builder, "
+        f"got {built!r}"
+    )
 
 
 def test_build_filter_from_dict_resolves_factory_paths(
@@ -139,8 +143,14 @@ def test_build_filter_from_dict_resolves_factory_paths(
         ),
     )
 
-    assert built_with == {"request_id": "req-123"}
-    assert result.callback == {"built": {"request_id": "req-123"}}
+    assert built_with == {"request_id": "req-123"}, (
+        "resolved factory should be called with the remaining config keys as "
+        f"keyword arguments, got {built_with!r}"
+    )
+    assert result.callback == {"built": {"request_id": "req-123"}}, (
+        "factory return value should be wrapped verbatim as the callback filter, "
+        f"got {result.callback!r}"
+    )
 
 
 def test_build_filter_from_dict_accepts_direct_callable_factories(
@@ -165,7 +175,10 @@ def test_build_filter_from_dict_accepts_direct_callable_factories(
         ),
     )
 
-    assert result.callback == {"enabled": True}
+    assert result.callback == {"enabled": True}, (
+        "a callable under '()' should be invoked directly without dotted-path "
+        f"resolution, got {result.callback!r}"
+    )
 
 
 def test_build_filter_from_dict_surfaces_factory_errors(
@@ -175,7 +188,9 @@ def test_build_filter_from_dict_surfaces_factory_errors(
 
     def boom_factory(**kwargs: object) -> object:
         """Raise a deterministic error once the factory is invoked."""
-        assert kwargs["request_id"] == "req-123"
+        assert kwargs["request_id"] == "req-123", (
+            f"factory should receive the declared config keys, got {kwargs!r}"
+        )
         msg = "boom"
         raise RuntimeError(msg)
 

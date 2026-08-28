@@ -61,19 +61,21 @@ class RecordCollector:
     """Collect structured records from ``handle_record``."""
 
     def __init__(self) -> None:
-        """Initialize the in-memory record buffer."""
+        """Initialize the in-memory record buffer and structured dispatch hook."""
         self.records: list[CollectedRecordPayload] = []
+        # femtologging looks up ``handle_record`` on the instance, so binding
+        # ``list.append`` directly avoids a forwarding method that would add
+        # nothing but a stack frame.
+        self.handle_record: cabc.Callable[[CollectedRecordPayload], None] = (
+            self.records.append
+        )
 
     @staticmethod
     def handle(_logger: str, _level: str, _message: str) -> None:
         """Fallback handle method required by registration."""
 
-    def handle_record(self, record: CollectedRecordPayload) -> None:
-        """Capture structured record payloads for assertions."""
-        self.records.append(record)
 
-
-def _wait_for(condition: typ.Callable[[], bool], timeout: float = 1.0) -> None:
+def _wait_for(condition: cabc.Callable[[], bool], timeout: float = 1.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if condition():
@@ -84,7 +86,7 @@ def _wait_for(condition: typ.Callable[[], bool], timeout: float = 1.0) -> None:
 
 
 def _holds_for_quiet_period(
-    condition: typ.Callable[[], bool],
+    condition: cabc.Callable[[], bool],
     quiet_period: float,
 ) -> bool:
     """Return ``True`` when ``condition`` holds for ``quiet_period`` seconds."""
@@ -97,7 +99,7 @@ def _holds_for_quiet_period(
 
 
 def _wait_for_quiescence(
-    condition: typ.Callable[[], bool],
+    condition: cabc.Callable[[], bool],
     *,
     quiet_period: float = 0.05,
     timeout: float = 1.0,
@@ -157,7 +159,9 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
 def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    assert config_builder.as_dict() == snapshot
+    assert config_builder.as_dict() == snapshot, (
+        "serialized python callback filter config must match the recorded snapshot"
+    )
 
 
 @when("the python callback filter configuration is built")
@@ -183,7 +187,9 @@ def attach_collector(name: str) -> RecordCollector:
 def emit_with_request_id(name: str, level: str, request_id: str) -> None:
     token = _REQUEST_ID.set(request_id)
     try:
-        assert get_logger(name).log(level, "hello") is not None
+        assert get_logger(name).log(level, "hello") is not None, (
+            f"the enrich callback must admit {level} records from logger {name!r}"
+        )
     finally:
         _REQUEST_ID.reset(token)
 
@@ -197,7 +203,11 @@ def assert_collected_metadata(
     collector: RecordCollector, key: str, expected_value: str
 ) -> None:
     _wait_for(lambda: len(collector.records) == 1)
-    assert collector.records[0]["metadata"]["key_values"][key] == expected_value
+    key_values = collector.records[0]["metadata"]["key_values"]
+    assert key_values.get(key) == expected_value, (
+        f"the callback filter must enrich the record with {key}={expected_value!r}; "
+        f"observed key-values {key_values!r}"
+    )
 
 
 @then(
@@ -206,6 +216,12 @@ def assert_collected_metadata(
     )
 )
 def suppresses_record(name: str, level: str, collector: RecordCollector) -> None:
-    assert get_logger(name).log(level, "blocked") is None
-    _wait_for_quiescence(lambda: collector.records == [])
-    assert collector.records == []
+    assert get_logger(name).log(level, "blocked") is None, (
+        f"the reject-all filter must stop {level} records from logger {name!r} "
+        "before formatting"
+    )
+    _wait_for_quiescence(lambda: not collector.records)
+    assert not collector.records, (
+        "no rejected record may reach the attached handler; "
+        f"collected {collector.records!r}"
+    )

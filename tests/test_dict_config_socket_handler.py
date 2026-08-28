@@ -21,7 +21,17 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from femtologging._femtologging_rs import BackoffConfigDict
+
+
+@pytest.fixture(autouse=True)
+def reset_logger_state() -> cabc.Iterator[None]:
+    """Reset the global manager around each test."""
+    reset_manager()
+    yield
+    reset_manager()
 
 
 class _SocketCaptureHandler(socketserver.BaseRequestHandler):
@@ -45,6 +55,23 @@ class _SocketServer(socketserver.ThreadingTCPServer):
         self.queue: queue.Queue[bytes] = queue.Queue()
 
 
+@pytest.fixture(name="capture_server")
+def fixture_capture_server() -> cabc.Iterator[_SocketServer]:
+    """Serve a loopback TCP endpoint that captures framed payloads."""
+    with _SocketServer(("127.0.0.1", 0)) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield server
+        finally:
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive(), (
+                "the capture server thread must stop once shutdown() returns, "
+                "otherwise later tests inherit a stray listener"
+            )
+
+
 def _build_socket_handler_from_kwargs(
     handler_id: str,
     kwargs: dict[str, object],
@@ -56,39 +83,46 @@ def _build_socket_handler_from_kwargs(
     )
 
 
-def test_dict_config_socket_handler() -> None:
+def _assert_socket_builder_kwargs(
+    builder: object,
+    expected: dict[str, object],
+    context: str,
+) -> None:
+    """Assert *builder* is a socket builder whose kwargs match *expected*."""
+    assert isinstance(builder, SocketHandlerBuilder), (
+        f"{context}: dictConfig must construct a SocketHandlerBuilder, but it "
+        f"produced a {type(builder).__name__}"
+    )
+    actual = builder.as_dict()
+    assert actual == expected, (
+        f"{context}: the socket builder kwargs must match the requested "
+        f"configuration; expected {expected}, got {actual}"
+    )
+
+
+def test_dict_config_socket_handler(capture_server: _SocketServer) -> None:
     """Ensure dictConfig wires a socket handler builder correctly."""
-    reset_manager()
-    with _SocketServer(("127.0.0.1", 0)) as server:
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        address = server.server_address
-        host = str(address[0])
-        port = int(address[1])
+    host, port = capture_server.server_address[:2]
 
-        cfg = {
-            "version": 1,
-            "handlers": {
-                "sock": {
-                    "class": "logging.handlers.SocketHandler",
-                    "args": [host, port],
-                }
-            },
-            "root": {"level": "INFO", "handlers": ["sock"]},
-        }
+    cfg = {
+        "version": 1,
+        "handlers": {
+            "sock": {
+                "class": "logging.handlers.SocketHandler",
+                "args": [str(host), int(port)],
+            }
+        },
+        "root": {"level": "INFO", "handlers": ["sock"]},
+    }
 
-        dictConfig(cfg)
-        logger = get_logger("root")
-        logger.log("INFO", "message")
+    dictConfig(cfg)
+    get_logger("root").log("INFO", "message")
 
-        payload = server.queue.get(timeout=2)
-        assert payload, "socket handler should emit payload"
-
-        server.shutdown()
-        thread.join(timeout=1)
-        if thread.is_alive():
-            msg = "server thread did not terminate within timeout"
-            raise AssertionError(msg)
+    payload = capture_server.queue.get(timeout=2)
+    assert payload, (
+        "the dictConfig-built socket handler must frame and send the record, "
+        "but the server received an empty payload"
+    )
 
 
 def test_dict_config_socket_handler_round_trip_kwargs() -> None:
@@ -112,8 +146,11 @@ def test_dict_config_socket_handler_round_trip_kwargs() -> None:
     expected_kwargs = builder.as_dict()
     round_trip = _build_socket_handler_from_kwargs("sock", dict(expected_kwargs))
 
-    assert isinstance(round_trip, SocketHandlerBuilder)
-    assert round_trip.as_dict() == expected_kwargs
+    _assert_socket_builder_kwargs(
+        round_trip,
+        expected_kwargs,
+        "SocketHandlerBuilder.as_dict() output fed back through dictConfig",
+    )
 
 
 def test_dict_config_socket_handler_backoff_legacy_kwargs(
@@ -162,14 +199,22 @@ def test_dict_config_socket_handler_backoff_legacy_kwargs(
         },
     )
 
-    assert isinstance(nested_builder, LegacyBuilder)
-    assert nested_builder.host == "127.0.0.1"
-    assert nested_builder.port == 9023
+    assert isinstance(nested_builder, LegacyBuilder), (
+        "the patched handler class map must be honoured, but dictConfig built "
+        f"a {type(nested_builder).__name__}"
+    )
+    assert (nested_builder.host, nested_builder.port) == ("127.0.0.1", 9023), (
+        "the legacy path must forward host and port to with_tcp(), but got "
+        f"{(nested_builder.host, nested_builder.port)}"
+    )
     assert nested_builder.overrides == {
         "base_ms": 10,
         "cap_ms": 100,
         "reset_after_ms": None,
-    }
+    }, (
+        "without BackoffConfig the nested backoff mapping must be splatted as "
+        f"with_backoff() keywords, but got {nested_builder.overrides}"
+    )
 
 
 def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
@@ -198,7 +243,6 @@ def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
         socket_kwargs,
     )
 
-    assert isinstance(nested_builder, SocketHandlerBuilder)
     expected = (
         SocketHandlerBuilder()
         .with_tcp("localhost", 9021)
@@ -209,7 +253,11 @@ def test_dict_config_socket_handler_accepts_nested_tls_backoff() -> None:
         .with_tls(tls_domain, insecure=tls_insecure)
         .with_backoff(BackoffConfig(backoff_config))
     )
-    assert nested_builder.as_dict() == expected.as_dict()
+    _assert_socket_builder_kwargs(
+        nested_builder,
+        expected.as_dict(),
+        "nested tls/backoff kwargs",
+    )
 
 
 def test_dict_config_socket_handler_rejects_conflicting_tls() -> None:

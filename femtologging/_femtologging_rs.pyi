@@ -2,7 +2,6 @@ import collections.abc as cabc
 import datetime as dt
 import types
 import typing as typ
-from typing import TypedDict  # noqa: ICN003 - explicit import required for stubs.
 
 Callable = cabc.Callable
 Mapping = cabc.Mapping
@@ -84,7 +83,7 @@ class FemtoLogger:
 
         """
         ...
-    def isEnabledFor(self, level: LevelArg) -> bool:  # noqa: N802  # TODO(#343): camelCase for stdlib compat
+    def isEnabledFor(self, level: LevelArg) -> bool:  # ruff: ignore[invalid-function-name]  # TODO(#343): camelCase for stdlib compat
         """Return ``True`` if *level* would pass the effective level filter."""
         ...
     def debug(
@@ -197,7 +196,7 @@ class _NamedLogFn(typ.Protocol):
         name: str | None = ...,
     ) -> str | None: ...
 
-class _HandlerBuilderBase(typ.Generic[_H_co]):  # noqa: UP046
+class _HandlerBuilderBase(typ.Generic[_H_co]):  # ruff: ignore[non-pep695-generic-class]
     def as_dict(self) -> dict[str, object]: ...
     def build(self) -> _H_co: ...
 
@@ -343,7 +342,7 @@ class TimedRotatingFileHandlerBuilder(
     def with_utc(self, use_utc: bool) -> Self: ...
     def with_at_time(self, at_time: dt.time | None) -> Self: ...
 
-class BackoffConfigDict(TypedDict, total=False):
+class BackoffConfigDict(typ.TypedDict, total=False):
     """Configuration options for exponential backoff retry behaviour."""
 
     base_ms: int | None
@@ -361,13 +360,13 @@ class SocketHandlerBuilder(_NetworkHandlerBuilderBase[FemtoSocketHandler]):
     def with_max_frame_size(self, size: int) -> Self: ...
     def with_tls(self, domain: str | None = ..., *, insecure: bool = ...) -> Self: ...
 
-class HTTPBasicAuthConfig(TypedDict):
+class HTTPBasicAuthConfig(typ.TypedDict):
     """HTTP Basic authentication options for :class:`HTTPHandlerBuilder`."""
 
     username: str
     password: str
 
-class HTTPTokenAuthConfig(TypedDict):
+class HTTPTokenAuthConfig(typ.TypedDict):
     """Bearer authentication options for :class:`HTTPHandlerBuilder`."""
 
     token: str

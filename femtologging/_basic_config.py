@@ -8,18 +8,18 @@ import logging
 import sys
 import typing as typ
 
-from . import _femtologging_rs as rust
+from ._femtologging_rs import (
+    ConfigBuilder,
+    FemtoHandler,
+    FemtoLogger,
+    FileHandlerBuilder,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
+    get_logger,
+)
 
-FemtoLogger = rust.FemtoLogger
-FemtoHandler = rust.FemtoHandler
-ConfigBuilder = rust.ConfigBuilder
-LoggerConfigBuilder = rust.LoggerConfigBuilder
-FileHandlerBuilder = rust.FileHandlerBuilder
-StreamHandlerBuilder = rust.StreamHandlerBuilder
-get_logger = rust.get_logger
 
-
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class BasicConfig:
     """Configuration parameters for basicConfig()."""
 
@@ -78,9 +78,8 @@ def _resolve_basic_config_params(
     )
 
 
-def basicConfig(  # noqa: N802
-    config: BasicConfig | None = None, /, **kwargs: object
-) -> None:
+# ruff: ignore[invalid-function-name] name mirrors stdlib logging.basicConfig
+def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     """Configure the root logger using the builder API.
 
     Parameters mirror ``logging.basicConfig`` but currently only a subset is
@@ -114,10 +113,20 @@ def basicConfig(  # noqa: N802
     handlers : cabc.Iterable[FemtoHandler], optional
         Pre-constructed handlers to attach.
 
+    Raises
+    ------
+    TypeError
+        If an unsupported keyword argument is supplied.
+
     Notes
     -----
     ``format`` and ``datefmt`` are intentionally unsupported until formatter
     customisation is implemented.
+
+    :func:`_validate_basic_config_params` additionally raises ``TypeError``
+    when ``handlers`` is not iterable, and ``ValueError`` when ``filename``,
+    ``stream``, and ``handlers`` are combined in an unsupported way or
+    ``stream`` is neither ``sys.stdout`` nor ``sys.stderr``.
 
     Examples
     --------

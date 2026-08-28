@@ -5,29 +5,22 @@ consistent between local `make` targets and CI.
 
 ## Ruff version
 
-Ruff is pinned to version `0.15.12`.
+Ruff is pinned to version `0.16.4` in the Makefile's `RUFF_VERSION`, and
+`make lint` invokes it through `uvx ruff==$(RUFF_VERSION)`.
+`.github/workflows/ci.yml` repeats the same value as the `RUFF_VERSION` job
+environment variable, and `tests/test_lint_version_contract.py` asserts the
+Makefile default and the CI environment variable stay identical, without
+pinning any specific version itself — a deliberate bump only touches the
+Makefile and the workflow file. `ty`, the project's typechecker, is pinned the
+same way through `TY_VERSION` (currently `0.0.74`) and checked by the same
+contract test.
 
-The pin was taken from the active local executable with:
-
-```shell
-$(which ruff) --version
-```
-
-which reported:
-
-```text
-ruff 0.15.12
-```
-
-The Makefile stores this value in `RUFF_VERSION` and invokes Ruff through the
-pinned `uvx ruff==$(RUFF_VERSION)` command. Pull-request CI installs `uv` and
-`ty`, then runs the same Makefile targets, so `make lint` and CI evaluate
-Python lint rules with the same Ruff release through the Makefile.
-
-When updating Ruff, first install the intended new version locally, confirm it
-with `$(which ruff) --version`, then update `RUFF_VERSION` in `Makefile`. CI
-does not install Ruff directly; it picks up the version from the Makefile's
-`uvx ruff==$(RUFF_VERSION)` invocation.
+When updating Ruff, install the intended new version locally, confirm it
+resolves through `uvx ruff==<version> --version`, then update `RUFF_VERSION`
+in `Makefile` and the matching CI environment variable together. CI does not
+install Ruff directly; it picks up the version from the Makefile's
+`uvx ruff==$(RUFF_VERSION)` invocation. See [Python
+linting](#python-linting) for the complete four-tier lint pipeline.
 
 ## Python test toolchain
 
@@ -198,10 +191,124 @@ resolve the same formatter and linter version without requiring a global Ruff
 install. CI must not add a second hard-coded Ruff installation; update
 `RUFF_VERSION` when the project intentionally changes Ruff releases.
 
-The Makefile pins the `ty` release used by `make typecheck`; local development
-should use that target rather than an independently installed version. CI
-installs `uv` and `ty`, then delegates formatting, linting, type checking, and
-tests to Makefile targets.
+The `ty` command no longer needs a separate install: `make typecheck` runs the
+pinned release through `uv tool run --from 'ty==$(TY_VERSION)' ty`. CI installs
+`uv` and the pinned Makeutil parser, then delegates formatting, linting, type
+checking, and tests to Makefile targets.
+
+
+## Python linting
+
+`femtologging` runs Python linting as four tiers, all reachable through
+`make lint` (`lint-python`, followed by `lint-rust`). Each stage must pass
+before the next runs. The decision is recorded in
+[ADR-005: Four-tier Python lint architecture](adr-005-four-tier-python-lint-architecture.md).
+
+1. **Ruff** — fast, broad rule set in preview mode, targeting `py312`. Pinned
+   by `RUFF_VERSION` (`0.16.4`); see [Ruff version](#ruff-version) for the
+   pin-sync scheme with CI.
+2. **Pylint** (`4.0.7`) — runs through the pinned `leynos/pylint-pypy-shim`
+   revision under managed PyPy, isolated from the project virtual
+   environment. Configuration lives in `pyproject.toml`'s `[tool.pylint]`
+   tables: `py-version = "3.12"`, `max-module-lines = 400`, and a curated
+   `enable` list covering logging interpolation, pattern matching, generator
+   control flow, environment handling, and subprocess safety.
+3. **`df12-python-lints`** and its companion **`ambrleaks`** — run under
+   CPython 3.14 so the house-rule parser stays ahead of the project's 3.12
+   syntax baseline. `df12-python-lints` is pinned to a specific commit of the
+   `v0.3.0` release and enables the message set
+   `R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112`.
+   `ambrleaks` sweeps Syrupy `.ambr` snapshots under `tests` and
+   `femtologging/unittests` for unredacted secrets.
+4. **Skylos** (`4.33.2`) — a blocking production dead-code gate, run under
+   Python 3.14 so Skylos parses the project's syntax with its own runtime
+   `ast` implementation rather than an older one that could produce phantom
+   findings. See [Skylos dead-code gate](#skylos-dead-code-gate) below.
+
+Run the full lint gate with:
+
+```shell
+make lint
+```
+
+To run a single tier locally, invoke the underlying tool directly:
+
+```shell
+uvx ruff==0.16.4 check
+uv tool run --python pypy --from \
+  'git+https://github.com/leynos/pylint-pypy-shim.git@726d09f968b4d729ee4b29c71fc732e744854f3b' \
+  --with 'pylint==4.0.7' pylint-pypy femtologging tests scripts
+uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
+  --config-file pyproject.toml femtologging \
+  --exclude femtologging/unittests --exclude femtologging/_femtologging_rs.pyi \
+  --category dead_code --gate --format concise --no-upload --no-provenance \
+  --no-grep-verify
+```
+
+Prefer running the exact Makefile-derived commands (for example,
+`make lint-python`) over hand-copied invocations, since the Makefile is the
+single source of truth for tool pins, targets, and flags.
+
+
+### Skylos dead-code gate
+
+Skylos analyses production code only: `femtologging/unittests` and the native
+`femtologging/_femtologging_rs.pyi` stub are excluded, so test-only
+references cannot keep a production symbol alive and the stub's inherently
+"unused" native parameters never trigger findings. `--no-grep-verify`
+prevents a repository-wide text match from masking a genuinely dead
+production symbol, and `[tool.skylos.gate] strict = true` in `pyproject.toml`
+enforces the strict gate.
+
+Investigate every Skylos finding before suppressing it:
+
+- **Genuine dead code** must be removed.
+- A **verified false positive** — an implicit runtime caller such as a
+  re-exported native module, a test-util hook, or a protocol-shaped
+  parameter — should first be modelled as a typed
+  `[[tool.skylos.dead_code.entrypoints]]` rule in `pyproject.toml`, giving the
+  fully qualified symbol, its `type` (for example, `"import"`, `"variable"`,
+  or `"parameter"`; use `"method"` for methods), and a caller-specific
+  reason.
+- Only when an entry-point rule cannot describe the boundary should a named
+  allow-list exception be recorded:
+
+  ```bash
+  make skylos-allow SYMBOL=handler REASON="Loaded by plugin registry"
+  ```
+
+  Both `SYMBOL` and `REASON` are required; the target rejects empty or
+  whitespace-only values with exit code 2. Use `SYMBOL` rather than `NAME`,
+  because Windows Subsystem for Linux (WSL) may inject `NAME` with the host
+  name. The target serializes whitelist writes with `flock` against the
+  ignored `.skylos-whitelist.lock` file, so concurrent invocations do not
+  overwrite one another. Never record a broad or unreasoned exception.
+
+The complete Skylos Makefile contract — the scan command, its exclusions, the
+strict gate configuration, the documented-whitelist set, and the entry-point
+rule set — is pinned by `tests/test_skylos_lint_contract.py` and
+`tests/test_skylos_whitelist_boundary.py`. Both parse the Makefile through
+the pinned `makeutil` executable (`makeutil parse Makefile`, emitting JSON)
+rather than matching Makefile text, so recording a new exception requires a
+conscious update to `tests/test_skylos_lint_contract.py`.
+
+
+### Makeutil bootstrap
+
+`makeutil` is a prerequisite of `make test` (the `test` target depends on the
+`makeutil` target, which only verifies the executable is present) and of
+every full-suite CI job — `ci.yml`'s `build-test` job and
+`heavy-tests.yml`'s `heavy` job each install their own pinned copy before
+running tests. Install the same pinned revision and toolchain locally before
+running `make test`:
+
+```bash
+rustup toolchain install nightly-2026-05-28 --profile minimal
+RUSTFLAGS="-Zpolonius=next" cargo +nightly-2026-05-28 install \
+  --git https://github.com/leynos/makeutil \
+  --rev 29fc5a1634ffbaa18a773eed9dff1b2838a45d9c \
+  --locked --force makeutil
+```
 
 ## Benchmarking Documentation
 

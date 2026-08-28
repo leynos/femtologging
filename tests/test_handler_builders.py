@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import datetime as dt
 import typing as typ
 
 import pytest
@@ -17,7 +17,161 @@ from femtologging import (
 from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
+
+try:
+    from hypothesis import given
+    from hypothesis import strategies as st
+except ImportError:  # pragma: no cover - only on interpreters lacking Hypothesis
+    # Hypothesis has no CPython 3.15 distribution yet; tracked by
+    # femtologging issue #385.
+    _FLUSH_INTERVAL_PROPERTY = pytest.mark.skip(
+        reason="Hypothesis is unavailable on this interpreter (issue #385)"
+    )
+else:
+    # The Rust builders extract flush parameters as u64, so the whole u64
+    # range must round-trip through ``as_dict``.
+    _FLUSH_INTERVAL_PROPERTY = given(
+        interval=st.integers(min_value=1, max_value=2**64 - 1)
+    )
+
+# The builders record configuration eagerly but only touch the filesystem at
+# ``build()``, so configuration-only tests can use a fixed placeholder path.
+_CONFIG_ONLY_LOG_PATH = "config_only.log"
+
+
+def _assert_config_value(
+    data: dict[str, object],
+    key: str,
+    expected: object,
+    context: str,
+) -> None:
+    """Assert that a builder's ``as_dict`` records ``expected`` under ``key``."""
+    assert data.get(key) == expected, (
+        f"{context}: expected {key}={expected!r}, got {data.get(key)!r}; data={data}"
+    )
+
+
+def _configure_file_flush(value: int) -> dict[str, object]:
+    """Set the file builder's flush interval and return its configuration."""
+    builder = FileHandlerBuilder(_CONFIG_ONLY_LOG_PATH)
+    return builder.with_flush_after_records(value).as_dict()
+
+
+def _configure_rotating_flush(value: int) -> dict[str, object]:
+    """Set the rotating builder's flush interval and return its configuration."""
+    builder = RotatingFileHandlerBuilder(_CONFIG_ONLY_LOG_PATH)
+    return builder.with_flush_after_records(value).as_dict()
+
+
+def _configure_stream_flush(value: int) -> dict[str, object]:
+    """Set the stream builder's flush timeout and return its configuration."""
+    return StreamHandlerBuilder.stderr().with_flush_after_ms(value).as_dict()
+
+
+# Issue #168: the file, rotating, and stream builders share a u64 flush
+# parameter type and a common rejection contract, while keeping distinct
+# semantics (record counts versus milliseconds). Driving all three through one
+# table keeps that consistency under test.
+_FLUSH_CASES: typ.Final = {
+    "file": (_configure_file_flush, "flush_after_records"),
+    "rotating": (_configure_rotating_flush, "flush_after_records"),
+    "stream": (_configure_stream_flush, "flush_after_ms"),
+}
+
+flush_config_cases = pytest.mark.parametrize(
+    ("configure_flush", "config_key"),
+    [pytest.param(*case, id=name) for name, case in _FLUSH_CASES.items()],
+)
+
+flush_zero_cases = pytest.mark.parametrize(
+    ("configure_flush", "zero_error"),
+    [
+        pytest.param(
+            configure_flush,
+            f"{config_key} must be greater than zero",
+            id=name,
+        )
+        for name, (configure_flush, config_key) in _FLUSH_CASES.items()
+    ],
+)
+
+flush_setter_cases = pytest.mark.parametrize(
+    "configure_flush",
+    [pytest.param(case[0], id=name) for name, case in _FLUSH_CASES.items()],
+)
+
+
+@flush_zero_cases
+def test_flush_setter_rejects_zero(
+    configure_flush: cabc.Callable[[int], dict[str, object]],
+    zero_error: str,
+) -> None:
+    """Zero flush intervals are invalid and name the offending parameter."""
+    with pytest.raises(ValueError, match=zero_error):
+        configure_flush(0)
+
+
+@flush_setter_cases
+@pytest.mark.parametrize("value", [-1, -5, -1_000_000])
+def test_flush_setter_rejects_negative(
+    configure_flush: cabc.Callable[[int], dict[str, object]],
+    value: int,
+) -> None:
+    """Negative flush intervals overflow the builders' u64 extraction."""
+    with pytest.raises(OverflowError):
+        configure_flush(value)
+
+
+@flush_config_cases
+@pytest.mark.parametrize(
+    "interval",
+    [
+        pytest.param(1, id="minimum"),
+        pytest.param(100, id="small"),
+        pytest.param(1_000_000, id="moderate"),
+        pytest.param(1_000_000_000, id="large"),
+        pytest.param(2**63 - 1, id="i64-max"),
+        pytest.param(2**64 - 1, id="u64-max"),
+    ],
+)
+def test_flush_interval_round_trips_named_examples(
+    configure_flush: cabc.Callable[[int], dict[str, object]],
+    config_key: str,
+    interval: int,
+) -> None:
+    """Normative flush intervals survive a round trip through ``as_dict``."""
+    _assert_config_value(
+        configure_flush(interval),
+        config_key,
+        interval,
+        f"flush interval round trip for {config_key}",
+    )
+
+
+@flush_config_cases
+@_FLUSH_INTERVAL_PROPERTY
+def test_flush_interval_round_trips_for_any_valid_value(
+    configure_flush: cabc.Callable[[int], dict[str, object]],
+    config_key: str,
+    interval: int,
+) -> None:
+    """Every accepted flush interval is preserved verbatim in the config."""
+    _assert_config_value(
+        configure_flush(interval),
+        config_key,
+        interval,
+        f"flush interval round trip for {config_key}",
+    )
+
+
+def test_flush_after_records_above_u64_max_overflows() -> None:
+    """Values wider than u64 must raise ``OverflowError`` rather than wrap."""
+    too_large = 2**64
+    builder = FileHandlerBuilder(_CONFIG_ONLY_LOG_PATH)
+    with pytest.raises(OverflowError):
+        builder.with_flush_after_records(too_large)
 
 
 @pytest.mark.parametrize("max_bytes", [-1, -100, -999999])
@@ -49,97 +203,19 @@ def test_timed_builder_rejects_at_time_for_hourly(tmp_path: Path) -> None:
     """Hour-based timed rotation should reject at_time."""
     builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed.log"))
     with pytest.raises(ValueError, match="at_time is only supported"):
-        builder.with_at_time(__import__("datetime").time(8, 15, 0))
+        builder.with_at_time(dt.time(8, 15, 0))
 
 
 @pytest.mark.parametrize(
     "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
 )
 def test_stream_builder_negative_capacity(
-    ctor: typ.Callable[[], StreamHandlerBuilder],
+    ctor: cabc.Callable[[], StreamHandlerBuilder],
 ) -> None:
     """Stream handler capacity must be non-negative."""
     builder = ctor()
     with pytest.raises(OverflowError):
         builder.with_capacity(-1)
-
-
-@pytest.mark.parametrize(
-    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
-)
-def test_stream_builder_negative_flush_after_ms(
-    ctor: typ.Callable[[], StreamHandlerBuilder],
-) -> None:
-    """Negative flush timeouts must raise."""
-    builder = ctor()
-    with pytest.raises(OverflowError):
-        builder.with_flush_after_ms(-1)
-
-
-@pytest.mark.parametrize(
-    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
-)
-def test_stream_builder_zero_flush_after_ms(
-    ctor: typ.Callable[[], StreamHandlerBuilder],
-) -> None:
-    """Zero flush timeout is invalid."""
-    builder = ctor()
-    with pytest.raises(ValueError, match="flush_after_ms must be greater than zero"):
-        builder.with_flush_after_ms(0)
-
-
-@pytest.mark.parametrize(
-    "ctor", [StreamHandlerBuilder.stdout, StreamHandlerBuilder.stderr]
-)
-def test_stream_builder_large_flush_after_ms(
-    ctor: typ.Callable[[], StreamHandlerBuilder],
-) -> None:
-    """Very large flush timeouts should round-trip in as_dict."""
-    builder = ctor().with_flush_after_ms(1_000_000_000)
-    data = builder.as_dict()
-    ctor_name = getattr(ctor, "__name__", repr(ctor))
-    assert data["flush_after_ms"] == 1_000_000_000, (
-        "Stream handler builder flush timeout mismatch: "
-        f"ctor={ctor_name} builder={builder!r} "
-        f"expected=1_000_000_000 actual={data['flush_after_ms']} "
-        f"data={data}"
-    )
-
-
-def test_file_builder_negative_flush_after_records(tmp_path: Path) -> None:
-    """Negative flush record intervals must be rejected."""
-    builder = FileHandlerBuilder(str(tmp_path / "negative_flush_interval.log"))
-    with pytest.raises(OverflowError):
-        builder.with_flush_after_records(-1)
-
-
-def test_file_builder_large_flush_after_records(tmp_path: Path) -> None:
-    """Large flush intervals should be preserved in configuration."""
-    builder = FileHandlerBuilder(str(tmp_path / "large_flush_interval.log"))
-    builder = builder.with_flush_after_records(1_000_000_000)
-    data = builder.as_dict()
-    assert data["flush_after_records"] == 1_000_000_000, (
-        "File handler builder flush interval mismatch: "
-        f"builder={builder!r} expected=1_000_000_000 "
-        f"actual={data['flush_after_records']} data={data}"
-    )
-
-
-def test_file_builder_zero_flush_after_records(tmp_path: Path) -> None:
-    """Zero flush record intervals are invalid."""
-    builder = FileHandlerBuilder(str(tmp_path / "zero_flush_interval.log"))
-    with pytest.raises(
-        ValueError, match="flush_after_records must be greater than zero"
-    ):
-        builder.with_flush_after_records(0)
-
-
-def test_file_builder_flush_after_records_overflow(tmp_path: Path) -> None:
-    """Values larger than u64 max must raise OverflowError."""
-    too_large = sys.maxsize * 2 + 2
-    builder = FileHandlerBuilder(str(tmp_path / "overflow_flush_interval.log"))
-    with pytest.raises(OverflowError):
-        builder.with_flush_after_records(too_large)
 
 
 def test_file_builder_timeout_requires_explicit_timeout(tmp_path: Path) -> None:
@@ -158,21 +234,34 @@ def test_file_builder_timeout_rejects_zero_timeout(tmp_path: Path) -> None:
         builder.with_overflow_policy(OverflowPolicy.timeout(0))
 
 
-def test_file_builder_accepts_inline_timeout(tmp_path: Path) -> None:
-    """Inline timeout syntax is accepted for builder configuration."""
+def test_file_builder_records_inline_timeout(tmp_path: Path) -> None:
+    """Inline timeout syntax is recorded in the builder configuration."""
     builder = FileHandlerBuilder(str(tmp_path / "builder_timeout_inline.log"))
-    builder = builder.with_overflow_policy(OverflowPolicy.timeout(125))
-    handler = builder.build()
-    handler.close()
+    data = builder.with_overflow_policy(OverflowPolicy.timeout(125)).as_dict()
+
+    _assert_config_value(data, "overflow_policy", "timeout", "inline timeout policy")
+    _assert_config_value(data, "timeout_ms", 125, "inline timeout duration")
 
 
-def test_stream_builder_accepts_callable_formatter() -> None:
-    """Callable formatters should be accepted by stream builder."""
-    builder = StreamHandlerBuilder.stderr().with_formatter(
-        lambda record: f"callable:{record['message']}"
+def test_stream_builder_applies_callable_formatter(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Callable formatters shape the text a stream handler emits."""
+    handler = (
+        StreamHandlerBuilder
+        .stderr()
+        .with_formatter(lambda record: f"callable:{record['message']}")
+        .build()
     )
-    handler = builder.build()
-    handler.close()
+    try:
+        handler.handle("logger", "INFO", "hello")
+    finally:
+        handler.close()
+
+    captured = capfd.readouterr().err
+    assert "callable:hello" in captured, (
+        f"stream handler should apply the callable formatter; stderr={captured!r}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,7 +283,7 @@ def test_stream_builder_accepts_callable_formatter() -> None:
 )
 def test_file_builders_accept_callable_formatter(
     tmp_path: Path,
-    builder_factory: typ.Callable[
+    builder_factory: cabc.Callable[
         [Path], FileHandlerBuilder | RotatingFileHandlerBuilder
     ],
     log_filename: str,
@@ -230,89 +319,3 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
     assert "expected a string identifier or callable" in error_message, (
         "formatter error must mention expected formatter types"
     )
-
-
-class TestFlushApiConsistency:
-    """Tests verifying consistent flush parameter types across handler builders.
-
-    Issue #168: FileHandlerBuilder and StreamHandlerBuilder now use u64 for
-    flush parameters, ensuring type consistency while preserving distinct
-    semantics (record-count vs time-based).
-    """
-
-    @staticmethod
-    def test_file_and_stream_builders_accept_same_large_value(tmp_path: Path) -> None:
-        """Both builders accept the same large u64-compatible value."""
-        # Exercise wide-range handling with a value that fits in u64
-        large_value = 2**63 - 1
-
-        # FileHandlerBuilder.with_flush_after_records accepts u64
-        file_builder = FileHandlerBuilder(str(tmp_path / "large.log"))
-        file_builder = file_builder.with_flush_after_records(large_value)
-        data = file_builder.as_dict()
-        assert data["flush_after_records"] == large_value, (
-            f"expected flush_after_records {large_value} for FileHandlerBuilder, "
-            f"got {data['flush_after_records']}"
-        )
-
-        # StreamHandlerBuilder.with_flush_after_ms accepts u64
-        stream_builder = StreamHandlerBuilder.stderr()
-        stream_builder = stream_builder.with_flush_after_ms(large_value)
-        data = stream_builder.as_dict()
-        assert data["flush_after_ms"] == large_value, (
-            f"expected flush_after_ms {large_value} for StreamHandlerBuilder, "
-            f"got {data['flush_after_ms']}"
-        )
-
-    @staticmethod
-    def test_flush_parameter_error_message_format_consistency(tmp_path: Path) -> None:
-        """Zero-value error messages follow the same pattern across builders."""
-        file_builder = FileHandlerBuilder(str(tmp_path / "zero.log"))
-        stream_builder = StreamHandlerBuilder.stderr()
-
-        with pytest.raises(ValueError, match="must be greater than zero"):
-            file_builder.with_flush_after_records(0)
-
-        with pytest.raises(ValueError, match="must be greater than zero"):
-            stream_builder.with_flush_after_ms(0)
-
-    @staticmethod
-    def test_rotating_builder_inherits_file_builder_flush_type(tmp_path: Path) -> None:
-        """RotatingFileHandlerBuilder uses same u64 type as FileHandlerBuilder."""
-        large_value = 2**62
-
-        rotating_builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating.log"))
-        rotating_builder = rotating_builder.with_flush_after_records(large_value)
-        data = rotating_builder.as_dict()
-        assert data["flush_after_records"] == large_value, (
-            f"expected flush_after_records {large_value} for "
-            f"RotatingFileHandlerBuilder, got {data['flush_after_records']}"
-        )
-
-    @staticmethod
-    def test_rotating_builder_zero_flush_after_records_rejected(tmp_path: Path) -> None:
-        """RotatingFileHandlerBuilder rejects zero flush interval with ValueError."""
-        rotating_builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating.log"))
-        with pytest.raises(ValueError, match="must be greater than zero"):
-            rotating_builder.with_flush_after_records(0)
-
-    @staticmethod
-    def test_rotating_builder_negative_raises_overflow(tmp_path: Path) -> None:
-        """Negative flush intervals raise OverflowError (PyO3 u64 extraction)."""
-        builder = RotatingFileHandlerBuilder(str(tmp_path / "negative.log"))
-        with pytest.raises(OverflowError):
-            builder.with_flush_after_records(-1)
-
-    @staticmethod
-    @pytest.mark.parametrize("interval", [1, 100, 1_000_000, 2**30])
-    def test_valid_interval_round_trips_in_config(
-        tmp_path: Path, interval: int
-    ) -> None:
-        """Valid non-zero intervals are preserved through as_dict()."""
-        builder = FileHandlerBuilder(str(tmp_path / f"interval_{interval}.log"))
-        builder = builder.with_flush_after_records(interval)
-        data = builder.as_dict()
-        assert data["flush_after_records"] == interval, (
-            f"expected flush_after_records {interval} for FileHandlerBuilder, "
-            f"got {data['flush_after_records']}"
-        )

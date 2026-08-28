@@ -16,15 +16,19 @@ from pathlib import Path
 
 from . import _femtologging_rs as rust
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
 # Note: Error messages are assigned to variables before raising to satisfy
 # TRY003/EM101 lint rules throughout this module.
 
 
-def fileConfig(  # noqa: N802
+# ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.fileConfig
+def fileConfig(
     fname: str | bytes | PathLike[str] | PathLike[bytes],
-    defaults: typ.Mapping[str, object] | None = None,
+    defaults: cabc.Mapping[str, object] | None = None,
     *,
     disable_existing_loggers: bool = True,
     encoding: str | None = None,
@@ -52,7 +56,7 @@ def fileConfig(  # noqa: N802
 
 def _ini_to_dict_config(
     sections: list[tuple[str, list[tuple[str, str]]]],
-    defaults: typ.Mapping[str, object] | None,
+    defaults: cabc.Mapping[str, object] | None,
     *,
     disable_existing: bool,
 ) -> dict[str, typ.Any]:
@@ -97,8 +101,8 @@ def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
 
 
 def _merge_defaults(
-    ini_defaults: typ.Mapping[str, str],
-    user_defaults: typ.Mapping[str, object] | None,
+    ini_defaults: cabc.Mapping[str, str],
+    user_defaults: cabc.Mapping[str, object] | None,
 ) -> dict[str, str]:
     merged: dict[str, str] = {}
     if user_defaults:
@@ -153,7 +157,7 @@ def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
 
 def _build_handler_config(
     section: dict[str, str],
-    defaults: typ.Mapping[str, str],
+    defaults: cabc.Mapping[str, str],
 ) -> dict[str, typ.Any]:
     cfg: dict[str, typ.Any] = {
         "class": section["class"],
@@ -168,7 +172,7 @@ def _build_handler_config(
 
 def _parse_handlers(
     sections: dict[str, dict[str, str]],
-    defaults: typ.Mapping[str, str],
+    defaults: cabc.Mapping[str, str],
 ) -> dict[str, dict[str, typ.Any]]:
     handler_section = sections.get("handlers")
     handler_ids = _split_csv(handler_section.get("keys")) if handler_section else []
@@ -232,8 +236,13 @@ def _normalize_path(
 ) -> str:
     """Return a normalized string path for ``pathlib`` and the Rust parser.
 
-    Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance and always
-    returns a string suitable for downstream parsing.
+    Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance.
+
+    Returns
+    -------
+    str
+        A string path suitable for downstream parsing.
+
     """
     path_like = fname if isinstance(fname, (str, bytes)) else fspath(fname)
     if isinstance(path_like, bytes):
@@ -251,7 +260,7 @@ def _require_section(
     return sections[name]
 
 
-def _expand_placeholders(value: str, defaults: typ.Mapping[str, str]) -> str:
+def _expand_placeholders(value: str, defaults: cabc.Mapping[str, str]) -> str:
     if not defaults or "%(" not in value:
         return value
 

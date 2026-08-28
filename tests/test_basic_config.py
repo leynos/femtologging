@@ -6,34 +6,43 @@ import pytest
 
 from femtologging import basicConfig, get_logger, reset_manager
 
+# Levels emitted by every case, ordered from most to least verbose so the
+# expected sets below read as prefixes of this sequence.
+PROBED_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+
 
 @pytest.mark.parametrize("force", [True, False])
 @pytest.mark.parametrize(
-    ("level", "expected_msgs", "suppressed_msgs"),
+    ("level", "expected_msgs"),
     [
-        ("DEBUG", {"debug", "info", "warning", "error"}, set()),
-        ("INFO", {"info", "warning", "error"}, {"debug"}),
-        ("WARNING", {"warning", "error"}, {"debug", "info"}),
+        ("DEBUG", {"debug", "info", "warning", "error"}),
+        ("INFO", {"info", "warning", "error"}),
+        ("WARNING", {"warning", "error"}),
+        ("ERROR", {"error"}),
     ],
 )
 def test_basic_config_emits_expected_records(
-    force: bool,  # noqa: FBT001
+    *,
+    force: bool,
     level: str,
     expected_msgs: set[str],
-    suppressed_msgs: set[str],
 ) -> None:
     """Verify that ``basicConfig`` honours level and force combinations."""
     reset_manager()
     basicConfig(level=level, force=force)
     logger = get_logger("root")
-    assert len(logger.handler_ptrs_for_test()) == 1
+
+    handlers = logger.handler_ptrs_for_test()
+    assert len(handlers) == 1, (
+        f"basicConfig(level={level!r}, force={force}) must install exactly one "
+        f"root handler, but the root logger holds {len(handlers)}"
+    )
+
     records = {
-        "debug": logger.log("DEBUG", "debug"),
-        "info": logger.log("INFO", "info"),
-        "warning": logger.log("WARNING", "warning"),
-        "error": logger.log("ERROR", "error"),
+        probed.lower(): logger.log(probed, probed.lower()) for probed in PROBED_LEVELS
     }
-    for msg in expected_msgs:
-        assert records[msg] is not None
-    for msg in suppressed_msgs:
-        assert records[msg] is None
+    emitted = {name for name, record in records.items() if record is not None}
+    assert emitted == expected_msgs, (
+        f"basicConfig(level={level!r}, force={force}) must emit exactly "
+        f"{sorted(expected_msgs)}, but emitted {sorted(emitted)}"
+    )

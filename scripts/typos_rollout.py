@@ -301,7 +301,8 @@ def _https_request(
     if urllib.parse.urlsplit(source).scheme != "https":
         message = f"shared dictionary URL must use HTTPS: {source}"
         raise ValueError(message)
-    return urllib.request.Request(source, headers=dict(headers))  # noqa: S310 - HTTPS is required above.
+    # HTTPS is enforced above, so this request cannot target another scheme.
+    return urllib.request.Request(source, headers=dict(headers))
 
 
 def _write_remote_cache(
@@ -367,7 +368,8 @@ def _refresh_http(
     saved = _read_metadata(metadata)
     request = _https_request(source, _conditional_headers(saved))
     try:
-        with urllib.request.urlopen(  # noqa: S310 - _https_request rejects non-HTTPS URLs.
+        # _https_request rejects non-HTTPS URLs before this call.
+        with urllib.request.urlopen(
             request,
             timeout=30.0,
         ) as response:

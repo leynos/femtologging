@@ -22,7 +22,10 @@ def test_try_import_module_returns_none_for_missing_root_module(
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
 
-    assert filter_factory._try_import_module("missing_package") is None
+    assert filter_factory._try_import_module("missing_package") is None, (
+        "a module that is itself absent should be reported as unimportable "
+        "rather than raising"
+    )
 
 
 def test_try_import_module_reraises_nested_import_failures(
@@ -38,7 +41,10 @@ def test_try_import_module_reraises_nested_import_failures(
 
     with pytest.raises(ModuleNotFoundError) as exc_info:
         filter_factory._try_import_module("pkg")
-    assert exc_info.value.name == "nested_dependency"
+    assert exc_info.value.name == "nested_dependency", (
+        "the original failing module must be preserved so a broken dependency "
+        f"is not misreported as a missing factory path, got {exc_info.value.name!r}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -86,7 +92,10 @@ def test_resolve_factory_resolves_supported_dotted_paths(
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
 
-    assert filter_factory.resolve_factory(dotted_path) == expected
+    resolved = filter_factory.resolve_factory(dotted_path)
+    assert resolved == expected, (
+        f"{dotted_path!r} should resolve to {expected!r}, got {resolved!r}"
+    )
 
 
 @pytest.mark.parametrize(

@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '0'
+      # Pinned Makefile parser used by the lint contract tests. The nightly
+      # toolchain and Polonius flag are required to build Makeutil.
+      MAKEUTIL_REVISION: '29fc5a1634ffbaa18a773eed9dff1b2838a45d9c'
+      MAKEUTIL_TOOLCHAIN: 'nightly-2026-05-28'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -26,6 +30,15 @@ jobs:
           python-version: '3.12'
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install Makefile parser
+        run: |
+          rustup toolchain install "${MAKEUTIL_TOOLCHAIN}" --profile minimal
+          RUSTFLAGS="-Zpolonius=next" cargo +"${MAKEUTIL_TOOLCHAIN}" install \
+            --git https://github.com/leynos/makeutil \
+            --rev "${MAKEUTIL_REVISION}" \
+            --locked \
+            --force \
+            makeutil
       - name: Set up virtualenv
         run: |
           python -m venv .venv
@@ -35,7 +48,9 @@ jobs:
           # Cache wheels to avoid repeated downloads
           pip install \
             --cache-dir "${{ runner.tool_cache }}" \
-            "maturin==1.13.3" pytest==8.4.2 pytest-bdd==8.1.0
+            "maturin==1.13.3" pytest==9.1.1 pytest-bdd==8.1.0 \
+            pytest-timeout pytest-xdist syrupy \
+            "hypothesis>=6.135,<7" "pyyaml>=6.0.3,<7"
       - name: Build editable extension
         run: |
           source .venv/bin/activate

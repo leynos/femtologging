@@ -16,7 +16,15 @@ import pytest
 from tests.steps._hypothesis_support import _ENTRYPOINT_PROPERTY_CASES
 from tests.steps.conftest import normalize_traceback_output
 
-_PYTEST_COMPAT_CASES = (
+_STABLE_ENTRYPOINT = (
+    "Stack (most recent call last):\n"
+    '  File "<file>", line <N>, in <module>\n'
+    "    sys.exit(console_main())\n"
+    '  File "<file>", line <N>, in console_main\n'
+    "    code = main()\n"
+)
+
+_NORMALIZATION_CASES = (
     pytest.param(
         (
             "Stack (most recent call last):\n"
@@ -28,8 +36,7 @@ _PYTEST_COMPAT_CASES = (
             '  File "<file>", line <N>, in <lambda>\n'
             "    lambda: runtest_hook(...),\n"
         ),
-        "normalize_traceback_output should strip pytest lambda kwargs and "
-        "normalize file/line markers",
+        "strip pytest lambda kwargs and normalize file/line markers",
         id="strips_pytest_lambda_kwargs",
     ),
     pytest.param(
@@ -44,8 +51,7 @@ _PYTEST_COMPAT_CASES = (
             '  File "<file>", line <N>, in <lambda>\n'
             "    lambda: runtest_hook(...),\n"
         ),
-        "normalize_traceback_output should retain a stable runtest_hook "
-        "placeholder across spacing and keyword changes",
+        "retain a stable runtest_hook placeholder across spacing and keyword changes",
         id="relaxes_runtest_hook_signature",
     ),
     pytest.param(
@@ -59,17 +65,33 @@ _PYTEST_COMPAT_CASES = (
             "    config = prepareconfig(args, plugins)\n"
         ),
         (
-            "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in <module>\n'
-            "    sys.exit(console_main())\n"
-            '  File "<file>", line <N>, in console_main\n'
-            "    code = main()\n"
+            f"{_STABLE_ENTRYPOINT}"
             '  File "<file>", line <N>, in main\n'
             "    config = prepareconfig(args, plugins)\n"
         ),
-        "normalize_traceback_output should keep pytest entrypoint snapshots "
-        "stable when the helper is private",
+        "keep pytest entrypoint snapshots stable when the helper is private",
         id="accepts_private_pytest_entrypoint",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
+            "    sys.exit(_console_main())\n"
+            '  File "/tmp/pytest.py", line 25, in _console_main\n'
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+            '  File "/tmp/pytest.py", line 31, in _main\n'
+            "    ret: ExitCode | int = "
+            "config.hook.pytest_cmdline_main(config=config)\n"
+        ),
+        (
+            f"{_STABLE_ENTRYPOINT}"
+            '  File "<file>", line <N>, in main\n'
+            "    ret: ExitCode | int = "
+            "config.hook.pytest_cmdline_main(config=config)\n"
+        ),
+        "preserve the trailing hook call while canonicalizing the private "
+        "entrypoint chain",
+        id="preserves_frame_after_private_entrypoint",
     ),
     pytest.param(
         (
@@ -79,15 +101,8 @@ _PYTEST_COMPAT_CASES = (
             '  File "/tmp/pytest.py", line 25, in _console_main\n'
             "    code = _main(prog=_get_prog_name(sys.argv))\n"
         ),
-        (
-            "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in <module>\n'
-            "    sys.exit(console_main())\n"
-            '  File "<file>", line <N>, in console_main\n'
-            "    code = main()\n"
-        ),
-        "normalize_traceback_output should normalize qualified private pytest "
-        "entrypoint calls",
+        _STABLE_ENTRYPOINT,
+        "normalize qualified private pytest entrypoint calls",
         id="accepts_qualified_private_pytest_entrypoint",
     ),
     pytest.param(
@@ -98,59 +113,25 @@ _PYTEST_COMPAT_CASES = (
             '  File "/tmp/pytest.py", line 25, in _console_main\n'
             "    code = _main(prog=_get_prog_name(sys.argv))\n"
         ),
-        (
-            "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in <module>\n'
-            "    sys.exit(console_main())\n"
-            '  File "<file>", line <N>, in console_main\n'
-            "    code = main()\n"
-        ),
-        "normalize_traceback_output should normalize bare private pytest "
-        "entrypoint calls",
+        _STABLE_ENTRYPOINT,
+        "normalize bare private pytest entrypoint calls",
         id="accepts_bare_private_pytest_entrypoint",
     ),
-)
-
-
-class TestTracebackNormalization:
-    """Grouped tests for traceback normalization behavior."""
-
-    @pytest.mark.parametrize(("output", "expected", "reason"), _PYTEST_COMPAT_CASES)
-    def test_normalize_traceback_output_pytest_compat_cases(
-        self,
-        output: str,
-        expected: str,
-        reason: str,
-    ) -> None:
-        """Normalize pytest compatibility frames to stable snapshot forms.
-
-        Returns
-        -------
-        None
-            Asserts pytest compatibility frames normalize for stable snapshots.
-
-        """
-        class_name = self.__class__.__name__
-
-        assert normalize_traceback_output(output) == expected, f"{class_name}: {reason}"
-
-    def test_normalize_traceback_output_strips_python_launcher_frames(self) -> None:
-        """Drop volatile runpy/python launcher frames before pytest frames.
-
-        Returns
-        -------
-        None
-            Asserts that runpy launcher frames are removed and pytest entrypoint
-            formatting remains stable.
-
-        Notes
-        -----
-        This protects snapshot output from Python launcher implementation
-        details that vary across versions.
-
-        """
-        class_name = self.__class__.__name__
-        output = (
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/pytest/__main__.py", line 9, in <module>\n'
+            "    raise SystemExit(_console_main())\n"
+            '  File "/tmp/_pytest/config/__init__.py", line 201, '
+            "in _console_main\n"
+            "    code = _main(prog=_get_prog_name(sys.argv))\n"
+        ),
+        _STABLE_ENTRYPOINT,
+        "normalize private entrypoints defined under the _pytest package",
+        id="accepts_private_entrypoint_from_pytest_internals",
+    ),
+    pytest.param(
+        (
             "Stack (most recent call last):\n"
             '  File "/usr/lib/python3.15/runpy.py", line 198, in _run_module_as_main\n'
             '  File "/usr/lib/python3.15/runpy.py", line 88, in _run_code\n'
@@ -165,94 +146,74 @@ class TestTracebackNormalization:
             "    raise SystemExit(pytest.console_main())\n"
             '  File "/tmp/pytest.py", line 25, in console_main\n'
             "    code = main()\n"
-        )
-        expected = (
+        ),
+        _STABLE_ENTRYPOINT,
+        "drop volatile runpy/python launcher frames that vary across "
+        "interpreter versions",
+        id="strips_python_launcher_frames",
+    ),
+    pytest.param(
+        (
             "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in <module>\n'
-            "    sys.exit(console_main())\n"
-            '  File "<file>", line <N>, in console_main\n'
-            "    code = main()\n"
-        )
+            '  File "/tmp/app.py", line 11, in main\n'
+            "    process_request()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in main\n'
+            "    process_request()\n"
+        ),
+        "keep application main frames so snapshots still catch regressions",
+        id="keeps_non_launcher_main_frame",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/tmp/app.py", line 11, in _main\n'
+            "    return application.run()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in _main\n'
+            "    return application.run()\n"
+        ),
+        "keep application _main frames that are not launcher wrappers",
+        id="keeps_non_launcher_private_main_frame",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/workspace/app/runtime.py", line 47, in run_module\n'
+            "    dispatch(request)\n"
+            '  File "/workspace/app/runtime.py", line 20, in dispatch\n'
+            "    raise RuntimeError('boom')\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in run_module\n'
+            "    dispatch(request)\n"
+            '  File "<file>", line <N>, in dispatch\n'
+            "    raise RuntimeError('boom')\n"
+        ),
+        "keep user-defined run_module frames outside stdlib launcher code",
+        id="keeps_non_launcher_run_module_frame",
+    ),
+)
 
-        assert normalize_traceback_output(output) == expected, (
-            f"{class_name}: normalize_traceback_output should remove launcher "
-            "frames and keep a stable pytest entrypoint frame"
-        )
 
-    @pytest.mark.parametrize(
-        ("description", "output", "expected"),
-        [
-            (
-                "qualified private entrypoint",
-                (
-                    "Stack (most recent call last):\n"
-                    '  File "/tmp/pytest/__main__.py", line 22, in <module>\n'
-                    "    sys.exit(_console_main())\n"
-                    '  File "/tmp/pytest.py", line 25, in _console_main\n'
-                    "    code = _main(prog=_get_prog_name(sys.argv))\n"
-                    '  File "/tmp/pytest.py", line 31, in _main\n'
-                    "    ret: ExitCode | int = "
-                    "config.hook.pytest_cmdline_main(config=config)\n"
-                ),
-                (
-                    "Stack (most recent call last):\n"
-                    '  File "<file>", line <N>, in <module>\n'
-                    "    sys.exit(console_main())\n"
-                    '  File "<file>", line <N>, in console_main\n'
-                    "    code = main()\n"
-                    '  File "<file>", line <N>, in main\n'
-                    "    ret: ExitCode | int = "
-                    "config.hook.pytest_cmdline_main(config=config)\n"
-                ),
-            ),
-            (
-                "unqualified private entrypoint",
-                (
-                    "Stack (most recent call last):\n"
-                    '  File "/tmp/pytest/__main__.py", line 9, in <module>\n'
-                    "    raise SystemExit(_console_main())\n"
-                    '  File "/tmp/_pytest/config/__init__.py", line 201, '
-                    "in _console_main\n"
-                    "    code = _main(prog=_get_prog_name(sys.argv))\n"
-                ),
-                (
-                    "Stack (most recent call last):\n"
-                    '  File "<file>", line <N>, in <module>\n'
-                    "    sys.exit(console_main())\n"
-                    '  File "<file>", line <N>, in console_main\n'
-                    "    code = main()\n"
-                ),
-            ),
-        ],
-        ids=[
-            "qualified private entrypoint",
-            "unqualified private entrypoint",
-        ],
-    )
-    def test_normalize_traceback_output_canonicalizes_pytest_entrypoint(
-        self, description: str, output: str, expected: str
+class TestTracebackNormalization:
+    """Grouped tests for traceback normalization behaviour."""
+
+    @staticmethod
+    @pytest.mark.parametrize(("output", "expected", "reason"), _NORMALIZATION_CASES)
+    def test_normalize_traceback_output_stabilizes_frames(
+        output: str,
+        expected: str,
+        reason: str,
     ) -> None:
-        """Handle pytest private entrypoint spelling used by newer versions.
-
-        Parameters
-        ----------
-        description : str
-            Human-readable label for the parameterized input variant.
-        output : str
-            Raw stack-info text to normalize.
-        expected : str
-            Stable stack-info text expected after normalization.
-
-        Returns
-        -------
-        None
-            Asserts that ``_console_main`` normalizes to the stable public
-            entrypoint spelling used by snapshots.
-
-        """
+        """Normalize traceback frames to their stable snapshot forms."""
         assert normalize_traceback_output(output) == expected, (
-            f"{self.__class__.__name__}: normalize_traceback_output should "
-            f"canonicalize pytest entrypoint calls ({description})"
+            f"normalize_traceback_output should {reason}"
         )
 
     @staticmethod
@@ -273,13 +234,6 @@ class TestTracebackNormalization:
         entrypoint_line : str
             Pytest entrypoint source line variant accepted by the normalizer.
 
-        Returns
-        -------
-        None
-            Asserts pytest entrypoint frames canonicalize their source line,
-            scrub concrete line numbers, and remain stable when normalized more
-            than once.
-
         """
         output = (
             "Stack (most recent call last):\n"
@@ -297,87 +251,4 @@ class TestTracebackNormalization:
         )
         assert normalize_traceback_output(normalized) == normalized, (
             "normalize_traceback_output should be idempotent"
-        )
-
-    @pytest.mark.parametrize(
-        ("description", "frame_name", "statement"),
-        [
-            ("bare main frame", "main", "process_request()"),
-            ("private _main frame", "_main", "return application.run()"),
-        ],
-        ids=["bare main frame", "private _main frame"],
-    )
-    def test_normalize_traceback_output_keeps_non_launcher_main_frame(
-        self, description: str, frame_name: str, statement: str
-    ) -> None:
-        """Keep application main/_main frames that are not launcher wrappers.
-
-        Parameters
-        ----------
-        description : str
-            Human-readable label for the parameterized input variant.
-        frame_name : str
-            The frame function name (``main`` or ``_main``) under test.
-        statement : str
-            The frame's source statement line.
-
-        Returns
-        -------
-        None
-            Asserts that non-launcher main/_main frames are preserved after
-            normalization.
-
-        Notes
-        -----
-        User entrypoints must remain visible so snapshots catch application
-        regressions.
-
-        """
-        class_name = self.__class__.__name__
-        output = (
-            "Stack (most recent call last):\n"
-            f'  File "/tmp/app.py", line 11, in {frame_name}\n'
-            f"    {statement}\n"
-        )
-        expected = (
-            "Stack (most recent call last):\n"
-            f'  File "<file>", line <N>, in {frame_name}\n'
-            f"    {statement}\n"
-        )
-
-        assert normalize_traceback_output(output) == expected, (
-            f"{class_name}: normalize_traceback_output should keep non-launcher "
-            f"{frame_name} frames ({description})"
-        )
-
-    def test_normalize_traceback_output_keeps_non_launcher_run_module_frame(
-        self,
-    ) -> None:
-        """Keep user-defined run_module frames outside stdlib launcher code.
-
-        Returns
-        -------
-        None
-            Asserts application ``run_module`` frames are retained.
-
-        """
-        class_name = self.__class__.__name__
-        output = (
-            "Stack (most recent call last):\n"
-            '  File "/workspace/app/runtime.py", line 47, in run_module\n'
-            "    dispatch(request)\n"
-            '  File "/workspace/app/runtime.py", line 20, in dispatch\n'
-            "    raise RuntimeError('boom')\n"
-        )
-        expected = (
-            "Stack (most recent call last):\n"
-            '  File "<file>", line <N>, in run_module\n'
-            "    dispatch(request)\n"
-            '  File "<file>", line <N>, in dispatch\n'
-            "    raise RuntimeError('boom')\n"
-        )
-
-        assert normalize_traceback_output(output) == expected, (
-            f"{class_name}: normalize_traceback_output should keep user "
-            "run_module frames"
         )

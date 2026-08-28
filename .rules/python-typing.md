@@ -1,8 +1,11 @@
-# Advanced Typing and Language Features (Python 3.13)
+# Advanced Typing and Language Features (Python 3.12)
 
-> This section documents forward-looking Python 3.13 typing features and best
+> This section documents advanced Python 3.12 typing features and best
 > practices to improve clarity, correctness, and tooling support. Use these
-> features to write expressive, modern Python.
+> features to write expressive, modern Python. A few entries describe Python
+> 3.13 features that are not yet available on this project's `>=3.12`
+> baseline; each such case says so explicitly and gives the
+> `typing_extensions` equivalent.
 
 ## `enum.Enum`, `enum.IntEnum`, `enum.StrEnum`
 
@@ -106,31 +109,41 @@ This decorator is a no-op at runtime but improves tooling correctness.
 Use `TypeIs[T]` to define custom runtime type guards that narrow types in type
 checkers.
 
+`typing.TypeIs` was added in Python 3.13. On this project's Python 3.12
+baseline, import it from the `typing_extensions` backport instead (add
+`typing_extensions` as a dependency if it is not already one):
+
 ```python
-import typing
+from typing_extensions import TypeIs
 
 
-def is_str_sequence(
-    val: typing.Sequence[object],
-) -> typing.TypeIs[typing.Sequence[str]]:
+def is_str_list(val: list[object]) -> TypeIs[list[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 
 Unlike `isinstance`, this informs the type checker that `val` is now
-`Sequence[str]`.
+`list[str]`.
 
 ## Defaults for TypeVars (PEP 696)
 
 Allow generic classes/functions to fall back to default types when no specific
 type is provided.
 
+PEP 696 landed in Python 3.13, including the native `class Box[T = int]:`
+bracket syntax and the `default=` keyword on `typing.TypeVar`. Neither is
+available on this project's Python 3.12 baseline, so use the
+`typing_extensions.TypeVar` backport instead:
+
 ```python
-class Box[T = int]:
-    def __init__(self, value: T):
-        self.value = value
+from typing_extensions import TypeVar
+
+T = TypeVar("T", default=int)
 
 
-default_box: Box = Box(0)
+class Box[T]:
+    def __init__(self, value: T | None = None):
+        # Fallback to the TypeVar default (int in this example)
+        self.value: T = value if value is not None else int()  # type: ignore[arg-type]
 ```
 
 This makes APIs more ergonomic while retaining type safety.

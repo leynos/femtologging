@@ -23,6 +23,8 @@ from . import _femtologging_rs as rust
 from .config_socket_opts import _pop_socket_backoff_kwargs, _pop_socket_tls_kwargs
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from ._femtologging_rs import BackoffConfig as _BackoffConfig
     from ._femtologging_rs import SocketHandlerBuilder as _SocketHandlerBuilder
 else:
@@ -163,7 +165,7 @@ def _apply_socket_kwargs(
     return builder, transport_configured
 
 
-_UINT_OPTION_METHODS: typ.Final[typ.Mapping[str, str]] = types.MappingProxyType({
+_UINT_OPTION_METHODS: typ.Final[cabc.Mapping[str, str]] = types.MappingProxyType({
     "capacity": "with_capacity",
     "connect_timeout_ms": "with_connect_timeout_ms",
     "write_timeout_ms": "with_write_timeout_ms",

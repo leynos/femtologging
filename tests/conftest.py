@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import gc
-import typing as typ
 import warnings
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
 import pytest
@@ -23,8 +22,8 @@ warnings.filterwarnings(
 # The warning originates in the vendored Gherkin parser, so filter it out until
 # the dependency releases a fix rather than letting our test suite go noisy.
 
-FileHandlerFactory = cabc.Callable[
-    [Path, int, int], typ.ContextManager[FemtoFileHandler]
+type FileHandlerFactory = cabc.Callable[
+    [Path, int, int], AbstractContextManager[FemtoFileHandler]
 ]
 
 
@@ -35,6 +34,12 @@ def file_handler_factory() -> FileHandlerFactory:
     The factory yields a handler that flushes every ``flush_interval`` records.
     The handler is automatically closed when the ``with`` block exits to ensure
     the worker thread shuts down.
+
+    Returns
+    -------
+    FileHandlerFactory
+        Callable taking ``(path, capacity, flush_interval)`` and returning a
+        context manager that yields the configured handler.
     """
 
     @contextmanager
@@ -61,7 +66,7 @@ def file_handler_factory() -> FileHandlerFactory:
 
 
 @pytest.fixture
-def active_exception() -> cabc.Callable[[str], typ.ContextManager[None]]:
+def active_exception() -> cabc.Callable[[str], AbstractContextManager[None]]:
     """Return a context manager that establishes an active exception.
 
     The returned callable accepts a message and yields inside a
@@ -78,6 +83,12 @@ def active_exception() -> cabc.Callable[[str], typ.ContextManager[None]]:
         is useful for tests where an active handler context is
         required but the captured traceback content is not asserted.
 
+    Returns
+    -------
+    cabc.Callable[[str], AbstractContextManager[None]]
+        Callable taking the exception message and returning a context manager
+        whose body runs inside an ``except ValueError`` block.
+
     Examples
     --------
     >>> def test_example(active_exception):
@@ -89,7 +100,9 @@ def active_exception() -> cabc.Callable[[str], typ.ContextManager[None]]:
     @contextmanager
     def _raise(message: str = "test error") -> cabc.Generator[None, None, None]:
         try:
-            raise ValueError(message)  # noqa: TRY301  # TODO(#340): deliberate re-raise
+            # ruff: ignore[raise-within-try] the raise is the fixture's whole
+            # purpose: it populates sys.exc_info() for the generator frame.
+            raise ValueError(message)
         except ValueError:
             yield
 

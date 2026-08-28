@@ -29,6 +29,9 @@ libraries. Use the links below to explore each topic.
 - [adr-004-batching-optimizations-in-consumer-threads.md](./adr-004-batching-optimizations-in-consumer-threads.md)
   - Proposes drain-loop batching and vectored I/O optimizations for handler
     consumer threads.
+- [adr-005-four-tier-python-lint-architecture.md](./adr-005-four-tier-python-lint-architecture.md)
+  - Records the four-tier Python lint pipeline: Ruff, PyPy-backed Pylint,
+    df12-python-lints/ambrleaks, and the strict Skylos dead-code gate.
 
 ## Logging Architecture
 

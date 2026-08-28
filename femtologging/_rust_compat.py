@@ -29,8 +29,13 @@ class _RustCompatPayload(TypedDict):
 def _make_zero_arg_hook(fn: object, error_msg: str = "") -> cabc.Callable[[], None]:
     """Return *fn* cast as a no-arg callable, or a fallback.
 
-    When *error_msg* is non-empty the fallback raises :class:`RuntimeError`;
-    otherwise it is a silent no-op.
+    Returns
+    -------
+    cabc.Callable[[], None]
+        *fn* itself when callable. Otherwise a fallback that raises
+        :class:`RuntimeError` with *error_msg* when *error_msg* is non-empty,
+        or a silent no-op when it is empty.
+
     """
     if callable(fn):
         return typ.cast("cabc.Callable[[], None]", fn)
@@ -117,8 +122,13 @@ def _initialize_rust_compat() -> _RustCompatPayload:
     """Initialize Rust extension compatibility layer.
 
     Extracts all optional Rust extension functions and wraps them with
-    appropriate fallback behavior. Returns a typed payload of initialized
-    module-level variables.
+    appropriate fallback behaviour.
+
+    Returns
+    -------
+    _RustCompatPayload
+        A typed payload of the initialized module-level hooks.
+
     """
     force_rotating, clear_rotating = _make_rotating_fresh_failure_hooks(
         getattr(rust, "force_rotating_fresh_failure_for_test", None),

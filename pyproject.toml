@@ -22,8 +22,11 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "hypothesis; python_version < '3.15'",
-    "pytest==8.4.2",
+    # Bounded so generated-input behaviour only shifts with a deliberate bump.
+    "hypothesis>=6.135,<7; python_version < '3.15'",
+    # The lint contract tests parse the CI workflows.
+    "pyyaml>=6.0.3,<7",
+    "pytest==9.1.1",
     "pytest-timeout",
     "pytest-bdd==8.1.0",
     "syrupy",
@@ -44,6 +47,7 @@ extra-paths = ["scripts"]
 [tool.ruff]
 line-length = 88
 preview = true
+target-version = "py312"
 extend-exclude = [
     # Python source fixtures embedded in Rust tests via include_str!; their
     # shape (line numbers, minimal bodies) is part of the test data.
@@ -61,8 +65,8 @@ select = [
     "E",        # PyCodeStyle errors
     "I",        # Sort imports properly
     "UP",       # Warn if certain things can changed due to newer Python versions
+    "FA",       # Enforce from __future__ import annotations on the 3.12 baseline
     "C4",       # Catch incorrect use of comprehensions, dict, list, etc
-    "FA",       # Enforce from __future__ import annotations
     "ISC",      # Good use of string concatenation
     "ICN",      # Use common import conventions
     "RET",      # Good return practices
@@ -77,7 +81,6 @@ select = [
     "DTZ",      # require strict timezone manipulation with datetime
     "FBT",      # detect boolean traps
     "N",        # enforce naming conventions, e.g. ClassName vs function_name
-    "EM",
     "FURB",
     "B",
     "RUF",
@@ -87,37 +90,39 @@ select = [
     "RSE",
     "PERF",
     "TRY",
+    "ASYNC",
     "D",
+    "DOC",
     "ANN",
     "C90",
     "PLR",
-    "PLE4703",
-    "PLR0202",
-    "PLR0203",
-    "PLR0914",
-    "PLR0916",
-    "PLR1702",
-    "PLR6104",
-    "PLR6201",
-    "PLR6301",
-    "PLW0108",
-    "RUF036",
-    "RUF053",
-    "RUF055",
-    "RUF064",
-    "RUF066",
+    "modified-iterating-set",
+    "no-classmethod-decorator",
+    "no-staticmethod-decorator",
+    "too-many-locals",
+    "too-many-boolean-expressions",
+    "too-many-nested-blocks",
+    "non-augmented-assignment",
+    "literal-membership",
+    "no-self-use",
+    "unnecessary-lambda",
+    "none-not-at-end-of-union",
+    "class-with-mixed-type-vars",
+    "unnecessary-regular-expression",
+    "non-octal-permissions",
+    "property-without-return",
 ]
 extend-ignore = [
-    "D203",  # Conflicts with D211; prefer enforcing no blank line before class docstring.
-    "D213",  # Conflicts with D212; keep summary on the first line.
-    "TD001", # FIXME is valid TODO tag for inline suppressions
-    "TD002", # Author not required for inline FIXME annotations
-    "TD003", # Issue link not required for inline FIXME annotations
+    "incorrect-blank-line-before-class",  # Conflicts with D211; prefer enforcing no blank line before class docstring.
+    "multi-line-summary-second-line",  # Conflicts with D212; keep summary on the first line.
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["S101", "PLR0913", "PLR2004"]
-"tests/steps/*.py" = ["S101", "PLR0913", "PLR2004", "D103"]
+"**/test_*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
+"tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use", "undocumented-public-function"]
+"tests/helpers.py" = ["assert"]
+# Shared fixtures and assertion helpers live beside the tests they serve.
+"tests/**/conftest.py" = ["assert"]
 
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
@@ -145,6 +150,52 @@ datetime = "dt"
 "msgspec.json" = "msjson"
 typing = "typ"
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.AbstractSet".msg = "Use collections.abc.Set instead of deprecated typing generics."
+"typing.AsyncContextManager".msg = "Use contextlib.AbstractAsyncContextManager instead of deprecated typing generics."
+"typing.AsyncGenerator".msg = "Use collections.abc.AsyncGenerator instead of deprecated typing generics."
+"typing.AsyncIterable".msg = "Use collections.abc.AsyncIterable instead of deprecated typing generics."
+"typing.AsyncIterator".msg = "Use collections.abc.AsyncIterator instead of deprecated typing generics."
+"typing.Awaitable".msg = "Use collections.abc.Awaitable instead of deprecated typing generics."
+"typing.Callable".msg = "Use collections.abc.Callable instead of deprecated typing generics."
+"typing.ChainMap".msg = "Use collections.ChainMap instead of deprecated typing generics."
+"typing.Collection".msg = "Use collections.abc.Collection instead of deprecated typing generics."
+"typing.Container".msg = "Use collections.abc.Container instead of deprecated typing generics."
+"typing.ContextManager".msg = "Use contextlib.AbstractContextManager instead of deprecated typing generics."
+"typing.Coroutine".msg = "Use collections.abc.Coroutine instead of deprecated typing generics."
+"typing.Counter".msg = "Use collections.Counter instead of deprecated typing generics."
+"typing.DefaultDict".msg = "Use collections.defaultdict instead of deprecated typing generics."
+"typing.Deque".msg = "Use collections.deque instead of deprecated typing generics."
+"typing.Dict".msg = "Use dict instead of deprecated typing generics."
+"typing.FrozenSet".msg = "Use frozenset instead of deprecated typing generics."
+"typing.Generator".msg = "Use collections.abc.Generator instead of deprecated typing generics."
+"typing.ItemsView".msg = "Use collections.abc.ItemsView instead of deprecated typing generics."
+"typing.Iterable".msg = "Use collections.abc.Iterable instead of deprecated typing generics."
+"typing.Iterator".msg = "Use collections.abc.Iterator instead of deprecated typing generics."
+"typing.KeysView".msg = "Use collections.abc.KeysView instead of deprecated typing generics."
+"typing.List".msg = "Use list instead of deprecated typing generics."
+"typing.Mapping".msg = "Use collections.abc.Mapping instead of deprecated typing generics."
+"typing.Match".msg = "Use re.Match instead of deprecated typing generics."
+"typing.MutableMapping".msg = "Use collections.abc.MutableMapping instead of deprecated typing generics."
+"typing.MutableSequence".msg = "Use collections.abc.MutableSequence instead of deprecated typing generics."
+"typing.MutableSet".msg = "Use collections.abc.MutableSet instead of deprecated typing generics."
+"typing.OrderedDict".msg = "Use collections.OrderedDict instead of deprecated typing generics."
+"typing.Pattern".msg = "Use re.Pattern instead of deprecated typing generics."
+"typing.Reversible".msg = "Use collections.abc.Reversible instead of deprecated typing generics."
+"typing.Sequence".msg = "Use collections.abc.Sequence instead of deprecated typing generics."
+"typing.Set".msg = "Use set instead of deprecated typing generics."
+"typing.Tuple".msg = "Use tuple instead of deprecated typing generics."
+"typing.Type".msg = "Use type instead of deprecated typing generics."
+"typing.ValuesView".msg = "Use collections.abc.ValuesView instead of deprecated typing generics."
+
+[tool.ruff.lint.pydocstyle]
+# Enforce NumPy docstring style
+convention = "numpy"
+
+[tool.ruff.lint.pydoclint]
+# Concise one-line private helpers do not require structured sections; public
+# entrypoints use multiline docstrings so their contracts remain checked.
+ignore-one-line-docstrings = true
 [tool.ruff.lint.mccabe]
 max-complexity = 8
 
@@ -153,6 +204,243 @@ max-args = 4
 max-bool-expr = 2
 max-locals = 10
 
+[tool.pylint.main]
+# Activate rules whose behaviour depends on the project's Python baseline.
+py-version = "3.12"
+# The shared rollout helper has its own pinned Ruff and coverage policy. The
+# .pyi stub declares the native extension's interface, so its ellipsis bodies
+# and argument counts are inherent to the surface it describes.
+ignore = [
+    "generate_typos_config.py",
+    "typos_rollout.py",
+    "typos_rollout_cache.py",
+    "test_typos_rollout.py",
+    "_femtologging_rs.pyi",
+]
+# Expand directory targets like tests and scripts even when they are not packages.
+recursive = true
+# Match the project file-size ceiling enforced during review.
+max-module-lines = 400
+
+[tool.pylint.design]
+# Keep function call surfaces small enough to understand without memorising
+# positional argument order.
+max-args = 4
+# The new Pylint gate complements Ruff's stricter PLR0914 threshold without
+# forcing broad refactors while introducing the additional rule families below.
+max-locals = 20
+# Use Pylint's statement-count proxy for function length; Pylint 4 does not
+# expose a distinct physical-lines-per-function option.
+max-statements = 70
+# Keep positional call surfaces aligned with Ruff's existing argument limit.
+max-positional-arguments = 4
+
+[tool.pylint."messages control"]
+# Keep this Pylint pass focused on the explicitly selected messages.
+disable = [
+    "all",
+    # Managed PyPy is currently 3.11 while the project targets Python 3.12
+    # syntax; keep PyPy-backed Pylint useful on files it can parse.
+    "syntax-error",
+]
+enable = [
+    # Catch invalid %-style specifiers before log calls reach production.
+    "logging-unsupported-format",
+    # Catch truncated %-style logging templates that cannot be formatted.
+    "logging-format-truncated",
+    # Reject log records that pass arguments with no matching placeholders.
+    "logging-too-many-args",
+    # Reject log records whose placeholders cannot all be populated.
+    "logging-too-few-args",
+    # Preserve lazy logging by passing interpolation values to the logger.
+    "logging-not-lazy",
+    # Discourage eager str.format calls in logging statements.
+    "logging-format-interpolation",
+    # Discourage eager f-string interpolation in logging statements.
+    "logging-fstring-interpolation",
+    # Prevent bare match captures from making later cases unreachable.
+    "bare-name-capture-pattern",
+    # Ensure class pattern matching metadata has the required shape.
+    "invalid-match-args-definition",
+    # Catch positional class patterns that exceed declared __match_args__.
+    "too-many-positional-sub-patterns",
+    # Reject duplicate attribute patterns in one class match.
+    "multiple-class-sub-patterns",
+    # Prefer whole-pattern class binding when that avoids extra lookups.
+    "match-class-bind-self",
+    # Prefer explicit keyword class patterns over positional attributes.
+    "match-class-positional-attributes",
+    # Keep adjacent isinstance checks compact and easier to scan.
+    "consider-merging-isinstance",
+    # Flag deeply nested control flow before functions become hard to audit.
+    "too-many-nested-blocks",
+    # Replace boolean-only if statements with direct boolean expressions.
+    "simplifiable-if-statement",
+    # Catch local bindings that accidentally shadow function parameters.
+    "redefined-argument-from-local",
+    # Remove redundant else blocks after unconditional returns.
+    "no-else-return",
+    # Prefer explicit ternary expressions over pre-ternary idioms.
+    "consider-using-ternary",
+    # Catch accidental one-item tuples caused by stray trailing commas.
+    "trailing-comma-tuple",
+    # Avoid StopIteration escaping generators under PEP 479.
+    "stop-iteration-return",
+    # Simplify redundant boolean expressions.
+    "simplify-boolean-expression",
+    # Keep return contracts explicit and consistent within each function.
+    "inconsistent-return-statements",
+    # Remove terminal return None statements that add no behaviour.
+    "useless-return",
+    # Prefer tuple unpacking for variable swaps.
+    "consider-swap-variables",
+    # Prefer str.join for iterable string assembly.
+    "consider-using-join",
+    # Prefer membership checks over repeated equality comparisons.
+    "consider-using-in",
+    # Prefer dict.get when retrieving optional dictionary values.
+    "consider-using-get",
+    # Prefer chained comparisons for ordered relationships.
+    "chained-comparison",
+    # Prefer dictionary comprehensions over dict(list-comprehension) patterns.
+    "consider-using-dict-comprehension",
+    # Prefer set comprehensions over set(list-comprehension) patterns.
+    "consider-using-set-comprehension",
+    # Simplify boolean-only conditional expressions.
+    "simplifiable-if-expression",
+    # Remove redundant else blocks after unconditional raises.
+    "no-else-raise",
+    # Replace identity comprehensions with direct collection constructors.
+    "unnecessary-comprehension",
+    # Prefer sys.exit for explicit process termination.
+    "consider-using-sys-exit",
+    # Remove redundant else blocks after unconditional breaks.
+    "no-else-break",
+    # Remove redundant else blocks after unconditional continues.
+    "no-else-continue",
+    # Prefer Python 3 super() without explicit class and instance arguments.
+    "super-with-arguments",
+    # Simplify boolean conditions that have redundant structure.
+    "simplifiable-condition",
+    # Catch conditions that statically evaluate to constants.
+    "condition-evals-to-constant",
+    # Prefer generators when a container is only consumed immediately.
+    "consider-using-generator",
+    # Avoid unnecessary comprehensions inside any/all/min/max/sum.
+    "use-a-generator",
+    # Prefer min() over equivalent conditional assignments.
+    "consider-using-min-builtin",
+    # Prefer max() over equivalent conditional assignments.
+    "consider-using-max-builtin",
+    # Encourage context managers for resource-owning operations.
+    "consider-using-with",
+    # Avoid redundant dictionary lookups while iterating items.
+    "unnecessary-dict-index-lookup",
+    # Prefer [] for empty list creation.
+    "use-list-literal",
+    # Prefer {} for dictionary creation when a literal is clearer.
+    "use-dict-literal",
+    # Avoid redundant list index lookups while enumerating values.
+    "unnecessary-list-index-lookup",
+    # Prefer yield from for delegating iterable output.
+    "use-yield-from",
+    # Remove double negatives from boolean expressions.
+    "unnecessary-negation",
+    # Prefer enumerate over range(len(...)) loops.
+    "consider-using-enumerate",
+    # Iterate dictionaries directly instead of through keys().
+    "consider-iterating-dictionary",
+    # Prefer dict.items() when both keys and values are used.
+    "consider-using-dict-items",
+    # Use maxsplit when only the first or last split component is needed.
+    "use-maxsplit-arg",
+    # Prefer sequence literals for repeated iteration values.
+    "use-sequence-for-iteration",
+    # Prefer f-strings for non-logging eager string interpolation.
+    "consider-using-f-string",
+    # Prefer direct sequence truthiness over len(sequence).
+    "use-implicit-booleaness-not-len",
+    # Prefer direct sequence truthiness over comparison to an empty literal.
+    "use-implicit-booleaness-not-comparison",
+    # Prefer direct string truthiness over comparison to an empty string.
+    "use-implicit-booleaness-not-comparison-to-string",
+    # Prefer operators and builtins over direct dunder calls.
+    "unnecessary-dunder-call",
+    # Avoid placeholder ellipses when a concrete stub body is clearer.
+    "unnecessary-ellipsis",
+    # Ensure environment helper calls receive string values.
+    "invalid-envvar-value",
+    # Use singledispatchmethod for method dispatch.
+    "singledispatch-method",
+    # Use singledispatch for function dispatch.
+    "singledispatchmethod-function",
+    # Catch invalid file open modes early.
+    "bad-open-mode",
+    # Preserve compatibility awareness for datetime.time truthiness checks.
+    "boolean-datetime",
+    # Catch unittest assertions that cannot fail.
+    "redundant-unittest-assert",
+    # Ensure threading.Thread receives the target argument intentionally.
+    "bad-thread-instantiation",
+    # Prefer os.environ.copy() over shallow-copying the environment proxy.
+    "shallow-copy-environ",
+    # Ensure os.getenv defaults have the expected string-or-None shape.
+    "invalid-envvar-default",
+    # Avoid preexec_fn because it can deadlock in threaded programs.
+    "subprocess-popen-preexec-fn",
+    # Require explicit subprocess.run check semantics.
+    "subprocess-run-check",
+    # Require explicit encodings for file I/O portability.
+    "unspecified-encoding",
+    # Keep breakpoint hooks out of committed code.
+    "forgotten-debug-statement",
+    # Avoid unbounded method caches that retain self indefinitely.
+    "method-cache-max-size-none",
+    # Surface deprecated stdlib method usage.
+    "deprecated-method",
+    # Surface deprecated stdlib argument usage.
+    "deprecated-argument",
+    # Surface deprecated stdlib class usage.
+    "deprecated-class",
+    # Surface deprecated stdlib decorator usage.
+    "deprecated-decorator",
+    # Surface deprecated stdlib attribute usage.
+    "deprecated-attribute",
+    # Flag modules that have grown large enough to deserve splitting.
+    "too-many-lines",
+    # Keep trailing whitespace out of Python sources.
+    "trailing-whitespace",
+    # Require final newlines for stable text-file handling.
+    "missing-final-newline",
+    # Avoid excess blank lines at file end.
+    "trailing-newlines",
+    # Remove redundant parentheses around control-flow keywords.
+    "superfluous-parens",
+    # Catch mixed line endings before they create noisy diffs.
+    "mixed-line-endings",
+    # Enforce the configured line-ending format.
+    "unexpected-line-ending-format",
+    # Prevent mutating dictionaries while iterating them.
+    "modified-iterating-dict",
+    # Prevent mutating sets while iterating them.
+    "modified-iterating-set",
+    # Flag list mutation during iteration, where behaviour is easy to miss.
+    "modified-iterating-list",
+    # Keep public class surfaces small enough to understand.
+    "too-many-public-methods",
+    # Flag branch-heavy functions for refactoring.
+    "too-many-branches",
+    # Keep function signatures from accumulating too many parameters.
+    "too-many-arguments",
+    # Flag functions whose local state has become hard to follow.
+    "too-many-locals",
+    # Flag functions that do too much sequential work.
+    "too-many-statements",
+    # Keep compound boolean conditions readable.
+    "too-many-boolean-expressions",
+    # Keep positional call surfaces small and explicit.
+    "too-many-positional-arguments",
+]
 [tool.uv]
 package = true
 
@@ -187,3 +475,16 @@ filterwarnings = [
     "ignore:Module already imported so cannot be rewritten; slipcover:pytest.PytestAssertRewriteWarning",
     "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin.gherkin_line",
 ]
+
+[tool.skylos.gate]
+strict = true
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "parameter"
+full_name = [
+    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.count",
+    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.reason",
+    "femtologging._rust_compat._make_timed_rotation_hooks._set.epoch_millis",
+    "femtologging._rust_compat._make_runtime_attachment_state._fallback.name",
+]
+reason = "Fallback hooks preserve the test-util protocol signatures when the extension lacks the feature."

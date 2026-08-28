@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-import subprocess  # noqa: S404 - FIXME: required to test fresh-process global subscriber semantics.
+import subprocess  # ruff: ignore[suspicious-subprocess-import] a fresh interpreter is the only way to exercise install-once global subscriber semantics
 import sys
 import time
 import typing as typ
@@ -28,9 +28,6 @@ if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
     from femtologging.adapter import FemtoRecord
-
-    Iterator = cabc.Iterator
-    Sequence = cabc.Sequence
 
 # Polling timeout for log output capture, increased for CI load tolerance.
 LOG_POLL_TIMEOUT = 5.0
@@ -65,7 +62,7 @@ scenarios(str(FEATURES / "rust_tracing_compat.feature"))
     parsers.parse('a stream handler attached to logger "{name}"'),
     target_fixture="stream_handler_ctx",
 )
-def given_stream_handler(name: str) -> Iterator[tuple[FemtoStreamHandler, str]]:
+def given_stream_handler(name: str) -> cabc.Iterator[tuple[FemtoStreamHandler, str]]:
     """Attach a stderr stream handler to the named logger."""
     with _attach_handler_ctx(
         StreamHandlerBuilder.stderr().build(),
@@ -79,26 +76,29 @@ class _RecordCaptureHandler:
 
     def __init__(self) -> None:
         self.records: list[FemtoRecord] = []
+        # femtologging looks up ``handle_record`` on the instance, so binding
+        # ``list.append`` directly avoids a forwarding method that would add
+        # nothing but a stack frame.
+        self.handle_record: cabc.Callable[[FemtoRecord], None] = self.records.append
 
     def handle(self, _message: str, _logger_name: str, _level: str) -> None:
         """Satisfy handler registration; structured dispatch uses handle_record."""
-
-    def handle_record(self, record: FemtoRecord) -> None:
-        self.records.append(record)
 
     def close(self) -> None:
         """Provide a stdlib-like close hook for teardown symmetry."""
 
 
 class _Closeable(typ.Protocol):
+    """Minimal protocol for handlers this module attaches and tears down."""
+
     def close(self) -> None: ...
 
 
-_H = typ.TypeVar("_H", bound="_Closeable")
-
-
 @contextlib.contextmanager
-def _attach_handler_ctx(handler: _H, name: str) -> Iterator[tuple[_H, str]]:  # noqa: UP047 - UP047 wants collections.abc.Iterator, but the generator return type annotation is incompatible with the test fixture pattern; safe because the yielded tuple matches the declared Iterator item type.
+def _attach_handler_ctx[HandlerT: _Closeable](
+    handler: HandlerT, name: str
+) -> cabc.Iterator[tuple[HandlerT, str]]:
+    """Attach ``handler`` to logger ``name`` and detach it on exit."""
     logger = get_logger(name)
     logger.add_handler(handler)
     try:
@@ -112,7 +112,9 @@ def _attach_handler_ctx(handler: _H, name: str) -> Iterator[tuple[_H, str]]:  # 
     parsers.parse('a record-collecting handler attached to logger "{name}"'),
     target_fixture="record_handler_ctx",
 )
-def given_record_handler(name: str) -> Iterator[tuple[_RecordCaptureHandler, str]]:
+def given_record_handler(
+    name: str,
+) -> cabc.Iterator[tuple[_RecordCaptureHandler, str]]:
     """Attach a Python ``handle_record`` collector to the named logger."""
     with _attach_handler_ctx(_RecordCaptureHandler(), name) as handler_ctx:
         yield handler_ctx
@@ -240,7 +242,7 @@ except RuntimeError as exc:
 print("setup_rust_tracing unexpectedly succeeded")
 raise SystemExit(1)
 """.strip()
-    result = subprocess.run(  # noqa: S603 - FIXME: required to validate subprocess failure semantics.
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed interpreter path and inline script
         [sys.executable, "-c", script],
         check=False,
         capture_output=True,
@@ -255,26 +257,35 @@ raise SystemExit(1)
 
 @then("the captured tracing stderr output matches snapshot")
 def then_tracing_stderr_snapshot(
-    stderr_output: Sequence[str],
+    stderr_output: cabc.Sequence[str],
     snapshot: SnapshotAssertion,
 ) -> None:
     """Assert captured tracing stderr output equals the stored snapshot."""
-    assert stderr_output == snapshot, "stderr output must match snapshot"
+    assert stderr_output == snapshot, (
+        "events bridged from Rust tracing must match the recorded snapshot; "
+        f"got {stderr_output!r}"
+    )
 
 
 @then("the captured tracing records match snapshot")
 def then_tracing_records_snapshot(
-    captured_tracing_records: Sequence[dict[str, object]],
+    captured_tracing_records: cabc.Sequence[dict[str, object]],
     snapshot: SnapshotAssertion,
 ) -> None:
     """Assert captured tracing records equal the stored snapshot."""
-    assert captured_tracing_records == snapshot, "record payloads must match snapshot"
+    assert captured_tracing_records == snapshot, (
+        "structured tracing fields and span context must match the recorded "
+        f"snapshot; got {captured_tracing_records!r}"
+    )
 
 
 @then("the rust tracing bridge error matches snapshot")
 def then_tracing_bridge_error_snapshot(
-    tracing_bridge_error: Sequence[str],
+    tracing_bridge_error: cabc.Sequence[str],
     snapshot: SnapshotAssertion,
 ) -> None:
     """Assert bridge failure output equals the stored snapshot."""
-    assert tracing_bridge_error == snapshot, "error output must match snapshot"
+    assert tracing_bridge_error == snapshot, (
+        "the double-install failure message must match the recorded snapshot; "
+        f"got {tracing_bridge_error!r}"
+    )
