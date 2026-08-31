@@ -91,6 +91,69 @@ For `rust_extension/tests/compile_tests.rs`, use
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
 
+## Type checking and heavy tests
+
+`make typecheck` depends on `make build`, which creates `./.venv`, installs the
+development dependencies, and installs the editable Rust extension there. The
+target then invokes:
+
+```shell
+ty check --python ./.venv --extra-search-path scripts
+```
+
+The `--python` option points `ty` at the project environment containing the
+extension and its dependencies. The `scripts` search path is required because
+the spelling-policy helpers import one another as top-level modules. The same
+paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the
+Makefile passes them explicitly because the pinned local `ty` version does not
+reliably apply the equivalent project settings.
+
+The long-running Rust integration suite is the Cargo `heavy` test target,
+rooted at `rust_extension/tests/heavy/main.rs`. Its property-based tests are
+marked `#[ignore]` because each generated case starts a handler worker. Run
+the target explicitly when investigating it:
+
+```shell
+cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
+  --test heavy -- --ignored
+```
+
+The scheduled `heavy-tests` workflow runs ignored tests across its feature
+lanes. Loom model test functions are compiled and registered only when Cargo
+is invoked with `--cfg loom`; the ordinary heavy run does not compile or run
+them. To select the Loom configuration locally, use:
+
+```shell
+RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
+  --no-default-features --test heavy
+```
+
+The current handlers use `std::thread::spawn`, so executing the Loom models
+requires the spawn abstraction described in the heavy-test module
+documentation. Until that follow-up is implemented, the Loom configuration
+is still compiled to keep the models type-checked.
+
+## Shared Rust test helpers and fixtures
+
+The reusable integration-test support is owned by
+`rust_extension/tests/test_utils/`. It consists of three focused components:
+
+- `handle_expect.rs` defines the `HandleExpect` trait, which turns a handler's
+  fallible `handle` call into a descriptive test panic.
+- `fixtures.rs` provides `handler_tuple` for a fresh buffer and default
+  stream handler, `handler_tuple_custom` for capacity and timeout cases, and
+  `stream_handler_for` when several handlers must share one buffer.
+- `shared_buffer.rs` provides standard-library and Loom-backed shared buffers;
+  use the variant matching the test's execution model.
+
+Each Cargo integration-test root declares only the support modules it needs.
+The stream-handler suite includes `test_utils/mod.rs` because it uses all three
+components; the file-handler and logger suites include their required files
+directly. The `heavy` root includes `shared_buffer.rs` and
+`handle_expect.rs` directly, and its Loom modules are themselves gated by
+`cfg(loom)`. Prefer these fixtures and the trait over duplicating setup or
+`handle(...).expect(...)` calls in individual suites.
+
 ## Toolchain Boundaries
 
 The root `Makefile` is the source of truth for local and CI tool commands. Keep

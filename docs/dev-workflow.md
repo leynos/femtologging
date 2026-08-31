@@ -15,10 +15,12 @@ across Python and Rust code.
 - `make typecheck` – run
 
   ```shell
-  ty check --extra-search-path=/root/.pyenv/versions/3.13.3/lib/python3.13/site-packages
+  ty check --python ./.venv --extra-search-path scripts
   ```
 
-  This target depends on `make build`.
+  This target depends on `make build`. The explicit Python path selects the
+  project virtual environment, and `scripts` makes the helper modules
+  importable as top-level modules during type checking.
 
 - `make build` – compile the Rust extension by running `pip install -e .`.
 
