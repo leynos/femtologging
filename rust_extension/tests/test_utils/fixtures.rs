@@ -26,7 +26,6 @@ fn fresh_buffer() -> SharedBytes {
 ///
 /// Use this when several handlers must share one buffer; otherwise prefer the
 /// `handler_tuple` fixture, which supplies a fresh buffer of its own.
-#[allow(dead_code)]
 #[must_use]
 pub fn stream_handler_for(buffer: &SharedBytes) -> FemtoStreamHandler {
     FemtoStreamHandler::new(SharedBuf::new(Arc::clone(buffer)), DefaultFormatter)

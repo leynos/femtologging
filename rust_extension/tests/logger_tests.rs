@@ -8,12 +8,14 @@ use _femtologging_rs::{
 };
 use rstest::{fixture, rstest};
 
-#[path = "test_utils/mod.rs"]
-mod test_utils;
+#[path = "test_utils/fixtures.rs"]
+mod fixtures;
+#[path = "test_utils/shared_buffer.rs"]
+mod shared_buffer;
+use fixtures::{handler_tuple, stream_handler_for};
+use shared_buffer::std::SharedBuf;
+use shared_buffer::std::read_output;
 use std::sync::{Arc, Mutex};
-use test_utils::fixtures::{handler_tuple, stream_handler_for};
-use test_utils::shared_buffer::std::read_output;
-use test_utils::std::SharedBuf;
 
 /// A shared in-memory buffer paired with the handler writing into it.
 type HandlerTuple = (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler);
@@ -350,7 +352,10 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
     }
 
     let accepted = producer.join().expect("producer thread panicked");
-    assert!(accepted <= RACE_RECORD_COUNT);
+    assert!(
+        accepted <= RACE_RECORD_COUNT,
+        "accepted record count ({accepted}) must not exceed {RACE_RECORD_COUNT}",
+    );
 
     // Only this thread writes the level, so the last value written must win:
     // a torn or lost update would leave some other variant behind.

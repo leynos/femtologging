@@ -25,7 +25,13 @@ enum ChainKind {
 /// # Arguments
 /// * `kind` - Which link type joins successive levels
 /// * `depth` - Total number of exceptions in the chain
+///
+/// # Panics
+///
+/// Panics if `depth` is zero.
 fn build_exception_chain(kind: ChainKind, depth: usize) -> ExceptionPayload {
+    assert!(depth >= 1, "exception chain depth must be at least one");
+
     let mut current = ExceptionPayload::new("BaseError", "root");
     for i in 1..depth {
         current = match kind {
@@ -76,6 +82,12 @@ fn verify_chain_depth(payload: &ExceptionPayload, kind: ChainKind, expected_dept
         depth, expected_depth,
         "Expected chain depth {expected_depth}, found {depth}"
     );
+}
+
+#[test]
+#[should_panic(expected = "exception chain depth must be at least one")]
+fn build_exception_chain_rejects_zero_depth() {
+    let _ = build_exception_chain(ChainKind::Cause, 0);
 }
 
 #[rstest]

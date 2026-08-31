@@ -13,8 +13,6 @@
 //! handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hi"));
 //! ```
 
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
 use _femtologging_rs::{FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};

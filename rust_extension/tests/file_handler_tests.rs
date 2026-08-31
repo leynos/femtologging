@@ -15,12 +15,14 @@ use _femtologging_rs::{
 };
 use tempfile::NamedTempFile;
 
-#[path = "test_utils/mod.rs"]
-mod test_utils;
+#[path = "test_utils/handle_expect.rs"]
+mod handle_expect;
+#[path = "test_utils/shared_buffer.rs"]
+mod shared_buffer;
+use handle_expect::HandleExpect;
+use shared_buffer::std::SharedBuf;
+use shared_buffer::std::read_output;
 use std::sync::{Arc, Mutex};
-use test_utils::HandleExpect;
-use test_utils::shared_buffer::std::read_output;
-use test_utils::std::SharedBuf;
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
@@ -249,18 +251,30 @@ fn blocking_policy_waits_for_space() {
     assert!(!t.is_finished());
     harness.start.wait();
     t.join().expect("blocked producer thread panicked");
-    assert!(handler.flush());
+    assert!(
+        handler.flush(),
+        "flush should succeed after the blocked producer completes",
+    );
 
     let output = read_output(&harness.buffer);
-    assert!(output.contains("core [INFO] first"));
-    assert!(output.contains("core [INFO] second"));
+    assert!(
+        output.contains("core [INFO] first"),
+        "output should contain the first record",
+    );
+    assert!(
+        output.contains("core [INFO] second"),
+        "output should contain the second record",
+    );
     let first_idx = output
         .find("core [INFO] first")
         .expect("first record missing from output");
     let second_idx = output
         .find("core [INFO] second")
         .expect("second record missing from output");
-    assert!(first_idx < second_idx);
+    assert!(
+        first_idx < second_idx,
+        "the first record should precede the second record",
+    );
 }
 
 #[test]
@@ -276,11 +290,17 @@ fn timeout_policy_gives_up() {
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
         .expect_err("second record should time out");
     assert_eq!(err, HandlerError::Timeout(Duration::from_millis(50)));
-    assert!(start_time.elapsed() >= Duration::from_millis(50));
+    assert!(
+        start_time.elapsed() >= Duration::from_millis(50),
+        "timeout should wait for at least the configured duration",
+    );
     harness.start.wait();
     // Flushing waits for the worker to acknowledge, so the queued record is
     // guaranteed to have reached the buffer by the time this returns.
-    assert!(harness.handler.flush());
+    assert!(
+        harness.handler.flush(),
+        "flush should succeed after the worker resumes",
+    );
     assert!(
         harness.output().contains("core [INFO] first"),
         "the queued record should still be written once the worker resumes",

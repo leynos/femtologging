@@ -11,12 +11,9 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoFileHandler, FemtoLevel, FemtoLogRecord, HandlerConfig, OverflowPolicy,
 };
 
-use crate::test_utils::HandleExpect;
+use crate::handle_expect::HandleExpect;
 
-// Registered as a test only under `--cfg loom`: see the module documentation
-// for why these models cannot run against the current handler implementation.
-#[cfg_attr(loom, test)]
-#[allow(dead_code)]
+#[test]
 fn loom_file_handler_flush_concurrent() {
     loom::model(|| {
         let tmp = NamedTempFile::new().expect("create temp file");

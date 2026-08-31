@@ -17,8 +17,8 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogger, FemtoStreamHandler,
 };
 
-use crate::test_utils::shared_buffer::loom::SharedBuf as LoomBuf;
-use crate::test_utils::shared_buffer::loom::read_output;
+use crate::shared_buffer::loom::SharedBuf as LoomBuf;
+use crate::shared_buffer::loom::read_output;
 
 /// A loom-instrumented byte buffer shared with a stream handler.
 type LoomBuffer = LoomArc<LoomMutex<Vec<u8>>>;
@@ -46,10 +46,7 @@ fn sorted_lines(buffer: &LoomBuffer) -> Vec<String> {
     lines
 }
 
-// Registered as a test only under `--cfg loom`: see the module documentation
-// for why these models cannot run against the current handler implementation.
-#[cfg_attr(loom, test)]
-#[allow(dead_code)]
+#[test]
 fn loom_single_logger_multi_handlers() {
     loom::model(|| {
         let buf1 = fresh_buffer();
@@ -74,10 +71,7 @@ fn loom_single_logger_multi_handlers() {
     });
 }
 
-// Registered as a test only under `--cfg loom`: see the module documentation
-// for why these models cannot run against the current handler implementation.
-#[cfg_attr(loom, test)]
-#[allow(dead_code)]
+#[test]
 fn loom_shared_handler_multi_loggers() {
     loom::model(|| {
         let buffer = fresh_buffer();
@@ -103,10 +97,7 @@ fn loom_shared_handler_multi_loggers() {
     });
 }
 
-// Registered as a test only under `--cfg loom`: see the module documentation
-// for why these models cannot run against the current handler implementation.
-#[cfg_attr(loom, test)]
-#[allow(dead_code)]
+#[test]
 fn loom_multiple_loggers_multiple_handlers() {
     loom::model(|| {
         let shared_buf = fresh_buffer();
@@ -145,10 +136,7 @@ fn loom_multiple_loggers_multiple_handlers() {
     });
 }
 
-// Registered as a test only under `--cfg loom`: see the module documentation
-// for why these models cannot run against the current handler implementation.
-#[cfg_attr(loom, test)]
-#[allow(dead_code)]
+#[test]
 fn loom_concurrent_handler_addition() {
     loom::model(|| {
         let buf1 = fresh_buffer();

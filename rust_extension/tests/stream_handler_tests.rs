@@ -16,8 +16,8 @@ use serial_test::serial;
 #[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex, PoisonError};
-use test_utils::HandleExpect;
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
+use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;
 use test_utils::std::SharedBuf;
 

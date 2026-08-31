@@ -9,9 +9,9 @@ use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStream
 use itertools::iproduct;
 use proptest::prelude::*;
 
-use crate::test_utils::HandleExpect;
-use crate::test_utils::shared_buffer::std::read_output;
-use crate::test_utils::std::SharedBuf;
+use crate::handle_expect::HandleExpect;
+use crate::shared_buffer::std::SharedBuf;
+use crate::shared_buffer::std::read_output;
 
 proptest! {
     #[test]

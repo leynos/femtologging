@@ -6,28 +6,32 @@
 //! that are too slow for the ordinary gate, so each is marked `#[ignore]` and
 //! run by the nightly `heavy-tests` workflow via `cargo test -- --ignored`.
 //!
-//! `test_utils` is declared once here and shared by the submodules through
-//! `crate::test_utils`, so the shared helpers are compiled a single time for
-//! this test binary.
+//! Shared buffer support is declared once here and shared by the property suite
+//! and, when enabled, the loom models. The `HandleExpect` helper is shared by
+//! the property suite and the loom models.
 //!
 //! # The loom modules
 //!
-//! The `loom_*` modules are compiled unconditionally — so that they cannot
-//! silently rot again — but their test functions are registered only under
-//! `--cfg loom`. `FemtoStreamHandler` and `FemtoFileHandler` spawn their
-//! worker with `std::thread::spawn`, and that worker then touches the
-//! loom-instrumented buffer from a thread loom did not create. Loom detects
-//! this and aborts the process ("cannot access Loom execution state from
-//! outside a Loom model"), which would take the whole heavy binary down with
-//! it. Making these models runnable requires the handlers to spawn through an
-//! injectable abstraction that resolves to `loom::thread` under `--cfg loom`;
-//! until then the models are kept compiling but unregistered.
-#![allow(unexpected_cfgs)]
+//! The `loom_*` modules compile only under `--cfg loom`. `FemtoStreamHandler`
+//! and `FemtoFileHandler` spawn their worker with `std::thread::spawn`, and
+//! that worker then touches the loom-instrumented buffer from a thread loom did
+//! not create. Loom detects this and aborts the process ("cannot access Loom
+//! execution state from outside a Loom model"), which would take the whole
+//! heavy binary down with it. Making these models runnable requires the
+//! handlers to spawn through an injectable abstraction that resolves to
+//! `loom::thread` under `--cfg loom`; until then the models are compile-checked
+//! but not run by the heavy workflow.
 
-#[path = "../test_utils/mod.rs"]
-mod test_utils;
+#[path = "../test_utils/shared_buffer.rs"]
+mod shared_buffer;
 
+#[path = "../test_utils/handle_expect.rs"]
+mod handle_expect;
+
+#[cfg(loom)]
 mod loom_file_flush;
+#[cfg(loom)]
 mod loom_push;
+#[cfg(loom)]
 mod loom_topologies;
 mod prop_stream_handler;

@@ -8,14 +8,11 @@ use loom::thread;
 
 use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
 
-use crate::test_utils::HandleExpect;
-use crate::test_utils::shared_buffer::loom::SharedBuf as LoomBuf;
-use crate::test_utils::shared_buffer::loom::read_output;
+use crate::handle_expect::HandleExpect;
+use crate::shared_buffer::loom::SharedBuf as LoomBuf;
+use crate::shared_buffer::loom::read_output;
 
-// Registered as a test only under `--cfg loom`: see the module documentation
-// for why these models cannot run against the current handler implementation.
-#[cfg_attr(loom, test)]
-#[allow(dead_code)]
+#[test]
 fn loom_stream_push_delivery() {
     loom::model(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));

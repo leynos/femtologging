@@ -7,12 +7,16 @@ traceback passed explicitly in a ``(type, value, traceback)`` tuple is still
 used for frame extraction.
 """
 
+from typing import NoReturn
 
-def inner():
+
+def inner() -> NoReturn:
+    """Raise the fixture's inner ValueError."""
     raise ValueError("test error")
 
 
-def outer():
+def outer() -> NoReturn:
+    """Invoke inner to add a traceback frame."""
     inner()
 
 
