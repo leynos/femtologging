@@ -30,7 +30,7 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
 /// Fallible so callers can `.expect()` at the assertion site, keeping the
 /// panic line attached to the calling test.
 fn handler_count(py: Python<'_>, name: &str) -> pyo3::PyResult<usize> {
-    let logger = manager::get_logger(py, name)?;
+    let logger = manager::lookup_existing_logger(py, name)?;
     let count = logger.borrow(py).handlers_for_test().len();
     Ok(count)
 }
@@ -39,7 +39,7 @@ fn handler_count(py: Python<'_>, name: &str) -> pyo3::PyResult<usize> {
 /// with `$reason` from the caller's line on mismatch.
 macro_rules! assert_handler_count {
     ($py:expr, $name:expr, $expected:expr, $reason:expr) => {{
-        let count = handler_count($py, $name).expect("get_logger should succeed");
+        let count = handler_count($py, $name).expect("existing logger lookup should succeed");
         assert_eq!(count, $expected, "{}", $reason);
     }};
 }

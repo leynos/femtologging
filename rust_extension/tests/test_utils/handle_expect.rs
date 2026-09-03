@@ -20,6 +20,7 @@ use _femtologging_rs::{FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, Femt
 /// Submit a record to a handler, panicking with a descriptive message if the
 /// handler rejects it.
 pub trait HandleExpect {
+    /// Submit `record`, panicking with receiver-specific context on rejection.
     fn expect_handle(&self, record: FemtoLogRecord);
 }
 

@@ -13,6 +13,7 @@ use crate::shared_buffer::loom::SharedBuf as LoomBuf;
 use crate::shared_buffer::loom::read_output;
 
 #[test]
+#[ignore = "FemtoStreamHandler workers use std::thread outside the Loom model"]
 fn loom_stream_push_delivery() {
     loom::model(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));

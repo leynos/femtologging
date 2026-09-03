@@ -1,11 +1,12 @@
 //! Behavioural tests for `FemtoLogger`: message formatting, level filtering,
 //! handler attachment and removal, and the thread-safety of both.
 
-use _femtologging_rs::FemtoLogger;
-use _femtologging_rs::QueuedRecord; // needed for clone_sender test
+use std::collections::BTreeSet;
+
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
+use _femtologging_rs::{FemtoLogger, QueuedRecord}; // needed for clone_sender test
 use rstest::{fixture, rstest};
 
 #[path = "test_utils/fixtures.rs"]
@@ -13,8 +14,7 @@ mod fixtures;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
 use fixtures::{handler_tuple, stream_handler_for};
-use shared_buffer::std::SharedBuf;
-use shared_buffer::std::read_output;
+use shared_buffer::std::{SharedBuf, read_output};
 use std::sync::{Arc, Mutex};
 
 /// A shared in-memory buffer paired with the handler writing into it.
@@ -322,7 +322,6 @@ fn set_level_is_thread_safe() {
     );
 }
 
-/// Number of records the producer thread emits while levels are being changed.
 const RACE_RECORD_COUNT: usize = 1000;
 
 #[rstest]
@@ -335,66 +334,66 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
     logger.add_handler(Arc::clone(&handler));
     let barrier = Arc::new(Barrier::new(2));
 
-    let lg = Arc::clone(&logger);
-    let b = Arc::clone(&barrier);
+    let (lg, b) = (Arc::clone(&logger), Arc::clone(&barrier));
     let producer = thread::spawn(move || {
         b.wait();
-        // Count the records that passed the level filter so the handler
-        // output can be checked against them.
         (0..RACE_RECORD_COUNT)
-            .filter(|_| lg.log(FemtoLevel::Info, "msg").is_some())
-            .count()
+            .filter_map(|index| {
+                let message = format!("msg{index}");
+                lg.log(FemtoLevel::Info, &message)
+                    .is_some()
+                    .then_some(message)
+            })
+            .collect::<BTreeSet<_>>()
     });
-
     barrier.wait();
     for lvl in ALL_LEVELS.iter().cycle().take(RACE_RECORD_COUNT) {
         logger.set_level(*lvl);
     }
 
-    let accepted = producer.join().expect("producer thread panicked");
+    let accepted_messages = producer.join().expect("producer thread panicked");
     assert!(
-        accepted <= RACE_RECORD_COUNT,
-        "accepted record count ({accepted}) must not exceed {RACE_RECORD_COUNT}",
+        accepted_messages.len() <= RACE_RECORD_COUNT,
+        "accepted record count ({}) must not exceed {RACE_RECORD_COUNT}",
+        accepted_messages.len(),
     );
-
-    // Only this thread writes the level, so the last value written must win:
-    // a torn or lost update would leave some other variant behind.
     let expected_final = ALL_LEVELS[(RACE_RECORD_COUNT - 1) % ALL_LEVELS.len()];
     assert_eq!(
         logger.get_level(),
         expected_final,
         "the final set_level must be observable after the race",
     );
-
-    // The logger must still filter correctly once the race has finished.
     logger.set_level(FemtoLevel::Trace);
     assert!(
         logger.log(FemtoLevel::Info, "after").is_some(),
-        "logger should remain usable after concurrent level changes",
+        "logger should remain usable after the race",
     );
     logger.set_level(FemtoLevel::Critical);
     assert!(
         logger.log(FemtoLevel::Info, "suppressed").is_none(),
-        "logger should still suppress records below its level",
+        "logger should still suppress records below its level after the race",
     );
 
-    drop(logger);
-    drop(handler);
+    drop((logger, handler));
 
-    // Records may be dropped when the logger's queue is full, but none may be
-    // fabricated, duplicated or truncated: every line must be a well-formed
-    // record that the producer actually accepted.
-    let output = read_output(&buffer);
-    let lines: Vec<&str> = output.lines().collect();
-    assert!(
-        lines.len() <= accepted + 1,
-        "handler saw {} lines but only {accepted} records (plus one post-race record) were accepted",
-        lines.len(),
+    let actual_messages = read_output(&buffer)
+        .lines()
+        .map(|line| {
+            line.strip_prefix("race [INFO] ")
+                .expect("race handler output should use the default formatter")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    let actual_set = actual_messages.iter().cloned().collect::<BTreeSet<_>>();
+    let mut expected_messages = accepted_messages;
+    expected_messages.insert("after".to_owned());
+    assert_eq!(
+        actual_messages.len(),
+        actual_set.len(),
+        "handler output should not duplicate identities: {actual_messages:?}",
     );
-    assert!(
-        lines
-            .iter()
-            .all(|line| *line == "race [INFO] msg" || *line == "race [INFO] after"),
-        "unexpected line in handler output: {lines:?}",
+    assert_eq!(
+        actual_set, expected_messages,
+        "output identities should match accepted records"
     );
 }

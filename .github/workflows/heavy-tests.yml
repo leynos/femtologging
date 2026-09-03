@@ -40,6 +40,10 @@ jobs:
         run: |
           source .venv/bin/activate
           maturin develop --manifest-path rust_extension/Cargo.toml
+      - name: Compile Loom heavy tests
+        run: |
+          RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
+            --no-default-features --test heavy --no-run
       - name: Run formatters and tests
         run: |
           source .venv/bin/activate

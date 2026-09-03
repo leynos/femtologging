@@ -140,16 +140,20 @@ fn queue_overflow_drops_excess_records() {
     let harness = OverflowHarness::new(3, OverflowPolicy::Drop);
 
     for i in 0..10 {
-        // Intentionally ignore errors; overflow testing expects some records
-        // to be dropped.
-        let _ = harness
-            .handler
-            .handle(FemtoLogRecord::new(
-                "core",
-                FemtoLevel::Info,
-                &format!("msg{i}"),
-            ))
-            .ok();
+        let result = harness.handler.handle(FemtoLogRecord::new(
+            "core",
+            FemtoLevel::Info,
+            &format!("msg{i}"),
+        ));
+        if i < 3 {
+            assert!(result.is_ok(), "record {i} should fit in the queue");
+        } else {
+            assert_eq!(
+                result,
+                Err(HandlerError::QueueFull),
+                "record {i} should be rejected when the queue is full",
+            );
+        }
     }
     // Allow the worker thread to start processing after all records are queued.
     harness.start.wait();
