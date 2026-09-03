@@ -473,6 +473,17 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 - Accepts `level`, `filename`, `stream` (`sys.stdout` or `sys.stderr`), `force`,
   and `handlers` (an iterable of handler objects) either via keyword arguments
   or the `BasicConfig` dataclass.
+- `BasicConfig` is a slotted dataclass: `level`, `filename`, `stream`, `force`,
+  and `handlers` are its complete supported surface, and instances cannot
+  accept arbitrary extra attributes. Assigning a mistyped field name raises
+  `AttributeError` immediately rather than silently creating a new attribute
+  that `basicConfig` never reads:
+
+  ```python
+  cfg = BasicConfig(level="INFO")
+  cfg.filenam = "/var/log/app.log"  # AttributeError: no such field
+  ```
+
 - `filename` and `stream` are mutually exclusive and cannot be combined with
   the `handlers` argument.
 - Passing `force=True` clears existing handlers on the root logger before

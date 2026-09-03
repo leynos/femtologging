@@ -109,12 +109,26 @@ def sole_variable(name: str) -> dict[str, object]:
 
 
 def variable_tokens(name: str) -> tuple[str, ...]:
-    """Return shell-like tokens from Makeutil's raw variable value."""
+    """Return shell-like tokens from Makeutil's raw variable value.
+
+    Make line continuations survive `shlex.split` as bare newline tokens; they
+    are layout, not arguments, so they are dropped here.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The variable's shell-like tokens, free of Make line continuations.
+
+    Raises
+    ------
+    TypeError
+        If Makeutil did not report a string value for `name`.
+    """
     value = sole_variable(name).get("raw_value")
     if not isinstance(value, str):
         msg = f"expected {name!r} to have a string value"
         raise TypeError(msg)
-    return tuple(shlex.split(value))
+    return tuple(token for token in shlex.split(value) if token.strip())
 
 
 def sole_recipe_rule(target: str, *, require_recipes: bool = True) -> dict[str, object]:

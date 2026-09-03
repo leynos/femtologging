@@ -148,14 +148,21 @@ duplicate noise.
 ## 5) Performance considerations in loops (PERF203)
 
 ```python
-# ❌ try/except inside a tight loop
+# Per-item: skip invalid items, keep processing the rest
 for item in items:
     try:
         parse(item)
     except ParseError:
         continue
+```
 
-# ✅ hoist the try, or avoid exceptions on the hot path
+This is the correct form whenever an invalid item must be skipped without
+halting the batch. Ruff's PERF203 flags `try`/`except` inside a loop because
+it carries overhead on the exceptional path, but that cost buys resilience:
+the loop keeps going after a failure.
+
+```python
+# Hoisted: deliberately abandon the remaining items on first failure
 try:
     for item in items:
         parse(item)
@@ -163,9 +170,13 @@ except ParseError:
     handle_parse_failure()
 ```
 
-Exception handling carries overhead on the exceptional path; hoisting the block
-can improve throughput in hot loops (PERF203). Treat as a micro-optimization
-guided by profiling.
+Hoisting is not an equivalent optimization of the per-item form; it is a
+different behaviour. The first `ParseError` aborts processing of every
+item that follows, so use this form only when abandoning the whole batch on
+failure is the desired semantics. Once the required behaviour is decided,
+treat any remaining performance difference between the two forms as a
+micro-optimization to confirm with profiling, not a reason to change
+semantics.
 
 ## 6) Testing: assert specific failures (B017)
 
@@ -238,7 +249,7 @@ logger.info("Dispatching order_id=%s to shop_id=%s", order_id, shop_id)  # struc
 ```python
 def parse_all(raw_items: list[str]) -> list[Record]:
     parsed: list[Record] = []
-    try:  # ✅ PERF203 hoist
+    try:  # hoisted; deliberately aborts on the first ParseError (§5)
         for raw in raw_items:
             rec = parse_record(raw)
             parsed.append(rec)
@@ -248,6 +259,11 @@ def parse_all(raw_items: list[str]) -> list[Record]:
         logger.info("Parsed %s records", len(parsed))
     return parsed
 ```
+
+This function's contract is to abort the whole batch on the first invalid
+record, so the hoisted form is correct here. Where invalid items must
+instead be skipped so the rest of the batch is still processed, use the
+per-item `try`/`except ParseError: continue` form from §5 instead.
 
 ### Tests with specific exceptions (B017)
 
@@ -293,15 +309,14 @@ select = [
 - Ruff rules: Tryceratops (TRY), Blind Except (BLE001), flake8-errmsg
   (EM101/EM102), flake8-logging (LOG004/LOG007/LOG009/LOG014/LOG015), N818,
   PERF203, B017.
-  - [https://docs.astral.sh/ruff/rules/#tryceratops-try](https://docs.astral.sh/ruff/rules/#tryceratops-try)
-  - [https://docs.astral.sh/ruff/rules/blind-except/](https://docs.astral.sh/ruff/rules/blind-except/)
-  - [https://docs.astral.sh/ruff/rules/assert-raises-exception/](https://docs.astral.sh/ruff/rules/assert-raises-exception/)
-  - [https://docs.astral.sh/ruff/rules/#flake8-errmsg-em](https://docs.astral.sh/ruff/rules/#flake8-errmsg-em)
-  - [https://docs.astral.sh/ruff/rules/#flake8-logging-log](https://docs.astral.sh/ruff/rules/#flake8-logging-log)
-  - [https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/](https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/)
-  - [https://docs.astral.sh/ruff/rules/try-except-in-loop/](https://docs.astral.sh/ruff/rules/try-except-in-loop/)
-- Gui Commits practice notes:
-  - Exception structure:
-    [https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/](https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/)
-  - Logging guidance:
-    [https://guicommits.com/how-to-log-in-python-like-a-pro/](https://guicommits.com/how-to-log-in-python-like-a-pro/)
+  - [Tryceratops (TRY)](https://docs.astral.sh/ruff/rules/#tryceratops-try)
+  - [Blind Except (BLE001)](https://docs.astral.sh/ruff/rules/blind-except/)
+  - [Assert (B017)](https://docs.astral.sh/ruff/rules/assert-raises-exception/)
+  - [flake8-errmsg (EM)](https://docs.astral.sh/ruff/rules/#flake8-errmsg-em)
+  - [logging (LOG)](https://docs.astral.sh/ruff/rules/#flake8-logging-log)
+  - [N818](https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/)
+  - [PERF203 loop](https://docs.astral.sh/ruff/rules/try-except-in-loop/)
+- Gui Commits practice notes — exception structure guide:
+  [Doc](https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/)
+- Gui Commits practice notes — logging guidance:
+  [Doc](https://guicommits.com/how-to-log-in-python-like-a-pro/)

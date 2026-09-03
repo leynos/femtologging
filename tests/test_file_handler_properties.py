@@ -4,8 +4,9 @@ The example-based cases in ``tests/test_file_handler.py`` pin the exact error
 messages; these properties assert the same relation holds across the whole
 non-positive integer domain rather than at a couple of sampled points.
 
-Hypothesis has no CPython 3.15 distribution yet, so this module is skipped
-there; see https://github.com/leynos/femtologging/issues/385.
+The ``importorskip`` guard below keeps the module collectible in environments
+that deliberately install without Hypothesis; every supported interpreter,
+including CPython 3.15, does provide it.
 """
 
 from __future__ import annotations

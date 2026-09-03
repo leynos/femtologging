@@ -107,8 +107,9 @@ class RecordCollector:
 
     def handle_record(self, record: CapturedRecordPayload) -> None:
         """Capture a snapshot of each record payload for metadata assertions."""
-        # Snapshot the payload: it crosses the extension boundary, so copying
-        # keeps assertions independent of any later mutation.
+        # Copy the top level only: the extension allocates a fresh payload
+        # tree per call and never retains it, so the nested mappings cannot be
+        # mutated behind us and a shallow copy is a faithful snapshot.
         self.records.append(typ.cast("CapturedRecordPayload", dict(record)))
 
     @staticmethod

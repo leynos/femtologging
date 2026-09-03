@@ -185,24 +185,36 @@ def test_handler_gains_handle_record_after_registration() -> None:
 
 
 def test_handler_dispatch_path_frozen_at_registration() -> None:
-    """Dispatch path (handle vs handle_record) is frozen at registration.
+    """The handle_record *dispatch path* stays frozen, even if the method is replaced.
 
-    The capability check that determines whether to use handle_record or
-    handle is performed once at registration time. If a handler is
-    registered with handle_record present, the handle_record dispatch path
-    will be used for all subsequent log records, even if the method is
-    later replaced.
+    ``PyHandler::new`` caches only a boolean -- whether the handler had a
+    callable ``handle_record`` at registration time -- not the callable
+    itself (see ``rust_extension/src/logger/py_handler.rs``). Once that
+    boolean is ``True`` for a handler, the runtime never falls back to the
+    legacy ``handle()`` method, no matter what ``handle_record`` is rebound
+    to afterwards; each call resolves the *current* ``handle_record``
+    attribute via a fresh lookup. Replacing ``handle_record`` after
+    registration is explicitly documented as unsupported ("mutating the
+    handler object after registration results in undefined behaviour",
+    ``py_handler.rs``), so *which* closure ends up running is deliberately
+    left unasserted here: pinning it would enshrine an accident of the
+    current implementation and would break spuriously if the callable were
+    ever cached at registration.
 
-    Note: Deleting handle_record after registration would cause an
-    AttributeError because the cached capability tells the runtime to call
-    a now-missing method. This test demonstrates the frozen dispatch path
-    by replacing the method and verifying handle() is not called.
+    What is contractual, and what this test proves, is the dispatch
+    *mechanism*: exactly one ``handle_record`` dispatch occurs, it carries
+    the logged payload, and ``handle()`` is never reached once the path
+    froze on ``handle_record``. The closures are tagged so the single
+    dispatch is observed rather than assumed, which catches a missed
+    dispatch or a double dispatch as well as a fallback to ``handle()``.
     """
     logger = FemtoLogger("core")
     handler = MutableHandler()
+    dispatch_log: list[str] = []
 
     # Add handle_record before registration
     def initial_handle_record(record: FemtoRecord) -> None:
+        dispatch_log.append("initial")
         handler.handle_record_calls.append(record)
 
     handler.handle_record = initial_handle_record
@@ -212,6 +224,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
 
     # Replace handle_record with a different implementation after registration
     def replacement_handle_record(record: FemtoRecord) -> None:
+        dispatch_log.append("replacement")
         handler.handle_record_calls.append(record)
 
     handler.handle_record = replacement_handle_record
@@ -225,7 +238,11 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
     assert handler.handle_record_calls[0]["message"] == "test message", (
         f"unexpected captured record: {handler.handle_record_calls[0]!r}"
     )
+    assert len(dispatch_log) == 1, (
+        "exactly one handle_record closure must run per logged record; "
+        f"a missed or duplicated dispatch would show here: {dispatch_log!r}"
+    )
     assert not handler.handle_calls, (
-        "handle() must not run once dispatch froze on handle_record: "
-        f"{handler.handle_calls!r}"
+        "handle() must not run once dispatch froze on handle_record, even "
+        f"though the handle_record callable was replaced: {handler.handle_calls!r}"
     )

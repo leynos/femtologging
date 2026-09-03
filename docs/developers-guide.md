@@ -27,11 +27,20 @@ linting](#python-linting) for the complete four-tier lint pipeline.
 The Python test toolchain is pinned so local runs and CI use the same pytest
 release:
 
-- `pytest` is pinned to `8.4.2` in `pyproject.toml` and CI.
+- `pytest` is pinned to `9.1.1` in `pyproject.toml` and CI.
 - `pytest-bdd` is pinned to `8.1.0` in `pyproject.toml` and CI.
+- `hypothesis` is bounded to `>=6.135,<7` in `pyproject.toml`'s
+  `[dependency-groups].dev`, so property-based and generated-input coverage
+  only shifts with a deliberate bump.
+- `pyyaml` is bounded to `>=6.0.3,<7` in the same dependency group, because
+  the lint contract tests parse the CI workflow files.
 
 Keep this policy in sync with `pyproject.toml` and the matching CI install
-steps where applicable.
+steps where applicable. The scheduled `heavy-tests.yml` workflow installs
+this same test toolchain explicitly (`pip install ... pytest==9.1.1
+pytest-bdd==8.1.0 ... "hypothesis>=6.135,<7" "pyyaml>=6.0.3,<7"`) rather than
+through the dev dependency group, since that job builds its own virtualenv
+outside `uv sync --group dev`.
 
 ## Typos spelling checker
 
@@ -231,13 +240,35 @@ Run the full lint gate with:
 make lint
 ```
 
-To run a single tier locally, invoke the underlying tool directly:
+To run any of the four tiers locally, invoke the underlying tool directly:
 
 ```shell
+
+# Tier 1: Ruff
 uvx ruff==0.16.4 check
+
+
+# Tier 2: Pylint under managed PyPy
 uv tool run --python pypy --from \
   'git+https://github.com/leynos/pylint-pypy-shim.git@726d09f968b4d729ee4b29c71fc732e744854f3b' \
   --with 'pylint==4.0.7' pylint-pypy femtologging tests scripts
+
+
+# Tier 3: df12-python-lints
+uv tool run --python 3.14 --from 'pylint==4.0.7' \
+  --with 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
+  pylint --disable=all --load-plugins=df12_python_lints \
+  --enable=R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112 \
+  femtologging tests scripts
+
+
+# Tier 3: ambrleaks (same df12-python-lints package, different entry point)
+uv tool run --python 3.14 \
+  --from 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
+  ambrleaks tests femtologging/unittests
+
+
+# Tier 4: Skylos
 uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
   --config-file pyproject.toml femtologging \
   --exclude femtologging/unittests --exclude femtologging/_femtologging_rs.pyi \
@@ -248,7 +279,6 @@ uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
 Prefer running the exact Makefile-derived commands (for example,
 `make lint-python`) over hand-copied invocations, since the Makefile is the
 single source of truth for tool pins, targets, and flags.
-
 
 ### Skylos dead-code gate
 

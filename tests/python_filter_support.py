@@ -48,6 +48,7 @@ class PrefixRejectingFilter(logging.Filter):
         super().__init__()
         self.prefix = prefix
 
+    @typ.override
     def filter(self, record: logging.LogRecord) -> bool:
         """Allow only records whose logger starts with ``self.prefix``.
 
@@ -67,6 +68,7 @@ class ContextFilterFactory(logging.Filter):
         super().__init__()
         self.request_id = request_id
 
+    @typ.override
     def filter(self, record: logging.LogRecord) -> bool:
         """Attach the configured request ID and accept the record.
 

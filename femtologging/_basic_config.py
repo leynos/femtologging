@@ -80,6 +80,9 @@ def _resolve_basic_config_params(
 
 # ruff: ignore[invalid-function-name] name mirrors stdlib logging.basicConfig
 def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
+    # ruff: ignore[docstring-extraneous-exception] ValueError is raised by
+    # _validate_basic_config_params, called directly below; documenting it
+    # here keeps the public contract accurate.
     """Configure the root logger using the builder API.
 
     Parameters mirror ``logging.basicConfig`` but currently only a subset is
@@ -116,17 +119,17 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     Raises
     ------
     TypeError
-        If an unsupported keyword argument is supplied.
+        If an unsupported keyword argument is supplied, or if ``handlers``
+        is not iterable.
+    ValueError
+        If ``filename``, ``stream``, and ``handlers`` are combined in an
+        unsupported way, or if ``stream`` is neither ``sys.stdout`` nor
+        ``sys.stderr``.
 
     Notes
     -----
     ``format`` and ``datefmt`` are intentionally unsupported until formatter
     customisation is implemented.
-
-    :func:`_validate_basic_config_params` additionally raises ``TypeError``
-    when ``handlers`` is not iterable, and ``ValueError`` when ``filename``,
-    ``stream``, and ``handlers`` are combined in an unsupported way or
-    ``stream`` is neither ``sys.stdout`` nor ``sys.stderr``.
 
     Examples
     --------

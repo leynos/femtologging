@@ -23,7 +23,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     # Bounded so generated-input behaviour only shifts with a deliberate bump.
-    "hypothesis>=6.135,<7; python_version < '3.15'",
+    "hypothesis>=6.135,<7",
     # The lint contract tests parse the CI workflows.
     "pyyaml>=6.0.3,<7",
     "pytest==9.1.1",

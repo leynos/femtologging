@@ -11,19 +11,23 @@ from femtologging import OverflowPolicy
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-hypothesis = pytest.importorskip(
-    "hypothesis", reason="the timeout round-trip property needs Hypothesis"
-)
-from hypothesis import (  # ruff: ignore[module-import-not-at-top-of-file] must follow importorskip so collection survives without Hypothesis
-    given,
-)
-from hypothesis import (  # ruff: ignore[module-import-not-at-top-of-file] must follow importorskip so collection survives without Hypothesis
-    strategies as st,
-)
-
 # ``timeout`` accepts a Rust ``u64`` millisecond count, so the property covers
 # the whole accepted domain above the rejected zero.
 _U64_MAX = 2**64 - 1
+
+try:
+    from hypothesis import given
+    from hypothesis import strategies as st
+except ImportError:  # pragma: no cover - only on interpreters lacking Hypothesis
+    # Every supported interpreter ships Hypothesis; this fallback only covers
+    # environments that deliberately install without the dev dependency group.
+    _TIMEOUT_ROUND_TRIP_PROPERTY = pytest.mark.skip(
+        reason="the timeout round-trip property needs Hypothesis"
+    )
+else:
+    _TIMEOUT_ROUND_TRIP_PROPERTY = given(
+        timeout_ms=st.integers(min_value=1, max_value=_U64_MAX)
+    )
 
 
 def _assert_repr(policy: OverflowPolicy, expected: str) -> None:
@@ -63,7 +67,7 @@ def test_timeout_factory_repr(timeout_ms: int) -> None:
     )
 
 
-@given(timeout_ms=st.integers(min_value=1, max_value=_U64_MAX))
+@_TIMEOUT_ROUND_TRIP_PROPERTY
 def test_timeout_repr_round_trips_for_any_accepted_duration(timeout_ms: int) -> None:
     """Every accepted millisecond count appears verbatim in the repr."""
     _assert_repr(

@@ -24,10 +24,10 @@ try:
     from hypothesis import given
     from hypothesis import strategies as st
 except ImportError:  # pragma: no cover - only on interpreters lacking Hypothesis
-    # Hypothesis has no CPython 3.15 distribution yet; tracked by
-    # femtologging issue #385.
+    # Every supported interpreter ships Hypothesis; this fallback only covers
+    # environments that deliberately install without the dev dependency group.
     _FLUSH_INTERVAL_PROPERTY = pytest.mark.skip(
-        reason="Hypothesis is unavailable on this interpreter (issue #385)"
+        reason="Hypothesis is unavailable on this interpreter"
     )
 else:
     # The Rust builders extract flush parameters as u64, so the whole u64

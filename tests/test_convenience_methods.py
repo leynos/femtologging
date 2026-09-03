@@ -40,9 +40,7 @@ import typing as typ
 import pytest
 
 from femtologging import FemtoLogger, get_logger, getLogger, log_context
-
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
+from tests.logger_support import assert_output_contains
 
 
 def _raise_for_capture(error: Exception) -> typ.NoReturn:
@@ -53,27 +51,6 @@ def _raise_for_capture(error: Exception) -> typ.NoReturn:
     of the block that handles it.
     """
     raise error
-
-
-def _assert_output_contains(
-    output: str | None, fragments: cabc.Sequence[str], context: str
-) -> str:
-    """Assert ``output`` exists and mentions every fragment; return it.
-
-    Reporting all missing fragments at once makes a formatting regression far
-    easier to diagnose than a chain of single-substring assertions.
-
-    Returns
-    -------
-    str
-        The rendered record, narrowed to ``str``.
-    """
-    assert output is not None, f"{context}: the logger emitted nothing"
-    missing = [fragment for fragment in fragments if fragment not in output]
-    assert not missing, (
-        f"{context}: rendered record omitted {missing!r}; got {output!r}"
-    )
-    return output
 
 
 # -- getLogger alias ----------------------------------------------------------
@@ -203,7 +180,9 @@ def test_convenience_method_with_exc_info() -> None:
         _raise_for_capture(TypeError("boom"))
     except TypeError:
         output = logger.error("caught", exc_info=True)
-    _assert_output_contains(output, ("TypeError", "Traceback"), "error(exc_info=True)")
+    assert_output_contains(
+        output, "TypeError", "Traceback", context="error(exc_info=True)"
+    )
 
 
 def test_convenience_method_with_stack_info() -> None:
@@ -211,8 +190,8 @@ def test_convenience_method_with_stack_info() -> None:
     logger = FemtoLogger("stack")
     logger.set_level("TRACE")
     output = logger.info("check", stack_info=True)
-    _assert_output_contains(
-        output, ("Stack (most recent call last)",), "info(stack_info=True)"
+    assert_output_contains(
+        output, "Stack (most recent call last)", context="info(stack_info=True)"
     )
 
 
@@ -282,8 +261,12 @@ def test_exception_captures_active_exception() -> None:
         _raise_for_capture(ValueError("auto capture"))
     except ValueError:
         output = logger.exception("caught")
-    _assert_output_contains(
-        output, ("[ERROR]", "ValueError", "Traceback"), "exception() auto-capture"
+    assert_output_contains(
+        output,
+        "[ERROR]",
+        "ValueError",
+        "Traceback",
+        context="exception() auto-capture",
     )
 
 
@@ -299,10 +282,12 @@ def test_exception_auto_capture_traceback() -> None:
         _raise_for_capture(RuntimeError("traceback check"))
     except RuntimeError:
         output = logger.exception("caught")
-    _assert_output_contains(
+    assert_output_contains(
         output,
-        ("RuntimeError", "traceback check", "Traceback"),
-        "exception() traceback capture",
+        "RuntimeError",
+        "traceback check",
+        "Traceback",
+        context="exception() traceback capture",
     )
 
 
@@ -314,7 +299,7 @@ def test_exception_logs_at_error_level() -> None:
         _raise_for_capture(ValueError("level check"))
     except ValueError:
         output = logger.exception("caught")
-    _assert_output_contains(output, ("[ERROR]",), "exception() at ERROR threshold")
+    assert_output_contains(output, "[ERROR]", context="exception() at ERROR threshold")
 
 
 def test_exception_filtered_below_error() -> None:
@@ -371,7 +356,7 @@ def test_exception_with_exc_info_instance() -> None:
     # ruff: ignore[log-exception-outside-except-handler] the instance is passed
     # explicitly, so no active handler is required.
     output = logger.exception("caught", exc_info=KeyError("specific"))
-    _assert_output_contains(output, ("KeyError",), "exception(exc_info=<instance>)")
+    assert_output_contains(output, "KeyError", context="exception(exc_info=<instance>)")
 
 
 def test_error_with_exc_info_captures_traceback() -> None:
@@ -387,6 +372,9 @@ def test_error_with_exc_info_captures_traceback() -> None:
         _raise_for_capture(ValueError("boom"))
     except ValueError:
         output = logger.error("caught", exc_info=True)
-    _assert_output_contains(
-        output, ("ValueError", "Traceback"), "error(exc_info=True) inside handler"
+    assert_output_contains(
+        output,
+        "ValueError",
+        "Traceback",
+        context="error(exc_info=True) inside handler",
     )

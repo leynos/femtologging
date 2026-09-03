@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import typing as typ
 
-from typing_extensions import TypedDict
-
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 from . import _femtologging_rs as rust
 
 
-class _RustCompatPayload(TypedDict):
+class _RustCompatPayload(typ.TypedDict):
     """Typed schema for Rust extension compatibility layer."""
 
     _force_rotating_fresh_failure_for_test: cabc.Callable[[int, str | None], None]
@@ -27,16 +25,7 @@ class _RustCompatPayload(TypedDict):
 
 
 def _make_zero_arg_hook(fn: object, error_msg: str = "") -> cabc.Callable[[], None]:
-    """Return *fn* cast as a no-arg callable, or a fallback.
-
-    Returns
-    -------
-    cabc.Callable[[], None]
-        *fn* itself when callable. Otherwise a fallback that raises
-        :class:`RuntimeError` with *error_msg* when *error_msg* is non-empty,
-        or a silent no-op when it is empty.
-
-    """
+    """Return *fn* as a callable, or a fallback that raises/no-ops per *error_msg*."""
     if callable(fn):
         return typ.cast("cabc.Callable[[], None]", fn)
 
@@ -119,17 +108,7 @@ def _has_timed_rotation_test_util_support(setter: object, clearer: object) -> bo
 
 
 def _initialize_rust_compat() -> _RustCompatPayload:
-    """Initialize Rust extension compatibility layer.
-
-    Extracts all optional Rust extension functions and wraps them with
-    appropriate fallback behaviour.
-
-    Returns
-    -------
-    _RustCompatPayload
-        A typed payload of the initialized module-level hooks.
-
-    """
+    """Extract optional Rust extension functions and wrap them with fallbacks."""
     force_rotating, clear_rotating = _make_rotating_fresh_failure_hooks(
         getattr(rust, "force_rotating_fresh_failure_for_test", None),
         getattr(rust, "clear_rotating_fresh_failure_for_test", None),

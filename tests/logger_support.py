@@ -43,7 +43,9 @@ def raise_exception(
     raise exc_type()
 
 
-def assert_output_contains(output: str | None, *fragments: str) -> None:
+def assert_output_contains(
+    output: str | None, *fragments: str, context: str = ""
+) -> None:
     """Assert *output* was produced and mentions every fragment.
 
     Collecting the fragments into a single assertion keeps the failure
@@ -57,17 +59,30 @@ def assert_output_contains(output: str | None, *fragments: str) -> None:
         was suppressed.
     fragments
         Substrings that must all be present in *output*.
+    context
+        Optional label describing the calling scenario, woven into the
+        failure messages when supplied.
 
     Examples
     --------
     >>> assert_output_contains("core [INFO] hi", "core", "hi")
+    >>> assert_output_contains("core [INFO] hi", "core", context="direct call")
 
     """
-    assert output is not None, (
-        f"expected formatted output mentioning {list(fragments)}, got None"
-    )
+    prefix = f"{context}: " if context else ""
+    if context:
+        assert output is not None, f"{prefix}the logger emitted nothing"
+    else:
+        assert output is not None, (
+            f"expected formatted output mentioning {list(fragments)}, got None"
+        )
     missing = [fragment for fragment in fragments if fragment not in output]
-    assert not missing, f"expected {missing} in output: {output!r}"
+    if context:
+        assert not missing, (
+            f"{prefix}rendered record omitted {missing!r}; got {output!r}"
+        )
+    else:
+        assert not missing, f"expected {missing} in output: {output!r}"
 
 
 class CollectingHandler:
