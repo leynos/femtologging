@@ -12,7 +12,7 @@ across Python and Rust code.
 - `make lint` – run the pinned Ruff checker and `cargo clippy` with
   `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0`.
 
-- `make typecheck` – run
+- `make typecheck` – run the pinned `ty` command
 
   ```shell
   ty check --python ./.venv --extra-search-path scripts
@@ -20,7 +20,9 @@ across Python and Rust code.
 
   This target depends on `make build`. The explicit Python path selects the
   project virtual environment, and `scripts` makes the helper modules
-  importable as top-level modules during type checking.
+  importable as top-level modules during type checking. The release is pinned
+  by the Makefile; use this target rather than an independently installed
+  `ty` version.
 
 - `make build` – compile the Rust extension by running `pip install -e .`.
 

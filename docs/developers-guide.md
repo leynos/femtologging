@@ -135,6 +135,21 @@ is still compiled to keep the models type-checked.
 
 ## Shared Rust test helpers and fixtures
 
+Crate unit-test support is owned by `rust_extension/src/test_utils/` and is
+compiled only under `cfg(test)`. Its focused modules keep test arrangement and
+assertions reusable without expanding the runtime API:
+
+- `collecting_handler.rs` provides `CollectingHandler`, an in-memory handler
+  whose collected records can be inspected by unit tests.
+- `frame_test_helpers.rs` provides `StackFrame` factories and assertions for
+  frame and payload slices.
+- `frame_assertion_helpers.rs` provides pure assertions for required and
+  optional frame fields and extracted locals maps. It is available to the
+  Python-enabled unit tests.
+- `traceback_test_helpers.rs` builds Python-like frame and exception objects,
+  arranges extraction cases, and re-exports the frame assertion helpers. It is
+  also limited to Python-enabled unit tests.
+
 The reusable integration-test support is owned by
 `rust_extension/tests/test_utils/`. It consists of three focused components:
 
@@ -154,6 +169,23 @@ directly. The `heavy` root includes `shared_buffer.rs` and
 `cfg(loom)`. Prefer these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
 
+File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
+The `impl_unsupported_seek!` macro supplies the required `Seek` implementation
+for an unseekable test writer and consistently returns
+`io::ErrorKind::Unsupported`; the same module also provides the process-wide
+test logger and helpers for installing it and taking captured messages.
+
+The macro unit tests in `rust_extension/src/logging_macros.rs` use the
+`logger_with_handler` `rstest` fixture. It clears the test logging context,
+creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so
+each macro case can inspect the resulting record.
+
+`rust_extension/src/test_fixtures/explicit_traceback.py` is Python source data,
+not a package module. `traceback_capture_tests` embeds it with `include_str!`;
+the fixture raises a nested `ValueError`, preserves its explicit traceback,
+and clears the exception object's `__traceback__` so tuple-based traceback
+capture is exercised.
+
 ## Toolchain Boundaries
 
 The root `Makefile` is the source of truth for local and CI tool commands. Keep
@@ -166,9 +198,10 @@ resolve the same formatter and linter version without requiring a global Ruff
 install. CI must not add a second hard-coded Ruff installation; update
 `RUFF_VERSION` when the project intentionally changes Ruff releases.
 
-The `ty` command remains an installed developer tool because `make typecheck`
-calls it directly. CI installs `uv` and `ty`, then delegates formatting,
-linting, type checking, and tests to Makefile targets.
+The Makefile pins the `ty` release used by `make typecheck`; local development
+should use that target rather than an independently installed version. CI
+installs `uv` and `ty`, then delegates formatting, linting, type checking, and
+tests to Makefile targets.
 
 ## Benchmarking Documentation
 
