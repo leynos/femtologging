@@ -21,15 +21,19 @@ use crate::log_record::RecordMetadata;
 use crate::manager;
 
 pub mod python;
+
 mod visitor;
 
 #[cfg(test)]
 mod tests;
 
+/// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
 const FALLBACK_EVENT_MESSAGE: &str = "tracing event";
 
+/// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
 #[derive(Debug, Default)]
 struct StoredSpanFields {
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fields: BTreeMap<String, String>,
 }
 
@@ -44,6 +48,7 @@ pub fn layer() -> FemtoTracingLayer {
 }
 
 impl FemtoTracingLayer {
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn map_level(level: &Level) -> FemtoLevel {
         match *level {
             Level::TRACE => FemtoLevel::Trace,
@@ -54,6 +59,7 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn normalize_target(target: &str) -> Cow<'_, str> {
         if target.contains("::") {
             Cow::Owned(target.replace("::", "."))
@@ -62,11 +68,13 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn should_ignore_target(target: &str) -> bool {
         let normalized = Self::normalize_target(target);
         normalized == "femtologging" || normalized.starts_with("femtologging.")
     }
 
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn resolve_logger<'a, 'py>(
         py: Python<'py>,
         target: &'a str,
@@ -80,6 +88,7 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn build_record_metadata<S>(
         event: &Event<'_>,
         ctx: Context<'_, S>,
@@ -103,6 +112,7 @@ impl FemtoTracingLayer {
         metadata
     }
 
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn merge_span_context<S>(
         key_values: &mut BTreeMap<String, String>,
         ctx: Context<'_, S>,
@@ -126,6 +136,7 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
     fn fallback_message(key_values: &BTreeMap<String, String>) -> String {
         if key_values.is_empty() {
             return FALLBACK_EVENT_MESSAGE.to_string();

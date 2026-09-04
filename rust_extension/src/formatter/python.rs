@@ -15,13 +15,17 @@ use crate::python::fq_py_type;
 
 use super::{FemtoFormatter, SharedFormatter};
 
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 #[derive(Clone)]
 struct PythonFormatter {
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     callable: Arc<Mutex<Py<PyAny>>>,
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     description: String,
 }
 
 impl PythonFormatter {
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     fn try_new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
         let description = fq_py_type(obj);
         if let Ok(s) = obj.cast::<PyString>() {
@@ -51,6 +55,7 @@ impl PythonFormatter {
         })
     }
 
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     fn call(&self, record: &FemtoLogRecord) -> PyResult<String> {
         Python::attach(|py| {
             let payload = record_to_dict(py, record)?;

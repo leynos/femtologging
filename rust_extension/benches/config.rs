@@ -86,9 +86,9 @@ impl PythonApis {
     }
 }
 
-type PythonImports = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
+type PythonConfigImports = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
 
-fn init_python_imports(py: Python<'_>) -> PyResult<PythonImports> {
+fn init_python_imports(py: Python<'_>) -> PyResult<PythonConfigImports> {
     let sys = py.import("sys")?;
     let sys_any = sys.as_any();
     inject_repo_to_path(sys_any)?;

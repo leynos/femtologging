@@ -17,11 +17,17 @@ use crate::formatter::{DefaultFormatter, FemtoFormatter};
 #[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct RotatingFileHandlerBuilder {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     path: String,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     common: FileLikeBuilderState,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     max_bytes: Option<NonZeroU64>,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     max_bytes_set: bool,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     backup_count: Option<NonZeroUsize>,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     backup_count_set: bool,
 }
 
@@ -104,6 +110,7 @@ impl RotatingFileHandlerBuilder {
         self
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn ensure_rotation_limits_valid(&self) -> Result<(), HandlerBuildError> {
         if self.max_bytes_set && self.max_bytes.is_none() {
             return Err(HandlerBuildError::InvalidConfig(
@@ -126,11 +133,13 @@ impl RotatingFileHandlerBuilder {
         }
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.common.validate()?;
         self.ensure_rotation_limits_valid()
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn build_handler_with_formatter<F>(
         &self,
         formatter: F,

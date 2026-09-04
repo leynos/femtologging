@@ -9,8 +9,10 @@ use rstest::{fixture, rstest};
 
 #[path = "test_utils/fixtures.rs"]
 mod fixtures;
+
 #[path = "logger_tests/lifecycle.rs"]
 mod logger_lifecycle_tests;
+
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
 use fixtures::{handler_tuple, stream_handler_for};
@@ -19,6 +21,7 @@ use std::sync::{Arc, Mutex};
 
 /// A shared in-memory buffer paired with the handler writing into it.
 type HandlerTuple = (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler);
+
 type DualHandlerSetup = (
     Arc<Mutex<Vec<u8>>>,
     Arc<Mutex<Vec<u8>>>,
@@ -188,6 +191,7 @@ fn handler_added_after_logging_only_sees_future_records(
     );
     assert_eq!(read_output(&buf2), "core [INFO] after\n");
 }
+
 #[rstest]
 fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
@@ -368,3 +372,12 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
         "output identities should match accepted records"
     );
 }
+
+/// Shares the dual-handler fixture shape without repeating a complex test signature.
+type DualHandlerSetup = (
+    Arc<Mutex<Vec<u8>>>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<dyn FemtoHandlerTrait>,
+    Arc<dyn FemtoHandlerTrait>,
+    FemtoLogger,
+);

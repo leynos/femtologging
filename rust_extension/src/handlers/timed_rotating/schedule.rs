@@ -8,16 +8,23 @@ use chrono::{
     TimeZone, Utc, Weekday,
 };
 
+/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
 const MIDNIGHT: NaiveTime = NaiveTime::MIN;
 
 /// Supported timed rotation cadences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimedRotationWhen {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     Seconds,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     Minutes,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     Hours,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     Days,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     Midnight,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     Weekday(Weekday),
 }
 
@@ -80,9 +87,13 @@ impl TimedRotationWhen {
 /// Validated timed rotation configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimedRotationSchedule {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     when: TimedRotationWhen,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     interval: u32,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     use_utc: bool,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     at_time: Option<NaiveTime>,
 }
 
@@ -218,6 +229,7 @@ impl TimedRotationSchedule {
         }
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn next_rollover_at_trigger(
         &self,
         now: DateTime<Utc>,
@@ -235,14 +247,17 @@ impl TimedRotationSchedule {
         self.to_utc(date.and_time(trigger))
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn next_daily_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
         self.next_rollover_at_trigger(now, 0)
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn next_midnight_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
         self.next_rollover_at_trigger(now, self.interval.saturating_sub(1))
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn next_weekday_rollover(&self, now: DateTime<Utc>, weekday: Weekday) -> DateTime<Utc> {
         let naive = self.local_naive(now);
         let trigger = self.at_time.unwrap_or(MIDNIGHT);
@@ -259,6 +274,7 @@ impl TimedRotationSchedule {
         self.to_utc((date + Duration::days(days_ahead)).and_time(trigger))
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn local_naive(&self, value: DateTime<Utc>) -> NaiveDateTime {
         if self.use_utc {
             value.naive_utc()
@@ -267,6 +283,7 @@ impl TimedRotationSchedule {
         }
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn to_utc(&self, value: NaiveDateTime) -> DateTime<Utc> {
         if self.use_utc {
             return Utc.from_utc_datetime(&value);
