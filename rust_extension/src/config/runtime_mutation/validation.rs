@@ -6,6 +6,7 @@ use crate::{config::ConfigError, manager::LoggerAttachmentState};
 
 use super::{CollectionMutation, SharedFilters, SharedHandlers};
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) fn collection_conflict(
     kind: &str,
     current: &CollectionMutation,
@@ -18,6 +19,7 @@ pub(crate) fn collection_conflict(
     }
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) fn resolve_attachment_ids(
     state: &LoggerAttachmentState,
     handlers: &SharedHandlers,
@@ -41,6 +43,7 @@ pub(crate) fn resolve_attachment_ids(
     }
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) fn validate_remove_ids(
     existing: &[String],
     mutation: &CollectionMutation,

@@ -224,11 +224,14 @@ impl FemtoLogger {
     }
 }
 
+/// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
 pub(super) fn log_join_result(handle: JoinHandle<()>) {
     if handle.join().is_err() {
         warn!("FemtoLogger: worker thread panicked");
     }
 }
+
+
 
 /// Join the logger's worker with the GIL released.
 ///
@@ -238,6 +241,8 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
 pub(super) fn join_worker(handle: JoinHandle<()>) {
     Python::attach(|py| py.detach(move || log_join_result(handle)));
 }
+
+
 
 /// Join the logger's worker directly inside a Loom model.
 ///

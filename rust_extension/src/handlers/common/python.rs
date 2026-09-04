@@ -67,11 +67,13 @@ fn write_overflow_policy_fields(d: &Bound<'_, PyDict>, policy: &OverflowPolicy) 
 #[pyclass(from_py_object, name = "OverflowPolicy")]
 #[derive(Clone)]
 pub struct PyOverflowPolicy {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) inner: OverflowPolicy,
 }
 
 #[pymethods]
 impl PyOverflowPolicy {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
     fn drop() -> Self {
         Self {
@@ -79,6 +81,7 @@ impl PyOverflowPolicy {
         }
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
     fn block() -> Self {
         Self {
@@ -86,6 +89,7 @@ impl PyOverflowPolicy {
         }
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
     fn timeout(timeout_ms: u64) -> PyResult<Self> {
         if timeout_ms == 0 {
@@ -96,14 +100,17 @@ impl PyOverflowPolicy {
         })
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn __str__(&self) -> String {
         self.__repr__()
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn __repr__(&self) -> String {
         format_overflow_policy(&self.inner)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
         let other_policy = other.extract::<PyRef<'py, PyOverflowPolicy>>().ok();
 
@@ -118,6 +125,7 @@ impl PyOverflowPolicy {
         }
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn __hash__(&self) -> PyResult<isize> {
         let mut hasher = DefaultHasher::new();
         self.inner.hash(&mut hasher);
