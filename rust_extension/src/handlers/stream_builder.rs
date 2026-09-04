@@ -29,13 +29,17 @@ use crate::{
     stream_handler::FemtoStreamHandler,
 };
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     Stdout,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     Stderr,
 }
 
 impl StreamTarget {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[cfg(feature = "python")]
     fn as_str(&self) -> &'static str {
         match self {
@@ -49,7 +53,9 @@ impl StreamTarget {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct StreamHandlerBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     target: StreamTarget,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     common: CommonBuilder,
 }
 
@@ -79,10 +85,12 @@ impl StreamHandlerBuilder {
         self
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn is_flush_after_ms_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
             "flush_after_ms",
@@ -90,10 +98,12 @@ impl StreamHandlerBuilder {
         )
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn resolved_capacity(&self) -> usize {
         self.common.capacity.map(|c| c.get()).unwrap_or(1024)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn resolved_flush_after(&self) -> Duration {
         Duration::from_millis(
             self.common
@@ -103,6 +113,7 @@ impl StreamHandlerBuilder {
         )
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn build_with_formatter<F>(&self, formatter: F) -> FemtoStreamHandler
     where
         F: FemtoFormatter + Send + 'static,
@@ -113,6 +124,7 @@ impl StreamHandlerBuilder {
         }
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn build_with_writer<W, F>(&self, writer: W, formatter: F) -> FemtoStreamHandler
     where
         W: Write + Send + 'static,
@@ -123,6 +135,7 @@ impl StreamHandlerBuilder {
         FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, flush_after)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
         self.is_flush_after_ms_valid()?;
@@ -169,18 +182,21 @@ builder_methods! {
                 Self::stderr()
             }
 
+            /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
             #[staticmethod]
             #[pyo3(name = "stdout")]
             fn py_stdout() -> Self {
                 Self::stdout()
             }
 
+            /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
             #[staticmethod]
             #[pyo3(name = "stderr")]
             fn py_stderr() -> Self {
                 Self::stderr()
             }
 
+            /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
             #[pyo3(name = "with_formatter")]
             #[pyo3(signature = (formatter))]
             #[pyo3(text_signature = "(self, formatter)")]

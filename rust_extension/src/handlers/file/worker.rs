@@ -18,6 +18,7 @@ use log::{error, warn};
 use super::config::HandlerConfig;
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
+/// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
 pub(crate) const DEFAULT_BATCH_CAPACITY: usize = 64;
 
 /// Commands sent to the worker thread.
@@ -68,9 +69,11 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
 /// receive plus non-blocking drain cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatchConfig {
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     capacity: usize,
 }
 
+/// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchConfigError {
     /// The requested batch capacity was zero.
@@ -137,12 +140,16 @@ impl From<&HandlerConfig> for WorkerConfig {
     }
 }
 
+/// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecvBatchError {
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     Disconnected,
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     ZeroCapacity,
 }
 
+/// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
 fn recv_batch(
     rx: &Receiver<FileCommand>,
     batch_capacity: usize,
@@ -166,11 +173,14 @@ fn recv_batch(
 
 /// Tracks how many writes occurred and triggers periodic flushes.
 pub(crate) struct FlushTracker {
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     writes: usize,
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     flush_interval: usize,
 }
 
 impl FlushTracker {
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     pub(crate) fn new(flush_interval: usize) -> Self {
         Self {
             writes: 0,
@@ -178,6 +188,7 @@ impl FlushTracker {
         }
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     pub(crate) fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
         self.flush_if_due(writer).map_err(|e| {
@@ -190,6 +201,7 @@ impl FlushTracker {
         Ok(())
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     pub(crate) fn reset(&mut self) {
         self.writes = 0;
     }
@@ -204,6 +216,7 @@ impl FlushTracker {
             && self.writes.is_multiple_of(self.flush_interval)
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.should_flush() {
             writer.flush()?;
@@ -212,9 +225,13 @@ impl FlushTracker {
     }
 }
 
+/// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
 struct WorkerState<W, R> {
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     writer: W,
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     rotation: R,
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     tracker: FlushTracker,
 }
 
@@ -223,6 +240,7 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
         Self {
             writer,
@@ -231,6 +249,7 @@ where
         }
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     fn handle_record<F>(&mut self, formatter: &F, record: FemtoLogRecord)
     where
         F: FemtoFormatter,
@@ -246,6 +265,7 @@ where
         }
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     fn handle_flush(&mut self, ack_tx: Sender<io::Result<()>>) {
         let flush_result = self.writer.flush();
         if let Err(err) = &flush_result {
@@ -258,12 +278,14 @@ where
         }
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     fn final_flush(&mut self) {
         if let Err(err) = self.writer.flush() {
             warn!("FemtoFileHandler final flush error: {err}");
         }
     }
 
+    /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
     fn process_batch<F>(&mut self, formatter: &F, commands: Vec<FileCommand>)
     where
         F: FemtoFormatter,

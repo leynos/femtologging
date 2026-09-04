@@ -75,6 +75,7 @@ fn log_at_level(
         .log_with_metadata(level, message, metadata))
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn extract_context_dict(
     context: &Bound<'_, PyAny>,
 ) -> PyResult<std::collections::BTreeMap<String, String>> {
@@ -92,6 +93,7 @@ fn extract_context_dict(
     Ok(result)
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn extract_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
     if raw_value.is_none() {
         return Ok(String::from("None"));

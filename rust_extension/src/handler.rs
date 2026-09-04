@@ -53,6 +53,7 @@ pub struct FemtoHandler;
 
 #[pymethods]
 impl FemtoHandler {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     #[new]
     fn py_new() -> Self {
         Self

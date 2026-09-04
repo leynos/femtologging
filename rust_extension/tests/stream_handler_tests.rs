@@ -8,8 +8,6 @@ use std::time::{Duration, Instant};
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
-use log;
-use logtest;
 use rstest::*;
 use serial_test::serial;
 

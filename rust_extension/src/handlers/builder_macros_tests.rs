@@ -43,11 +43,11 @@ builder_methods! {
                 py_fn: py_with_label,
                 py_name: "with_label",
                 py_text_signature: "(self, label)",
-                rust_args: (label: impl Into<String>),
+                rust_args: (label: String),
                 py_args: (label: String),
                 self_ident: builder,
                 body: {
-                    builder.label = Some(label.into());
+                    builder.label = Some(label);
                 }
             }
             method {
@@ -77,7 +77,7 @@ builder_methods! {
 fn rust_methods_chain() {
     let builder = DummyBuilder::new()
         .with_value(7)
-        .with_label("alpha")
+        .with_label("alpha".to_string())
         .reset();
     assert_eq!(builder.value, 0);
     assert_eq!(builder.label(), None);
@@ -153,7 +153,7 @@ impl CapacityDummy {
 builder_methods! {
     impl CapacityDummy {
         capacity {
-            self_ident = builder,
+            self_ident = state,
             setter = |builder, capacity| {
                 builder.capacity_attempted = true;
                 builder.capacity = NonZeroUsize::new(capacity).map(NonZeroUsize::get);

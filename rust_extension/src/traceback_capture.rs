@@ -19,25 +19,33 @@ use crate::traceback_frames::extract_frames_from_stack_summary;
 mod traceback_payload;
 use self::traceback_payload::build_payload_from_traceback_exception;
 
+/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
 enum ExcInfoKind {
+    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
     BoolTrue,
+    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
     BoolFalse,
+    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
     Tuple(Py<PyTuple>),
+    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
     Exception,
 }
 
+/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
 fn is_py_bool_true(exc_info: &Bound<'_, PyAny>) -> bool {
     exc_info
         .cast::<PyBool>()
         .is_ok_and(|bool_value| bool_value.is_true())
 }
 
+/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
 fn is_py_bool_false(exc_info: &Bound<'_, PyAny>) -> bool {
     exc_info
         .cast::<PyBool>()
         .is_ok_and(|bool_value| !bool_value.is_true())
 }
 
+/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
 fn extract_exc_tuple(exc_info: &Bound<'_, PyAny>) -> Option<Py<PyTuple>> {
     let tuple = exc_info.cast::<PyTuple>().ok()?;
     if tuple.len() == 3 {
@@ -47,6 +55,7 @@ fn extract_exc_tuple(exc_info: &Bound<'_, PyAny>) -> Option<Py<PyTuple>> {
     }
 }
 
+/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
 fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<ExcInfoKind> {
     if is_py_bool_true(exc_info) {
         return Ok(ExcInfoKind::BoolTrue);

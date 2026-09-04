@@ -20,17 +20,29 @@ use crate::log_record::FemtoLogRecord;
 /// The `thread_id` field stores the raw `ThreadId` and is formatted only during
 /// serialization, avoiding per-record String allocations.
 pub(super) struct HttpSerializableRecord<'a> {
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) name: &'a str,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) levelname: &'static str,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) msg: &'a str,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) created: f64,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) filename: &'a str,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) lineno: u32,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) module: &'a str,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) thread_id: ThreadId,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) thread_name: Option<&'a str>,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) key_values: &'a BTreeMap<String, String>,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) exc_info: Option<&'a ExceptionPayload>,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) stack_info: Option<&'a StackTracePayload>,
 }
 

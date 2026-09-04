@@ -120,10 +120,10 @@ impl CountingHandler {
 
 impl FemtoHandlerTrait for CountingHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        if self.count.fetch_add(1, Ordering::SeqCst) == 0 {
-            if let Some(first_tx) = &self.first_tx {
-                let _ = first_tx.send(());
-            }
+        if self.count.fetch_add(1, Ordering::SeqCst) == 0
+            && let Some(first_tx) = &self.first_tx
+        {
+            let _ = first_tx.send(());
         }
         Ok(())
     }

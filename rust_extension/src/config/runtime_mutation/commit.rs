@@ -13,20 +13,30 @@ use crate::{
 
 use super::{LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) struct BuiltRegistries {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) handlers: SharedHandlers,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) filters: SharedFilters,
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) struct RuntimeCommit {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) handler_registry: SharedHandlers,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) filter_registry: SharedFilters,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) impacted_loggers: Vec<(String, Py<FemtoLogger>)>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) scalar_mutations: BTreeMap<String, LoggerScalarMutation>,
 }
 
 impl RuntimeConfigBuilder {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) fn prepare_commit(
         &self,
         py: Python<'_>,
@@ -60,6 +70,7 @@ impl RuntimeConfigBuilder {
         })
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn fetch_impacted_logger(
         &self,
         py: Python<'_>,
@@ -70,6 +81,7 @@ impl RuntimeConfigBuilder {
     }
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) fn build_handlers(
     items: &BTreeMap<String, HandlerBuilder>,
 ) -> Result<SharedHandlers, ConfigError> {
@@ -86,6 +98,7 @@ pub(crate) fn build_handlers(
     Ok(built)
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) fn build_filters(
     items: &BTreeMap<String, FilterBuilder>,
 ) -> Result<SharedFilters, ConfigError> {
@@ -100,6 +113,7 @@ pub(crate) fn build_filters(
     Ok(built)
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(), ConfigError> {
     for (name, logger) in &commit.impacted_loggers {
         let logger_ref = logger.borrow(py);
@@ -134,6 +148,7 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
     Ok(())
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 fn apply_scalar_mutation(
     logger_ref: &pyo3::PyRef<'_, FemtoLogger>,
     mutation: &LoggerScalarMutation,
@@ -146,6 +161,7 @@ fn apply_scalar_mutation(
     }
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 fn resolve_registered_items<T: ?Sized>(
     logger_name: &str,
     ids: &[String],

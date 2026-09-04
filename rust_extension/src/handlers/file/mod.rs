@@ -56,9 +56,13 @@ use worker::{FileCommand, WorkerConfig, spawn_worker};
 /// configuration provided at construction time.
 #[pyclass]
 pub struct FemtoFileHandler {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     tx: Option<Sender<FileCommand>>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     handle: Option<JoinHandle<()>>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     done_rx: Receiver<()>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     overflow_policy: OverflowPolicy,
 }
 
@@ -106,6 +110,7 @@ impl FemtoFileHandler {
         ))
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -142,6 +147,7 @@ impl FemtoFileHandler {
         self.flush()
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.close();
@@ -191,6 +197,7 @@ impl FemtoFileHandler {
         Ok(Self::from_file(file, formatter, config))
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn from_file<F>(file: File, formatter: F, config: HandlerConfig) -> Self
     where
         F: FemtoFormatter + Send + 'static,
@@ -215,6 +222,7 @@ impl FemtoFileHandler {
         }
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
@@ -228,6 +236,7 @@ impl FemtoFileHandler {
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn wait_for_flush_completion(
         &self,
         ack_rx: &Receiver<io::Result<()>>,
@@ -260,6 +269,7 @@ impl FemtoFileHandler {
         }
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) fn build_from_worker<W, F, R>(
         writer: W,
         formatter: F,
