@@ -11,6 +11,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, ThreadId};
 use thiserror::Error;
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::{PyAny, exceptions::PyModuleNotFoundError};
+
 pub(crate) const MAX_CONTEXT_KEYS: usize = 64;
 pub(crate) const MAX_KEY_BYTES: usize = 64;
 pub(crate) const MAX_VALUE_BYTES: usize = 1024;
@@ -301,6 +306,22 @@ fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogCon
             .map_err(|error| error.into_log_context_error(key))?;
     }
     Ok(())
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn current_python_context(py: Python<'_>) -> PyResult<BTreeMap<String, String>> {
+    let module = match py.import("femtologging._log_context") {
+        Ok(module) => module,
+        Err(err) if err.is_instance_of::<PyModuleNotFoundError>(py) => return Ok(BTreeMap::new()),
+        Err(err) => return Err(err),
+    };
+    let context = module.call_method0("_current_log_context")?;
+    crate::python_context::extract_python_context_map(&context)
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn validate_python_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
+    crate::python_context::extract_python_context_map(context).map(|_| ())
 }
 
 #[cfg(test)]

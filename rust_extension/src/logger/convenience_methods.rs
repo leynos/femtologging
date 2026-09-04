@@ -81,12 +81,13 @@ impl FemtoLogger {
         extra: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<String>> {
         #[cfg(feature = "python")]
-        let explicit_key_values = extra
-            .map(extract_python_context_map)
-            .transpose()?
-            .unwrap_or_default();
+        let mut explicit_key_values = log_context::current_python_context(py)?;
         #[cfg(not(feature = "python"))]
-        let explicit_key_values = BTreeMap::new();
+        let mut explicit_key_values = BTreeMap::new();
+        #[cfg(feature = "python")]
+        if let Some(extra) = extra {
+            explicit_key_values.extend(extract_python_context_map(extra)?);
+        }
         let merged_key_values = log_context::merge_context_values(&explicit_key_values)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
         if !self.is_enabled_for(level) {

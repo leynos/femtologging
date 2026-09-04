@@ -5,14 +5,13 @@
 //! root logger by default and captures the Python caller's source location
 //! (filename, line number, module name) into the log record's metadata.
 
+use pyo3::PyAny;
 use pyo3::prelude::*;
-use pyo3::{PyAny, exceptions::PyValueError};
 
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::RecordMetadata;
 use crate::manager;
-use crate::python_context::extract_python_context_map;
 
 /// Default logger name used when the caller does not specify one.
 const DEFAULT_LOGGER_NAME: &str = "root";
@@ -69,24 +68,17 @@ fn log_at_level(
     let logger = manager::get_logger(py, logger_name)?;
     // Rust functions are transparent in the Python frame stack, so
     // _getframe(0) = the pyfunction, _getframe(1) = the Python caller.
-    let metadata = capture_python_caller(py, 1);
+    let mut metadata = capture_python_caller(py, 1);
+    metadata.key_values = log_context::current_python_context(py)?;
     Ok(logger
         .borrow(py)
         .log_with_metadata(level, message, metadata))
 }
 
-/// Push a structured logging context frame for the current thread.
-#[pyfunction(name = "_push_log_context", signature = (context), text_signature = "(context)")]
-pub(crate) fn py_push_log_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
-    let context_map = extract_python_context_map(context)?;
-    log_context::push_log_context_map(context_map)
-        .map_err(|err| PyValueError::new_err(err.to_string()))
-}
-
-/// Pop the latest structured logging context frame for the current thread.
-#[pyfunction(name = "_pop_log_context", text_signature = "()")]
-pub(crate) fn py_pop_log_context() -> PyResult<()> {
-    log_context::pop_log_context().map_err(|err| PyValueError::new_err(err.to_string()))
+/// Validate a Python task-local logging context before it becomes active.
+#[pyfunction(name = "_validate_log_context", signature = (context), text_signature = "(context)")]
+pub(crate) fn py_validate_log_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
+    log_context::validate_python_context(context)
 }
 
 /// Log a message at DEBUG level.
