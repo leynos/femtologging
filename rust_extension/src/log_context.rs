@@ -6,6 +6,10 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread::{self, ThreadId};
 use thiserror::Error;
 
 const MAX_CONTEXT_KEYS: usize = 64;
@@ -14,9 +18,17 @@ const MAX_VALUE_BYTES: usize = 1024;
 const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
 thread_local! {
-    static CONTEXT_STACK: RefCell<Vec<BTreeMap<String, String>>> = const {
+    static CONTEXT_STACK: RefCell<Vec<ContextFrame>> = const {
         RefCell::new(Vec::new())
     };
+}
+
+static NEXT_CONTEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
+struct ContextFrame {
+    id: u64,
+    fields: BTreeMap<String, String>,
 }
 
 /// Errors raised when validating or mutating structured logging context.
@@ -39,34 +51,41 @@ pub enum LogContextError {
     TotalBytesExceeded { total: usize, max: usize },
 }
 
-/// RAII guard that pops one context frame on drop.
+/// RAII guard that removes its context frame on the owning thread when dropped.
+///
+/// The guard is deliberately not `Send` or `Sync`: the underlying context is
+/// OS-thread-local, so a guard must stay on the thread that created it. Dropping
+/// a guard on any other thread leaves both stacks unchanged.
 #[must_use = "hold the guard for as long as the scoped log context should remain active"]
 pub struct LogContextGuard {
-    _private: (),
+    frame_id: u64,
+    owner_thread: ThreadId,
+    _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
 impl Drop for LogContextGuard {
     fn drop(&mut self) {
-        let _ignored = pop_internal();
+        if thread::current().id() != self.owner_thread {
+            return;
+        }
+        let _removed = remove_context_frame(self.frame_id);
     }
 }
 
 /// Push a map-based context frame onto the current thread's context stack.
 pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), LogContextError> {
-    validate_context_map(&context)?;
-    let mut merged = active_context();
-    merged.extend(context.iter().map(|(k, v)| (k.clone(), v.clone())));
-    validate_context_map(&merged)?;
-    CONTEXT_STACK.with(|stack| stack.borrow_mut().push(context));
-    Ok(())
+    push_context_frame(context).map(|_| ())
 }
 
 /// Pop the latest context frame from the current thread's context stack.
+///
+/// Prefer [`push_log_context`] for scoped use: its guard removes only the
+/// frame it created, even when guards are dropped out of order.
 pub fn pop_log_context() -> Result<(), LogContextError> {
     pop_internal()
 }
 
-/// Push a context frame and return a guard that pops it on drop.
+/// Push a context frame and return a thread-affine guard that removes only that frame on drop.
 pub fn push_log_context<I, K, V>(fields: I) -> Result<LogContextGuard, LogContextError>
 where
     I: IntoIterator<Item = (K, V)>,
@@ -77,8 +96,12 @@ where
         .into_iter()
         .map(|(k, v)| (k.into(), v.into()))
         .collect::<BTreeMap<_, _>>();
-    push_log_context_map(context)?;
-    Ok(LogContextGuard { _private: () })
+    let frame_id = push_context_frame(context)?;
+    Ok(LogContextGuard {
+        frame_id,
+        owner_thread: thread::current().id(),
+        _not_send_or_sync: PhantomData,
+    })
 }
 
 /// Run a closure with a pushed context frame and pop it afterward.
@@ -123,6 +146,21 @@ pub(crate) fn merge_context_values(
     Ok(active)
 }
 
+fn push_context_frame(context: BTreeMap<String, String>) -> Result<u64, LogContextError> {
+    validate_context_map(&context)?;
+    let mut merged = active_context();
+    merged.extend(context.iter().map(|(k, v)| (k.clone(), v.clone())));
+    validate_context_map(&merged)?;
+    let frame_id = next_context_frame_id();
+    CONTEXT_STACK.with(|stack| {
+        stack.borrow_mut().push(ContextFrame {
+            id: frame_id,
+            fields: context,
+        });
+    });
+    Ok(frame_id)
+}
+
 fn pop_internal() -> Result<(), LogContextError> {
     CONTEXT_STACK.with(|stack| {
         if stack.borrow_mut().pop().is_some() {
@@ -133,11 +171,31 @@ fn pop_internal() -> Result<(), LogContextError> {
     })
 }
 
+fn remove_context_frame(frame_id: u64) -> bool {
+    CONTEXT_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let Some(position) = stack.iter().position(|frame| frame.id == frame_id) else {
+            return false;
+        };
+        stack.remove(position);
+        true
+    })
+}
+
+fn next_context_frame_id() -> u64 {
+    loop {
+        let frame_id = NEXT_CONTEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed);
+        if frame_id != 0 {
+            return frame_id;
+        }
+    }
+}
+
 fn active_context() -> BTreeMap<String, String> {
     CONTEXT_STACK.with(|stack| {
         let mut merged = BTreeMap::new();
         for frame in stack.borrow().iter() {
-            merged.extend(frame.iter().map(|(k, v)| (k.clone(), v.clone())));
+            merged.extend(frame.fields.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         merged
     })
@@ -187,113 +245,5 @@ pub(crate) fn clear_log_context_for_test() {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Unit tests for scoped context propagation helpers.
-
-    use super::*;
-    use rstest::{fixture, rstest};
-
-    #[fixture]
-    fn isolated_context() {
-        clear_log_context_for_test();
-    }
-
-    #[rstest]
-    fn context_push_pop_round_trip(_isolated_context: ()) {
-        push_log_context_map(BTreeMap::from([("request_id".into(), "123".into())]))
-            .expect("context push should succeed");
-        let merged = merge_context_values(&BTreeMap::new()).expect("merge should succeed");
-        assert_eq!(merged.get("request_id").map(String::as_str), Some("123"));
-        pop_log_context().expect("context pop should succeed");
-    }
-
-    #[rstest]
-    fn nested_context_overrides_outer_keys(_isolated_context: ()) {
-        push_log_context_map(BTreeMap::from([("user".into(), "outer".into())]))
-            .expect("outer context should push");
-        push_log_context_map(BTreeMap::from([("user".into(), "inner".into())]))
-            .expect("inner context should push");
-        let merged = merge_context_values(&BTreeMap::new()).expect("merge should succeed");
-        assert_eq!(merged.get("user").map(String::as_str), Some("inner"));
-        pop_log_context().expect("inner context should pop");
-        pop_log_context().expect("outer context should pop");
-    }
-
-    #[rstest]
-    fn explicit_values_override_context(_isolated_context: ()) {
-        push_log_context_map(BTreeMap::from([("request_id".into(), "ctx".into())]))
-            .expect("context should push");
-        let explicit = BTreeMap::from([("request_id".into(), "inline".into())]);
-        let merged = merge_context_values(&explicit).expect("merge should succeed");
-        assert_eq!(merged.get("request_id").map(String::as_str), Some("inline"));
-        pop_log_context().expect("context should pop");
-    }
-
-    #[rstest]
-    fn pop_on_empty_stack_errors(_isolated_context: ()) {
-        let err = pop_log_context().expect_err("empty pop should fail");
-        assert_eq!(err, LogContextError::EmptyContextStack);
-    }
-
-    #[rstest]
-    fn reject_key_too_long(_isolated_context: ()) {
-        let long_key = "k".repeat(MAX_KEY_BYTES + 1);
-        let err = push_log_context_map(BTreeMap::from([(long_key.clone(), "v".into())]))
-            .expect_err("long key should fail");
-        assert_eq!(
-            err,
-            LogContextError::KeyTooLong {
-                key: long_key,
-                len: MAX_KEY_BYTES + 1,
-                max: MAX_KEY_BYTES,
-            }
-        );
-    }
-
-    #[rstest]
-    fn reject_too_many_keys(_isolated_context: ()) {
-        let context = (0..=MAX_CONTEXT_KEYS)
-            .map(|index| (format!("k{index}"), String::from("v")))
-            .collect::<BTreeMap<_, _>>();
-        let err = push_log_context_map(context).expect_err("too many keys should fail");
-        assert_eq!(
-            err,
-            LogContextError::TooManyKeys {
-                count: MAX_CONTEXT_KEYS + 1,
-                max: MAX_CONTEXT_KEYS,
-            }
-        );
-    }
-
-    #[rstest]
-    fn reject_value_too_long(_isolated_context: ()) {
-        let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
-        let err = push_log_context_map(BTreeMap::from([(String::from("ok"), long_value)]))
-            .expect_err("long value should fail");
-        assert_eq!(
-            err,
-            LogContextError::ValueTooLong {
-                key: String::from("ok"),
-                len: MAX_VALUE_BYTES + 1,
-                max: MAX_VALUE_BYTES,
-            }
-        );
-    }
-
-    #[rstest]
-    fn reject_total_bytes_exceeded(_isolated_context: ()) {
-        let value_len = 300usize;
-        let mut context = BTreeMap::new();
-        for index in 0..60usize {
-            context.insert(format!("k{index:02}"), "x".repeat(value_len));
-        }
-        let err = push_log_context_map(context).expect_err("total bytes limit should fail");
-        assert!(matches!(
-            err,
-            LogContextError::TotalBytesExceeded {
-                total,
-                max: MAX_TOTAL_BYTES
-            } if total > MAX_TOTAL_BYTES
-        ));
-    }
-}
+#[path = "log_context_tests.rs"]
+mod tests;
