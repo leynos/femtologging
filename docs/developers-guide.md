@@ -20,7 +20,7 @@ resolves through `uvx ruff==<version> --version`, then update `RUFF_VERSION`
 in `Makefile` and the matching CI environment variable together. CI does not
 install Ruff directly; it picks up the version from the Makefile's
 `uvx ruff==$(RUFF_VERSION)` invocation. See [Python
-linting](#python-linting) for the complete four-tier lint pipeline.
+linting](#python-linting) for the complete five-tier lint pipeline.
 
 ## Python test toolchain
 
@@ -208,28 +208,36 @@ checking, and tests to Makefile targets.
 
 ## Python linting
 
-`femtologging` runs Python linting as four tiers, all reachable through
+`femtologging` runs Python linting as five tiers, all reachable through
 `make lint` (`lint-python`, followed by `lint-rust`). Each stage must pass
-before the next runs. The decision is recorded in
-[ADR-005: Four-tier Python lint architecture](adr-005-four-tier-python-lint-architecture.md).
+before the next runs. The original four-tier decision is recorded in
+[ADR-005: Four-tier Python lint architecture](adr-005-four-tier-python-lint-architecture.md);
+its addendum records the addition of the docstring-coverage tier below.
 
 1. **Ruff** — fast, broad rule set in preview mode, targeting `py312`. Pinned
    by `RUFF_VERSION` (`0.16.4`); see [Ruff version](#ruff-version) for the
    pin-sync scheme with CI.
-2. **Pylint** (`4.0.7`) — runs through the pinned `leynos/pylint-pypy-shim`
+2. **interrogate** (`1.7.0`) — enforces 100% docstring coverage over the
+   production package only (`femtologging`). Tests are excluded
+   deliberately: Ruff's `D` rules already govern docstrings in tests, and
+   `tests/steps/*.py` ignores `undocumented-public-function` (D103) because
+   pytest-bdd step function names document themselves. Without that
+   exclusion, interrogate would also demand docstrings on nested helper
+   closures for little value.
+3. **Pylint** (`4.0.7`) — runs through the pinned `leynos/pylint-pypy-shim`
    revision under managed PyPy, isolated from the project virtual
    environment. Configuration lives in `pyproject.toml`'s `[tool.pylint]`
    tables: `py-version = "3.12"`, `max-module-lines = 400`, and a curated
    `enable` list covering logging interpolation, pattern matching, generator
    control flow, environment handling, and subprocess safety.
-3. **`df12-python-lints`** and its companion **`ambrleaks`** — run under
+4. **`df12-python-lints`** and its companion **`ambrleaks`** — run under
    CPython 3.14 so the house-rule parser stays ahead of the project's 3.12
    syntax baseline. `df12-python-lints` is pinned to a specific commit of the
    `v0.3.0` release and enables the message set
    `R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112`.
    `ambrleaks` sweeps Syrupy `.ambr` snapshots under `tests` and
    `femtologging/unittests` for unredacted secrets.
-4. **Skylos** (`4.33.2`) — a blocking production dead-code gate, run under
+5. **Skylos** (`4.33.2`) — a blocking production dead-code gate, run under
    Python 3.14 so Skylos parses the project's syntax with its own runtime
    `ast` implementation rather than an older one that could produce phantom
    findings. See [Skylos dead-code gate](#skylos-dead-code-gate) below.
@@ -240,35 +248,34 @@ Run the full lint gate with:
 make lint
 ```
 
-To run any of the four tiers locally, invoke the underlying tool directly:
+To run any of the five tiers locally, invoke the underlying tool directly:
 
 ```shell
 
 # Tier 1: Ruff
 uvx ruff==0.16.4 check
 
+# Tier 2: interrogate (docstring coverage, production package only)
+uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 femtologging
 
-# Tier 2: Pylint under managed PyPy
+# Tier 3: Pylint under managed PyPy
 uv tool run --python pypy --from \
   'git+https://github.com/leynos/pylint-pypy-shim.git@726d09f968b4d729ee4b29c71fc732e744854f3b' \
   --with 'pylint==4.0.7' pylint-pypy femtologging tests scripts
 
-
-# Tier 3: df12-python-lints
+# Tier 4: df12-python-lints
 uv tool run --python 3.14 --from 'pylint==4.0.7' \
   --with 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
   pylint --disable=all --load-plugins=df12_python_lints \
   --enable=R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112 \
   femtologging tests scripts
 
-
-# Tier 3: ambrleaks (same df12-python-lints package, different entry point)
+# Tier 4: ambrleaks (same df12-python-lints package, different entry point)
 uv tool run --python 3.14 \
   --from 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
   ambrleaks tests femtologging/unittests
 
-
-# Tier 4: Skylos
+# Tier 5: Skylos
 uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
   --config-file pyproject.toml femtologging \
   --exclude femtologging/unittests --exclude femtologging/_femtologging_rs.pyi \

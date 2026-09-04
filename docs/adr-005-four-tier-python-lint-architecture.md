@@ -179,3 +179,30 @@ and revision.
 - Pylint's PyPy shim is intentionally focused; messages outside the curated
   `enable` list remain out of scope unless the policy is updated
   deliberately.
+
+## Addendum: docstring-coverage tier (2026-08-28)
+
+A docstring-coverage stage, run with `interrogate`, was added to the Python
+lint gate. It runs second, immediately after Ruff and before Pylint, so
+`lint-python` now runs five stages rather than four: Ruff, `interrogate`,
+PyPy-backed Pylint, `df12-python-lints` with `ambrleaks`, and the Skylos
+strict dead-code gate. This ADR retains its original "four-tier" title for
+link stability; readers should take the title as historical and this
+addendum as the current tier count.
+
+`interrogate` is pinned by `INTERROGATE_VERSION` (currently `1.7.0`) in the
+Makefile, following the same pinned-`uv tool run` pattern as every other
+tier, so an unpinned version bump cannot silently change the coverage
+verdict. It runs with `--fail-under 100` against `INTERROGATE_TARGETS`
+(`femtologging`), enforcing 100% docstring coverage over the production
+package only.
+
+Tests are deliberately excluded from this tier. Ruff's `D` rule family
+already governs docstrings in test code, and `tests/steps/*.py` ignores
+`undocumented-public-function` (D103) because pytest-bdd step function names
+are self-documenting. Running `interrogate` over tests as well would also
+demand docstrings on nested helper closures for little practical benefit.
+
+This addition follows the same pattern as the `leynos/lading` and
+`leynos/cuprum` Python lint stacks, which both run a pinned, production-only
+docstring-coverage gate as part of their tiered lint pipelines.

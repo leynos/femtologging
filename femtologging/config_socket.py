@@ -33,6 +33,13 @@ else:
 
 
 class _RustBindings(typ.Protocol):
+    """Shape of the compiled ``_femtologging_rs`` module used by this file.
+
+    ``BackoffConfig`` is optional because older extension builds omit it;
+    callers must fall back to keyword-only backoff configuration when it is
+    ``None`` (see :func:`_apply_backoff_to_builder`).
+    """
+
     SocketHandlerBuilder: type[_SocketHandlerBuilder]
     BackoffConfig: type[_BackoffConfig] | None
 

@@ -34,10 +34,11 @@ from tests.steps.logging_macros_support import (
     LogResultPayload,
     MetadataPayload,
     capture_records,
+    latest_key_values,
     normalize_source_location,
     parse_pairs,
     split_nested_contexts,
-    wait_for_latest_key_values,
+    wait_for_record,
 )
 
 if typ.TYPE_CHECKING:
@@ -189,7 +190,8 @@ def _capture_key_values(
     logger = get_logger(logger_name)
     with capture_records(logger) as collector:
         emit()
-        latest = wait_for_latest_key_values(logger, collector)
+        wait_for_record(collector)
+        latest = latest_key_values(collector)
     return {str(key): str(value) for key, value in latest.items()}
 
 

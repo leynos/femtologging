@@ -28,9 +28,10 @@ WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
 
-# Pylint runs on managed PyPy through the pylint-pypy shim, mirroring the
-# lading lint stack. The shim ref and pylint itself are both pinned: the shim
-# ref alone would let pylint float, changing lint behaviour without any
+# Pylint runs on managed PyPy through the pylint-pypy shim, mirroring the lint
+# stack in https://github.com/leynos/lading ("lading" is that repository's
+# name, not a misspelling). The shim ref and pylint itself are both pinned: the
+# shim ref alone would let pylint float, changing lint behaviour without any
 # repository change.
 PYLINT_PYTHON ?= pypy
 PYLINT_TARGETS ?= femtologging tests scripts
@@ -52,6 +53,22 @@ DF12_PYLINT = $(UV_ENV) uv tool run --python $(DF12_PYTHON) \
   --enable=$(DF12_PYLINT_MESSAGES)
 AMBRLEAKS = $(UV_ENV) uv tool run --python $(DF12_PYTHON) \
   --from '$(DF12_PYTHON_LINTS)' ambrleaks
+# Docstring coverage over the production package only, matching the
+# leynos/lading and leynos/cuprum lint stacks. Tests are excluded
+# deliberately: Ruff's D rules already govern them, and tests/steps/*.py
+# ignores D103 because pytest-bdd step names document themselves.
+# Pinned like every other tier: an unpinned interrogate could change the
+# coverage verdict with no repository change.
+INTERROGATE_VERSION ?= 1.7.0
+INTERROGATE_TARGETS ?= femtologging
+# `basicConfig` is exempted because its three @typ.overload stubs cannot carry
+# docstrings (Ruff D418 forbids them) and interrogate 1.7.0 only detects the
+# literal `typing.overload`/`overload` spellings, so --ignore-overloaded-functions
+# misses the `typ.overload` alias this project's import conventions require.
+# Ruff's undocumented-public-function still guards the real implementation.
+INTERROGATE_IGNORE_REGEX ?= ^basicConfig$$
+INTERROGATE = $(UV_ENV) uv tool run --from 'interrogate==$(INTERROGATE_VERSION)' \
+  interrogate --fail-under 100 --ignore-regex '$(INTERROGATE_IGNORE_REGEX)'
 SKYLOS_VERSION = 4.33.2
 # Skylos parses source using its own runtime AST; pinning Python 3.14 prevents
 # phantom dead-code findings on syntax newer than an older tool runtime.
@@ -106,8 +123,9 @@ check-fmt: ## Verify formatting
 
 lint: lint-python lint-rust ## Run linters
 
-lint-python: ## Run Ruff, Pylint, df12-python-lints, ambrleaks, and Skylos
+lint-python: ## Run Ruff, interrogate, Pylint, df12, ambrleaks, and Skylos
 	$(RUFF) check
+	$(INTERROGATE) $(INTERROGATE_TARGETS)
 	$(PYLINT) $(PYLINT_TARGETS)
 	$(DF12_PYLINT) $(PYLINT_TARGETS)
 	$(AMBRLEAKS) tests femtologging/unittests

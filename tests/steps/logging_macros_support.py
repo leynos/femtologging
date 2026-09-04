@@ -212,14 +212,35 @@ def capture_records(logger: FlushableLogger) -> cabc.Iterator[RecordCollector]:
         logger.remove_handler(collector)
 
 
-def wait_for_latest_key_values(
-    logger: FlushableLogger,
-    collector: RecordCollector,
-    *,
-    attempts: int = 20,
-    interval_s: float = 0.01,
-) -> dict[str, object]:
-    """Wait for a captured record and return its latest key-values payload.
+# Bounded wait for the worker to deliver a record. `flush_handlers()` cannot be
+# used to synchronize here: it blocks while holding the GIL, so a Python handler
+# can never run during the wait and the flush always times out
+# (https://github.com/leynos/femtologging/issues/451). Until that is fixed, the
+# only available synchronization is to observe the collector itself.
+_DELIVERY_TIMEOUT_S: typ.Final = 2.0
+_DELIVERY_POLL_S: typ.Final = 0.01
+
+
+def wait_for_record(collector: RecordCollector) -> None:
+    """Block until the collector holds a record, or the timeout expires.
+
+    This is the command half of the pair: it performs the waiting and returns
+    nothing, leaving `latest_key_values` a pure query over captured state.
+    """
+    deadline = time.monotonic() + _DELIVERY_TIMEOUT_S
+    while not collector.records and time.monotonic() < deadline:
+        time.sleep(_DELIVERY_POLL_S)
+    assert collector.records, (
+        f"no record delivered within {_DELIVERY_TIMEOUT_S}s of emitting"
+    )
+
+
+def latest_key_values(collector: RecordCollector) -> dict[str, object]:
+    """Return the most recently captured record's key-values payload.
+
+    This is a pure query over already-captured state: it neither waits nor
+    flushes. Callers run `wait_for_record` first, as a named command, to
+    ensure the worker has delivered the record.
 
     Returns
     -------
@@ -228,15 +249,9 @@ def wait_for_latest_key_values(
 
     Examples
     --------
-    >>> wait_for_latest_key_values(logger, collector)
+    >>> latest_key_values(collector)
     {'request_id': '42'}
 
     """
-    for _ in range(attempts):
-        if collector.records:
-            break
-        time.sleep(interval_s)
-        flushed = logger.flush_handlers()
-        assert flushed, "flush_handlers() failed while waiting for captured records"
     assert collector.records, "expected at least one captured record"
     return collector.records[-1]["metadata"]["key_values"]

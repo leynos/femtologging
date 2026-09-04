@@ -1,8 +1,9 @@
-"""Contract tests for the four-tier Python lint gate in the Makefile.
+"""Contract tests for the Python lint gate's tiers in the Makefile.
 
 `make lint` delegates to `lint-python`, which must run every tier in order:
-Ruff, PyPy-backed Pylint, the df12-python-lints house rules, the `ambrleaks`
-snapshot scanner, and the Skylos dead-code gate. Each tier's runtime and pinned
+Ruff, the `interrogate` docstring-coverage gate, PyPy-backed Pylint, the
+df12-python-lints house rules, the `ambrleaks` snapshot scanner, and the
+Skylos dead-code gate. Each tier's runtime and pinned
 revision is load-bearing — the df12 checkers and Skylos deliberately run on a
 newer interpreter than the project's 3.12 baseline — so this module pins the
 whole recipe shape rather than trusting that a tier is still wired in.
@@ -23,6 +24,7 @@ from tests.make_contract_helpers import recipe_tokens, variable_tokens
 # The tier commands, in the order `lint-python` must run them.
 _LINT_TIER_COMMANDS: typ.Final = (
     ("$(RUFF)", "check"),
+    ("$(INTERROGATE)", "$(INTERROGATE_TARGETS)"),
     ("$(PYLINT)", "$(PYLINT_TARGETS)"),
     ("$(DF12_PYLINT)", "$(PYLINT_TARGETS)"),
     ("$(AMBRLEAKS)", "tests", "femtologging/unittests"),
@@ -68,6 +70,24 @@ _DF12_PYLINT_TOKENS: typ.Final = (
     "--load-plugins=df12_python_lints",
     "--enable=$(DF12_PYLINT_MESSAGES)",
 )
+# Docstring coverage is enforced at 100% over the production package only.
+_INTERROGATE_TOKENS: typ.Final = (
+    "$(UV_ENV)",
+    "uv",
+    "tool",
+    "run",
+    "--from",
+    "interrogate==$(INTERROGATE_VERSION)",
+    "interrogate",
+    "--fail-under",
+    "100",
+    "--ignore-regex",
+    "$(INTERROGATE_IGNORE_REGEX)",
+)
+_INTERROGATE_TARGET_TOKENS: typ.Final = ("femtologging",)
+# Only the overload stubs are exempt; Ruff still requires the implementation's
+# docstring, so this must not widen into a general escape hatch.
+_INTERROGATE_IGNORE_REGEX_TOKENS: typ.Final = ("^basicConfig$$",)
 _AMBRLEAKS_TOKENS: typ.Final = (
     "$(UV_ENV)",
     "uv",
@@ -93,19 +113,20 @@ _PINNED_REVISIONS: typ.Final = (
     ("PYLINT_VERSION", "4.0.7"),
     ("PYLINT_PYPY_SHIM_REF", "726d09f968b4d729ee4b29c71fc732e744854f3b"),
     ("DF12_PYTHON_LINTS_REF", "4cf41736cce2f7ba2778882a5c629c044568a0e5"),
+    ("INTERROGATE_VERSION", "1.7.0"),
 )
 
 
 def test_lint_python_runs_every_tier_in_order() -> None:
-    """`lint-python` must run all four tiers, Skylos last."""
+    """`lint-python` must run every lint tier, Skylos last."""
     commands = recipe_tokens("lint-python")
 
     assert len(commands) == len(_LINT_TIER_COMMANDS) + 1, (
-        "Lint tier contract must run exactly the four tiers plus the Skylos gate"
+        "Lint tier contract must run exactly the five tiers plus the Skylos gate"
     )
     assert commands[: len(_LINT_TIER_COMMANDS)] == _LINT_TIER_COMMANDS, (
-        "Lint tier contract must run Ruff, Pylint, df12-python-lints, and "
-        "ambrleaks in that order"
+        "Lint tier contract must run Ruff, interrogate, Pylint, "
+        "df12-python-lints, and ambrleaks in that order"
     )
     assert commands[-1][: len(_SKYLOS_COMMAND_HEAD)] == _SKYLOS_COMMAND_HEAD, (
         "Lint tier contract must finish with the Skylos production dead-code gate"
@@ -117,6 +138,7 @@ def test_lint_python_runs_every_tier_in_order() -> None:
     [
         ("RUFF", _RUFF_TOKENS),
         ("TY", _TY_TOKENS),
+        ("INTERROGATE", _INTERROGATE_TOKENS),
         ("PYLINT", _PYLINT_TOKENS),
         ("DF12_PYLINT", _DF12_PYLINT_TOKENS),
         ("AMBRLEAKS", _AMBRLEAKS_TOKENS),
@@ -136,6 +158,8 @@ def test_tier_commands_consume_their_pinned_versions(
     ("variable_name", "expected_tokens"),
     [
         ("PYLINT_TARGETS", _PYLINT_TARGET_TOKENS),
+        ("INTERROGATE_TARGETS", _INTERROGATE_TARGET_TOKENS),
+        ("INTERROGATE_IGNORE_REGEX", _INTERROGATE_IGNORE_REGEX_TOKENS),
         ("DF12_PYLINT_MESSAGES", _DF12_PYLINT_MESSAGE_TOKENS),
         ("DF12_PYTHON", _DF12_PYTHON_TOKENS),
         ("PYLINT_PYTHON", _PYLINT_PYTHON_TOKENS),
