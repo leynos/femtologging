@@ -117,7 +117,7 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
 }
 
 /// Return an existing logger without changing the manager registry.
-#[cfg(test)]
+#[cfg(all(test, feature = "python"))]
 pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     if is_invalid_logger_name(name) {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
