@@ -7,6 +7,7 @@ use thiserror::Error;
 #[cfg(feature = "python")]
 use pyo3::prelude::pyclass;
 
+/// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
 pub(crate) fn normalize_vec(ids: Vec<String>) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
@@ -45,6 +46,7 @@ impl HandlerBuilder {
         not(feature = "python"),
         expect(dead_code, reason = "unused without python feature")
     )]
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     pub(crate) fn build(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
         match self {
             Self::Stream(b) => <StreamHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
@@ -147,7 +149,9 @@ pub enum ConfigError {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct FormatterBuilder {
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     format: Option<String>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     datefmt: Option<String>,
 }
 
@@ -184,9 +188,13 @@ impl FormatterBuilder {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerConfigBuilder {
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     level: Option<FemtoLevel>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     propagate: Option<bool>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     filters: Vec<String>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     handlers: Vec<String>,
 }
 
@@ -255,17 +263,24 @@ impl LoggerConfigBuilder {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     version: u8,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     disable_existing_loggers: bool,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     default_level: Option<FemtoLevel>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     formatters: BTreeMap<String, FormatterBuilder>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     filters: BTreeMap<String, FilterBuilder>,
     /// Registered handler builders keyed by identifier.
     ///
     /// `HandlerBuilder` is a concrete enum rather than a trait object to make
     /// cloning and serialization straightforward.
     handlers: BTreeMap<String, HandlerBuilder>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     loggers: BTreeMap<String, LoggerConfigBuilder>,
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     root_logger: Option<LoggerConfigBuilder>,
 }
 

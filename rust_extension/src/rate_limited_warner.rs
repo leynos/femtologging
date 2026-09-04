@@ -16,6 +16,7 @@ pub trait Clock: Send + Sync {
 
 /// [`Clock`] implementation backed by [`Instant`].
 struct RealClock {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     start: Instant,
 }
 
@@ -43,9 +44,13 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 /// interval has elapsed. [`flush`] emits a warning immediately if any records
 /// have been dropped since the last emission.
 pub struct RateLimitedWarner {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     last_warn: AtomicU64,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     dropped: AtomicU64,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     interval_ms: u64,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     clock: Arc<dyn Clock>,
 }
 

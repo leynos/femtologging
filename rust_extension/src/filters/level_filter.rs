@@ -7,8 +7,10 @@ use pyo3::prelude::*;
 use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
 use crate::{filters::FemtoFilter, level::FemtoLevel, log_record::FemtoLogRecord};
 
+/// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
 #[derive(Debug)]
 pub struct LevelFilter {
+    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
     max_level: FemtoLevel,
 }
 
@@ -26,6 +28,7 @@ impl FemtoFilter for LevelFilter {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LevelFilterBuilder {
+    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
     max_level: Option<FemtoLevel>,
 }
 

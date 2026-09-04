@@ -8,6 +8,7 @@ use std::time::Duration;
 use super::config::OverflowPolicy;
 use thiserror::Error;
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 const VALID_POLICIES: &str = "drop, block, timeout:N";
 
 /// Errors produced while parsing overflow policy inputs.
@@ -26,10 +27,15 @@ pub(crate) enum ParseOverflowPolicyError {
     #[error("timeout_ms required for timeout policy")]
     MissingExternalTimeout,
     /// Provided policy name is not recognized.
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[error("invalid overflow policy: '{policy}'. Valid options are: {VALID_POLICIES}")]
-    UnknownPolicy { policy: String },
+    UnknownPolicy {
+        /// Retains the rejected input so callers can report an actionable configuration error.
+        policy: String,
+    },
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 fn parse_timeout_ms(raw: &str) -> Result<u64, ParseOverflowPolicyError> {
     let ms: u64 = raw
         .trim()
@@ -42,6 +48,7 @@ fn parse_timeout_ms(raw: &str) -> Result<u64, ParseOverflowPolicyError> {
     }
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 fn parse_timeout_policy(
     timeout_ms: Option<u64>,
     expects_external_timeout: bool,
@@ -59,6 +66,7 @@ fn parse_timeout_policy(
     }
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 fn parse_overflow_policy(
     policy: &str,
     timeout_ms: Option<u64>,

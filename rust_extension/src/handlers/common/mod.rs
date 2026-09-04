@@ -77,15 +77,21 @@ impl IntoFormatterConfig for &str {
     }
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 #[derive(Clone, Debug, Default)]
 pub struct CommonBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) capacity: Option<NonZeroUsize>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) capacity_set: bool,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) flush_after_ms: Option<NonZeroU64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) formatter: Option<FormatterConfig>,
 }
 
 impl CommonBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) const DEFAULT_FLUSH_AFTER_MS: u64 = 1_000;
 
     /// Update the bounded channel capacity in place.
@@ -100,6 +106,7 @@ impl CommonBuilder {
         self.capacity_set = true;
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) fn set_formatter<F>(&mut self, formatter: F)
     where
         F: IntoFormatterConfig,
@@ -183,10 +190,14 @@ mod tests {
     }
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 #[derive(Clone, Debug)]
 pub(crate) struct FileLikeBuilderState {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) common: CommonBuilder,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) flush_after_records: Option<NonZeroU64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) overflow_policy: OverflowPolicy,
 }
 

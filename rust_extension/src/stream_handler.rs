@@ -27,6 +27,7 @@ use crate::{
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Configuration for constructing a [`FemtoStreamHandler`].
@@ -77,16 +78,20 @@ impl HandlerConfig {
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
 )]
 enum StreamCommand {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     Record(FemtoLogRecord),
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     Flush(Sender<io::Result<()>>),
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn flush_with_warning<W: Write>(writer: &mut W) {
     if writer.flush().is_err() {
         warn!("FemtoStreamHandler flush error");
     }
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn handle_record_command<W, F>(writer: &mut W, formatter: &F, record: FemtoLogRecord)
 where
     W: Write,
@@ -101,6 +106,7 @@ where
     }
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
     let flush_result = writer.flush();
     if flush_result.is_err() {
@@ -109,6 +115,7 @@ fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
     let _ = ack.send(flush_result);
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn run_stream_worker<W, F>(
     rx: Receiver<StreamCommand>,
     mut writer: W,
@@ -130,8 +137,11 @@ fn run_stream_worker<W, F>(
 
 #[pyclass]
 pub struct FemtoStreamHandler {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     tx: Option<Sender<StreamCommand>>,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     handle: Mutex<Option<JoinHandle<()>>>,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     done_rx: Mutex<Receiver<()>>,
     /// Tracks dropped records and rate-limits warnings.
     warner: RateLimitedWarner,
@@ -145,17 +155,20 @@ pub struct FemtoStreamHandler {
 )]
 #[pymethods]
 impl FemtoStreamHandler {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     #[new]
     fn py_new() -> Self {
         Self::stderr()
     }
 
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     #[staticmethod]
     #[pyo3(name = "stdout")]
     fn py_stdout() -> Self {
         Self::stdout()
     }
 
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     #[staticmethod]
     #[pyo3(name = "stderr")]
     fn py_stderr() -> Self {
@@ -264,6 +277,7 @@ impl FemtoStreamHandler {
         Self::with_config(writer, formatter, config)
     }
 
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     fn with_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
     where
         W: Write + Send + 'static,

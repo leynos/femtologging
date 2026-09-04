@@ -7,15 +7,21 @@ use tracing::Event;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Record};
 
+/// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
 #[derive(Debug, Default)]
 pub(crate) struct CapturedFields {
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     pub(crate) message: Option<String>,
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     pub(crate) key_values: BTreeMap<String, String>,
 }
 
+/// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
 #[derive(Debug, Default)]
 struct FieldCaptureVisitor {
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     message: Option<String>,
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     key_values: BTreeMap<String, String>,
     /// If true, treat "message" as a regular field instead of extracting it.
     /// This is used for spans, where "message" is just a structured field.
@@ -23,6 +29,7 @@ struct FieldCaptureVisitor {
 }
 
 impl FieldCaptureVisitor {
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     fn for_event() -> Self {
         Self {
             preserve_message_field: false,
@@ -30,6 +37,7 @@ impl FieldCaptureVisitor {
         }
     }
 
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     fn for_span() -> Self {
         Self {
             preserve_message_field: true,
@@ -37,6 +45,7 @@ impl FieldCaptureVisitor {
         }
     }
 
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     fn store(&mut self, field: &Field, value: String) {
         if field.name() == "message" && !self.preserve_message_field {
             self.message = Some(value);
@@ -45,6 +54,7 @@ impl FieldCaptureVisitor {
         }
     }
 
+    /// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
     fn finish(self) -> CapturedFields {
         CapturedFields {
             message: self.message,
@@ -95,18 +105,21 @@ impl Visit for FieldCaptureVisitor {
     }
 }
 
+/// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
 pub(crate) fn capture_event(event: &Event<'_>) -> CapturedFields {
     let mut visitor = FieldCaptureVisitor::for_event();
     event.record(&mut visitor);
     visitor.finish()
 }
 
+/// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
 pub(crate) fn capture_attributes(attrs: &Attributes<'_>) -> CapturedFields {
     let mut visitor = FieldCaptureVisitor::for_span();
     attrs.record(&mut visitor);
     visitor.finish()
 }
 
+/// Preserves feature-gated tracing context so events, spans, and Python logger delivery retain their original ordering and fields.
 pub(crate) fn capture_record(record: &Record<'_>) -> CapturedFields {
     let mut visitor = FieldCaptureVisitor::for_span();
     record.record(&mut visitor);

@@ -158,27 +158,19 @@ guide (`en-GB-oxendict`).
 Consumers of the Rust crate who use `mod` paths or `include!` macros
 referencing internal module files should note the following renames:
 
-Table: Rust module file renames
-
-| Parent module    | Old file       | New file       |
-| ---------------- | -------------- | -------------- |
-| `http_handler`   | `serialise.rs` | `serialize.rs` |
-| `socket_handler` | `serialise.rs` | `serialize.rs` |
-
-These modules are private (`mod serialize`, not `pub mod`) and not re-exported,
-so this change does not affect Python consumers or users of the public Rust API.
+The private HTTP and socket encoding modules use the canonical `serialize.rs`
+filename and are not re-exported, so this change does not affect Python
+consumers or users of the public Rust API.
 
 ### Documentation and docstring changes
 
 All doc comments and user-facing strings now use `-ize` / `-ization` forms:
 
-- `serialise` / `serialisation` → `serialize` / `serialization`
-- `normalise` / `normalisation` → `normalize` / `normalization`
-- `initialise` / `initialisation` → `initialize` / `initialization`
-- `finalise` → `finalize`
-- `customise` → `customize`
-- `maximise` → `maximize`
-- `recognise` → `recognize`
+- `serialize` / `serialization` remain the canonical source spellings.
+- `normalize` / `normalization` remain the canonical source spellings.
+- `initialize` / `initialization` remain the canonical source spellings.
+- `finalize`, `customize`, `maximize`, and `recognize` remain canonical source
+  spellings.
 
 ### Impact
 

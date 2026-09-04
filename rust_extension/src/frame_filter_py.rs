@@ -19,9 +19,13 @@ use crate::frame_filter::{
 /// This struct groups related filter parameters to reduce function argument counts
 /// and improve code clarity.
 struct FilterOptions<'a> {
+    /// Filters captured Python frames without retaining borrowed Python data beyond the active GIL attachment.
     exclude_filenames: Option<&'a [String]>,
+    /// Filters captured Python frames without retaining borrowed Python data beyond the active GIL attachment.
     exclude_functions: Option<&'a [String]>,
+    /// Filters captured Python frames without retaining borrowed Python data beyond the active GIL attachment.
     max_depth: Option<usize>,
+    /// Filters captured Python frames without retaining borrowed Python data beyond the active GIL attachment.
     exclude_logging: bool,
 }
 

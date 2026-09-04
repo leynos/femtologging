@@ -12,7 +12,9 @@ use super::record::HttpSerializableRecord;
 
 /// Wrapper for filtered serialization with zero-copy where possible.
 pub(super) struct FilteredRecord<'a> {
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) record: HttpSerializableRecord<'a>,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     pub(super) fields: &'a HashSet<&'a str>,
 }
 

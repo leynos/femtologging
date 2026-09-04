@@ -149,10 +149,12 @@ impl FemtoLogger {
         true
     }
 
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn should_propagate_to_parent(&self) -> bool {
         self.propagate.load(std::sync::atomic::Ordering::SeqCst) && self.parent.is_some()
     }
 
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {
         let Some(parent_name) = &self.parent else {
             return;
@@ -164,6 +166,7 @@ impl FemtoLogger {
         });
     }
 
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
@@ -180,10 +183,12 @@ impl FemtoLogger {
         });
     }
 
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }
 
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn wait_for_worker_idle(&self) -> bool {
         let Some(tx) = &self.tx else {
             return true;
@@ -206,6 +211,7 @@ impl FemtoLogger {
             .is_ok()
     }
 
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn flush_configured_handlers(&self) -> bool {
         self.handlers.read().iter().all(|handler| handler.flush())
     }

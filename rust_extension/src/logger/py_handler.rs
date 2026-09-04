@@ -317,11 +317,13 @@ mod tests {
 /// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]
 pub struct PyHandler {
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     pub obj: Py<PyAny>,
 }
 
 #[cfg(not(feature = "python"))]
 impl PyHandler {
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
         Self { obj }
     }

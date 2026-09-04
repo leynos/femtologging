@@ -36,7 +36,9 @@ use crate::macros::{AsPyDict, dict_into_py};
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct FileHandlerBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     path: PathBuf,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     common: FileLikeBuilderState,
 }
 
@@ -114,6 +116,7 @@ builder_methods! {
                 Self::new(path)
             }
 
+            /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
             #[pyo3(name = "with_overflow_policy")]
             fn py_with_overflow_policy<'py>(
                 mut slf: PyRefMut<'py, Self>,
@@ -123,6 +126,7 @@ builder_methods! {
                 Ok(slf)
             }
 
+            /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
             #[pyo3(name = "with_formatter")]
             #[pyo3(signature = (formatter))]
             #[pyo3(text_signature = "(self, formatter)")]

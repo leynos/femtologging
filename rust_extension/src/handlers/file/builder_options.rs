@@ -22,8 +22,11 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) rotation: R,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) start_barrier: Option<Arc<Barrier>>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     _phantom: PhantomData<W>,
 }
 

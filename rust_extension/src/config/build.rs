@@ -15,13 +15,24 @@ use crate::{
 
 use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
+/// A validated logger mutation kept detached from the global manager.
+///
+/// Planning resolves handlers and filters before any live logger is changed;
+/// committing the matching logger objects is a distinct lifecycle step.
 struct ConfiguredLoggerPlan {
+    /// Registry name used to match this plan with its committed logger.
     name: String,
+    /// Handler identities retained in the runtime snapshot for later updates.
     handler_ids: Vec<String>,
+    /// Filter identities retained in the runtime snapshot for later updates.
     filter_ids: Vec<String>,
+    /// Shared handlers already validated against this configuration.
     handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    /// Shared filters already validated against this configuration.
     filters: Vec<Arc<dyn FemtoFilter>>,
+    /// Optional threshold that deliberately leaves the existing level intact.
     level: Option<FemtoLevel>,
+    /// Optional propagation choice that deliberately leaves it intact when absent.
     propagate: Option<bool>,
 }
 
@@ -87,6 +98,10 @@ impl ConfigBuilder {
         Ok(())
     }
 
+    /// Attach validated plans only after every logger has been committed.
+    ///
+    /// This preserves configuration atomicity: a failed plan cannot leave a
+    /// newly created logger in the manager with partially attached resources.
     fn apply_committed_logger_plans(
         &self,
         py: Python<'_>,
@@ -121,6 +136,7 @@ impl ConfigBuilder {
         }
     }
 
+    /// Add each dotted parent so disabling old loggers cannot break propagation.
     fn insert_logger_ancestors(name: &str, keep_names: &mut HashSet<String>) {
         let mut cur = name;
         while let Some((parent, _)) = cur.rsplit_once('.') {
@@ -129,6 +145,7 @@ impl ConfigBuilder {
         }
     }
 
+    /// Build a named registry while preserving the failing configuration ID.
     fn build_map<B, O, E, F, G>(
         items: &BTreeMap<String, B>,
         mut build: F,
@@ -146,6 +163,7 @@ impl ConfigBuilder {
         Ok(built)
     }
 
+    /// Resolve referenced resources once and reject duplicate or unknown IDs.
     fn collect_items<T: ?Sized>(
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
@@ -176,14 +194,17 @@ impl ConfigBuilder {
         Ok(items)
     }
 
+    /// Convert repeated handler references into the configuration error type.
     fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
         ConfigError::DuplicateHandlerIds(ids)
     }
 
+    /// Convert repeated filter references into the configuration error type.
     fn duplicate_filter_ids(ids: Vec<String>) -> ConfigError {
         ConfigError::DuplicateFilterIds(ids)
     }
 
+    /// Validate a logger's resource references without changing live state.
     fn prepare_logger_plan(
         &self,
         name: &str,
@@ -206,6 +227,10 @@ impl ConfigBuilder {
         })
     }
 
+    /// Replace a committed logger's attachments while the Python GIL is held.
+    ///
+    /// Handler and filter objects are shared by `Arc`; borrowing the PyO3
+    /// logger here confines Python object access to the attached interpreter.
     fn apply_logger_plan(
         &self,
         py: Python<'_>,

@@ -32,10 +32,15 @@ pub(crate) use validation::{collection_conflict, resolve_attachment_ids, validat
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerMutationBuilder {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     level: Option<FemtoLevel>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     propagate: Option<bool>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     handlers: CollectionMutation,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     filters: CollectionMutation,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     invalid: Option<String>,
 }
 
@@ -44,6 +49,7 @@ impl LoggerMutationBuilder {
         Self::default()
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn normalize_ids<I, S>(ids: I) -> Vec<String>
     where
         I: IntoIterator<Item = S>,
@@ -52,6 +58,7 @@ impl LoggerMutationBuilder {
         ids.into_iter().map(Into::into).collect()
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn apply_ids_mutation<I, S>(
         mut self,
         ids: I,
@@ -67,6 +74,7 @@ impl LoggerMutationBuilder {
         self
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn do_replace<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -75,6 +83,7 @@ impl LoggerMutationBuilder {
         self.apply_ids_mutation(ids, CollectionMutation::replace, setter)
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn do_append<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -83,6 +92,7 @@ impl LoggerMutationBuilder {
         self.apply_ids_mutation(ids, CollectionMutation::append, setter)
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn do_remove<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -91,6 +101,7 @@ impl LoggerMutationBuilder {
         self.apply_ids_mutation(ids, CollectionMutation::remove, setter)
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn do_clear(self, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self {
         let mut this = self;
         setter(&mut this, CollectionMutation::Clear);
@@ -163,6 +174,7 @@ impl LoggerMutationBuilder {
         self.do_clear(Self::set_filters)
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn set_handlers(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
             self.invalid = collection_conflict("handlers", &self.handlers, &mutation);
@@ -170,6 +182,7 @@ impl LoggerMutationBuilder {
         self.handlers = mutation;
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn set_filters(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
             self.invalid = collection_conflict("filters", &self.filters, &mutation);
@@ -177,6 +190,7 @@ impl LoggerMutationBuilder {
         self.filters = mutation;
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn ensure_valid(&self, logger_name: &str) -> Result<(), ConfigError> {
         self.invalid
             .clone()
@@ -193,17 +207,26 @@ impl LoggerMutationBuilder {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeConfigBuilder {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     handlers: BTreeMap<String, HandlerBuilder>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     filters: BTreeMap<String, FilterBuilder>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     loggers: BTreeMap<String, LoggerMutationBuilder>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     root_logger: Option<LoggerMutationBuilder>,
 }
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 pub(crate) struct LoggerScalarMutation {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) level: Option<FemtoLevel>,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     pub(crate) propagate: Option<bool>,
 }
 
@@ -251,6 +274,7 @@ impl RuntimeConfigBuilder {
         })
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn validate(&self) -> Result<(), ConfigError> {
         if self.root_logger.is_some() && self.loggers.contains_key("root") {
             return Err(ConfigError::InvalidMutation(
@@ -267,6 +291,7 @@ impl RuntimeConfigBuilder {
         Ok(())
     }
 
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn collect_impacted(&self, before: &RuntimeStateSnapshot) -> BTreeSet<String> {
         let overridden_handler_ids = self.handlers.keys().cloned().collect::<BTreeSet<_>>();
         let overridden_filter_ids = self.filters.keys().cloned().collect::<BTreeSet<_>>();
@@ -291,7 +316,7 @@ impl RuntimeConfigBuilder {
         impacted.extend(self.loggers.keys().cloned());
         impacted
     }
-
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn apply_logger_mutations(
         &self,
         logger_states: &mut BTreeMap<String, LoggerAttachmentState>,
@@ -311,7 +336,7 @@ impl RuntimeConfigBuilder {
         }
         Ok(())
     }
-
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     fn build_scalar_mutations(&self) -> BTreeMap<String, LoggerScalarMutation> {
         let mut out = BTreeMap::new();
         if let Some(root) = &self.root_logger {
@@ -335,7 +360,7 @@ impl RuntimeConfigBuilder {
         out
     }
 }
-
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 fn apply_mutation_to_logger(
     name: &str,
     mutation: &LoggerMutationBuilder,
@@ -364,13 +389,12 @@ fn apply_mutation_to_logger(
     logger_states.insert(name.to_string(), next);
     Ok(())
 }
-
+/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
 fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
     matches!(
         mutation,
         CollectionMutation::Append(ids) | CollectionMutation::Remove(ids) if !ids.is_empty()
     )
 }
-
 #[cfg(feature = "python")]
 mod python_bindings;

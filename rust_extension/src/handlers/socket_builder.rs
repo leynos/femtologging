@@ -19,15 +19,29 @@ use super::builder_macros::dict_set;
 use super::builder_macros::ensure_positive;
 use super::{HandlerBuildError, HandlerBuilderTrait};
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 #[derive(Clone, Debug)]
 enum TransportConfig {
-    Tcp { host: String, port: u16 },
-    Unix { path: PathBuf },
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    Tcp {
+        /// Identifies the peer selected before the worker opens its TCP connection.
+        host: String,
+        /// Identifies the peer service without deferring endpoint validation to the worker.
+        port: u16,
+    },
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    Unix {
+        /// Identifies the local socket path the worker may open after successful validation.
+        path: PathBuf,
+    },
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 #[derive(Clone, Debug, Default)]
 struct TlsConfig {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     domain: Option<String>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     insecure: bool,
 }
 
@@ -47,12 +61,17 @@ struct TlsConfig {
 #[cfg_attr(feature = "python", pyclass(from_py_object, name = "BackoffConfig"))]
 #[derive(Clone, Debug, Default)]
 pub struct BackoffOverrides {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     base_ms: Option<u64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     cap_ms: Option<u64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     reset_after_ms: Option<u64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     deadline_ms: Option<u64>,
 }
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 macro_rules! apply_backoff_field {
     ($self:expr, $field:ident, $policy:expr, $policy_field:ident, $name:expr) => {{
         if let Some(value) = $self.$field {
@@ -72,46 +91,39 @@ impl BackoffOverrides {
     pub fn base_ms(&self) -> Option<u64> {
         self.base_ms
     }
-
     /// Get the cap override if configured.
     pub fn cap_ms(&self) -> Option<u64> {
         self.cap_ms
     }
-
     /// Get the reset-after override if configured.
     pub fn reset_after_ms(&self) -> Option<u64> {
         self.reset_after_ms
     }
-
     /// Get the deadline override if configured.
     pub fn deadline_ms(&self) -> Option<u64> {
         self.deadline_ms
     }
-
     /// Override the base jitter duration in milliseconds.
     pub fn with_base_ms(mut self, base_ms: u64) -> Self {
         self.base_ms = Some(base_ms);
         self
     }
-
     /// Override the cap duration in milliseconds.
     pub fn with_cap_ms(mut self, cap_ms: u64) -> Self {
         self.cap_ms = Some(cap_ms);
         self
     }
-
     /// Override the reset-after duration in milliseconds.
     pub fn with_reset_after_ms(mut self, reset_after_ms: u64) -> Self {
         self.reset_after_ms = Some(reset_after_ms);
         self
     }
-
     /// Override the deadline duration in milliseconds.
     pub fn with_deadline_ms(mut self, deadline_ms: u64) -> Self {
         self.deadline_ms = Some(deadline_ms);
         self
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[cfg(feature = "python")]
     pub(crate) fn from_options(
         base_ms: Option<u64>,
@@ -126,7 +138,7 @@ impl BackoffOverrides {
             deadline_ms,
         }
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
         apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
         apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");
@@ -141,7 +153,7 @@ impl BackoffOverrides {
         Ok(())
     }
 }
-
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
         $(#[$meta])*
@@ -151,26 +163,30 @@ macro_rules! option_setter {
         }
     };
 }
-
 /// Builder for constructing [`FemtoSocketHandler`] instances.
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct SocketHandlerBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     capacity: Option<usize>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     connect_timeout_ms: Option<u64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     write_timeout_ms: Option<u64>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     max_frame_size: Option<usize>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     transport: Option<TransportConfig>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     tls: Option<TlsConfig>,
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     backoff: BackoffOverrides,
 }
-
 impl SocketHandlerBuilder {
     /// Create a new builder with no transport configured.
     pub fn new() -> Self {
         Self::default()
     }
-
     /// Configure the builder to use TCP.
     pub fn with_tcp(mut self, host: impl Into<String>, port: u16) -> Self {
         self.transport = Some(TransportConfig::Tcp {
@@ -179,19 +195,16 @@ impl SocketHandlerBuilder {
         });
         self
     }
-
     /// Configure the builder to use a Unix domain socket.
     pub fn with_unix_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.transport = Some(TransportConfig::Unix { path: path.into() });
         self
     }
-
     /// Configure TLS using the provided domain and validation policy.
     pub fn with_tls(mut self, domain: Option<String>, insecure: bool) -> Self {
         self.tls = Some(TlsConfig { domain, insecure });
         self
     }
-
     option_setter!(
         #[doc = "Set the bounded channel capacity."]
         with_capacity,
@@ -216,7 +229,6 @@ impl SocketHandlerBuilder {
         max_frame_size,
         usize
     );
-
     /// Override backoff timings using the provided overrides.
     ///
     /// See [`BackoffOverrides`] for fluent helpers when constructing the
@@ -225,7 +237,7 @@ impl SocketHandlerBuilder {
         self.backoff = overrides;
         self
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.validate_transport()?;
         self.validate_capacity()?;
@@ -233,7 +245,7 @@ impl SocketHandlerBuilder {
         self.validate_frame_size()?;
         Ok(())
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn validate_transport(&self) -> Result<(), HandlerBuildError> {
         match &self.transport {
             None => Err(HandlerBuildError::InvalidConfig(
@@ -245,14 +257,14 @@ impl SocketHandlerBuilder {
             _ => Ok(()),
         }
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn validate_capacity(&self) -> Result<(), HandlerBuildError> {
         if let Some(capacity) = self.capacity {
             ensure_positive!(capacity, "capacity")?;
         }
         Ok(())
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn validate_timeouts(&self) -> Result<(), HandlerBuildError> {
         if let Some(timeout) = self.connect_timeout_ms {
             ensure_positive!(timeout, "connect_timeout_ms")?;
@@ -262,14 +274,14 @@ impl SocketHandlerBuilder {
         }
         Ok(())
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn validate_frame_size(&self) -> Result<(), HandlerBuildError> {
         if let Some(size) = self.max_frame_size {
             ensure_positive!(size, "max_frame_size")?;
         }
         Ok(())
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn build_config(&self) -> Result<SocketHandlerConfig, HandlerBuildError> {
         self.validate()?;
         let mut config = SocketHandlerConfig::default();
@@ -280,7 +292,7 @@ impl SocketHandlerBuilder {
         self.backoff.apply(&mut config.backoff)?;
         Ok(config)
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn apply_optional_fields(&self, config: &mut SocketHandlerConfig) {
         if let Some(capacity) = self.capacity {
             config.capacity = capacity;
@@ -295,7 +307,7 @@ impl SocketHandlerBuilder {
             config.max_frame_size = size;
         }
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn build_transport_config(
         &self,
         transport: &TransportConfig,
@@ -319,7 +331,7 @@ impl SocketHandlerBuilder {
             }
         }
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn build_tls_options(&self, host: &str) -> Option<TlsOptions> {
         self.tls.as_ref().map(|tls_cfg| {
             let domain = tls_cfg
@@ -333,7 +345,7 @@ impl SocketHandlerBuilder {
             }
         })
     }
-
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[cfg(feature = "python")]
     fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "capacity", self.capacity);
@@ -347,7 +359,6 @@ impl SocketHandlerBuilder {
         dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms);
         Ok(())
     }
-
     /// Serialize the configured transport (and any TLS options) into the dict.
     #[cfg(feature = "python")]
     fn extend_dict_with_transport(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
@@ -365,7 +376,6 @@ impl SocketHandlerBuilder {
             None => Ok(()),
         }
     }
-
     /// Serialize the TLS options for a TCP transport into the dict.
     #[cfg(feature = "python")]
     fn extend_dict_with_tls(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
@@ -379,15 +389,12 @@ impl SocketHandlerBuilder {
         d.set_item("tls_insecure", tls_cfg.insecure)
     }
 }
-
 impl HandlerBuilderTrait for SocketHandlerBuilder {
     type Handler = FemtoSocketHandler;
-
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError> {
         let config = self.build_config()?;
         Ok(FemtoSocketHandler::with_config(config))
     }
 }
-
 #[cfg(feature = "python")]
 mod python_bindings;

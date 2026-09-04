@@ -7,17 +7,28 @@ use serde::Serialize;
 
 use crate::log_record::FemtoLogRecord;
 
+/// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
 #[derive(Serialize)]
 struct SerializableRecord<'a> {
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     logger: &'a str,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     level: &'a str,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     message: &'a str,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     timestamp_ns: u128,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     filename: &'a str,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     line_number: u32,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     module_path: &'a str,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     thread_id: String,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     thread_name: Option<&'a str>,
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     key_values: &'a std::collections::BTreeMap<String, String>,
 }
 

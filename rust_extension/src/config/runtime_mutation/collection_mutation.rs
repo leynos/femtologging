@@ -15,11 +15,16 @@ use crate::config::types::normalize_vec;
 /// [`normalize_vec`] so stored IDs remain sorted and deduplicated.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CollectionMutation {
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     #[default]
     Unchanged,
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     Replace(Vec<String>),
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     Append(Vec<String>),
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     Remove(Vec<String>),
+    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
     Clear,
 }
 

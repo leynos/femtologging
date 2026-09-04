@@ -14,15 +14,19 @@ use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(feature = "python")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LoggerAttachmentState {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     handler_ids: Vec<String>,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     filter_ids: Vec<String>,
 }
 
 #[cfg(feature = "python")]
 impl LoggerAttachmentState {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     pub(crate) fn new(handler_ids: Vec<String>, filter_ids: Vec<String>) -> Self {
         Self {
             handler_ids,
@@ -30,42 +34,56 @@ impl LoggerAttachmentState {
         }
     }
 
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     pub(crate) fn handler_ids(&self) -> &[String] {
         &self.handler_ids
     }
 
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     pub(crate) fn filter_ids(&self) -> &[String] {
         &self.filter_ids
     }
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(feature = "python")]
 type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(feature = "python")]
 type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(feature = "python")]
 #[derive(Clone, Default)]
 pub(crate) struct RuntimeStateSnapshot {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     pub(crate) handler_registry: SharedHandlers,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     pub(crate) filter_registry: SharedFilters,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[derive(Default)]
 struct Manager {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     loggers: HashMap<String, Py<FemtoLogger>>,
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     #[cfg(feature = "python")]
     runtime: RuntimeStateSnapshot,
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(feature = "python")]
 fn clear_runtime_state(mgr: &mut Manager) {
     mgr.runtime = RuntimeStateSnapshot::default();
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(not(feature = "python"))]
 fn clear_runtime_state(_mgr: &mut Manager) {}
 
@@ -80,6 +98,7 @@ fn is_invalid_logger_name(name: &str) -> bool {
         || name.split('.').any(|s| s.is_empty())
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
         let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
@@ -88,6 +107,7 @@ fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     Ok(())
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 fn calculate_parent_name(name: &str) -> Option<String> {
     name.rsplit_once('.')
         .map(|(p, _)| p.to_string())
@@ -183,11 +203,18 @@ pub(crate) fn commit_staged_loggers(
         .collect()
 }
 
+/// Clone the runtime registries while holding the manager read lock.
+///
+/// The returned snapshot deliberately owns Python references so configuration
+/// replacement can release the global lock before it mutates handlers or
+/// filters. Callers must treat it as a point-in-time view: concurrent Python
+/// threads may register or detach runtime state after this lock is released.
 #[cfg(feature = "python")]
 pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
 }
 
+/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
@@ -229,6 +256,10 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
     }
 }
 
+/// Clears cached loggers and their runtime attachments while holding the manager write lock.
+///
+/// The exported reset point is primarily test support; it ensures queued handler state cannot
+/// survive into the next Python logging configuration.
 #[pyfunction]
 pub fn reset_manager() {
     let mut mgr = MANAGER.write();
