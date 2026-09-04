@@ -12,6 +12,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, ThreadId};
 use thiserror::Error;
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::{PyDict, PyInt};
+#[cfg(feature = "python")]
+use pyo3::{
+    PyAny,
+    exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError},
+};
+
 const MAX_CONTEXT_KEYS: usize = 64;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 1024;
@@ -201,7 +211,9 @@ fn active_context() -> BTreeMap<String, String> {
     })
 }
 
-fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogContextError> {
+pub(crate) fn validate_context_map(
+    context: &BTreeMap<String, String>,
+) -> Result<(), LogContextError> {
     if context.len() > MAX_CONTEXT_KEYS {
         return Err(LogContextError::TooManyKeys {
             count: context.len(),
@@ -237,6 +249,64 @@ fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogCon
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn current_python_context(py: Python<'_>) -> PyResult<BTreeMap<String, String>> {
+    let module = match py.import("femtologging._log_context") {
+        Ok(module) => module,
+        Err(err) if err.is_instance_of::<PyModuleNotFoundError>(py) => return Ok(BTreeMap::new()),
+        Err(err) => return Err(err),
+    };
+    let context = module.call_method0("_current_log_context")?;
+    let context_map = extract_python_context_dict(&context)?;
+    validate_context_map(&context_map).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(context_map)
+}
+
+#[cfg(feature = "python")]
+pub(crate) fn validate_python_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
+    let context_map = extract_python_context_dict(context)?;
+    validate_context_map(&context_map).map_err(|err| PyValueError::new_err(err.to_string()))
+}
+
+#[cfg(feature = "python")]
+fn extract_python_context_dict(context: &Bound<'_, PyAny>) -> PyResult<BTreeMap<String, String>> {
+    let dict = context.cast::<PyDict>().map_err(|_| {
+        PyTypeError::new_err("context must be a dict[str, str|int|float|bool|None]")
+    })?;
+    let mut result = BTreeMap::new();
+    for (raw_key, raw_value) in dict.iter() {
+        let key = raw_key
+            .extract::<String>()
+            .map_err(|_| PyTypeError::new_err("context keys must be strings"))?;
+        result.insert(key, extract_python_context_value(&raw_value)?);
+    }
+    Ok(result)
+}
+
+#[cfg(feature = "python")]
+fn extract_python_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
+    if raw_value.is_none() {
+        return python_context_value_string(raw_value);
+    }
+    if raw_value.extract::<bool>().is_ok() {
+        return python_context_value_string(raw_value);
+    }
+    if raw_value.is_instance_of::<PyInt>() {
+        return python_context_value_string(raw_value);
+    }
+    if raw_value.extract::<f64>().is_ok() {
+        return python_context_value_string(raw_value);
+    }
+    raw_value
+        .extract::<String>()
+        .map_err(|_| PyTypeError::new_err("context values must be str, int, float, bool, or None"))
+}
+
+#[cfg(feature = "python")]
+fn python_context_value_string(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
+    Ok(raw_value.str()?.to_str()?.to_owned())
 }
 
 #[cfg(test)]
