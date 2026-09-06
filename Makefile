@@ -1,4 +1,4 @@
-.PHONY: help all clean build release lint lint-rust fmt check-fmt \
+.PHONY: help all clean build release lint lint-rust lint-env-policy fmt check-fmt \
 markdownlint tools nixie spelling spelling-helper-test test typecheck
 
 CARGO ?= cargo
@@ -59,7 +59,19 @@ lint: ## Run linters
 	$(RUFF) check
 	$(MAKE) lint-rust
 
-lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+# The environment-access policy (issue #423) has to hold in every target kind
+# and every feature, including tests and benches, because a test that mutates
+# the parent environment forces the whole suite to serialize. The feature lanes
+# below still omit `--all-targets`: the test tree carries a backlog of unrelated
+# Clippy findings that issue #421 clears. Until then this lane silences the rest
+# of Clippy and denies only the environment methods, so the policy reaches test
+# code without absorbing that backlog. Issue #421 folds this into the lane list.
+ENV_POLICY_CLIPPY_FLAGS ?= --all-targets --all-features -- -A clippy::all -D clippy::disallowed_methods
+
+lint-env-policy: ## Enforce the environment-access policy across all targets and features
+	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) $(ENV_POLICY_CLIPPY_FLAGS)
+
+lint-rust: lint-env-policy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	@for features in none python log-compat tracing-compat; do \
 		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
 		echo "# Lint Rust features: $$features"; \

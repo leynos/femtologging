@@ -21,9 +21,18 @@
 # - heavy: loom and proptest concurrency test crate; its file-flush model
 #   inspects a tempdir-staged log file with ambient std::fs reads, matching
 #   the same test-support exclusion as file_handler_tests.
+# - env_access_policy: contract test for the environment-access lint policy.
+#   It reads three checked-in configuration files — this crate's clippy.toml
+#   and Cargo.toml, and the repository Makefile — at paths derived from
+#   CARGO_MANIFEST_DIR. The Makefile sits above the crate directory, so a
+#   capability handle would have to be opened ambiently at the repository root
+#   anyway, and the crate performs no writes. In-source allow/expect
+#   attributes are ignored by the lint (whitaker bug #270), leaving this
+#   crate-level exclusion as the only workable suppression.
 [no_std_fs_operations]
 excluded_crates = [
     "_femtologging_rs",
+    "env_access_policy",
     "file_handler_tests",
     "heavy",
 ]

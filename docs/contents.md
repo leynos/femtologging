@@ -29,6 +29,9 @@ libraries. Use the links below to explore each topic.
 - [adr-004-batching-optimizations-in-consumer-threads.md](./adr-004-batching-optimizations-in-consumer-threads.md)
   - Proposes drain-loop batching and vectored I/O optimizations for handler
     consumer threads.
+- [adr-005-environment-seam-taxonomy.md](./adr-005-environment-seam-taxonomy.md)
+  - Records the ban on ambient process-environment access in the Rust
+    extension and the injection shapes that replace it.
 
 ## Logging Architecture
 

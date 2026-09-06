@@ -403,6 +403,7 @@ dependencies = [
  "static_assertions",
  "tempfile",
  "thiserror",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "trybuild",

@@ -203,6 +203,37 @@ should use that target rather than an independently installed version. CI
 installs `uv` and `ty`, then delegates formatting, linting, type checking, and
 tests to Makefile targets.
 
+## Environment Access in the Rust Extension
+
+The Rust extension must not read or mutate the process environment ambiently.
+`rust_extension/clippy.toml` disallows `std::env::var`, `var_os`, `vars`,
+`vars_os`, `set_var`, and `remove_var`, and `rust_extension/Cargo.toml` denies
+`clippy::disallowed_methods`. The `lint-env-policy` target, which `lint-rust`
+runs first, applies that lint with `--all-targets --all-features`, so
+integration tests and benches are governed alongside the library.
+
+Pick the lightest seam the boundary justifies:
+
+- an explicit value, for one-off configuration;
+- a narrow reader closure, for a small reusable boundary;
+- a shared environment trait, only when several variables and tests justify it.
+
+Tests never change the parent process environment. A test that needs a child
+process to see a variable builds the child's environment with `Command::env`;
+a test that needs the code under test to observe a value passes it through the
+seam. Serialization, whether `#[serial]` or a lowered `TEST_THREADS`, stays only
+where a structural reason such as the global manager or the Python interpreter
+demands it.
+
+A direct read is permitted only at a genuine composition root, under an
+item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`. Use
+`expect`, not `allow`, so the attribute warns once the site is migrated.
+
+`rust_extension/tests/env_access_policy.rs` holds this configuration to that
+contract. See
+[adr-005-environment-seam-taxonomy.md](./adr-005-environment-seam-taxonomy.md)
+for the decision and its rationale.
+
 ## Benchmarking Documentation
 
 Benchmarking work is governed by
