@@ -24,23 +24,23 @@ linting](#python-linting) for the complete five-tier lint pipeline.
 
 ## Python test toolchain
 
-The Python test toolchain is pinned so local runs and CI use the same pytest
-release:
+The local development group in `pyproject.toml` and the scheduled
+`.github/workflows/heavy-tests.yml` job define the same test toolchain. The
+heavy job repeats the install explicitly because it builds its own virtualenv
+outside `uv sync --group dev`. Keep both sources aligned when changing a
+dependency or its version policy:
 
-- `pytest` is pinned to `9.1.1` in `pyproject.toml` and CI.
-- `pytest-bdd` is pinned to `8.1.0` in `pyproject.toml` and CI.
-- `hypothesis` is bounded to `>=6.135,<7` in `pyproject.toml`'s
-  `[dependency-groups].dev`, so property-based and generated-input coverage
-  only shifts with a deliberate bump.
-- `pyyaml` is bounded to `>=6.0.3,<7` in the same dependency group, because
-  the lint contract tests parse the CI workflow files.
-
-Keep this policy in sync with `pyproject.toml` and the matching CI install
-steps where applicable. The scheduled `heavy-tests.yml` workflow installs
-this same test toolchain explicitly (`pip install ... pytest==9.1.1
-pytest-bdd==8.1.0 ... "hypothesis>=6.135,<7" "pyyaml>=6.0.3,<7"`) rather than
-through the dev dependency group, since that job builds its own virtualenv
-outside `uv sync --group dev`.
+- `maturin[patchelf]` is pinned to `1.13.3` in both sources for the editable
+  Rust extension build.
+- `pytest` is pinned to `9.1.1` in both sources.
+- `pytest-bdd` is pinned to `8.1.0` in both sources.
+- `pytest-timeout`, `pytest-xdist`, and `syrupy` are currently unpinned in
+  both sources; they follow the resolver's latest compatible releases.
+- `hypothesis` is bounded to `>=6.135,<7` in both sources, so
+  property-based and generated-input coverage only shifts with a deliberate
+  compatible-version change.
+- `pyyaml` is bounded to `>=6.0.3,<7` in both sources because the lint
+  contract tests parse the CI workflow files.
 
 ## Typos spelling checker
 
@@ -256,7 +256,8 @@ To run any of the five tiers locally, invoke the underlying tool directly:
 uvx ruff==0.16.4 check
 
 # Tier 2: interrogate (docstring coverage, production package only)
-uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 femtologging
+uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 \
+  --ignore-regex '^basicConfig$' femtologging
 
 # Tier 3: Pylint under managed PyPy
 uv tool run --python pypy --from \
