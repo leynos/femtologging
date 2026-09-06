@@ -218,10 +218,14 @@ Pick the lightest seam the boundary justifies:
 - a narrow reader closure, for a small reusable boundary;
 - a shared environment trait, only when several variables and tests justify it.
 
-Tests never change the parent process environment. A test that needs a child
-process to see a variable builds the child's environment with `Command::env`;
-a test that needs the code under test to observe a value passes it through the
-seam. Serialization, whether `#[serial]` or a lowered `TEST_THREADS`, stays only
+Tests never change the parent process environment. A test that needs the code
+under test to observe a value passes it through the seam. A test that needs a
+child process to see a variable builds the child's environment explicitly.
+`Command::env` alone keeps the parent's environment, so where an inherited
+variable could change the outcome, call `Command::env_clear` first and then add
+back every variable the child legitimately needs, `PATH` included.
+
+Serialization, whether `#[serial]` or a lowered `TEST_THREADS`, stays only
 where a structural reason such as the global manager or the Python interpreter
 demands it.
 

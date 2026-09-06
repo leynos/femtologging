@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted — 2026-09-06: ban ambient process-environment access in the Rust
+extension, enforce it with Clippy, and require an injected seam in its place.
 
 ## Date
 
@@ -61,11 +62,16 @@ living in one Clippy invocation.
 The `lint-env-policy` Make target then runs that lint over the whole crate:
 
 ```make
-ENV_POLICY_CLIPPY_FLAGS ?= --all-targets --all-features -- -A clippy::all -D clippy::disallowed_methods
+ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
+ENV_POLICY_CLIPPY_FLAGS ?= --all-targets -- -A clippy::all -D clippy::disallowed_methods
 ```
 
-`--all-targets --all-features` reaches integration tests, benches, and every
-feature combination in one pass. `-A clippy::all` is deliberate and temporary:
+`--all-targets` reaches integration tests and benches. The lane list is what
+reaches every feature arm: `--all-features` alone never compiles a
+`#[cfg(not(feature = ...))]` block, and the crate has such blocks, so the
+`none` and `all` lanes together compile both arms of every gate while the named
+lanes cover the combinations between. `-A clippy::all` is deliberate and
+temporary:
 the existing feature lanes in `lint-rust` omit `--all-targets` because the test
 tree carries a backlog of unrelated Clippy findings, and clearing that backlog
 is issue #421's job. Silencing the rest of Clippy in this one lane lets the
@@ -102,9 +108,12 @@ exists for a future binary target.
 ### Tests
 
 A test never mutates the parent process environment. Where a test needs a child
-process to see a variable, it builds the child's environment explicitly with
-`Command::env` (and `Command::env_clear` where isolation matters) rather than
-setting the variable in the harness and letting the child inherit it. Where a
+process to see a variable, it builds the child's environment explicitly rather
+than setting the variable in the harness and letting the child inherit it.
+`Command::env` alone leaves the parent's environment in place, so a test whose
+outcome could depend on an inherited variable calls `Command::env_clear` first
+and then adds back every variable the child legitimately needs, `PATH`
+included. Where a
 test needs the code under test to observe a value, it supplies that value
 through the seam.
 
@@ -125,7 +134,12 @@ access is governed by the Python architecture and its own lint stack.
 - `rust_extension/tests/env_access_policy.rs` fails if any of the six entries
   leaves `clippy.toml`, if the manifest stops denying the lint, or if the
   policy lane stops covering every target and feature or drops out of
-  `make lint`. Each of its assertions records the mutation that proved it.
+  `make lint`. It also compiles `tests/fixtures/env_policy_probe.rs` through
+  `clippy-driver` under this crate's `clippy.toml` and checks that all six
+  methods are rejected and that the composition-root `expect` suppresses
+  exactly one call. Each of its assertions records the mutation that proved it.
+- Adding a feature to the crate manifest without adding a lane fails that test,
+  so the lane list cannot drift behind the feature list.
 - Adding a new environment-dependent boundary means choosing among three named
   shapes, so a reviewer can reject one that is heavier or lighter than the
   call-site count warrants.

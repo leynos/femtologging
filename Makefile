@@ -61,15 +61,31 @@ lint: ## Run linters
 
 # The environment-access policy (issue #423) has to hold in every target kind
 # and every feature, including tests and benches, because a test that mutates
-# the parent environment forces the whole suite to serialize. The feature lanes
-# below still omit `--all-targets`: the test tree carries a backlog of unrelated
-# Clippy findings that issue #421 clears. Until then this lane silences the rest
-# of Clippy and denies only the environment methods, so the policy reaches test
-# code without absorbing that backlog. Issue #421 folds this into the lane list.
-ENV_POLICY_CLIPPY_FLAGS ?= --all-targets --all-features -- -A clippy::all -D clippy::disallowed_methods
+# the parent environment forces the whole suite to serialize.
+#
+# One lane per declared feature, plus `none` and `all`. `--all-features` alone
+# would never compile a `#[cfg(not(feature = ...))]` block, and the crate has
+# such blocks; `none` and `all` between them compile both arms of every feature
+# gate, and the named lanes cover the combinations in between.
+#
+# The feature lanes in `lint-rust` still omit `--all-targets`: the test tree
+# carries a backlog of unrelated Clippy findings that issue #421 clears. Until
+# then this target silences the rest of Clippy and denies only the environment
+# methods, so the policy reaches test code without absorbing that backlog.
+# Issue #421 folds these flags into its lane list and retires this target.
+ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
+ENV_POLICY_CLIPPY_FLAGS ?= --all-targets -- -A clippy::all -D clippy::disallowed_methods
 
 lint-env-policy: ## Enforce the environment-access policy across all targets and features
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) $(ENV_POLICY_CLIPPY_FLAGS)
+	@for features in $(ENV_POLICY_FEATURE_LANES); do \
+		case "$$features" in \
+			none) selection="--no-default-features" ;; \
+			all) selection="--all-features" ;; \
+			*) selection="--no-default-features --features $$features" ;; \
+		esac; \
+		echo "# Environment policy lane: $$features"; \
+		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) $$selection $(ENV_POLICY_CLIPPY_FLAGS); \
+	done
 
 lint-rust: lint-env-policy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	@for features in none python log-compat tracing-compat; do \
