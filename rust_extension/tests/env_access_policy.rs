@@ -73,11 +73,6 @@ fn parse_toml(path: &Path) -> Fallible<Value> {
         .map_err(|error| format!("parse {}: {error}", path.display()).into())
 }
 
-/// Read the repository Makefile.
-fn makefile() -> Fallible<String> {
-    read(&repository_root()?.join("Makefile"))
-}
-
 /// Read the crate manifest.
 fn manifest() -> Fallible<Value> {
     parse_toml(&crate_dir().join("Cargo.toml"))
@@ -122,34 +117,42 @@ fn lint_level(lints: &Value, lint: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Return the body of the named Makefile recipe, including its own line.
-fn makefile_recipe(makefile: &str, target: &str) -> Fallible<String> {
-    let prefix = format!("{target}:");
-    let mut lines = makefile
-        .lines()
-        .skip_while(|line| !line.starts_with(&prefix));
-    let header = lines
-        .next()
-        .ok_or_else(|| format!("Makefile has no `{target}` target"))?;
-    let mut recipe = String::from(header);
-    for line in lines {
-        if !line.starts_with('\t') && !line.trim().is_empty() {
-            break;
-        }
-        writeln!(recipe)?;
-        recipe.push_str(line);
-    }
-    Ok(recipe)
-}
+/// The repository `Makefile`, read once and queried by name.
+struct Makefile(String);
 
-/// Return the value of a `?=` Makefile variable.
-fn makefile_variable<'a>(makefile: &'a str, name: &str) -> Fallible<&'a str> {
-    let prefix = format!("{name} ?=");
-    makefile
-        .lines()
-        .find_map(|line| line.strip_prefix(prefix.as_str()))
-        .map(str::trim)
-        .ok_or_else(|| format!("Makefile must define {name}").into())
+impl Makefile {
+    /// Read the Makefile from the repository root.
+    fn read() -> Fallible<Self> {
+        Ok(Self(read(&repository_root()?.join("Makefile"))?))
+    }
+
+    /// Return the body of the named recipe, including its own line.
+    fn recipe(&self, target: &str) -> Fallible<String> {
+        let prefix = format!("{target}:");
+        let mut lines = self.0.lines().skip_while(|line| !line.starts_with(&prefix));
+        let header = lines
+            .next()
+            .ok_or_else(|| format!("Makefile has no `{target}` target"))?;
+        let mut recipe = String::from(header);
+        for line in lines {
+            if !line.starts_with('\t') && !line.trim().is_empty() {
+                break;
+            }
+            writeln!(recipe)?;
+            recipe.push_str(line);
+        }
+        Ok(recipe)
+    }
+
+    /// Return the value of a `?=` variable.
+    fn variable(&self, name: &str) -> Fallible<&str> {
+        let prefix = format!("{name} ?=");
+        self.0
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix.as_str()))
+            .map(str::trim)
+            .ok_or_else(|| format!("Makefile must define {name}").into())
+    }
 }
 
 /// Return the optional-feature names declared by the crate manifest.
@@ -168,23 +171,25 @@ fn declared_features() -> Fallible<Vec<String>> {
 
 /// Fail unless the policy lane list covers both arms of every feature gate.
 fn ensure_lanes_cover_every_feature(lanes: &[&str]) -> TestResult {
-    for required in REQUIRED_FEATURE_LANES {
-        if !lanes.contains(&required) {
-            return Err(format!(
-                "ENV_POLICY_FEATURE_LANES must include the {required:?} lane, found {lanes:?}"
-            )
-            .into());
-        }
+    let missing_lane = REQUIRED_FEATURE_LANES
+        .into_iter()
+        .find(|required| !lanes.contains(required));
+    if let Some(required) = missing_lane {
+        return Err(format!(
+            "ENV_POLICY_FEATURE_LANES must include the {required:?} lane, found {lanes:?}"
+        )
+        .into());
     }
-    for feature in declared_features()? {
-        if !lanes.contains(&feature.as_str()) {
-            return Err(format!(
-                "ENV_POLICY_FEATURE_LANES must lint the {feature:?} feature, found {lanes:?}"
-            )
-            .into());
-        }
+    let missing_feature = declared_features()?
+        .into_iter()
+        .find(|feature| !lanes.contains(&feature.as_str()));
+    match missing_feature {
+        None => Ok(()),
+        Some(feature) => Err(format!(
+            "ENV_POLICY_FEATURE_LANES must lint the {feature:?} feature, found {lanes:?}"
+        )
+        .into()),
     }
-    Ok(())
 }
 
 /// Fail unless the policy Clippy flags reach every target kind and deny the
@@ -213,14 +218,14 @@ fn ensure_flags_deny_the_policy(flags: &str) -> TestResult {
 }
 
 /// Fail unless `make lint` still reaches the policy lane.
-fn ensure_lint_reaches_the_policy_lane(makefile: &str) -> TestResult {
-    let policy_recipe = makefile_recipe(makefile, "lint-env-policy")?;
+fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestResult {
+    let policy_recipe = makefile.recipe("lint-env-policy")?;
     if !policy_recipe.contains("$(ENV_POLICY_CLIPPY_FLAGS)")
         || !policy_recipe.contains("$(ENV_POLICY_FEATURE_LANES)")
     {
         return Err("lint-env-policy must drive Clippy from both policy variables".into());
     }
-    let rust_recipe = makefile_recipe(makefile, "lint-rust")?;
+    let rust_recipe = makefile.recipe("lint-rust")?;
     let prerequisites = rust_recipe
         .lines()
         .next()
@@ -233,7 +238,7 @@ fn ensure_lint_reaches_the_policy_lane(makefile: &str) -> TestResult {
     {
         return Err("lint-rust must run the lint-env-policy lane".into());
     }
-    if !makefile_recipe(makefile, "lint")?.contains("$(MAKE) lint-rust") {
+    if !makefile.recipe("lint")?.contains("$(MAKE) lint-rust") {
         return Err("lint must delegate the Rust lanes to lint-rust".into());
     }
     Ok(())
@@ -313,12 +318,13 @@ fn manifest_denies_disallowed_methods() -> TestResult {
 /// lane".
 #[test]
 fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
-    let makefile = makefile()?;
-    let lanes: Vec<&str> = makefile_variable(&makefile, "ENV_POLICY_FEATURE_LANES")?
+    let makefile = Makefile::read()?;
+    let lanes: Vec<&str> = makefile
+        .variable("ENV_POLICY_FEATURE_LANES")?
         .split_whitespace()
         .collect();
     ensure_lanes_cover_every_feature(&lanes)?;
-    ensure_flags_deny_the_policy(makefile_variable(&makefile, "ENV_POLICY_CLIPPY_FLAGS")?)?;
+    ensure_flags_deny_the_policy(makefile.variable("ENV_POLICY_CLIPPY_FLAGS")?)?;
     ensure_lint_reaches_the_policy_lane(&makefile)
 }
 
