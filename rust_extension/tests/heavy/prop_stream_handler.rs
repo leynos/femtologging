@@ -3,21 +3,21 @@
 //! These tests generate random logger names, levels, and messages to verify
 //! that the handler correctly writes each record without losing data.
 
-use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
 
 use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
 use itertools::iproduct;
 use proptest::prelude::*;
 
-#[path = "../test_utils/mod.rs"]
-mod test_utils;
-use std::sync::{Arc, Mutex};
-use test_utils::shared_buffer::std::read_output;
-use test_utils::std::SharedBuf;
+use crate::handle_expect::HandleExpect;
+use crate::shared_buffer::std::SharedBuf;
+use crate::shared_buffer::std::read_output;
 
 proptest! {
     #[test]
-    #[ignore]
+    // Each case spins up a handler worker thread, so the suite is far slower
+    // than an ordinary property test; it runs in the nightly heavy job.
+    #[ignore = "spawns a worker thread per generated case; too slow for the ordinary gate"]
     fn prop_stream_handler_writes(
         ref messages in proptest::collection::vec("[^\n]*", 1..5),
         ref logger_names in proptest::collection::vec("[a-zA-Z_][a-zA-Z0-9_]{0,10}", 1..3),
@@ -37,7 +37,7 @@ proptest! {
 
         let mut expected = String::new();
         for (logger, level, msg) in iproduct!(logger_names, log_levels, messages) {
-            handler.handle(FemtoLogRecord::new(logger, *level, msg));
+            handler.expect_handle(FemtoLogRecord::new(logger, *level, msg));
             expected.push_str(&format!("{} [{}] {}\n", logger, level.as_str(), msg));
         }
         drop(handler);

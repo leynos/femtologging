@@ -8,6 +8,9 @@ authors = ["Payton McIntosh <pmcintosh@df12.net>"]
 name = "_femtologging_rs"
 crate-type = ["cdylib", "rlib"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
+
 [dependencies]
 delegate = "0.13.4"
 pyo3 = { version = "0.29.0", default-features = false, features = ["macros", "auto-initialize", "multiple-pymethods"] }

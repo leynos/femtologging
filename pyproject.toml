@@ -23,7 +23,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "hypothesis; python_version < '3.15'",
-    "pytest==9.1.1",
+    "pytest==8.4.2",
     "pytest-timeout",
     "pytest-bdd==8.1.0",
     "syrupy",
@@ -32,10 +32,22 @@ dev = [
     "pytest-xdist",
 ]
 
+[tool.ty.environment]
+# Newer ty releases resolve against their own tool environment unless the
+# project virtual environment is named explicitly; `make build` creates it
+# at `.venv` and installs the extension module there. The `scripts` helpers
+# import each other as top-level modules. (`typings` is deliberately absent:
+# its partial pytest stub is for pyright and would shadow the real pytest.)
+python = "./.venv"
+extra-paths = ["scripts"]
+
 [tool.ruff]
 line-length = 88
 preview = true
 extend-exclude = [
+    # Python source fixtures embedded in Rust tests via include_str!; their
+    # shape (line numbers, minimal bodies) is part of the test data.
+    "rust_extension/src/test_fixtures",
     "scripts/generate_typos_config.py",
     "scripts/typos_rollout.py",
     "scripts/typos_rollout_cache.py",

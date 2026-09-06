@@ -5,10 +5,13 @@
 //! crate-wide `test_utils` module; logger-specific helpers
 //! (`HandlePtr`, `CountingHandler`) are defined here.
 
+use super::QueuedRecord;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, SendError, Sender, bounded};
 use parking_lot::Mutex;
+use rstest::fixture;
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,8 +38,37 @@ impl HandlePtr {
 unsafe impl Send for HandlePtr {}
 unsafe impl Sync for HandlePtr {}
 
+#[fixture]
 pub(super) fn collecting_handler() -> Arc<CollectingHandler> {
     Arc::new(CollectingHandler::new())
+}
+
+/// Enqueue one `QueuedRecord` per entry in `messages` on `tx`, all
+/// addressed to `handler`.
+///
+/// Fallible so callers can `.expect()` at the panic boundary; the send
+/// only fails if the receiving end has been dropped.
+pub(super) fn enqueue_records(
+    tx: &Sender<QueuedRecord>,
+    handler: &Arc<dyn FemtoHandlerTrait>,
+    messages: &[&str],
+) -> Result<(), SendError<QueuedRecord>> {
+    for message in messages {
+        tx.send(QueuedRecord {
+            record: FemtoLogRecord::new("core", FemtoLevel::Info, message),
+            handlers: vec![handler.clone()],
+        })?;
+    }
+    Ok(())
+}
+
+/// Return the messages collected by `handler`, in arrival order.
+pub(super) fn collected_messages(handler: &CollectingHandler) -> Vec<String> {
+    handler
+        .collected()
+        .iter()
+        .map(|record| record.message().to_owned())
+        .collect()
 }
 
 #[derive(Clone)]

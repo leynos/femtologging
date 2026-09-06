@@ -6,6 +6,8 @@ RUST_MANIFEST ?= rust_extension/Cargo.toml
 BUILD_JOBS ?=
 RUFF_VERSION ?= 0.15.12
 RUFF ?= uvx ruff==$(RUFF_VERSION)
+TY_VERSION ?= 0.0.75
+TY ?= uvx ty==$(TY_VERSION)
 MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
 # Single source of truth for the typos version, keeping the Makefile and any
@@ -43,7 +45,6 @@ tools:
 	$(call ensure_tool,$(CARGO))
 	$(call ensure_tool,rustfmt)
 	$(call ensure_tool,uv)
-	$(call ensure_tool,ty)
 
 fmt: tools ## Format sources
 	$(RUFF) format
@@ -108,7 +109,9 @@ test: build ## Run tests
 	uv run pytest -v
 
 typecheck: build ## Static type analysis
-	ty check
+	# Pass the environment explicitly: ty 0.0.75 ignores the equivalent
+	# `[tool.ty.environment]` settings.
+	$(TY) check --python ./.venv --extra-search-path scripts
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \

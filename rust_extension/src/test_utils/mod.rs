@@ -5,6 +5,9 @@
 //! below the repository line-length limit.
 
 pub mod collecting_handler;
+/// Assertions for extracted traceback frame fields and local variables.
+#[cfg(feature = "python")]
+pub mod frame_assertion_helpers;
 pub mod frame_test_helpers;
 #[cfg(feature = "python")]
 pub mod traceback_test_helpers;

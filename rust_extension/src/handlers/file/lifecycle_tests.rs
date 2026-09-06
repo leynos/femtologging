@@ -3,11 +3,12 @@
 //!
 //! Split from `tests.rs` to keep each test module within the size limit.
 
+use super::test_support::impl_unsupported_seek;
 use super::*;
 use crate::formatter::DefaultFormatter;
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
-use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
@@ -22,23 +23,24 @@ fn femto_file_handler_worker_thread_failure() {
 
     impl Write for BlockingWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buf.lock().unwrap().write(buf)
+            // Recover from poisoning: the buffer contents remain valid data.
+            self.buf
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
             self.barrier.wait();
-            self.buf.lock().unwrap().flush()
+            // Recover from poisoning: the buffer contents remain valid data.
+            self.buf
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .flush()
         }
     }
 
-    impl Seek for BlockingWriter {
-        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-            Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "seek unsupported for BlockingWriter",
-            ))
-        }
-    }
+    impl_unsupported_seek!(BlockingWriter);
 
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(2));
@@ -79,14 +81,7 @@ fn femto_file_handler_flush_and_close_idempotency() {
         }
     }
 
-    impl Seek for TestWriter {
-        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-            Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "seek unsupported for TestWriter",
-            ))
-        }
-    }
+    impl_unsupported_seek!(TestWriter);
 
     impl Drop for TestWriter {
         fn drop(&mut self) {

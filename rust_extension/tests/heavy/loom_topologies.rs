@@ -2,65 +2,80 @@
 //!
 //! These tests leverage `loom` to explore possible thread interleavings
 //! and ensure log records are routed correctly without duplication.
+//!
+//! Handlers and loggers are held in `std::sync::Arc` because
+//! `FemtoLogger::add_handler` takes a `std::sync::Arc<dyn FemtoHandlerTrait>`;
+//! only the shared output buffers use loom's primitives, since those are the
+//! locations whose interleavings the model actually explores.
 
-#[path = "../test_utils/mod.rs"]
-mod test_utils;
-use test_utils::shared_buffer::loom::read_output;
-use test_utils::shared_buffer::loom::SharedBuf as LoomBuf;
-use loom::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
 use loom::thread;
-use std::io::Write;
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoLogger, FemtoHandlerTrait, FemtoStreamHandler,
+    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogger, FemtoStreamHandler,
 };
 
+use crate::shared_buffer::loom::SharedBuf as LoomBuf;
+use crate::shared_buffer::loom::read_output;
+
+/// A loom-instrumented byte buffer shared with a stream handler.
+type LoomBuffer = LoomArc<LoomMutex<Vec<u8>>>;
+
+/// Return a fresh loom-instrumented output buffer.
+fn fresh_buffer() -> LoomBuffer {
+    LoomArc::new(LoomMutex::new(Vec::new()))
+}
+
+/// Return a default-formatting stream handler writing into `buffer`.
+fn handler_for(buffer: &LoomBuffer) -> Arc<FemtoStreamHandler> {
+    Arc::new(FemtoStreamHandler::new(
+        LoomBuf::new(LoomArc::clone(buffer)),
+        DefaultFormatter,
+    ))
+}
+
+/// Return the buffer contents split into sorted lines.
+///
+/// Ordering between concurrently logged records is not specified, so tests
+/// compare sorted lines rather than raw output.
+fn sorted_lines(buffer: &LoomBuffer) -> Vec<String> {
+    let mut lines: Vec<String> = read_output(buffer).lines().map(str::to_owned).collect();
+    lines.sort();
+    lines
+}
 
 #[test]
-#[ignore]
 fn loom_single_logger_multi_handlers() {
     loom::model(|| {
-        let buf1 = Arc::new(Mutex::new(Vec::new()));
-        let buf2 = Arc::new(Mutex::new(Vec::new()));
-        let h1 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf1)),
-            DefaultFormatter,
-        ));
-        let h2 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf2)),
-            DefaultFormatter,
-        ));
+        let buf1 = fresh_buffer();
+        let buf2 = fresh_buffer();
+        let h1 = handler_for(&buf1);
+        let h2 = handler_for(&buf2);
         let logger = FemtoLogger::new("core".to_string());
         logger.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
         logger.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
         let logger = Arc::new(logger);
         let l = Arc::clone(&logger);
         let t = thread::spawn(move || {
-            l.log("INFO", "one");
+            let _ = l.log(FemtoLevel::Info, "one");
         });
-        logger.log("INFO", "two");
+        let _ = logger.log(FemtoLevel::Info, "two");
         t.join().expect("Thread panicked");
         drop(logger);
         drop(h1);
         drop(h2);
-        let mut lines1: Vec<_> = read_output(&buf1).lines().collect();
-        let mut lines2: Vec<_> = read_output(&buf2).lines().collect();
-        lines1.sort();
-        lines2.sort();
-        assert_eq!(lines1, ["core [INFO] one", "core [INFO] two"]);
-        assert_eq!(lines2, ["core [INFO] one", "core [INFO] two"]);
+        assert_eq!(sorted_lines(&buf1), ["core [INFO] one", "core [INFO] two"]);
+        assert_eq!(sorted_lines(&buf2), ["core [INFO] one", "core [INFO] two"]);
     });
 }
 
 #[test]
-#[ignore]
 fn loom_shared_handler_multi_loggers() {
     loom::model(|| {
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let handler = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buffer)),
-            DefaultFormatter,
-        ));
+        let buffer = fresh_buffer();
+        let handler = handler_for(&buffer);
         let l1 = FemtoLogger::new("a".to_string());
         let l2 = FemtoLogger::new("b".to_string());
         l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
@@ -70,39 +85,27 @@ fn loom_shared_handler_multi_loggers() {
         let t = thread::spawn({
             let l1 = Arc::clone(&l1);
             move || {
-                l1.log("INFO", "one");
+                let _ = l1.log(FemtoLevel::Info, "one");
             }
         });
-        l2.log("INFO", "two");
+        let _ = l2.log(FemtoLevel::Info, "two");
         t.join().expect("Thread panicked");
         drop(l1);
         drop(l2);
         drop(handler);
-        let mut lines: Vec<_> = read_output(&buffer).lines().collect();
-        lines.sort();
-        assert_eq!(lines, ["a [INFO] one", "b [INFO] two"]);
+        assert_eq!(sorted_lines(&buffer), ["a [INFO] one", "b [INFO] two"]);
     });
 }
 
 #[test]
-#[ignore]
 fn loom_multiple_loggers_multiple_handlers() {
     loom::model(|| {
-        let shared_buf = Arc::new(Mutex::new(Vec::new()));
-        let buf1 = Arc::new(Mutex::new(Vec::new()));
-        let buf2 = Arc::new(Mutex::new(Vec::new()));
-        let shared_handler = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&shared_buf)),
-            DefaultFormatter,
-        ));
-        let h1 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf1)),
-            DefaultFormatter,
-        ));
-        let h2 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf2)),
-            DefaultFormatter,
-        ));
+        let shared_buf = fresh_buffer();
+        let buf1 = fresh_buffer();
+        let buf2 = fresh_buffer();
+        let shared_handler = handler_for(&shared_buf);
+        let h1 = handler_for(&buf1);
+        let h2 = handler_for(&buf2);
         let l1 = FemtoLogger::new("l1".to_string());
         l1.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
         l1.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
@@ -114,71 +117,56 @@ fn loom_multiple_loggers_multiple_handlers() {
         let t = thread::spawn({
             let l1 = Arc::clone(&l1);
             move || {
-                l1.log("INFO", "one");
+                let _ = l1.log(FemtoLevel::Info, "one");
             }
         });
-        l2.log("INFO", "two");
+        let _ = l2.log(FemtoLevel::Info, "two");
         t.join().expect("Thread panicked");
         drop(l1);
         drop(l2);
         drop(shared_handler);
         drop(h1);
         drop(h2);
-        let mut shared_lines: Vec<_> = read_output(&shared_buf).lines().collect();
-        shared_lines.sort();
-        assert_eq!(shared_lines, ["l1 [INFO] one", "l2 [INFO] two"]);
+        assert_eq!(
+            sorted_lines(&shared_buf),
+            ["l1 [INFO] one", "l2 [INFO] two"]
+        );
         assert_eq!(read_output(&buf1), "l1 [INFO] one\n");
         assert_eq!(read_output(&buf2), "l2 [INFO] two\n");
     });
 }
 
 #[test]
-#[ignore]
 fn loom_concurrent_handler_addition() {
     loom::model(|| {
-        let buf1 = Arc::new(Mutex::new(Vec::new()));
-        let buf2 = Arc::new(Mutex::new(Vec::new()));
-        let buf3 = Arc::new(Mutex::new(Vec::new()));
-        let h1 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf1)),
-            DefaultFormatter,
-        ));
-        let h2 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf2)),
-            DefaultFormatter,
-        ));
-        let h3 = Arc::new(FemtoStreamHandler::new(
-            LoomBuf(Arc::clone(&buf3)),
-            DefaultFormatter,
-        ));
+        let buf1 = fresh_buffer();
+        let buf2 = fresh_buffer();
+        let buf3 = fresh_buffer();
+        let h1 = handler_for(&buf1);
+        let h2 = handler_for(&buf2);
+        let h3 = handler_for(&buf3);
         let logger = Arc::new(FemtoLogger::new("core".to_string()));
 
-        let t1 = {
+        let adders: Vec<_> = [
+            h1.clone() as Arc<dyn FemtoHandlerTrait>,
+            h2.clone() as Arc<dyn FemtoHandlerTrait>,
+            h3.clone() as Arc<dyn FemtoHandlerTrait>,
+        ]
+        .into_iter()
+        .map(|h| {
             let l = Arc::clone(&logger);
-            let h = h1.clone() as Arc<dyn FemtoHandlerTrait>;
             thread::spawn(move || {
                 l.add_handler(h);
             })
-        };
-        let t2 = {
-            let l = Arc::clone(&logger);
-            let h = h2.clone() as Arc<dyn FemtoHandlerTrait>;
-            thread::spawn(move || {
-                l.add_handler(h);
-            })
-        };
-        let t3 = {
-            let l = Arc::clone(&logger);
-            let h = h3.clone() as Arc<dyn FemtoHandlerTrait>;
-            thread::spawn(move || {
-                l.add_handler(h);
-            })
-        };
-        t1.join().expect("t1");
-        t2.join().expect("t2");
-        t3.join().expect("t3");
+        })
+        .collect();
+        for (index, adder) in adders.into_iter().enumerate() {
+            if adder.join().is_err() {
+                panic!("handler-adding thread {index} panicked");
+            }
+        }
 
-        logger.log("INFO", "hi");
+        let _ = logger.log(FemtoLevel::Info, "hi");
         drop(logger);
         drop(h1);
         drop(h2);

@@ -25,17 +25,23 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
     (builder, root)
 }
 
-fn assert_handler_count(
-    py: Python<'_>,
-    name: &str,
-    expected: usize,
-    reason: &str,
-) -> pyo3::PyResult<()> {
-    // Fetch a logger and assert it exposes the expected number of handlers.
-    let logger = manager::get_logger(py, name)?;
+/// Fetch the logger named `name` and report its handler count.
+///
+/// Fallible so callers can `.expect()` at the assertion site, keeping the
+/// panic line attached to the calling test.
+fn handler_count(py: Python<'_>, name: &str) -> pyo3::PyResult<usize> {
+    let logger = manager::lookup_existing_logger(py, name)?;
     let count = logger.borrow(py).handlers_for_test().len();
-    assert_eq!(count, expected, "{}", reason);
-    Ok(())
+    Ok(count)
+}
+
+/// Assert that the logger named `$name` has `$expected` handlers, panicking
+/// with `$reason` from the caller's line on mismatch.
+macro_rules! assert_handler_count {
+    ($py:expr, $name:expr, $expected:expr, $reason:expr) => {{
+        let count = handler_count($py, $name).expect("existing logger lookup should succeed");
+        assert_eq!(count, $expected, "{}", $reason);
+    }};
 }
 
 #[rstest]
@@ -58,22 +64,25 @@ fn build_rejects_missing_root() {
 
 #[rstest]
 #[serial]
-fn build_accepts_default_version(_gil_and_clean_manager: ()) {
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+fn build_accepts_default_version(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
+    let (_, root) = base_logger_builder;
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
 }
 
 #[rstest]
 #[serial]
-fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
+fn shared_handler_attached_once(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
     Python::attach(|py| {
-        let handler = StreamHandlerBuilder::stderr();
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["h"]);
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-        let builder = ConfigBuilder::new()
-            .with_handler("h", handler)
-            .with_root_logger(root)
+        let (builder, _root) = base_logger_builder;
+        let builder = builder
             .with_logger("first", logger_cfg.clone())
             .with_logger("second", logger_cfg);
         builder.build_and_init().expect("build should succeed");
@@ -108,11 +117,12 @@ fn shared_handler_attached_once(_gil_and_clean_manager: ()) {
 #[serial]
 fn unknown_id_rejected(
     _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     #[case] _kind: &str,
     #[case] add: fn(ConfigBuilder) -> ConfigBuilder,
     #[case] cfg: LoggerConfigBuilder,
 ) {
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let (_, root) = base_logger_builder;
     let builder = add(ConfigBuilder::new()
         .with_root_logger(root)
         .with_logger("child", cfg));
@@ -129,9 +139,12 @@ fn unknown_id_rejected(
 
 #[rstest]
 #[serial]
-fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manager: ()) {
+fn reconfig_with_unknown_filter_preserves_existing_filters(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
     Python::attach(|py| {
-        let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+        let (_, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
         let builder = ConfigBuilder::new()
             .with_filter("lvl", FilterBuilder::Level(filt))
@@ -157,8 +170,11 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(_gil_and_clean_manage
 
 #[rstest]
 #[serial]
-fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+fn unknown_filter_id_rejected(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
+    let (_, root) = base_logger_builder;
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
     let builder = ConfigBuilder::new()
         .with_root_logger(root)
@@ -188,11 +204,12 @@ fn unknown_filter_id_rejected(_gil_and_clean_manager: ()) {
 #[serial]
 fn multiple_unknown_ids_rejected(
     _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     #[case] _kind: &str,
     #[case] add: fn(ConfigBuilder) -> ConfigBuilder,
     #[case] cfg: LoggerConfigBuilder,
 ) {
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+    let (_, root) = base_logger_builder;
     let builder = add(ConfigBuilder::new()
         .with_root_logger(root)
         .with_logger("child", cfg));
@@ -229,16 +246,14 @@ fn disable_existing_loggers_clears_unmentioned(
             .build_and_init()
             .expect("initial build should succeed");
 
-        assert_handler_count(py, "stale", 1, "stale logger should start active")
-            .expect("get_logger should succeed");
+        assert_handler_count!(py, "stale", 1, "stale logger should start active");
 
         let rebuild = ConfigBuilder::new()
             .with_root_logger(root)
             .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
 
-        assert_handler_count(py, "stale", 0, "stale logger should be disabled")
-            .expect("get_logger should succeed");
+        assert_handler_count!(py, "stale", 0, "stale logger should be disabled");
     });
 }
 
@@ -263,8 +278,7 @@ fn disable_existing_loggers_keeps_ancestors(
             .expect("initial build should succeed");
 
         for name in ancestor_names {
-            assert_handler_count(py, name, 1, "ancestor logger should start active")
-                .expect("get_logger should succeed");
+            assert_handler_count!(py, name, 1, "ancestor logger should start active");
         }
 
         let child_name = format!(
@@ -277,11 +291,9 @@ fn disable_existing_loggers_keeps_ancestors(
         rebuild.build_and_init().expect("rebuild should succeed");
 
         for name in ancestor_names {
-            assert_handler_count(py, name, 1, "ancestor logger should remain active")
-                .expect("get_logger should succeed");
+            assert_handler_count!(py, name, 1, "ancestor logger should remain active");
         }
-        assert_handler_count(py, &child_name, 1, "child logger should retain its handler")
-            .expect("get_logger should succeed");
+        assert_handler_count!(py, &child_name, 1, "child logger should retain its handler");
         // femtologging does not mutate Python's standard `logging` module state.
     });
 }

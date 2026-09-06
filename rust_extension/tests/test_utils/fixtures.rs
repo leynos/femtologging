@@ -22,11 +22,20 @@ fn fresh_buffer() -> SharedBytes {
     Arc::new(Mutex::new(Vec::new()))
 }
 
+/// Return a default-configured handler that writes into `buffer`.
+///
+/// Use this when several handlers must share one buffer; otherwise prefer the
+/// `handler_tuple` fixture, which supplies a fresh buffer of its own.
+#[must_use]
+pub fn stream_handler_for(buffer: &SharedBytes) -> FemtoStreamHandler {
+    FemtoStreamHandler::new(SharedBuf::new(Arc::clone(buffer)), DefaultFormatter)
+}
+
 /// Return a handler with a fresh in-memory buffer using the default configuration.
 #[fixture]
 pub fn handler_tuple() -> (SharedBytes, FemtoStreamHandler) {
     let buffer = fresh_buffer();
-    let handler = FemtoStreamHandler::new(SharedBuf::new(Arc::clone(&buffer)), DefaultFormatter);
+    let handler = stream_handler_for(&buffer);
     (buffer, handler)
 }
 

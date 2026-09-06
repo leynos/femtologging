@@ -285,6 +285,14 @@ where applicable.
   compile-time filtering). See
   [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap)
   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+- [x] 4.1.5. Sweep the Rust test suites for structural quality: consolidate
+  unit-test and integration-test helpers and fixtures, strengthen assertions,
+  restore Cargo discovery for the heavy target, keep Loom models explicitly
+  configuration-gated, and document the `make typecheck` environment and
+  heavy-test workflow. See
+  [developer workflow](./dev-workflow.md#commands),
+  [developers guide](./developers-guide.md#type-checking-and-heavy-tests), and
+  [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
 ### 4.2. Delivery and adoption
 

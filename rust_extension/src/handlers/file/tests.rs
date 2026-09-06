@@ -3,13 +3,13 @@
 //! These tests verify the wiring between configuration and worker threads as
 //! well as basic flushing behaviour.
 
-use super::test_support::{install_test_logger, take_logged_messages};
+use super::test_support::{impl_unsupported_seek, install_test_logger, take_logged_messages};
 use super::*;
 use crate::handler::HandlerError;
 use log::Level;
 use rstest::rstest;
 use serial_test::serial;
-use std::io::{self, Cursor, ErrorKind, Seek, SeekFrom, Write};
+use std::io::{self, Cursor, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
@@ -51,14 +51,7 @@ impl Write for SharedBuf {
     }
 }
 
-impl Seek for SharedBuf {
-    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-        Err(io::Error::new(
-            ErrorKind::Unsupported,
-            "seek unsupported for SharedBuf",
-        ))
-    }
-}
+impl_unsupported_seek!(SharedBuf);
 
 struct CountingRotation {
     calls: Arc<AtomicUsize>,
@@ -250,8 +243,9 @@ fn build_from_worker_wires_handler_components() {
     assert_eq!(contents, "core [INFO] test\n");
 }
 
-// `#[serial]` wraps the test bodies below, so the expect lint cannot
-// recognise them as tests; errors are propagated instead.
+// `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
+// so this test is not recognised as test-only code and must propagate
+// errors with `?` rather than `.expect(...)`.
 #[test]
 #[serial]
 fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::Error>> {
@@ -347,6 +341,9 @@ fn femto_file_handler_rejects_zero_flush_interval(
     );
 }
 
+// `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
+// so this test is not recognised as test-only code and must propagate
+// errors with `?` rather than `.expect(...)`.
 #[test]
 #[serial]
 fn femto_file_handler_queue_overflow_drop_policy() -> Result<(), Box<dyn std::error::Error>> {

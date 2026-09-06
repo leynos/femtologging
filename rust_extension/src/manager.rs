@@ -116,6 +116,23 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     }
 }
 
+/// Return an existing logger without changing the manager registry.
+#[cfg(all(test, feature = "python"))]
+pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+    if is_invalid_logger_name(name) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "logger name cannot be empty, start or end with '.', or contain consecutive dots",
+        ));
+    }
+
+    MANAGER
+        .read()
+        .loggers
+        .get(name)
+        .map(|logger| logger.clone_ref(py))
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("logger {name:?} not found")))
+}
+
 #[cfg(feature = "python")]
 pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
@@ -176,6 +193,42 @@ pub fn reset_manager() {
 #[cfg(test)]
 mod tests {
     //! Tests for the logger manager registry.
+
+    #[cfg(feature = "python")]
+    mod lookup {
+        //! Tests for read-only logger lookup.
+
+        use pyo3::Python;
+        use serial_test::serial;
+
+        use super::super::{MANAGER, get_logger, lookup_existing_logger, reset_manager};
+
+        #[test]
+        #[serial]
+        fn lookup_existing_logger_does_not_create_missing_loggers() {
+            Python::attach(|py| {
+                reset_manager();
+
+                assert!(
+                    lookup_existing_logger(py, "missing").is_err(),
+                    "a missing logger should return an explicit lookup error",
+                );
+                assert!(
+                    MANAGER.read().loggers.is_empty(),
+                    "a failed lookup must not create root or the requested logger",
+                );
+
+                assert!(
+                    get_logger(py, "existing").is_ok(),
+                    "logger setup should succeed before the lookup",
+                );
+                assert!(
+                    lookup_existing_logger(py, "existing").is_ok(),
+                    "an existing logger should be returned by the read-only lookup",
+                );
+            });
+        }
+    }
 
     #[cfg(feature = "log-compat")]
     mod log_compat {

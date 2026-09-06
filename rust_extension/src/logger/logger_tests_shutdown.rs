@@ -4,8 +4,10 @@
 //! `worker_thread_loop` drain-on-shutdown guarantee.
 
 use super::*;
-use rstest::{fixture, rstest};
+use rstest::rstest;
 use std::sync::Arc;
+
+use super::super::logger_tests_helpers::{collected_messages, collecting_handler, enqueue_records};
 
 // ------------------------------------------------------------------
 // should_shutdown_now
@@ -45,45 +47,30 @@ fn should_shutdown_now_cases(state: ShutdownState, expected: bool) {
 // shutdown_and_drain
 // ------------------------------------------------------------------
 
-#[fixture]
-fn collecting_handler() -> Arc<CollectingHandler> {
-    Arc::new(CollectingHandler::new())
-}
-
 #[rstest]
 fn shutdown_and_drain_processes_all_records_in_order(collecting_handler: Arc<CollectingHandler>) {
     let (tx, rx) = crossbeam_channel::bounded(8);
-
-    for i in 0..5 {
-        tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", FemtoLevel::Info, &format!("msg-{i}")),
-            handlers: vec![collecting_handler.clone() as Arc<dyn FemtoHandlerTrait>],
-        })
-        .expect("Failed to enqueue record");
-    }
+    let handler = collecting_handler.clone() as Arc<dyn FemtoHandlerTrait>;
+    enqueue_records(
+        &tx,
+        &handler,
+        &["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"],
+    )
+    .expect("Failed to enqueue records");
 
     FemtoLogger::shutdown_and_drain(&rx);
 
-    let collected = collecting_handler.collected();
-    let msgs: Vec<&str> = collected.iter().map(|r| r.message()).collect();
-    assert_eq!(msgs, vec!["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"]);
+    assert_eq!(
+        collected_messages(&collecting_handler),
+        vec!["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"]
+    );
 }
 
 #[rstest]
 fn shutdown_and_drain_leaves_channel_empty(collecting_handler: Arc<CollectingHandler>) {
     let (tx, rx) = crossbeam_channel::bounded(4);
     let handler: Arc<dyn FemtoHandlerTrait> = collecting_handler as Arc<dyn FemtoHandlerTrait>;
-
-    tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", FemtoLevel::Info, "a"),
-        handlers: vec![handler.clone()],
-    })
-    .expect("Failed to enqueue record");
-    tx.send(QueuedRecord {
-        record: FemtoLogRecord::new("core", FemtoLevel::Info, "b"),
-        handlers: vec![handler],
-    })
-    .expect("Failed to enqueue record");
+    enqueue_records(&tx, &handler, &["a", "b"]).expect("Failed to enqueue records");
 
     FemtoLogger::shutdown_and_drain(&rx);
 
@@ -108,13 +95,9 @@ fn worker_loop_drains_all_queued_records_on_shutdown() {
     // the worker so every record is guaranteed to be queued when the
     // shutdown signal arrives.
     let record_count: usize = 50;
-    for i in 0..record_count {
-        tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("core", FemtoLevel::Info, &format!("{i}")),
-            handlers: vec![handler_trait.clone()],
-        })
-        .expect("Failed to enqueue record");
-    }
+    let messages: Vec<String> = (0..record_count).map(|i| i.to_string()).collect();
+    let message_refs: Vec<&str> = messages.iter().map(String::as_str).collect();
+    enqueue_records(&tx, &handler_trait, &message_refs).expect("Failed to enqueue records");
     // Send the shutdown signal before the worker even starts so
     // Phase 1 picks it up immediately.
     shutdown_tx
@@ -127,13 +110,11 @@ fn worker_loop_drains_all_queued_records_on_shutdown() {
 
     worker.join().expect("Worker thread panicked");
 
-    let collected = handler.collected();
+    let msgs = collected_messages(&handler);
     assert_eq!(
-        collected.len(),
+        msgs.len(),
         record_count,
         "all pre-queued records must be drained on shutdown"
     );
-    let msgs: Vec<String> = collected.iter().map(|r| r.message().to_owned()).collect();
-    let expected: Vec<String> = (0..record_count).map(|i| i.to_string()).collect();
-    assert_eq!(msgs, expected, "records must be drained in FIFO order");
+    assert_eq!(msgs, messages, "records must be drained in FIFO order");
 }

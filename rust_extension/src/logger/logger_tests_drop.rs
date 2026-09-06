@@ -49,7 +49,15 @@ fn spawn_lock_attempt_worker(
     })
 }
 
-fn wait_for_drop_to_acquire_lock(handle_ptr: HandlePtr, timeout: std::time::Duration) {
+/// Poll `handle_ptr` until the drop thread has taken the handle mutex, or
+/// return an error describing the timeout.
+///
+/// Fallible so the calling test can `.expect()` at the panic boundary,
+/// keeping the descriptive message attached to the caller's line.
+fn wait_for_drop_to_acquire_lock(
+    handle_ptr: HandlePtr,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
     use std::time::Instant;
 
     // SAFETY: The logger outlives the drop thread and mutex guards access.
@@ -58,12 +66,12 @@ fn wait_for_drop_to_acquire_lock(handle_ptr: HandlePtr, timeout: std::time::Dura
     while probe_start.elapsed() < timeout {
         if let Some(guard) = handle_mutex.try_lock() {
             if guard.is_none() {
-                return;
+                return Ok(());
             }
         }
         std::thread::yield_now();
     }
-    panic!("Timed out waiting for drop thread to take handle mutex");
+    Err("timed out waiting for drop thread to take handle mutex".to_string())
 }
 
 #[test]
@@ -96,7 +104,8 @@ fn drop_releases_handle_lock_before_join() {
     drop_started_rx
         .recv()
         .expect("Failed to wait for drop start");
-    wait_for_drop_to_acquire_lock(handle_ptr, Duration::from_millis(200));
+    wait_for_drop_to_acquire_lock(handle_ptr, Duration::from_millis(200))
+        .expect("drop thread should take the handle mutex before joining");
 
     start_lock_tx
         .send(())

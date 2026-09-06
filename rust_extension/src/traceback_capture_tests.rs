@@ -6,9 +6,17 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyTuple};
 use rstest::rstest;
+use std::ffi::CString;
 
 use crate::exception_schema::EXCEPTION_SCHEMA_VERSION;
+use crate::test_utils::traceback_test_helpers::{
+    builtin_type, create_builtin_exception, create_value_error,
+};
 use crate::traceback_capture::{capture_exception, capture_stack};
+
+/// Python source that raises a nested `ValueError`, then clears the
+/// exception's `__traceback__` while retaining the traceback separately.
+const EXPLICIT_TRACEBACK_SOURCE: &str = include_str!("test_fixtures/explicit_traceback.py");
 
 #[rstest]
 fn capture_exception_with_true_no_active_exception() {
@@ -34,13 +42,7 @@ fn capture_exception_with_false_returns_none() {
 fn capture_exception_with_instance() {
     Python::attach(|py| {
         // Create an exception instance
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("test error",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_value_error(py, "test error").expect("exception should build");
 
         let result = capture_exception(py, &exc)
             .expect("capture_exception should succeed with exception instance");
@@ -57,11 +59,7 @@ fn capture_exception_with_instance() {
 fn capture_exception_with_tuple() {
     Python::attach(|py| {
         // Create a 3-tuple (type, value, traceback)
-        let exc_type = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("KeyError")
-            .expect("KeyError should exist");
+        let exc_type = builtin_type(py, "KeyError").expect("KeyError should exist");
         let exc_value = exc_type
             .call1(("missing_key",))
             .expect("KeyError constructor should succeed");
@@ -101,25 +99,10 @@ fn capture_exception_tuple_preserves_explicit_traceback() {
     Python::attach(|py| {
         // Raise an exception to get a real traceback, then clear __traceback__
         // but pass the traceback explicitly in the tuple - frames should be preserved
-        let code = c"
-def inner():
-    raise ValueError('test error')
-
-def outer():
-    inner()
-
-try:
-    outer()
-except ValueError as e:
-    exc_type = type(e)
-    exc_value = e
-    exc_tb = e.__traceback__
-    # Clear the exception's __traceback__ to simulate the case where
-    # it has been garbage collected or explicitly cleared
-    e.__traceback__ = None
-";
+        let code = CString::new(EXPLICIT_TRACEBACK_SOURCE)
+            .expect("fixture source should not contain NUL bytes");
         let globals = PyDict::new(py);
-        py.run(code, Some(&globals), None)
+        py.run(code.as_c_str(), Some(&globals), None)
             .expect("code to raise and capture exception should succeed");
 
         let exc_type = globals
@@ -254,13 +237,8 @@ fn capture_exception_with_notes() {
 #[rstest]
 fn capture_exception_args_repr() {
     Python::attach(|py| {
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("message", 42))
-            .expect("ValueError constructor should succeed");
+        let exc = create_builtin_exception(py, "ValueError", ("message", 42))
+            .expect("exception should build");
 
         let payload = capture_exception(py, &exc)
             .expect("capture_exception should succeed")
@@ -276,13 +254,7 @@ fn capture_exception_args_repr() {
 fn capture_exception_builtin_has_no_module() {
     // Built-in exceptions should have module=None because "builtins" is filtered.
     Python::attach(|py| {
-        let exc = py
-            .import("builtins")
-            .expect("builtins module should exist")
-            .getattr("ValueError")
-            .expect("ValueError should exist")
-            .call1(("test",))
-            .expect("ValueError constructor should succeed");
+        let exc = create_value_error(py, "test").expect("exception should build");
 
         let payload = capture_exception(py, &exc)
             .expect("capture_exception should succeed")

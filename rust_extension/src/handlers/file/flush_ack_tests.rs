@@ -4,8 +4,9 @@
 //! acknowledgement rather than reusing a stale ack from an earlier timed-out
 //! flush.
 
+use super::test_support::impl_unsupported_seek;
 use super::*;
-use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
+use std::io::{self, ErrorKind, Write};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -103,14 +104,7 @@ impl Write for BlockingFlushWriter {
     }
 }
 
-impl Seek for BlockingFlushWriter {
-    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-        Err(io::Error::new(
-            ErrorKind::Unsupported,
-            "seek unsupported for BlockingFlushWriter",
-        ))
-    }
-}
+impl_unsupported_seek!(BlockingFlushWriter);
 
 /// Ensure each flush waits on its own acknowledgement channel.
 #[test]

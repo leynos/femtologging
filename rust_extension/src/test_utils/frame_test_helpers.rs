@@ -14,6 +14,7 @@ pub fn make_frame(filename: &str, lineno: u32, function: &str) -> StackFrame {
 ///
 /// Validates that `expected_len` matches `expected_values.len()` to catch test
 /// authoring errors.
+#[track_caller]
 pub fn assert_frames_by_field<F>(
     frames: &[StackFrame],
     expected_len: usize,
@@ -41,11 +42,13 @@ pub fn assert_frames_by_field<F>(
 }
 
 /// Assert frames have expected length and filenames.
+#[track_caller]
 pub fn assert_frames(frames: &[StackFrame], expected_len: usize, expected_filenames: &[&str]) {
     assert_frames_by_field(frames, expected_len, expected_filenames, |f| &f.filename);
 }
 
 /// Assert frames have expected length and function names.
+#[track_caller]
 pub fn assert_frames_by_function(
     frames: &[StackFrame],
     expected_len: usize,
@@ -55,6 +58,7 @@ pub fn assert_frames_by_function(
 }
 
 /// Assert a payload's frames have expected length and filenames.
+#[track_caller]
 pub fn assert_payload_frames(
     payload: &ExceptionPayload,
     expected_len: usize,
@@ -64,6 +68,7 @@ pub fn assert_payload_frames(
 }
 
 /// Assert a payload's frames have expected length and function names.
+#[track_caller]
 pub fn assert_payload_frames_by_function(
     payload: &ExceptionPayload,
     expected_len: usize,

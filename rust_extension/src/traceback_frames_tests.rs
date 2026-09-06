@@ -89,11 +89,22 @@ fn frame_with_missing_optional_fields(
 }
 
 /// Which required field is missing from the frame dict.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum MissingField {
     Filename,
     Lineno,
     Name,
+}
+
+impl MissingField {
+    /// The frame attribute name this variant omits.
+    const fn field_name(self) -> &'static str {
+        match self {
+            Self::Filename => "filename",
+            Self::Lineno => "lineno",
+            Self::Name => "name",
+        }
+    }
 }
 
 #[rstest]
@@ -105,27 +116,9 @@ fn frame_missing_required_field_returns_error(
     #[case] expected_error_substr: &str,
 ) {
     Python::attach(|py| {
-        let dict = PyDict::new(py);
-        match missing {
-            MissingField::Filename => {
-                dict.set_item("lineno", 1)
-                    .expect("set lineno should succeed");
-                dict.set_item("name", "func")
-                    .expect("set name should succeed");
-            }
-            MissingField::Lineno => {
-                dict.set_item("filename", "test.py")
-                    .expect("set filename should succeed");
-                dict.set_item("name", "func")
-                    .expect("set name should succeed");
-            }
-            MissingField::Name => {
-                dict.set_item("filename", "test.py")
-                    .expect("set filename should succeed");
-                dict.set_item("lineno", 1)
-                    .expect("set lineno should succeed");
-            }
-        }
+        let dict = base_frame_dict(py).expect("base frame dict should build");
+        dict.del_item(missing.field_name())
+            .expect("removing the required field should succeed");
 
         assert_frame_extraction_error_contains(&dict, expected_error_substr)
             .expect("frame arrangement should succeed");
@@ -135,13 +128,9 @@ fn frame_missing_required_field_returns_error(
 #[test]
 fn frame_with_wrong_type_lineno_returns_error() {
     Python::attach(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("filename", "test.py")
-            .expect("set filename should succeed");
+        let dict = base_frame_dict(py).expect("base frame dict should build");
         dict.set_item("lineno", "not_a_number")
             .expect("set lineno should succeed");
-        dict.set_item("name", "func")
-            .expect("set name should succeed");
 
         assert_frame_extraction_error_contains(&dict, "integer")
             .expect("frame arrangement should succeed");
