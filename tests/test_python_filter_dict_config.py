@@ -19,7 +19,25 @@ _FACTORY_PATH = "tests.python_filter_support.ContextFilterFactory"
 _NONCALLABLE_PATH = "tests.python_filter_support.NONCALLABLE_FACTORY"
 
 
-def _collect_single_record(context: str) -> dict[str, typ.Any]:
+class _RecordKeyValues(typ.TypedDict):
+    """Typed record metadata read by the factory-mode filter assertions."""
+
+    request_id: str
+
+
+class _RecordMetadata(typ.TypedDict):
+    """Typed metadata envelope emitted by the test record collector."""
+
+    key_values: _RecordKeyValues
+
+
+class _CollectedRecord(typ.TypedDict):
+    """Narrow view of the record payload used in this module."""
+
+    metadata: _RecordMetadata
+
+
+def _collect_single_record(context: str) -> _CollectedRecord:
     """Attach a collector to ``app``, emit one record, and return it."""
     collector = RecordCollector()
     get_logger("app").add_handler(collector)
@@ -28,7 +46,7 @@ def _collect_single_record(context: str) -> dict[str, typ.Any]:
         f"{context}: the configured filter must accept the record"
     )
     wait_for(lambda: len(collector.records) == 1, "the record reaches the collector")
-    return collector.records[0]
+    return typ.cast("_CollectedRecord", collector.records[0])
 
 
 def test_dict_config_filter_factory_form_supports_kwargs() -> None:
@@ -74,9 +92,8 @@ def test_dict_config_filter_factory_rejects_non_callable_objects() -> None:
 def test_dict_config_filter_factory_prefers_attributes_over_submodules() -> None:
     """Factory resolution should prefer attributes before importing submodules."""
     package = types.ModuleType("factory_pkg")
-    package_obj = typ.cast("typ.Any", package)
-    package_obj.__path__ = []
-    package_obj.factory = ContextFilterFactory
+    package.__dict__["__path__"] = []
+    package.__dict__["factory"] = ContextFilterFactory
     submodule = types.ModuleType("factory_pkg.factory")
     original_modules = dict(sys.modules)
     sys.modules["factory_pkg"] = package

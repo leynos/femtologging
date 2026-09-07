@@ -79,8 +79,7 @@ def test_basic_config_fields_are_readable_and_assignable() -> None:
 def test_basic_config_rejects_unknown_attribute() -> None:
     """Verify assigning an undeclared field raises AttributeError."""
     cfg = BasicConfig(level="INFO")
+    misspelled_attribute = "filenam"
 
     with pytest.raises(AttributeError, match="filenam"):
-        # ty: ignore[unresolved-attribute] deliberate typo proving slots
-        # reject unknown fields
-        cfg.filenam = "/var/log/app.log"
+        setattr(cfg, misspelled_attribute, "/var/log/app.log")

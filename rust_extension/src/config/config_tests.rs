@@ -257,6 +257,38 @@ fn disable_existing_loggers_clears_unmentioned(
     });
 }
 
+#[rstest]
+#[serial]
+fn failed_reconfiguration_preserves_unmentioned_loggers(_gil_and_clean_manager: ()) {
+    Python::attach(|py| {
+        let initial = builder_with_root(LoggerConfigBuilder::new())
+            .with_logger("stale", LoggerConfigBuilder::new().with_handlers(["h"]));
+        initial
+            .build_and_init()
+            .expect("initial configuration should succeed");
+        assert_handler_count(py, "stale", 1, "stale logger should start active")
+            .expect("get_logger should succeed");
+
+        let invalid = ConfigBuilder::new()
+            .with_root_logger(LoggerConfigBuilder::new())
+            .with_disable_existing_loggers(true)
+            .with_logger(
+                "broken",
+                LoggerConfigBuilder::new().with_handlers(["missing"]),
+            );
+        invalid
+            .build_and_init()
+            .expect_err("unknown handler must reject the replacement configuration");
+
+        assert_handler_count(
+            py,
+            "stale",
+            1,
+            "failed replacement must leave unmentioned loggers unchanged",
+        )
+        .expect("get_logger should succeed");
+    });
+}
 #[rstest(
     ancestor_names,
     case::parent(&["parent"]),

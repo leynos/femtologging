@@ -144,11 +144,15 @@ def _assert_nested_payload(
 ) -> dict[str, object]:
     """Assert ``key`` holds a nested JSON object and return it."""
     nested = _assert_has_key(payload, key, context)
-    assert isinstance(nested, dict), (
-        f"{context}: {key!r} must serialize as a JSON object, "
-        f"got {type(nested).__name__}"
-    )
-    return nested
+    match nested:
+        case dict() as nested_payload:
+            return nested_payload
+        case _:
+            msg = (
+                f"{context}: {key!r} must serialize as a JSON object, "
+                f"got {type(nested).__name__}"
+            )
+            raise AssertionError(msg)
 
 
 def _assert_field_equals(
@@ -191,14 +195,21 @@ def json_contains_nested(
 
 @then(parsers.parse('the JSON contains "{key}" array with {count:d} items'))
 def json_array_length(serialized_json: dict[str, str], key: str, count: int) -> None:
+    """Assert that a serialized field is an array with the requested length."""
     context = "exception group serialization"
     items = _assert_has_key(_decode(serialized_json), key, context)
-    assert isinstance(items, list), (
-        f"{context}: {key!r} must serialize as a JSON array, got {type(items).__name__}"
-    )
-    assert len(items) == count, (
-        f"{context}: {key!r} must hold {count} nested entries, got {len(items)}"
-    )
+    match items:
+        case list() as json_items:
+            assert len(json_items) == count, (
+                f"{context}: {key!r} must hold {count} nested entries, "
+                f"got {len(json_items)}"
+            )
+        case _:
+            msg = (
+                f"{context}: {key!r} must serialize as a JSON array, "
+                f"got {type(items).__name__}"
+            )
+            raise AssertionError(msg)
 
 
 @then("the JSON matches snapshot")
@@ -231,11 +242,16 @@ def constant_is_accessible() -> None:
 
 @then("the constant value is a positive integer")
 def constant_is_positive_int() -> None:
-    assert isinstance(EXCEPTION_SCHEMA_VERSION, int), (
-        "EXCEPTION_SCHEMA_VERSION must cross the FFI boundary as an int, "
-        f"got {type(EXCEPTION_SCHEMA_VERSION).__name__}"
-    )
-    assert EXCEPTION_SCHEMA_VERSION > 0, (
-        "schema versions are one-based, so EXCEPTION_SCHEMA_VERSION must be "
-        f"positive; got {EXCEPTION_SCHEMA_VERSION}"
-    )
+    """Assert that the native schema version is a positive Python integer."""
+    match EXCEPTION_SCHEMA_VERSION:
+        case int() as version:
+            assert version > 0, (
+                "schema versions are one-based, so EXCEPTION_SCHEMA_VERSION must "
+                f"be positive; got {version}"
+            )
+        case value:
+            msg = (
+                "EXCEPTION_SCHEMA_VERSION must cross the FFI boundary as an int, "
+                f"got {type(value).__name__}"
+            )
+            raise AssertionError(msg)

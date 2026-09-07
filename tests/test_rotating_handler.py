@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import typing as typ
+from contextlib import closing
 
 import pytest
 from hypothesis import given, settings
@@ -184,8 +185,7 @@ def test_rotating_handler_threshold_pairing_is_the_only_rule(
 
     if _is_paired(max_bytes, backup_count):
         options = HandlerOptions(rotation=(max_bytes, backup_count))
-        handler = FemtoRotatingFileHandler(str(path), options=options)
-        try:
+        with closing(FemtoRotatingFileHandler(str(path), options=options)) as handler:
             assert (handler.max_bytes, handler.backup_count) == (
                 max_bytes,
                 backup_count,
@@ -194,8 +194,6 @@ def test_rotating_handler_threshold_pairing_is_the_only_rule(
                 "accepted verbatim, but the handler reported "
                 f"({handler.max_bytes}, {handler.backup_count})"
             )
-        finally:
-            handler.close()
     else:
         with pytest.raises(ValueError, match=re.escape(ROTATION_VALIDATION_MSG)):
             FemtoRotatingFileHandler(

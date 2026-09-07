@@ -17,7 +17,6 @@ use super::types::{ConfigBuilder, LoggerConfigBuilder};
 
 struct ConfiguredLoggerPlan {
     name: String,
-    logger: Py<FemtoLogger>,
     handler_ids: Vec<String>,
     filter_ids: Vec<String>,
     handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
@@ -47,18 +46,6 @@ impl ConfigBuilder {
         )?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
-            if self.disable_existing_loggers() {
-                let mut keep_names: HashSet<String> = self
-                    .logger_builders()
-                    .keys()
-                    .cloned()
-                    .chain(std::iter::once("root".to_string()))
-                    .collect();
-                self.extend_keep_names_with_ancestors(&mut keep_names);
-                manager::disable_existing_loggers(py, &keep_names)
-                    .map_err(|e| ConfigError::LoggerInit(e.to_string()))?;
-            }
-
             let targets = self
                 .root_logger()
                 .map(|c| ("root", c))
@@ -66,13 +53,37 @@ impl ConfigBuilder {
                 .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
             let plans = targets
                 .map(|(name, cfg)| {
-                    self.prepare_logger_plan(py, name, cfg, &built_handlers, &built_filters)
+                    self.prepare_logger_plan(name, cfg, &built_handlers, &built_filters)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let staged_loggers =
+                manager::stage_loggers(py, plans.iter().map(|plan| plan.name.as_str()))
+                    .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
+            let keep_names = self.disable_existing_loggers().then(|| {
+                let mut names: HashSet<String> = self
+                    .logger_builders()
+                    .keys()
+                    .cloned()
+                    .chain(std::iter::once("root".to_string()))
+                    .collect();
+                self.extend_keep_names_with_ancestors(&mut names);
+                names
+            });
+            let committed_loggers = manager::commit_staged_loggers(py, staged_loggers);
+
+            if let Some(keep_names) = &keep_names {
+                manager::disable_existing_loggers(py, keep_names);
+            }
 
             let mut runtime_loggers = BTreeMap::new();
             for plan in &plans {
-                self.apply_logger_plan(py, plan);
+                let logger = committed_loggers.get(&plan.name).ok_or_else(|| {
+                    ConfigError::LoggerInit(format!(
+                        "missing committed logger for configuration plan {}",
+                        plan.name
+                    ))
+                })?;
+                self.apply_logger_plan(py, logger, plan);
                 runtime_loggers.insert(
                     plan.name.clone(),
                     manager::LoggerAttachmentState::new(
@@ -124,14 +135,6 @@ impl ConfigBuilder {
         Ok(built)
     }
 
-    fn fetch_logger<'py>(
-        &self,
-        py: Python<'py>,
-        name: &str,
-    ) -> Result<Py<FemtoLogger>, ConfigError> {
-        manager::get_logger(py, name).map_err(|e| ConfigError::LoggerInit(format!("{name}: {e}")))
-    }
-
     fn collect_items<T: ?Sized>(
         ids: &[String],
         pool: &BTreeMap<String, Arc<T>>,
@@ -170,22 +173,19 @@ impl ConfigBuilder {
         ConfigError::DuplicateFilterIds(ids)
     }
 
-    fn prepare_logger_plan<'py>(
+    fn prepare_logger_plan(
         &self,
-        py: Python<'py>,
         name: &str,
         cfg: &LoggerConfigBuilder,
         handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
         filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
     ) -> Result<ConfiguredLoggerPlan, ConfigError> {
-        let logger = self.fetch_logger(py, name)?;
         let planned_handlers =
             Self::collect_items(cfg.handler_ids(), handlers, Self::duplicate_handler_ids)?;
         let planned_filters =
             Self::collect_items(cfg.filter_ids(), filters, Self::duplicate_filter_ids)?;
         Ok(ConfiguredLoggerPlan {
             name: name.to_string(),
-            logger,
             handler_ids: cfg.handler_ids().to_vec(),
             filter_ids: cfg.filter_ids().to_vec(),
             handlers: planned_handlers,
@@ -195,8 +195,13 @@ impl ConfigBuilder {
         })
     }
 
-    fn apply_logger_plan(&self, py: Python<'_>, plan: &ConfiguredLoggerPlan) {
-        let logger_ref = plan.logger.borrow(py);
+    fn apply_logger_plan(
+        &self,
+        py: Python<'_>,
+        logger: &Py<FemtoLogger>,
+        plan: &ConfiguredLoggerPlan,
+    ) {
+        let logger_ref = logger.borrow(py);
         logger_ref.clear_handlers();
         for handler in &plan.handlers {
             logger_ref.add_handler(handler.clone());

@@ -71,6 +71,22 @@ def test_file_config_expands_defaults(tmp_path: Path) -> None:
     )
 
 
+def test_file_config_rejects_unresolved_placeholders_without_defaults(
+    tmp_path: Path,
+) -> None:
+    """Undefined placeholders must fail even when no defaults mapping exists."""
+    ini = tmp_path / "unresolved-placeholder.ini"
+    ini.write_text(
+        "[loggers]\nkeys = root\n\n[handlers]\nkeys = h\n\n"
+        "[handler_h]\nclass = femtologging.StreamHandler\n"
+        "args = ('%(missing)s',)\n\n[logger_root]\nhandlers = h\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown placeholder 'missing'"):
+        fileConfig(ini)
+
+
 def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
     """Handler level specification should be rejected by fileConfig."""
     ini = tmp_path / "bad.ini"

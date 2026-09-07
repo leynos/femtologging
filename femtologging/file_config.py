@@ -25,8 +25,7 @@ _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
 # TRY003/EM101 lint rules throughout this module.
 
 
-# ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.fileConfig
-def fileConfig(
+def fileConfig(  # ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.fileConfig
     fname: str | bytes | PathLike[str] | PathLike[bytes],
     defaults: cabc.Mapping[str, object] | None = None,
     *,
@@ -275,7 +274,7 @@ def _require_section(
 
 def _expand_placeholders(value: str, defaults: cabc.Mapping[str, str]) -> str:
     """Expand ``%(name)s`` placeholders, rejecting names absent from *defaults*."""
-    if not defaults or "%(" not in value:
+    if "%(" not in value:
         return value
 
     def replacer(match: re.Match[str]) -> str:
