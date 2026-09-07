@@ -40,8 +40,9 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
     Notes
     -----
     Context values are merged on the producer thread before queueing. The
-    ``extra`` mapping accepted by ``FemtoLogger.log()`` and its convenience
-    methods overrides scoped context keys with the same name. Rust
+    ``extra`` mapping accepted by ``FemtoLogger.log()``, ``debug()``,
+    ``info()``, ``warning()``, ``error()``, and ``critical()`` overrides
+    scoped context keys with the same name. Rust
     ``tracing``-bridge events use span fields instead of this scoped context.
 
     The context stack is thread-local, not task-local. Holding this context
