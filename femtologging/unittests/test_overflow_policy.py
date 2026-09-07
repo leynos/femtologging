@@ -124,3 +124,11 @@ def test_string_representation_matches_repr() -> None:
     assert str(policy) == repr(policy), (
         "str() must reuse the repr form so log messages stay unambiguous"
     )
+
+
+@pytest.mark.parametrize("milliseconds", [1, 200, 2**32, 2**63])
+def test_equal_timeout_policies_share_dictionary_keys(milliseconds: int) -> None:
+    """Equal timeout policies retrieve the same dictionary entries."""
+    entries = {OverflowPolicy.timeout(milliseconds): "stored"}
+
+    assert entries[OverflowPolicy.timeout(milliseconds)] == "stored"

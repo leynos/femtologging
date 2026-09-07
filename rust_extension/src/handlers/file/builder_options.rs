@@ -47,7 +47,7 @@ where
 {
     /// Bundle rotation behaviour and an optional start barrier for worker
     /// construction.
-    pub(crate) fn new(rotation: R, start_barrier: Option<Arc<Barrier>>) -> Self {
+    pub(crate) const fn new(rotation: R, start_barrier: Option<Arc<Barrier>>) -> Self {
         Self {
             rotation,
             start_barrier,

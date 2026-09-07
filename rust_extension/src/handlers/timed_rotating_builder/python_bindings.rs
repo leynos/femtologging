@@ -27,14 +27,14 @@ use crate::{
     macros::{AsPyDict, dict_into_py},
 };
 
-fn extract_positive_i128(value: Bound<'_, PyAny>, field: &str) -> PyResult<i128> {
-    let value = value.extract::<i128>()?;
-    if value <= 0 {
+fn extract_positive_i128(value: &Bound<'_, PyAny>, field: &str) -> PyResult<i128> {
+    let extracted_value = value.extract::<i128>()?;
+    if extracted_value <= 0 {
         return Err(PyValueError::new_err(format!(
             "{field} must be greater than zero",
         )));
     }
-    Ok(value)
+    Ok(extracted_value)
 }
 
 fn nonzero_interval(value: u64) -> PyResult<NonZeroU64> {
@@ -45,12 +45,12 @@ fn nonzero_interval(value: u64) -> PyResult<NonZeroU64> {
 fn map_config_error(err: HandlerBuildError) -> PyErr {
     match err {
         HandlerBuildError::InvalidConfig(message) => PyValueError::new_err(message),
-        other => PyErr::from(other),
+        HandlerBuildError::Io(error) => PyErr::from(HandlerBuildError::Io(error)),
     }
 }
 
-fn extract_optional_time(value: Bound<'_, PyAny>) -> PyResult<Option<NaiveTime>> {
-    extract_naive_time_from_py_time(&value, "at_time", true)
+fn extract_optional_time(value: &Bound<'_, PyAny>) -> PyResult<Option<NaiveTime>> {
+    extract_naive_time_from_py_time(value, "at_time", true)
 }
 
 fn fill_pydict(builder: &TimedRotatingFileHandlerBuilder, d: &Bound<'_, PyDict>) -> PyResult<()> {
@@ -66,10 +66,10 @@ fn fill_pydict(builder: &TimedRotatingFileHandlerBuilder, d: &Bound<'_, PyDict>)
     Ok(())
 }
 
-fn apply_builder_update<'py, F>(
-    mut slf: PyRefMut<'py, TimedRotatingFileHandlerBuilder>,
+fn apply_builder_update<F>(
+    mut slf: PyRefMut<'_, TimedRotatingFileHandlerBuilder>,
     update: F,
-) -> PyResult<PyRefMut<'py, TimedRotatingFileHandlerBuilder>>
+) -> PyResult<PyRefMut<'_, TimedRotatingFileHandlerBuilder>>
 where
     F: FnOnce(&mut TimedRotatingFileHandlerBuilder) -> PyResult<()>,
 {
@@ -124,48 +124,48 @@ impl TimedRotatingFileHandlerBuilder {
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(
         slf: PyRefMut<'py, Self>,
-        capacity: Bound<'py, PyAny>,
+        capacity: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let capacity = extract_positive_i128(capacity, "capacity")?;
-        let capacity = usize::try_from(capacity)
+        let positive_capacity = extract_positive_i128(capacity, "capacity")?;
+        let validated_capacity = usize::try_from(positive_capacity)
             .map_err(|_| PyOverflowError::new_err("capacity exceeds the allowable range"))?;
         apply_builder_update(slf, |builder| {
-            builder.common.set_capacity(capacity);
+            builder.common.set_capacity(validated_capacity);
             Ok(())
         })
     }
 
     #[pyo3(name = "with_flush_after_records")]
-    fn py_with_flush_after_records<'py>(
-        slf: PyRefMut<'py, Self>,
+    fn py_with_flush_after_records(
+        slf: PyRefMut<'_, Self>,
         interval: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let interval = py_flush_after_records_to_nonzero(interval)?;
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        let flush_interval = py_flush_after_records_to_nonzero(interval)?;
         apply_builder_update(slf, |builder| {
-            builder.common.set_flush_after_records(interval);
+            builder.common.set_flush_after_records(flush_interval);
             Ok(())
         })
     }
 
     #[pyo3(name = "with_when")]
-    fn py_with_when<'py>(slf: PyRefMut<'py, Self>, when: String) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_when<'py>(slf: PyRefMut<'py, Self>, when: &str) -> PyResult<PyRefMut<'py, Self>> {
         apply_builder_update(slf, |builder| {
-            let when = TimedRotationWhen::parse(&when)
+            let parsed_when = TimedRotationWhen::parse(when)
                 .map_err(HandlerBuildError::InvalidConfig)
                 .map_err(map_config_error)?;
-            if builder.at_time.is_some() && !when.supports_at_time() {
+            if builder.at_time.is_some() && !parsed_when.supports_at_time() {
                 return Err(map_config_error(HandlerBuildError::InvalidConfig(format!(
                     "at_time is only supported for daily, midnight, and weekday rotation (got {})",
-                    when.as_str(),
+                    parsed_when.as_str(),
                 ))));
             }
             // Validate weekday/interval invariant
-            if matches!(when, TimedRotationWhen::Weekday(_)) && builder.interval.get() != 1 {
+            if matches!(parsed_when, TimedRotationWhen::Weekday(_)) && builder.interval.get() != 1 {
                 return Err(map_config_error(HandlerBuildError::InvalidConfig(
-                    "weekday rotation only supports interval = 1".to_string(),
+                    "weekday rotation only supports interval = 1".to_owned(),
                 )));
             }
-            builder.when = when;
+            builder.when = parsed_when;
             Ok(())
         })
     }
@@ -173,20 +173,22 @@ impl TimedRotatingFileHandlerBuilder {
     #[pyo3(name = "with_interval")]
     fn py_with_interval<'py>(
         slf: PyRefMut<'py, Self>,
-        interval: Bound<'py, PyAny>,
+        interval: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let interval = extract_positive_i128(interval, "interval")?;
-        let interval = u64::try_from(interval)
+        let positive_interval = extract_positive_i128(interval, "interval")?;
+        let interval_u64 = u64::try_from(positive_interval)
             .map_err(|_| PyOverflowError::new_err("interval exceeds the allowable range"))?;
-        let interval = nonzero_interval(interval)?;
+        let validated_interval = nonzero_interval(interval_u64)?;
         apply_builder_update(slf, |builder| {
             // Validate weekday/interval invariant
-            if matches!(builder.when, TimedRotationWhen::Weekday(_)) && interval.get() != 1 {
+            if matches!(builder.when, TimedRotationWhen::Weekday(_))
+                && validated_interval.get() != 1
+            {
                 return Err(map_config_error(HandlerBuildError::InvalidConfig(
-                    "weekday rotation only supports interval = 1".to_string(),
+                    "weekday rotation only supports interval = 1".to_owned(),
                 )));
             }
-            builder.interval = interval;
+            builder.interval = validated_interval;
             Ok(())
         })
     }
@@ -194,17 +196,17 @@ impl TimedRotatingFileHandlerBuilder {
     #[pyo3(name = "with_backup_count")]
     fn py_with_backup_count<'py>(
         slf: PyRefMut<'py, Self>,
-        backup_count: Bound<'py, PyAny>,
+        backup_count: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let backup_count = backup_count.extract::<usize>()?;
+        let validated_backup_count = backup_count.extract::<usize>()?;
         apply_builder_update(slf, |builder| {
-            builder.backup_count = backup_count;
+            builder.backup_count = validated_backup_count;
             Ok(())
         })
     }
 
     #[pyo3(name = "with_utc")]
-    fn py_with_utc<'py>(slf: PyRefMut<'py, Self>, use_utc: bool) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_utc(slf: PyRefMut<'_, Self>, use_utc: bool) -> PyResult<PyRefMut<'_, Self>> {
         apply_builder_update(slf, |builder| {
             builder.use_utc = use_utc;
             Ok(())
@@ -216,18 +218,18 @@ impl TimedRotatingFileHandlerBuilder {
         slf: PyRefMut<'py, Self>,
         at_time: Option<Bound<'py, PyAny>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let at_time = match at_time {
-            Some(value) => extract_optional_time(value)?,
+        let parsed_at_time = match at_time {
+            Some(value) => extract_optional_time(&value)?,
             None => None,
         };
         apply_builder_update(slf, |builder| {
-            if at_time.is_some() && !builder.when.supports_at_time() {
+            if parsed_at_time.is_some() && !builder.when.supports_at_time() {
                 return Err(map_config_error(HandlerBuildError::InvalidConfig(format!(
                     "at_time is only supported for daily, midnight, and weekday rotation (got {})",
                     builder.when.as_str(),
                 ))));
             }
-            builder.at_time = at_time;
+            builder.at_time = parsed_at_time;
             Ok(())
         })
     }
@@ -235,7 +237,7 @@ impl TimedRotatingFileHandlerBuilder {
     #[pyo3(name = "with_overflow_policy")]
     fn py_with_overflow_policy<'py>(
         slf: PyRefMut<'py, Self>,
-        policy: PyOverflowPolicy,
+        policy: &PyOverflowPolicy,
     ) -> PyResult<PyRefMut<'py, Self>> {
         apply_builder_update(slf, |builder| {
             builder.common.set_overflow_policy(policy.inner);
@@ -246,10 +248,10 @@ impl TimedRotatingFileHandlerBuilder {
     #[pyo3(name = "with_formatter")]
     fn py_with_formatter<'py>(
         slf: PyRefMut<'py, Self>,
-        formatter: Bound<'py, PyAny>,
+        formatter: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         apply_builder_update(slf, |builder| {
-            builder.common.set_formatter_from_py(&formatter)?;
+            builder.common.set_formatter_from_py(formatter)?;
             Ok(())
         })
     }

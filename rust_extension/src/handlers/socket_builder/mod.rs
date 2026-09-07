@@ -47,10 +47,10 @@ struct TlsConfig {
 #[cfg_attr(feature = "python", pyclass(from_py_object, name = "BackoffConfig"))]
 #[derive(Clone, Debug, Default)]
 pub struct BackoffOverrides {
-    base_ms: Option<u64>,
-    cap_ms: Option<u64>,
-    reset_after_ms: Option<u64>,
-    deadline_ms: Option<u64>,
+    base: Option<u64>,
+    cap: Option<u64>,
+    reset_after: Option<u64>,
+    deadline: Option<u64>,
 }
 
 macro_rules! apply_backoff_field {
@@ -69,75 +69,75 @@ impl BackoffOverrides {
     }
 
     /// Get the base jitter override if configured.
-    pub fn base_ms(&self) -> Option<u64> {
-        self.base_ms
+    pub const fn base_ms(&self) -> Option<u64> {
+        self.base
     }
 
     /// Get the cap override if configured.
-    pub fn cap_ms(&self) -> Option<u64> {
-        self.cap_ms
+    pub const fn cap_ms(&self) -> Option<u64> {
+        self.cap
     }
 
     /// Get the reset-after override if configured.
-    pub fn reset_after_ms(&self) -> Option<u64> {
-        self.reset_after_ms
+    pub const fn reset_after_ms(&self) -> Option<u64> {
+        self.reset_after
     }
 
     /// Get the deadline override if configured.
-    pub fn deadline_ms(&self) -> Option<u64> {
-        self.deadline_ms
+    pub const fn deadline_ms(&self) -> Option<u64> {
+        self.deadline
     }
 
     /// Override the base jitter duration in milliseconds.
-    pub fn with_base_ms(mut self, base_ms: u64) -> Self {
-        self.base_ms = Some(base_ms);
+    pub const fn with_base_ms(mut self, base_ms: u64) -> Self {
+        self.base = Some(base_ms);
         self
     }
 
     /// Override the cap duration in milliseconds.
-    pub fn with_cap_ms(mut self, cap_ms: u64) -> Self {
-        self.cap_ms = Some(cap_ms);
+    pub const fn with_cap_ms(mut self, cap_ms: u64) -> Self {
+        self.cap = Some(cap_ms);
         self
     }
 
     /// Override the reset-after duration in milliseconds.
-    pub fn with_reset_after_ms(mut self, reset_after_ms: u64) -> Self {
-        self.reset_after_ms = Some(reset_after_ms);
+    pub const fn with_reset_after_ms(mut self, reset_after_ms: u64) -> Self {
+        self.reset_after = Some(reset_after_ms);
         self
     }
 
     /// Override the deadline duration in milliseconds.
-    pub fn with_deadline_ms(mut self, deadline_ms: u64) -> Self {
-        self.deadline_ms = Some(deadline_ms);
+    pub const fn with_deadline_ms(mut self, deadline_ms: u64) -> Self {
+        self.deadline = Some(deadline_ms);
         self
     }
 
     #[cfg(feature = "python")]
-    pub(crate) fn from_options(
+    pub(crate) const fn from_options(
         base_ms: Option<u64>,
         cap_ms: Option<u64>,
         reset_after_ms: Option<u64>,
         deadline_ms: Option<u64>,
     ) -> Self {
         Self {
-            base_ms,
-            cap_ms,
-            reset_after_ms,
-            deadline_ms,
+            base: base_ms,
+            cap: cap_ms,
+            reset_after: reset_after_ms,
+            deadline: deadline_ms,
         }
     }
 
     pub(crate) fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
-        apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
-        apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");
+        apply_backoff_field!(self, base, policy, base, "backoff_base_ms");
+        apply_backoff_field!(self, cap, policy, cap, "backoff_cap_ms");
         apply_backoff_field!(
             self,
-            reset_after_ms,
+            reset_after,
             policy,
             reset_after,
             "backoff_reset_after_ms"
         );
-        apply_backoff_field!(self, deadline_ms, policy, deadline, "backoff_deadline_ms");
+        apply_backoff_field!(self, deadline, policy, deadline, "backoff_deadline_ms");
         Ok(())
     }
 }
@@ -145,7 +145,8 @@ impl BackoffOverrides {
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
         $(#[$meta])*
-        pub fn $fn_name(mut self, value: $ty) -> Self {
+        #[must_use]
+        pub const fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
         }
@@ -167,11 +168,13 @@ pub struct SocketHandlerBuilder {
 
 impl SocketHandlerBuilder {
     /// Create a new builder with no transport configured.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Configure the builder to use TCP.
+    #[must_use]
     pub fn with_tcp(mut self, host: impl Into<String>, port: u16) -> Self {
         self.transport = Some(TransportConfig::Tcp {
             host: host.into(),
@@ -181,12 +184,14 @@ impl SocketHandlerBuilder {
     }
 
     /// Configure the builder to use a Unix domain socket.
+    #[must_use]
     pub fn with_unix_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.transport = Some(TransportConfig::Unix { path: path.into() });
         self
     }
 
     /// Configure TLS using the provided domain and validation policy.
+    #[must_use]
     pub fn with_tls(mut self, domain: Option<String>, insecure: bool) -> Self {
         self.tls = Some(TlsConfig { domain, insecure });
         self
@@ -219,9 +224,10 @@ impl SocketHandlerBuilder {
 
     /// Override backoff timings using the provided overrides.
     ///
-    /// See [`BackoffOverrides`] for fluent helpers when constructing the
+    /// See `BackoffOverrides` for fluent helpers when constructing the
     /// override set from Rust.
-    pub fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
+    #[must_use]
+    pub const fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
         self.backoff = overrides;
         self
     }
@@ -281,7 +287,7 @@ impl SocketHandlerBuilder {
         Ok(config)
     }
 
-    fn apply_optional_fields(&self, config: &mut SocketHandlerConfig) {
+    const fn apply_optional_fields(&self, config: &mut SocketHandlerConfig) {
         if let Some(capacity) = self.capacity {
             config.capacity = capacity;
         }
@@ -341,10 +347,10 @@ impl SocketHandlerBuilder {
         dict_set!(d, "write_timeout_ms", self.write_timeout_ms);
         dict_set!(d, "max_frame_size", self.max_frame_size);
         self.extend_dict_with_transport(d)?;
-        dict_set!(d, "backoff_base_ms", self.backoff.base_ms);
-        dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms);
-        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms);
-        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms);
+        dict_set!(d, "backoff_base_ms", self.backoff.base);
+        dict_set!(d, "backoff_cap_ms", self.backoff.cap);
+        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after);
+        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline);
         Ok(())
     }
 
