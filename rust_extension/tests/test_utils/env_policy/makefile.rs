@@ -103,6 +103,28 @@ impl Makefile {
         Ok(commands)
     }
 
+    /// Return the recipe's declared prerequisites.
+    ///
+    /// Prerequisites cannot be wrapped or made conditional the way a recipe
+    /// command can, so a target reached this way is reached unconditionally.
+    pub(crate) fn prerequisites(&self, target: Recipe) -> Fallible<Vec<String>> {
+        let body = self.recipe(target)?;
+        let header = body
+            .lines()
+            .next()
+            .ok_or_else(|| "recipe has no header".to_string())?;
+        let (_, rest) = header
+            .split_once(':')
+            .ok_or_else(|| "recipe header has no colon".to_string())?;
+        Ok(rest
+            .split("##")
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect())
+    }
+
     /// Return the value of a `?=` variable.
     pub(crate) fn variable(&self, variable: Variable) -> Fallible<&'static str> {
         let Variable(name) = variable;
@@ -219,34 +241,45 @@ fn ensure_policy_recipe_drives_the_script(makefile: &Makefile) -> TestResult {
     Ok(())
 }
 
+/// Fail unless `parent` runs `child`, by either unwrappable route.
+///
+/// A prerequisite cannot be wrapped or made conditional at all. A recipe
+/// command can, so it is matched whole: `if false; then $(MAKE) child; fi`
+/// and `$(MAKE) child || true` are both rejected.
+fn ensure_target_runs(makefile: &Makefile, parent: Recipe, child: &str) -> TestResult {
+    let Recipe(parent_name) = parent;
+    if makefile
+        .prerequisites(parent)?
+        .iter()
+        .any(|declared| declared == child)
+    {
+        return Ok(());
+    }
+    let delegation = format!("$(MAKE) {child}");
+    if makefile
+        .commands(parent)?
+        .iter()
+        .any(|command| *command == delegation)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{parent_name} must run {child} as a prerequisite or as a command of its own, \
+         not inside a wrapper"
+    )
+    .into())
+}
+
 /// Fail unless `make lint` reaches the policy recipe.
 fn ensure_lint_reaches_lint_rust(makefile: &Makefile) -> TestResult {
-    let rust_recipe = makefile.recipe(LINT_RUST)?;
-    let prerequisites = rust_recipe
-        .lines()
-        .next()
-        .and_then(|header| header.split_once(':'))
-        .map(|(_, rest)| rest)
-        .ok_or_else(|| "lint-rust must declare its prerequisites".to_string())?;
-    let declared: Vec<&str> = prerequisites.split_whitespace().collect();
+    let declared = makefile.prerequisites(LINT_RUST)?;
     let missing = RUST_LINT_PREREQUISITES
         .into_iter()
-        .find(|required| !declared.contains(required));
+        .find(|required| !declared.iter().any(|entry| entry == required));
     if let Some(required) = missing {
         return Err(format!("lint-rust must run {required}, found {declared:?}").into());
     }
-    let delegation = "$(MAKE) lint-rust";
-    if !makefile
-        .commands(LINT)?
-        .iter()
-        .any(|command| command == delegation)
-    {
-        return Err(format!(
-            "lint must run {delegation:?} as a command of its own, not inside a wrapper"
-        )
-        .into());
-    }
-    Ok(())
+    ensure_target_runs(makefile, LINT, "lint-rust")
 }
 
 /// Fail unless `make lint` still reaches the policy lane through the driver.

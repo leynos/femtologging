@@ -12,7 +12,7 @@ excessive-nesting-threshold = 5
 # item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`; the
 # expectation warns once the site is migrated, so the backlog removes itself.
 #
-# `docs/adr-005-environment-seam-taxonomy.md` records how to choose a seam.
+# `docs/adr-006-environment-seam-taxonomy.md` records how to choose a seam.
 disallowed-methods = [
   { path = "std::env::var", reason = "inject an environment reader" },
   { path = "std::env::var_os", reason = "inject an environment reader" },

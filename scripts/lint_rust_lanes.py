@@ -42,7 +42,7 @@ import typing as typ
 
 # Cyclopts resolves annotations at run time to coerce parameters, so `Path`
 # must be a real import rather than a type-checking one.
-from pathlib import Path  # noqa: TC003
+from pathlib import Path  # ruff: ignore[typing-only-standard-library-import]
 
 import cyclopts
 from cyclopts import App
@@ -71,6 +71,10 @@ def lane_selection(lane: str) -> list[str]:
     ['--all-features']
     >>> lane_selection("python")
     ['--no-default-features', '--features', 'python']
+
+    Returns
+    -------
+        The Cargo flags that select the lane, in the order Cargo expects.
     """
     if lane == NO_FEATURES:
         return ["--no-default-features"]
@@ -89,6 +93,10 @@ def lane_command(
 
     Arguments after ``--`` reach the lint driver; they are omitted entirely
     when empty so that Cargo is never handed a bare trailing separator.
+
+    Returns
+    -------
+        The complete argument vector, excluding the ``cargo`` executable.
     """
     argv = [
         "clippy",
@@ -111,9 +119,13 @@ def main(
     cargo_args: list[str] | None = None,
     lint_args: list[str] | None = None,
 ) -> int:
-    """Lint every lane in turn and return the first failure's exit code.
+    """Lint every lane in turn, stopping at the first lane that fails.
 
-    Returns 0 only when every lane passes.
+    Returns
+    -------
+        The failing lane's exit code, or 0 when every lane passes. An empty
+        lane list returns non-zero rather than reporting a clean run it never
+        made.
     """
     if not lanes:
         print("no lanes requested; refusing to report success", flush=True)

@@ -15,7 +15,7 @@
 //! The machinery lives in `tests/test_utils/env_policy.rs`, keeping both files
 //! inside the 400-line limit in `AGENTS.md`.
 //!
-//! See `docs/adr-005-environment-seam-taxonomy.md` for the policy itself.
+//! See `docs/adr-006-environment-seam-taxonomy.md` for the policy itself.
 
 #[path = "test_utils/env_policy.rs"]
 mod env_policy;
@@ -111,6 +111,12 @@ fn manifest_denies_disallowed_methods() -> TestResult {
 /// recipe's driver call failed with "lint-env-policy must end in the lane
 /// driver call", and appending a second command failed with "must be one
 /// command, found 2".
+///
+/// `lint` reaches `lint-rust` through a prerequisite, which cannot be wrapped
+/// or made conditional at all; a whole recipe command is accepted as the
+/// equivalent. Removing the prerequisite, and moving it into a wrapped
+/// command, both failed with "lint must run lint-rust as a prerequisite or as
+/// a command of its own, not inside a wrapper".
 #[test]
 fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
     let makefile = Makefile::embedded();

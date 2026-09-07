@@ -28,14 +28,16 @@ from __future__ import annotations
 
 import typing as typ
 
-from ._femtologging_rs import FemtoLogger, get_logger
+from ._femtologging_rs import FemtoLogger
+
+# ruff: ignore[lowercase-imported-as-non-lowercase] alias mirrors stdlib
+# logging.getLogger, whose camelCase spelling is part of the drop-in API.
+from ._femtologging_rs import get_logger as getLogger
 
 if typ.TYPE_CHECKING:
     from ._femtologging_rs import ExcInfo
 
 _MISSING = typ.cast("ExcInfo", object())
-
-getLogger = get_logger  # noqa: N816  # TODO(#343): camelCase alias for stdlib compat
 
 
 def _exception_wrapper(
@@ -51,6 +53,13 @@ def _exception_wrapper(
     Unlike the Rust ``_exception_impl`` (which cannot distinguish omitted
     from explicit ``None``), this wrapper respects an explicit
     ``exc_info=None`` as falsy — matching stdlib ``logging`` semantics.
+
+    Returns
+    -------
+    str or None
+        The formatted record emitted by ``_exception_impl``, or ``None``
+        when the record was dropped.
+
     """
     if exc_info is _MISSING:
         return self._exception_impl(message, exc_info=True, stack_info=stack_info)
@@ -62,6 +71,8 @@ def _exception_wrapper(
 
 
 _logger_type = typ.cast("type[typ.Any]", FemtoLogger)
-_logger_type.exception = typ.cast("typ.Any", _exception_wrapper)  # type: ignore[assignment,method-assign]  # FIXME(<ticket>): method assignment requires typ.Any cast to bypass type checker — revisit when PyO3 supports native method binding
+# PyO3 classes expose no way to bind a Python-level method statically, so the
+# wrapper is patched on at import time via the ``type[typ.Any]`` view above.
+_logger_type.exception = typ.cast("typ.Any", _exception_wrapper)
 
 __all__ = ["getLogger"]

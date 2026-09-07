@@ -8,18 +8,18 @@ import logging
 import sys
 import typing as typ
 
-from . import _femtologging_rs as rust
+from ._femtologging_rs import (
+    ConfigBuilder,
+    FemtoHandler,
+    FemtoLogger,
+    FileHandlerBuilder,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
+    get_logger,
+)
 
-FemtoLogger = rust.FemtoLogger
-FemtoHandler = rust.FemtoHandler
-ConfigBuilder = rust.ConfigBuilder
-LoggerConfigBuilder = rust.LoggerConfigBuilder
-FileHandlerBuilder = rust.FileHandlerBuilder
-StreamHandlerBuilder = rust.StreamHandlerBuilder
-get_logger = rust.get_logger
 
-
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class BasicConfig:
     """Configuration parameters for basicConfig()."""
 
@@ -78,9 +78,11 @@ def _resolve_basic_config_params(
     )
 
 
-def basicConfig(  # noqa: N802
-    config: BasicConfig | None = None, /, **kwargs: object
-) -> None:
+# ruff: ignore[invalid-function-name] name mirrors stdlib logging.basicConfig
+def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
+    # ruff: ignore[docstring-extraneous-exception] ValueError is raised by
+    # _validate_basic_config_params, called directly below; documenting it
+    # here keeps the public contract accurate.
     """Configure the root logger using the builder API.
 
     Parameters mirror ``logging.basicConfig`` but currently only a subset is
@@ -113,6 +115,16 @@ def basicConfig(  # noqa: N802
         Remove any existing handlers before configuring.
     handlers : cabc.Iterable[FemtoHandler], optional
         Pre-constructed handlers to attach.
+
+    Raises
+    ------
+    TypeError
+        If an unsupported keyword argument is supplied, or if ``handlers``
+        is not iterable.
+    ValueError
+        If ``filename``, ``stream``, and ``handlers`` are combined in an
+        unsupported way, or if ``stream`` is neither ``sys.stdout`` nor
+        ``sys.stderr``.
 
     Notes
     -----

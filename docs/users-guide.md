@@ -473,6 +473,17 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 - Accepts `level`, `filename`, `stream` (`sys.stdout` or `sys.stderr`), `force`,
   and `handlers` (an iterable of handler objects) either via keyword arguments
   or the `BasicConfig` dataclass.
+- `BasicConfig` is a slotted dataclass: `level`, `filename`, `stream`, `force`,
+  and `handlers` are its complete supported surface, and instances cannot
+  accept arbitrary extra attributes. Assigning a mistyped field name raises
+  `AttributeError` immediately rather than silently creating a new attribute
+  that `basicConfig` never reads:
+
+  ```python
+  cfg = BasicConfig(level="INFO")
+  cfg.filenam = "/var/log/app.log"  # AttributeError: no such field
+  ```
+
 - `filename` and `stream` are mutually exclusive and cannot be combined with
   the `handlers` argument.
 - Passing `force=True` clears existing handlers on the root logger before
@@ -529,6 +540,9 @@ builder = (
 builder.build_and_init()
 ```
 
+- `build_and_init()` validates handler and filter references and prepares the
+  complete configuration before changing live logger state. If configuration
+  fails, the current logger configuration remains intact.
 - `with_default_level(level)` sets a fallback for loggers that omit explicit
   levels. `with_disable_existing_loggers(True)` clears handlers and filters on
   previously created loggers that are not part of the new configuration (their
@@ -569,12 +583,19 @@ builder.build_and_init()
   currently results in `ValueError("unknown formatter id")`.
 - A `root` section is mandatory. Named loggers support `level`,
   `handlers`, `filters`, and `propagate` (bool).
+- The parsed configuration is passed to `ConfigBuilder.build_and_init()`, so
+  handler and filter validation completes before live logger state changes. A
+  failed configuration leaves the current logger configuration intact.
 
 ### fileConfig (INI compatibility)
 
 - `fileConfig(path, defaults=None, disable_existing_loggers=True, encoding=None)`
   parses CPython-style INI files via the Rust extension and translates them to
   the restricted `dictConfig` schema.
+- Because the resulting schema is delegated to `dictConfig` and then
+  `ConfigBuilder.build_and_init()`, validation completes before live logger
+  state changes. A failed `fileConfig` call leaves the current logger
+  configuration intact.
 - Default substitutions (`%(foo)s`) work across the INI file and any mapping
   you pass via `defaults`.
 - Formatters and handler-level overrides are not supported. Including

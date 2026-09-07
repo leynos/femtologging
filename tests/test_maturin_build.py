@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata as im
+import json
 import pathlib as pth
 import sys
 
@@ -16,45 +17,13 @@ from tests.maturin_compat import (
     wheel_build_snapshot,
 )
 
-_EXPECTED_WHEEL_ENTRIES: list[str] = [
-    "femtologging-<version>.dist-info/METADATA",
-    "femtologging-<version>.dist-info/RECORD",
-    "femtologging-<version>.dist-info/WHEEL",
-    "femtologging-<version>.dist-info/licenses/LICENSE",
-    "femtologging-<version>.dist-info/sboms/<sbom>.cyclonedx.json",
-    "femtologging/__init__.py",
-    "femtologging/_basic_config.py",
-    "femtologging/_compat.py",
-    "femtologging/_config_filters.py",
-    "femtologging/_femtologging_rs.cpython-<platform>.so",
-    "femtologging/_femtologging_rs.pyi",
-    "femtologging/_filter_factory.py",
-    "femtologging/_log_context.py",
-    "femtologging/_rust_compat.py",
-    "femtologging/_timed_handler_config.py",
-    "femtologging/adapter.py",
-    "femtologging/config.py",
-    "femtologging/config_protocol.py",
-    "femtologging/config_sections.py",
-    "femtologging/config_socket.py",
-    "femtologging/config_socket_opts.py",
-    "femtologging/file_config.py",
-    "femtologging/overflow_policy.py",
-    "femtologging/unittests/test_overflow_policy.py",
-]
-
-_EXPECTED_WHEEL_METADATA: dict[str, object] = {
-    "classifiers": [
-        "License :: OSI Approved :: ISC License (ISCL)",
-        "Operating System :: OS Independent",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Rust",
-    ],
-    "name": "femtologging",
-    "requires_dist": [],
-    "requires_python": ">=3.12",
-    "version": "0.1.0",
-}
+# The expected wheel manifest lives in an external data file so the assertion
+# stays readable; ``generator`` carries a placeholder that is substituted with
+# the pinned maturin version at assertion time.
+_EXPECTED_WHEEL_SNAPSHOT = pth.Path(__file__).with_name("data") / (
+    "expected_wheel_snapshot.json"
+)
+_GENERATOR_PLACEHOLDER = "<maturin-version>"
 
 
 def repo_root() -> pth.Path:
@@ -104,14 +73,16 @@ def test_maturin_wheel_build_snapshot(
     if sys.version_info >= (3, 15):
         pytest.skip()
 
+    expected_payload = json.loads(_EXPECTED_WHEEL_SNAPSHOT.read_text(encoding="utf-8"))
+    assert expected_payload["generator"] == _GENERATOR_PLACEHOLDER, (
+        f"{_EXPECTED_WHEEL_SNAPSHOT.name} must keep the generator placeholder so "
+        "the pinned maturin version stays the single source of truth"
+    )
+    expected_payload["generator"] = expected
+
     wheel_path = build_native_wheel_artifact(root, tmp_path / "wheelhouse")
     snapshot_payload = wheel_build_snapshot(wheel_path)
-    assert snapshot_payload == {
-        "generator": expected,
-        "metadata": _EXPECTED_WHEEL_METADATA,
-        "wheel": {
-            "root_is_purelib": "false",
-            "tag": "<platform-tag>",
-        },
-        "entries": _EXPECTED_WHEEL_ENTRIES,
-    }
+    assert snapshot_payload == expected_payload, (
+        "built wheel metadata and layout must match the recorded manifest in "
+        f"{_EXPECTED_WHEEL_SNAPSHOT.name}"
+    )

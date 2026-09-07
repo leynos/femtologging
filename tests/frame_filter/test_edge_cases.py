@@ -6,47 +6,43 @@ import pytest
 
 from femtologging import filter_frames
 
-from .conftest import StackPayload, make_stack_payload
+from .conftest import StackPayload, assert_frame_filenames
 
 
 def test_edge_missing_frames_key() -> None:
-    """Payload without frames key should return empty frames."""
+    """Payload without frames key should filter to an empty stack."""
     payload: StackPayload = {"schema_version": 1}
 
     result = filter_frames(payload)
 
-    assert result.get("frames", []) == [], "missing frames should return empty"
-
-
-def test_edge_preserves_frame_details() -> None:
-    """Frame details like source_line should be preserved."""
-    payload = make_stack_payload(["a.py"])
-    payload["frames"][0]["source_line"] = "    x = 42"
-    payload["frames"][0]["colno"] = 5
-    payload["frames"][0]["end_colno"] = 10
-
-    result = filter_frames(payload)
-
-    assert result["frames"][0]["source_line"] == "    x = 42", (
-        "source_line should be preserved"
-    )
-    assert result["frames"][0]["colno"] == 5, "colno should be preserved"
-    assert result["frames"][0]["end_colno"] == 10, "end_colno should be preserved"
+    assert_frame_filenames(result, [], "payload without a frames key")
 
 
 @pytest.mark.parametrize(
     ("missing_field", "frame_data"),
     [
-        ("filename", {"lineno": 1, "function": "test"}),
-        ("lineno", {"filename": "a.py", "function": "test"}),
-        ("function", {"filename": "a.py", "lineno": 1}),
+        pytest.param(
+            "filename",
+            {"lineno": 1, "function": "test"},
+            id="missing-filename",
+        ),
+        pytest.param(
+            "lineno",
+            {"filename": "a.py", "function": "test"},
+            id="missing-lineno",
+        ),
+        pytest.param(
+            "function",
+            {"filename": "a.py", "lineno": 1},
+            id="missing-function",
+        ),
     ],
 )
 def test_edge_invalid_frame_missing_required_field(
     missing_field: str,
     frame_data: dict[str, object],
 ) -> None:
-    """Frame missing a required field should raise TypeError."""
+    """Frame missing a required field should raise TypeError naming that field."""
     payload: dict[str, object] = {
         "schema_version": 1,
         "frames": [frame_data],
@@ -59,32 +55,24 @@ def test_edge_invalid_frame_missing_required_field(
 @pytest.mark.parametrize(
     ("frames_value", "expected_error"),
     [
-        ("not a list", "must be a list"),
-        (["not a dict"], "must be a dict"),
+        pytest.param("not a list", "must be a list", id="frames-not-a-list"),
+        pytest.param(["not a dict"], "must be a dict", id="frame-not-a-dict"),
+        pytest.param(
+            [{"filename": "a.py", "lineno": 1, "function": "test", "end_lineno": "x"}],
+            "wrong type",
+            id="optional-field-wrong-type",
+        ),
     ],
 )
-def test_edge_invalid_frames_shape(
+def test_edge_malformed_frames_raise_type_error(
     frames_value: object,
     expected_error: str,
 ) -> None:
-    """Malformed frames should raise TypeError with descriptive message."""
+    """Malformed frame payloads should raise TypeError with a descriptive message."""
     payload: dict[str, object] = {
         "schema_version": 1,
         "frames": frames_value,
     }
 
     with pytest.raises(TypeError, match=expected_error):
-        filter_frames(payload)
-
-
-def test_edge_optional_field_wrong_type() -> None:
-    """Optional field with wrong type should raise TypeError."""
-    payload: dict[str, object] = {
-        "schema_version": 1,
-        "frames": [
-            {"filename": "a.py", "lineno": 1, "function": "test", "end_lineno": "wrong"}
-        ],
-    }
-
-    with pytest.raises(TypeError, match="wrong type"):
         filter_frames(payload)

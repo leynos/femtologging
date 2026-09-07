@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import typing as typ
 
-cast = typ.cast
-
 _UNSUPPORTED_STDLIB_PARAMS: typ.Final[dict[str, tuple[object, str]]] = {
     "encoding": (None, "must be None"),
     "delay": (False, "must be False"),
@@ -90,10 +88,28 @@ def _unpack_positional(
     args_t: tuple[object, ...],
     kwargs_d: dict[str, object],
 ) -> str:
-    """Map positional args for a timed rotating handler into kwargs_d.
+    """Map positional args for a timed rotating handler into ``kwargs_d``.
 
-    Returns the path extracted from the first positional argument.
-    Validates stdlib-compatible positional args and rejects unsupported features.
+    Validates stdlib-compatible positional args and rejects unsupported
+    features.
+
+    Returns
+    -------
+    str
+        The path extracted from the first positional argument.
+
+    Raises
+    ------
+    TypeError
+        If ``path`` is missing, is not a ``str``, too many positional
+        arguments are supplied, or an argument is given both positionally and
+        as a keyword.
+
+    Notes
+    -----
+    :func:`_validate_stdlib_unsupported_param` additionally raises
+    ``ValueError`` when a stdlib-only parameter is given a non-default value.
+
     """
     # Guard: missing path
     if not args_t:
@@ -148,17 +164,30 @@ def parse_timed_args(
     Handles both positional and keyword argument styles, validates stdlib
     parameter compatibility, and constructs TimedHandlerOptions if needed.
 
-    Args:
-        args_t: Positional arguments (first arg should be path if present)
-        kwargs_d: Keyword arguments (modified in place during parsing)
+    Parameters
+    ----------
+    args_t : tuple[object, ...]
+        Positional arguments; the first is the path when present.
+    kwargs_d : dict[str, object]
+        Keyword arguments, modified in place during parsing.
 
-    Returns:
-        Tuple of (path, TimedHandlerOptions or None)
+    Returns
+    -------
+    tuple[str, object | None]
+        The path and either a ``TimedHandlerOptions`` instance or ``None``
+        when no options were supplied.
 
-    Raises:
-        TypeError: Invalid argument types or duplicates
-        ValueError: Unsupported stdlib parameters or conflicts
-        HandlerConfigError: Missing required path argument
+    Raises
+    ------
+    TypeError
+        If an argument is supplied both positionally and as a keyword.
+
+    Notes
+    -----
+    The helpers invoked here also raise ``ValueError`` for unsupported stdlib
+    parameters or aliasing conflicts, ``TypeError`` for invalid argument
+    types, and ``HandlerConfigError`` when the required ``path`` argument is
+    missing or is not a string.
 
     """
     from . import _femtologging_rs as rust
@@ -182,15 +211,16 @@ def parse_timed_args(
         if not isinstance(kwargs_d.get("path"), str):
             msg = "'path' argument must be a string"
             raise handler_config_error(msg)
-        path = cast(str, kwargs_d.pop("path"))
+        path = typ.cast("str", kwargs_d.pop("path"))
 
     _validate_and_strip_stdlib_only_kwargs(kwargs_d)
 
     timed_handler_options = getattr(rust, "TimedHandlerOptions", None)
     if timed_handler_options is None or not kwargs_d:
         return path, None
-    # kwargs_d is runtime dict from external config; typ.Any cast needed for **kwargs
-    options = timed_handler_options(**cast("typ.Any", kwargs_d))  # pyright: ignore[reportCallIssue]
+    # kwargs_d is a runtime dict from external config, so its keys cannot be
+    # matched against the constructor signature; widen to Any to forward them.
+    options = timed_handler_options(**typ.cast("typ.Any", kwargs_d))
     return path, options
 
 

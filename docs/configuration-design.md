@@ -940,6 +940,22 @@ surfaces mature further.
 
 ## 3. Runtime Reconfiguration
 
+### 3.1. Bootstrap transaction boundary
+
+`ConfigBuilder::build_and_init()` uses a staged transaction for the initial
+configuration. It builds the handler and filter registries, prepares all logger
+plans, and calls `stage_loggers` to construct or retrieve the logger objects
+without changing the manager registry. `commit_staged_loggers` is the
+registry-commit boundary. After that commit, the builder optionally runs
+`disable_existing_loggers`, applies each prepared plan, and calls
+`replace_runtime_state` only after every plan has succeeded.
+
+Construction, identifier validation, and plan preparation occur before the
+commit boundary. If one of those steps fails, the existing logger attachments
+and manager runtime metadata remain unchanged. The final runtime-state
+replacement records the handler and filter registries together with the
+per-logger attachment metadata produced by the applied plans.
+
 - **Dynamic Log Level Updates:** As outlined in the [Rust multithreaded
   logging framework for Python
   design](./rust-multithreaded-logging-framework-for-python-design.md), dynamic

@@ -6,19 +6,44 @@ import pytest
 
 from femtologging._timed_handler_config import parse_timed_args
 
+# Keyword arguments accepted by ``logging.handlers.TimedRotatingFileHandler``
+# but deliberately unsupported by femtologging's options object.
+STDLIB_ONLY_KEYWORDS = ("encoding", "delay", "errors")
+
+
+def _timed_kwargs(**extra: object) -> dict[str, object]:
+    """Return the minimal valid timed-handler kwargs, merged with *extra*."""
+    return {
+        "path": "app.log",
+        "when": "S",
+        "interval": 1,
+        "backup_count": 1,
+        **extra,
+    }
+
 
 @pytest.mark.parametrize(
     ("args_t", "kwargs_d", "name"),
     [
-        (("app.log", "S", 1, 1, None), {"encoding": None}, "encoding"),
-        (("app.log", "S", 1, 1, None, False), {"delay": False}, "delay"),
-        (
+        pytest.param(
+            ("app.log", "S", 1, 1, None),
+            {"encoding": None},
+            "encoding",
+            id="encoding",
+        ),
+        pytest.param(
+            ("app.log", "S", 1, 1, None, False),
+            {"delay": False},
+            "delay",
+            id="delay",
+        ),
+        pytest.param(
             ("app.log", "S", 1, 1, None, False, False, None, None),
             {"errors": None},
             "errors",
+            id="errors",
         ),
     ],
-    ids=["encoding", "delay", "errors"],
 )
 def test_parse_timed_args_rejects_stdlib_slot_duplicate_keywords(
     args_t: tuple[object, ...],
@@ -39,38 +64,10 @@ def test_parse_timed_args_rejects_stdlib_slot_duplicate_keywords(
 @pytest.mark.parametrize(
     ("kwargs_d", "name"),
     [
-        (
-            {
-                "path": "app.log",
-                "when": "S",
-                "interval": 1,
-                "backup_count": 1,
-                "encoding": None,
-            },
-            "encoding",
-        ),
-        (
-            {
-                "path": "app.log",
-                "when": "S",
-                "interval": 1,
-                "backup_count": 1,
-                "delay": False,
-            },
-            "delay",
-        ),
-        (
-            {
-                "path": "app.log",
-                "when": "S",
-                "interval": 1,
-                "backup_count": 1,
-                "errors": None,
-            },
-            "errors",
-        ),
+        pytest.param(_timed_kwargs(encoding=None), "encoding", id="encoding"),
+        pytest.param(_timed_kwargs(delay=False), "delay", id="delay"),
+        pytest.param(_timed_kwargs(errors=None), "errors", id="errors"),
     ],
-    ids=["encoding", "delay", "errors"],
 )
 def test_parse_timed_args_strips_valid_stdlib_only_kwargs(
     kwargs_d: dict[str, object],
@@ -79,55 +76,30 @@ def test_parse_timed_args_strips_valid_stdlib_only_kwargs(
     """Stdlib-only kwargs supplied only as keywords should be stripped."""
     path, options = parse_timed_args((), kwargs_d)
 
-    assert path == "app.log", "parse_timed_args should preserve the path 'app.log'"
-    assert options is not None, "parse_timed_args should return non-None options"
-    assert not hasattr(options, "encoding"), (
-        "TimedHandlerOptions should not expose an 'encoding' attribute"
+    assert path == "app.log", (
+        f"parse_timed_args must return the configured path; got {path!r}"
     )
-    assert not hasattr(options, "delay"), (
-        "TimedHandlerOptions should not expose a 'delay' attribute"
+    assert options is not None, (
+        f"a valid {name!r} keyword must still yield TimedHandlerOptions"
     )
-    assert not hasattr(options, "errors"), (
-        "TimedHandlerOptions should not expose an 'errors' attribute"
+    exposed = [keyword for keyword in STDLIB_ONLY_KEYWORDS if hasattr(options, keyword)]
+    assert not exposed, (
+        "TimedHandlerOptions must not expose stdlib-only attributes, but it "
+        f"exposes {exposed}"
     )
-    assert name not in kwargs_d, f"expected {name!r} to be removed from kwargs_d"
+    assert name not in kwargs_d, (
+        f"parse_timed_args must consume {name!r} from the caller's kwargs, "
+        f"leaving {sorted(kwargs_d)}"
+    )
 
 
 @pytest.mark.parametrize(
     ("kwargs_d", "name"),
     [
-        (
-            {
-                "path": "app.log",
-                "when": "S",
-                "interval": 1,
-                "backup_count": 1,
-                "encoding": "utf-8",
-            },
-            "encoding",
-        ),
-        (
-            {
-                "path": "app.log",
-                "when": "S",
-                "interval": 1,
-                "backup_count": 1,
-                "delay": True,
-            },
-            "delay",
-        ),
-        (
-            {
-                "path": "app.log",
-                "when": "S",
-                "interval": 1,
-                "backup_count": 1,
-                "errors": "ignore",
-            },
-            "errors",
-        ),
+        pytest.param(_timed_kwargs(encoding="utf-8"), "encoding", id="encoding"),
+        pytest.param(_timed_kwargs(delay=True), "delay", id="delay"),
+        pytest.param(_timed_kwargs(errors="ignore"), "errors", id="errors"),
     ],
-    ids=["encoding", "delay", "errors"],
 )
 def test_parse_timed_args_rejects_invalid_stdlib_only_kwargs(
     kwargs_d: dict[str, object],

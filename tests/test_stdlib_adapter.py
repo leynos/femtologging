@@ -1,20 +1,22 @@
-"""Tests for StdlibHandlerAdapter bridging stdlib handlers to femtologging."""
+"""Construction and record-dispatch tests for :class:`StdlibHandlerAdapter`.
+
+Covers validation of the wrapped handler, translation of femtologging
+records into stdlib ``LogRecord`` output, level mapping, and forwarding of
+exception and stack payloads. Attribute population, delegation, and export
+checks live in ``tests/test_stdlib_adapter_records.py``.
+"""
 
 from __future__ import annotations
 
 import dataclasses
 import io
 import logging
-import time
 import typing as typ
 
 import pytest
 
 from femtologging import FemtoLogger, StdlibHandlerAdapter
-from femtologging.adapter import (
-    TRACE_LEVEL_NUM,
-    FemtoRecord,
-)
+from femtologging.adapter import TRACE_LEVEL_NUM
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -28,96 +30,97 @@ class _LevelCase:
     handler_level: int | None = None
 
 
-# -- Fixtures -------------------------------------------------------------
+@dataclasses.dataclass(frozen=True, slots=True)
+class _LogRequest:
+    """One log emission routed through the adapter under test."""
+
+    logger_name: str
+    level: str
+    message: str
+    logger_level: str | None = None
+    stack_info: bool = False
+    exc_info: bool = False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _HandlerSetup:
+    """Optional stdlib handler configuration applied before logging."""
+
+    formatter: logging.Formatter | None = None
+    handler_level: int | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AdapterProbe:
+    """A StringIO sink, its stdlib handler, and the adapter wrapping it."""
+
+    stream: io.StringIO
+    handler: logging.StreamHandler[io.StringIO]
+    adapter: StdlibHandlerAdapter
+
+    def capture(self, request: _LogRequest, setup: _HandlerSetup | None = None) -> str:
+        """Log one message via the adapter and return the captured output.
+
+        Parameters
+        ----------
+        request
+            The record to emit and the logger threshold to apply.
+        setup
+            Optional formatter and handler-level configuration.
+
+        Returns
+        -------
+        str
+            Everything the wrapped handler wrote to the stream.
+
+        Examples
+        --------
+        >>> probe.capture(_LogRequest("app", "INFO", "hi")).strip()
+        'hi'
+
+        """
+        setup = setup or _HandlerSetup()
+        if setup.formatter is not None:
+            self.handler.setFormatter(setup.formatter)
+        if setup.handler_level is not None:
+            self.handler.setLevel(setup.handler_level)
+
+        logger = FemtoLogger(request.logger_name)
+        if request.logger_level is not None:
+            logger.set_level(request.logger_level)
+        logger.add_handler(self.adapter)
+        logger.log(
+            request.level,
+            request.message,
+            stack_info=request.stack_info,
+            exc_info=request.exc_info,
+        )
+        del logger
+
+        return self.stream.getvalue()
 
 
 @pytest.fixture
-def stream() -> io.StringIO:
-    """Return a fresh StringIO for capturing handler output."""
-    return io.StringIO()
-
-
-@pytest.fixture
-def stdlib_handler(stream: io.StringIO) -> logging.StreamHandler[io.StringIO]:
-    """Return a StreamHandler writing to *stream*."""
-    return logging.StreamHandler(stream)
-
-
-@pytest.fixture
-def adapter(
-    stdlib_handler: logging.StreamHandler[io.StringIO],
-) -> StdlibHandlerAdapter:
-    """Return a StdlibHandlerAdapter wrapping *stdlib_handler*."""
-    return StdlibHandlerAdapter(stdlib_handler)
-
-
-# -- Helpers --------------------------------------------------------------
-
-
-class CapturingHandler(logging.Handler):
-    """Handler that captures emitted LogRecords for test inspection."""
-
-    def __init__(self) -> None:
-        """Initialise with an empty records list."""
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    @typ.override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-def log_and_capture(
-    stream: io.StringIO,
-    stdlib_handler: logging.StreamHandler[io.StringIO],
-    adapter: StdlibHandlerAdapter,
-    /,
-    *,
-    logger_name: str,
-    level: str,
-    message: str,
-    formatter: logging.Formatter | None = None,
-    logger_level: str | None = None,
-    handler_level: int | None = None,
-    stack_info: bool = False,
-    exc_info: bool = False,
-) -> str:
-    """Configure, log a single message via *adapter*, and return captured output."""
-    if formatter is not None:
-        stdlib_handler.setFormatter(formatter)
-    if handler_level is not None:
-        stdlib_handler.setLevel(handler_level)
-
-    logger = FemtoLogger(logger_name)
-    if logger_level is not None:
-        logger.set_level(logger_level)
-    logger.add_handler(adapter)
-    logger.log(level, message, stack_info=stack_info, exc_info=exc_info)
-    del logger
-
-    return stream.getvalue()
-
-
-# -- Tests ----------------------------------------------------------------
+def probe() -> AdapterProbe:
+    """Return an adapter wrapping a StreamHandler over a fresh StringIO."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    return AdapterProbe(stream, handler, StdlibHandlerAdapter(handler))
 
 
 class TestStdlibHandlerAdapterConstruction:
     """Verify adapter construction validates the wrapped handler."""
 
     @staticmethod
-    def test_wraps_stdlib_handler() -> None:
+    def test_wraps_stdlib_handler(probe: AdapterProbe) -> None:
         """Adapter should forward records to the wrapped stdlib handler."""
-        stream = io.StringIO()
-        handler = logging.StreamHandler(stream)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        adapter = StdlibHandlerAdapter(handler)
-
-        adapter.handle_record(
+        probe.handler.setFormatter(logging.Formatter("%(message)s"))
+        probe.adapter.handle_record(
             {"logger": "test", "level": "INFO", "message": "wrapped-ok"},
         )
-        handler.flush()
+        probe.handler.flush()
 
-        output = stream.getvalue()
+        output = probe.stream.getvalue()
         assert "wrapped-ok" in output, (
             f"wrapped handler did not receive the record: {output!r}"
         )
@@ -133,41 +136,31 @@ class TestStdlibHandlerAdapterConstruction:
         )
 
     @staticmethod
-    def test_rejects_non_handler() -> None:
-        """Adapter should raise TypeError for non-Handler objects."""
+    @pytest.mark.parametrize(
+        "not_a_handler",
+        ["not a handler", object()],
+        ids=["string", "plain_object"],
+    )
+    def test_rejects_non_handler(not_a_handler: object) -> None:
+        """Adapter should raise TypeError for objects that are not handlers."""
         with pytest.raises(TypeError, match=r"expected a logging\.Handler"):
-            StdlibHandlerAdapter(typ.cast("logging.Handler", "not a handler"))
-
-    @staticmethod
-    def test_rejects_plain_object() -> None:
-        """Adapter should raise TypeError for arbitrary objects."""
-        with pytest.raises(TypeError, match=r"expected a logging\.Handler"):
-            StdlibHandlerAdapter(typ.cast("logging.Handler", object()))
+            StdlibHandlerAdapter(typ.cast("logging.Handler", not_a_handler))
 
 
 class TestHandleRecordDispatch:
     """Verify that femtologging records are translated and emitted."""
 
     @staticmethod
-    def test_basic_message_emitted(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-    ) -> None:
+    def test_basic_message_emitted(probe: AdapterProbe) -> None:
         """A simple log message should appear in the wrapped handler's output."""
-        output = log_and_capture(
-            stream,
-            stdlib_handler,
-            adapter,
-            logger_name="myapp",
-            level="INFO",
-            message="hello world",
-            formatter=logging.Formatter("%(name)s %(levelname)s %(message)s"),
+        output = probe.capture(
+            _LogRequest("myapp", "INFO", "hello world"),
+            _HandlerSetup(
+                formatter=logging.Formatter("%(name)s %(levelname)s %(message)s")
+            ),
         )
-        assert "myapp" in output, f"expected source 'myapp' in output: {output!r}"
-        assert "INFO" in output, f"expected level 'INFO' in output: {output!r}"
-        assert "hello world" in output, (
-            f"expected message 'hello world' in output: {output!r}"
+        assert output == "myapp INFO hello world\n", (
+            f"unexpected formatted output: {output!r}"
         )
 
     @staticmethod
@@ -182,32 +175,17 @@ class TestHandleRecordDispatch:
         ],
         ids=["error", "debug", "critical", "warn", "trace"],
     )
-    def test_level_mapped(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-        case: _LevelCase,
-    ) -> None:
+    def test_level_mapped(probe: AdapterProbe, case: _LevelCase) -> None:
         """Each femtologging level should map to its stdlib equivalent."""
-        output = log_and_capture(
-            stream,
-            stdlib_handler,
-            adapter,
-            logger_name="app",
-            level=case.level,
-            message=case.message,
-            formatter=logging.Formatter("%(levelname)s %(message)s"),
-            logger_level=case.logger_level,
-            handler_level=case.handler_level,
+        output = probe.capture(
+            _LogRequest("app", case.level, case.message, case.logger_level),
+            _HandlerSetup(
+                formatter=logging.Formatter("%(levelname)s %(message)s"),
+                handler_level=case.handler_level,
+            ),
         )
-        assert case.expected_level in output, (
-            f"expected level {case.expected_level!r} not found in output "
-            f"for logger='app', level={case.level!r}, message={case.message!r}: "
-            f"{output!r}"
-        )
-        assert case.message in output, (
-            f"expected message {case.message!r} not found in output "
-            f"for logger='app', level={case.level!r}: {output!r}"
+        assert output == f"{case.expected_level} {case.message}\n", (
+            f"level {case.level!r} did not map to {case.expected_level!r}: {output!r}"
         )
 
 
@@ -220,295 +198,28 @@ class TestExceptionForwarding:
         raise ValueError(msg)
 
     @staticmethod
-    def test_exc_info_forwarded_as_text(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-    ) -> None:
+    def test_exc_info_forwarded_as_text(probe: AdapterProbe) -> None:
         """Exception payload should appear as exc_text on the LogRecord."""
         output = ""
         try:
             TestExceptionForwarding._raise_value_error()
         except ValueError:
-            output = log_and_capture(
-                stream,
-                stdlib_handler,
-                adapter,
-                logger_name="app",
-                level="ERROR",
-                message="caught",
-                formatter=logging.Formatter("%(message)s\n%(exc_text)s"),
-                exc_info=True,
+            output = probe.capture(
+                _LogRequest("app", "ERROR", "caught", exc_info=True),
+                _HandlerSetup(formatter=logging.Formatter("%(message)s\n%(exc_text)s")),
             )
         assert "caught" in output, f"expected 'caught' in output: {output!r}"
         assert "ValueError" in output, f"expected 'ValueError' in output: {output!r}"
 
     @staticmethod
-    def test_stack_info_forwarded(
-        stream: io.StringIO,
-        stdlib_handler: logging.StreamHandler[io.StringIO],
-        adapter: StdlibHandlerAdapter,
-    ) -> None:
+    def test_stack_info_forwarded(probe: AdapterProbe) -> None:
         """Stack trace payload should appear as stack_info on the LogRecord."""
-        output = log_and_capture(
-            stream,
-            stdlib_handler,
-            adapter,
-            logger_name="app",
-            level="INFO",
-            message="trace",
-            formatter=logging.Formatter("%(message)s"),
-            stack_info=True,
+        output = probe.capture(
+            _LogRequest("app", "INFO", "trace", stack_info=True),
+            _HandlerSetup(formatter=logging.Formatter("%(message)s")),
         )
         assert "trace" in output, f"expected 'trace' in output: {output!r}"
         # stdlib Formatter appends stack_info after the message
         assert "Stack (most recent call last)" in output, (
             f"expected stack trace header in output: {output!r}"
-        )
-
-
-class TestDelegation:
-    """Verify flush() and close() delegate to the wrapped handler."""
-
-    @staticmethod
-    @pytest.mark.parametrize(
-        "method_name",
-        ["flush", "close"],
-        ids=["flush", "close"],
-    )
-    def test_delegation(method_name: str) -> None:
-        """flush() and close() should delegate to the wrapped handler."""
-        calls: list[str] = []
-
-        class SpyHandler(logging.Handler):
-            @typ.override
-            def emit(self, record: logging.LogRecord) -> None:
-                pass
-
-            @typ.override
-            def flush(self) -> None:
-                calls.append("flush")
-
-            @typ.override
-            def close(self) -> None:
-                calls.append("close")
-                super().close()
-
-        adapter = StdlibHandlerAdapter(SpyHandler())
-        getattr(adapter, method_name)()
-        assert calls == [method_name], f"expected [{method_name!r}], got {calls!r}"
-
-
-class TestHandleFallback:
-    """Verify the static handle method exists for validation."""
-
-    @staticmethod
-    def test_handle_is_callable() -> None:
-        """The handle fallback must be callable for add_handler validation."""
-        adapter = StdlibHandlerAdapter(logging.StreamHandler(io.StringIO()))
-        assert callable(adapter.handle), "adapter.handle should be callable"
-
-    @staticmethod
-    def test_handle_emits_warning() -> None:
-        """Calling handle() directly should emit a RuntimeWarning."""
-        adapter = StdlibHandlerAdapter(logging.StreamHandler(io.StringIO()))
-        with pytest.warns(RuntimeWarning, match=r"handle_record\(\) should be used"):
-            adapter.handle("logger", "INFO", "msg")
-
-
-class TestLogRecordAttributes:
-    """Verify LogRecord attributes are populated from the femtologging record."""
-
-    @staticmethod
-    @pytest.mark.parametrize(
-        ("logger_name", "level", "message", "check_attrs"),
-        [
-            (
-                "myapp.sub",
-                "INFO",
-                "test",
-                {
-                    "name": "myapp.sub",
-                    "levelno": logging.INFO,
-                    "levelname": "INFO",
-                    "message": "test",
-                },
-            ),
-            (
-                "app",
-                "INFO",
-                "stamped",
-                {"created_type": float, "created_positive": True},
-            ),
-        ],
-        ids=["logger_name", "default_timestamp"],
-    )
-    def test_record_attributes(
-        logger_name: str,
-        level: str,
-        message: str,
-        check_attrs: dict[str, object],
-    ) -> None:
-        """LogRecord attributes should be populated from the femtologging record."""
-        capturing = CapturingHandler()
-        adapter = StdlibHandlerAdapter(capturing)
-
-        logger = FemtoLogger(logger_name)
-        logger.add_handler(adapter)
-        logger.log(level, message)
-        del logger
-
-        assert len(capturing.records) == 1, (
-            f"expected 1 emitted record, got {len(capturing.records)}"
-        )
-        record = capturing.records[0]
-
-        ctx = f"logger={logger_name!r}, level={level!r}, message={message!r}"
-        if "name" in check_attrs:
-            assert record.name == check_attrs["name"], (
-                f"record.name mismatch ({ctx}): "
-                f"got {record.name!r}, expected {check_attrs['name']!r}"
-            )
-        if "levelno" in check_attrs:
-            assert record.levelno == check_attrs["levelno"], (
-                f"record.levelno mismatch ({ctx}): "
-                f"got {record.levelno!r}, expected {check_attrs['levelno']!r}"
-            )
-        if "levelname" in check_attrs:
-            assert record.levelname == check_attrs["levelname"], (
-                f"record.levelname mismatch ({ctx}): "
-                f"got {record.levelname!r}, expected {check_attrs['levelname']!r}"
-            )
-        if "message" in check_attrs:
-            assert record.getMessage() == check_attrs["message"], (
-                f"record message mismatch ({ctx}): "
-                f"got {record.getMessage()!r}, expected {check_attrs['message']!r}"
-            )
-        if "created_type" in check_attrs:
-            expected_type = check_attrs["created_type"]
-            assert isinstance(expected_type, type), (
-                f"created_type check_attr must be a type ({ctx})"
-            )
-            assert isinstance(record.created, expected_type), (
-                f"record.created type mismatch ({ctx}): "
-                f"got {type(record.created).__name__}, "
-                f"expected {expected_type.__name__}"
-            )
-        if "created_positive" in check_attrs:
-            assert record.created > 0, (
-                f"record.created not positive ({ctx}): got {record.created}"
-            )
-
-    @staticmethod
-    def _emit_with_timestamp(timestamp: float) -> logging.LogRecord:
-        """Emit a record with a specific timestamp through the public API."""
-        capturing = CapturingHandler()
-        adapter = StdlibHandlerAdapter(capturing)
-        femto_record: FemtoRecord = {"metadata": {"timestamp": timestamp}}
-        adapter.handle_record(femto_record)
-        assert len(capturing.records) == 1, (
-            f"expected 1 emitted record, got {len(capturing.records)}"
-        )
-        return capturing.records[0]
-
-    @staticmethod
-    def test_msecs_consistent_with_created() -> None:
-        """Milliseconds should be derived from created when timestamp is overridden."""
-        timestamp = 1700000000.456
-        record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
-        assert record.created == timestamp, (
-            f"record.created mismatch: got {record.created}, expected {timestamp}"
-        )
-        expected_msecs = (timestamp - int(timestamp)) * 1000.0
-        assert record.msecs == pytest.approx(expected_msecs), (
-            f"record.msecs mismatch: got {record.msecs}, expected {expected_msecs}"
-        )
-
-    @staticmethod
-    def test_asctime_uses_overridden_timestamp() -> None:
-        """Formatted asctime should reflect the overridden timestamp."""
-        # logging.Formatter uses local time unless its converter is overridden.
-        timestamp = 1700000000.456
-        record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
-        formatter = logging.Formatter("%(asctime)s")
-        formatted = formatter.format(record)
-
-        expected_prefix = time.strftime(
-            "%Y-%m-%d %H:%M:%S",
-            time.localtime(timestamp),
-        )
-        assert formatted.startswith(expected_prefix), (
-            f"asctime does not start with expected prefix: "
-            f"got {formatted!r}, expected prefix {expected_prefix!r}"
-        )
-        # The default asctime format appends ",456" for milliseconds
-        assert ",456" in formatted, (
-            f"asctime missing expected milliseconds ',456': {formatted!r}"
-        )
-
-    @staticmethod
-    def test_relative_created_consistent_with_created() -> None:
-        """Relative-created should be recomputed when timestamp is overridden."""
-        timestamp = 1700000000.456
-        record = TestLogRecordAttributes._emit_with_timestamp(timestamp)
-        start_time: float = getattr(logging, "_startTime", time.time())
-        expected = (record.created - start_time) * 1000.0
-        assert record.relativeCreated == pytest.approx(expected), (
-            f"relativeCreated mismatch: got {record.relativeCreated}, "
-            f"expected {expected}"
-        )
-
-
-class TestLevelFallback:
-    """Verify the adapter falls back to WARNING for unknown levels."""
-
-    @staticmethod
-    @pytest.mark.parametrize(
-        ("femto_record", "expected"),
-        [
-            ({"levelno": 99}, logging.WARNING),
-            ({"level": "FOO"}, logging.WARNING),
-            ({}, logging.WARNING),
-        ],
-        ids=["unknown_levelno", "unknown_name", "empty_record"],
-    )
-    def test_unknown_level_falls_back(
-        femto_record: FemtoRecord,
-        expected: int,
-    ) -> None:
-        """Unknown or missing level information should fall back to WARNING."""
-        capturing = CapturingHandler()
-        adapter = StdlibHandlerAdapter(capturing)
-        adapter.handle_record(femto_record)
-        assert len(capturing.records) == 1, (
-            f"expected 1 emitted record, got {len(capturing.records)}"
-        )
-        actual = capturing.records[0].levelno
-        assert actual == expected, (
-            f"expected levelno {expected} for record {femto_record!r}, got {actual}"
-        )
-
-
-class TestPublicExport:
-    """Verify the adapter is accessible from the top-level package."""
-
-    @staticmethod
-    def test_importable_from_package() -> None:
-        """StdlibHandlerAdapter should be importable from femtologging."""
-        import femtologging
-
-        assert hasattr(femtologging, "StdlibHandlerAdapter"), (
-            "StdlibHandlerAdapter not found on femtologging module"
-        )
-        assert femtologging.StdlibHandlerAdapter is StdlibHandlerAdapter, (
-            "femtologging.StdlibHandlerAdapter is not the expected class"
-        )
-
-    @staticmethod
-    def test_in_all() -> None:
-        """StdlibHandlerAdapter should be listed in __all__."""
-        import femtologging
-
-        assert "StdlibHandlerAdapter" in femtologging.__all__, (
-            f"StdlibHandlerAdapter not in __all__: {femtologging.__all__!r}"
         )

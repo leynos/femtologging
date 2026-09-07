@@ -2,118 +2,129 @@
 
 from __future__ import annotations
 
+import typing as typ
+
+import pytest
+
 from femtologging import filter_frames
 
-from .conftest import make_exception_payload
+from .conftest import (
+    FilteredPayload,
+    assert_frame_filenames,
+    assert_frame_functions,
+    make_exception_payload,
+)
+
+# Depth of the synthetic cause chain used to prove recursion is not bounded by
+# an accidental limit and does not blow the interpreter stack.
+_DEEP_CHAIN_LENGTH = 100
+
+
+def _assert_exception_identity(
+    payload: FilteredPayload,
+    type_name: str,
+    message: str,
+    context: str,
+) -> None:
+    """Assert that filtering preserved an exception's type name and message."""
+    assert (payload.get("type_name"), payload.get("message")) == (type_name, message), (
+        f"{context}: expected exception {type_name}({message!r}), got "
+        f"{payload.get('type_name')}({payload.get('message')!r})"
+    )
 
 
 def test_exc_detects_exception_payload() -> None:
-    """Exception payloads should be detected by type_name and message."""
+    """Exception payloads should be filtered while keeping their identity."""
     payload = make_exception_payload(
         ["myapp/main.py", "femtologging/__init__.py"],
     )
 
     result = filter_frames(payload, exclude_logging=True)
 
-    # Should preserve exception fields
-    assert result["type_name"] == "ValueError", "type_name should be preserved"
-    assert result["message"] == "test error", "message should be preserved"
-    assert len(result["frames"]) == 1, "expected 1 frame after filtering"
+    _assert_exception_identity(result, "ValueError", "test error", "filtered exception")
+    assert_frame_filenames(result, ["myapp/main.py"], "exception frames")
 
 
-def test_exc_filters_cause_chain() -> None:
-    """Cause chain should be recursively filtered."""
-    cause = make_exception_payload(
-        ["cause.py", "femtologging/__init__.py"],
-        type_name="IOError",
-        message="cause error",
+@pytest.mark.parametrize("link", ["cause", "context"])
+def test_exc_filters_linked_exception(link: str) -> None:
+    """Cause and context links should be recursively filtered."""
+    linked = make_exception_payload(
+        [f"{link}.py", "femtologging/__init__.py"],
+        type_name="OSError",
+        message=f"{link} error",
     )
-    payload = make_exception_payload(
-        ["main.py", "logging/__init__.py"],
-    )
-    payload["cause"] = cause
+    payload = make_exception_payload(["main.py", "logging/__init__.py"])
+    # Cast around the TypedDict's closed key set so one test can drive both the
+    # "cause" and "context" links.
+    typ.cast("dict[str, object]", payload)[link] = linked
 
     result = filter_frames(payload, exclude_logging=True)
 
-    # Main frames filtered
-    assert len(result["frames"]) == 1, "expected 1 main frame"
-    assert result["frames"][0]["filename"] == "main.py", "main frame mismatch"
-
-    # Cause frames also filtered
-    assert "cause" in result, "cause should be present"
-    assert len(result["cause"]["frames"]) == 1, "expected 1 cause frame"
-    assert result["cause"]["frames"][0]["filename"] == "cause.py", (
-        "cause frame mismatch"
-    )
-
-
-def test_exc_filters_context_chain() -> None:
-    """Context chain should be recursively filtered."""
-    context = make_exception_payload(
-        ["context.py", "femtologging/__init__.py"],
-        type_name="KeyError",
-        message="context error",
-    )
-    payload = make_exception_payload(["main.py"])
-    payload["context"] = context
-
-    result = filter_frames(payload, exclude_logging=True)
-
-    assert "context" in result, "context should be present"
-    assert len(result["context"]["frames"]) == 1, "expected 1 context frame"
-    assert result["context"]["frames"][0]["filename"] == "context.py", (
-        "context frame mismatch"
+    assert_frame_filenames(result, ["main.py"], "outer exception frames")
+    assert link in result, f"{link} link should survive filtering, got {result}"
+    assert_frame_filenames(result[link], [f"{link}.py"], f"{link} frames")
+    _assert_exception_identity(
+        result[link],
+        "OSError",
+        f"{link} error",
+        f"{link} identity",
     )
 
 
 def test_exc_filters_exception_group() -> None:
     """Exception group members should be recursively filtered."""
-    exc1 = make_exception_payload(
-        ["exc1.py", "femtologging/__init__.py"],
-        type_name="ValueError",
-        message="error 1",
-    )
-    exc2 = make_exception_payload(
-        ["exc2.py", "logging/__init__.py"],
-        type_name="TypeError",
-        message="error 2",
-    )
+    members = [
+        make_exception_payload(
+            ["exc1.py", "femtologging/__init__.py"],
+            type_name="ValueError",
+            message="error 1",
+        ),
+        make_exception_payload(
+            ["exc2.py", "logging/__init__.py"],
+            type_name="TypeError",
+            message="error 2",
+        ),
+    ]
     payload = make_exception_payload(
         ["group.py"],
         type_name="ExceptionGroup",
         message="multiple errors",
     )
-    payload["exceptions"] = [exc1, exc2]
+    payload["exceptions"] = members
 
     result = filter_frames(payload, exclude_logging=True)
 
-    assert len(result["exceptions"]) == 2, "expected 2 exception group members"
-    assert len(result["exceptions"][0]["frames"]) == 1, "expected 1 frame in exc1"
-    assert result["exceptions"][0]["frames"][0]["filename"] == "exc1.py", (
-        "exc1 frame mismatch"
+    assert len(result["exceptions"]) == 2, (
+        f"both group members should survive filtering, got {result['exceptions']}"
     )
-    assert len(result["exceptions"][1]["frames"]) == 1, "expected 1 frame in exc2"
-    assert result["exceptions"][1]["frames"][0]["filename"] == "exc2.py", (
-        "exc2 frame mismatch"
-    )
+    for index, expected_filename in enumerate(["exc1.py", "exc2.py"]):
+        assert_frame_filenames(
+            result["exceptions"][index],
+            [expected_filename],
+            f"exception group member {index}",
+        )
 
 
 def test_exc_preserves_exception_fields() -> None:
     """All exception fields should be preserved."""
     payload = make_exception_payload(["main.py"])
-    payload["module"] = "myapp.errors"
-    payload["args_repr"] = ["'key'"]
-    payload["notes"] = ["check the input"]
-    payload["suppress_context"] = True
+    extras: dict[str, object] = {
+        "module": "myapp.errors",
+        "args_repr": ["'key'"],
+        "notes": ["check the input"],
+        "suppress_context": True,
+    }
+    # Cast around the TypedDict's closed key set so the optional exception
+    # fields can be applied from a table.
+    typ.cast("dict[str, object]", payload).update(extras)
 
     result = filter_frames(payload)
 
-    assert result["type_name"] == "ValueError", "type_name should be preserved"
-    assert result["message"] == "test error", "message should be preserved"
-    assert result["module"] == "myapp.errors", "module should be preserved"
-    assert result["args_repr"] == ["'key'"], "args_repr should be preserved"
-    assert result["notes"] == ["check the input"], "notes should be preserved"
-    assert result["suppress_context"] is True, "suppress_context should be preserved"
+    _assert_exception_identity(result, "ValueError", "test error", "unfiltered payload")
+    for key, expected in extras.items():
+        assert result[key] == expected, (
+            f"{key} should be preserved: expected {expected!r}, got {result.get(key)!r}"
+        )
 
 
 def test_exc_exclude_functions() -> None:
@@ -123,19 +134,15 @@ def test_exc_exclude_functions() -> None:
 
     result = filter_frames(payload, exclude_functions=["_internal"])
 
-    assert len(result["frames"]) == 2, "expected 2 frames after filtering"
-    functions = [f["function"] for f in result["frames"]]
-    assert "_internal_helper" not in functions, "internal function should be excluded"
-    # Should preserve exception fields
-    assert result["type_name"] == "ValueError", "type_name should be preserved"
-    assert result["message"] == "test error", "message should be preserved"
+    assert_frame_functions(result, ["func_0", "func_2"], "exception frames")
+    _assert_exception_identity(result, "ValueError", "test error", "filtered exception")
 
 
 def test_exc_exclude_functions_in_cause() -> None:
     """Function patterns should exclude matching frames in cause chain."""
     cause = make_exception_payload(
         ["cause_a.py", "cause_b.py"],
-        type_name="IOError",
+        type_name="OSError",
         message="cause error",
     )
     cause["frames"][0]["function"] = "_internal_cause"
@@ -144,44 +151,42 @@ def test_exc_exclude_functions_in_cause() -> None:
 
     result = filter_frames(payload, exclude_functions=["_internal"])
 
-    # Cause frames should be filtered
-    assert len(result["cause"]["frames"]) == 1, "expected 1 cause frame"
-    assert result["cause"]["frames"][0]["function"] == "func_1", (
-        "remaining cause function mismatch"
-    )
+    assert_frame_functions(result["cause"], ["func_1"], "cause frames")
 
 
 def test_exc_filters_deep_cause_chain() -> None:
-    """Deep cause chain (100 levels) should be recursively filtered."""
-    # Build a 100-level nested cause chain
+    """A deeply nested cause chain should be filtered at every level."""
     current = make_exception_payload(
         ["base.py"],
         type_name="BaseError",
         message="root cause",
     )
-    for i in range(1, 100):
+    for level in range(1, _DEEP_CHAIN_LENGTH):
         wrapper = make_exception_payload(
-            [f"level_{i}.py", "femtologging/__init__.py"],
-            type_name=f"Error{i}",
-            message=f"level {i}",
+            [f"level_{level}.py", "femtologging/__init__.py"],
+            type_name=f"Error{level}",
+            message=f"level {level}",
         )
         wrapper["cause"] = current
         current = wrapper
 
     result = filter_frames(current, exclude_logging=True)
 
-    # Verify filtering was applied recursively
-    # The outermost should have 1 frame (femtologging filtered)
-    assert len(result["frames"]) == 1, "expected 1 frame at top level"
+    # The outermost wrapper is the deepest level; the base exception is last.
+    expected_filenames = [
+        f"level_{level}.py" for level in range(_DEEP_CHAIN_LENGTH - 1, 0, -1)
+    ]
+    expected_filenames.append("base.py")
 
-    # Walk the chain and verify each level was filtered
-    depth = 0
-    node = result
-    while "cause" in node and node["cause"] is not None:
-        depth += 1
-        node = node["cause"]
-        # Each level should have 1 frame after filtering
-        assert len(node["frames"]) == 1, f"expected 1 frame at depth {depth}"
+    node: FilteredPayload | None = result
+    for depth, expected_filename in enumerate(expected_filenames):
+        assert node is not None, (
+            f"cause chain ended at depth {depth}, expected "
+            f"{len(expected_filenames)} linked exceptions"
+        )
+        assert_frame_filenames(node, [expected_filename], f"cause chain depth {depth}")
+        node = node.get("cause")
 
-    # Should have traversed 99 cause links (100 total exceptions)
-    assert depth == 99, f"expected 99 cause links, got {depth}"
+    assert node is None, (
+        f"cause chain should end after the root cause, found extra link {node}"
+    )

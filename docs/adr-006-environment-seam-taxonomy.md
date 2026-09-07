@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 005: environment seam taxonomy
+# Architectural decision record (ADR) 006: environment seam taxonomy
 
 ## Status
 

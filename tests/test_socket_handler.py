@@ -13,6 +13,7 @@ import pytest
 import femtologging
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 
@@ -39,25 +40,40 @@ class _RecordingTCPServer(socketserver.ThreadingTCPServer):
         self.queue: queue.Queue[bytes] = queue.Queue()
 
 
-def test_socket_handler_sends_records() -> None:
-    """Verify the handler frames MessagePack payloads over TCP."""
+@pytest.fixture(name="recording_server")
+def fixture_recording_server() -> cabc.Iterator[_RecordingTCPServer]:
+    """Serve a loopback TCP endpoint that records framed payloads."""
     with _RecordingTCPServer(("127.0.0.1", 0)) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        address = server.server_address
-        host = str(address[0])
-        port = int(address[1])
+        try:
+            yield server
+        finally:
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive(), (
+                "the recording server thread must stop once shutdown() returns, "
+                "otherwise later tests inherit a stray listener"
+            )
 
-        builder = femtologging.SocketHandlerBuilder().with_tcp(host, port)
-        handler = builder.build()
+
+def test_socket_handler_sends_records(
+    recording_server: _RecordingTCPServer,
+) -> None:
+    """Verify the handler frames MessagePack payloads over TCP."""
+    host, port = recording_server.server_address[:2]
+
+    handler = femtologging.SocketHandlerBuilder().with_tcp(str(host), int(port)).build()
+    try:
         handler.handle("test.logger", "INFO", "message")
-
-        payload = server.queue.get(timeout=2)
-        assert payload, "payload should not be empty"
-
+        payload = recording_server.queue.get(timeout=2)
+    finally:
         handler.close()
-        server.shutdown()
-        thread.join(timeout=1)
+
+    assert payload, (
+        "the socket handler must frame and send the record, but the server "
+        "received an empty payload"
+    )
 
 
 def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:

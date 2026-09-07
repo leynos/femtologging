@@ -1,0 +1,11 @@
+# serializer version: 1
+# name: test_patterns_returns_expected
+  list([
+    'femtologging',
+    '_femtologging_rs',
+    'logging/__init__',
+    'logging/config',
+    'logging/handlers',
+    '<frozen importlib',
+  ])
+# ---

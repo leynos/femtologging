@@ -13,6 +13,7 @@ from femtologging import (
     LoggerConfigBuilder,
     StreamHandlerBuilder,
     get_logger,
+    reset_manager,
 )
 
 if typ.TYPE_CHECKING:
@@ -27,8 +28,7 @@ scenarios(str(FEATURES / "dynamic_level.feature"))
 
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> cabc.Iterator[None]:
-    from femtologging import reset_manager
-
+    """Isolate each scenario by clearing global logging state around it."""
     reset_manager()
     yield
     reset_manager()
@@ -105,4 +105,6 @@ def logger_suppresses(name: str, level: str) -> None:
 def logger_level_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> None:
     """Assert that the named logger's level state matches a stored snapshot."""
     logger = get_logger(name)
-    assert {"name": name, "level": logger.level} == snapshot
+    assert {"name": name, "level": logger.level} == snapshot, (
+        f"level state for logger '{name}' must match the recorded snapshot"
+    )

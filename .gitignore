@@ -221,3 +221,7 @@ bin/act
 *.swp
 *.swo
 *~
+
+# Skylos whitelist lock and analysis cache
+.skylos-whitelist.lock
+.skylos/

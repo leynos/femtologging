@@ -1,11 +1,11 @@
 ---
-description: 
+description:
 globs: *.py
 alwaysApply: false
 ---
-### Advanced Typing and Language Features (Python 3.13)
+### Advanced Typing and Language Features (Python 3.12)
 
-> This section documents forward-looking Python 3.13 typing features and best practices to improve clarity, correctness, and tooling support. Use these features to write expressive, modern Python.
+> This section documents advanced Python 3.12 typing features and best practices to improve clarity, correctness, and tooling support. Use these features to write expressive, modern Python. A few entries describe Python 3.13 features that are not yet available on this project's `>=3.12` baseline; each such case says so explicitly and gives the `typing_extensions` equivalent.
 
 #### `enum.Enum`, `enum.IntEnum`, `enum.StrEnum`
 
@@ -62,6 +62,9 @@ Use `Self` in fluent interfaces and builder-style APIs to indicate the method re
 import typing
 
 class Builder:
+    def __init__(self) -> None:
+        self.values: list[int] = []
+
     def add(self, value: int) -> typing.Self:
         self.values.append(value)
         return self
@@ -92,28 +95,40 @@ This decorator is a no-op at runtime but improves tooling correctness.
 
 Use `TypeIs[T]` to define custom runtime type guards that narrow types in type checkers.
 
-```python
-import typing
+`typing.TypeIs` was added in Python 3.13. On this project's Python 3.12 baseline, import it from the `typing_extensions` backport instead (add `typing_extensions` as a dependency if it is not already one):
 
-def is_str_sequence(val: typing.Sequence[object]) -> typing.TypeIs[typing.Sequence[str]]:
+```python
+import collections.abc as cabc
+
+from typing_extensions import TypeIs
+
+def is_str_sequence(val: cabc.Sequence[object]) -> TypeIs[cabc.Sequence[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 
-Unlike `isinstance`, this informs the type checker that `val` is now `Sequence[str]`.
+`TypeIs[T]` requires the narrowed type to be consistent with the parameter's declared type. `list` is invariant, so `list[str]` is not a subtype of `list[object]` and a type checker rejects `TypeIs[list[str]]` on a `list[object]` parameter; `cabc.Sequence` is covariant, so narrowing it this way is valid. When narrowing to an invariant type such as `list[str]`, use `TypeGuard` instead, since it does not impose the consistency requirement.
+
+Unlike `isinstance`, this informs the type checker that `val` is now `cabc.Sequence[str]`.
 
 #### Defaults for TypeVars (PEP 696)
 
 Allow generic classes/functions to fall back to default types when no specific type is provided.
 
-```python
-class Box[T = int]:
-    def __init__(self, value: T):
-        self.value = value
+PEP 696 landed in Python 3.13, including the native `class Box[T = int]:` bracket syntax and the `default=` keyword on `typing.TypeVar`. Neither is available on this project's Python 3.12 baseline. The bracket syntax also declares its own type parameter, so `class Box[T]:` shadows a module-level `TypeVar` and silently ignores any `default=` set on it. On this baseline, carry the default on a `typing_extensions.TypeVar` and use it with `typing.Generic` instead:
 
-default_box: Box = Box(0)
+```python
+import typing as typ
+
+from typing_extensions import TypeVar
+
+T = TypeVar("T", default=int)
+
+class Box(typ.Generic[T]):
+    def __init__(self, value: T) -> None:
+        self.value = value
 ```
 
-This makes APIs more ergonomic while retaining type safety.
+An unparameterized `Box` is then treated as `Box[int]`, so callers get a sensible default without writing it out. This makes APIs more ergonomic while retaining type safety.
 
 #### Standard Library Generics (PEP 585)
 
@@ -144,6 +159,8 @@ type StrDict = dict[str, str]
 ```
 
 This replaces `StrDict = TypeAlias = ...` and is preferred in modern Python.
+
+This project's `pyproject.toml` sets `requires-python = ">=3.12"` and declares no runtime dependencies, so the `type` keyword is available without a backport. If pre-3.12 compatibility is ever required, keep the older `typing.TypeAlias` syntax instead and suppress the resulting lint, giving a reason for the suppression (this project requires every suppression to carry one), preferring Ruff's native `# ruff: ignore[non-pep695-type-alias] reason` form over a bare `# noqa: UP040`. Place alias definitions after the import block and group shared aliases in a single module within the `femtologging` package to avoid duplication.
 
 #### `from __future__ import annotations`
 

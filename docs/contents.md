@@ -16,6 +16,15 @@ libraries. Use the links below to explore each topic.
 - [roadmap.md](./roadmap.md)
   - Lists milestones for porting picologging to a Rust/PyO3 implementation.
 
+## Migration guides
+
+- [v0-1-0-migration-guide.md](./v0-1-0-migration-guide.md)
+  - Records the v0.1.0 renames from British to Oxford spelling across the
+    Rust modules and the Python surface.
+- [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
+  - Describes the breaking `BasicConfig` slotted-dataclass change in v0.2.0
+    and how to migrate.
+
 ## Architecture decision records
 
 - [adr-001-python-exception-logging.md](./adr-001-python-exception-logging.md)
@@ -29,7 +38,10 @@ libraries. Use the links below to explore each topic.
 - [adr-004-batching-optimizations-in-consumer-threads.md](./adr-004-batching-optimizations-in-consumer-threads.md)
   - Proposes drain-loop batching and vectored I/O optimizations for handler
     consumer threads.
-- [adr-005-environment-seam-taxonomy.md](./adr-005-environment-seam-taxonomy.md)
+- [adr-005-four-tier-python-lint-architecture.md](./adr-005-four-tier-python-lint-architecture.md)
+  - Records the Python lint pipeline: Ruff, interrogate, PyPy-backed Pylint,
+    df12-python-lints/ambrleaks, and the strict Skylos dead-code gate.
+- [adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
   - Records the ban on ambient process-environment access in the Rust
     extension and the injection shapes that replace it.
 

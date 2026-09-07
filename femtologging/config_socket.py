@@ -23,6 +23,8 @@ from . import _femtologging_rs as rust
 from .config_socket_opts import _pop_socket_backoff_kwargs, _pop_socket_tls_kwargs
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from ._femtologging_rs import BackoffConfig as _BackoffConfig
     from ._femtologging_rs import SocketHandlerBuilder as _SocketHandlerBuilder
 else:
@@ -31,6 +33,13 @@ else:
 
 
 class _RustBindings(typ.Protocol):
+    """Shape of the compiled ``_femtologging_rs`` module used by this file.
+
+    ``BackoffConfig`` is optional because older extension builds omit it;
+    callers must fall back to keyword-only backoff configuration when it is
+    ``None`` (see :func:`_apply_backoff_to_builder`).
+    """
+
     SocketHandlerBuilder: type[_SocketHandlerBuilder]
     BackoffConfig: type[_BackoffConfig] | None
 
@@ -163,7 +172,7 @@ def _apply_socket_kwargs(
     return builder, transport_configured
 
 
-_UINT_OPTION_METHODS: typ.Final[typ.Mapping[str, str]] = types.MappingProxyType({
+_UINT_OPTION_METHODS: typ.Final[cabc.Mapping[str, str]] = types.MappingProxyType({
     "capacity": "with_capacity",
     "connect_timeout_ms": "with_connect_timeout_ms",
     "write_timeout_ms": "with_write_timeout_ms",

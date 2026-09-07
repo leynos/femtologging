@@ -71,17 +71,21 @@ class _TlsConfigParser:
         self, tls_value: object
     ) -> tuple[str | None, bool | None, bool]:
         """Parse the tls kwarg value and return (domain, insecure, enabled)."""
-        if isinstance(tls_value, cabc.Mapping):
-            domain, insecure = self._parse_mapping(
-                typ.cast("cabc.Mapping[object, object]", tls_value)
-            )
-            return domain, insecure, True
-        if isinstance(tls_value, bool):
-            return None, None, tls_value
-        if tls_value is None:
-            return None, None, False
-        msg = f"handler {self.hid!r} socket kwargs tls must be a bool or mapping"
-        raise TypeError(msg)
+        match tls_value:
+            case cabc.Mapping():
+                domain, insecure = self._parse_mapping(
+                    typ.cast("cabc.Mapping[object, object]", tls_value)
+                )
+                return domain, insecure, True
+            case bool():
+                return None, None, tls_value
+            case None:
+                return None, None, False
+            case _:
+                msg = (
+                    f"handler {self.hid!r} socket kwargs tls must be a bool or mapping"
+                )
+                raise TypeError(msg)
 
     def _parse_mapping(
         self, tls_value: cabc.Mapping[object, object]

@@ -201,6 +201,62 @@ def get_patterns(filter_fixture: FilterFixture) -> None:
     filter_fixture["patterns"] = list(get_logging_infrastructure_patterns())
 
 
+# --- Then step helpers ---
+
+
+def _assert_frame_count(
+    filter_fixture: FilterFixture,
+    expected: int,
+    *,
+    from_cause: bool = False,
+) -> None:
+    """Assert the filtered payload (or its cause) retains ``expected`` frames.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared state storage containing the filtered result.
+    expected : int
+        Number of frames the filter is required to retain.
+    from_cause : bool, optional
+        Inspect the chained cause exception instead of the outer payload.
+
+    """
+    frames = _get_frames(filter_fixture, from_cause=from_cause)
+    scope = "cause" if from_cause else "payload"
+    filenames = [frame["filename"] for frame in frames]
+    assert len(frames) == expected, (
+        f"filtering must leave {expected} frame(s) in the {scope}, "
+        f"got {len(frames)}: {filenames}"
+    )
+
+
+def _assert_sole_frame_filename(
+    filter_fixture: FilterFixture,
+    expected: str,
+    *,
+    from_cause: bool = False,
+) -> None:
+    """Assert exactly one frame survives filtering, and name it.
+
+    Parameters
+    ----------
+    filter_fixture : FilterFixture
+        Shared state storage containing the filtered result.
+    expected : str
+        Filename the single surviving frame must carry.
+    from_cause : bool, optional
+        Inspect the chained cause exception instead of the outer payload.
+
+    """
+    _assert_frame_count(filter_fixture, 1, from_cause=from_cause)
+    scope = "cause" if from_cause else "payload"
+    actual = _get_frames(filter_fixture, from_cause=from_cause)[0]["filename"]
+    assert actual == expected, (
+        f"the surviving {scope} frame must come from '{expected}', got '{actual}'"
+    )
+
+
 # --- Then steps ---
 
 
@@ -217,8 +273,7 @@ def check_frame_count(filter_fixture: FilterFixture, n: int) -> None:
         Expected number of frames.
 
     """
-    frames = _get_frames(filter_fixture)
-    assert len(frames) == n, f"Expected {n} frames, got {len(frames)}"
+    _assert_frame_count(filter_fixture, n)
 
 
 @then(parsers.parse('the filtered frame filename is "{expected}"'))
@@ -233,10 +288,7 @@ def check_frame_filename(filter_fixture: FilterFixture, expected: str) -> None:
         Expected filename of the single remaining frame.
 
     """
-    frames = _get_frames(filter_fixture)
-    assert len(frames) == 1, "Expected exactly 1 frame"
-    actual = frames[0]["filename"]
-    assert actual == expected, f"Expected filename '{expected}', got '{actual}'"
+    _assert_sole_frame_filename(filter_fixture, expected)
 
 
 @then(parsers.parse('the filtered frames do not contain "{pattern}"'))
@@ -252,10 +304,17 @@ def check_frames_exclude_pattern(filter_fixture: FilterFixture, pattern: str) ->
 
     """
     frames = _get_frames(filter_fixture)
-    for frame in frames:
-        assert pattern not in frame["filename"], (
-            f"Frame {frame['filename']} should not contain {pattern}"
-        )
+    # Guard against a vacuous pass: an empty result would satisfy the loop
+    # below while proving nothing about the exclusion rule.
+    assert frames, (
+        f"filtering must retain the frames that do not match {pattern!r}, "
+        "but every frame was dropped"
+    )
+    offenders = [f["filename"] for f in frames if pattern in f["filename"]]
+    assert not offenders, (
+        f"filtering must drop every frame whose filename contains {pattern!r}, "
+        f"but these survived: {offenders}"
+    )
 
 
 @then(parsers.parse('the filtered frames are "{f1}", "{f2}"'))
@@ -272,10 +331,12 @@ def check_frames_order(filter_fixture: FilterFixture, f1: str, f2: str) -> None:
         Expected filename of the second frame.
 
     """
-    frames = _get_frames(filter_fixture)
-    assert len(frames) == 2, f"Expected 2 frames, got {len(frames)}"
-    assert frames[0]["filename"] == f1, f"First frame should be {f1}"
-    assert frames[1]["filename"] == f2, f"Second frame should be {f2}"
+    _assert_frame_count(filter_fixture, 2)
+    actual = [frame["filename"] for frame in _get_frames(filter_fixture)]
+    assert actual == [f1, f2], (
+        f"filtering must preserve caller-to-callee frame order ['{f1}', '{f2}'], "
+        f"got {actual}"
+    )
 
 
 @then(parsers.parse("the filtered cause has {n:d} frame"))
@@ -291,8 +352,7 @@ def check_cause_frame_count(filter_fixture: FilterFixture, n: int) -> None:
         Expected number of frames in the cause exception.
 
     """
-    frames = _get_frames(filter_fixture, from_cause=True)
-    assert len(frames) == n, f"Expected {n} cause frames, got {len(frames)}"
+    _assert_frame_count(filter_fixture, n, from_cause=True)
 
 
 @then(parsers.parse('the filtered cause frame filename is "{expected}"'))
@@ -307,10 +367,7 @@ def check_cause_frame_filename(filter_fixture: FilterFixture, expected: str) -> 
         Expected filename of the single remaining cause frame.
 
     """
-    frames = _get_frames(filter_fixture, from_cause=True)
-    assert len(frames) == 1, "Expected exactly 1 cause frame"
-    actual = frames[0]["filename"]
-    assert actual == expected, f"Expected cause filename '{expected}', got '{actual}'"
+    _assert_sole_frame_filename(filter_fixture, expected, from_cause=True)
 
 
 @then(parsers.parse('the patterns contain "{pattern}"'))

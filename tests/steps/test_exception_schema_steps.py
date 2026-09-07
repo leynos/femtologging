@@ -125,65 +125,133 @@ def serialize_exception(
     serialized_json["value"] = json.dumps(exception_data, sort_keys=True)
 
 
+def _decode(serialized_json: dict[str, str]) -> dict[str, object]:
+    """Decode the payload recorded by the serialization ``when`` step."""
+    return json.loads(serialized_json["value"])
+
+
+def _assert_has_key(payload: dict[str, object], key: str, context: str) -> object:
+    """Assert ``key`` is present in ``payload`` and return its value."""
+    assert key in payload, (
+        f"{context}: serialized payload must expose {key!r}; "
+        f"present keys are {sorted(payload)}"
+    )
+    return payload[key]
+
+
+def _assert_nested_payload(
+    payload: dict[str, object], key: str, context: str
+) -> dict[str, object]:
+    """Assert ``key`` holds a nested JSON object and return it."""
+    nested = _assert_has_key(payload, key, context)
+    match nested:
+        case dict() as nested_payload:
+            return nested_payload
+        case _:
+            msg = (
+                f"{context}: {key!r} must serialize as a JSON object, "
+                f"got {type(nested).__name__}"
+            )
+            raise AssertionError(msg)
+
+
+def _assert_field_equals(
+    payload: dict[str, object], key: str, expected: object, context: str
+) -> None:
+    """Assert that ``key`` serializes to ``expected`` within ``payload``."""
+    actual = _assert_has_key(payload, key, context)
+    assert actual == expected, (
+        f"{context}: {key!r} must serialize as {expected!r}, but was {actual!r}"
+    )
+
+
 @then(parsers.parse('the JSON contains "{key}" as "{value}"'))
 def json_contains_string(serialized_json: dict[str, str], key: str, value: str) -> None:
-    data = json.loads(serialized_json["value"])
-    assert key in data
-    assert data[key] == value
+    _assert_field_equals(
+        _decode(serialized_json), key, value, "string field serialization"
+    )
 
 
 @then(parsers.parse('the JSON contains "{key}" as {value:d}'))
 def json_contains_int(serialized_json: dict[str, str], key: str, value: int) -> None:
-    data = json.loads(serialized_json["value"])
-    assert key in data
-    assert data[key] == value
+    _assert_field_equals(
+        _decode(serialized_json), key, value, "integer field serialization"
+    )
 
 
 @then(parsers.parse('the JSON contains "{key}"'))
 def json_has_key(serialized_json: dict[str, str], key: str) -> None:
-    data = json.loads(serialized_json["value"])
-    assert key in data
+    _assert_has_key(_decode(serialized_json), key, "optional field serialization")
 
 
 @then(parsers.parse('the JSON contains nested "{parent}" with "{key}" as "{value}"'))
 def json_contains_nested(
     serialized_json: dict[str, str], parent: str, key: str, value: str
 ) -> None:
-    data = json.loads(serialized_json["value"])
-    assert parent in data
-    assert key in data[parent]
-    assert data[parent][key] == value
+    context = f"nested {parent!r} payload serialization"
+    nested = _assert_nested_payload(_decode(serialized_json), parent, context)
+    _assert_field_equals(nested, key, value, context)
 
 
 @then(parsers.parse('the JSON contains "{key}" array with {count:d} items'))
 def json_array_length(serialized_json: dict[str, str], key: str, count: int) -> None:
-    data = json.loads(serialized_json["value"])
-    assert key in data
-    assert isinstance(data[key], list)
-    assert len(data[key]) == count
+    """Assert that a serialized field is an array with the requested length."""
+    context = "exception group serialization"
+    items = _assert_has_key(_decode(serialized_json), key, context)
+    match items:
+        case list() as json_items:
+            assert len(json_items) == count, (
+                f"{context}: {key!r} must hold {count} nested entries, "
+                f"got {len(json_items)}"
+            )
+        case _:
+            msg = (
+                f"{context}: {key!r} must serialize as a JSON array, "
+                f"got {type(items).__name__}"
+            )
+            raise AssertionError(msg)
 
 
 @then("the JSON matches snapshot")
 def json_matches_snapshot(
     serialized_json: dict[str, str], snapshot: SnapshotAssertion
 ) -> None:
-    data = json.loads(serialized_json["value"])
-    assert data == snapshot
+    assert _decode(serialized_json) == snapshot, (
+        "serialized payload must match the recorded exception schema snapshot"
+    )
 
 
 @then("the schema version matches the Rust constant")
 def schema_version_matches_rust(serialized_json: dict[str, str]) -> None:
-    data = json.loads(serialized_json["value"])
-    assert data["schema_version"] == EXCEPTION_SCHEMA_VERSION
+    _assert_field_equals(
+        _decode(serialized_json),
+        "schema_version",
+        EXCEPTION_SCHEMA_VERSION,
+        "schema version agreement between Rust and Python",
+    )
 
 
 @then("the EXCEPTION_SCHEMA_VERSION constant is accessible from Python")
 def constant_is_accessible() -> None:
-    # This test will fail at import time if the constant is not exported
-    assert EXCEPTION_SCHEMA_VERSION is not None
+    # Import failure would already abort collection; this guards against the
+    # constant being exported as a placeholder rather than a real value.
+    assert EXCEPTION_SCHEMA_VERSION is not None, (
+        "EXCEPTION_SCHEMA_VERSION must be re-exported from the femtologging package"
+    )
 
 
 @then("the constant value is a positive integer")
 def constant_is_positive_int() -> None:
-    assert isinstance(EXCEPTION_SCHEMA_VERSION, int)
-    assert EXCEPTION_SCHEMA_VERSION > 0
+    """Assert that the native schema version is a positive Python integer."""
+    match EXCEPTION_SCHEMA_VERSION:
+        case int() as version:
+            assert version > 0, (
+                "schema versions are one-based, so EXCEPTION_SCHEMA_VERSION must "
+                f"be positive; got {version}"
+            )
+        case value:
+            msg = (
+                "EXCEPTION_SCHEMA_VERSION must cross the FFI boundary as an int, "
+                f"got {type(value).__name__}"
+            )
+            raise AssertionError(msg)

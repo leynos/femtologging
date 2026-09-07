@@ -16,9 +16,6 @@ if typ.TYPE_CHECKING:
 
     from syrupy.assertion import SnapshotAssertion
 
-    Iterator = cabc.Iterator
-    Sequence = cabc.Sequence
-
 INFO_PREFIX = "test [INFO] "
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
@@ -29,7 +26,7 @@ scenarios(str(FEATURES / "send_sync.feature"))
 
 
 @given("a stream handler built for stderr", target_fixture="handler")
-def given_handler() -> Iterator[FemtoStreamHandler]:
+def given_handler() -> cabc.Iterator[FemtoStreamHandler]:
     handler = StreamHandlerBuilder.stderr().build()
     try:
         yield handler
@@ -42,15 +39,20 @@ def given_closed(handler: FemtoStreamHandler) -> None:
     handler.close()
 
 
+def _drain_info_lines(capfd: pytest.CaptureFixture[str]) -> list[str]:
+    """Return the captured stderr lines emitted at INFO by the test logger."""
+    captured = capfd.readouterr().err.strip().splitlines()
+    return [line for line in captured if line.startswith(INFO_PREFIX)]
+
+
 @when("I log a message", target_fixture="output")
 def when_log_one(
     handler: FemtoStreamHandler, capfd: pytest.CaptureFixture[str]
 ) -> list[str]:
     handler.handle("test", "INFO", "drop me")
-    ok = handler.flush()
-    out = capfd.readouterr().err.strip().splitlines()
-    lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]
-    assert ok, "handler.flush() timed out"
+    is_flushed = handler.flush()
+    lines = _drain_info_lines(capfd)
+    assert is_flushed, "an open handler must drain its queue before the flush deadline"
     return lines
 
 
@@ -60,10 +62,9 @@ def when_log_after_close(
 ) -> list[str]:
     with pytest.raises(RuntimeError, match="Handler error: handler is closed"):
         handler.handle("test", "INFO", "drop me")
-    ok = handler.flush()
-    out = capfd.readouterr().err.strip().splitlines()
-    lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]
-    assert not ok, "handler.flush() unexpectedly succeeded"
+    is_flushed = handler.flush()
+    lines = _drain_info_lines(capfd)
+    assert not is_flushed, "flushing a closed handler must report failure, not success"
     return lines
 
 
@@ -80,25 +81,33 @@ def when_log_threads(
         handler.handle("test", "INFO", f"message {i}")
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(count)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    ok = handler.flush()
-    out = capfd.readouterr().err.strip().splitlines()
-    assert ok, "handler.flush() timed out"
-    lines = [ln for ln in out if ln.startswith(INFO_PREFIX)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    is_flushed = handler.flush()
+    lines = _drain_info_lines(capfd)
+    assert is_flushed, (
+        "the handler must drain every thread's record before the flush deadline"
+    )
 
-    def _suffix_num(s: str) -> int | None:
+    def _suffix_num(line: str) -> int | None:
         try:
-            return int(s.rsplit(" ", 1)[-1])
+            return int(line.rsplit(" ", 1)[-1])
         except (ValueError, IndexError):
             return None
 
+    # Concurrent writers interleave non-deterministically, so order by the
+    # message ordinal to give the snapshot a stable sequence.
     lines.sort(key=lambda s: (_suffix_num(s) is None, _suffix_num(s) or 0, s))
     return lines
 
 
 @then("the captured output matches snapshot")
-def then_output_snapshot(output: Sequence[str], snapshot: SnapshotAssertion) -> None:
-    assert output == snapshot, "normalized output does not match the snapshot"
+def then_output_snapshot(
+    output: cabc.Sequence[str], snapshot: SnapshotAssertion
+) -> None:
+    assert output == snapshot, (
+        "concurrently emitted records must match the recorded snapshot "
+        f"once normalized; got {output!r}"
+    )

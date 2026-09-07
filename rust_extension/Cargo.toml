@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [lints.clippy]
 # Enforce the environment-access policy from
-# `docs/adr-005-environment-seam-taxonomy.md` in every target kind and every
+# `docs/adr-006-environment-seam-taxonomy.md` in every target kind and every
 # feature lane. The banned paths live in `clippy.toml`; this is the severity.
 # Issue #420 will widen this table to the full Netsuke lint baseline.
 disallowed_methods = "deny"

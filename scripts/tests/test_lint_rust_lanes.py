@@ -46,6 +46,10 @@ def manifest_path() -> pathlib.Path:
 
     The driver only ever stringifies this value, so the tests pass a plain
     string and narrow the type here in one place.
+
+    Returns
+    -------
+        The manifest path, typed as the driver expects it.
     """
     return typ.cast("pathlib.Path", MANIFEST)
 
@@ -57,6 +61,10 @@ def selects(argv: cabc.Sequence[str], lane: str) -> bool:
     `none` lane passes `--no-default-features` and never the word "none".
     Matching the selection contiguously keeps `python` from also matching a
     lane that merely mentions it elsewhere.
+
+    Returns
+    -------
+        True when the vector contains the lane's selection contiguously.
     """
     wanted = lint_rust_lanes.lane_selection(lane)
     window = len(wanted)
@@ -67,7 +75,13 @@ def selects(argv: cabc.Sequence[str], lane: str) -> bool:
 
 
 def rejecting(lane: str) -> cabc.Callable[[Invocation], tuple[str, str, int]]:
-    """Return a shim handler that rejects exactly one lane."""
+    """Return a shim handler that rejects exactly one lane.
+
+    Returns
+    -------
+        A handler returning a non-zero result for that lane and success
+        otherwise.
+    """
 
     def handler(invocation: Invocation) -> tuple[str, str, int]:
         if selects(invocation.args, lane):
@@ -78,12 +92,22 @@ def rejecting(lane: str) -> cabc.Callable[[Invocation], tuple[str, str, int]]:
 
 
 def lanes_invoked(spy: SpyCommand) -> list[list[str]]:
-    """Return the argument vector of each recorded ``cargo`` invocation."""
+    """Return the argument vector of each recorded ``cargo`` invocation.
+
+    Returns
+    -------
+        One argument list per invocation, in the order they were made.
+    """
     return [list(invocation.args) for invocation in spy.invocations]
 
 
 def run_lanes(lanes: cabc.Sequence[str]) -> int:
-    """Invoke the driver over the given lanes and return its exit code."""
+    """Invoke the driver over the given lanes.
+
+    Returns
+    -------
+        The driver's exit code.
+    """
     return lint_rust_lanes.main(
         manifest=manifest_path(),
         lanes=list(lanes),
@@ -98,13 +122,17 @@ def test_lane_selection_maps_the_two_reserved_names() -> None:
     other name selects that feature alone. ``--all-features`` on its own would
     never compile a ``cfg(not(feature))`` block, which is why ``none`` exists.
     """
-    assert lint_rust_lanes.lane_selection("none") == ["--no-default-features"]
-    assert lint_rust_lanes.lane_selection("all") == ["--all-features"]
+    assert lint_rust_lanes.lane_selection("none") == ["--no-default-features"], (
+        "the none lane must select no features"
+    )
+    assert lint_rust_lanes.lane_selection("all") == ["--all-features"], (
+        "the all lane must select every feature"
+    )
     assert lint_rust_lanes.lane_selection("python") == [
         "--no-default-features",
         "--features",
         "python",
-    ]
+    ], "a named lane must select that feature and nothing else"
 
 
 def test_lane_command_omits_an_empty_lint_separator() -> None:
@@ -114,7 +142,7 @@ def test_lane_command_omits_an_empty_lint_separator() -> None:
     separator with nothing behind it.
     """
     argv = lint_rust_lanes.lane_command(manifest_path(), "none", (), ())
-    assert "--" not in argv
+    assert "--" not in argv, "an empty lint argument list must add no separator"
 
 
 def test_lane_command_places_lint_arguments_behind_the_separator() -> None:
@@ -127,8 +155,12 @@ def test_lane_command_places_lint_arguments_behind_the_separator() -> None:
         manifest_path(), "python", ("--all-targets",), LINT_ARGS
     )
     separator = argv.index("--")
-    assert argv[separator - 1] == "--all-targets"
-    assert argv[separator + 1 :] == list(LINT_ARGS)
+    assert argv[separator - 1] == "--all-targets", (
+        "Cargo arguments must precede the separator"
+    )
+    assert argv[separator + 1 :] == list(LINT_ARGS), (
+        "lint arguments must follow the separator"
+    )
 
 
 @manual_lifecycle
@@ -141,10 +173,10 @@ def test_every_lane_passing_succeeds(cmd_mox: CmdMox) -> None:
     spy = cmd_mox.spy("cargo").runs(rejecting("no-such-feature"))
 
     cmd_mox.replay()
-    assert run_lanes(["none", "python"]) == 0
+    assert run_lanes(["none", "python"]) == 0, "every lane passing must succeed"
     cmd_mox.verify()
 
-    assert spy.call_count == 2
+    assert spy.call_count == 2, "both lanes must actually be linted"
 
 
 @manual_lifecycle
@@ -158,10 +190,12 @@ def test_a_failing_first_lane_fails_the_run(cmd_mox: CmdMox) -> None:
     spy = cmd_mox.spy("cargo").runs(rejecting("none"))
 
     cmd_mox.replay()
-    assert run_lanes(["none", "python"]) == REJECTED
+    assert run_lanes(["none", "python"]) == REJECTED, (
+        "a failing first lane must fail the run"
+    )
     cmd_mox.verify()
 
-    assert spy.call_count == 1
+    assert spy.call_count == 1, "the run must stop at the failing lane"
 
 
 @manual_lifecycle
@@ -174,10 +208,12 @@ def test_a_failing_last_lane_fails_the_run(cmd_mox: CmdMox) -> None:
     spy = cmd_mox.spy("cargo").runs(rejecting("python"))
 
     cmd_mox.replay()
-    assert run_lanes(["none", "python"]) == REJECTED
+    assert run_lanes(["none", "python"]) == REJECTED, (
+        "a failing last lane must fail the run"
+    )
     cmd_mox.verify()
 
-    assert spy.call_count == 2
+    assert spy.call_count == 2, "both lanes must run before the failure"
 
 
 @manual_lifecycle
@@ -193,14 +229,18 @@ def test_the_failing_lane_is_named(
     spy = cmd_mox.spy("cargo").runs(rejecting("test-util"))
 
     cmd_mox.replay()
-    assert run_lanes(["none", "test-util", "python"]) == REJECTED
+    assert run_lanes(["none", "test-util", "python"]) == REJECTED, (
+        "a failing middle lane must fail the run"
+    )
     cmd_mox.verify()
 
     assert (
         f"# Rust lint lane failed: test-util (exit {REJECTED})"
         in capsys.readouterr().out
+    ), "the failing lane must be named in the output"
+    assert not any(selects(argv, "python") for argv in lanes_invoked(spy)), (
+        "the run must stop before the lane after the failure"
     )
-    assert not any(selects(argv, "python") for argv in lanes_invoked(spy))
 
 
 @manual_lifecycle
@@ -213,7 +253,7 @@ def test_each_lane_selects_its_own_features(cmd_mox: CmdMox) -> None:
     spy = cmd_mox.spy("cargo").runs(rejecting("no-such-feature"))
 
     cmd_mox.replay()
-    assert run_lanes(["none", "python", "all"]) == 0
+    assert run_lanes(["none", "python", "all"]) == 0, "every lane must pass"
     cmd_mox.verify()
 
     selections = [
@@ -224,7 +264,7 @@ def test_each_lane_selects_its_own_features(cmd_mox: CmdMox) -> None:
         ["--no-default-features"],
         ["--no-default-features", "--features", "python"],
         ["--all-features"],
-    ]
+    ], "each lane must carry its own feature selection"
 
 
 def test_an_empty_lane_list_is_not_success() -> None:
@@ -240,4 +280,4 @@ def test_an_empty_lane_list_is_not_success() -> None:
             lint_args=list(LINT_ARGS),
         )
         != 0
-    )
+    ), "an empty lane list must not report success"
