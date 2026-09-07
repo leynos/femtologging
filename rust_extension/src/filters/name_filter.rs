@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 #[cfg(test)]
 use crate::level::FemtoLevel;
 #[cfg(feature = "python")]
-use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
+use crate::macros::{AsPyDict, impl_as_pydict};
 use crate::{
     filters::{FemtoFilter, FilterBuildError},
     log_record::FemtoLogRecord,
@@ -76,10 +76,8 @@ impl_as_pydict!(NameFilterBuilder {
 });
 
 #[cfg(feature = "python")]
-py_setters!(NameFilterBuilder {
-    prefix: py_with_prefix => "with_prefix", String, Some,
-        "Set the accepted logger-name prefix.",
-});
+#[path = "name_filter_python_bindings.rs"]
+mod python_bindings;
 
 #[cfg(test)]
 mod tests {

@@ -4,7 +4,7 @@
 use pyo3::prelude::*;
 
 #[cfg(feature = "python")]
-use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
+use crate::macros::{AsPyDict, impl_as_pydict};
 use crate::{filters::FemtoFilter, level::FemtoLevel, log_record::FemtoLogRecord};
 
 #[derive(Debug)]
@@ -66,10 +66,8 @@ impl_as_pydict!(LevelFilterBuilder {
 });
 
 #[cfg(feature = "python")]
-py_setters!(LevelFilterBuilder {
-    max_level: py_with_max_level => "with_max_level", FemtoLevel, Some,
-        "Set the maximum level permitted.",
-});
+#[path = "level_filter_python_bindings.rs"]
+mod python_bindings;
 
 #[cfg(test)]
 mod tests {
