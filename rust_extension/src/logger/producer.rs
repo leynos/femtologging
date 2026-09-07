@@ -195,7 +195,7 @@ impl FemtoLogger {
         };
         let handlers = self.handlers.read().clone();
         #[cfg(feature = "python")]
-        let context = self.capture_python_context();
+        let context = Self::capture_python_context(&handlers);
         if tx
             .try_send(QueuedRecord {
                 record,
@@ -215,13 +215,15 @@ impl FemtoLogger {
         });
     }
 
-    /// Capture the emitting thread's context only when a queued handler needs it.
+    /// Capture the emitting thread's context when the queued handlers need it.
+    ///
+    /// Inspecting `handlers` rather than logger-wide mutable state keeps the
+    /// context paired with the exact handler snapshot that the worker receives.
     #[cfg(feature = "python")]
-    fn capture_python_context(&self) -> Option<pyo3::Py<pyo3::PyAny>> {
-        if !self
-            .has_python_handlers
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+    pub(super) fn capture_python_context(
+        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+    ) -> Option<pyo3::Py<pyo3::PyAny>> {
+        if !handlers.iter().any(|handler| handler.is_python_backed()) {
             return None;
         }
         pyo3::Python::attach(|py| {
