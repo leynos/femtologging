@@ -1,5 +1,10 @@
 //! Python bindings for runtime mutation builders.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use std::collections::BTreeMap;
 
 use pyo3::{IntoPyObjectExt, prelude::*, types::PyDict};

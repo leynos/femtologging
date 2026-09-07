@@ -16,7 +16,7 @@ pub(crate) trait RotationClock: Send {
 pub(crate) struct SystemClock;
 
 impl RotationClock for SystemClock {
-    fn now(&mut self) -> DateTime<Utc> { take_injected_time().unwrap_or_else(Utc::now) }
+    fn now(&mut self) -> DateTime<Utc> { injected::take().unwrap_or_else(Utc::now) }
 }
 
 #[cfg(feature = "python")]
@@ -57,12 +57,12 @@ mod injected {
 
 #[cfg(not(feature = "python"))]
 mod injected {
+    //! No injected clock values are available without Python test support.
+
     use chrono::{DateTime, Utc};
 
-    pub(super) fn take() -> Option<DateTime<Utc>> { None }
+    pub(super) const fn take() -> Option<DateTime<Utc>> { None }
 }
-
-fn take_injected_time() -> Option<DateTime<Utc>> { injected::take() }
 
 #[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn set_injected_times_for_test(epoch_millis: Vec<i64>) { injected::set(epoch_millis); }

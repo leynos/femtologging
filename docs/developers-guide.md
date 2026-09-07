@@ -224,6 +224,22 @@ crates. The private `femtologging_test_macros` crate is a path-only development
 dependency, so Cargo removes it from published package metadata; this check
 keeps that packaging boundary intact. `make test` includes this check.
 
+Every workspace member inherits the shared Rust, Clippy, and rustdoc policy
+through `[lints] workspace = true`. `make lint` runs Clippy for each supported
+feature lane, then checks all workspace targets with all features. It also runs
+strict workspace documentation with `--cfg docsrs -D warnings`. The feature
+lane loop is fail-fast, so a finding in one lane must be fixed before the next
+lane can run.
+
+`make test` includes `make test-doc`, which compiles documentation examples with
+`-D warnings`. The all-feature workspace pass excludes `femtologging_rs`
+because PyO3's `extension-module` feature omits the Python linkage needed by
+standalone doctests. A second pass checks that crate with all runtime features
+enabled in embedding mode, so its public examples remain covered. Fix baseline
+findings at source. The only permitted `#[expect]` uses are narrowly scoped,
+reasoned exceptions for macro-expansion artefacts or genuine floating-point
+arithmetic. Do not add source-level `#[allow]` suppressions.
+
 ## Benchmarking Documentation
 
 Benchmarking work is governed by

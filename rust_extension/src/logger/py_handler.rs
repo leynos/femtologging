@@ -188,7 +188,7 @@ impl FemtoHandlerTrait for PyHandler {
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// Fallback PyHandler when python feature is disabled.
+/// Fallback `PyHandler` when the `python` feature is disabled.
 #[cfg(not(feature = "python"))]
 pub struct PyHandler {
     pub obj: Py<PyAny>,
@@ -196,7 +196,7 @@ pub struct PyHandler {
 
 #[cfg(not(feature = "python"))]
 impl PyHandler {
-    pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self { Self { obj } }
+    pub const fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self { Self { obj } }
 }
 
 #[cfg(not(feature = "python"))]

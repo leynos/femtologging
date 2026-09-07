@@ -2,6 +2,11 @@
 //!
 //! This module isolates generated Python method wrappers from the logger core.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use std::sync::{Arc, atomic::Ordering};
 
 use pyo3::{
@@ -55,7 +60,7 @@ impl FemtoLogger {
         args: &Bound<'py, PyTuple>,
         kwargs: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Option<String>> {
-        log_python_request(self, py, &parse_log_call(args, kwargs)?)
+        log_python_request(self, py, parse_log_call(args, kwargs))
     }
 
     /// Update the logger's minimum level.

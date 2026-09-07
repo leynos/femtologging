@@ -265,6 +265,7 @@ pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
 }
 
 /// Bundles timed-rotation parameters passed to the handler constructor.
+#[derive(Clone, Copy)]
 pub(crate) struct TimedRotationConfig {
     pub(crate) schedule: TimedRotationSchedule,
     pub(crate) backup_count: usize,
@@ -333,7 +334,7 @@ impl FemtoTimedRotatingFileHandler {
         let writer = BufWriter::new(file);
         let mut rotation_strategy = TimedFileRotationStrategy::new(
             path_ref.to_path_buf(),
-            rotation.schedule.clone(),
+            rotation.schedule,
             rotation.backup_count,
         );
         // Only apply the mtime seed when it predates the clock's "now"

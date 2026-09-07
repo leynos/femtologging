@@ -4,6 +4,11 @@
 //! logic so the Rust implementation remains focused on validation and handler
 //! construction.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use pyo3::{

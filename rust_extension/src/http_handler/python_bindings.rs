@@ -1,5 +1,10 @@
 //! `PyO3` methods isolated from the transport handler implementation.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::prelude::*;
 
 use super::{FemtoHTTPHandler, FemtoHandlerTrait, FemtoLogRecord};

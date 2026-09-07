@@ -148,6 +148,11 @@ pub struct FemtoStreamHandler {
 mod python_bindings {
     //! `PyO3` method wrappers for [`super::FemtoStreamHandler`].
 
+    #![expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 generates five-argument Python call wrappers"
+    )]
+
     use pyo3::prelude::*;
 
     use super::FemtoStreamHandler;

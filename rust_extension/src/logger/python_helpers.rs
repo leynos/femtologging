@@ -66,16 +66,18 @@ pub(super) fn parse_fixed_level_call<'py>(
     Ok(PythonLogRequest { level, options })
 }
 
-/// Build and emit a record from an already validated Python logging call.
+/// Parse, build, and emit a record from a Python logging call.
 ///
 /// # Errors
 ///
-/// Returns a Python error when exception or stack capture fails.
+/// Returns parsing errors before checking the resolved level. Enabled calls
+/// can additionally return exception-capture or stack-capture errors.
 pub(super) fn log_python_request<'py>(
     logger: &FemtoLogger,
     py: Python<'py>,
-    request: &PythonLogRequest<'py>,
+    request_result: PyResult<PythonLogRequest<'py>>,
 ) -> PyResult<Option<String>> {
+    let request = request_result?;
     if !logger.is_enabled_for(request.level) {
         return Ok(None);
     }

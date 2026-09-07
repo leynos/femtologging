@@ -140,7 +140,7 @@ fn seed_rollover_from_overrides_initial_rollover() {
     let now = utc_datetime!("2026-03-12T10:00:00Z");
     let mtime = utc_datetime!("2026-03-12T08:00:00Z");
     let clock = SequenceClock::new([now]);
-    let mut strategy = TimedFileRotationStrategy::new_with_clock(path, schedule.clone(), 1, clock);
+    let mut strategy = TimedFileRotationStrategy::new_with_clock(path, schedule, 1, clock);
 
     strategy.seed_rollover_from(mtime);
 
@@ -167,7 +167,7 @@ fn new_with_clock_uses_clock_time() {
 
     let now = utc_datetime!("2026-03-12T10:00:00Z");
     let clock = SequenceClock::new([now]);
-    let strategy = TimedFileRotationStrategy::new_with_clock(path, schedule.clone(), 1, clock);
+    let strategy = TimedFileRotationStrategy::new_with_clock(path, schedule, 1, clock);
 
     let expected = schedule.next_rollover(now);
     assert_eq!(
@@ -204,7 +204,7 @@ fn production_handler_seeds_rollover_from_file_mtime() {
         overflow_policy: OverflowPolicy::Block,
     };
     let rotation_config = TimedRotationConfig {
-        schedule: schedule.clone(),
+        schedule,
         backup_count: 1,
     };
     let handler = FemtoTimedRotatingFileHandler::with_capacity_flush_policy(

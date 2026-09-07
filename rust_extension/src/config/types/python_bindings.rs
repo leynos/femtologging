@@ -1,5 +1,10 @@
 //! Python bindings for configuration builders.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use std::convert::identity;
 
 use pyo3::prelude::*;

@@ -41,6 +41,11 @@ fn emit_message_event(level: FemtoLevel, message: &str) {
 mod python_bindings {
     //! Python function wrappers for the tracing compatibility bridge.
 
+    #![expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 generates five-argument Python call wrappers"
+    )]
+
     use pyo3::prelude::*;
 
     use super::{FemtoLevel, emit_message_event, install_global_tracing_subscriber};

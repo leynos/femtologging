@@ -171,6 +171,11 @@ const fn hello() -> &'static str { "hello from Rust" }
 mod py_api {
     //! Python-facing helper functions that bridge to the Rust manager.
 
+    #![expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 generates five-argument Python call wrappers"
+    )]
+
     use pyo3::prelude::{Py, PyResult, Python};
 
     #[cfg(feature = "python")]

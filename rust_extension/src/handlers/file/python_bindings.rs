@@ -3,6 +3,11 @@
 //! Keeping the `PyO3` expansion in this private module leaves the file handler's
 //! Rust implementation and direct API in the parent module.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::prelude::*;
 
 use super::{

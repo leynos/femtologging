@@ -1,10 +1,11 @@
 .PHONY: help all clean build release lint lint-rust fmt check-fmt \
-markdownlint tools nixie spelling spelling-helper-test test typecheck package-check
+markdownlint tools nixie spelling spelling-helper-test test typecheck package-check test-doc
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
 FMT_TOOLCHAIN ?= nightly-2026-05-28
 BUILD_JOBS ?=
+RUSTDOC_FLAGS ?= --cfg docsrs -D warnings
 RUFF_VERSION ?= 0.15.12
 RUFF ?= uvx ruff==$(RUFF_VERSION)
 TY_VERSION ?= 0.0.75
@@ -61,11 +62,13 @@ lint: ## Run linters
 	$(MAKE) lint-rust
 
 lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
-	@for features in none python log-compat tracing-compat; do \
+	@set -e; for features in none python log-compat tracing-compat; do \
 		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
 		echo "# Lint Rust features: $$features"; \
-		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings; \
+		$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --no-default-features $$flags -- -D warnings; \
 	done
+	$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --all-targets --all-features -- -D warnings
+	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) doc --manifest-path $(RUST_MANIFEST) --workspace --no-deps
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
@@ -98,17 +101,24 @@ nixie: ## Validate Mermaid diagrams
 
 test: build ## Run tests
 	$(CARGO) +$(FMT_TOOLCHAIN) fmt --manifest-path $(RUST_MANIFEST) --all -- --check
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- -D warnings
+	$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --no-default-features -- -D warnings
+	$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --no-default-features --features python -- -D warnings
+	$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --no-default-features --features log-compat -- -D warnings
+	$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --no-default-features --features tracing-compat -- -D warnings
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- --test-threads=$(TEST_THREADS)
+	$(MAKE) test-doc
 	uv run pytest -v
 	$(MAKE) package-check
+
+test-doc: ## Compile workspace documentation with warnings denied
+	# PyO3 extension-module omits libpython linkage, so its doctests cannot link standalone.
+	RUSTFLAGS="-D warnings" $(CARGO) test --manifest-path $(RUST_MANIFEST) --workspace --doc --all-features --exclude femtologging_rs $(BUILD_JOBS)
+	# Exercise the extension's examples with every runtime feature in embedding mode.
+	RUSTFLAGS="-D warnings" $(CARGO) test --manifest-path $(RUST_MANIFEST) --package femtologging_rs --doc --no-default-features --features python,test-util,log-compat,tracing-compat $(BUILD_JOBS)
 
 package-check: ## Verify publishable crates without private test dependencies
 	$(CARGO) package --manifest-path $(RUST_MANIFEST) --workspace --allow-dirty $(BUILD_JOBS)
