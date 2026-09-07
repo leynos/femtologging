@@ -61,15 +61,11 @@ impl RotationConfig {
     /// assert_eq!(config.max_bytes, 0);
     /// assert_eq!(config.backup_count, 0);
     /// ```
-    pub const fn disabled() -> Self {
-        Self::new(0, 0)
-    }
+    pub const fn disabled() -> Self { Self::new(0, 0) }
 }
 
 impl Default for RotationConfig {
-    fn default() -> Self {
-        Self::disabled()
-    }
+    fn default() -> Self { Self::disabled() }
 }
 
 /// File handler variant configured for size-based rotation.
@@ -198,13 +194,9 @@ impl FemtoHandlerTrait for FemtoRotatingFileHandler {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
 impl Drop for FemtoRotatingFileHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
+    fn drop(&mut self) { self.close(); }
 }

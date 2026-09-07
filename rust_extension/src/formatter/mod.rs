@@ -42,19 +42,13 @@ impl SharedFormatter {
     }
 
     /// Wrap an existing shared formatter trait object.
-    pub fn from_arc(inner: Arc<dyn FemtoFormatter + Send + Sync>) -> Self {
-        Self { inner }
-    }
+    pub fn from_arc(inner: Arc<dyn FemtoFormatter + Send + Sync>) -> Self { Self { inner } }
 
     /// Clone the underlying trait object, incrementing the reference count.
-    pub fn clone_arc(&self) -> Arc<dyn FemtoFormatter + Send + Sync> {
-        Arc::clone(&self.inner)
-    }
+    pub fn clone_arc(&self) -> Arc<dyn FemtoFormatter + Send + Sync> { Arc::clone(&self.inner) }
 
     /// Format a log record using the wrapped formatter instance.
-    pub fn format(&self, record: &FemtoLogRecord) -> String {
-        self.inner.format(record)
-    }
+    pub fn format(&self, record: &FemtoLogRecord) -> String { self.inner.format(record) }
 }
 
 impl fmt::Debug for SharedFormatter {
@@ -93,25 +87,24 @@ impl FemtoFormatter for DefaultFormatter {
 }
 
 impl FemtoFormatter for Arc<dyn FemtoFormatter + Send + Sync> {
-    fn format(&self, record: &FemtoLogRecord) -> String {
-        (**self).format(record)
-    }
+    fn format(&self, record: &FemtoLogRecord) -> String { (**self).format(record) }
 }
 
 impl FemtoFormatter for Box<dyn FemtoFormatter + Send + Sync> {
-    fn format(&self, record: &FemtoLogRecord) -> String {
-        (**self).format(record)
-    }
+    fn format(&self, record: &FemtoLogRecord) -> String { (**self).format(record) }
 }
 
 #[cfg(test)]
 mod tests {
     //! Tests for formatter implementations.
 
-    use super::*;
-    use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
-    use crate::level::FemtoLevel;
     use static_assertions::assert_impl_all;
+
+    use super::*;
+    use crate::{
+        exception_schema::{ExceptionPayload, StackFrame, StackTracePayload},
+        level::FemtoLevel,
+    };
 
     #[test]
     fn shared_formatter_is_send_sync() {

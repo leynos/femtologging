@@ -23,9 +23,7 @@ pub struct PyRotatingFileHandler {
 
 impl PyRotatingFileHandler {
     /// Wrap a core rotating file handler for Python exposure.
-    pub(crate) const fn from_core(inner: CoreRotatingFileHandler) -> Self {
-        Self { inner }
-    }
+    pub(crate) const fn from_core(inner: CoreRotatingFileHandler) -> Self { Self { inner } }
 }
 
 /// Python options bundling queue and rotation configuration for rotating
@@ -114,7 +112,8 @@ impl HandlerOptions {
 mod python_bindings;
 
 pub use python_bindings::{
-    clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
+    clear_rotating_fresh_failure_for_test,
+    force_rotating_fresh_failure_for_test,
 };
 
 impl Default for HandlerOptions {

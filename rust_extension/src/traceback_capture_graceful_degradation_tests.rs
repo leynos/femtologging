@@ -3,13 +3,14 @@
 //! These tests verify that exception capture handles edge cases gracefully,
 //! such as missing attributes, empty args, chained exceptions, and malformed notes.
 
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::{prelude::*, types::PyDict};
 use rstest::rstest;
 
-use crate::exception_schema::ExceptionPayload;
-use crate::test_utils::traceback_test_helpers::{create_base_exception, create_value_error};
-use crate::traceback_capture::capture_exception;
+use crate::{
+    exception_schema::ExceptionPayload,
+    test_utils::traceback_test_helpers::{create_base_exception, create_value_error},
+    traceback_capture::capture_exception,
+};
 
 // --------------------------------
 // Helper functions for common setup

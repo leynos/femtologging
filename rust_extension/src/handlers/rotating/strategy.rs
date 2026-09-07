@@ -49,9 +49,7 @@ impl FileRotationStrategy {
         std::mem::replace(&mut self.last_outcome, RotationOutcome::Skipped)
     }
 
-    pub(crate) const fn next_record_bytes(message: &str) -> u64 {
-        message.len() as u64 + 1
-    }
+    pub(crate) const fn next_record_bytes(message: &str) -> u64 { message.len() as u64 + 1 }
 
     pub(crate) fn should_rotate(
         &self,
@@ -144,7 +142,8 @@ impl FileRotationStrategy {
                     Err(io::Error::new(
                         fresh_err.kind(),
                         format!(
-                            "failed to open fresh writer ({fresh_err}); fallback append failed ({fallback_err})"
+                            "failed to open fresh writer ({fresh_err}); fallback append failed \
+                             ({fallback_err})"
                         ),
                     ))
                 }

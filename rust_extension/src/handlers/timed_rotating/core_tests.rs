@@ -1,29 +1,36 @@
 //! Tests for timed rotation core logic.
 
-use std::fs::{self, OpenOptions};
-use std::io::{BufWriter, Write};
-use std::time::{Duration as StdDuration, SystemTime};
+use std::{
+    fs::{self, OpenOptions},
+    io::{BufWriter, Write},
+    time::{Duration as StdDuration, SystemTime},
+};
 
 use chrono::{Duration, NaiveTime, Utc};
 use filetime::FileTime;
 use rstest::rstest;
 use tempfile::tempdir;
 
-use crate::formatter::DefaultFormatter;
-use crate::handler::FemtoHandlerTrait;
-use crate::handlers::{
-    file::{HandlerConfig, OverflowPolicy, RotationStrategy},
-    timed_rotating::{
-        TimedRotationConfig, clock::SequenceClock, core::FemtoTimedRotatingFileHandler,
-        schedule::TimedRotationWhen,
-    },
+use super::{
+    core::TimedFileRotationStrategy,
+    schedule::TimedRotationSchedule,
+    test_helpers::utc_datetime,
 };
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
-
-use super::core::TimedFileRotationStrategy;
-use super::schedule::TimedRotationSchedule;
-use super::test_helpers::utc_datetime;
+use crate::{
+    formatter::DefaultFormatter,
+    handler::FemtoHandlerTrait,
+    handlers::{
+        file::{HandlerConfig, OverflowPolicy, RotationStrategy},
+        timed_rotating::{
+            TimedRotationConfig,
+            clock::SequenceClock,
+            core::FemtoTimedRotatingFileHandler,
+            schedule::TimedRotationWhen,
+        },
+    },
+    level::FemtoLevel,
+    log_record::FemtoLogRecord,
+};
 
 #[derive(Debug)]
 struct RotationPruningCase {
@@ -223,8 +230,8 @@ fn production_handler_seeds_rollover_from_file_mtime() {
     ));
     assert!(
         backup_path.exists(),
-        "rollover seeded from the file mtime should trigger an immediate \
-         rotation, producing {backup_path:?}",
+        "rollover seeded from the file mtime should trigger an immediate rotation, producing \
+         {backup_path:?}",
     );
     let backup_contents = fs::read_to_string(&backup_path).expect("backup file must be readable");
     assert_eq!(

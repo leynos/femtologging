@@ -4,12 +4,17 @@
 //! along with their contextual metadata such as timestamps, source location,
 //! and thread information.
 
-use crate::exception_schema::{ExceptionPayload, StackTracePayload};
-use crate::level::FemtoLevel;
-use std::collections::BTreeMap;
-use std::fmt;
-use std::thread::{self, ThreadId};
-use std::time::SystemTime;
+use std::{
+    collections::BTreeMap,
+    fmt,
+    thread::{self, ThreadId},
+    time::SystemTime,
+};
+
+use crate::{
+    exception_schema::{ExceptionPayload, StackTracePayload},
+    level::FemtoLevel,
+};
 
 /// Additional context associated with a log record.
 #[derive(Clone, Debug)]
@@ -78,36 +83,26 @@ impl FemtoLogRecord {
     /// Returns the logger name.
     #[inline]
     #[must_use]
-    pub const fn logger(&self) -> &str {
-        self.logger.as_str()
-    }
+    pub const fn logger(&self) -> &str { self.logger.as_str() }
 
     /// Returns the log level.
     #[inline]
     #[must_use]
-    pub const fn level(&self) -> FemtoLevel {
-        self.level
-    }
+    pub const fn level(&self) -> FemtoLevel { self.level }
 
     /// Returns the log message.
     #[inline]
     #[must_use]
-    pub const fn message(&self) -> &str {
-        self.message.as_str()
-    }
+    pub const fn message(&self) -> &str { self.message.as_str() }
 
     /// Returns a reference to the record metadata.
     #[inline]
     #[must_use]
-    pub const fn metadata(&self) -> &RecordMetadata {
-        &self.metadata
-    }
+    pub const fn metadata(&self) -> &RecordMetadata { &self.metadata }
 
     /// Returns a mutable reference to the record metadata.
     #[inline]
-    pub(crate) const fn metadata_mut(&mut self) -> &mut RecordMetadata {
-        &mut self.metadata
-    }
+    pub(crate) const fn metadata_mut(&mut self) -> &mut RecordMetadata { &mut self.metadata }
 
     /// Returns a reference to the exception payload, if present.
     #[inline]
@@ -119,9 +114,7 @@ impl FemtoLogRecord {
     /// Returns a reference to the stack trace payload, if present.
     #[inline]
     #[must_use]
-    pub const fn stack_payload(&self) -> Option<&StackTracePayload> {
-        self.stack_payload.as_ref()
-    }
+    pub const fn stack_payload(&self) -> Option<&StackTracePayload> { self.stack_payload.as_ref() }
 
     /// Sets the exception payload.
     #[inline]
@@ -180,9 +173,7 @@ impl FemtoLogRecord {
     /// (e.g., "INFO", "ERROR") without allocation.
     #[inline]
     #[must_use]
-    pub const fn level_str(&self) -> &'static str {
-        self.level.as_str()
-    }
+    pub const fn level_str(&self) -> &'static str { self.level.as_str() }
 
     /// Attach an exception payload to the record.
     #[must_use]
@@ -209,9 +200,10 @@ impl fmt::Display for FemtoLogRecord {
 mod tests {
     //! Tests for log record construction and payload attachment.
 
+    use rstest::rstest;
+
     use super::*;
     use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
-    use rstest::rstest;
 
     #[rstest]
     fn new_record_has_no_payloads() {

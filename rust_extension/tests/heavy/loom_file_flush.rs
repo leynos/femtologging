@@ -3,13 +3,16 @@
 //! Uses loom to explore potential interleavings when multiple threads
 //! call `flush()` simultaneously while writing records.
 
-use loom::sync::Arc;
-use loom::thread;
-use tempfile::NamedTempFile;
-
 use _femtologging_rs::{
-    DefaultFormatter, FemtoFileHandler, FemtoLevel, FemtoLogRecord, HandlerConfig, OverflowPolicy,
+    DefaultFormatter,
+    FemtoFileHandler,
+    FemtoLevel,
+    FemtoLogRecord,
+    HandlerConfig,
+    OverflowPolicy,
 };
+use loom::{sync::Arc, thread};
+use tempfile::NamedTempFile;
 
 use crate::handle_expect::HandleExpect;
 

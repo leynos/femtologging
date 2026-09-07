@@ -11,26 +11,32 @@ mod python_helpers;
 mod runtime_mutation;
 mod worker;
 
-use pyo3::prelude::*;
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU8, AtomicU64},
+    },
+    thread::JoinHandle,
+};
 
-use crate::filters::FemtoFilter;
-use crate::handler::FemtoHandlerTrait;
-use crate::rate_limited_warner::RateLimitedWarner;
-
-use crate::{formatter::SharedFormatter, log_record::FemtoLogRecord};
 use crossbeam_channel::Sender;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64};
-use std::thread::JoinHandle;
-
 pub use py_handler::{PyHandler, validate_handler};
+use pyo3::prelude::*;
 // Re-exported for the parameterized tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 use python_helpers::{log_python_request, parse_log_call};
+
+use crate::{
+    filters::FemtoFilter,
+    formatter::SharedFormatter,
+    handler::FemtoHandlerTrait,
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
+};
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
@@ -70,9 +76,7 @@ impl FemtoLogger {
     }
 
     /// Attach a filter to this logger.
-    pub fn add_filter(&self, filter: Arc<dyn FemtoFilter>) {
-        self.filters.write().push(filter);
-    }
+    pub fn add_filter(&self, filter: Arc<dyn FemtoFilter>) { self.filters.write().push(filter); }
 
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
@@ -84,9 +88,7 @@ impl FemtoLogger {
     /// Note: This affects only records enqueued after the call. Any records
     /// already queued retain their captured handler set and will still be
     /// dispatched to those handlers.
-    pub fn clear_handlers(&self) {
-        self.handlers.write().clear();
-    }
+    pub fn clear_handlers(&self) { self.handlers.write().clear(); }
 
     /// Detach a filter previously added to this logger.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
@@ -106,9 +108,7 @@ impl FemtoLogger {
     }
 
     /// Remove all attached filters from this logger.
-    pub fn clear_filters(&self) {
-        self.filters.write().clear();
-    }
+    pub fn clear_filters(&self) { self.filters.write().clear(); }
 
     /// Clone the configured handlers for internal test assertions.
     #[cfg(test)]
@@ -123,9 +123,7 @@ impl FemtoLogger {
     /// Holding a clone alive after dropping the logger will prevent the worker
     /// thread from exiting.
     #[cfg(feature = "test-util")]
-    pub fn clone_sender_for_test(&self) -> Option<Sender<QueuedRecord>> {
-        self.tx.clone()
-    }
+    pub fn clone_sender_for_test(&self) -> Option<Sender<QueuedRecord>> { self.tx.clone() }
 }
 
 impl FemtoLogger {

@@ -1,5 +1,7 @@
 //! Transport primitives for the socket handler.
 
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::{
     io::{self, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
@@ -8,9 +10,6 @@ use std::{
 };
 
 use native_tls::{TlsConnector, TlsStream};
-
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 
 /// Transport targeted by the socket handler.
 #[derive(Clone, Debug)]

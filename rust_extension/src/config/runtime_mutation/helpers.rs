@@ -2,12 +2,15 @@
 
 use std::collections::BTreeMap;
 
-use crate::manager::LoggerAttachmentState;
-
 use super::{
-    CollectionMutation, ConfigError, LoggerMutationBuilder, MutationRegistries,
-    resolve_attachment_ids, validate_remove_ids,
+    CollectionMutation,
+    ConfigError,
+    LoggerMutationBuilder,
+    MutationRegistries,
+    resolve_attachment_ids,
+    validate_remove_ids,
 };
+use crate::manager::LoggerAttachmentState;
 
 pub(super) fn apply_mutation_to_logger(
     name: &str,
@@ -21,7 +24,8 @@ pub(super) fn apply_mutation_to_logger(
             || requires_existing_baseline(&mutation.filters) =>
         {
             return Err(ConfigError::InvalidMutation(format!(
-                "{name}: logger has no runtime metadata; Append/Remove require prior build_and_init()",
+                "{name}: logger has no runtime metadata; Append/Remove require prior \
+                 build_and_init()",
             )));
         }
         None => LoggerAttachmentState::default(),

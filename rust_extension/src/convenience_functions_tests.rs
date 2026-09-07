@@ -1,16 +1,24 @@
 //! Unit tests for the Python convenience logging functions.
 
-use super::*;
-use crate::handler::FemtoHandlerTrait;
-use crate::log_context;
-use crate::log_record::RecordMetadata;
-use crate::logger::FemtoLogger;
-use crate::test_utils::collecting_handler::CollectingHandler;
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
 use pyo3::types::PyDict;
 use rstest::{fixture, rstest};
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::*;
+use crate::{
+    handler::FemtoHandlerTrait,
+    log_context,
+    log_record::RecordMetadata,
+    logger::FemtoLogger,
+    test_utils::collecting_handler::CollectingHandler,
+};
 
 static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -132,9 +140,7 @@ fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
     struct LogContextPopGuard;
 
     impl Drop for LogContextPopGuard {
-        fn drop(&mut self) {
-            drop(py_pop_log_context());
-        }
+        fn drop(&mut self) { drop(py_pop_log_context()); }
     }
 
     Python::attach(|py| {

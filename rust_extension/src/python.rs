@@ -29,10 +29,12 @@ pub(crate) fn fq_py_type(obj: &Bound<'_, PyAny>) -> String {
 mod tests {
     //! Tests for fully-qualified Python type-name resolution.
 
-    use super::*;
+    use std::ffi::CString;
+
     use pyo3::types::{PyList, PyModule};
     use serial_test::serial;
-    use std::ffi::CString;
+
+    use super::*;
 
     /// `#[serial]` wraps the test body, so errors are propagated rather than
     /// unwrapped to satisfy the expect lint.

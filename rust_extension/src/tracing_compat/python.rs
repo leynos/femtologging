@@ -4,9 +4,8 @@ use std::sync::OnceLock;
 
 use tracing_subscriber::prelude::*;
 
-use crate::level::FemtoLevel;
-
 use super::layer;
+use crate::level::FemtoLevel;
 
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
 
@@ -55,7 +54,8 @@ mod python_bindings {
             Ok(())
         } else {
             Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "global tracing subscriber is already set; femtologging cannot install the tracing bridge",
+                "global tracing subscriber is already set; femtologging cannot install the \
+                 tracing bridge",
             ))
         }
     }
@@ -106,6 +106,9 @@ mod python_bindings {
 }
 
 pub(crate) use python_bindings::{
-    emit_rust_tracing_event, emit_rust_tracing_span_event, emit_rust_tracing_structured_event,
-    install_test_global_tracing_subscriber, setup_rust_tracing,
+    emit_rust_tracing_event,
+    emit_rust_tracing_span_event,
+    emit_rust_tracing_structured_event,
+    install_test_global_tracing_subscriber,
+    setup_rust_tracing,
 };

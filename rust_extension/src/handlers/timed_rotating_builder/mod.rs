@@ -7,11 +7,15 @@ use std::{num::NonZeroU64, path::PathBuf};
 use chrono::NaiveTime;
 
 use super::{
-    FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    FormatterId,
+    HandlerBuildError,
+    HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{HandlerConfig, OverflowPolicy},
     timed_rotating::{
-        FemtoTimedRotatingFileHandler, TimedRotationConfig, TimedRotationSchedule,
+        FemtoTimedRotatingFileHandler,
+        TimedRotationConfig,
+        TimedRotationSchedule,
         TimedRotationWhen,
     },
 };

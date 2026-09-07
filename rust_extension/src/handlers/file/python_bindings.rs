@@ -6,8 +6,15 @@
 use pyo3::prelude::*;
 
 use super::{
-    DEFAULT_CHANNEL_CAPACITY, DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait,
-    FemtoLogRecord, HandlerConfig, open_log_file, policy, validate_params,
+    DEFAULT_CHANNEL_CAPACITY,
+    DefaultFormatter,
+    FemtoFileHandler,
+    FemtoHandlerTrait,
+    FemtoLogRecord,
+    HandlerConfig,
+    open_log_file,
+    policy,
+    validate_params,
 };
 
 #[pymethods]
@@ -23,7 +30,8 @@ impl FemtoFileHandler {
     /// - `policy` is one of: `"drop"`, `"block"`, or `"timeout:N"` (N > 0).
     #[new]
     #[pyo3(
-        text_signature = "(path, capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')"
+        text_signature = "(path, capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, \
+                          policy='drop')"
     )]
     #[pyo3(signature=(
         path,
@@ -78,12 +86,8 @@ impl FemtoFileHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
-    }
+    fn py_flush(&self) -> bool { self.flush() }
 
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
-    }
+    fn py_close(&mut self) { self.close(); }
 }

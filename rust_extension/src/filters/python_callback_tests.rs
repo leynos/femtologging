@@ -1,20 +1,24 @@
 //! Tests for Python callback filter validation and enrichment behaviour.
 
-use std::collections::BTreeMap;
-use std::ffi::CString;
+use std::{collections::BTreeMap, ffi::CString};
 
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::{prelude::*, types::PyModule};
 use rstest::rstest;
 
-use super::python_callback::{PythonCallbackFilter, PythonCallbackFilterBuilder};
-use super::python_callback_validation::{
-    extract_supported_value, validate_enrichment_key, validate_enrichment_total,
-    validate_enrichment_value,
+use super::{
+    python_callback::{PythonCallbackFilter, PythonCallbackFilterBuilder},
+    python_callback_validation::{
+        extract_supported_value,
+        validate_enrichment_key,
+        validate_enrichment_total,
+        validate_enrichment_value,
+    },
 };
-use crate::filters::{FemtoFilter, FilterBuilderTrait};
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
+use crate::{
+    filters::{FemtoFilter, FilterBuilderTrait},
+    level::FemtoLevel,
+    log_record::FemtoLogRecord,
+};
 
 #[rstest]
 #[case("levelname")]

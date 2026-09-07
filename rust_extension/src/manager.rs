@@ -3,16 +3,19 @@
 //! Access is guarded by a `parking_lot::RwLock` and must only occur while the
 //! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
 
-use parking_lot::RwLock;
-use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use std::collections::HashSet;
-use std::collections::{HashMap, hash_map::Entry};
 #[cfg(feature = "python")]
 use std::hash::BuildHasher;
-use std::sync::LazyLock;
 #[cfg(feature = "python")]
 use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    sync::LazyLock,
+};
+
+use parking_lot::RwLock;
+use pyo3::prelude::*;
 
 use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
@@ -34,13 +37,9 @@ impl LoggerAttachmentState {
         }
     }
 
-    pub(crate) fn handler_ids(&self) -> &[String] {
-        &self.handler_ids
-    }
+    pub(crate) fn handler_ids(&self) -> &[String] { &self.handler_ids }
 
-    pub(crate) fn filter_ids(&self) -> &[String] {
-        &self.filter_ids
-    }
+    pub(crate) fn filter_ids(&self) -> &[String] { &self.filter_ids }
 }
 
 #[cfg(feature = "python")]
@@ -66,9 +65,7 @@ struct Manager {
 static MANAGER: LazyLock<RwLock<Manager>> = LazyLock::new(|| RwLock::new(Manager::default()));
 
 #[cfg(feature = "python")]
-fn clear_runtime_state(mgr: &mut Manager) {
-    mgr.runtime = RuntimeStateSnapshot::default();
-}
+fn clear_runtime_state(mgr: &mut Manager) { mgr.runtime = RuntimeStateSnapshot::default(); }
 
 #[cfg(not(feature = "python"))]
 fn clear_runtime_state(_mgr: &mut Manager) {}
@@ -146,9 +143,7 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
 }
 
 #[cfg(feature = "python")]
-pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
-    MANAGER.read().runtime.clone()
-}
+pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot { MANAGER.read().runtime.clone() }
 
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
@@ -254,16 +249,22 @@ mod tests {
     mod log_compat {
         //! Tests for the log-compat bridge integration.
 
-        use std::any::Any;
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::{
+            any::Any,
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering},
+            },
+        };
 
         use pyo3::Python;
         use serial_test::serial;
 
         use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
-        use crate::handler::{FemtoHandlerTrait, HandlerError};
-        use crate::log_record::FemtoLogRecord;
+        use crate::{
+            handler::{FemtoHandlerTrait, HandlerError},
+            log_record::FemtoLogRecord,
+        };
 
         #[derive(Clone)]
         struct FlushCountingHandler {
@@ -271,18 +272,14 @@ mod tests {
         }
 
         impl FemtoHandlerTrait for FlushCountingHandler {
-            fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-                Ok(())
-            }
+            fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> { Ok(()) }
 
             fn flush(&self) -> bool {
                 self.flushes.fetch_add(1, Ordering::SeqCst);
                 true
             }
 
-            fn as_any(&self) -> &dyn Any {
-                self
-            }
+            fn as_any(&self) -> &dyn Any { self }
         }
 
         // `#[serial]` wraps the test bodies below, so the expect lint cannot

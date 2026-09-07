@@ -4,7 +4,8 @@
 //! retries with exponential backoff for transient failures.
 
 use std::{
-    io, thread,
+    io,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -13,14 +14,15 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 use ureq::{Agent, AgentBuilder};
 
-use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
-    socket_handler::backoff::BackoffState,
-};
-
 use super::{
     config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
     serialize::{serialize_json, serialize_url_encoded},
+};
+use crate::{
+    handler::HandlerError,
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
+    socket_handler::backoff::BackoffState,
 };
 
 /// Commands processed by the worker thread.
@@ -250,9 +252,7 @@ impl Worker {
     /// immediately without blocking until those retries complete. Callers
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
-    fn handle_flush_command(ack: &Sender<()>) {
-        Self::acknowledge(ack);
-    }
+    fn handle_flush_command(ack: &Sender<()>) { Self::acknowledge(ack); }
 
     fn drain_pending(&mut self, rx: &Receiver<HTTPCommand>) {
         loop {
@@ -306,9 +306,7 @@ fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
 }
 
 /// Base64-encode a byte slice for Basic auth.
-fn base64_encode(input: &[u8]) -> String {
-    BASE64_STANDARD.encode(input)
-}
+fn base64_encode(input: &[u8]) -> String { BASE64_STANDARD.encode(input) }
 
 /// Enqueues a log record for transmission by the HTTP worker.
 ///

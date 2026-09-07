@@ -3,14 +3,16 @@
 //! These tests model concurrent logging via the `FemtoStreamHandler` to ensure
 //! there are no race conditions when multiple threads push records.
 
-use loom::sync::{Arc, Mutex};
-use loom::thread;
-
 use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
+use loom::{
+    sync::{Arc, Mutex},
+    thread,
+};
 
-use crate::handle_expect::HandleExpect;
-use crate::shared_buffer::loom::SharedBuf as LoomBuf;
-use crate::shared_buffer::loom::read_output;
+use crate::{
+    handle_expect::HandleExpect,
+    shared_buffer::loom::{SharedBuf as LoomBuf, read_output},
+};
 
 #[test]
 #[ignore = "FemtoStreamHandler workers use std::thread outside the Loom model"]

@@ -3,6 +3,8 @@
 //! The builder macro emits both direct Rust fluent methods and `PyO3` wrappers;
 //! keeping its invocation private isolates the generated Python expansion.
 
+use std::num::NonZeroU64;
+
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
@@ -14,7 +16,6 @@ use super::{PyOverflowPolicy, py_flush_after_records_to_nonzero};
 use crate::handlers::builder_macros::builder_methods;
 #[cfg(feature = "python")]
 use crate::macros::AsPyDict;
-use std::num::NonZeroU64;
 
 builder_methods! {
     impl FileHandlerBuilder {

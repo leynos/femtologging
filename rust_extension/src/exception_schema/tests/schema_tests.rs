@@ -1,10 +1,12 @@
 //! Tests for exception schema type definitions and serialization.
 
-use crate::exception_schema::*;
+use std::collections::BTreeMap;
+
 use rmp_serde::Serializer;
 use rstest::rstest;
 use serde::Serialize;
-use std::collections::BTreeMap;
+
+use crate::exception_schema::*;
 
 #[rstest]
 fn schema_version_is_one() {

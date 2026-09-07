@@ -6,14 +6,11 @@
 //! The URL encoding uses `+` for spaces to match `CPython`'s `urllib.parse.urlencode`
 //! behaviour (which uses `quote_plus` internally).
 
-use std::collections::HashSet;
-use std::io;
+use std::{collections::HashSet, io};
 
 use serde::Serialize;
 
-use super::filtered::FilteredRecord;
-use super::record::HttpSerializableRecord;
-use super::url_encoding::url_encode;
+use super::{filtered::FilteredRecord, record::HttpSerializableRecord, url_encoding::url_encode};
 use crate::log_record::FemtoLogRecord;
 
 /// Emit a numeric field as URL-encoded key=value pair if included by the filter.
@@ -112,8 +109,7 @@ fn emit_all_fields(
 /// # Arguments
 ///
 /// * `record` - The log record to serialize.
-/// * `fields` - Optional list of field names to include. If `None`, all fields
-///   are included.
+/// * `fields` - Optional list of field names to include. If `None`, all fields are included.
 ///
 /// # Returns
 ///
@@ -145,8 +141,7 @@ pub fn serialize_url_encoded(
 /// # Arguments
 ///
 /// * `record` - The log record to serialize.
-/// * `fields` - Optional list of field names to include. If `None`, all fields
-///   are included.
+/// * `fields` - Optional list of field names to include. If `None`, all fields are included.
 ///
 /// # Returns
 ///
@@ -178,10 +173,10 @@ pub fn serialize_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 mod tests {
     //! Tests for HTTP record serialization.
 
-    use super::*;
-    use crate::level::FemtoLevel;
-    use crate::log_record::RecordMetadata;
     use rstest::{fixture, rstest};
+
+    use super::*;
+    use crate::{level::FemtoLevel, log_record::RecordMetadata};
 
     #[fixture]
     fn test_record() -> FemtoLogRecord {

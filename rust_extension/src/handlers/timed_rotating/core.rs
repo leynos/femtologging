@@ -91,9 +91,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) const fn next_rollover_at(&self) -> DateTime<Utc> {
-        self.next_rollover_at
-    }
+    pub(crate) const fn next_rollover_at(&self) -> DateTime<Utc> { self.next_rollover_at }
 
     fn rotate(
         &mut self,
@@ -136,7 +134,8 @@ where
                     return Err(io::Error::new(
                         err.kind(),
                         format!(
-                            "failed to open fresh writer: {err}; rollback rename also failed: {rollback_err}"
+                            "failed to open fresh writer: {err}; rollback rename also failed: \
+                             {rollback_err}"
                         ),
                     ));
                 }
@@ -299,14 +298,10 @@ impl FemtoTimedRotatingFileHandler {
     }
 
     #[cfg(feature = "python")]
-    pub(crate) const fn schedule(&self) -> &TimedRotationSchedule {
-        &self.schedule
-    }
+    pub(crate) const fn schedule(&self) -> &TimedRotationSchedule { &self.schedule }
 
     #[cfg(feature = "python")]
-    pub(crate) const fn backup_count(&self) -> usize {
-        self.backup_count
-    }
+    pub(crate) const fn backup_count(&self) -> usize { self.backup_count }
 
     /// Build a timed rotating handler with the supplied configuration.
     pub(crate) fn with_capacity_flush_policy<P, F>(
@@ -378,13 +373,9 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
 impl Drop for FemtoTimedRotatingFileHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
+    fn drop(&mut self) { self.close(); }
 }

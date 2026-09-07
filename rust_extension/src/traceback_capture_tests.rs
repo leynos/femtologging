@@ -3,16 +3,23 @@
 //! Graceful degradation tests (missing attributes, malformed `__notes__`,
 //! chained exceptions) are in [`crate::traceback_capture_graceful_degradation_tests`].
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyTuple};
-use rstest::rstest;
 use std::ffi::CString;
 
-use crate::exception_schema::EXCEPTION_SCHEMA_VERSION;
-use crate::test_utils::traceback_test_helpers::{
-    builtin_type, create_builtin_exception, create_value_error,
+use pyo3::{
+    prelude::*,
+    types::{PyBool, PyDict, PyTuple},
 };
-use crate::traceback_capture::{capture_exception, capture_stack};
+use rstest::rstest;
+
+use crate::{
+    exception_schema::EXCEPTION_SCHEMA_VERSION,
+    test_utils::traceback_test_helpers::{
+        builtin_type,
+        create_builtin_exception,
+        create_value_error,
+    },
+    traceback_capture::{capture_exception, capture_stack},
+};
 
 /// Python source that raises a nested `ValueError`, then clears the
 /// exception's `__traceback__` while retaining the traceback separately.

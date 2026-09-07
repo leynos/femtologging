@@ -3,11 +3,15 @@
 //! This submodule isolates TracebackException-to-schema conversion, including
 //! chained exceptions and exception-group extraction.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyList, PyString, PyTuple};
+use pyo3::{
+    prelude::*,
+    types::{PyList, PyString, PyTuple},
+};
 
-use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload};
-use crate::traceback_frames::{extract_frames_from_tb_exception, get_optional_attr};
+use crate::{
+    exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload},
+    traceback_frames::{extract_frames_from_tb_exception, get_optional_attr},
+};
 
 /// Build payload from a `TracebackException` object.
 ///

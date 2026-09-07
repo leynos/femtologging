@@ -190,8 +190,7 @@ impl ExceptionPayload {
     ///     StackFrame::new("app.py", 10, "main"),
     ///     StackFrame::new("logging/__init__.py", 20, "info"),
     /// ];
-    /// let payload = ExceptionPayload::new("ValueError", "test")
-    ///     .with_frames(frames);
+    /// let payload = ExceptionPayload::new("ValueError", "test").with_frames(frames);
     ///
     /// let filtered = payload.filter_frames(|f| !f.filename.contains("logging"));
     /// assert_eq!(filtered.frames.len(), 1);

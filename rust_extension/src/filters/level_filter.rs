@@ -32,13 +32,12 @@ pub struct LevelFilterBuilder {
 impl LevelFilterBuilder {
     /// Create a new `LevelFilterBuilder`.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Set the maximum level allowed.
     ///
-    /// When called from Python, `level` may be a `FemtoLevel` instance or a recognized level string.
+    /// When called from Python, `level` may be a `FemtoLevel` instance or a recognized level
+    /// string.
     #[must_use]
     pub const fn with_max_level(mut self, level: FemtoLevel) -> Self {
         self.max_level = Some(level);
@@ -73,13 +72,12 @@ mod python_bindings;
 mod tests {
     //! Tests for the level filter builder.
 
-    use super::*;
-    use crate::filters::FilterBuilderTrait;
     use rstest::rstest;
 
-    fn record(level: FemtoLevel) -> FemtoLogRecord {
-        FemtoLogRecord::new("core", level, "msg")
-    }
+    use super::*;
+    use crate::filters::FilterBuilderTrait;
+
+    fn record(level: FemtoLevel) -> FemtoLogRecord { FemtoLogRecord::new("core", level, "msg") }
 
     #[rstest]
     #[case(FemtoLevel::Info, FemtoLevel::Info, true)]

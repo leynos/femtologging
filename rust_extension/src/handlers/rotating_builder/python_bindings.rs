@@ -61,9 +61,7 @@ where
 impl RotatingFileHandlerBuilder {
     /// Create a new `RotatingFileHandlerBuilder`.
     #[new]
-    fn py_new(path: String) -> Self {
-        Self::new(path)
-    }
+    fn py_new(path: String) -> Self { Self::new(path) }
 
     /// Set the builder capacity.
     #[pyo3(name = "with_capacity")]
@@ -150,9 +148,7 @@ impl RotatingFileHandlerBuilder {
     }
 
     /// Return a dictionary describing the builder configuration.
-    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.as_pydict(py)
-    }
+    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { self.as_pydict(py) }
 
     /// Build the handler, raising ``HandlerConfigError`` or ``HandlerIOError`` on
     /// failure.

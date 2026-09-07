@@ -8,15 +8,16 @@
 //! Unlike the stdlib, these methods accept a pre-formatted `message`
 //! string rather than `*args` / `**kwargs` lazy formatting.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyTuple};
-
-use crate::level::FemtoLevel;
+use pyo3::{
+    prelude::*,
+    types::{PyBool, PyDict, PyTuple},
+};
 
 use super::{
     FemtoLogger,
     python_helpers::{log_python_request, parse_fixed_level_call},
 };
+use crate::level::FemtoLevel;
 
 /// Generate a convenience logging method that delegates to `py_log` with a
 /// fixed level.
@@ -158,9 +159,7 @@ impl FemtoLogger {
     /// assert logger.isEnabledFor("ERROR")
     /// ```
     #[pyo3(name = "isEnabledFor", text_signature = "(self, level)")]
-    pub fn py_is_enabled_for(&self, level: FemtoLevel) -> bool {
-        self.is_enabled_for(level)
-    }
+    pub fn py_is_enabled_for(&self, level: FemtoLevel) -> bool { self.is_enabled_for(level) }
 
     /// Low-level implementation of `exception()` for the Python wrapper.
     ///

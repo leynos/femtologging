@@ -3,15 +3,19 @@
 //!
 //! Split from `tests.rs` to keep each test module within the size limit.
 
-use super::test_support::impl_unsupported_seek;
-use super::*;
-use crate::formatter::DefaultFormatter;
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
-use std::io::{self, Write};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Barrier, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    io::{self, Write},
+    sync::{
+        Arc,
+        Barrier,
+        Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+use super::{test_support::impl_unsupported_seek, *};
+use crate::{formatter::DefaultFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
 
 struct LifecycleWriter {
     flushed: Arc<AtomicU32>,
@@ -19,9 +23,7 @@ struct LifecycleWriter {
 }
 
 impl Write for LifecycleWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(buf.len())
-    }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { Ok(buf.len()) }
 
     fn flush(&mut self) -> io::Result<()> {
         self.flushed.fetch_add(1, Ordering::Relaxed);
@@ -32,9 +34,7 @@ impl Write for LifecycleWriter {
 impl_unsupported_seek!(LifecycleWriter);
 
 impl Drop for LifecycleWriter {
-    fn drop(&mut self) {
-        self.closed.fetch_add(1, Ordering::Relaxed);
-    }
+    fn drop(&mut self) { self.closed.fetch_add(1, Ordering::Relaxed); }
 }
 
 fn make_lifecycle_handler(flushed: Arc<AtomicU32>, closed: Arc<AtomicU32>) -> FemtoFileHandler {

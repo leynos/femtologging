@@ -1,9 +1,10 @@
 //! Python call-boundary regression tests for frame filtering.
 
-use super::*;
 use pyo3::types::{PyDict, PyList, PyModule};
 use rstest::rstest;
 use serial_test::serial;
+
+use super::*;
 
 fn make_stack_payload_dict<'py>(
     py: Python<'py>,
@@ -43,7 +44,8 @@ fn filter_frames_python_boundary_preserves_signature_and_defaults() {
             .expect("text signature should be text");
         assert_eq!(
             signature,
-            "(payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=False)"
+            "(payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, \
+             exclude_logging=False)"
         );
 
         let payload = make_stack_payload_dict(py, &["main.py", "logging/__init__.py"])

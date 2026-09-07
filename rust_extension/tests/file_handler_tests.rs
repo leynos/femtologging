@@ -3,15 +3,24 @@
 //! These cover single-record writes, multi-record writes, queue overflow
 //! handling and concurrent usage from multiple threads.
 
-use std::fs;
-use std::io;
-use std::sync::Barrier;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    fs,
+    io,
+    sync::Barrier,
+    thread,
+    time::{Duration, Instant},
+};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord,
-    HandlerConfig, HandlerError, OverflowPolicy, TestConfig,
+    DefaultFormatter,
+    FemtoFileHandler,
+    FemtoHandlerTrait,
+    FemtoLevel,
+    FemtoLogRecord,
+    HandlerConfig,
+    HandlerError,
+    OverflowPolicy,
+    TestConfig,
 };
 use tempfile::NamedTempFile;
 
@@ -19,10 +28,10 @@ use tempfile::NamedTempFile;
 mod handle_expect;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
-use handle_expect::HandleExpect;
-use shared_buffer::std::SharedBuf;
-use shared_buffer::std::read_output;
 use std::sync::{Arc, Mutex};
+
+use handle_expect::HandleExpect;
+use shared_buffer::std::{SharedBuf, read_output};
 
 /// Execute `f` with a `FemtoFileHandler` backed by a fresh temporary file
 /// and return whatever the handler wrote.
@@ -105,9 +114,7 @@ impl OverflowHarness {
     }
 
     /// Return everything the worker thread has written so far.
-    fn output(&self) -> Result<String, std::string::FromUtf8Error> {
-        read_output(&self.buffer)
-    }
+    fn output(&self) -> Result<String, std::string::FromUtf8Error> { read_output(&self.buffer) }
 }
 
 #[test]

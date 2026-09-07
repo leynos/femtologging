@@ -3,14 +3,17 @@
 //! Provides an intermediate representation that borrows from the original
 //! log record to avoid allocations during serialization.
 
-use std::collections::BTreeMap;
-use std::thread::ThreadId;
+use std::{collections::BTreeMap, thread::ThreadId};
 
-use serde::Serialize;
-use serde::ser::{SerializeMap, Serializer};
+use serde::{
+    Serialize,
+    ser::{SerializeMap, Serializer},
+};
 
-use crate::exception_schema::{ExceptionPayload, StackTracePayload};
-use crate::log_record::FemtoLogRecord;
+use crate::{
+    exception_schema::{ExceptionPayload, StackTracePayload},
+    log_record::FemtoLogRecord,
+};
 
 /// Zero-copy serializable record for HTTP payloads.
 ///

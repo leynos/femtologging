@@ -3,15 +3,17 @@
 //! This module provides [`PyHandler`], which wraps Python handler objects
 //! to allow them to be used by the Rust logging infrastructure.
 
-use pyo3::prelude::*;
-use pyo3::{Py, PyAny};
 use std::any::Any;
+
+use log::warn;
+use pyo3::{Py, PyAny, prelude::*};
 
 #[cfg(feature = "python")]
 use crate::formatter::python::record_to_dict;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::log_record::FemtoLogRecord;
-use log::warn;
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    log_record::FemtoLogRecord,
+};
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
 fn map_py_err(py: Python<'_>, err: &PyErr, method: &str) -> HandlerError {
@@ -38,10 +40,10 @@ fn map_py_err(py: Python<'_>, err: &PyErr, method: &str) -> HandlerError {
 /// # Errors
 ///
 /// Returns a `PyTypeError` in the following cases:
-/// - The object has no `handle` attribute (message: "handler must implement a
-///   callable 'handle' method")
-/// - The `handle` attribute exists but is not callable (message includes the
-///   attribute type and handler representation)
+/// - The object has no `handle` attribute (message: "handler must implement a callable 'handle'
+///   method")
+/// - The `handle` attribute exists but is not callable (message includes the attribute type and
+///   handler representation)
 pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
     let py = obj.py();
     let handle = obj.getattr("handle").map_err(|err| {
@@ -77,12 +79,12 @@ pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
 /// objects by implementing [`FemtoHandlerTrait`]. It supports two handler
 /// interfaces:
 ///
-/// 1. **Structured interface** (`handle_record`): If the Python handler has a
-///    callable `handle_record` method, the full log record is passed as a
-///    dictionary, providing access to all structured fields.
+/// 1. **Structured interface** (`handle_record`): If the Python handler has a callable
+///    `handle_record` method, the full log record is passed as a dictionary, providing access to
+///    all structured fields.
 ///
-/// 2. **Legacy interface** (`handle`): The handler's `handle` method is called
-///    with three positional arguments: logger name, level, and message.
+/// 2. **Legacy interface** (`handle`): The handler's `handle` method is called with three
+///    positional arguments: logger name, level, and message.
 ///
 /// The structured interface is preferred when available, falling back to the
 /// legacy interface otherwise.
@@ -106,8 +108,8 @@ impl PyHandler {
     /// # Parameters
     ///
     /// * `py` - The Python interpreter token.
-    /// * `obj` - The Python handler object to wrap. Should have at least a
-    ///   callable `handle` method (validated separately via [`validate_handler`]).
+    /// * `obj` - The Python handler object to wrap. Should have at least a callable `handle` method
+    ///   (validated separately via [`validate_handler`]).
     ///
     /// # Returns
     ///
@@ -183,9 +185,7 @@ impl FemtoHandlerTrait for PyHandler {
         })
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
 /// Fallback PyHandler when python feature is disabled.
@@ -196,9 +196,7 @@ pub struct PyHandler {
 
 #[cfg(not(feature = "python"))]
 impl PyHandler {
-    pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
-        Self { obj }
-    }
+    pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self { Self { obj } }
 }
 
 #[cfg(not(feature = "python"))]
@@ -216,7 +214,5 @@ impl FemtoHandlerTrait for PyHandler {
         })
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }

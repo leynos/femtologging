@@ -15,6 +15,7 @@ mod test_helpers;
 
 pub use core::FemtoTimedRotatingFileHandler;
 pub(crate) use core::TimedRotationConfig;
+
 pub use schedule::{TimedRotationSchedule, TimedRotationWhen};
 
 #[cfg(feature = "python")]
@@ -25,5 +26,6 @@ pub(crate) use python::PyTimedRotatingFileHandler;
 pub use python::{TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};
 #[cfg(all(feature = "python", feature = "test-util"))]
 pub use python::{
-    clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+    clear_timed_rotation_test_times_for_test,
+    set_timed_rotation_test_times_for_test,
 };

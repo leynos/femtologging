@@ -2,13 +2,15 @@
 //!
 //! This module isolates generated Python method wrappers from the logger core.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
 use std::sync::{Arc, atomic::Ordering};
 
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyTuple},
+};
+
 use super::{FemtoLogger, PyHandler, log_python_request, parse_log_call, validate_handler};
-use crate::handler::FemtoHandlerTrait;
-use crate::level::FemtoLevel;
+use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 
 #[pymethods]
 impl FemtoLogger {
@@ -16,9 +18,7 @@ impl FemtoLogger {
     #[new]
     #[pyo3(text_signature = "(name)")]
     #[must_use]
-    pub fn new(name: String) -> Self {
-        Self::with_parent(name, None)
-    }
+    pub fn new(name: String) -> Self { Self::with_parent(name, None) }
 
     /// Format a message at the provided level and return it.
     ///
@@ -73,21 +73,17 @@ impl FemtoLogger {
     /// This method is thread-safe; the level is stored in an `AtomicU8` and
     /// read with `Ordering::Relaxed`.
     #[getter]
-    pub fn level(&self) -> String {
-        self.load_level().to_string()
-    }
+    pub fn level(&self) -> String { self.load_level().to_string() }
 
-    /// Return whether this logger propagates records to its parent (affecting parent-propagation behaviour).
+    /// Return whether this logger propagates records to its parent (affecting parent-propagation
+    /// behaviour).
     #[getter]
-    pub fn propagate(&self) -> bool {
-        self.propagate.load(Ordering::SeqCst)
-    }
+    pub fn propagate(&self) -> bool { self.propagate.load(Ordering::SeqCst) }
 
-    /// Set whether this logger propagates records to its parent, controlling parent-propagation behaviour.
+    /// Set whether this logger propagates records to its parent, controlling parent-propagation
+    /// behaviour.
     #[pyo3(text_signature = "(self, flag)")]
-    pub fn set_propagate(&self, flag: bool) {
-        self.propagate.store(flag, Ordering::SeqCst);
-    }
+    pub fn set_propagate(&self, flag: bool) { self.propagate.store(flag, Ordering::SeqCst); }
 
     /// Attach a handler implemented in Python or Rust.
     ///
@@ -127,23 +123,17 @@ impl FemtoLogger {
 
     /// Remove all attached handlers.
     #[pyo3(name = "clear_handlers", text_signature = "(self)")]
-    pub fn py_clear_handlers(&self) {
-        self.clear_handlers();
-    }
+    pub fn py_clear_handlers(&self) { self.clear_handlers(); }
 
     /// Remove all attached filters.
     #[pyo3(name = "clear_filters", text_signature = "(self)")]
-    pub fn py_clear_filters(&self) {
-        self.clear_filters();
-    }
+    pub fn py_clear_filters(&self) { self.clear_filters(); }
 
     /// Return the number of records dropped due to a full queue.
     ///
     /// Useful for tests and monitoring dashboards.
     #[pyo3(text_signature = "(self)")]
-    pub fn get_dropped(&self) -> u64 {
-        self.dropped_records.load(Ordering::Relaxed)
-    }
+    pub fn get_dropped(&self) -> u64 { self.dropped_records.load(Ordering::Relaxed) }
 
     /// Flush all handlers attached to this logger.
     ///
@@ -165,9 +155,7 @@ impl FemtoLogger {
     /// >>> logger.flush_handlers()
     /// True
     #[pyo3(text_signature = "(self)")]
-    pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
-    }
+    pub fn flush_handlers(&self) -> bool { self.flush_handlers_blocking() }
 
     pub(super) fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers

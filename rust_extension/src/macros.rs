@@ -5,14 +5,16 @@
 //! structs. The macros reduce boilerplate in `PyO3` bindings whilst ensuring
 //! uniform serialization behaviour across all builder types.
 
-use pyo3::IntoPyObjectExt;
-use pyo3::conversion::IntoPyObject;
+use std::collections::BTreeMap;
+
 use pyo3::{
-    Bound, PyResult,
+    Bound,
+    IntoPyObjectExt,
+    PyResult,
+    conversion::IntoPyObject,
     prelude::*,
     types::{PyDict, PyList},
 };
-use std::collections::BTreeMap;
 
 /// Convert a configuration builder into a Python dictionary.
 pub trait AsPyDict {

@@ -20,9 +20,7 @@ static INIT: Once = Once::new();
 static LOGS: OnceLock<Mutex<Vec<CapturedLog>>> = OnceLock::new();
 
 impl Log for TestLogger {
-    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
-        true
-    }
+    fn enabled(&self, _metadata: &Metadata<'_>) -> bool { true }
 
     fn log(&self, record: &Record<'_>) {
         if self.enabled(record.metadata()) {

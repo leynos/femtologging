@@ -40,9 +40,7 @@ pub struct NameFilterBuilder {
 impl NameFilterBuilder {
     /// Create a new `NameFilterBuilder`.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Set the prefix that logger names must start with.
     #[must_use]
@@ -83,13 +81,12 @@ mod python_bindings;
 mod tests {
     //! Tests for the name filter builder.
 
-    use super::*;
-    use crate::filters::{FilterBuildError, FilterBuilderTrait};
     use rstest::rstest;
 
-    fn record(name: &str) -> FemtoLogRecord {
-        FemtoLogRecord::new(name, FemtoLevel::Info, "msg")
-    }
+    use super::*;
+    use crate::filters::{FilterBuildError, FilterBuilderTrait};
+
+    fn record(name: &str) -> FemtoLogRecord { FemtoLogRecord::new(name, FemtoLevel::Info, "msg") }
 
     #[rstest]
     #[case("core", "core.child", true)]

@@ -1,10 +1,11 @@
 //! Tests for `ExceptionPayload` recursive frame filtering methods.
 
-use crate::exception_schema::*;
-use crate::test_utils::frame_test_helpers::{
-    assert_payload_frames, assert_payload_frames_by_function,
-};
 use rstest::rstest;
+
+use crate::{
+    exception_schema::*,
+    test_utils::frame_test_helpers::{assert_payload_frames, assert_payload_frames_by_function},
+};
 
 #[rstest]
 fn exception_payload_limit_frames_recursive_on_cause() {

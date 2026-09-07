@@ -73,20 +73,28 @@ mod traceback_frames_tests;
 pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 #[cfg(feature = "python")]
 pub use config::{LoggerMutationBuilder, RuntimeConfigBuilder};
-
+/// Re-export exception schema types.
+pub use exception_schema::{
+    EXCEPTION_SCHEMA_VERSION,
+    ExceptionPayload,
+    MIN_EXCEPTION_SCHEMA_VERSION,
+    SchemaVersionError,
+    SchemaVersioned,
+    StackFrame,
+    StackTracePayload,
+    validate_schema_version,
+};
 // Re-exports: filter types (FilterBuildErrorPy is Python-only)
 #[cfg(feature = "python")]
 pub use filters::FilterBuildErrorPy;
 #[cfg(feature = "python")]
 pub use filters::PythonCallbackFilterBuilder;
 pub use filters::{
-    FemtoFilter, FilterBuildError, FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder,
-};
-
-/// Re-export exception schema types.
-pub use exception_schema::{
-    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, MIN_EXCEPTION_SCHEMA_VERSION, SchemaVersionError,
-    SchemaVersioned, StackFrame, StackTracePayload, validate_schema_version,
+    FemtoFilter,
+    FilterBuildError,
+    FilterBuilderTrait,
+    LevelFilterBuilder,
+    NameFilterBuilder,
 };
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
@@ -94,9 +102,16 @@ pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
 pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
 /// Re-export handler builders and errors.
 pub use handlers::{
-    FemtoRotatingFileHandler, FemtoTimedRotatingFileHandler, FileHandlerBuilder,
-    HTTPHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
-    RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    FemtoRotatingFileHandler,
+    FemtoTimedRotatingFileHandler,
+    FileHandlerBuilder,
+    HTTPHandlerBuilder,
+    HandlerBuilderTrait,
+    HandlerConfigError,
+    HandlerIOError,
+    RotatingFileHandlerBuilder,
+    SocketHandlerBuilder,
+    StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
     file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
 };
@@ -104,12 +119,20 @@ pub use handlers::{
 pub use handlers::{HandlerOptions, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};
 /// Re-export HTTP handler types.
 pub use http_handler::{
-    AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
+    AuthConfig,
+    FemtoHTTPHandler,
+    HTTPHandlerConfig,
+    HTTPMethod,
+    SerializationFormat,
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
 pub use log_context::{
-    LogContextError, LogContextGuard, pop_log_context, push_log_context, push_log_context_map,
+    LogContextError,
+    LogContextGuard,
+    pop_log_context,
+    push_log_context,
+    push_log_context_map,
     with_log_context,
 };
 /// Re-export log record types.
@@ -118,8 +141,13 @@ pub use log_record::{FemtoLogRecord, RecordMetadata};
 pub use logger::{FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
 pub use socket_handler::{
-    BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
-    TlsOptions, UnixTransport,
+    BackoffPolicy,
+    FemtoSocketHandler,
+    SocketHandlerConfig,
+    SocketTransport,
+    TcpTransport,
+    TlsOptions,
+    UnixTransport,
 };
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
@@ -138,9 +166,7 @@ pub use tracing_compat::{FemtoTracingLayer, layer as tracing_layer};
 /// assert_eq!(crate::hello(), "hello from Rust");
 /// ```
 #[pyfunction]
-const fn hello() -> &'static str {
-    "hello from Rust"
-}
+const fn hello() -> &'static str { "hello from Rust" }
 
 mod py_api {
     //! Python-facing helper functions that bridge to the Rust manager.
@@ -156,8 +182,8 @@ mod py_api {
     /// # Parameters
     ///
     /// - `py`: Python GIL token for creating Python objects.
-    /// - `name`: Logger name; must not be empty, start or end with '.', or
-    ///   contain consecutive dots.
+    /// - `name`: Logger name; must not be empty, start or end with '.', or contain consecutive
+    ///   dots.
     ///
     /// # Returns
     ///
@@ -201,9 +227,7 @@ mod py_api {
     /// });
     /// ```
     #[pyo3::pyfunction]
-    pub(crate) fn reset_manager_py() {
-        reset_manager();
-    }
+    pub(crate) fn reset_manager_py() { reset_manager(); }
 
     /// Return runtime attachment identifiers for the named logger.
     ///
@@ -228,8 +252,7 @@ use py_api::{get_logger, reset_manager_py};
 ///
 /// # Parameters
 ///
-/// - `m`: The Python module to populate with classes, functions, and
-///   constants.
+/// - `m`: The Python module to populate with classes, functions, and constants.
 ///
 /// # Errors
 ///

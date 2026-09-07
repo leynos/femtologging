@@ -1,10 +1,15 @@
 //! Python bindings for configuration builders.
 
-use super::{ConfigBuilder, FormatterBuilder, HandlerBuilder, LoggerConfigBuilder, normalize_vec};
-use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
-use crate::{filters::FilterBuilder, level::FemtoLevel};
-use pyo3::prelude::*;
 use std::convert::identity;
+
+use pyo3::prelude::*;
+
+use super::{ConfigBuilder, FormatterBuilder, HandlerBuilder, LoggerConfigBuilder, normalize_vec};
+use crate::{
+    filters::FilterBuilder,
+    level::FemtoLevel,
+    macros::{AsPyDict, impl_as_pydict, py_setters},
+};
 
 impl AsPyDict for HandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {

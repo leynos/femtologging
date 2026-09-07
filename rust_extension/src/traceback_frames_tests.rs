@@ -3,12 +3,16 @@
 //! Graceful degradation tests (type mismatches, non-mapping locals, non-string
 //! keys) are in [`crate::traceback_frames_graceful_degradation_tests`].
 
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyList},
+};
 use rstest::rstest;
 
-use crate::test_utils::traceback_test_helpers::*;
-use crate::traceback_frames::extract_frames_from_stack_summary;
+use crate::{
+    test_utils::traceback_test_helpers::*,
+    traceback_frames::extract_frames_from_stack_summary,
+};
 
 #[test]
 fn frame_with_all_optional_fields_present() {

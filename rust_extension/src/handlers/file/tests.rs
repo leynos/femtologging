@@ -3,17 +3,28 @@
 //! These tests verify the wiring between configuration and worker threads as
 //! well as basic flushing behaviour.
 
-use super::test_support::{impl_unsupported_seek, install_test_logger, take_logged_messages};
-use super::*;
-use crate::handler::HandlerError;
+use std::{
+    io::{self, Cursor, Write},
+    sync::{
+        Arc,
+        Barrier,
+        Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
+    time::Duration,
+};
+
 use log::Level;
 use rstest::rstest;
 use serial_test::serial;
-use std::io::{self, Cursor, Write};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex, mpsc};
-use std::thread;
-use std::time::Duration;
+
+use super::{
+    test_support::{impl_unsupported_seek, install_test_logger, take_logged_messages},
+    *,
+};
+use crate::handler::HandlerError;
 #[derive(Clone, Default)]
 struct SharedBuf {
     buffer: Arc<Mutex<Vec<u8>>>,
@@ -57,9 +68,7 @@ struct CountingRotation {
 }
 
 impl CountingRotation {
-    fn new(calls: Arc<AtomicUsize>) -> Self {
-        Self { calls }
-    }
+    fn new(calls: Arc<AtomicUsize>) -> Self { Self { calls } }
 }
 
 impl RotationStrategy<SharedBuf> for CountingRotation {
@@ -74,9 +83,7 @@ struct FlagRotation {
 }
 
 impl FlagRotation {
-    fn new(flag: Arc<AtomicBool>) -> Self {
-        Self { flag }
-    }
+    fn new(flag: Arc<AtomicBool>) -> Self { Self { flag } }
 }
 
 impl RotationStrategy<Cursor<Vec<u8>>> for FlagRotation {

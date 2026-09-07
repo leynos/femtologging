@@ -4,14 +4,21 @@
 //! from exception and stack trace payloads. The functions operate on Python
 //! dicts (the same format returned by `handle_record`).
 
-use pyo3::exceptions::PyTypeError;
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyDict, PyList, PyTuple},
+};
 
-use crate::exception_schema::StackFrame;
-use crate::frame_filter::{
-    LOGGING_INFRA_PATTERNS, exclude_by_filename, exclude_by_function,
-    exclude_logging_infrastructure, limit_frames,
+use crate::{
+    exception_schema::StackFrame,
+    frame_filter::{
+        LOGGING_INFRA_PATTERNS,
+        exclude_by_filename,
+        exclude_by_function,
+        exclude_logging_infrastructure,
+        limit_frames,
+    },
 };
 
 #[path = "frame_filter_py_arguments.rs"]
@@ -339,7 +346,8 @@ fn filter_payload(
 #[pyfunction]
 #[pyo3(signature = (*args, **kwargs))]
 #[pyo3(
-    text_signature = "(payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=False)"
+    text_signature = "(payload, *, exclude_filenames=None, exclude_functions=None, \
+                      max_depth=None, exclude_logging=False)"
 )]
 pub fn filter_frames(
     args: &Bound<'_, PyTuple>,

@@ -46,9 +46,8 @@ pub(crate) use dict_set;
 /// remaining method definitions. Each method is described once and the macro
 /// expands to:
 /// - a consuming Rust method returning `Self`;
-/// - `#[pymethods]` wrappers calling the same body on a `PyRefMut` with
-///   generated `#[pyo3(signature = ...)]` metadata and derived
-///   `#[pyo3(text_signature = ...)]` strings;
+/// - `#[pymethods]` wrappers calling the same body on a `PyRefMut` with generated `#[pyo3(signature
+///   = ...)]` metadata and derived `#[pyo3(text_signature = ...)]` strings;
 /// - optional additional Python methods appended verbatim.
 ///
 /// The Python signature defaults to the Rust signature; specify `py_args` only

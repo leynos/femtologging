@@ -7,14 +7,13 @@ use std::{
 
 use pyo3::prelude::*;
 
+use super::{ConfigError, types::HandlerBuilder};
 use crate::{
     FemtoLevel,
     filters::{FemtoFilter, FilterBuilder},
     handler::FemtoHandlerTrait,
     manager::{LoggerAttachmentState, RuntimeStateSnapshot},
 };
-
-use super::{ConfigError, types::HandlerBuilder};
 
 mod collection_mutation;
 mod commit;
@@ -49,9 +48,7 @@ pub struct LoggerMutationBuilder {
 impl LoggerMutationBuilder {
     /// Create an empty logger mutation builder.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     fn normalize_ids<I, S>(ids: I) -> Vec<String>
     where
@@ -152,9 +149,7 @@ impl LoggerMutationBuilder {
 
     /// Remove all handler attachments from the logger.
     #[must_use]
-    pub fn clear_handlers(self) -> Self {
-        self.do_clear(Self::set_handlers)
-    }
+    pub fn clear_handlers(self) -> Self { self.do_clear(Self::set_handlers) }
 
     /// Replace the logger's filter attachments with `ids`.
     #[must_use]
@@ -188,9 +183,7 @@ impl LoggerMutationBuilder {
 
     /// Remove all filter attachments from the logger.
     #[must_use]
-    pub fn clear_filters(self) -> Self {
-        self.do_clear(Self::set_filters)
-    }
+    pub fn clear_filters(self) -> Self { self.do_clear(Self::set_filters) }
 
     fn set_handlers(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
@@ -239,9 +232,7 @@ pub(crate) struct LoggerScalarMutation {
 impl RuntimeConfigBuilder {
     /// Create an empty runtime configuration builder.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Register a handler builder under `id`.
     #[must_use]
@@ -298,7 +289,8 @@ impl RuntimeConfigBuilder {
     fn validate(&self) -> Result<(), ConfigError> {
         if self.root_logger.is_some() && self.loggers.contains_key("root") {
             return Err(ConfigError::InvalidMutation(
-                "root logger cannot be mutated via both with_root_logger() and with_logger(\"root\", ...)"
+                "root logger cannot be mutated via both with_root_logger() and \
+                 with_logger(\"root\", ...)"
                     .to_owned(),
             ));
         }

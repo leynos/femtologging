@@ -5,14 +5,14 @@
 //! root logger by default and captures the Python caller's source location
 //! (filename, line number, module name) into the log record's metadata.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyInt};
-use pyo3::{PyAny, exceptions::PyTypeError, exceptions::PyValueError};
+use pyo3::{
+    PyAny,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::{PyDict, PyInt},
+};
 
-use crate::level::FemtoLevel;
-use crate::log_context;
-use crate::log_record::RecordMetadata;
-use crate::manager;
+use crate::{level::FemtoLevel, log_context, log_record::RecordMetadata, manager};
 
 /// Default logger name used when the caller does not specify one.
 const DEFAULT_LOGGER_NAME: &str = "root";
@@ -116,7 +116,12 @@ fn extract_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
 #[path = "convenience_functions_python_bindings.rs"]
 mod python_bindings;
 pub(crate) use python_bindings::{
-    py_debug, py_error, py_info, py_pop_log_context, py_push_log_context, py_warn,
+    py_debug,
+    py_error,
+    py_info,
+    py_pop_log_context,
+    py_push_log_context,
+    py_warn,
 };
 
 #[cfg(test)]

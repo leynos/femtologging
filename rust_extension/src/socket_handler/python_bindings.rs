@@ -36,13 +36,9 @@ impl FemtoSocketHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
-    }
+    fn py_flush(&self) -> bool { self.flush() }
 
     /// Close the handler and wait for the worker thread to finish.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
-    }
+    fn py_close(&mut self) { self.close(); }
 }

@@ -10,11 +10,15 @@
 //! The primary entry points are [`capture_exception`] for `exc_info` handling
 //! and [`capture_stack`] for `stack_info=True` support.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBoolMethods, PyDict, PyTuple};
+use pyo3::{
+    prelude::*,
+    types::{PyBool, PyBoolMethods, PyDict, PyTuple},
+};
 
-use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackTracePayload};
-use crate::traceback_frames::extract_frames_from_stack_summary;
+use crate::{
+    exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackTracePayload},
+    traceback_frames::extract_frames_from_stack_summary,
+};
 
 mod traceback_payload;
 use self::traceback_payload::build_payload_from_traceback_exception;

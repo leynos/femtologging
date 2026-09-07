@@ -31,7 +31,5 @@ impl From<String> for FormatterId {
 }
 
 impl From<&str> for FormatterId {
-    fn from(id: &str) -> Self {
-        Self::from(id.to_owned())
-    }
+    fn from(id: &str) -> Self { Self::from(id.to_owned()) }
 }

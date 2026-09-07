@@ -11,6 +11,12 @@ use std::{
 use rstest::{fixture, rstest};
 use serde::Deserialize;
 
+use super::{
+    backoff::BackoffState,
+    config::BackoffPolicy,
+    serialize::{frame_payload, serialize_record},
+    transport::{SocketTransport, TcpTransport, TlsOptions, connect_transport},
+};
 use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
     handlers::{HandlerBuildError, HandlerBuilderTrait, socket_builder::SocketHandlerBuilder},
@@ -19,19 +25,11 @@ use crate::{
     socket_handler::FemtoSocketHandler,
 };
 
-use super::{
-    backoff::BackoffState,
-    config::BackoffPolicy,
-    serialize::{frame_payload, serialize_record},
-    transport::{SocketTransport, TcpTransport, TlsOptions, connect_transport},
-};
-
 // Fixtures and helpers arrange state, so they return Result and leave the
 // verdict to the calling test.
+#[femtologging_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-fn tcp_listener() -> io::Result<TcpListener> {
-    TcpListener::bind(("127.0.0.1", 0))
-}
+fn tcp_listener() -> io::Result<TcpListener> { TcpListener::bind(("127.0.0.1", 0)) }
 
 type FrameRx = mpsc::Receiver<io::Result<Vec<u8>>>;
 

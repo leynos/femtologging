@@ -3,11 +3,15 @@
 //! These tests verify that frame extraction handles edge cases gracefully,
 //! such as wrong types for optional fields, non-mapping locals, and non-string keys.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyList},
+};
 
-use crate::test_utils::traceback_test_helpers::*;
-use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
+use crate::{
+    test_utils::traceback_test_helpers::*,
+    traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict},
+};
 
 #[test]
 fn frame_with_wrong_type_optional_field_degrades_to_none() {

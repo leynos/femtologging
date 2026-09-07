@@ -5,20 +5,31 @@
 //! and accepted enrichment fields are copied into Rust-owned record metadata
 //! before asynchronous dispatch.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use log::warn;
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyList},
+};
 
-use crate::formatter::python::record_to_dict;
-use crate::log_record::FemtoLogRecord;
-use crate::macros::{AsPyDict, dict_into_py};
-use crate::python::fq_py_type;
-
-use super::python_callback_validation::is_reserved_enrichment_key;
-use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait, FilterContext, FilterDecision};
+use super::{
+    FemtoFilter,
+    FilterBuildError,
+    FilterBuilderTrait,
+    FilterContext,
+    FilterDecision,
+    python_callback_validation::is_reserved_enrichment_key,
+};
+use crate::{
+    formatter::python::record_to_dict,
+    log_record::FemtoLogRecord,
+    macros::{AsPyDict, dict_into_py},
+    python::fq_py_type,
+};
 
 #[path = "python_callback_enrichment.rs"]
 mod enrichment;
@@ -102,9 +113,7 @@ impl PythonCallbackFilter {
         }
     }
 
-    pub(crate) fn description(&self) -> &str {
-        &self.description
-    }
+    pub(crate) fn description(&self) -> &str { &self.description }
 }
 
 fn warn_if_record_restore_fails(
@@ -157,9 +166,7 @@ impl PythonCallbackFilterBuilder {
 impl FilterBuilderTrait for PythonCallbackFilterBuilder {
     type Filter = PythonCallbackFilter;
 
-    fn build_inner(&self) -> Result<Self::Filter, FilterBuildError> {
-        Ok(self.filter.clone())
-    }
+    fn build_inner(&self) -> Result<Self::Filter, FilterBuildError> { Ok(self.filter.clone()) }
 }
 
 impl AsPyDict for PythonCallbackFilterBuilder {
@@ -174,13 +181,9 @@ impl AsPyDict for PythonCallbackFilterBuilder {
 impl PythonCallbackFilterBuilder {
     #[new]
     #[pyo3(text_signature = "(callback, /)")]
-    fn py_new(callback: Bound<'_, PyAny>) -> PyResult<Self> {
-        Self::from_callback_obj(callback)
-    }
+    fn py_new(callback: Bound<'_, PyAny>) -> PyResult<Self> { Self::from_callback_obj(callback) }
 
-    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.as_pydict(py)
-    }
+    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { self.as_pydict(py) }
 }
 
 pub(crate) fn validate_filter_target(obj: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -196,7 +199,8 @@ pub(crate) fn validate_filter_target(obj: &Bound<'_, PyAny>) -> PyResult<()> {
         ))),
         Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(obj.py()) => {
             Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "python callback filter must be callable or expose a callable 'filter' method (got {})",
+                "python callback filter must be callable or expose a callable 'filter' method \
+                 (got {})",
                 fq_py_type(obj),
             )))
         }

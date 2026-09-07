@@ -11,19 +11,13 @@ struct DummyBuilder {
 }
 
 impl DummyBuilder {
-    fn new() -> Self {
-        Self::default()
-    }
+    fn new() -> Self { Self::default() }
 
-    fn label(&self) -> Option<&str> {
-        self.label.as_deref()
-    }
+    fn label(&self) -> Option<&str> { self.label.as_deref() }
 }
 
 /// Convert a Rust or Python builder label into the stored representation.
-fn convert_label(label: impl Into<String>) -> String {
-    label.into()
-}
+fn convert_label(label: impl Into<String>) -> String { label.into() }
 
 builder_methods! {
     impl DummyBuilder {
@@ -148,9 +142,7 @@ struct CapacityDummy {
 }
 
 impl CapacityDummy {
-    fn new() -> Self {
-        Self::default()
-    }
+    fn new() -> Self { Self::default() }
 }
 
 builder_methods! {

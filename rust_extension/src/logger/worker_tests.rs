@@ -1,16 +1,16 @@
 //! Focused unit tests for logger worker helpers.
 
-use crate::level::FemtoLevel;
-use std::any::Any;
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 
 use log::Level;
 use rstest::rstest;
 
-use super::logger_tests_helpers::collecting_handler;
-use super::*;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
+use super::{logger_tests_helpers::collecting_handler, *};
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    handlers::file::test_support::{install_test_logger, take_logged_messages},
+    level::FemtoLevel,
+};
 
 #[derive(Default)]
 struct FailingHandler;
@@ -20,9 +20,7 @@ impl FemtoHandlerTrait for FailingHandler {
         Err(HandlerError::Message("boom".to_owned()))
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 #[rstest]
 fn handle_log_record_continues_after_handler_errors() {

@@ -6,7 +6,9 @@
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use super::{
-    FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    FormatterId,
+    HandlerBuildError,
+    HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{HandlerConfig, OverflowPolicy},
     rotating::{FemtoRotatingFileHandler, RotationConfig},
@@ -204,11 +206,10 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
 mod tests {
     //! Tests for the rotating file handler builder.
 
-    use super::super::test_helpers::assert_build_err;
-    use super::*;
     use rstest::rstest;
     use tempfile::tempdir;
 
+    use super::{super::test_helpers::assert_build_err, *};
     use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
     #[derive(Clone, Copy, Debug)]

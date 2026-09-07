@@ -7,7 +7,9 @@ use pyo3::prelude::*;
 
 use super::{CoreRotatingFileHandler, HandlerOptions, PyRotatingFileHandler, fresh_failure};
 use crate::{
-    formatter::DefaultFormatter, handler::FemtoHandlerTrait, level::FemtoLevel,
+    formatter::DefaultFormatter,
+    handler::FemtoHandlerTrait,
+    level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
 
@@ -15,7 +17,8 @@ use crate::{
 impl HandlerOptions {
     #[new]
     #[pyo3(
-        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', rotation=None)"
+        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', \
+                          rotation=None)"
     )]
     #[pyo3(signature = (
         capacity = super::DEFAULT_CHANNEL_CAPACITY,
@@ -66,15 +69,11 @@ impl PyRotatingFileHandler {
 
     /// Expose the configured maximum number of bytes before rotation.
     #[getter]
-    const fn max_bytes(&self) -> u64 {
-        self.inner.rotation_limits().0
-    }
+    const fn max_bytes(&self) -> u64 { self.inner.rotation_limits().0 }
 
     /// Expose the configured backup count.
     #[getter]
-    const fn backup_count(&self) -> usize {
-        self.inner.rotation_limits().1
-    }
+    const fn backup_count(&self) -> usize { self.inner.rotation_limits().1 }
 
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
@@ -106,14 +105,10 @@ impl PyRotatingFileHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.inner.flush()
-    }
+    fn py_flush(&self) -> bool { self.inner.flush() }
 
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.inner.close();
-    }
+    fn py_close(&mut self) { self.inner.close(); }
 }
 
 #[pyfunction]
@@ -126,6 +121,4 @@ pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>)
 }
 
 #[pyfunction]
-pub fn clear_rotating_fresh_failure_for_test() {
-    fresh_failure::clear_forced_fresh_failure();
-}
+pub fn clear_rotating_fresh_failure_for_test() { fresh_failure::clear_forced_fresh_failure(); }

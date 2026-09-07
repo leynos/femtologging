@@ -2,9 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::{config::ConfigError, manager::LoggerAttachmentState};
-
 use super::{CollectionMutation, SharedFilters, SharedHandlers};
+use crate::{config::ConfigError, manager::LoggerAttachmentState};
 
 pub(crate) fn collection_conflict(
     kind: &str,

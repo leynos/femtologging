@@ -6,6 +6,7 @@
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
 use std::{
+    any::Any,
     io::{self, Write},
     thread::{self, JoinHandle},
     time::Duration,
@@ -15,11 +16,10 @@ use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use log::warn;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
-use std::any::Any;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
+    handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
@@ -150,28 +150,21 @@ mod python_bindings {
 
     use pyo3::prelude::*;
 
-    use crate::{handler::FemtoHandlerTrait, log_record::FemtoLogRecord};
-
     use super::FemtoStreamHandler;
+    use crate::{handler::FemtoHandlerTrait, log_record::FemtoLogRecord};
 
     #[pymethods]
     impl FemtoStreamHandler {
         #[new]
-        fn py_new() -> Self {
-            Self::stderr()
-        }
+        fn py_new() -> Self { Self::stderr() }
 
         #[staticmethod]
         #[pyo3(name = "stdout")]
-        fn py_stdout() -> Self {
-            Self::stdout()
-        }
+        fn py_stdout() -> Self { Self::stdout() }
 
         #[staticmethod]
         #[pyo3(name = "stderr")]
-        fn py_stderr() -> Self {
-            Self::stderr()
-        }
+        fn py_stderr() -> Self { Self::stderr() }
 
         /// Dispatch a log record to the handler's worker thread.
         #[pyo3(name = "handle")]
@@ -206,30 +199,22 @@ mod python_bindings {
         /// >>> handler.flush()
         /// False
         #[pyo3(name = "flush")]
-        fn py_flush(&self) -> bool {
-            self.flush()
-        }
+        fn py_flush(&self) -> bool { self.flush() }
 
         /// Close the handler and wait for the worker thread to finish.
         #[pyo3(name = "close")]
-        fn py_close(&mut self) {
-            self.close();
-        }
+        fn py_close(&mut self) { self.close(); }
     }
 }
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
     #[must_use]
-    pub fn stdout() -> Self {
-        Self::new(io::stdout(), DefaultFormatter)
-    }
+    pub fn stdout() -> Self { Self::new(io::stdout(), DefaultFormatter) }
 
     /// Create a new handler writing to `stderr` with a `DefaultFormatter`.
     #[must_use]
-    pub fn stderr() -> Self {
-        Self::new(io::stderr(), DefaultFormatter)
-    }
+    pub fn stderr() -> Self { Self::new(io::stderr(), DefaultFormatter) }
 
     /// Create a new handler from an arbitrary writer and formatter using the default capacity.
     #[must_use]
@@ -302,9 +287,7 @@ impl FemtoStreamHandler {
     }
 
     /// Flush any pending log records.
-    pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
-    }
+    pub fn flush(&self) -> bool { <Self as FemtoHandlerTrait>::flush(self) }
 
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
@@ -373,13 +356,9 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
 impl Drop for FemtoStreamHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
+    fn drop(&mut self) { self.close(); }
 }

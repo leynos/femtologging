@@ -1,11 +1,14 @@
 //! Tests for file-worker batch configuration and command draining.
 
-use super::*;
-use crate::formatter::DefaultFormatter;
-use crate::level::FemtoLevel;
+use std::{
+    io::{self, Cursor, Seek, SeekFrom, Write},
+    time::Duration,
+};
+
 use crossbeam_channel::bounded;
-use std::io::{self, Cursor, Seek, SeekFrom, Write};
-use std::time::Duration;
+
+use super::*;
+use crate::{formatter::DefaultFormatter, level::FemtoLevel};
 
 #[derive(Default)]
 struct RecordingWriter {
@@ -14,9 +17,7 @@ struct RecordingWriter {
 }
 
 impl Write for RecordingWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer.write(buf)
-    }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.buffer.write(buf) }
 
     fn flush(&mut self) -> io::Result<()> {
         self.flushes += 1;
@@ -25,9 +26,7 @@ impl Write for RecordingWriter {
 }
 
 impl Seek for RecordingWriter {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.buffer.seek(pos)
-    }
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> { self.buffer.seek(pos) }
 }
 
 /// Create a record command with a stable logger and level for assertions.

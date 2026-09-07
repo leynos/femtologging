@@ -5,8 +5,9 @@
 
 use std::time::Duration;
 
-use super::config::OverflowPolicy;
 use thiserror::Error;
+
+use super::config::OverflowPolicy;
 
 const VALID_POLICIES: &str = "drop, block, timeout:N";
 
@@ -73,11 +74,11 @@ fn parse_overflow_policy(
     };
 
     match (kind, inline_ms, expects_external_timeout) {
-        ("drop", _, _) => Ok(OverflowPolicy::Drop),
-        ("block", _, _) => Ok(OverflowPolicy::Block),
+        ("drop", ..) => Ok(OverflowPolicy::Drop),
+        ("block", ..) => Ok(OverflowPolicy::Block),
         ("timeout", Some(ms), _) => Ok(OverflowPolicy::Timeout(Duration::from_millis(ms))),
         ("timeout", None, _) => parse_timeout_policy(timeout_ms, expects_external_timeout),
-        (_, _, _) => Err(ParseOverflowPolicyError::UnknownPolicy { policy: normalized }),
+        (..) => Err(ParseOverflowPolicyError::UnknownPolicy { policy: normalized }),
     }
 }
 

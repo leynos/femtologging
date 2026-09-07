@@ -4,8 +4,17 @@
 //! filename suffixes without touching the filesystem or sleeping.
 
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
-    TimeZone, Utc, Weekday,
+    DateTime,
+    Datelike,
+    Duration,
+    Local,
+    LocalResult,
+    NaiveDate,
+    NaiveDateTime,
+    NaiveTime,
+    TimeZone,
+    Utc,
+    Weekday,
 };
 
 const MIDNIGHT: NaiveTime = NaiveTime::MIN;
@@ -119,27 +128,19 @@ impl TimedRotationSchedule {
 
     /// Return the configured cadence.
     #[cfg(feature = "python")]
-    pub const fn when(&self) -> TimedRotationWhen {
-        self.when
-    }
+    pub const fn when(&self) -> TimedRotationWhen { self.when }
 
     /// Return the configured interval.
     #[cfg(feature = "python")]
-    pub const fn interval(&self) -> u32 {
-        self.interval
-    }
+    pub const fn interval(&self) -> u32 { self.interval }
 
     /// Return whether UTC scheduling is enabled.
     #[cfg(feature = "python")]
-    pub const fn use_utc(&self) -> bool {
-        self.use_utc
-    }
+    pub const fn use_utc(&self) -> bool { self.use_utc }
 
     /// Return the optional time-of-day trigger.
     #[cfg(feature = "python")]
-    pub const fn at_time(&self) -> Option<NaiveTime> {
-        self.at_time
-    }
+    pub const fn at_time(&self) -> Option<NaiveTime> { self.at_time }
 
     /// Return the next rollover instant after ``now``.
     pub fn next_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {

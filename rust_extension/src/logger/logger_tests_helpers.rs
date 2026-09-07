@@ -4,25 +4,31 @@
 //! test modules.  `CollectingHandler` is re-exported from the
 //! crate-wide `test_utils` module; logger-specific helper (`CountingHandler`) is defined here.
 
-use super::QueuedRecord;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
+use std::{
+    any::Any,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
 use crossbeam_channel::{Receiver, SendError, Sender, bounded};
 use rstest::fixture;
-use std::any::Any;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
+use super::QueuedRecord;
 pub(super) use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    level::FemtoLevel,
+    log_record::FemtoLogRecord,
+};
 
 const RECORD_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 
+#[femtologging_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-pub(super) fn collecting_handler() -> Arc<CollectingHandler> {
-    Arc::new(CollectingHandler::new())
-}
+pub(super) fn collecting_handler() -> Arc<CollectingHandler> { Arc::new(CollectingHandler::new()) }
 
 /// Enqueue one `QueuedRecord` per entry in `messages` on `tx`, all
 /// addressed to `handler`.
@@ -74,9 +80,7 @@ impl FemtoHandlerTrait for SignallingCollectingHandler {
         Ok(())
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
 pub(super) fn wait_for_record_signal(
@@ -110,7 +114,5 @@ impl FemtoHandlerTrait for CountingHandler {
         Ok(())
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }

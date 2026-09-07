@@ -4,12 +4,14 @@
 //! acknowledgement rather than reusing a stale ack from an earlier timed-out
 //! flush.
 
-use super::test_support::impl_unsupported_seek;
-use super::*;
-use std::io::{self, ErrorKind, Write};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
-use std::thread;
-use std::time::Duration;
+use std::{
+    io::{self, ErrorKind, Write},
+    sync::{Arc, Condvar, Mutex, mpsc},
+    thread,
+    time::Duration,
+};
+
+use super::{test_support::impl_unsupported_seek, *};
 
 #[derive(Clone)]
 struct BlockingFlushWriter {
@@ -51,9 +53,7 @@ impl BlockingFlushWriter {
     }
 
     /// Release every blocked flush call.
-    fn release_all_flushes(&self) {
-        self.release_flushes_through(usize::MAX);
-    }
+    fn release_all_flushes(&self) { self.release_flushes_through(usize::MAX); }
 }
 
 impl Write for BlockingFlushWriter {

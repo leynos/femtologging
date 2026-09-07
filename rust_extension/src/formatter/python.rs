@@ -1,7 +1,9 @@
 //! Helpers for adapting Python callables into [`FemtoFormatter`] instances.
 
-use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
+use std::{
+    sync::{Arc, Mutex},
+    time::UNIX_EPOCH,
+};
 
 use pyo3::{
     exceptions::PyTypeError,
@@ -9,11 +11,12 @@ use pyo3::{
     types::{PyDict, PyList, PyString},
 };
 
-use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
-use crate::log_record::FemtoLogRecord;
-use crate::python::fq_py_type;
-
 use super::{FemtoFormatter, SharedFormatter};
+use crate::{
+    exception_schema::{ExceptionPayload, StackFrame, StackTracePayload},
+    log_record::FemtoLogRecord,
+    python::fq_py_type,
+};
 
 #[derive(Clone)]
 struct PythonFormatter {
@@ -26,7 +29,8 @@ impl PythonFormatter {
         let description = fq_py_type(obj);
         if let Ok(s) = obj.cast::<PyString>() {
             let msg = format!(
-                "formatter must be callable or provide a callable format() method (got string: {s})",
+                "formatter must be callable or provide a callable format() method (got string: \
+                 {s})",
             );
             return Err(PyTypeError::new_err(msg));
         }
@@ -35,7 +39,8 @@ impl PythonFormatter {
         } else {
             let format = obj.getattr("format").map_err(|_| {
                 PyTypeError::new_err(format!(
-                    "formatter must be callable or provide a callable format() method (got Python type: {description})",
+                    "formatter must be callable or provide a callable format() method (got Python \
+                     type: {description})",
                 ))
             })?;
             if !format.is_callable() {

@@ -9,15 +9,18 @@ use std::{path::PathBuf, time::Duration};
 #[cfg(feature = "python")]
 use pyo3::{Bound, prelude::*, types::PyDict};
 
-use crate::socket_handler::{
-    BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
-    TlsOptions, UnixTransport,
-};
-
 #[cfg(feature = "python")]
 use super::builder_macros::dict_set;
-use super::builder_macros::ensure_positive;
-use super::{HandlerBuildError, HandlerBuilderTrait};
+use super::{HandlerBuildError, HandlerBuilderTrait, builder_macros::ensure_positive};
+use crate::socket_handler::{
+    BackoffPolicy,
+    FemtoSocketHandler,
+    SocketHandlerConfig,
+    SocketTransport,
+    TcpTransport,
+    TlsOptions,
+    UnixTransport,
+};
 
 #[derive(Clone, Debug)]
 enum TransportConfig {
@@ -64,29 +67,19 @@ macro_rules! apply_backoff_field {
 
 impl BackoffOverrides {
     /// Create overrides with no custom values.
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Get the base jitter override if configured.
-    pub const fn base_ms(&self) -> Option<u64> {
-        self.base
-    }
+    pub const fn base_ms(&self) -> Option<u64> { self.base }
 
     /// Get the cap override if configured.
-    pub const fn cap_ms(&self) -> Option<u64> {
-        self.cap
-    }
+    pub const fn cap_ms(&self) -> Option<u64> { self.cap }
 
     /// Get the reset-after override if configured.
-    pub const fn reset_after_ms(&self) -> Option<u64> {
-        self.reset_after
-    }
+    pub const fn reset_after_ms(&self) -> Option<u64> { self.reset_after }
 
     /// Get the deadline override if configured.
-    pub const fn deadline_ms(&self) -> Option<u64> {
-        self.deadline
-    }
+    pub const fn deadline_ms(&self) -> Option<u64> { self.deadline }
 
     /// Override the base jitter duration in milliseconds.
     pub const fn with_base_ms(mut self, base_ms: u64) -> Self {
@@ -169,9 +162,7 @@ pub struct SocketHandlerBuilder {
 impl SocketHandlerBuilder {
     /// Create a new builder with no transport configured.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Configure the builder to use TCP.
     #[must_use]

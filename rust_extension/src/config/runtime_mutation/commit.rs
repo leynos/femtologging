@@ -4,14 +4,13 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use pyo3::{Py, Python};
 
+use super::{LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
 use crate::{
     config::{ConfigError, types::HandlerBuilder},
     filters::FilterBuilder,
     logger::FemtoLogger,
     manager::{self, LoggerAttachmentState, RuntimeStateSnapshot},
 };
-
-use super::{LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
 
 pub(crate) struct BuiltRegistries {
     pub(crate) handlers: SharedHandlers,

@@ -6,13 +6,13 @@
 //! dictionary, while [`SocketHandlerBuilder`] provides a fluent interface for
 //! assembling socket handler instances with TCP/Unix endpoints, TLS, and timeouts.
 
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
-
-use crate::macros::{AsPyDict, dict_into_py};
-use crate::socket_handler::FemtoSocketHandler;
+use pyo3::{prelude::*, types::PyDict};
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};
+use crate::{
+    macros::{AsPyDict, dict_into_py},
+    socket_handler::FemtoSocketHandler,
+};
 
 const ALLOWED_BACKOFF_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
 
@@ -34,9 +34,9 @@ impl BackoffOverrides {
     ///
     /// # Arguments
     ///
-    /// * `config` - Optional dictionary with keys: `base_ms`, `cap_ms`,
-    ///   `reset_after_ms`, `deadline_ms`. All values must be integers or `None`.
-    ///   If `config` is `None`, returns empty overrides (all fields `None`).
+    /// * `config` - Optional dictionary with keys: `base_ms`, `cap_ms`, `reset_after_ms`,
+    ///   `deadline_ms`. All values must be integers or `None`. If `config` is `None`, returns empty
+    ///   overrides (all fields `None`).
     ///
     /// # Errors
     ///
@@ -76,9 +76,7 @@ impl BackoffOverrides {
 #[pymethods]
 impl SocketHandlerBuilder {
     #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
+    fn py_new() -> Self { Self::new() }
 
     #[pyo3(name = "with_tcp")]
     #[pyo3(signature = (host, port))]
@@ -166,9 +164,7 @@ impl SocketHandlerBuilder {
     }
 
     #[pyo3(name = "build")]
-    fn py_build(&self) -> PyResult<FemtoSocketHandler> {
-        self.build_inner().map_err(Into::into)
-    }
+    fn py_build(&self) -> PyResult<FemtoSocketHandler> { self.build_inner().map_err(Into::into) }
 }
 
 impl AsPyDict for SocketHandlerBuilder {
@@ -183,11 +179,11 @@ impl AsPyDict for SocketHandlerBuilder {
 mod tests {
     //! Tests for the socket handler builder Python bindings.
 
-    use pyo3::PyErr;
-    use pyo3::Python;
-    use pyo3::types::PyAnyMethods;
-    use pyo3::types::PyDict;
-    use pyo3::types::PyDictMethods;
+    use pyo3::{
+        PyErr,
+        Python,
+        types::{PyAnyMethods, PyDict, PyDictMethods},
+    };
     use rstest::rstest;
 
     use super::{BackoffOverrides, SocketHandlerBuilder};

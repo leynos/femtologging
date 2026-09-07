@@ -1,14 +1,20 @@
 //! Tests for convenience logging methods and `isEnabledFor`.
 
-use super::*;
-use crate::handler::FemtoHandlerTrait;
-use crate::level::FemtoLevel;
-use crate::log_context;
-use crate::test_utils::collecting_handler::CollectingHandler;
-use pyo3::Python;
-use pyo3::types::{PyBool, PyDict, PyTuple};
-use rstest::rstest;
 use std::sync::Arc;
+
+use pyo3::{
+    Python,
+    types::{PyBool, PyDict, PyTuple},
+};
+use rstest::rstest;
+
+use super::*;
+use crate::{
+    handler::FemtoHandlerTrait,
+    level::FemtoLevel,
+    log_context,
+    test_utils::collecting_handler::CollectingHandler,
+};
 
 /// Construct positional message arguments, propagating Python errors.
 fn message_args<'py>(py: Python<'py>, message: &str) -> PyResult<pyo3::Bound<'py, PyTuple>> {

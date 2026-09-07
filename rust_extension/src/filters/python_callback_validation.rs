@@ -1,7 +1,9 @@
 //! Validation helpers for Python callback filter enrichment.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
+use pyo3::{
+    prelude::*,
+    types::{PyBool, PyFloat, PyInt, PyString},
+};
 
 use crate::python::fq_py_type;
 

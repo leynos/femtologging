@@ -2,7 +2,11 @@
 #![cfg(feature = "python")]
 
 use _femtologging_rs::{
-    ConfigBuilder, FemtoLevel, LevelFilterBuilder, LoggerConfigBuilder, manager,
+    ConfigBuilder,
+    FemtoLevel,
+    LevelFilterBuilder,
+    LoggerConfigBuilder,
+    manager,
 };
 use pyo3::Python;
 use rstest::rstest;

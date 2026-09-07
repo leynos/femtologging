@@ -2,12 +2,10 @@
 
 use std::collections::BTreeMap;
 
+use pyo3::{IntoPyObjectExt, prelude::*, types::PyDict};
+
 use super::{CollectionMutation, LoggerMutationBuilder, RuntimeConfigBuilder};
-use crate::macros::AsPyDict;
-use crate::{FemtoLevel, config::types::HandlerBuilder, filters::FilterBuilder};
-use pyo3::IntoPyObjectExt;
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use crate::{FemtoLevel, config::types::HandlerBuilder, filters::FilterBuilder, macros::AsPyDict};
 
 fn collection_to_pydict<'py, V: AsPyDict>(
     py: Python<'py>,
@@ -57,9 +55,7 @@ impl AsPyDict for RuntimeConfigBuilder {
 #[pymethods]
 impl LoggerMutationBuilder {
     #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
+    fn py_new() -> Self { Self::new() }
 
     #[pyo3(name = "with_level")]
     fn py_with_level(mut slf: PyRefMut<'_, Self>, level: FemtoLevel) -> PyRefMut<'_, Self> {
@@ -121,17 +117,13 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.as_pydict(py)
-    }
+    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { self.as_pydict(py) }
 }
 
 #[pymethods]
 impl RuntimeConfigBuilder {
     #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
+    fn py_new() -> Self { Self::new() }
 
     #[pyo3(name = "with_handler")]
     fn py_with_handler<'py>(
@@ -175,11 +167,7 @@ impl RuntimeConfigBuilder {
     }
 
     #[pyo3(name = "apply")]
-    fn py_apply(&self) -> PyResult<()> {
-        self.apply().map_err(Into::into)
-    }
+    fn py_apply(&self) -> PyResult<()> { self.apply().map_err(Into::into) }
 
-    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.as_pydict(py)
-    }
+    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { self.as_pydict(py) }
 }

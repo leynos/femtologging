@@ -3,19 +3,23 @@
 //! The parent module owns schedule validation and rotation logic; this private
 //! module contains only Python-facing macro expansions and their adapters.
 
-use pyo3::prelude::*;
 use pyo3::{
     exceptions::{PyIOError, PyValueError},
+    prelude::*,
     types::{PyDict, PyTuple},
 };
 
-use super::constructor::TimedHandlerOptionsRequest;
 use super::{
-    CoreTimedRotatingFileHandler, PyTimedRotatingFileHandler, TimedHandlerOptions,
+    CoreTimedRotatingFileHandler,
+    PyTimedRotatingFileHandler,
+    TimedHandlerOptions,
     TimedRotationConfig,
+    constructor::TimedHandlerOptionsRequest,
 };
 use crate::{
-    formatter::DefaultFormatter, handler::FemtoHandlerTrait, level::FemtoLevel,
+    formatter::DefaultFormatter,
+    handler::FemtoHandlerTrait,
+    level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
 
@@ -24,7 +28,8 @@ impl TimedHandlerOptions {
     #[new]
     #[pyo3(signature = (*args, **kwargs))]
     #[pyo3(
-        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', when='H', interval=1, backup_count=0, utc=False, at_time=None)"
+        text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', \
+                          when='H', interval=1, backup_count=0, utc=False, at_time=None)"
     )]
     fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         let request = TimedHandlerOptionsRequest::from_python(args, kwargs)?;
@@ -34,9 +39,7 @@ impl TimedHandlerOptions {
     }
 
     #[getter]
-    fn at_time(&self) -> Option<String> {
-        self.at_time.map(|value| value.to_string())
-    }
+    fn at_time(&self) -> Option<String> { self.at_time.map(|value| value.to_string()) }
 }
 
 #[pymethods]
@@ -61,24 +64,16 @@ impl PyTimedRotatingFileHandler {
     }
 
     #[getter]
-    const fn when(&self) -> &str {
-        self.inner.schedule().when().as_str()
-    }
+    const fn when(&self) -> &str { self.inner.schedule().when().as_str() }
 
     #[getter]
-    const fn interval(&self) -> u32 {
-        self.inner.schedule().interval()
-    }
+    const fn interval(&self) -> u32 { self.inner.schedule().interval() }
 
     #[getter]
-    const fn backup_count(&self) -> usize {
-        self.inner.backup_count()
-    }
+    const fn backup_count(&self) -> usize { self.inner.backup_count() }
 
     #[getter]
-    const fn utc(&self) -> bool {
-        self.inner.schedule().use_utc()
-    }
+    const fn utc(&self) -> bool { self.inner.schedule().use_utc() }
 
     #[getter]
     fn at_time(&self) -> Option<String> {
@@ -97,14 +92,10 @@ impl PyTimedRotatingFileHandler {
     }
 
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.inner.flush()
-    }
+    fn py_flush(&self) -> bool { self.inner.flush() }
 
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.inner.close();
-    }
+    fn py_close(&mut self) { self.inner.close(); }
 }
 
 #[cfg(feature = "test-util")]
@@ -115,6 +106,4 @@ pub fn set_timed_rotation_test_times_for_test(epoch_millis: Vec<i64>) {
 
 #[cfg(feature = "test-util")]
 #[pyfunction]
-pub fn clear_timed_rotation_test_times_for_test() {
-    super::clear_injected_times_for_test();
-}
+pub fn clear_timed_rotation_test_times_for_test() { super::clear_injected_times_for_test(); }

@@ -5,11 +5,11 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
 use thiserror::Error;
 
 use crate::log_record::FemtoLogRecord;
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
 
 /// Outcome returned by the filter pipeline.
 #[derive(Debug, Default)]
@@ -123,22 +123,16 @@ impl FilterBuilder {
 }
 
 impl From<LevelFilterBuilder> for FilterBuilder {
-    fn from(value: LevelFilterBuilder) -> Self {
-        Self::Level(value)
-    }
+    fn from(value: LevelFilterBuilder) -> Self { Self::Level(value) }
 }
 
 impl From<NameFilterBuilder> for FilterBuilder {
-    fn from(value: NameFilterBuilder) -> Self {
-        Self::Name(value)
-    }
+    fn from(value: NameFilterBuilder) -> Self { Self::Name(value) }
 }
 
 #[cfg(feature = "python")]
 impl From<PythonCallbackFilterBuilder> for FilterBuilder {
-    fn from(value: PythonCallbackFilterBuilder) -> Self {
-        Self::PythonCallback(value)
-    }
+    fn from(value: PythonCallbackFilterBuilder) -> Self { Self::PythonCallback(value) }
 }
 
 #[cfg(feature = "python")]
@@ -150,16 +144,25 @@ mod py_helpers {
     //! adapters).
     #![expect(
         missing_docs,
-        reason = "create_exception! generates a public Python exception without a source item that can carry documentation"
+        reason = "create_exception! generates a public Python exception without a source item \
+                  that can carry documentation"
     )]
+    use pyo3::{
+        Borrowed,
+        FromPyObject,
+        create_exception,
+        exceptions::PyTypeError,
+        prelude::{Py, PyAny, PyErr, PyResult, Python},
+    };
+
     use super::{
-        FilterBuildError, FilterBuilder, LevelFilterBuilder, NameFilterBuilder,
+        FilterBuildError,
+        FilterBuilder,
+        LevelFilterBuilder,
+        NameFilterBuilder,
         PythonCallbackFilterBuilder,
     };
-    use crate::macros::AsPyDict;
-    use crate::python::fq_py_type;
-    use pyo3::prelude::{Py, PyAny, PyErr, PyResult, Python};
-    use pyo3::{Borrowed, FromPyObject, create_exception, exceptions::PyTypeError};
+    use crate::{macros::AsPyDict, python::fq_py_type};
 
     create_exception!(
         _femtologging_rs,
@@ -168,9 +171,7 @@ mod py_helpers {
     );
 
     impl From<FilterBuildError> for PyErr {
-        fn from(err: FilterBuildError) -> Self {
-            FilterBuildErrorPy::new_err(err.to_string())
-        }
+        fn from(err: FilterBuildError) -> Self { FilterBuildErrorPy::new_err(err.to_string()) }
     }
 
     impl AsPyDict for FilterBuilder {
@@ -205,7 +206,8 @@ mod py_helpers {
 
             let fq = fq_py_type(&obj.to_owned());
             Err(PyTypeError::new_err(format!(
-                "builder must be LevelFilterBuilder, NameFilterBuilder, or a Python callback filter (got Python type: {fq})",
+                "builder must be LevelFilterBuilder, NameFilterBuilder, or a Python callback \
+                 filter (got Python type: {fq})",
             )))
         }
     }

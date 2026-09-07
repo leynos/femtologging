@@ -5,17 +5,25 @@
 //! into [`crate::FemtoLogRecord`] values and routes them through the existing
 //! femtologging logger and handler pipeline.
 
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use pyo3::prelude::*;
-use tracing::{Event, Level, Subscriber, span::Attributes, span::Id, span::Record};
-use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::registry::LookupSpan;
+use tracing::{
+    Event,
+    Level,
+    Subscriber,
+    span::{Attributes, Id, Record},
+};
+use tracing_subscriber::{
+    layer::{Context, Layer},
+    registry::LookupSpan,
+};
 
-use crate::level::FemtoLevel;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
-use crate::manager;
+use crate::{
+    level::FemtoLevel,
+    log_record::{FemtoLogRecord, RecordMetadata},
+    manager,
+};
 
 pub mod python;
 mod visitor;
@@ -36,9 +44,7 @@ pub struct FemtoTracingLayer;
 
 /// Construct a tracing layer that forwards events into femtologging.
 #[must_use]
-pub const fn layer() -> FemtoTracingLayer {
-    FemtoTracingLayer
-}
+pub const fn layer() -> FemtoTracingLayer { FemtoTracingLayer }
 
 impl FemtoTracingLayer {
     const fn map_level(level: Level) -> FemtoLevel {
@@ -205,9 +211,9 @@ where
     /// For applications emitting thousands of tracing events per second, consider these approaches
     /// to reduce per-event GIL overhead:
     ///
-    /// - **Buffering in Rust**: Collect event data (target, level, message, fields) in a
-    ///   lock-free queue or bounded channel on the Rust side, then flush to Python periodically
-    ///   or in a dedicated worker thread. This amortizes GIL acquisition across batches of events.
+    /// - **Buffering in Rust**: Collect event data (target, level, message, fields) in a lock-free
+    ///   queue or bounded channel on the Rust side, then flush to Python periodically or in a
+    ///   dedicated worker thread. This amortizes GIL acquisition across batches of events.
     ///
     /// - **Lock-Free Queues**: Use structures like `crossbeam::queue::ArrayQueue` or
     ///   `crossbeam::channel` with a background thread that calls `Python::attach` once per batch,

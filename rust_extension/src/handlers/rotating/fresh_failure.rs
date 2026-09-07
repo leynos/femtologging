@@ -106,9 +106,7 @@ static FRESH_FAILURE_STATE: std::sync::LazyLock<FreshFailureState> =
 /// # Returns
 ///
 /// `Some(reason)` if failures remain, `None` otherwise.
-pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
-    FRESH_FAILURE_STATE.take()
-}
+pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> { FRESH_FAILURE_STATE.take() }
 
 /// Configures forced fresh-file-open failures for testing.
 ///
@@ -130,9 +128,7 @@ pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) 
 /// Resets the failure count to zero and clears the stored reason. Intended for
 /// test cleanup.
 #[cfg(feature = "python")]
-pub(crate) fn clear_forced_fresh_failure() {
-    FRESH_FAILURE_STATE.clear_forced();
-}
+pub(crate) fn clear_forced_fresh_failure() { FRESH_FAILURE_STATE.clear_forced(); }
 
 /// Forces a single fresh-file-open failure for testing.
 ///

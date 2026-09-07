@@ -16,17 +16,14 @@ pub(crate) trait RotationClock: Send {
 pub(crate) struct SystemClock;
 
 impl RotationClock for SystemClock {
-    fn now(&mut self) -> DateTime<Utc> {
-        take_injected_time().unwrap_or_else(Utc::now)
-    }
+    fn now(&mut self) -> DateTime<Utc> { take_injected_time().unwrap_or_else(Utc::now) }
 }
 
 #[cfg(feature = "python")]
 mod injected {
     //! Injected-time queue used by tests to make rotation deterministic.
 
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use std::{collections::VecDeque, sync::Mutex};
 
     use chrono::{DateTime, TimeZone, Utc};
     static INJECTED_TIMES: std::sync::LazyLock<Mutex<VecDeque<i64>>> =
@@ -62,24 +59,16 @@ mod injected {
 mod injected {
     use chrono::{DateTime, Utc};
 
-    pub(super) fn take() -> Option<DateTime<Utc>> {
-        None
-    }
+    pub(super) fn take() -> Option<DateTime<Utc>> { None }
 }
 
-fn take_injected_time() -> Option<DateTime<Utc>> {
-    injected::take()
-}
+fn take_injected_time() -> Option<DateTime<Utc>> { injected::take() }
 
 #[cfg(all(feature = "python", feature = "test-util"))]
-pub(crate) fn set_injected_times_for_test(epoch_millis: Vec<i64>) {
-    injected::set(epoch_millis);
-}
+pub(crate) fn set_injected_times_for_test(epoch_millis: Vec<i64>) { injected::set(epoch_millis); }
 
 #[cfg(all(feature = "python", feature = "test-util"))]
-pub(crate) fn clear_injected_times_for_test() {
-    injected::clear();
-}
+pub(crate) fn clear_injected_times_for_test() { injected::clear(); }
 
 #[cfg(test)]
 #[derive(Debug)]
@@ -105,7 +94,5 @@ impl SequenceClock {
 
 #[cfg(test)]
 impl RotationClock for SequenceClock {
-    fn now(&mut self) -> DateTime<Utc> {
-        self.remaining.pop_front().unwrap_or(self.fallback)
-    }
+    fn now(&mut self) -> DateTime<Utc> { self.remaining.pop_front().unwrap_or(self.fallback) }
 }

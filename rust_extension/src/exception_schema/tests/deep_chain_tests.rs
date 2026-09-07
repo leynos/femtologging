@@ -3,8 +3,9 @@
 //! These tests verify that deeply nested cause and context chains serialize
 //! correctly without stack overflow or performance degradation.
 
-use crate::exception_schema::ExceptionPayload;
 use rstest::rstest;
+
+use crate::exception_schema::ExceptionPayload;
 
 /// The kind of link used to build (and traverse) an exception chain.
 ///

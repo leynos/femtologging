@@ -4,10 +4,13 @@
 //! Python `FrameSummary` objects and convert them to the Rust `StackFrame`
 //! type defined in [`crate::exception_schema`].
 
-use log::trace;
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeMap;
+
+use log::trace;
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyList},
+};
 
 use crate::exception_schema::StackFrame;
 
@@ -37,8 +40,8 @@ where
 ///
 /// Returns an error in the following cases:
 /// - `PyAttributeError` if `tb_exc` lacks a `stack` attribute
-/// - `PyDowncastError` or `PyTypeError` if the `stack` cannot be converted to a
-///   list of `FrameSummary` objects (propagated from `extract_frames_from_stack_summary`)
+/// - `PyDowncastError` or `PyTypeError` if the `stack` cannot be converted to a list of
+///   `FrameSummary` objects (propagated from `extract_frames_from_stack_summary`)
 /// - Any extraction error from individual frame conversion
 pub(crate) fn extract_frames_from_tb_exception(
     tb_exc: &Bound<'_, PyAny>,
@@ -104,14 +107,10 @@ struct LocalsSkipCounts {
 
 impl LocalsSkipCounts {
     /// Returns true if any entries were skipped.
-    const fn any_skipped(&self) -> bool {
-        self.non_string_keys > 0 || self.repr_failures > 0
-    }
+    const fn any_skipped(&self) -> bool { self.non_string_keys > 0 || self.repr_failures > 0 }
 
     /// Returns the total number of skipped entries.
-    const fn total(&self) -> usize {
-        self.non_string_keys + self.repr_failures
-    }
+    const fn total(&self) -> usize { self.non_string_keys + self.repr_failures }
 }
 
 /// Extract the locals dictionary from a frame, converting values to repr strings.

@@ -3,15 +3,19 @@
 use std::collections::BTreeMap;
 
 use log::warn;
-use pyo3::basic::CompareOp;
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::{basic::CompareOp, prelude::*, types::PyDict};
 
-use super::super::python_callback_validation::{
-    extract_supported_value, is_reserved_enrichment_key, validate_enrichment_key,
-    validate_enrichment_total, validate_enrichment_value,
+use super::{
+    super::python_callback_validation::{
+        extract_supported_value,
+        is_reserved_enrichment_key,
+        validate_enrichment_key,
+        validate_enrichment_total,
+        validate_enrichment_value,
+    },
+    SerializedEnrichment,
+    TypedEnrichment,
 };
-use super::{SerializedEnrichment, TypedEnrichment};
 
 struct EnrichmentState<'description, 'py> {
     py: Python<'py>,
