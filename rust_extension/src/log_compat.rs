@@ -166,7 +166,9 @@ pub(crate) fn install_global_logger() -> bool {
 mod python_bindings {
     //! Python function wrappers for the `log` compatibility bridge.
 
-    use super::*;
+    use pyo3::prelude::*;
+
+    use super::{FemtoLevel, Metadata, Record, install_global_logger, map_femto_to_log_level};
 
     /// Python-facing entrypoint for enabling the `log` crate bridge.
     ///
@@ -277,7 +279,8 @@ mod tests {
     }
 
     #[rstest]
-    fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
+    fn adapter_dispatches_records_to_target_logger(log_max_level: (), unique_logger_name: String) {
+        let () = log_max_level;
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
 
@@ -308,7 +311,7 @@ mod tests {
                 .expect("handler downcast")
                 .collected();
             assert_eq!(records.len(), 1);
-            let rec = &records[0];
+            let rec = records.first().expect("one record should be collected");
             assert_eq!(rec.logger(), logger_name.as_str());
             assert_eq!(rec.level_str(), "INFO");
             assert_eq!(rec.message(), "hello");
@@ -319,7 +322,8 @@ mod tests {
     }
 
     #[rstest]
-    fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
+    fn adapter_normalizes_rust_module_targets(log_max_level: (), unique_logger_name: String) {
+        let () = log_max_level;
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
         let target = logger_name.replace('.', "::");
@@ -344,12 +348,14 @@ mod tests {
                 .expect("handler downcast")
                 .collected();
             assert_eq!(records.len(), 1);
-            assert_eq!(records[0].logger(), logger_name.as_str());
+            let collected_record = records.first().expect("one record should be collected");
+            assert_eq!(collected_record.logger(), logger_name.as_str());
         });
     }
 
     #[rstest]
-    fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
+    fn log_respects_logger_threshold(log_max_level: (), unique_logger_name: String) {
+        let () = log_max_level;
         let adapter = FemtoLogAdapter;
         let logger_name = unique_logger_name;
 
@@ -384,7 +390,8 @@ mod tests {
                 .expect("handler downcast")
                 .collected();
             assert_eq!(records.len(), 1, "only WARN should pass threshold");
-            assert_eq!(records[0].level_str(), "WARN");
+            let record = records.first().expect("one record should be collected");
+            assert_eq!(record.level_str(), "WARN");
         });
     }
 }

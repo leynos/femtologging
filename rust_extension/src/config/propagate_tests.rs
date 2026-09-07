@@ -40,27 +40,28 @@ fn build_root_and_child(
     root_handler: FileHandlerBuilder,
     child_cfg: LoggerConfigBuilder,
 ) -> pyo3::PyResult<(Py<FemtoLogger>, Py<FemtoLogger>)> {
-    let root = LoggerConfigBuilder::new()
+    let root_config = LoggerConfigBuilder::new()
         .with_level(FemtoLevel::Info)
         .with_handlers(["h"]);
     let builder = ConfigBuilder::new()
         .with_handler("h", root_handler)
-        .with_root_logger(root)
+        .with_root_logger(root_config)
         .with_logger("child", child_cfg);
     builder
         .build_and_init()
         .map_err(|err| pyo3::exceptions::PyRuntimeError::new_err(err.to_string()))?;
     let child = manager::get_logger(py, "child")?;
-    let root = manager::get_logger(py, "root")?;
-    Ok((child, root))
+    let root_logger = manager::get_logger(py, "root")?;
+    Ok((child, root_logger))
 }
 
 #[rstest]
 #[serial]
 fn propagate_flag_applied(
-    _gil_and_clean_manager: (),
+    gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
 ) {
+    let () = gil_and_clean_manager;
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
         let child_cfg = LoggerConfigBuilder::new()
@@ -84,9 +85,10 @@ fn propagate_flag_applied(
 #[rstest]
 #[serial]
 fn record_propagates_to_root(
-    _gil_and_clean_manager: (),
+    gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
 ) {
+    let () = gil_and_clean_manager;
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
         let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
@@ -106,9 +108,10 @@ fn record_propagates_to_root(
 #[rstest]
 #[serial]
 fn propagate_toggle_runtime(
-    _gil_and_clean_manager: (),
+    gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
 ) {
+    let () = gil_and_clean_manager;
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
         let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);

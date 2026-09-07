@@ -16,12 +16,15 @@ fn handler_ptrs(logger: &crate::logger::FemtoLogger) -> Vec<usize> {
     logger
         .handlers_for_test()
         .iter()
-        .map(|handler| std::sync::Arc::as_ptr(handler) as *const () as usize)
+        .map(|handler| std::sync::Arc::as_ptr(handler).cast::<()>() as usize)
         .collect()
 }
 
 #[fixture]
-fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
+fn configured_core_logger(
+    #[from(gil_and_clean_manager)] manager_reset: (),
+) -> Result<(), ConfigError> {
+    let () = manager_reset;
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Debug);
     let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
     ConfigBuilder::new()
@@ -39,8 +42,10 @@ fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError>
 
 #[rstest]
 #[serial]
-fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn append_handler_preserves_existing_handler_arc(
+    #[from(configured_core_logger)] configured_core_logger_result: Result<(), ConfigError>,
+) {
+    configured_core_logger_result.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         let before = handler_ptrs(&logger.borrow(py));
@@ -56,8 +61,10 @@ fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<
 
         let after = handler_ptrs(&logger.borrow(py));
         assert_eq!(after.len(), 2, "core logger should now have two handlers");
+        let before_handler = before.first().expect("existing handler should be present");
+        let after_handler = after.first().expect("first handler should be present");
         assert_eq!(
-            before[0], after[0],
+            before_handler, after_handler,
             "the existing handler arc should be preserved for unchanged ids",
         );
     });
@@ -65,8 +72,10 @@ fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<
 
 #[rstest]
 #[serial]
-fn replace_filters_changes_live_filtering(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn replace_filters_changes_live_filtering(
+    #[from(configured_core_logger)] configured_core_logger_result: Result<(), ConfigError>,
+) {
+    configured_core_logger_result.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         assert!(
@@ -102,9 +111,9 @@ fn replace_filters_changes_live_filtering(configured_core_logger: Result<(), Con
 #[rstest]
 #[serial]
 fn unknown_removed_handler_preserves_existing_state(
-    configured_core_logger: Result<(), ConfigError>,
+    #[from(configured_core_logger)] configured_core_logger_result: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_result.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         let before = handler_ptrs(&logger.borrow(py));
@@ -117,7 +126,7 @@ fn unknown_removed_handler_preserves_existing_state(
             .apply()
             .expect_err("unknown ids should be rejected");
 
-        assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
+        assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_owned()]));
         assert_eq!(
             before,
             handler_ptrs(&logger.borrow(py)),
@@ -127,27 +136,27 @@ fn unknown_removed_handler_preserves_existing_state(
 }
 
 #[rstest]
-#[case::append_handler("append handler", |b: RuntimeConfigBuilder| {
+#[case::append_handler(|b: RuntimeConfigBuilder| {
     b.with_handler("stdout", StreamHandlerBuilder::stdout())
         .with_logger(
             "orphan",
             LoggerMutationBuilder::new().append_handlers(["stdout"]),
         )
 })]
-#[case::remove_handler("remove handler", |b: RuntimeConfigBuilder| {
+#[case::remove_handler(|b: RuntimeConfigBuilder| {
     b.with_logger(
         "orphan",
         LoggerMutationBuilder::new().remove_handlers(["stdout"]),
     )
 })]
-#[case::append_filter("append filter", |b: RuntimeConfigBuilder| {
+#[case::append_filter(|b: RuntimeConfigBuilder| {
     let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
     b.with_filter("lvl", FilterBuilder::Level(filter)).with_logger(
         "orphan",
         LoggerMutationBuilder::new().append_filters(["lvl"]),
     )
 })]
-#[case::remove_filter("remove filter", |b: RuntimeConfigBuilder| {
+#[case::remove_filter(|b: RuntimeConfigBuilder| {
     b.with_logger(
         "orphan",
         LoggerMutationBuilder::new().remove_filters(["lvl"]),
@@ -155,10 +164,10 @@ fn unknown_removed_handler_preserves_existing_state(
 })]
 #[serial]
 fn mutation_requires_runtime_metadata(
-    _gil_and_clean_manager: (),
-    #[case] _kind: &str,
+    #[from(gil_and_clean_manager)] manager_reset: (),
     #[case] mutate: fn(RuntimeConfigBuilder) -> RuntimeConfigBuilder,
 ) {
+    let () = manager_reset;
     Python::attach(|py| {
         let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
 
@@ -176,7 +185,10 @@ fn mutation_requires_runtime_metadata(
 
 #[rstest]
 #[serial]
-fn empty_append_and_remove_allow_missing_runtime_metadata(_gil_and_clean_manager: ()) {
+fn empty_append_and_remove_allow_missing_runtime_metadata(
+    #[from(gil_and_clean_manager)] manager_reset: (),
+) {
+    let () = manager_reset;
     Python::attach(|py| {
         let logger = manager::get_logger(py, "orphan").expect("logger should exist");
 
@@ -199,7 +211,10 @@ fn empty_append_and_remove_allow_missing_runtime_metadata(_gil_and_clean_manager
 
 #[rstest]
 #[serial]
-fn replacing_shared_handler_id_updates_untouched_loggers(_gil_and_clean_manager: ()) {
+fn replacing_shared_handler_id_updates_untouched_loggers(
+    #[from(gil_and_clean_manager)] manager_reset: (),
+) {
+    let () = manager_reset;
     Python::attach(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["shared"]);

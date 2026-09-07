@@ -224,8 +224,8 @@ mod tests {
     #[case(StreamHandlerBuilder::stdout())]
     #[case(StreamHandlerBuilder::stderr())]
     fn build_stream_handler_with_capacity(#[case] builder: StreamHandlerBuilder) {
-        let builder = builder.with_capacity(8);
-        let mut handler = builder
+        let configured_builder = builder.with_capacity(8);
+        let mut handler = configured_builder
             .build_inner()
             .expect("build_inner must succeed for a valid builder");
         handler.flush();
@@ -236,15 +236,13 @@ mod tests {
     #[case(StreamHandlerBuilder::stdout())]
     #[case(StreamHandlerBuilder::stderr())]
     fn build_stream_handler_with_custom_formatter(#[case] builder: StreamHandlerBuilder) {
-        let builder = builder.with_formatter(UpperFormatter).with_capacity(4);
+        let configured_builder = builder.with_formatter(UpperFormatter).with_capacity(4);
         let sink = Arc::new(Mutex::new(Vec::new()));
-        let mut handler = match builder.common.formatter.as_ref() {
-            Some(FormatterConfig::Instance(fmt)) => {
-                builder.build_with_writer(TestWriter::new(Arc::clone(&sink)), fmt.clone_arc())
-            }
-            Some(FormatterConfig::Id(FormatterId::Default)) | None => {
-                builder.build_with_writer(TestWriter::new(Arc::clone(&sink)), DefaultFormatter)
-            }
+        let mut handler = match configured_builder.common.formatter.as_ref() {
+            Some(FormatterConfig::Instance(fmt)) => configured_builder
+                .build_with_writer(TestWriter::new(Arc::clone(&sink)), fmt.clone_arc()),
+            Some(FormatterConfig::Id(FormatterId::Default)) | None => configured_builder
+                .build_with_writer(TestWriter::new(Arc::clone(&sink)), DefaultFormatter),
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => {
                 panic!("unexpected custom formatter id: {other}")
             }
@@ -272,8 +270,11 @@ mod tests {
     #[case(StreamHandlerBuilder::stdout())]
     #[case(StreamHandlerBuilder::stderr())]
     fn reject_zero_capacity(#[case] builder: StreamHandlerBuilder) {
-        let builder = builder.with_capacity(0);
-        assert_build_err(&builder, "build_inner must fail for zero capacity");
+        let configured_builder = builder.with_capacity(0);
+        assert_build_err(
+            &configured_builder,
+            "build_inner must fail for zero capacity",
+        );
     }
 
     #[cfg(feature = "python")]
@@ -296,7 +297,10 @@ mod tests {
     #[case(StreamHandlerBuilder::stdout())]
     #[case(StreamHandlerBuilder::stderr())]
     fn reject_unknown_formatter(#[case] builder: StreamHandlerBuilder) {
-        let builder = builder.with_formatter("does-not-exist");
-        assert_build_err(&builder, "build_inner must fail for unknown formatter");
+        let configured_builder = builder.with_formatter("does-not-exist");
+        assert_build_err(
+            &configured_builder,
+            "build_inner must fail for unknown formatter",
+        );
     }
 }

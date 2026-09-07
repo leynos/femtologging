@@ -1,6 +1,8 @@
 //! `PyO3` setter wrappers isolated from filter implementation.
 
-use super::*;
+use pyo3::prelude::*;
+
+use super::{AsPyDict, FemtoLevel, LevelFilterBuilder};
 use crate::macros::py_setters;
 
 #[cfg(feature = "python")]

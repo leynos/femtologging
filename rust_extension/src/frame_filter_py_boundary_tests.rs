@@ -25,10 +25,10 @@ fn make_stack_payload_dict<'py>(
     Ok(payload)
 }
 
-fn python_filter_function<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+fn python_filter_function(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     let module = PyModule::new(py, "frame_filter_boundary")?;
     module.add_function(wrap_pyfunction!(filter_frames, &module)?)?;
-    Ok(module.getattr("filter_frames")?)
+    module.getattr("filter_frames")
 }
 
 #[rstest]

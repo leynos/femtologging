@@ -239,7 +239,7 @@ fn version_validation_error_includes_versions(
                 "error message should contain found version"
             );
         }
-        _ => panic!("expected {expected_variant}, got {:?}", err),
+        _ => panic!("expected {expected_variant}, got {err:?}"),
     }
 }
 

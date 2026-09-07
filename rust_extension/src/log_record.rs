@@ -244,7 +244,11 @@ mod tests {
             .stack_payload()
             .expect("stack_payload should be Some after with_stack");
         assert_eq!(payload.frames.len(), 1);
-        assert_eq!(payload.frames[0].function, "main");
+        let frame = payload
+            .frames
+            .first()
+            .expect("stack payload should contain its frame");
+        assert_eq!(frame.function, "main");
     }
 
     #[rstest]

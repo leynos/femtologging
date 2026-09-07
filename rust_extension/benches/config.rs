@@ -3,6 +3,7 @@
 
 use std::{
     path::PathBuf,
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 
@@ -10,7 +11,6 @@ use _femtologging_rs::{
     ConfigBuilder, FemtoLevel, LoggerConfigBuilder, StreamHandlerBuilder, manager,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
-use once_cell::sync::Lazy;
 use pyo3::{
     exceptions::PyKeyError,
     prelude::*,
@@ -33,7 +33,7 @@ _schema_builder = (
 schema = _schema_builder.as_dict()
 "#;
 
-static PY_APIS: Lazy<PythonApis> = Lazy::new(|| {
+static PY_APIS: LazyLock<PythonApis> = LazyLock::new(|| {
     Python::initialize();
     // A bench has no harness to report a Result to, so surface setup failure
     // with an explicit panic at this single boundary.
@@ -86,10 +86,12 @@ impl PythonApis {
     }
 }
 
-fn init_python_imports(py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+type PythonImports = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
+
+fn init_python_imports(py: Python<'_>) -> PyResult<PythonImports> {
     let sys = py.import("sys")?;
     let sys_any = sys.as_any();
-    inject_repo_to_path(&sys_any)?;
+    inject_repo_to_path(sys_any)?;
     let femto = py.import("femtologging")?;
     let config_mod = py.import("femtologging.config")?;
     let reset_manager = femto.getattr("reset_manager")?.unbind();
@@ -100,8 +102,8 @@ fn init_python_imports(py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyA
 }
 
 fn inject_repo_to_path(sys: &Bound<'_, PyAny>) -> PyResult<()> {
-    let path = sys.getattr("path")?;
-    let path = path.cast::<PyList>()?;
+    let path_object = sys.getattr("path")?;
+    let path = path_object.cast::<PyList>()?;
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(std::path::Path::to_path_buf)

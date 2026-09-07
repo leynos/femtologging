@@ -37,8 +37,9 @@ fn filter_frames_all_excluded() {
 fn limit_frames_within_or_at_limit(
     #[case] limit: usize,
     #[case] expected_len: usize,
-    #[case] _scenario: &str,
+    #[case] scenario: &str,
 ) {
+    let _ = scenario;
     let frames = vec![make_frame("a.py", 1, "a"), make_frame("b.py", 2, "b")];
 
     let limited = limit_frames(&frames, limit);
@@ -127,12 +128,19 @@ fn exclude_by_function_scenarios(
     #[case] function_names: &[&str],
     #[case] patterns: &[&str],
     #[case] expected_functions: &[&str],
-    #[case] _scenario: &str,
+    #[case] scenario: &str,
 ) {
+    let _ = scenario;
     let frames: Vec<StackFrame> = function_names
         .iter()
         .enumerate()
-        .map(|(i, name)| make_frame("app.py", (i + 1) as u32, name))
+        .map(|(index, name)| {
+            make_frame(
+                "app.py",
+                u32::try_from(index + 1).expect("test frame index must fit in u32"),
+                name,
+            )
+        })
         .collect();
 
     let filtered = exclude_by_function(&frames, patterns);
@@ -204,9 +212,7 @@ fn is_logging_infrastructure_detects_patterns(#[case] filename: &str, #[case] ex
     assert_eq!(
         is_logging_infrastructure(&frame),
         expected,
-        "Expected is_logging_infrastructure('{}') to be {}",
-        filename,
-        expected
+        "Expected is_logging_infrastructure('{filename}') to be {expected}"
     );
 }
 

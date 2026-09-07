@@ -1,8 +1,6 @@
 //! Behavioural tests for `FemtoLogger`: message formatting, level filtering,
 //! handler attachment and removal, and the thread-safety of both.
 
-use std::collections::BTreeSet;
-
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
@@ -20,6 +18,15 @@ use std::sync::{Arc, Mutex};
 /// A shared in-memory buffer paired with the handler writing into it.
 type HandlerTuple = (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler);
 
+/// The two buffers and handlers used by tests that exercise fan-out.
+struct DualHandlerSetup {
+    buf1: Arc<Mutex<Vec<u8>>>,
+    buf2: Arc<Mutex<Vec<u8>>>,
+    handler1: Arc<dyn FemtoHandlerTrait>,
+    handler2: Arc<dyn FemtoHandlerTrait>,
+    logger: FemtoLogger,
+}
+
 /// Every level a logger may be set to, ordered from most to least verbose.
 const ALL_LEVELS: [FemtoLevel; 6] = [
     FemtoLevel::Trace,
@@ -31,13 +38,7 @@ const ALL_LEVELS: [FemtoLevel; 6] = [
 ];
 
 #[fixture]
-fn dual_handler_setup() -> (
-    Arc<Mutex<Vec<u8>>>,
-    Arc<Mutex<Vec<u8>>>,
-    Arc<dyn FemtoHandlerTrait>,
-    Arc<dyn FemtoHandlerTrait>,
-    FemtoLogger,
-) {
+fn dual_handler_setup() -> DualHandlerSetup {
     let buf1 = Arc::new(Mutex::new(Vec::new()));
     let buf2 = Arc::new(Mutex::new(Vec::new()));
     let handler1: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
@@ -48,8 +49,14 @@ fn dual_handler_setup() -> (
         SharedBuf::new(Arc::clone(&buf2)),
         DefaultFormatter,
     ));
-    let logger = FemtoLogger::new("core".to_string());
-    (buf1, buf2, handler1, handler2, logger)
+    let logger = FemtoLogger::new("core".to_owned());
+    DualHandlerSetup {
+        buf1,
+        buf2,
+        handler1,
+        handler2,
+        logger,
+    }
 }
 
 #[rstest]
@@ -69,7 +76,7 @@ fn log_formats_message(
     #[case] message: &str,
     #[case] expected: &str,
 ) {
-    let logger = FemtoLogger::new(name.to_string());
+    let logger = FemtoLogger::new(name.to_owned());
     assert_eq!(logger.log(level, message).as_deref(), Some(expected));
 }
 
@@ -80,8 +87,8 @@ fn log_formats_message(
 #[case(1_048_576)]
 fn log_formats_long_messages(#[case] length: usize) {
     let msg = "x".repeat(length);
-    let logger = FemtoLogger::new("long".to_string());
-    let expected = format!("long [INFO] {}", msg);
+    let logger = FemtoLogger::new("long".to_owned());
+    let expected = format!("long [INFO] {msg}");
     assert_eq!(
         logger.log(FemtoLevel::Info, &msg).as_deref(),
         Some(expected.as_str())
@@ -90,7 +97,7 @@ fn log_formats_long_messages(#[case] length: usize) {
 
 #[test]
 fn logger_filters_levels() {
-    let logger = FemtoLogger::new("core".to_string());
+    let logger = FemtoLogger::new("core".to_owned());
     logger.set_level(FemtoLevel::Error);
     assert_eq!(logger.log(FemtoLevel::Info, "ignored"), None);
     assert_eq!(
@@ -101,7 +108,7 @@ fn logger_filters_levels() {
 
 #[test]
 fn level_parsing_and_filtering() {
-    let logger = FemtoLogger::new("core".to_string());
+    let logger = FemtoLogger::new("core".to_owned());
     for lvl in ALL_LEVELS {
         logger.set_level(lvl);
         assert!(logger.log(lvl, "ok").is_some());
@@ -112,38 +119,39 @@ fn level_parsing_and_filtering() {
 }
 
 #[rstest]
-fn logger_routes_to_multiple_handlers(
-    #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, logger): (
-        Arc<Mutex<Vec<u8>>>,
-        Arc<Mutex<Vec<u8>>>,
-        Arc<dyn FemtoHandlerTrait>,
-        Arc<dyn FemtoHandlerTrait>,
-        FemtoLogger,
-    ),
-) {
+fn logger_routes_to_multiple_handlers(#[from(dual_handler_setup)] setup: DualHandlerSetup) {
+    let DualHandlerSetup {
+        buf1,
+        buf2,
+        handler1,
+        handler2,
+        logger,
+    } = setup;
     logger.add_handler(handler1.clone());
     logger.add_handler(handler2.clone());
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler1);
     drop(handler2);
-    assert_eq!(read_output(&buf1), "core [INFO] hello\n");
-    assert_eq!(read_output(&buf2), "core [INFO] hello\n");
+    let output1 = read_output(&buf1).expect("handler output should be valid UTF-8");
+    let output2 = read_output(&buf2).expect("handler output should be valid UTF-8");
+    assert_eq!(output1, "core [INFO] hello\n");
+    assert_eq!(output2, "core [INFO] hello\n");
 }
 
 #[rstest]
 fn shared_handler_across_loggers(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    let handler = Arc::new(handler);
-    let l1 = FemtoLogger::new("a".to_string());
-    let l2 = FemtoLogger::new("b".to_string());
-    l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    let shared_handler = Arc::new(handler);
+    let l1 = FemtoLogger::new("a".to_owned());
+    let l2 = FemtoLogger::new("b".to_owned());
+    l1.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    l2.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
     l1.log(FemtoLevel::Info, "one");
     l2.log(FemtoLevel::Info, "two");
     drop(l1);
     drop(l2);
-    drop(handler);
-    let out = read_output(&buffer);
+    drop(shared_handler);
+    let out = read_output(&buffer).expect("shared handler output should be valid UTF-8");
     assert!(out.contains("a [INFO] one"));
     assert!(out.contains("b [INFO] two"));
 }
@@ -152,26 +160,28 @@ fn shared_handler_across_loggers(#[from(handler_tuple)] (buffer, handler): Handl
 fn adding_same_handler_multiple_times_duplicates_output(
     #[from(handler_tuple)] (buffer, handler): HandlerTuple,
 ) {
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
-    let logger = FemtoLogger::new("dup".to_string());
-    logger.add_handler(handler.clone());
-    logger.add_handler(handler.clone());
+    let shared_handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
+    let logger = FemtoLogger::new("dup".to_owned());
+    logger.add_handler(shared_handler.clone());
+    logger.add_handler(shared_handler.clone());
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
-    drop(handler);
-    assert_eq!(read_output(&buffer), "dup [INFO] hello\ndup [INFO] hello\n");
+    drop(shared_handler);
+    let output = read_output(&buffer).expect("handler output should be valid UTF-8");
+    assert_eq!(output, "dup [INFO] hello\ndup [INFO] hello\n");
 }
 
 #[rstest]
 fn handler_added_after_logging_only_sees_future_records(
-    #[from(dual_handler_setup)] (buf1, buf2, h1, h2, logger): (
-        Arc<Mutex<Vec<u8>>>,
-        Arc<Mutex<Vec<u8>>>,
-        Arc<dyn FemtoHandlerTrait>,
-        Arc<dyn FemtoHandlerTrait>,
-        FemtoLogger,
-    ),
+    #[from(dual_handler_setup)] setup: DualHandlerSetup,
 ) {
+    let DualHandlerSetup {
+        buf1,
+        buf2,
+        handler1: h1,
+        handler2: h2,
+        logger,
+    } = setup;
     logger.add_handler(h1.clone());
     logger.log(FemtoLevel::Info, "before");
     logger.add_handler(h2.clone());
@@ -179,34 +189,33 @@ fn handler_added_after_logging_only_sees_future_records(
     drop(logger);
     drop(h1);
     drop(h2);
-    assert_eq!(
-        read_output(&buf1),
-        "core [INFO] before\ncore [INFO] after\n"
-    );
-    assert_eq!(read_output(&buf2), "core [INFO] after\n");
+    let output1 = read_output(&buf1).expect("handler output should be valid UTF-8");
+    let output2 = read_output(&buf2).expect("handler output should be valid UTF-8");
+    assert_eq!(output1, "core [INFO] before\ncore [INFO] after\n");
+    assert_eq!(output2, "core [INFO] after\n");
 }
 #[rstest]
 fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
-    let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(Arc::clone(&handler));
+    let shared_handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
+    let logger = FemtoLogger::new("core".to_owned());
+    logger.add_handler(Arc::clone(&shared_handler));
     logger.log(FemtoLevel::Info, "one");
-    handler.flush();
+    shared_handler.flush();
     std::thread::sleep(std::time::Duration::from_millis(10));
-    let output = read_output(&buffer);
+    let output = read_output(&buffer).expect("valid UTF-8");
     assert!(output.contains("one"));
-    assert!(logger.remove_handler(&handler));
+    assert!(logger.remove_handler(&shared_handler));
     logger.log(FemtoLevel::Info, "two");
     drop(logger);
-    handler.flush();
-    drop(handler);
-    let output = read_output(&buffer);
-    assert!(!output.contains("two"));
+    shared_handler.flush();
+    drop(shared_handler);
+    let final_output = read_output(&buffer).expect("handler output should be valid UTF-8");
+    assert!(!final_output.contains("two"));
 }
 
 #[test]
 fn drop_with_sender_clone_exits() {
-    let logger = FemtoLogger::new("clone".to_string());
+    let logger = FemtoLogger::new("clone".to_owned());
     let tx = logger.clone_sender_for_test().expect("sender should exist");
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let thread_barrier = std::sync::Arc::clone(&barrier);
@@ -228,16 +237,17 @@ fn drop_with_sender_clone_exits() {
 
 #[rstest]
 fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    let handler = Arc::new(handler);
-    let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    let shared_handler = Arc::new(handler);
+    let logger = FemtoLogger::new("core".to_owned());
+    logger.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
     logger.log(FemtoLevel::Info, "one");
     logger.log(FemtoLevel::Info, "two");
     logger.log(FemtoLevel::Info, "three");
     drop(logger);
-    drop(handler);
+    drop(shared_handler);
+    let output = read_output(&buffer).expect("handler output should be valid UTF-8");
     assert_eq!(
-        read_output(&buffer),
+        output,
         "core [INFO] one\ncore [INFO] two\ncore [INFO] three\n"
     );
 }
@@ -245,7 +255,7 @@ fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): Handl
 #[test]
 fn add_handler_is_thread_safe() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
-    let logger = Arc::new(FemtoLogger::new("core".to_string()));
+    let logger = Arc::new(FemtoLogger::new("core".to_owned()));
     // All four handlers deliberately share one buffer so the test can count
     // the lines emitted by the whole handler set.
     let new_handlers: Vec<_> = (0..4)
@@ -276,13 +286,13 @@ fn add_handler_is_thread_safe() {
     for h in new_handlers {
         drop(h);
     }
-    let output = read_output(&buffer);
+    let output = read_output(&buffer).expect("handler output should be valid UTF-8");
     assert_eq!(output.lines().count(), 4);
 }
 
 #[test]
 fn get_level_returns_current_level() {
-    let logger = FemtoLogger::new("core".to_string());
+    let logger = FemtoLogger::new("core".to_owned());
     for lvl in ALL_LEVELS {
         logger.set_level(lvl);
         assert_eq!(logger.get_level(), lvl);
@@ -294,7 +304,7 @@ fn set_level_is_thread_safe() {
     use std::sync::Barrier;
     use std::thread;
 
-    let logger = Arc::new(FemtoLogger::new("concurrent".to_string()));
+    let logger = Arc::new(FemtoLogger::new("concurrent".to_owned()));
     let barrier = Arc::new(Barrier::new(ALL_LEVELS.len()));
 
     let threads: Vec<_> = ALL_LEVELS
@@ -322,78 +332,5 @@ fn set_level_is_thread_safe() {
     );
 }
 
-const RACE_RECORD_COUNT: usize = 1000;
-
-#[rstest]
-fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    use std::sync::Barrier;
-    use std::thread;
-
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
-    let logger = Arc::new(FemtoLogger::new("race".to_string()));
-    logger.add_handler(Arc::clone(&handler));
-    let barrier = Arc::new(Barrier::new(2));
-
-    let (lg, b) = (Arc::clone(&logger), Arc::clone(&barrier));
-    let producer = thread::spawn(move || {
-        b.wait();
-        (0..RACE_RECORD_COUNT)
-            .filter_map(|index| {
-                let message = format!("msg{index}");
-                lg.log(FemtoLevel::Info, &message)
-                    .is_some()
-                    .then_some(message)
-            })
-            .collect::<BTreeSet<_>>()
-    });
-    barrier.wait();
-    for lvl in ALL_LEVELS.iter().cycle().take(RACE_RECORD_COUNT) {
-        logger.set_level(*lvl);
-    }
-
-    let accepted_messages = producer.join().expect("producer thread panicked");
-    assert!(
-        accepted_messages.len() <= RACE_RECORD_COUNT,
-        "accepted record count ({}) must not exceed {RACE_RECORD_COUNT}",
-        accepted_messages.len(),
-    );
-    let expected_final = ALL_LEVELS[(RACE_RECORD_COUNT - 1) % ALL_LEVELS.len()];
-    assert_eq!(
-        logger.get_level(),
-        expected_final,
-        "the final set_level must be observable after the race",
-    );
-    logger.set_level(FemtoLevel::Trace);
-    assert!(
-        logger.log(FemtoLevel::Info, "after").is_some(),
-        "logger should remain usable after the race",
-    );
-    logger.set_level(FemtoLevel::Critical);
-    assert!(
-        logger.log(FemtoLevel::Info, "suppressed").is_none(),
-        "logger should still suppress records below its level after the race",
-    );
-
-    drop((logger, handler));
-
-    let actual_messages = read_output(&buffer)
-        .lines()
-        .map(|line| {
-            line.strip_prefix("race [INFO] ")
-                .expect("race handler output should use the default formatter")
-                .to_owned()
-        })
-        .collect::<Vec<_>>();
-    let actual_set = actual_messages.iter().cloned().collect::<BTreeSet<_>>();
-    let mut expected_messages = accepted_messages;
-    expected_messages.insert("after".to_owned());
-    assert_eq!(
-        actual_messages.len(),
-        actual_set.len(),
-        "handler output should not duplicate identities: {actual_messages:?}",
-    );
-    assert_eq!(
-        actual_set, expected_messages,
-        "output identities should match accepted records"
-    );
-}
+#[path = "logger_cases/level_change.rs"]
+mod level_change;

@@ -1,3 +1,5 @@
+//! Formatter integration tests for the Rust extension.
+
 use _femtologging_rs::{DefaultFormatter, FemtoFormatter, FemtoLevel, FemtoLogRecord};
 use rstest::rstest;
 

@@ -23,17 +23,8 @@ pub mod std {
 
     impl SharedBuf {
         /// Create a new `SharedBuf` backed by the given shared buffer.
-        pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+        pub const fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
             Self { buffer }
-        }
-
-        /// Return a snapshot of the buffer contents.
-        #[allow(dead_code)]
-        pub fn contents(&self) -> Vec<u8> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .clone()
         }
     }
 
@@ -47,17 +38,19 @@ pub mod std {
 
     impl Write for SharedBuf {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .write(buf)
+            let mut buffer = match self.buffer.lock() {
+                Ok(buffer) => buffer,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            buffer.write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .flush()
+            let mut buffer = match self.buffer.lock() {
+                Ok(buffer) => buffer,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            buffer.flush()
         }
     }
 
@@ -70,14 +63,22 @@ pub mod std {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
-            .expect("Buffer contains invalid UTF-8")
+    /// Return the shared buffer as UTF-8 text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::string::FromUtf8Error`] when the buffer contains invalid
+    /// UTF-8 bytes.
+    pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> Result<String, std::string::FromUtf8Error> {
+        let bytes = match buffer.lock() {
+            Ok(locked_buffer) => locked_buffer.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        String::from_utf8(bytes)
     }
 }
 
-#[allow(dead_code)]
+#[cfg(loom)]
 pub mod loom {
     //! Shared buffer backed by loom synchronization primitives for model checking.
 
@@ -93,16 +94,8 @@ pub mod loom {
     }
 
     impl SharedBuf {
-        pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+        pub const fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
             Self { buffer }
-        }
-
-        #[allow(dead_code)]
-        pub fn contents(&self) -> Vec<u8> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .clone()
         }
     }
 
@@ -116,17 +109,19 @@ pub mod loom {
 
     impl Write for SharedBuf {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .write(buf)
+            let mut buffer = match self.buffer.lock() {
+                Ok(buffer) => buffer,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            buffer.write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .flush()
+            let mut buffer = match self.buffer.lock() {
+                Ok(buffer) => buffer,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            buffer.flush()
         }
     }
 
@@ -139,9 +134,17 @@ pub mod loom {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
-            .expect("Buffer contains invalid UTF-8")
+    /// Return the shared buffer as UTF-8 text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::string::FromUtf8Error`] when the buffer contains invalid
+    /// UTF-8 bytes.
+    pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> Result<String, std::string::FromUtf8Error> {
+        let bytes = match buffer.lock() {
+            Ok(locked_buffer) => locked_buffer.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        String::from_utf8(bytes)
     }
 }

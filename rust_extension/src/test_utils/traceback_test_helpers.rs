@@ -48,7 +48,7 @@ pub fn create_value_error<'py>(py: Python<'py>, message: &str) -> PyResult<Bound
 }
 
 /// Create a `BaseException` instance with no arguments.
-pub fn create_base_exception<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+pub fn create_base_exception(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     builtin_type(py, "BaseException")?.call0()
 }
 
@@ -140,7 +140,7 @@ impl MockFrameBuilder {
     }
 
     /// Build the mock frame as a Python `SimpleNamespace` object.
-    pub fn build<'py>(self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    pub fn build(self, py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("filename", &self.filename)?;
         dict.set_item("lineno", self.lineno)?;
@@ -205,7 +205,7 @@ impl LocalEntry {
 /// Create a Python object whose `__repr__` raises an exception.
 ///
 /// Useful for testing repr failure handling in locals extraction.
-pub fn create_bad_repr_object<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+pub fn create_bad_repr_object(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     let globals = PyDict::new(py);
     py.run(
         c"class BadRepr:\n    def __repr__(self): raise ValueError('boom')",
@@ -306,32 +306,29 @@ pub fn compare_locals(
             }
             Ok(())
         }
-        (Some(_), None) => Err("locals should be extracted, found None".to_string()),
+        (Some(_), None) => Err("locals should be extracted, found None".to_owned()),
         (None, Some(locals)) => Err(format!("locals should be None, found {locals:?}")),
         (None, None) => Ok(()),
     }
 }
 
-/// Assert the result of `extract_locals_dict` against expected entries.
+/// Check the result of `extract_locals_dict` against expected entries.
 ///
 /// Builds a frame from the provided locals dict, calls `extract_locals_dict`,
 /// and verifies that the result matches the expected entries (or is `None`).
-/// Returns an error when the arrangement (frame construction) fails; the
-/// assertion itself panics with the calling test's location.
-#[track_caller]
-pub fn assert_locals_extraction_result(
+/// Returns an error if frame construction fails or the extracted entries differ.
+pub fn check_locals_extraction_result(
     locals_dict: &Bound<'_, PyDict>,
     expected: Option<&[(&str, &str)]>,
     description: &str,
 ) -> PyResult<()> {
     let actual = extract_locals_for_dict(locals_dict)?;
-    if let Err(mismatch) = compare_locals(actual.as_ref(), expected) {
-        panic!("{description}: {mismatch}");
-    }
-    Ok(())
+    compare_locals(actual.as_ref(), expected).map_err(|mismatch| {
+        pyo3::exceptions::PyAssertionError::new_err(format!("{description}: {mismatch}"))
+    })
 }
 
-/// Populate a PyDict with LocalEntry items, inserting integer keys for entries
+/// Populate a `PyDict` with `LocalEntry` items, inserting integer keys for entries
 /// where `is_int_key()` returns true and the key successfully parses as `i32`.
 ///
 /// Falls back to inserting as a string key if parsing fails (e.g., overflow).
@@ -340,11 +337,11 @@ pub fn populate_locals_dict_from_entries(
     entries: &[LocalEntry],
 ) -> PyResult<()> {
     for entry in entries {
-        if entry.is_int_key() {
-            if let Ok(int_key) = entry.key().parse::<i32>() {
-                locals_dict.set_item(int_key, entry.value())?;
-                continue;
-            }
+        if entry.is_int_key()
+            && let Ok(int_key) = entry.key().parse::<i32>()
+        {
+            locals_dict.set_item(int_key, entry.value())?;
+            continue;
         }
         // Fallback: insert as string key (either not an int key, or parsing failed)
         locals_dict.set_item(entry.key(), entry.value())?;

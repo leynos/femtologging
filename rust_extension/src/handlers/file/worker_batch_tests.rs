@@ -72,8 +72,10 @@ fn recv_batch_collects_up_to_capacity() {
 
     let batch = recv_batch(&rx, 2).expect("batch should be received");
     assert_eq!(batch.len(), 2);
-    assert!(matches!(batch[0], FileCommand::Record(_)));
-    assert!(matches!(batch[1], FileCommand::Record(_)));
+    let first = batch.first().expect("first batch record should be present");
+    let second = batch.get(1).expect("second batch record should be present");
+    assert!(matches!(first, FileCommand::Record(_)));
+    assert!(matches!(second, FileCommand::Record(_)));
 
     let remainder = recv_batch(&rx, 2).expect("remaining record should be received");
     assert_eq!(remainder.len(), 1);

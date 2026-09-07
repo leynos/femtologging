@@ -43,7 +43,7 @@ fn build_exception_chain(kind: ChainKind, depth: usize) -> ExceptionPayload {
                     .with_context(current)
             }
             ChainKind::Mixed => {
-                if i % 2 == 0 {
+                if i.is_multiple_of(2) {
                     ExceptionPayload::new(format!("CauseError{i}"), format!("cause {i}"))
                         .with_cause(current)
                 } else {
@@ -121,7 +121,6 @@ fn deep_cause_chain_100_levels_timing() {
     let elapsed = start.elapsed();
     assert!(
         elapsed.as_secs() < 10,
-        "Deep chain serialization took too long: {:?} (expected < 10s)",
-        elapsed
+        "Deep chain serialization took too long: {elapsed:?} (expected < 10s)"
     );
 }

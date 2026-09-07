@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::handler::FemtoHandlerTrait;
+use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use pyo3::Python;
@@ -39,7 +40,7 @@ fn call_py_log_method(
 
 #[test]
 fn is_enabled_for_respects_logger_level() {
-    let logger = FemtoLogger::new("test".to_string());
+    let logger = FemtoLogger::new("test".to_owned());
     logger.set_level(FemtoLevel::Warn);
     assert!(!logger.is_enabled_for(FemtoLevel::Debug));
     assert!(!logger.is_enabled_for(FemtoLevel::Info));
@@ -51,7 +52,7 @@ fn is_enabled_for_respects_logger_level() {
 #[test]
 fn py_is_enabled_for_mirrors_internal_method() {
     Python::attach(|_py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         logger.set_level(FemtoLevel::Error);
         assert!(!logger.py_is_enabled_for(FemtoLevel::Info));
         assert!(logger.py_is_enabled_for(FemtoLevel::Error));
@@ -67,11 +68,11 @@ fn py_is_enabled_for_mirrors_internal_method() {
 #[case::critical("py_critical", "test [CRITICAL] hello")]
 fn convenience_method_logs_at_correct_level(#[case] method_name: &str, #[case] expected: &str) {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         logger.set_level(FemtoLevel::Trace);
         let result = call_py_log_method(&logger, py, method_name, "hello")
             .expect("convenience method should not fail");
-        assert_eq!(result, Some(expected.to_string()));
+        assert_eq!(result, Some(expected.to_owned()));
     });
 }
 
@@ -86,7 +87,7 @@ fn convenience_methods_respect_level_filtering(
     #[case] should_emit: bool,
 ) {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         logger.set_level(FemtoLevel::Error);
         let result =
             call_py_log_method(&logger, py, method_name, "filtered").expect("should not fail");
@@ -105,20 +106,20 @@ fn exception_omitted_exc_info_defaults_to_true() {
     // With no active Python exception the output is a plain ERROR message
     // (capture finds nothing to attach).
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let args = message_args(py, "no active exc")
             .expect("Python log arguments should be constructible");
         let result = logger
             .py_exception_impl(py, &args, None)
             .expect("exception() with omitted exc_info should not fail");
-        assert_eq!(result, Some("test [ERROR] no active exc".to_string()));
+        assert_eq!(result, Some("test [ERROR] no active exc".to_owned()));
     });
 }
 
 #[test]
 fn exception_with_explicit_exc_info_false() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let false_val = PyBool::new(py, false).to_owned().into_any();
         let args =
             message_args(py, "no capture").expect("Python log arguments should be constructible");
@@ -129,7 +130,7 @@ fn exception_with_explicit_exc_info_false() {
         let result = logger
             .py_exception_impl(py, &args, Some(&keyword_args))
             .expect("exception(exc_info=False) should not fail");
-        assert_eq!(result, Some("test [ERROR] no capture".to_string()));
+        assert_eq!(result, Some("test [ERROR] no capture".to_owned()));
     });
 }
 
@@ -140,7 +141,7 @@ fn exception_with_explicit_python_none_uses_default_capture() {
     // default for the private implementation. The Python wrapper converts an
     // explicit None to False to preserve stdlib-compatible public behaviour.
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let none_val = py.None().into_bound(py).into_any();
         let args =
             message_args(py, "none passed").expect("Python log arguments should be constructible");
@@ -151,7 +152,7 @@ fn exception_with_explicit_python_none_uses_default_capture() {
         let result = logger
             .py_exception_impl(py, &args, Some(&keyword_args))
             .expect("exception(exc_info=<Python None>) should not fail");
-        assert_eq!(result, Some("test [ERROR] none passed".to_string()));
+        assert_eq!(result, Some("test [ERROR] none passed".to_owned()));
     });
 }
 
@@ -159,7 +160,7 @@ fn exception_with_explicit_python_none_uses_default_capture() {
 fn convenience_methods_merge_scoped_context() {
     Python::attach(|py| {
         log_context::clear_log_context_for_test();
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         logger.set_level(FemtoLevel::Info);
         let handler = Arc::new(CollectingHandler::default());
         logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
@@ -176,7 +177,8 @@ fn convenience_methods_merge_scoped_context() {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let key_values = &records[0].metadata().key_values;
+        let first_record = records.first().expect("logger should collect one record");
+        let key_values = &first_record.metadata().key_values;
         assert_eq!(
             key_values.get("request_id").map(String::as_str),
             Some("123")

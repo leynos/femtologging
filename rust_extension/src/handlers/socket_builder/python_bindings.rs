@@ -192,7 +192,7 @@ mod tests {
 
     use super::{BackoffOverrides, SocketHandlerBuilder};
 
-    /// Assert all backoff fields on BackoffOverrides match expected values.
+    /// Assert all backoff fields on `BackoffOverrides` match expected values.
     fn assert_backoff_overrides(actual: &BackoffOverrides, expected: &BackoffOverrides) {
         assert_eq!(actual.base, expected.base);
         assert_eq!(actual.cap, expected.cap);
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(actual.deadline, expected.deadline);
     }
 
-    /// Assert all backoff fields in a PyDict match expected values.
+    /// Assert all backoff fields in a `PyDict` match expected values.
     ///
     /// Returns an error when a field is missing or fails to extract, so the
     /// calling test decides the verdict.
@@ -212,13 +212,19 @@ mod tests {
             dict.get_item(key)?.map(|v| v.extract()).transpose()
         }
 
-        assert_eq!(get_field(dict, "backoff_base_ms")?, expected.base);
-        assert_eq!(get_field(dict, "backoff_cap_ms")?, expected.cap);
-        assert_eq!(
-            get_field(dict, "backoff_reset_after_ms")?,
-            expected.reset_after
-        );
-        assert_eq!(get_field(dict, "backoff_deadline_ms")?, expected.deadline);
+        for (name, expected_value) in [
+            ("backoff_base_ms", expected.base),
+            ("backoff_cap_ms", expected.cap),
+            ("backoff_reset_after_ms", expected.reset_after),
+            ("backoff_deadline_ms", expected.deadline),
+        ] {
+            let actual_value = get_field(dict, name)?;
+            if actual_value != expected_value {
+                return Err(pyo3::exceptions::PyAssertionError::new_err(format!(
+                    "{name}: expected {expected_value:?}, received {actual_value:?}"
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -266,26 +272,26 @@ mod tests {
     impl BackoffErrorKind {
         fn setup_dict(self, d: &pyo3::Bound<'_, PyDict>) -> pyo3::PyResult<()> {
             match self {
-                BackoffErrorKind::UnknownKey => {
+                Self::UnknownKey => {
                     d.set_item("base_ms", 50_u64)?;
                     d.set_item("typo_ms", 1_u64)?;
                 }
-                BackoffErrorKind::InvalidType => {
+                Self::InvalidType => {
                     d.set_item("base_ms", "not-an-int")?;
                 }
             }
             Ok(())
         }
 
-        fn check_error(self, py: Python, err: PyErr) {
+        fn check_error(self, py: Python, err: &PyErr) {
             match self {
-                BackoffErrorKind::UnknownKey => {
+                Self::UnknownKey => {
                     assert!(
                         err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
                         "unknown keys should raise ValueError"
                     );
                 }
-                BackoffErrorKind::InvalidType => {
+                Self::InvalidType => {
                     assert!(
                         err.is_instance_of::<pyo3::exceptions::PyTypeError>(py),
                         "invalid value types should raise TypeError"
@@ -305,7 +311,7 @@ mod tests {
                 .expect("set_item should succeed in test");
             let err = BackoffOverrides::py_new(Some(d))
                 .expect_err("config with validation errors should fail");
-            kind.check_error(py, err);
+            kind.check_error(py, &err);
         });
     }
 
@@ -332,15 +338,16 @@ mod tests {
             let expected =
                 BackoffOverrides::from_options(Some(10), Some(100), Some(200), Some(300));
 
-            let builder_ref = builder.borrow_mut(py);
-            let builder_ref = SocketHandlerBuilder::py_with_backoff(builder_ref, expected.clone());
-            drop(builder_ref);
+            let mutable_builder = builder.borrow_mut(py);
+            let configured_builder =
+                SocketHandlerBuilder::py_with_backoff(mutable_builder, expected.clone());
+            drop(configured_builder);
 
-            let builder_ref = builder.borrow(py);
-            assert_backoff_overrides(&builder_ref.backoff, &expected);
+            let immutable_builder = builder.borrow(py);
+            assert_backoff_overrides(&immutable_builder.backoff, &expected);
 
             let d = PyDict::new(py);
-            builder_ref
+            immutable_builder
                 .extend_dict(&d)
                 .expect("dict serialization succeeds");
             assert_backoff_dict_fields(&d, &expected).expect("backoff dict fields must match");

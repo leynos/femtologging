@@ -13,6 +13,89 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
+struct LifecycleWriter {
+    flushed: Arc<AtomicU32>,
+    closed: Arc<AtomicU32>,
+}
+
+impl Write for LifecycleWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flushed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+impl_unsupported_seek!(LifecycleWriter);
+
+impl Drop for LifecycleWriter {
+    fn drop(&mut self) {
+        self.closed.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn make_lifecycle_handler(flushed: Arc<AtomicU32>, closed: Arc<AtomicU32>) -> FemtoFileHandler {
+    let writer = LifecycleWriter { flushed, closed };
+    let handler_cfg = HandlerConfig {
+        capacity: 10,
+        flush_interval: 0,
+        overflow_policy: OverflowPolicy::Block,
+    };
+    FemtoFileHandler::build_from_worker(
+        writer,
+        DefaultFormatter,
+        handler_cfg,
+        BuilderOptions::<LifecycleWriter>::default(),
+    )
+}
+
+fn assert_flush_count(flushed: &AtomicU32, expected: u32) {
+    assert_eq!(flushed.load(Ordering::Relaxed), expected);
+}
+
+fn verify_manual_flushes(handler: &mut FemtoFileHandler, flushed: &AtomicU32) {
+    assert!(handler.flush());
+    assert_flush_count(flushed, 1);
+
+    assert!(handler.flush());
+    assert_flush_count(flushed, 2);
+}
+
+fn verify_close_is_idempotent(
+    handler: &mut FemtoFileHandler,
+    flushed: &AtomicU32,
+    closed: &AtomicU32,
+) {
+    handler.close();
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    // Expect two manual flushes plus one triggered during shutdown.
+    assert_flush_count(flushed, 3);
+
+    handler.close();
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_flush_count(flushed, 3);
+}
+
+fn verify_closed_handler_is_noop(
+    handler: &mut FemtoFileHandler,
+    flushed: &AtomicU32,
+    closed: &AtomicU32,
+) {
+    assert!(
+        !handler.flush(),
+        "flush after close should be a no-op and report failure"
+    );
+    assert_flush_count(flushed, 3);
+
+    assert!(!handler.flush());
+    // Ensure counters remain unchanged after the no-op flush.
+    assert_flush_count(flushed, 3);
+    assert_eq!(closed.load(Ordering::Relaxed), 1);
+}
+
 #[test]
 fn femto_file_handler_worker_thread_failure() {
     #[derive(Clone)]
@@ -65,77 +148,15 @@ fn femto_file_handler_worker_thread_failure() {
 
 #[test]
 fn femto_file_handler_flush_and_close_idempotency() {
-    struct TestWriter {
-        flushed: Arc<AtomicU32>,
-        closed: Arc<AtomicU32>,
-    }
-
-    impl Write for TestWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.flushed.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }
-    }
-
-    impl_unsupported_seek!(TestWriter);
-
-    impl Drop for TestWriter {
-        fn drop(&mut self) {
-            self.closed.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
     let flushed = Arc::new(AtomicU32::new(0));
     let closed = Arc::new(AtomicU32::new(0));
-    let writer = TestWriter {
-        flushed: Arc::clone(&flushed),
-        closed: Arc::clone(&closed),
-    };
+    let mut handler = make_lifecycle_handler(Arc::clone(&flushed), Arc::clone(&closed));
 
-    // Disable periodic flushing to ensure deterministic counter checks.
-    let handler_cfg = HandlerConfig {
-        capacity: 10,
-        flush_interval: 0,
-        overflow_policy: OverflowPolicy::Block,
-    };
-    let mut handler = FemtoFileHandler::build_from_worker(
-        writer,
-        DefaultFormatter,
-        handler_cfg,
-        BuilderOptions::<TestWriter>::default(),
-    );
-
-    assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::Relaxed), 1);
-
-    assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::Relaxed), 2);
-
-    handler.close();
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-    // Expect two manual flushes plus one triggered during shutdown
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-
-    handler.close();
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-
-    assert!(
-        !handler.flush(),
-        "flush after close should be a no-op and report failure"
-    );
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-
-    assert!(!handler.flush());
-    // Ensure counters remain unchanged after the no-op flush
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    verify_manual_flushes(&mut handler, &flushed);
+    verify_close_is_idempotent(&mut handler, &flushed, &closed);
+    verify_closed_handler_is_noop(&mut handler, &flushed, &closed);
 
     drop(handler);
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert_flush_count(&flushed, 3);
     assert_eq!(closed.load(Ordering::Relaxed), 1);
 }

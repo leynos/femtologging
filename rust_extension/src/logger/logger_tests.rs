@@ -1,8 +1,9 @@
-//! Unit tests for FemtoLogger.
+//! Unit tests for `FemtoLogger`.
 
 use super::*;
 use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::level::FemtoLevel;
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -29,8 +30,12 @@ fn handle_log_record_dispatches() {
     let r2 = h2.collected();
     assert_eq!(r1.len(), 1);
     assert_eq!(r2.len(), 1);
-    assert_eq!(r1[0].message(), "msg");
-    assert_eq!(r2[0].message(), "msg");
+    let first_r1 = r1.first().expect("first handler should collect the record");
+    let first_r2 = r2
+        .first()
+        .expect("second handler should collect the record");
+    assert_eq!(first_r1.message(), "msg");
+    assert_eq!(first_r2.message(), "msg");
 }
 
 #[test]
@@ -225,7 +230,7 @@ fn drop_counter_increments_on_queue_overflow() {
         release: Arc::clone(&release),
         waited: AtomicBool::new(false),
     }) as Arc<dyn FemtoHandlerTrait>;
-    let logger = FemtoLogger::new("drop".to_string());
+    let logger = FemtoLogger::new("drop".to_owned());
     logger.add_handler(handler);
     logger.log(FemtoLevel::Info, "block");
 

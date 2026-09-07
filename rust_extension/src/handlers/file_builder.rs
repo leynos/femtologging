@@ -14,6 +14,7 @@
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+#[cfg(test)]
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 

@@ -207,10 +207,10 @@ mod tests {
     fn json_contains_expected_fields(test_record: FemtoLogRecord) {
         let json = serialize_json(&test_record, None).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(parsed["name"], "test.logger");
-        assert_eq!(parsed["levelname"], "INFO");
-        assert_eq!(parsed["msg"], "Hello World");
-        assert_eq!(parsed["lineno"], 42);
+        assert_eq!(parsed.get("name").expect("name"), "test.logger");
+        assert_eq!(parsed.get("levelname").expect("levelname"), "INFO");
+        assert_eq!(parsed.get("msg").expect("msg"), "Hello World");
+        assert_eq!(parsed.get("lineno").expect("lineno"), 42);
     }
 
     #[rstest]
@@ -218,8 +218,8 @@ mod tests {
         let fields = vec!["name".into(), "msg".into()];
         let json = serialize_json(&test_record, Some(&fields)).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(parsed["name"], "test.logger");
-        assert_eq!(parsed["msg"], "Hello World");
+        assert_eq!(parsed.get("name").expect("name"), "test.logger");
+        assert_eq!(parsed.get("msg").expect("msg"), "Hello World");
         assert!(parsed.get("levelname").is_none());
         assert!(parsed.get("lineno").is_none());
     }

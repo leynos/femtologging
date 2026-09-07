@@ -325,8 +325,9 @@ mod tests {
             .with_json_format()
             .build_inner();
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+        let Err(err) = result else {
+            panic!("GET with JSON format should be rejected");
+        };
         assert!(matches!(err, HandlerBuildError::InvalidConfig(_)));
         if let HandlerBuildError::InvalidConfig(msg) = err {
             assert!(msg.contains("JSON"));

@@ -36,7 +36,6 @@ fn status_text(code: u16) -> &'static str {
         _ => "Unknown",
     }
 }
-
 #[derive(Debug)]
 struct CapturedRequest {
     method: String,
@@ -47,12 +46,13 @@ struct CapturedRequest {
 
 /// Parses a single header line into a key-value pair.
 fn parse_header_line(line: &str) -> Option<(String, String)> {
-    let line = line.trim();
-    if line.is_empty() {
+    let trimmed_line = line.trim();
+    if trimmed_line.is_empty() {
         return None;
     }
-    line.split_once(':')
-        .map(|(key, value)| (key.trim().to_lowercase(), value.trim().to_string()))
+    trimmed_line
+        .split_once(':')
+        .map(|(key, value)| (key.trim().to_lowercase(), value.trim().to_owned()))
 }
 
 /// Reads all headers from the request and returns them with the content length.
@@ -88,7 +88,7 @@ fn read_body(reader: &mut BufReader<TcpStream>, content_length: usize) -> io::Re
 }
 
 fn read_http_request(stream: &mut TcpStream) -> io::Result<CapturedRequest> {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
 
     // Read request line
@@ -117,7 +117,7 @@ fn tcp_listener() -> io::Result<TcpListener> {
 }
 
 fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
-    let url = format!("http://{}/log", addr);
+    let url = format!("http://{addr}/log");
     let config = HTTPHandlerConfig {
         url,
         method: HTTPMethod::POST,
@@ -132,10 +132,9 @@ fn send_info_record(handler: &FemtoHTTPHandler, message: &str) -> Result<(), Han
     let record = FemtoLogRecord::new("test", FemtoLevel::Info, message);
     handler.handle(record)
 }
-
 #[rstest]
-fn sends_records_over_http(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn sends_records_over_http(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let handler = build_http_handler(addr);
     send_info_record(&handler, "test message").expect("record should be queued");
@@ -148,12 +147,11 @@ fn sends_records_over_http(tcp_listener: io::Result<TcpListener>) {
 
     drop(handler);
 }
-
 #[rstest]
-fn sends_json_format(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn sends_json_format(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
-    let url = format!("http://{}/log", addr);
+    let url = format!("http://{addr}/log");
     let config = HTTPHandlerConfig {
         url,
         format: SerializationFormat::Json,
@@ -168,22 +166,15 @@ fn sends_json_format(tcp_listener: io::Result<TcpListener>) {
     let content_type = captured
         .headers
         .iter()
-        .find(|(k, _)| k == "content-type")
-        .map(|(_, v)| v.as_str())
-        .unwrap_or("");
+        .find(|(key, _)| key == "content-type")
+        .map_or("", |(_, value)| value.as_str());
     assert_eq!(content_type, "application/json");
     assert!(captured.body.contains("\"msg\":\"json test\""));
 
     drop(handler);
 }
 
-/// Helper function for testing authentication headers.
-///
-/// # Parameters
-/// - `listener`: The TCP listener to use for the mock server
-/// - `configure_auth`: Closure to configure authentication on the builder
-/// - `verify_header`: Closure to verify the authorization header value
-/// - `message`: The test message to send
+/// Exercises configured authentication headers against the mock server.
 fn test_auth_header<F, V>(
     listener: TcpListener,
     configure_auth: F,
@@ -195,7 +186,7 @@ where
     V: FnOnce(&str),
 {
     let (addr, rx) = spawn_mock_server(listener, 200)?;
-    let url = format!("http://{}/log", addr);
+    let url = format!("http://{addr}/log");
     let builder = HTTPHandlerBuilder::new().with_url(url);
     let handler = configure_auth(builder).build_inner()?;
     send_info_record(&handler, message)?;
@@ -204,18 +195,16 @@ where
     let auth = captured
         .headers
         .iter()
-        .find(|(k, _)| k == "authorization")
-        .map(|(_, v)| v.as_str())
-        .unwrap_or("");
+        .find(|(key, _)| key == "authorization")
+        .map_or("", |(_, value)| value.as_str());
     verify_header(auth);
 
     drop(handler);
     Ok(())
 }
-
 #[rstest]
-fn sends_basic_auth_header(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn sends_basic_auth_header(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     test_auth_header(
         tcp_listener,
         |builder| builder.with_basic_auth("user", "pass"),
@@ -228,10 +217,9 @@ fn sends_basic_auth_header(tcp_listener: io::Result<TcpListener>) {
     )
     .expect("auth header test must complete");
 }
-
 #[rstest]
-fn sends_bearer_token(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn sends_bearer_token(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     test_auth_header(
         tcp_listener,
         |builder| builder.with_bearer_token("my-secret-token"),
@@ -242,10 +230,9 @@ fn sends_bearer_token(tcp_listener: io::Result<TcpListener>) {
     )
     .expect("bearer token test must complete");
 }
-
 #[rstest]
-fn handler_closes_gracefully(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn handler_closes_gracefully(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let mut handler = build_http_handler(addr);
     send_info_record(&handler, "close test").expect("record should be queued");
@@ -292,21 +279,19 @@ fn spawn_retry_server(
                 status,
                 status_text(status)
             );
-            let _ = stream.write_all(response.as_bytes());
-            let _ = tx.send(captured);
+            if stream.write_all(response.as_bytes()).is_err() {
+                break;
+            }
+            if tx.send(captured).is_err() {
+                break;
+            }
         }
     });
 
     Ok((addr, rx))
 }
 
-/// Helper function for testing retry behaviour.
-///
-/// # Parameters
-/// - `listener`: The TCP listener to use for the mock server
-/// - `statuses`: The sequence of HTTP status codes to return
-/// - `message`: The test message to send
-/// - `verify`: Closure to verify the captured requests
+/// Exercises retry behaviour against a sequence of mock-server responses.
 fn test_retry_behaviour<F>(
     listener: TcpListener,
     statuses: Vec<u16>,
@@ -319,7 +304,7 @@ where
     use crate::socket_handler::BackoffPolicy;
 
     let (addr, rx) = spawn_retry_server(listener, statuses)?;
-    let url = format!("http://{}/log", addr);
+    let url = format!("http://{addr}/log");
     let config = HTTPHandlerConfig {
         url,
         method: HTTPMethod::POST,
@@ -344,38 +329,48 @@ where
 
 /// Verifies that the expected number of requests are received, each containing the expected message fragment.
 fn verify_requests_with_message(
-    rx: mpsc::Receiver<CapturedRequest>,
+    rx: &mpsc::Receiver<CapturedRequest>,
     count: usize,
     expected_msg_fragment: &str,
-) -> Result<(), mpsc::RecvTimeoutError> {
+) -> Result<(), String> {
     for _ in 0..count {
-        let request = rx.recv_timeout(Duration::from_secs(5))?;
-        assert!(request.body.contains(expected_msg_fragment));
+        let request = rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| error.to_string())?;
+        if !request.body.contains(expected_msg_fragment) {
+            return Err(format!(
+                "request body did not contain {expected_msg_fragment:?}"
+            ));
+        }
     }
     Ok(())
 }
 
 #[rstest]
-fn retries_on_503_then_succeeds(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn retries_on_503_then_succeeds(
+    #[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>,
+) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     test_retry_behaviour(tcp_listener, vec![503, 200], "retry test", |rx| {
-        verify_requests_with_message(rx, 2, "msg=retry+test").expect("expected request");
+        verify_requests_with_message(&rx, 2, "msg=retry+test").expect("expected request");
     })
     .expect("retry test must complete");
 }
 
 #[rstest]
-fn retries_on_429_then_succeeds(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn retries_on_429_then_succeeds(
+    #[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>,
+) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     test_retry_behaviour(tcp_listener, vec![429, 200], "rate limit test", |rx| {
-        verify_requests_with_message(rx, 2, "msg=rate+limit+test").expect("expected request");
+        verify_requests_with_message(&rx, 2, "msg=rate+limit+test").expect("expected request");
     })
     .expect("retry test must complete");
 }
 
 #[rstest]
-fn does_not_retry_on_400(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn does_not_retry_on_400(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     test_retry_behaviour(tcp_listener, vec![400], "permanent error test", |rx| {
         // Should receive exactly one request
         let first = rx

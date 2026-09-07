@@ -85,7 +85,7 @@ pub fn assert_frame_required_fields(
 /// * `colno` - Expected column offset, or `None` if absent
 /// * `end_colno` - Expected end column offset, or `None` if absent
 /// * `source_line` - Expected source line text, or `None` if absent
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ExpectedOptionalFields<'a> {
     /// Expected end line number for the frame.
     pub end_lineno: Option<u32>,

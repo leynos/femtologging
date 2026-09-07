@@ -1,8 +1,9 @@
-//! Unit tests for Python integration paths in FemtoLogger.
+//! Unit tests for Python integration paths in `FemtoLogger`.
 //!
-//! These tests require the `python` feature and exercise the PyO3 bindings.
+//! These tests require the `python` feature and exercise the `PyO3` bindings.
 
 use super::*;
+use crate::level::FemtoLevel;
 use pyo3::Python;
 use pyo3::types::{PyBool, PyDict, PyTuple};
 use rstest::rstest;
@@ -63,7 +64,7 @@ enum ExpectedCapture {
     NoCapture,
 }
 
-/// Test inputs for py_log exc_info parameter tests.
+/// Test inputs for `py_log` `exc_info` parameter tests.
 #[derive(Debug)]
 enum PyLogExcInfoInput {
     BoolFalse,
@@ -134,11 +135,9 @@ fn should_capture_exc_info_cases(
                     .expect("exception construction should succeed");
                 let exc_type = exc_value.get_type();
                 let exc_tb = py.None();
-                let tuple = PyTuple::new(
-                    py,
-                    &[exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)],
-                )
-                .expect("tuple creation should succeed");
+                let tuple =
+                    PyTuple::new(py, [exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)])
+                        .expect("tuple creation should succeed");
                 should_capture_exc_info(tuple.as_any())
             }
             ExcInfoInput::Integer => {
@@ -162,20 +161,20 @@ fn should_capture_exc_info_cases(
 #[test]
 fn py_log_basic_message() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let args =
             log_args(py, "INFO", "hello").expect("Python log arguments should be constructible");
         let result = logger
             .py_log(py, &args, None)
             .expect("py_log should not fail");
-        assert_eq!(result, Some("test [INFO] hello".to_string()));
+        assert_eq!(result, Some("test [INFO] hello".to_owned()));
     });
 }
 
 #[test]
 fn py_log_filtered_by_level() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         logger.set_level(FemtoLevel::Error);
         let args =
             log_args(py, "INFO", "ignored").expect("Python log arguments should be constructible");
@@ -221,7 +220,7 @@ fn py_log_exc_info_variation_cases(
     #[case] expected: &str,
 ) {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let exc_info: Option<pyo3::Bound<'_, pyo3::PyAny>> = match &input {
             PyLogExcInfoInput::BoolFalse => Some(PyBool::new(py, false).to_owned().into_any()),
             PyLogExcInfoInput::PythonNone => Some(py.None().into_bound(py)),
@@ -234,14 +233,14 @@ fn py_log_exc_info_variation_cases(
         let args =
             log_args(py, "ERROR", message).expect("Python log arguments should be constructible");
         let keyword_args = PyDict::new(py);
-        if let Some(exc_info) = exc_info {
+        if let Some(exc_info_value) = exc_info {
             keyword_args
-                .set_item("exc_info", exc_info)
+                .set_item("exc_info", exc_info_value)
                 .expect("keyword argument insertion should succeed");
         }
-        if let Some(stack_info) = stack_info {
+        if let Some(stack_info_value) = stack_info {
             keyword_args
-                .set_item("stack_info", stack_info)
+                .set_item("stack_info", stack_info_value)
                 .expect("keyword argument insertion should succeed");
         }
         let result = logger
@@ -251,7 +250,7 @@ fn py_log_exc_info_variation_cases(
         // expected contains newline-separated substrings to check
         let expected_parts: Vec<&str> = expected.split('\n').collect();
         if expected_parts.len() == 1 {
-            assert_eq!(result, Some(expected.to_string()));
+            assert_eq!(result, Some(expected.to_owned()));
         } else {
             assert_output_contains!(result, &expected_parts);
         }
@@ -261,7 +260,7 @@ fn py_log_exc_info_variation_cases(
 #[test]
 fn py_log_with_stack_info_false() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let args =
             log_args(py, "INFO", "no stack").expect("Python log arguments should be constructible");
         let keyword_args = PyDict::new(py);
@@ -271,14 +270,14 @@ fn py_log_with_stack_info_false() {
         let result = logger
             .py_log(py, &args, Some(&keyword_args))
             .expect("py_log should not fail with stack_info=false");
-        assert_eq!(result, Some("test [INFO] no stack".to_string()));
+        assert_eq!(result, Some("test [INFO] no stack".to_owned()));
     });
 }
 
 #[test]
 fn py_log_with_stack_info_true() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger = FemtoLogger::new("test".to_owned());
         let args = log_args(py, "INFO", "with stack")
             .expect("Python log arguments should be constructible");
         let keyword_args = PyDict::new(py);

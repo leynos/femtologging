@@ -105,7 +105,7 @@ impl OverflowHarness {
     }
 
     /// Return everything the worker thread has written so far.
-    fn output(&self) -> String {
+    fn output(&self) -> Result<String, std::string::FromUtf8Error> {
         read_output(&self.buffer)
     }
 }
@@ -163,7 +163,7 @@ fn queue_overflow_drops_excess_records() {
     drop(handler);
 
     assert_eq!(
-        read_output(&buffer),
+        read_output(&buffer).expect("buffer output should be valid UTF-8"),
         "core [INFO] msg0\ncore [INFO] msg1\ncore [INFO] msg2\n",
     );
 }
@@ -173,24 +173,24 @@ fn file_handler_concurrent_usage() {
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     let handler = Arc::new(FemtoFileHandler::new(&path).expect("Failed to create file handler"));
-    let mut handles = vec![];
+    let mut join_handles = vec![];
     for i in 0..10 {
         let h = Arc::clone(&handler);
-        handles.push(thread::spawn(move || {
+        join_handles.push(thread::spawn(move || {
             h.expect_handle(FemtoLogRecord::new(
                 "core",
                 FemtoLevel::Info,
-                &format!("msg{}", i),
+                &format!("msg{i}"),
             ));
         }));
     }
-    for h in handles {
+    for h in join_handles {
         h.join().expect("Thread panicked");
     }
     drop(handler);
     let output = fs::read_to_string(&path).expect("failed to read log output");
     for i in 0..10 {
-        assert!(output.contains(&format!("core [INFO] msg{}", i)));
+        assert!(output.contains(&format!("core [INFO] msg{i}")));
     }
 }
 #[test]
@@ -224,9 +224,8 @@ fn file_handler_flush_interval_zero() {
     };
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let result = FemtoFileHandler::with_capacity_flush_policy(tmp.path(), DefaultFormatter, cfg);
-    let err = match result {
-        Ok(_) => panic!("expected invalid flush_interval"),
-        Err(e) => e,
+    let Err(err) = result else {
+        panic!("expected invalid flush_interval");
     };
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(err.to_string(), "flush_interval must be greater than zero");
@@ -260,7 +259,7 @@ fn blocking_policy_waits_for_space() {
         "flush should succeed after the blocked producer completes",
     );
 
-    let output = read_output(&harness.buffer);
+    let output = read_output(&harness.buffer).expect("buffer output should be valid UTF-8");
     assert!(
         output.contains("core [INFO] first"),
         "output should contain the first record",
@@ -306,7 +305,10 @@ fn timeout_policy_gives_up() {
         "flush should succeed after the worker resumes",
     );
     assert!(
-        harness.output().contains("core [INFO] first"),
+        harness
+            .output()
+            .expect("buffer output should be valid UTF-8")
+            .contains("core [INFO] first"),
         "the queued record should still be written once the worker resumes",
     );
 }

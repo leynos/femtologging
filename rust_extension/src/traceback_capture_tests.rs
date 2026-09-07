@@ -65,11 +65,8 @@ fn capture_exception_with_tuple() {
             .expect("KeyError constructor should succeed");
         let exc_tb = py.None();
 
-        let tuple = PyTuple::new(
-            py,
-            &[exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)],
-        )
-        .expect("tuple creation should succeed");
+        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)])
+            .expect("tuple creation should succeed");
 
         let result = capture_exception(py, tuple.as_any())
             .expect("capture_exception should succeed with tuple");
@@ -85,7 +82,7 @@ fn capture_exception_with_none_value_tuple() {
     Python::attach(|py| {
         // 3-tuple with None value means no exception
         let none = py.None();
-        let tuple = PyTuple::new(py, &[none.bind(py), none.bind(py), none.bind(py)])
+        let tuple = PyTuple::new(py, [none.bind(py), none.bind(py), none.bind(py)])
             .expect("tuple creation should succeed");
 
         let result = capture_exception(py, tuple.as_any())
@@ -128,7 +125,7 @@ fn capture_exception_tuple_preserves_explicit_traceback() {
         );
 
         // Create tuple with explicit traceback
-        let tuple = PyTuple::new(py, &[&exc_type, &exc_value, &exc_tb])
+        let tuple = PyTuple::new(py, [&exc_type, &exc_value, &exc_tb])
             .expect("tuple creation should succeed");
 
         let result =
@@ -205,7 +202,10 @@ fn capture_stack_returns_frames() {
         assert!(!payload.frames.is_empty(), "Stack should have frames");
 
         // Check that frames have required fields
-        let frame = &payload.frames[0];
+        let frame = payload
+            .frames
+            .first()
+            .expect("captured stack should contain a frame");
         assert!(!frame.filename.is_empty());
         assert!(!frame.function.is_empty());
     });
@@ -228,9 +228,11 @@ fn capture_exception_with_notes() {
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 
-        assert_eq!(payload.notes.len(), 2);
-        assert_eq!(payload.notes[0], "Note 1");
-        assert_eq!(payload.notes[1], "Note 2");
+        assert_eq!(
+            payload.notes,
+            ["Note 1", "Note 2"],
+            "both notes should be retained in order"
+        );
     });
 }
 
@@ -244,9 +246,11 @@ fn capture_exception_args_repr() {
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 
-        assert_eq!(payload.args_repr.len(), 2);
-        assert_eq!(payload.args_repr[0], "'message'");
-        assert_eq!(payload.args_repr[1], "42");
+        assert_eq!(
+            payload.args_repr,
+            ["'message'", "42"],
+            "argument representations should retain their order"
+        );
     });
 }
 

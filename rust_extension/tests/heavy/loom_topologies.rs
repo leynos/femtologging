@@ -40,10 +40,11 @@ fn handler_for(buffer: &LoomBuffer) -> Arc<FemtoStreamHandler> {
 ///
 /// Ordering between concurrently logged records is not specified, so tests
 /// compare sorted lines rather than raw output.
-fn sorted_lines(buffer: &LoomBuffer) -> Vec<String> {
-    let mut lines: Vec<String> = read_output(buffer).lines().map(str::to_owned).collect();
+fn sorted_lines(buffer: &LoomBuffer) -> Result<Vec<String>, std::string::FromUtf8Error> {
+    let output = read_output(buffer)?;
+    let mut lines: Vec<String> = output.lines().map(str::to_owned).collect();
     lines.sort();
-    lines
+    Ok(lines)
 }
 
 #[test]
@@ -66,8 +67,14 @@ fn loom_single_logger_multi_handlers() {
         drop(logger);
         drop(h1);
         drop(h2);
-        assert_eq!(sorted_lines(&buf1), ["core [INFO] one", "core [INFO] two"]);
-        assert_eq!(sorted_lines(&buf2), ["core [INFO] one", "core [INFO] two"]);
+        assert_eq!(
+            sorted_lines(&buf1).expect("buffer output should be valid UTF-8"),
+            ["core [INFO] one", "core [INFO] two"]
+        );
+        assert_eq!(
+            sorted_lines(&buf2).expect("buffer output should be valid UTF-8"),
+            ["core [INFO] one", "core [INFO] two"]
+        );
     });
 }
 
@@ -93,7 +100,10 @@ fn loom_shared_handler_multi_loggers() {
         drop(l1);
         drop(l2);
         drop(handler);
-        assert_eq!(sorted_lines(&buffer), ["a [INFO] one", "b [INFO] two"]);
+        assert_eq!(
+            sorted_lines(&buffer).expect("buffer output should be valid UTF-8"),
+            ["a [INFO] one", "b [INFO] two"]
+        );
     });
 }
 
@@ -128,11 +138,17 @@ fn loom_multiple_loggers_multiple_handlers() {
         drop(h1);
         drop(h2);
         assert_eq!(
-            sorted_lines(&shared_buf),
+            sorted_lines(&shared_buf).expect("buffer output should be valid UTF-8"),
             ["l1 [INFO] one", "l2 [INFO] two"]
         );
-        assert_eq!(read_output(&buf1), "l1 [INFO] one\n");
-        assert_eq!(read_output(&buf2), "l2 [INFO] two\n");
+        assert_eq!(
+            read_output(&buf1).expect("buffer output should be valid UTF-8"),
+            "l1 [INFO] one\n"
+        );
+        assert_eq!(
+            read_output(&buf2).expect("buffer output should be valid UTF-8"),
+            "l2 [INFO] two\n"
+        );
     });
 }
 
@@ -172,8 +188,17 @@ fn loom_concurrent_handler_addition() {
         drop(h2);
         drop(h3);
 
-        assert_eq!(read_output(&buf1), "core [INFO] hi\n");
-        assert_eq!(read_output(&buf2), "core [INFO] hi\n");
-        assert_eq!(read_output(&buf3), "core [INFO] hi\n");
+        assert_eq!(
+            read_output(&buf1).expect("buffer output should be valid UTF-8"),
+            "core [INFO] hi\n"
+        );
+        assert_eq!(
+            read_output(&buf2).expect("buffer output should be valid UTF-8"),
+            "core [INFO] hi\n"
+        );
+        assert_eq!(
+            read_output(&buf3).expect("buffer output should be valid UTF-8"),
+            "core [INFO] hi\n"
+        );
     });
 }

@@ -1,4 +1,4 @@
-//! Two-phase shutdown tests for the FemtoLogger worker loop.
+//! Two-phase shutdown tests for the `FemtoLogger` worker loop.
 //!
 //! Exercises `should_shutdown_now`, `shutdown_and_drain`, and the
 //! `worker_thread_loop` drain-on-shutdown guarantee.

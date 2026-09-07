@@ -1,4 +1,4 @@
-//! Compile-time UI tests for PyO3 patterns used by the maturin build.
+//! Compile-time UI tests for `PyO3` patterns used by the maturin build.
 
 #[test]
 fn compile_time_ui() {

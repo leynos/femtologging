@@ -1,4 +1,4 @@
-//! Tests for ExceptionPayload recursive frame filtering methods.
+//! Tests for `ExceptionPayload` recursive frame filtering methods.
 
 use crate::exception_schema::*;
 use crate::test_utils::frame_test_helpers::{
@@ -76,17 +76,20 @@ fn exception_payload_filter_frames_recursive_on_cause_chain() {
 
     // Top frame unchanged
     assert_eq!(filtered.frames.len(), 1);
-    assert_eq!(filtered.frames[0].filename, "top.py");
+    let top_frame = filtered.frames.first().expect("top frame exists");
+    assert_eq!(top_frame.filename, "top.py");
 
     // Outer cause filtered
     let outer = filtered.cause.as_ref().expect("outer cause exists");
     assert_eq!(outer.frames.len(), 1);
-    assert_eq!(outer.frames[0].filename, "outer.py");
+    let outer_frame = outer.frames.first().expect("outer frame exists");
+    assert_eq!(outer_frame.filename, "outer.py");
 
     // Inner cause filtered
     let inner = outer.cause.as_ref().expect("inner cause exists");
     assert_eq!(inner.frames.len(), 1);
-    assert_eq!(inner.frames[0].filename, "inner.py");
+    let inner_frame = inner.frames.first().expect("inner frame exists");
+    assert_eq!(inner_frame.filename, "inner.py");
 }
 
 #[rstest]
@@ -114,10 +117,12 @@ fn exception_payload_exclude_filenames_recursive_on_exception_group() {
     assert_payload_frames(&filtered, 1, &["app/main.py"]);
 
     // exc1's venv frame removed
-    assert_payload_frames(&filtered.exceptions[0], 1, &["app/module1.py"]);
+    let first_exception = filtered.exceptions.first().expect("first exception exists");
+    assert_payload_frames(first_exception, 1, &["app/module1.py"]);
 
     // exc2's site-packages frame removed
-    assert_payload_frames(&filtered.exceptions[1], 1, &["app/module2.py"]);
+    let second_exception = filtered.exceptions.get(1).expect("second exception exists");
+    assert_payload_frames(second_exception, 1, &["app/module2.py"]);
 }
 
 #[rstest]

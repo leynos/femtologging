@@ -94,7 +94,7 @@ impl SequenceClock {
         let remaining: std::collections::VecDeque<_> = times.into_iter().collect();
         let fallback = remaining
             .back()
-            .cloned()
+            .copied()
             .unwrap_or_else(|| Utc::now() + chrono::Duration::hours(1));
         Self {
             remaining,

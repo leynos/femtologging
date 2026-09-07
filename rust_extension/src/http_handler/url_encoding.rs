@@ -76,20 +76,28 @@ mod tests {
 
     #[test]
     fn url_encode_edge_cases() {
-        // Empty string
-        assert_eq!(url_encode(""), "");
-        // Consecutive spaces
-        assert_eq!(url_encode("a  b"), "a++b");
-        assert_eq!(url_encode("a   b"), "a+++b");
-        // Leading spaces
-        assert_eq!(url_encode(" hello"), "+hello");
-        assert_eq!(url_encode("  hello"), "++hello");
-        // Trailing spaces
-        assert_eq!(url_encode("hello "), "hello+");
-        assert_eq!(url_encode("hello  "), "hello++");
-        // Only spaces
-        assert_eq!(url_encode(" "), "+");
-        assert_eq!(url_encode("  "), "++");
-        assert_eq!(url_encode("   "), "+++");
+        assert_encodings(&[
+            ("", ""),
+            ("a  b", "a++b"),
+            ("a   b", "a+++b"),
+            (" hello", "+hello"),
+            ("  hello", "++hello"),
+            ("hello ", "hello+"),
+            ("hello  ", "hello++"),
+            (" ", "+"),
+            ("  ", "++"),
+            ("   ", "+++"),
+        ]);
+    }
+
+    #[track_caller]
+    fn assert_encodings(cases: &[(&str, &str)]) {
+        for (input, expected) in cases {
+            assert_eq!(
+                url_encode(input),
+                *expected,
+                "unexpected encoding for {input:?}"
+            );
+        }
     }
 }
