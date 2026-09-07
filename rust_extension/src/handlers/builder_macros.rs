@@ -205,6 +205,72 @@ macro_rules! builder_methods {
         [$($py_methods:tt)*],
         [
             capacity_method {
+                const = true,
+                self_ident = $self_ident:ident,
+                setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
+            }
+            $($rest:tt)*
+        ],
+        $( ($($extra_py_methods:tt)*) )?
+    ) => {
+        $crate::handlers::builder_macros::builder_methods!(
+            @expand_const_capacity_method
+            $builder,
+            [$($rust_methods)*],
+            [$($py_methods)*],
+            self_ident = $self_ident,
+            setter = |$setter_self, $setter_arg| { $($setter_body)* },
+            remaining = [ $($rest)* ],
+            $( extra_py_methods = ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@expand_const_capacity_method
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        self_ident = $self_ident:ident,
+        setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* },
+        remaining = [ $($rest:tt)* ],
+        $( extra_py_methods = ($($extra_py_methods:tt)*) )?
+    ) => {
+        $crate::handlers::builder_macros::builder_methods!(
+            @process_methods
+            $builder,
+            [$($rust_methods)*],
+            [$($py_methods)*],
+            [
+                method {
+                    doc: concat!(
+                        "Set the bounded channel capacity.\n\n",
+                        "# Validation\n\n",
+                        "The capacity must be greater than zero; ",
+                        "invalid values cause `build` to error.",
+                    ),
+                    rust_name: with_capacity,
+                    py_fn: py_with_capacity,
+                    py_name: "with_capacity",
+                    py_text_signature: "(self, capacity)",
+                    rust_args: (capacity: usize),
+                    rust_const: true,
+                    self_ident: $setter_self,
+                    body: {
+                        let $setter_arg = capacity;
+                        { $($setter_body)* }
+                    }
+                }
+                $($rest)*
+            ],
+            $( ($($extra_py_methods)*) )?
+        );
+    };
+
+    (@process_methods
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        [
+            capacity_method {
                 self_ident = $self_ident:ident,
                 setter = |$setter_self:ident, $setter_arg:ident| { $($setter_body:tt)* }
             }
@@ -248,8 +314,19 @@ macro_rules! builder_methods {
         );
     };
 
+    (@rust_method_tokens const $doc:expr, $rust_name:ident, ( $( $rarg:ident : $rty:ty ),* ), $self_ident:ident, $body:block) => {
+        #[doc = $doc]
+        #[must_use]
+        pub const fn $rust_name(self $(, $rarg : $rty )* ) -> Self {
+            let mut $self_ident = self;
+            $body
+            $self_ident
+        }
+    };
+
     (@rust_method_tokens $doc:expr, $rust_name:ident, ( $( $rarg:ident : $rty:ty ),* ), $self_ident:ident, $body:block) => {
         #[doc = $doc]
+        #[must_use]
         pub fn $rust_name(mut self $(, $rarg : $rty )* ) -> Self {
             let $self_ident = &mut self;
             $body

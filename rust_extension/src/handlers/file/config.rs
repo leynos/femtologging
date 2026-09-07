@@ -1,4 +1,4 @@
-//! Configuration structures for [`FemtoFileHandler`].
+//! Configuration structures for [`super::FemtoFileHandler`].
 //!
 //! This module defines the various configuration types used when constructing
 //! and testing file handlers. The public API exposes [`HandlerConfig`] for Rust
@@ -25,7 +25,7 @@ pub enum OverflowPolicy {
     Timeout(Duration),
 }
 
-/// Configuration options for constructing a [`FemtoFileHandler`].
+/// Configuration options for constructing a [`super::FemtoFileHandler`].
 #[derive(Clone, Copy)]
 pub struct HandlerConfig {
     /// Bounded queue size for records waiting to be written.
@@ -48,16 +48,23 @@ impl Default for HandlerConfig {
 
 /// Configuration for `with_writer_for_test` when constructing handlers in tests.
 pub struct TestConfig<W, F> {
+    /// Writer supplied to the test handler.
     pub writer: W,
+    /// Formatter supplied to the test handler.
     pub formatter: F,
+    /// Queue capacity used by the test handler.
     pub capacity: usize,
+    /// Flush interval used by the test handler.
     pub flush_interval: usize,
+    /// Overflow policy used by the test handler.
     pub overflow_policy: OverflowPolicy,
+    /// Optional barrier used to synchronize worker startup in tests.
     pub start_barrier: Option<Arc<Barrier>>,
 }
 
 impl<W, F> TestConfig<W, F> {
-    pub fn new(writer: W, formatter: F) -> Self {
+    /// Create a test configuration with the default queue settings.
+    pub const fn new(writer: W, formatter: F) -> Self {
         Self {
             writer,
             formatter,

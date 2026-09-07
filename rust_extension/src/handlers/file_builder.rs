@@ -50,12 +50,14 @@ impl FileHandlerBuilder {
     }
 
     /// Set the overflow policy for the handler.
-    pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
+    #[must_use]
+    pub const fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.common.set_overflow_policy(policy);
         self
     }
 
     /// Attach a formatter instance or identifier.
+    #[must_use]
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -79,6 +81,7 @@ impl FileHandlerBuilder {
 builder_methods! {
     impl FileHandlerBuilder {
         capacity {
+            const = true,
             self_ident = builder,
             setter = |builder_ref, capacity| {
                 builder_ref.common.set_capacity(capacity);
@@ -91,15 +94,16 @@ builder_methods! {
                 py_fn: py_with_flush_after_records,
                 py_name: "with_flush_after_records",
                 py_text_signature: "(self, interval)",
-                rust_args: (interval: NonZeroU64),
+                rust_args: (parsed_interval: NonZeroU64),
                 py_args: (interval: u64),
+                rust_const: true,
                 py_prelude: {
-                    let interval =
+                    let parsed_interval =
                         py_flush_after_records_to_nonzero(interval)?;
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.set_flush_after_records(interval);
+                    builder.common.set_flush_after_records(parsed_interval);
                 }
             }
         }
@@ -110,17 +114,17 @@ builder_methods! {
             /// filesystem path directly so Python callers can pass the same
             /// `filename` argument.
             #[new]
-            fn py_new(path: String) -> Self {
+            fn py_new(path: &str) -> Self {
                 Self::new(path)
             }
 
             #[pyo3(name = "with_overflow_policy")]
-            fn py_with_overflow_policy<'py>(
-                mut slf: PyRefMut<'py, Self>,
+            fn py_with_overflow_policy(
+                mut slf: PyRefMut<'_, Self>,
                 policy: PyOverflowPolicy,
-            ) -> PyResult<PyRefMut<'py, Self>> {
+            ) -> PyRefMut<'_, Self> {
                 slf.common.set_overflow_policy(policy.inner);
-                Ok(slf)
+                slf
             }
 
             #[pyo3(name = "with_formatter")]
@@ -128,9 +132,9 @@ builder_methods! {
             #[pyo3(text_signature = "(self, formatter)")]
             fn py_with_formatter<'py>(
                 mut slf: PyRefMut<'py, Self>,
-                formatter: Bound<'py, PyAny>,
+                formatter: &Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_formatter_from_py(&formatter)?;
+                slf.common.set_formatter_from_py(formatter)?;
                 Ok(slf)
             }
 
@@ -215,7 +219,10 @@ mod tests {
         let handler = builder
             .build_inner()
             .expect("build_inner must succeed for a valid file builder");
-        handler.flush();
+        assert!(
+            handler.flush(),
+            "the built handler must acknowledge flushing"
+        );
     }
 
     #[rstest]

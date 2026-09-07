@@ -79,7 +79,7 @@ pub enum BatchConfigError {
 
 impl BatchConfig {
     /// Create a batch configuration with a non-zero drain capacity.
-    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+    pub const fn new(capacity: usize) -> Result<Self, BatchConfigError> {
         if capacity == 0 {
             return Err(BatchConfigError::ZeroCapacity);
         }
@@ -171,7 +171,7 @@ pub(crate) struct FlushTracker {
 }
 
 impl FlushTracker {
-    pub(crate) fn new(flush_interval: usize) -> Self {
+    pub(crate) const fn new(flush_interval: usize) -> Self {
         Self {
             writes: 0,
             flush_interval,
@@ -190,7 +190,7 @@ impl FlushTracker {
         Ok(())
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub(crate) const fn reset(&mut self) {
         self.writes = 0;
     }
 
@@ -198,7 +198,7 @@ impl FlushTracker {
     ///
     /// A flush is due when the interval is positive, at least one write has
     /// occurred, and the write count is a multiple of the interval.
-    fn should_flush(&self) -> bool {
+    const fn should_flush(&self) -> bool {
         self.flush_interval != 0
             && self.writes > 0
             && self.writes.is_multiple_of(self.flush_interval)
@@ -223,7 +223,7 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
-    fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
+    const fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
         Self {
             writer,
             rotation,
@@ -231,11 +231,11 @@ where
         }
     }
 
-    fn handle_record<F>(&mut self, formatter: &F, record: FemtoLogRecord)
+    fn handle_record<F>(&mut self, formatter: &F, record: &FemtoLogRecord)
     where
         F: FemtoFormatter,
     {
-        let message = formatter.format(&record);
+        let message = formatter.format(record);
         if let Err(err) = self.rotation.before_write(&mut self.writer, &message) {
             error!("FemtoFileHandler rotation error; writing record without rotating: {err}");
         }
@@ -246,7 +246,7 @@ where
         }
     }
 
-    fn handle_flush(&mut self, ack_tx: Sender<io::Result<()>>) {
+    fn handle_flush(&mut self, ack_tx: &Sender<io::Result<()>>) {
         let flush_result = self.writer.flush();
         if let Err(err) = &flush_result {
             warn!("FemtoFileHandler flush error: {err}");
@@ -270,8 +270,8 @@ where
     {
         for command in commands {
             match command {
-                FileCommand::Record(record) => self.handle_record(formatter, *record),
-                FileCommand::Flush(ack_tx) => self.handle_flush(ack_tx),
+                FileCommand::Record(record) => self.handle_record(formatter, &record),
+                FileCommand::Flush(ack_tx) => self.handle_flush(&ack_tx),
             }
         }
     }

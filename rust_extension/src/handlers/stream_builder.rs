@@ -7,7 +7,7 @@
 
 use std::{
     io::{self, Write},
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroUsize},
     time::Duration,
 };
 
@@ -17,6 +17,7 @@ use pyo3::prelude::*;
 use super::{
     FormatterId, HandlerBuildError, HandlerBuilderTrait,
     common::{CommonBuilder, FormatterConfig, IntoFormatterConfig},
+    file::DEFAULT_CHANNEL_CAPACITY,
 };
 
 use crate::handlers::builder_macros::builder_methods;
@@ -37,10 +38,10 @@ enum StreamTarget {
 
 impl StreamTarget {
     #[cfg(feature = "python")]
-    fn as_str(&self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
-            StreamTarget::Stdout => "stdout",
-            StreamTarget::Stderr => "stderr",
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
         }
     }
 }
@@ -55,6 +56,7 @@ pub struct StreamHandlerBuilder {
 
 impl StreamHandlerBuilder {
     /// Create a builder targeting `stdout`.
+    #[must_use]
     pub fn stdout() -> Self {
         Self {
             target: StreamTarget::Stdout,
@@ -63,6 +65,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Create a builder targeting `stderr`.
+    #[must_use]
     pub fn stderr() -> Self {
         Self {
             target: StreamTarget::Stderr,
@@ -71,6 +74,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Attach a formatter instance or identifier.
+    #[must_use]
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -91,15 +95,16 @@ impl StreamHandlerBuilder {
     }
 
     fn resolved_capacity(&self) -> usize {
-        self.common.capacity.map(|c| c.get()).unwrap_or(1024)
+        self.common
+            .capacity
+            .map_or(DEFAULT_CHANNEL_CAPACITY, NonZeroUsize::get)
     }
 
     fn resolved_flush_after(&self) -> Duration {
         Duration::from_millis(
             self.common
                 .flush_after_ms
-                .map(NonZeroU64::get)
-                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_AFTER_MS),
+                .map_or(CommonBuilder::DEFAULT_FLUSH_AFTER_MS, NonZeroU64::get),
         )
     }
 
@@ -133,6 +138,7 @@ impl StreamHandlerBuilder {
 builder_methods! {
     impl StreamHandlerBuilder {
         capacity {
+            const = true,
             self_ident = builder,
             setter = |builder_ref, capacity| {
                 builder_ref.common.set_capacity(capacity);
@@ -145,10 +151,11 @@ builder_methods! {
                 py_fn: py_with_flush_after_ms,
                 py_name: "with_flush_after_ms",
                 py_text_signature: "(self, flush_ms)",
-                rust_args: (flush_ms: NonZeroU64),
+                rust_args: (parsed_flush_ms: NonZeroU64),
                 py_args: (flush_ms: u64),
+                rust_const: true,
                 py_prelude: {
-                    let flush_ms = NonZeroU64::new(flush_ms).ok_or_else(|| {
+                    let parsed_flush_ms = NonZeroU64::new(flush_ms).ok_or_else(|| {
                         pyo3::exceptions::PyValueError::new_err(
                             "flush_after_ms must be greater than zero",
                         )
@@ -156,7 +163,7 @@ builder_methods! {
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.flush_after_ms = Some(flush_ms);
+                    builder.common.flush_after_ms = Some(parsed_flush_ms);
                 }
             }
         }
@@ -186,9 +193,9 @@ builder_methods! {
             #[pyo3(text_signature = "(self, formatter)")]
             fn py_with_formatter<'py>(
                 mut slf: PyRefMut<'py, Self>,
-                formatter: Bound<'py, PyAny>,
+                formatter: &Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_formatter_from_py(&formatter)?;
+                slf.common.set_formatter_from_py(formatter)?;
                 Ok(slf)
             }
 

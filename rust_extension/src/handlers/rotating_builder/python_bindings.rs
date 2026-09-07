@@ -23,14 +23,14 @@ use crate::{
 };
 
 /// Extract a positive `i128` from a Python object.
-fn extract_positive_i128(value: Bound<'_, PyAny>, field: &str) -> PyResult<i128> {
-    let value = value.extract::<i128>()?;
-    if value <= 0 {
+fn extract_positive_i128(value: &Bound<'_, PyAny>, field: &str) -> PyResult<i128> {
+    let extracted_value = value.extract::<i128>()?;
+    if extracted_value <= 0 {
         return Err(PyValueError::new_err(format!(
             "{field} must be greater than zero",
         )));
     }
-    Ok(value)
+    Ok(extracted_value)
 }
 
 /// Populate a Python dictionary with the builder's fields.
@@ -45,11 +45,11 @@ fn fill_pydict(builder: &RotatingFileHandlerBuilder, d: &Bound<'_, PyDict>) -> P
     Ok(())
 }
 
-/// Apply an immutable builder update to a borrowed PyO3 builder reference.
-fn apply_builder_update<'py, F>(
-    mut slf: PyRefMut<'py, RotatingFileHandlerBuilder>,
+/// Apply an immutable builder update to a borrowed `PyO3` builder reference.
+fn apply_builder_update<F>(
+    mut slf: PyRefMut<'_, RotatingFileHandlerBuilder>,
     update: F,
-) -> PyResult<PyRefMut<'py, RotatingFileHandlerBuilder>>
+) -> PyResult<PyRefMut<'_, RotatingFileHandlerBuilder>>
 where
     F: FnOnce(RotatingFileHandlerBuilder) -> PyResult<RotatingFileHandlerBuilder>,
 {
@@ -71,27 +71,26 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(text_signature = "(self, capacity)")]
     fn py_with_capacity<'py>(
         slf: PyRefMut<'py, Self>,
-        capacity: Bound<'py, PyAny>,
+        capacity: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let capacity = extract_positive_i128(capacity, "capacity")?;
-        let capacity = usize::try_from(capacity)
+        let positive_capacity = extract_positive_i128(capacity, "capacity")?;
+        let validated_capacity = usize::try_from(positive_capacity)
             .map_err(|_| PyOverflowError::new_err("capacity exceeds the allowable range"))?;
-        apply_builder_update(slf, |builder| Ok(builder.with_capacity(capacity)))
+        apply_builder_update(slf, |builder| Ok(builder.with_capacity(validated_capacity)))
     }
 
     /// Set the flush interval in records.
     #[pyo3(name = "with_flush_after_records")]
     #[pyo3(signature = (interval))]
     #[pyo3(text_signature = "(self, interval)")]
-    fn py_with_flush_after_records<'py>(
-        slf: PyRefMut<'py, Self>,
+    fn py_with_flush_after_records(
+        slf: PyRefMut<'_, Self>,
         interval: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let interval = py_flush_after_records_to_nonzero(interval)?;
-        apply_builder_update(
-            slf,
-            |builder| Ok(builder.with_flush_after_records(interval)),
-        )
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        let flush_interval = py_flush_after_records_to_nonzero(interval)?;
+        apply_builder_update(slf, |builder| {
+            Ok(builder.with_flush_after_records(flush_interval))
+        })
     }
 
     /// Set the maximum bytes threshold for rotation.
@@ -100,12 +99,14 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(text_signature = "(self, max_bytes)")]
     fn py_with_max_bytes<'py>(
         slf: PyRefMut<'py, Self>,
-        max_bytes: Bound<'py, PyAny>,
+        max_bytes: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let max_bytes = extract_positive_i128(max_bytes, "max_bytes")?;
-        let max_bytes = u64::try_from(max_bytes)
+        let positive_max_bytes = extract_positive_i128(max_bytes, "max_bytes")?;
+        let validated_max_bytes = u64::try_from(positive_max_bytes)
             .map_err(|_| PyOverflowError::new_err("max_bytes exceeds the allowable range"))?;
-        apply_builder_update(slf, |builder| Ok(builder.with_max_bytes(max_bytes)))
+        apply_builder_update(slf, |builder| {
+            Ok(builder.with_max_bytes(validated_max_bytes))
+        })
     }
 
     /// Set the backup-file count for rotation.
@@ -114,12 +115,14 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(text_signature = "(self, backup_count)")]
     fn py_with_backup_count<'py>(
         slf: PyRefMut<'py, Self>,
-        backup_count: Bound<'py, PyAny>,
+        backup_count: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let backup_count = extract_positive_i128(backup_count, "backup_count")?;
-        let backup_count = usize::try_from(backup_count)
+        let positive_backup_count = extract_positive_i128(backup_count, "backup_count")?;
+        let validated_backup_count = usize::try_from(positive_backup_count)
             .map_err(|_| PyOverflowError::new_err("backup_count exceeds the allowable range"))?;
-        apply_builder_update(slf, |builder| Ok(builder.with_backup_count(backup_count)))
+        apply_builder_update(slf, |builder| {
+            Ok(builder.with_backup_count(validated_backup_count))
+        })
     }
 
     /// Set the overflow policy for queue saturation.
@@ -127,7 +130,7 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(signature = (policy))]
     fn py_with_overflow_policy<'py>(
         slf: PyRefMut<'py, Self>,
-        policy: PyOverflowPolicy,
+        policy: &PyOverflowPolicy,
     ) -> PyResult<PyRefMut<'py, Self>> {
         apply_builder_update(
             slf,
@@ -141,9 +144,9 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(text_signature = "(self, formatter)")]
     fn py_with_formatter<'py>(
         slf: PyRefMut<'py, Self>,
-        formatter: Bound<'py, PyAny>,
+        formatter: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        apply_builder_update(slf, |builder| builder.with_formatter_from_py(&formatter))
+        apply_builder_update(slf, |builder| builder.with_formatter_from_py(formatter))
     }
 
     /// Return a dictionary describing the builder configuration.

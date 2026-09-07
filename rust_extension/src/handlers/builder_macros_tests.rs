@@ -1,7 +1,5 @@
 //! Tests for the shared builder-method macros.
 
-use std::num::NonZeroUsize;
-
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
@@ -153,10 +151,11 @@ impl CapacityDummy {
 builder_methods! {
     impl CapacityDummy {
         capacity {
+            const = true,
             self_ident = builder,
-            setter = |builder, capacity| {
-                builder.capacity_attempted = true;
-                builder.capacity = NonZeroUsize::new(capacity).map(NonZeroUsize::get);
+            setter = |builder_ref, capacity| {
+                builder_ref.capacity_attempted = true;
+                builder_ref.capacity = if capacity == 0 { None } else { Some(capacity) };
             }
         };
         methods { }

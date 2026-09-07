@@ -13,7 +13,7 @@ pub enum FormatterId {
 
 impl FormatterId {
     /// Return the identifier as a string slice.
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &str {
         match self {
             Self::Default => "default",
             Self::Custom(id) => id.as_str(),

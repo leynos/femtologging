@@ -45,12 +45,14 @@ pub use timed_rotating_builder::TimedRotatingFileHandlerBuilder;
 create_exception!(
     _femtologging_rs,
     HandlerConfigError,
-    pyo3::exceptions::PyException
+    pyo3::exceptions::PyException,
+    "Raised when a handler configuration is invalid."
 );
 create_exception!(
     _femtologging_rs,
     HandlerIOError,
-    pyo3::exceptions::PyException
+    pyo3::exceptions::PyException,
+    "Raised when a handler cannot complete an I/O operation."
 );
 
 /// Errors that may occur while building a handler.
@@ -78,11 +80,23 @@ impl From<HandlerBuildError> for pyo3::PyErr {
 /// Builders return boxed [`FemtoHandlerTrait`] objects so the caller can
 /// register them without knowing the concrete handler type.
 pub trait HandlerBuilderTrait: Send + Sync {
+    /// Concrete handler constructed by this builder.
     type Handler: FemtoHandlerTrait;
 
+    /// Construct the concrete handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HandlerBuildError` when the configuration is invalid or the
+    /// handler cannot be created.
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError>;
 
     /// Build the handler instance, returning a boxed trait object.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HandlerBuildError` when the configuration is invalid or the
+    /// handler cannot be created.
     fn build(&self) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError> {
         let handler = self.build_inner()?;
         Ok(Box::new(handler))
