@@ -3,6 +3,11 @@
 //! The Rust builder remains the source of truth; this module only adapts
 //! Python inputs and serialization helpers.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use std::num::NonZeroU64;
 
 use chrono::NaiveTime;

@@ -8,6 +8,11 @@
 //! Unlike the stdlib, these methods accept a pre-formatted `message`
 //! string rather than `*args` / `**kwargs` lazy formatting.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::{
     prelude::*,
     types::{PyBool, PyDict, PyTuple},
@@ -44,7 +49,7 @@ macro_rules! log_method {
                 args: &Bound<'py, PyTuple>,
                 kwargs: Option<&Bound<'py, PyDict>>,
             ) -> PyResult<Option<String>> {
-                log_python_request(self, py, &parse_fixed_level_call($level, args, kwargs)?)
+                log_python_request(self, py, parse_fixed_level_call($level, args, kwargs))
             }
         }
     };
@@ -196,6 +201,6 @@ impl FemtoLogger {
         if request.options.exc_info.is_none() {
             request.options.exc_info = Some(PyBool::new(py, true).to_owned().into_any());
         }
-        log_python_request(self, py, &request)
+        log_python_request(self, py, Ok(request))
     }
 }

@@ -90,7 +90,7 @@ impl TimedRotationWhen {
 }
 
 /// Validated timed rotation configuration.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimedRotationSchedule {
     when: TimedRotationWhen,
     interval: u32,
@@ -259,7 +259,7 @@ impl TimedRotationSchedule {
         }
     }
 
-    fn to_utc(&self, value: NaiveDateTime) -> DateTime<Utc> {
+    fn to_utc(self, value: NaiveDateTime) -> DateTime<Utc> {
         if self.use_utc {
             return Utc.from_utc_datetime(&value);
         }

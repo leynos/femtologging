@@ -25,6 +25,11 @@ type ParsedSections = Vec<(String, SectionEntries)>;
 mod python_bindings {
     //! Python function wrappers for INI file configuration parsing.
 
+    #![expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 generates five-argument Python call wrappers"
+    )]
+
     use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
     use super::{ParsedSections, decode_contents, parse_sections, read_file_bytes};

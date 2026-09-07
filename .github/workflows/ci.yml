@@ -97,6 +97,8 @@ jobs:
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
       - name: Test Rust (log-compat feature)
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
+      - name: Test all-feature Rust documentation
+        run: make test-doc
       - name: Verify Cargo packages
         run: make package-check
       - name: Test and measure coverage

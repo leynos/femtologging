@@ -3,6 +3,11 @@
 //! The parent module owns schedule validation and rotation logic; this private
 //! module contains only Python-facing macro expansions and their adapters.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::{
     exceptions::{PyIOError, PyValueError},
     prelude::*,

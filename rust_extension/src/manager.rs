@@ -68,7 +68,7 @@ static MANAGER: LazyLock<RwLock<Manager>> = LazyLock::new(|| RwLock::new(Manager
 fn clear_runtime_state(mgr: &mut Manager) { mgr.runtime = RuntimeStateSnapshot::default(); }
 
 #[cfg(not(feature = "python"))]
-fn clear_runtime_state(_mgr: &mut Manager) {}
+const fn clear_runtime_state(_mgr: &mut Manager) {}
 
 /// Return `true` when the provided name is not a valid logger identifier.
 ///
@@ -175,7 +175,7 @@ where
     let mgr = MANAGER.read();
     for (name, logger) in &mgr.loggers {
         if name != "root" && !keep_names.contains(name) {
-            let logger_ref = logger.borrow(py);
+            let logger_ref = logger.try_borrow(py)?;
             logger_ref.clear_handlers();
             logger_ref.clear_filters();
         }
@@ -217,6 +217,33 @@ mod tests {
         use serial_test::serial;
 
         use super::super::{MANAGER, get_logger, lookup_existing_logger, reset_manager};
+
+        #[rstest::rstest]
+        #[case(false)]
+        #[case(true)]
+        #[serial]
+        fn disable_reports_borrow_conflicts_for_removed_loggers(#[case] keep_logger: bool) {
+            Python::attach(|py| {
+                reset_manager();
+                let Ok(logger) = get_logger(py, "borrowed") else {
+                    panic!("logger setup should succeed");
+                };
+                let Ok(_exclusive_borrow) = logger.try_borrow_mut(py) else {
+                    panic!("the test should exclusively borrow its logger");
+                };
+                let keep_names = if keep_logger {
+                    std::collections::HashSet::from(["borrowed".to_owned()])
+                } else {
+                    std::collections::HashSet::new()
+                };
+                let result = super::super::disable_existing_loggers(py, &keep_names);
+                assert_eq!(
+                    result.is_ok(),
+                    keep_logger,
+                    "only loggers selected for removal should report a borrow conflict"
+                );
+            });
+        }
 
         #[test]
         #[serial]

@@ -1,5 +1,13 @@
 //! Tests for the shared builder-method macros.
 
+#![cfg_attr(
+    feature = "python",
+    expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 generates five-argument Python call wrappers"
+    )
+)]
+
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

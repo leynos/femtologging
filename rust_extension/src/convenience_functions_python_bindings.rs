@@ -1,5 +1,10 @@
 //! `PyO3` convenience-function wrappers isolated from logging helpers.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::prelude::*;
 
 use super::{FemtoLevel, PyValueError, extract_context_dict, log_at_level, log_context};

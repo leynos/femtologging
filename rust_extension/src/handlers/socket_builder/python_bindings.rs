@@ -6,6 +6,11 @@
 //! dictionary, while [`SocketHandlerBuilder`] provides a fluent interface for
 //! assembling socket handler instances with TCP/Unix endpoints, TLS, and timeouts.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::{prelude::*, types::PyDict};
 
 use super::{BackoffOverrides, HandlerBuilderTrait, SocketHandlerBuilder};

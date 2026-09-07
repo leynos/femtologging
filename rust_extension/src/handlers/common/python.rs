@@ -3,6 +3,11 @@
 //! This module exposes Python APIs for the [`PyOverflowPolicy`] wrapper and
 //! helper methods used by file-based handler builders.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},

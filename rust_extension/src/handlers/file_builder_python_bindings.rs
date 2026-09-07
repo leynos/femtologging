@@ -3,6 +3,14 @@
 //! The builder macro emits both direct Rust fluent methods and `PyO3` wrappers;
 //! keeping its invocation private isolates the generated Python expansion.
 
+#![cfg_attr(
+    feature = "python",
+    expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 generates five-argument Python call wrappers"
+    )
+)]
+
 use std::num::NonZeroU64;
 
 #[cfg(feature = "python")]

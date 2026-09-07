@@ -3,6 +3,11 @@
 //! This module exposes Python APIs for constructing HTTP handlers with
 //! URL configuration, authentication, timeouts, and serialization options.
 
+#![expect(
+    clippy::too_many_arguments,
+    reason = "PyO3 generates five-argument Python call wrappers"
+)]
+
 use pyo3::{prelude::*, types::PyDict};
 
 use super::HTTPHandlerBuilder;
