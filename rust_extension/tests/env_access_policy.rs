@@ -22,8 +22,9 @@ mod env_policy;
 
 use env_policy::{
     CRATE_MANIFEST, Makefile, REQUIRED_DISALLOWED_METHODS, TestResult, configured_severity,
-    disallowed_methods, ensure_flags_deny_the_policy, ensure_lanes_cover_every_feature,
-    ensure_lint_reaches_the_policy_lane, policy_lane_run_succeeds, probe_violations,
+    disallowed_methods, ensure_ci_runs_the_policy_gates, ensure_flags_deny_the_policy,
+    ensure_lanes_cover_every_feature, ensure_lint_reaches_the_policy_lane,
+    policy_lane_run_succeeds, probe_violations,
 };
 
 /// Scenario: a contributor edits `clippy.toml`.
@@ -94,9 +95,22 @@ fn manifest_denies_disallowed_methods() -> TestResult {
 /// clippy::disallowed_methods"; dropping the `none` lane failed it with
 /// "ENV_POLICY_FEATURE_LANES must include the \"none\" lane"; dropping the
 /// `test-util` lane failed it with "ENV_POLICY_FEATURE_LANES must lint the
-/// \"test-util\" feature"; and removing the `lint-env-policy` prerequisite
-/// from `lint-rust` failed it with "lint-rust must run the lint-env-policy
-/// lane".
+/// Mutation proof (2026-09-07): narrowing `ENV_POLICY_CARGO_ARGS` from
+/// `--all-targets` to `--lib` failed with "must lint every target kind";
+/// dropping `-D clippy::disallowed_methods` from `ENV_POLICY_LINT_ARGS`
+/// failed with "must deny clippy::disallowed_methods"; dropping the `none`
+/// lane and the `test-util` lane each failed by name; and removing the
+/// `lint-lanes-test` prerequisite failed with "lint-rust must run
+/// lint-lanes-test".
+///
+/// Recipes are judged one whole command at a time, which is what kills the
+/// two ways a command can survive review while doing nothing. Wrapping
+/// `$(MAKE) lint-rust` in `if false; then ...; fi` and appending `|| true` to
+/// it both failed with "lint must run \"$(MAKE) lint-rust\" as a command of
+/// its own, not inside a wrapper". The same two mutations on the policy
+/// recipe's driver call failed with "lint-env-policy must end in the lane
+/// driver call", and appending a second command failed with "must be one
+/// command, found 2".
 #[test]
 fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
     let makefile = Makefile::embedded();
@@ -177,4 +191,29 @@ fn a_failing_lane_fails_the_policy_target() -> TestResult {
         return Err("lint-env-policy must succeed when every lane passes".into());
     }
     Ok(())
+}
+
+/// Scenario: a contributor edits the CI workflow.
+///
+/// Invariant: CI still runs both policy gates on every pull request, each as
+/// a step's whole command, with no condition on the step or its job and no
+/// blanket tolerance of that job's failure. Everything else in this file
+/// proves the policy holds when the gates run; this proves they run.
+///
+/// The workflow is parsed rather than searched, because a text search is
+/// satisfied by `if false; then make lint; fi` and by `make lint || true`,
+/// and no list of falsy spellings is reliable: YAML resolves `false` to a
+/// boolean whose string form is `False`.
+///
+/// Mutation proof (2026-09-07): `if: false` on the Lint step failed with "the
+/// \"make lint\" step in job build-test must carry no condition"; the same on
+/// the job failed with "job build-test runs \"make lint\" but carries a
+/// condition"; a push-only condition failed identically; `continue-on-error:
+/// true` on the job failed with "tolerates its own failure"; wrapping the
+/// command and appending `|| true` each failed with "must run \"make lint\" as
+/// a step's whole command", as did renaming the command; and deleting the
+/// `pull_request` trigger failed with "must trigger on pull_request".
+#[test]
+fn ci_runs_the_policy_gates_unconditionally() -> TestResult {
+    ensure_ci_runs_the_policy_gates()
 }
