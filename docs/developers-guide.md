@@ -117,14 +117,14 @@ ty check --python ./.venv --extra-search-path scripts
 The `--python` option points `ty` at the project environment containing the
 extension and its dependencies. The `scripts` search path is required because
 the spelling-policy helpers import one another as top-level modules. The same
-paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the
-Makefile passes them explicitly because the pinned local `ty` version does not
-reliably apply the equivalent project settings.
+paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the Makefile
+passes them explicitly because the pinned local `ty` version does not reliably
+apply the equivalent project settings.
 
 The long-running Rust integration suite is the Cargo `heavy` test target,
 rooted at `rust_extension/tests/heavy/main.rs`. Its property-based tests are
-marked `#[ignore]` because each generated case starts a handler worker. Run
-the target explicitly when investigating it:
+marked `#[ignore]` because each generated case starts a handler worker. Run the
+target explicitly when investigating it:
 
 ```shell
 cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
@@ -132,9 +132,9 @@ cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
 ```
 
 The scheduled `heavy-tests` workflow runs ignored tests across its feature
-lanes. Loom model test functions are compiled and registered only when Cargo
-is invoked with `--cfg loom`; the ordinary heavy run does not compile or run
-them. To select the Loom configuration locally, use:
+lanes. Loom model test functions are compiled and registered only when Cargo is
+invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
+To select the Loom configuration locally, use:
 
 ```shell
 RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
@@ -143,8 +143,8 @@ RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
 
 The current handlers use `std::thread::spawn`, so executing the Loom models
 requires the spawn abstraction described in the heavy-test module
-documentation. Until that follow-up is implemented, the Loom configuration
-is still compiled to keep the models type-checked.
+documentation. Until that follow-up is implemented, the Loom configuration is
+still compiled to keep the models type-checked.
 
 ## Configuration transaction
 
@@ -192,10 +192,36 @@ The reusable integration-test support is owned by
 Each Cargo integration-test root declares only the support modules it needs.
 The stream-handler suite includes `test_utils/mod.rs` because it uses all three
 components; the file-handler and logger suites include their required files
-directly. The `heavy` root includes `shared_buffer.rs` and
-`handle_expect.rs` directly, and its Loom modules are themselves gated by
-`cfg(loom)`. Prefer these fixtures and the trait over duplicating setup or
+directly. The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs`
+directly, and its Loom modules are themselves gated by `cfg(loom)`. Prefer
+these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
+
+
+## Structured logging contracts
+
+Python structured fields use one conversion and validation path in
+`rust_extension/src/log_context.rs`. `extract_python_context_map` converts the
+mapping accepted by both `_push_log_context` and `FemtoLogger.py_log` into the
+Rust-owned scalar representation. Keep Python type checks, string conversion,
+and the key, value, and aggregate-size bounds in that shared function so scoped
+and inline fields cannot drift apart.
+
+`merge_context_values` is the producer-side merge boundary. It combines the
+active thread-local context with explicit fields, with explicit fields taking
+precedence on collisions. `FemtoLogger.py_log` performs this merge before level
+gating and record construction. Conversion failures are reported to Python as
+type errors, while merge and size-validation failures are reported as
+`ValueError`; invalid context must not be silently dropped.
+
+`PyHandler` inspects handler capabilities when a Python handler is registered.
+For built-in stream, file, rotating-file, timed-rotating-file, socket, and HTTP
+handlers, native dispatch passes the original `FemtoLogRecord` to the
+`FemtoHandlerTrait` implementation, preserving `RecordMetadata.key_values`
+through the handler queue. Other Python handlers use the structured
+`handle_record` dictionary interface when available, or the legacy three-
+argument `handle` interface as a fallback. This boundary is described in more
+detail in [the Rust extension design notes](rust-extension.md).
 
 File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
 The `impl_unsupported_seek!` macro supplies the required `Seek` implementation
@@ -205,14 +231,14 @@ test logger and helpers for installing it and taking captured messages.
 
 The macro unit tests in `rust_extension/src/logging_macros.rs` use the
 `logger_with_handler` `rstest` fixture. It clears the test logging context,
-creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so
-each macro case can inspect the resulting record.
+creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so each
+macro case can inspect the resulting record.
 
 `rust_extension/src/test_fixtures/explicit_traceback.py` is Python source data,
 not a package module. `traceback_capture_tests` embeds it with `include_str!`;
-the fixture raises a nested `ValueError`, preserves its explicit traceback,
-and clears the exception object's `__traceback__` so tuple-based traceback
-capture is exercised.
+the fixture raises a nested `ValueError`, preserves its explicit traceback, and
+clears the exception object's `__traceback__` so tuple-based traceback capture
+is exercised.
 
 ## Toolchain Boundaries
 

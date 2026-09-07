@@ -957,27 +957,40 @@ Implemented baseline (roadmap item 3.4.2):
 - Merged key-values are persisted into `RecordMetadata.key_values` before the
   record is queued to consumer threads.
 
+**Figure: Asynchronous dispatch preserving scoped context in Python-registered
+handlers.**
+
 For screen readers: this sequence diagram shows that `FemtoLogger` merges
 explicit key-values with active scoped context, records the merged values in
-`FemtoLogRecord` metadata, and passes that same record through `PyHandler` to
-the built-in handler before the result returns to the logger.
+`FemtoLogRecord` metadata, enqueues the record, and returns to the Python
+caller. A worker then dispatches that same record through `PyHandler` to the
+built-in handler, where processing completes asynchronously.
 
 ```mermaid
 sequenceDiagram
+    participant Caller as PythonCaller
     participant Logger as FemtoLogger
     participant Context as log_context
+    participant Record as FemtoLogRecord
+    participant Queue as RecordQueue
+    participant Worker as ConsumerWorker
     participant Bridge as PyHandler
     participant Native as BuiltInHandler
-    participant Record as FemtoLogRecord
 
+    Caller->>Logger: FemtoLogger.log(...)
     Logger->>Context: merge_context_values(explicit_key_values)
     Context-->>Logger: merged_key_values
     Logger->>Record: with_metadata(merged_key_values)
-    Logger->>Bridge: handle(record)
+    Logger->>Queue: enqueue(record)
+    Logger-->>Caller: return
+    Worker->>Queue: dequeue(record)
+    Worker->>Bridge: handle(record)
     Bridge->>Native: handle(record)
     Native-->>Bridge: Result
-    Bridge-->>Logger: Result
+    Bridge-->>Worker: Result
 ```
+
+**Figure: Invalid logging context errors.**
 
 For screen readers: this sequence diagram shows an invalid logging context
 causing `merge_context_values` to return an error, which `FemtoLogger` exposes

@@ -1,3 +1,8 @@
+"""Typed interface for the PyO3 ``femtologging._femtologging_rs`` module.
+
+The interface exposes ``FemtoLogger`` and its structured logging fields.
+"""
+
 import collections.abc as cabc
 import datetime as dt
 import types
