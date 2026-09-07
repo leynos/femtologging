@@ -13,7 +13,7 @@ use pyo3::exceptions::PyTypeError;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
-use pyo3::types::{PyInt, PyTuple};
+use pyo3::types::{PyBool, PyFloat, PyInt, PyTuple};
 
 const MAX_CONTEXT_KEYS: usize = 64;
 const MAX_KEY_BYTES: usize = 64;
@@ -168,13 +168,13 @@ fn extract_python_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String
     if raw_value.is_none() {
         return Ok(String::from("None"));
     }
-    if raw_value.extract::<bool>().is_ok() {
+    if raw_value.is_instance_of::<PyBool>() {
         return Ok(raw_value.str()?.to_str()?.to_owned());
     }
     if raw_value.is_instance_of::<PyInt>() {
         return Ok(raw_value.str()?.to_str()?.to_owned());
     }
-    if raw_value.extract::<f64>().is_ok() {
+    if raw_value.is_instance_of::<PyFloat>() {
         return Ok(raw_value.str()?.to_str()?.to_owned());
     }
     if let Ok(value) = raw_value.extract::<String>() {
