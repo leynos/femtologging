@@ -1,5 +1,8 @@
-.PHONY: help all clean build release lint lint-rust fmt check-fmt \
+.PHONY: help all clean build release lint lint-clippy lint-whitaker fmt check-fmt \
 markdownlint tools nixie spelling spelling-helper-test test typecheck package-check test-doc
+
+# The lint targets share Cargo's build cache and must not overlap under `make -j`.
+.NOTPARALLEL: lint
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -18,6 +21,8 @@ TYPOS_VERSION ?= 1.48.0
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 TYPOS ?= $(UV_ENV) uv tool run typos@$(TYPOS_VERSION)
 WHITAKER ?= whitaker
+# `--all` selects Dylint libraries; this selects every Cargo package.
+WHITAKER_PACKAGES ?= --workspace
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
 
@@ -57,11 +62,10 @@ check-fmt: ## Verify formatting
 	$(RUFF) format --check
 	$(CARGO) +$(FMT_TOOLCHAIN) fmt --manifest-path $(RUST_MANIFEST) --all -- --check
 
-lint: ## Run linters
-	$(RUFF) check
-	$(MAKE) lint-rust
+lint: lint-clippy lint-whitaker ## Run linters
 
-lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+lint-clippy: ## Run Ruff and Rust Clippy across feature lanes
+	$(RUFF) check
 	@set -e; for features in none python log-compat tracing-compat; do \
 		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
 		echo "# Lint Rust features: $$features"; \
@@ -69,7 +73,9 @@ lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	done
 	$(CARGO_BUILD_ENV) $(CARGO) clippy --manifest-path $(RUST_MANIFEST) --workspace --all-targets --all-features -- -D warnings
 	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) doc --manifest-path $(RUST_MANIFEST) --workspace --no-deps
-	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
+
+lint-whitaker: ## Run Whitaker across every workspace package and target
+	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all $(WHITAKER_PACKAGES) -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
 	find . -type f -name '*.md' -not -path '*/target/*' -print0 | xargs -0 $(MDLINT) --
