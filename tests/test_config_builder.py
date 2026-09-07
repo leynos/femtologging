@@ -133,7 +133,7 @@ def test_logger_config_builder_optional_fields_omitted() -> None:
     assert "handlers" not in config, "Handlers should be omitted when not set"
 
 
-def test_no_root_logger_behavior() -> None:
+def test_no_root_logger_behaviour() -> None:
     """Test that building without a root logger raises ValueError."""
     builder = ConfigBuilder()
     with pytest.raises(ValueError, match="root logger configuration"):

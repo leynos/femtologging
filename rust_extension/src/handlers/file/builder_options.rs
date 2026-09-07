@@ -15,7 +15,7 @@ use super::{NoRotation, RotationStrategy};
 /// Builder-only state needed to start a file-handler worker.
 ///
 /// The public builders construct this value just before spawning the worker so
-/// rotation hooks and test-only synchronisation can stay out of the runtime
+/// rotation hooks and test-only synchronization can stay out of the runtime
 /// handler state.
 pub(crate) struct BuilderOptions<W, R = NoRotation>
 where

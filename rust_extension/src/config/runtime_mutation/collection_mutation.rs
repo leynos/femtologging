@@ -86,7 +86,7 @@ impl CollectionMutation {
         }
     }
 
-    /// Serialises this [`CollectionMutation`] into a Python dict with a
+    /// Serializes this [`CollectionMutation`] into a Python dict with a
     /// `"mode"` key whose value is one of `"unchanged"`, `"replace"`,
     /// `"append"`, `"remove"`, or `"clear"`.
     ///

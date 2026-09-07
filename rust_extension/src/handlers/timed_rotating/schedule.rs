@@ -169,7 +169,7 @@ impl TimedRotationSchedule {
     ///
     /// The suffix represents the start of the period being closed, which is
     /// one interval before the rollover time. This matches Python's
-    /// `logging.handlers.TimedRotatingFileHandler` behavior.
+    /// `logging.handlers.TimedRotatingFileHandler` behaviour.
     pub fn suffix_timestamp(&self, rollover_at: DateTime<Utc>) -> DateTime<Utc> {
         match self.when {
             TimedRotationWhen::Seconds => rollover_at - Duration::seconds(i64::from(self.interval)),

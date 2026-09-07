@@ -113,7 +113,7 @@ _PYTEST_COMPAT_CASES = (
 
 
 class TestTracebackNormalization:
-    """Grouped tests for traceback normalization behavior."""
+    """Grouped tests for traceback normalization behaviour."""
 
     @pytest.mark.parametrize(("output", "expected", "reason"), _PYTEST_COMPAT_CASES)
     def test_normalize_traceback_output_pytest_compat_cases(

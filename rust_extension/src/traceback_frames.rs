@@ -120,7 +120,7 @@ impl LocalsSkipCounts {
 /// entire dictionary, ensuring partial data is preserved when possible.
 ///
 /// When trace-level logging is enabled, emits a summary of any skipped entries
-/// at the end of extraction, categorising them by reason (non-string key or
+/// at the end of extraction, categorizing them by reason (non-string key or
 /// repr failure).
 pub(crate) fn extract_locals_dict(frame: &Bound<'_, PyAny>) -> Option<BTreeMap<String, String>> {
     let locals_attr = frame.getattr("locals").ok()?;

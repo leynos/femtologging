@@ -56,7 +56,7 @@ def _ini_to_dict_config(
     *,
     disable_existing: bool,
 ) -> dict[str, typ.Any]:
-    section_map = _materialise_sections(sections)
+    section_map = _materialize_sections(sections)
     _reject_formatters(section_map)
     default_pool = _merge_defaults(section_map.pop(_DEFAULT_SECTION, {}), defaults)
     formatters = _parse_formatters(section_map)
@@ -76,7 +76,7 @@ def _ini_to_dict_config(
     return cfg
 
 
-def _materialise_sections(
+def _materialize_sections(
     sections: list[tuple[str, list[tuple[str, str]]]],
 ) -> dict[str, dict[str, str]]:
     result: dict[str, dict[str, str]] = {}

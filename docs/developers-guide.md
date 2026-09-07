@@ -42,15 +42,19 @@ steps where applicable.
 
 ## Typos spelling checker
 
-Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)
-so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
+Tracked source and prose spelling is enforced with
+[`typos`](https://github.com/crate-ci/typos) so that code and documentation
+stay in en-GB-oxendict (Oxford "-ize") spelling.
 
 - `typos` is pinned to `1.48.0`. The pin lives in `TYPOS_VERSION` in the
   `Makefile`, which is the single source of truth; any CI that shells out to the
   `markdownlint` target reuses it, so the Makefile and CI cannot drift apart.
 - The `make markdownlint` target runs
-  `typos --config typos.toml --force-exclude` across the tracked Markdown files
-  after `markdownlint-cli2`.
+  `make spelling` before `markdownlint-cli2`. Spelling covers tracked files,
+  including Rust and Python source, comments and documentation examples.
+- Inline and fenced code have no blanket exemptions. Only fixed external names
+  and deliberate compatibility or spelling-test inputs receive narrow patterns.
+  Authored UI and traceback fixture files remain excluded as test data.
 
 ### Configuration
 

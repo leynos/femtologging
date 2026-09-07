@@ -29,7 +29,7 @@ use crate::{
 ///
 /// The helper collects registrations in one place, keeping conditional
 /// compilation tidy. It is invoked by [`_femtologging_rs`] during
-/// initialisation.
+/// initialization.
 pub(crate) fn add_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     // Group type registrations to keep future additions concise.

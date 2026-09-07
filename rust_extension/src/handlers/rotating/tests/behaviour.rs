@@ -239,7 +239,7 @@ fn rotating_handler_respects_test_builder_defaults() {
 }
 
 // `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
-// so these tests are not recognised as test-only code and must propagate
+// so these tests are not recognized as test-only code and must propagate
 // errors with `?` rather than `.expect(...)`.
 #[serial(rotating_fresh_failure)]
 #[test]
@@ -277,7 +277,7 @@ fn before_write_reports_rotation_outcome() -> io::Result<()> {
 }
 
 // `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
-// so this test is not recognised as test-only code and must propagate
+// so this test is not recognized as test-only code and must propagate
 // errors with `?` rather than `.expect(...)`.
 #[serial(rotating_fresh_failure)]
 #[test]

@@ -117,7 +117,7 @@ def _initialize_rust_compat() -> _RustCompatPayload:
     """Initialize Rust extension compatibility layer.
 
     Extracts all optional Rust extension functions and wraps them with
-    appropriate fallback behavior. Returns a typed payload of initialized
+    appropriate fallback behaviour. Returns a typed payload of initialized
     module-level variables.
     """
     force_rotating, clear_rotating = _make_rotating_fresh_failure_hooks(
