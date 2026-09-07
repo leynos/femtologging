@@ -25,6 +25,8 @@ pub(crate) use types::normalize_vec;
 pub use types::{ConfigBuilder, ConfigError, LoggerConfigBuilder};
 
 #[cfg(all(test, feature = "python"))]
+mod build_tests;
+#[cfg(all(test, feature = "python"))]
 mod config_tests;
 #[cfg(all(test, feature = "python"))]
 mod propagate_tests;
