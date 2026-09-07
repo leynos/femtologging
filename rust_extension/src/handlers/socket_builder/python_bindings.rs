@@ -269,7 +269,7 @@ mod tests {
         });
     }
 
-    /// Test helper enum for parameterising validation error scenarios.
+    /// Test helper enum for parameterizing validation error scenarios.
     ///
     /// Variants represent different failure modes (unknown keys, invalid types)
     /// with methods to set up test cases and verify error types.

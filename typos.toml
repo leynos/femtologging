@@ -20,7 +20,9 @@ extend-exclude = [
     "node_modules",
     "package-lock.json",
     "pnpm-lock.yaml",
+    "rust_extension/src/test_fixtures",
     "rust_extension/target",
+    "rust_extension/tests/ui",
     "target",
     "typos.local.toml",
     "typos.toml",
@@ -31,10 +33,23 @@ extend-exclude = [
 [default]
 locale = "en-gb"
 extend-ignore-re = [
-    "(?s)```.*?```",
+    "(?m)^  library, for example, `color`\\.$",
+    "(?m)^\\-\\ `customise`\\ →\\ `customize`$",
+    "(?m)^\\-\\ `finalise`\\ →\\ `finalize`$",
+    "(?m)^\\-\\ `initialise`\\ /\\ `initialisation`\\ →\\ `initialize`\\ /\\ `initialization`$",
+    "(?m)^\\-\\ `maximise`\\ →\\ `maximize`$",
+    "(?m)^\\-\\ `normalise`\\ /\\ `normalisation`\\ →\\ `normalize`\\ /\\ `normalization`$",
+    "(?m)^\\-\\ `recognise`\\ →\\ `recognize`$",
+    "(?m)^\\-\\ `serialise`\\ /\\ `serialisation`\\ →\\ `serialize`\\ /\\ `serialization`$",
+    "(?m)^\\s*types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
+    "(?m)^\\| `(?:http_handler|socket_handler)`\\s+\\| `serialise\\.rs`\\s+\\|",
+    "\\(\"ises\", \"izes\"\\)",
+    "\\bCARGO_TERM_COLOR\\b",
     "\\brust-analyzer\\b",
-    "`[^`\\n]+`",
-    "rust-analyzer",
+    "caf\\\\u\\{e9\\}",
+    "caf\\\\xE9",
+    "corrections=\\(\\(\"teh\", \"(?:the|ten)\"\\),\\)",
+    "mappings\\[\"organise\"\\]",
 ]
 
 [default.extend-words]
@@ -148,7 +163,6 @@ extend-ignore-re = [
 "apologizers" = "apologizers"
 "apologizes" = "apologizes"
 "apologizing" = "apologizing"
-"astroid" = "astroid"
 "atomisable" = "atomizable"
 "atomisation" = "atomization"
 "atomisations" = "atomizations"
@@ -1286,7 +1300,6 @@ extend-ignore-re = [
 "minimizers" = "minimizers"
 "minimizes" = "minimizes"
 "minimizing" = "minimizing"
-"mis" = "mis"
 "mobilisable" = "mobilizable"
 "mobilisation" = "mobilization"
 "mobilisations" = "mobilizations"

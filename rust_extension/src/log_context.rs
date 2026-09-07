@@ -81,7 +81,7 @@ where
     Ok(LogContextGuard { _private: () })
 }
 
-/// Run a closure with a pushed context frame and pop it afterward.
+/// Run a closure with a pushed context frame and pop it afterwards.
 pub fn with_log_context<I, K, V, F, R>(fields: I, f: F) -> Result<R, LogContextError>
 where
     I: IntoIterator<Item = (K, V)>,

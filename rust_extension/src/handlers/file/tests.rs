@@ -244,7 +244,7 @@ fn build_from_worker_wires_handler_components() {
 }
 
 // `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
-// so this test is not recognised as test-only code and must propagate
+// so this test is not recognized as test-only code and must propagate
 // errors with `?` rather than `.expect(...)`.
 #[test]
 #[serial]
@@ -342,7 +342,7 @@ fn femto_file_handler_rejects_zero_flush_interval(
 }
 
 // `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
-// so this test is not recognised as test-only code and must propagate
+// so this test is not recognized as test-only code and must propagate
 // errors with `?` rather than `.expect(...)`.
 #[test]
 #[serial]

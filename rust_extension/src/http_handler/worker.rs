@@ -344,7 +344,7 @@ pub fn enqueue_record(
     }
 }
 
-/// Sends a flush command to the HTTP worker and waits for acknowledgment.
+/// Sends a flush command to the HTTP worker and waits for acknowledgement.
 ///
 /// Uses a deadline-based approach to ensure the total wait time does not
 /// exceed `timeout`, even if the send operation consumes part of the budget.

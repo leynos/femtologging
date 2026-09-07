@@ -163,7 +163,7 @@ def toolchain_available() -> bool:
     return result.returncode == 0
 
 
-def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
+def build_native_wheel_artefact(root: Path, out_dir: Path) -> Path:
     """Build one native femtologging wheel with maturin.
 
     Parameters
@@ -188,7 +188,7 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
     Given a repository root and an output directory, the helper returns the
     single wheel produced by maturin:
 
-    >>> wheel = build_native_wheel_artifact(root, out_dir)  # doctest: +SKIP
+    >>> wheel = build_native_wheel_artefact(root, out_dir)  # doctest: +SKIP
     >>> wheel.suffix  # doctest: +SKIP
     '.whl'
 

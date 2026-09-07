@@ -14,6 +14,7 @@ repository-specific policy that must not weaken the estate-wide base.
 import tomllib
 import urllib.error
 import urllib.parse
+from dataclasses import replace
 from pathlib import Path
 
 import typos_rollout as rollout
@@ -34,7 +35,16 @@ def dictionary_from_cache(repository: Path = REPOSITORY_ROOT) -> rollout.Diction
             dictionary,
             rollout.load_dictionary(local_overlay),
         )
-    return dictionary
+    # Code examples and identifiers are authored text too. Keep narrow external
+    # names from the shared policy, but require explicit fixture exceptions.
+    return replace(
+        dictionary,
+        ignore_patterns=tuple(
+            pattern
+            for pattern in dictionary.ignore_patterns
+            if pattern not in {"(?s)```.*?```", r"`[^`\n]+`"}
+        ),
+    )
 
 
 def render_config(repository: Path = REPOSITORY_ROOT) -> str:

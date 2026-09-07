@@ -312,7 +312,7 @@ mod tests {
         }
 
         // `#[serial]` wraps the test bodies below, so the expect lint cannot
-        // recognise them as tests; errors are propagated instead.
+        // recognize them as tests; errors are propagated instead.
         #[test]
         #[serial]
         fn flush_all_handlers_flushes_loggers_with_handlers() -> pyo3::PyResult<()> {

@@ -1,4 +1,4 @@
-# Repository-specific identifiers, quotations and deliberate fixtures.
+# Repository-specific external names and deliberate compatibility fixtures.
 
 schema = 1
 
@@ -6,14 +6,33 @@ schema = 1
 stems = []
 
 [words]
-accepted = ["OT", "astroid", "mis", "yse"]
+accepted = ["OT"]
 
 [words.corrections]
 
 [patterns]
-# Inline code spans quote identifiers and deliberate spelling examples;
-# they are code, not prose, so the en-GB-oxendict rules do not apply.
-ignore = ["rust-analyzer", "`[^`\\n]+`"]
+# Cargo/GitHub schema names, an external API example and historical migration
+# before-values are fixed. Latin-1 input and spelling-policy pairs deliberately
+# exercise decoding or rejected spellings; no blanket code masking is permitted.
+ignore = [
+    "\\bCARGO_TERM_COLOR\\b",
+    "(?m)^\\s*types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
+    "(?m)^  library, for example, `color`\\.$",
+    "(?m)^\\| `(?:http_handler|socket_handler)`\\s+\\| `serialise\\.rs`\\s+\\|",
+    "(?m)^\\-\\ `serialise`\\ /\\ `serialisation`\\ →\\ `serialize`\\ /\\ `serialization`$",
+    "(?m)^\\-\\ `normalise`\\ /\\ `normalisation`\\ →\\ `normalize`\\ /\\ `normalization`$",
+    "(?m)^\\-\\ `initialise`\\ /\\ `initialisation`\\ →\\ `initialize`\\ /\\ `initialization`$",
+    "(?m)^\\-\\ `finalise`\\ →\\ `finalize`$",
+    "(?m)^\\-\\ `customise`\\ →\\ `customize`$",
+    "(?m)^\\-\\ `maximise`\\ →\\ `maximize`$",
+    "(?m)^\\-\\ `recognise`\\ →\\ `recognize`$",
+    "caf\\\\xE9",
+    "caf\\\\u\\{e9\\}",
+    "mappings\\[\"organise\"\\]",
+    "corrections=\\(\\(\"teh\", \"(?:the|ten)\"\\),\\)",
+    "\\(\"ises\", \"izes\"\\)",
+]
 
 [files]
-exclude = ["rust_extension/target"]
+# UI and embedded traceback sources are authored test data, not lint targets.
+exclude = ["rust_extension/target", "rust_extension/tests/ui", "rust_extension/src/test_fixtures"]

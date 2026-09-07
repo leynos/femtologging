@@ -129,7 +129,7 @@ def basicConfig(config: BasicConfig | None = None, /, **kwargs: object) -> None:
     Notes
     -----
     ``format`` and ``datefmt`` are intentionally unsupported until formatter
-    customisation is implemented.
+    customization is implemented.
 
     Examples
     --------

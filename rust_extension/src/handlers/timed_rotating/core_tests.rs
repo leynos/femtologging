@@ -44,7 +44,7 @@ use super::test_helpers::utc_datetime;
     "first timed backup must be retained when backup_count is zero",
     "second timed backup must be retained when backup_count is zero"
 )]
-fn rotation_and_pruning_behavior(
+fn rotation_and_pruning_behaviour(
     #[case] backup_count: usize,
     #[case] create_notes_file: bool,
     #[case] expect_oldest_exists: bool,

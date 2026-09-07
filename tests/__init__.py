@@ -4,7 +4,7 @@ Contains unit tests for core logging functionality, integration tests for the
 Rust log bridge (log-compat), and BDD-style feature tests for end-to-end
 scenarios.
 
-Test Organisation
+Test Organization
 -----------------
 - Unit tests (test_*.py): Test individual components such as handlers,
   builders, filters, and configuration.
