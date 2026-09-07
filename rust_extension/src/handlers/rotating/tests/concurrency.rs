@@ -130,7 +130,6 @@ fn rotation_runs_on_worker_thread() {
     );
     let file = OpenOptions::new()
         .create(true)
-        .write(true)
         .append(true)
         .open(&path)
         .expect("log file must open");
@@ -176,7 +175,6 @@ fn rotation_keeps_producers_non_blocking() {
     );
     let file = OpenOptions::new()
         .create(true)
-        .write(true)
         .append(true)
         .open(&path)
         .expect("log file must open");

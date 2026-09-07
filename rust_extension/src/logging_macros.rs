@@ -286,7 +286,7 @@ mod tests {
         log_context::clear_log_context_for_test();
 
         {
-            let _guard = log_context::push_log_context_map(::std::collections::BTreeMap::from([(
+            log_context::push_log_context_map(::std::collections::BTreeMap::from([(
                 "trace_id".to_string(),
                 "abc123".to_string(),
             )]))
@@ -310,7 +310,7 @@ mod tests {
         log_context::clear_log_context_for_test();
 
         {
-            let _guard = log_context::push_log_context_map(::std::collections::BTreeMap::from([(
+            log_context::push_log_context_map(::std::collections::BTreeMap::from([(
                 "request_id".to_string(),
                 "from_context".to_string(),
             )]))
