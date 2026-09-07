@@ -46,18 +46,20 @@ pub(super) fn collecting_handler() -> Arc<CollectingHandler> {
 /// Enqueue one `QueuedRecord` per entry in `messages` on `tx`, all
 /// addressed to `handler`.
 ///
-/// Fallible so callers can `.expect()` at the panic boundary; the send
-/// only fails if the receiving end has been dropped.
+/// Fallible so callers can `.expect()` at the panic boundary; the send only
+/// fails if the receiving end has been dropped. Box the returned error because
+/// it owns the unsent record and would otherwise inflate every test's result.
 pub(super) fn enqueue_records(
     tx: &Sender<QueuedRecord>,
     handler: &Arc<dyn FemtoHandlerTrait>,
     messages: &[&str],
-) -> Result<(), SendError<QueuedRecord>> {
+) -> Result<(), Box<SendError<QueuedRecord>>> {
     for message in messages {
         tx.send(QueuedRecord {
             record: FemtoLogRecord::new("core", FemtoLevel::Info, message),
             handlers: vec![handler.clone()],
-        })?;
+        })
+        .map_err(Box::new)?;
     }
     Ok(())
 }
