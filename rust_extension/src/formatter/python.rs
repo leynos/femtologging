@@ -51,17 +51,19 @@ impl PythonFormatter {
         })
     }
 
+    fn clone_callable(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let guard = self.callable.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Python formatter mutex poisoned by prior panic",
+            )
+        })?;
+        Ok(guard.clone_ref(py))
+    }
+
     fn call(&self, record: &FemtoLogRecord) -> PyResult<String> {
         Python::attach(|py| {
             let payload = record_to_dict(py, record)?;
-            let callable = {
-                let guard = self.callable.lock().map_err(|_| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        "Python formatter mutex poisoned by prior panic",
-                    )
-                })?;
-                guard.clone_ref(py)
-            };
+            let callable = self.clone_callable(py)?;
             let result = callable.call1(py, (payload,))?;
             result.extract::<String>(py)
         })

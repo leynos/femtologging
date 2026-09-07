@@ -23,7 +23,7 @@ fn handle_log_record_dispatches() {
         ],
     };
 
-    FemtoLogger::handle_log_record(record);
+    FemtoLogger::handle_log_record(&record);
 
     let r1 = h1.collected();
     let r2 = h2.collected();
@@ -53,7 +53,7 @@ fn worker_thread_loop_processes_and_drains() {
     let h = Arc::new(CollectingHandler::new());
 
     let thread = std::thread::spawn(move || {
-        FemtoLogger::worker_thread_loop(rx, shutdown_rx);
+        FemtoLogger::worker_thread_loop(&rx, &shutdown_rx);
     });
 
     let handler = h.clone() as Arc<dyn FemtoHandlerTrait>;
@@ -97,7 +97,7 @@ fn worker_thread_loop_shutdown_exits_under_load() {
     });
 
     let worker = std::thread::spawn(move || {
-        FemtoLogger::worker_thread_loop(rx, shutdown_rx);
+        FemtoLogger::worker_thread_loop(&rx, &shutdown_rx);
         done_tx
             .send(())
             .expect("Failed to signal worker completion");

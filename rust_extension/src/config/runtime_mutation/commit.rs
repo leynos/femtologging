@@ -30,25 +30,23 @@ impl RuntimeConfigBuilder {
     pub(crate) fn prepare_commit(
         &self,
         py: Python<'_>,
-        before: RuntimeStateSnapshot,
+        before: &RuntimeStateSnapshot,
         built: BuiltRegistries,
     ) -> Result<RuntimeCommit, ConfigError> {
+        let BuiltRegistries { handlers, filters } = built;
         let mut handler_registry = before.handler_registry.clone();
-        handler_registry.extend(built.handlers);
+        handler_registry.extend(handlers);
         let mut filter_registry = before.filter_registry.clone();
-        filter_registry.extend(built.filters);
+        filter_registry.extend(filters);
 
         let mut logger_states = before.logger_states.clone();
-        let impacted = self.collect_impacted(&before);
+        let impacted = self.collect_impacted(before);
 
         self.apply_logger_mutations(&mut logger_states, &handler_registry, &filter_registry)?;
 
         let impacted_loggers = impacted
             .into_iter()
-            .map(|name| {
-                self.fetch_impacted_logger(py, &name)
-                    .map(|logger| (name, logger))
-            })
+            .map(|name| Self::fetch_impacted_logger(py, &name).map(|logger| (name, logger)))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(RuntimeCommit {
@@ -60,11 +58,7 @@ impl RuntimeConfigBuilder {
         })
     }
 
-    fn fetch_impacted_logger(
-        &self,
-        py: Python<'_>,
-        name: &str,
-    ) -> Result<Py<FemtoLogger>, ConfigError> {
+    fn fetch_impacted_logger(py: Python<'_>, name: &str) -> Result<Py<FemtoLogger>, ConfigError> {
         manager::get_logger(py, name)
             .map_err(|err| ConfigError::LoggerInit(format!("{name}: {err}")))
     }

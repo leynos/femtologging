@@ -1,8 +1,13 @@
 //! Python bindings for runtime mutation builders.
 
-use super::*;
+use std::collections::BTreeMap;
+
+use super::{CollectionMutation, LoggerMutationBuilder, RuntimeConfigBuilder};
 use crate::macros::AsPyDict;
-use pyo3::{Bound, IntoPyObjectExt, types::PyDict};
+use crate::{FemtoLevel, config::types::HandlerBuilder, filters::FilterBuilder};
+use pyo3::IntoPyObjectExt;
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 fn collection_to_pydict<'py, V: AsPyDict>(
     py: Python<'py>,
@@ -57,82 +62,61 @@ impl LoggerMutationBuilder {
     }
 
     #[pyo3(name = "with_level")]
-    fn py_with_level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
+    fn py_with_level(mut slf: PyRefMut<'_, Self>, level: FemtoLevel) -> PyRefMut<'_, Self> {
         slf.level = Some(level);
         slf
     }
 
     #[pyo3(name = "with_propagate")]
-    fn py_with_propagate<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        propagate: bool,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_propagate(mut slf: PyRefMut<'_, Self>, propagate: bool) -> PyRefMut<'_, Self> {
         slf.propagate = Some(propagate);
         slf
     }
 
     #[pyo3(name = "replace_handlers")]
-    fn py_replace_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_replace_handlers(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::replace(ids));
         slf
     }
 
     #[pyo3(name = "append_handlers")]
-    fn py_append_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_append_handlers(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::append(ids));
         slf
     }
 
     #[pyo3(name = "remove_handlers")]
-    fn py_remove_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_remove_handlers(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::remove(ids));
         slf
     }
 
     #[pyo3(name = "clear_handlers")]
-    fn py_clear_handlers<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
+    fn py_clear_handlers(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::Clear);
         slf
     }
 
     #[pyo3(name = "replace_filters")]
-    fn py_replace_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_replace_filters(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::replace(ids));
         slf
     }
 
     #[pyo3(name = "append_filters")]
-    fn py_append_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_append_filters(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::append(ids));
         slf
     }
 
     #[pyo3(name = "remove_filters")]
-    fn py_remove_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_remove_filters(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::remove(ids));
         slf
     }
 
     #[pyo3(name = "clear_filters")]
-    fn py_clear_filters<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
+    fn py_clear_filters(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::Clear);
         slf
     }
@@ -153,10 +137,10 @@ impl RuntimeConfigBuilder {
     fn py_with_handler<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
-        builder: Bound<'py, PyAny>,
+        builder: &'py Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let builder = builder.extract::<HandlerBuilder>()?;
-        slf.handlers.insert(id, builder);
+        let handler_builder = builder.extract::<HandlerBuilder>()?;
+        slf.handlers.insert(id, handler_builder);
         Ok(slf)
     }
 
@@ -164,28 +148,28 @@ impl RuntimeConfigBuilder {
     fn py_with_filter<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
-        builder: Bound<'py, PyAny>,
+        builder: &'py Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let builder = builder.extract::<FilterBuilder>()?;
-        slf.filters.insert(id, builder);
+        let filter_builder = builder.extract::<FilterBuilder>()?;
+        slf.filters.insert(id, filter_builder);
         Ok(slf)
     }
 
     #[pyo3(name = "with_logger")]
-    fn py_with_logger<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_logger(
+        mut slf: PyRefMut<'_, Self>,
         name: String,
         builder: LoggerMutationBuilder,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.loggers.insert(name, builder);
         slf
     }
 
     #[pyo3(name = "with_root_logger")]
-    fn py_with_root_logger<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_root_logger(
+        mut slf: PyRefMut<'_, Self>,
         builder: LoggerMutationBuilder,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.root_logger = Some(builder);
         slf
     }

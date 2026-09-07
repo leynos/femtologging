@@ -4,7 +4,7 @@
 
 use super::*;
 use pyo3::Python;
-use pyo3::types::{PyBool, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyTuple};
 use rstest::rstest;
 
 // --------------------------------
@@ -18,6 +18,15 @@ fn create_py_exception<'py>(
     message: &str,
 ) -> PyResult<pyo3::Bound<'py, pyo3::PyAny>> {
     py.import("builtins")?.getattr(exc_type)?.call1((message,))
+}
+
+/// Construct positional logging arguments, propagating Python errors.
+fn log_args<'py>(
+    py: Python<'py>,
+    level: &str,
+    message: &str,
+) -> PyResult<pyo3::Bound<'py, PyTuple>> {
+    PyTuple::new(py, [level, message])
 }
 
 /// Assert that output contains the base log message and all expected substrings.
@@ -102,7 +111,7 @@ fn should_capture_exc_info_cases(
     #[case] description: &str,
 ) {
     Python::attach(|py| {
-        let result = match input {
+        let capture_result = match input {
             ExcInfoInput::True => {
                 let true_val = PyBool::new(py, true);
                 should_capture_exc_info(true_val.as_any())
@@ -141,7 +150,6 @@ fn should_capture_exc_info_cases(
             }
         };
 
-        let capture_result = result.expect("should_capture_exc_info should not fail");
         let expected_bool = expected == ExpectedCapture::Capture;
         assert_eq!(capture_result, expected_bool, "{description}");
     });
@@ -155,8 +163,10 @@ fn should_capture_exc_info_cases(
 fn py_log_basic_message() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
+        let args =
+            log_args(py, "INFO", "hello").expect("Python log arguments should be constructible");
         let result = logger
-            .py_log(py, FemtoLevel::Info, "hello", None, None)
+            .py_log(py, &args, None)
             .expect("py_log should not fail");
         assert_eq!(result, Some("test [INFO] hello".to_string()));
     });
@@ -167,8 +177,10 @@ fn py_log_filtered_by_level() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         logger.set_level(FemtoLevel::Error);
+        let args =
+            log_args(py, "INFO", "ignored").expect("Python log arguments should be constructible");
         let result = logger
-            .py_log(py, FemtoLevel::Info, "ignored", None, None)
+            .py_log(py, &args, None)
             .expect("py_log should not fail");
         assert!(
             result.is_none(),
@@ -219,14 +231,21 @@ fn py_log_exc_info_variation_cases(
             ),
         };
 
+        let args =
+            log_args(py, "ERROR", message).expect("Python log arguments should be constructible");
+        let keyword_args = PyDict::new(py);
+        if let Some(exc_info) = exc_info {
+            keyword_args
+                .set_item("exc_info", exc_info)
+                .expect("keyword argument insertion should succeed");
+        }
+        if let Some(stack_info) = stack_info {
+            keyword_args
+                .set_item("stack_info", stack_info)
+                .expect("keyword argument insertion should succeed");
+        }
         let result = logger
-            .py_log(
-                py,
-                FemtoLevel::Error,
-                message,
-                exc_info.as_ref(),
-                stack_info,
-            )
+            .py_log(py, &args, Some(&keyword_args))
             .expect("py_log should succeed");
 
         // expected contains newline-separated substrings to check
@@ -243,8 +262,14 @@ fn py_log_exc_info_variation_cases(
 fn py_log_with_stack_info_false() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
+        let args =
+            log_args(py, "INFO", "no stack").expect("Python log arguments should be constructible");
+        let keyword_args = PyDict::new(py);
+        keyword_args
+            .set_item("stack_info", false)
+            .expect("keyword argument insertion should succeed");
         let result = logger
-            .py_log(py, FemtoLevel::Info, "no stack", None, Some(false))
+            .py_log(py, &args, Some(&keyword_args))
             .expect("py_log should not fail with stack_info=false");
         assert_eq!(result, Some("test [INFO] no stack".to_string()));
     });
@@ -254,8 +279,14 @@ fn py_log_with_stack_info_false() {
 fn py_log_with_stack_info_true() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
+        let args = log_args(py, "INFO", "with stack")
+            .expect("Python log arguments should be constructible");
+        let keyword_args = PyDict::new(py);
+        keyword_args
+            .set_item("stack_info", true)
+            .expect("keyword argument insertion should succeed");
         let result = logger
-            .py_log(py, FemtoLevel::Info, "with stack", None, Some(true))
+            .py_log(py, &args, Some(&keyword_args))
             .expect("py_log should not fail with stack_info=true");
 
         assert_output_contains!(result, &["test [INFO] with stack", "Stack"]);

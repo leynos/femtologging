@@ -5,6 +5,8 @@
 //! provides a unified interface for formatting, while free functions maintain
 //! backward compatibility.
 
+use std::fmt::Write as _;
+
 use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 
 // ============================================================================
@@ -53,7 +55,12 @@ impl ExceptionFormat for StackFrame {
             return output;
         }
 
-        output.push_str(&format!("    {}\n", trimmed_end));
+        if output
+            .write_fmt(format_args!("    {trimmed_end}\n"))
+            .is_err()
+        {
+            return output;
+        }
         if let Some(underline) = build_column_underline(source, trimmed, self.colno, self.end_colno)
         {
             output.push_str(&underline);
@@ -70,12 +77,12 @@ fn build_column_underline(
     colno: Option<u32>,
     end_colno: Option<u32>,
 ) -> Option<String> {
-    let (colno, end_colno) = colno.zip(end_colno)?;
+    let (column, end_column) = colno.zip(end_colno)?;
 
     // Account for indentation removed by `trim_start`.
     let leading_trimmed = source.len() - trimmed_source.len();
-    let col_start = (colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
-    let col_end = (end_colno.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+    let col_start = (column.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
+    let col_end = (end_column.saturating_sub(1) as usize).saturating_sub(leading_trimmed);
     let underline_len = col_end.saturating_sub(col_start).max(1);
 
     Some(format!(
@@ -137,37 +144,45 @@ pub fn format_exception_payload(payload: &ExceptionPayload) -> String {
 
 /// Format exception chaining (cause or context) if present.
 fn format_exception_chain(payload: &ExceptionPayload) -> String {
-    if let Some(ref cause) = payload.cause {
-        let mut output = cause.format_exception();
-        output
-            .push_str("\nThe above exception was the direct cause of the following exception:\n\n");
-        output
-    } else if let Some(ref context) = payload.context
-        && !payload.suppress_context
-    {
-        let mut output = context.format_exception();
-        output
-            .push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
-        output
-    } else {
-        String::new()
-    }
+    payload.cause.as_ref().map_or_else(
+        || {
+            payload
+                .context
+                .as_ref()
+                .filter(|_| !payload.suppress_context)
+                .map_or_else(String::new, |context| {
+                    let mut output = context.format_exception();
+                    output.push_str(
+                        "\nDuring handling of the above exception, another exception occurred:\n\n",
+                    );
+                    output
+                })
+        },
+        |cause| {
+            let mut output = cause.format_exception();
+            output.push_str(
+                "\nThe above exception was the direct cause of the following exception:\n\n",
+            );
+            output
+        },
+    )
 }
 
 /// Format the exception header line (module, type, and message).
 fn format_exception_header(payload: &ExceptionPayload) -> String {
-    if let Some(ref module) = payload.module {
-        format!("{}.{}: {}\n", module, payload.type_name, payload.message)
-    } else {
-        format!("{}: {}\n", payload.type_name, payload.message)
-    }
+    payload.module.as_ref().map_or_else(
+        || format!("{}: {}\n", payload.type_name, payload.message),
+        |module| format!("{module}.{}: {}\n", payload.type_name, payload.message),
+    )
 }
 
 /// Format exception notes as indented lines.
 fn format_exception_notes(notes: &[String]) -> String {
     let mut output = String::new();
     for note in notes {
-        output.push_str(&format!("  {}\n", note));
+        if output.write_fmt(format_args!("  {note}\n")).is_err() {
+            return output;
+        }
     }
     output
 }
@@ -180,11 +195,19 @@ fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
 
     let mut output = String::from("  |\n");
     for (i, nested) in exceptions.iter().enumerate() {
-        output.push_str(&format!("  +---- [{}] ", i + 1));
+        let entry_number = i + 1;
+        if output
+            .write_fmt(format_args!("  +---- [{entry_number}] "))
+            .is_err()
+        {
+            return output;
+        }
         let nested_str = nested.format_exception();
         // Indent nested exception output
         for line in nested_str.lines() {
-            output.push_str(&format!("  |     {}\n", line));
+            if output.write_fmt(format_args!("  |     {line}\n")).is_err() {
+                return output;
+            }
         }
     }
     output

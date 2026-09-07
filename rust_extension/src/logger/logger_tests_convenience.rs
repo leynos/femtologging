@@ -5,9 +5,14 @@ use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use pyo3::Python;
-use pyo3::types::PyBool;
+use pyo3::types::{PyBool, PyDict, PyTuple};
 use rstest::rstest;
 use std::sync::Arc;
+
+/// Construct positional message arguments, propagating Python errors.
+fn message_args<'py>(py: Python<'py>, message: &str) -> PyResult<pyo3::Bound<'py, PyTuple>> {
+    PyTuple::new(py, [message])
+}
 
 /// Dispatch to the named convenience method on `FemtoLogger`.
 ///
@@ -19,13 +24,16 @@ fn call_py_log_method(
     method_name: &str,
     message: &str,
 ) -> PyResult<Option<String>> {
+    let args = message_args(py, message)?;
     match method_name {
-        "py_debug" => logger.py_debug(py, message, None, None),
-        "py_info" => logger.py_info(py, message, None, None),
-        "py_warning" => logger.py_warning(py, message, None, None),
-        "py_error" => logger.py_error(py, message, None, None),
-        "py_critical" => logger.py_critical(py, message, None, None),
-        _ => unreachable!("unknown convenience method: {method_name}"),
+        "py_debug" => logger.py_debug(py, &args, None),
+        "py_info" => logger.py_info(py, &args, None),
+        "py_warning" => logger.py_warning(py, &args, None),
+        "py_error" => logger.py_error(py, &args, None),
+        "py_critical" => logger.py_critical(py, &args, None),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown convenience method: {method_name}"
+        ))),
     }
 }
 
@@ -98,8 +106,10 @@ fn exception_omitted_exc_info_defaults_to_true() {
     // (capture finds nothing to attach).
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
+        let args = message_args(py, "no active exc")
+            .expect("Python log arguments should be constructible");
         let result = logger
-            .py_exception_impl(py, "no active exc", None, None)
+            .py_exception_impl(py, &args, None)
             .expect("exception() with omitted exc_info should not fail");
         assert_eq!(result, Some("test [ERROR] no active exc".to_string()));
     });
@@ -110,24 +120,36 @@ fn exception_with_explicit_exc_info_false() {
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let false_val = PyBool::new(py, false).to_owned().into_any();
+        let args =
+            message_args(py, "no capture").expect("Python log arguments should be constructible");
+        let keyword_args = PyDict::new(py);
+        keyword_args
+            .set_item("exc_info", false_val)
+            .expect("keyword argument insertion should succeed");
         let result = logger
-            .py_exception_impl(py, "no capture", Some(&false_val.as_borrowed()), None)
+            .py_exception_impl(py, &args, Some(&keyword_args))
             .expect("exception(exc_info=False) should not fail");
         assert_eq!(result, Some("test [ERROR] no capture".to_string()));
     });
 }
 
 #[test]
-fn exception_with_explicit_python_none_suppresses_capture() {
-    // Passing an actual Python None bound object for exc_info (as opposed
-    // to Rust None meaning "omitted") should suppress exception capture.
-    // This path is only reachable from Rust tests — in Python, PyO3 maps
-    // both omitted and explicit None to Rust None.
+fn exception_with_explicit_python_none_uses_default_capture() {
+    // The typed PyO3 signature historically mapped both explicit Python None
+    // and omitted exc_info to Rust None, which means auto-capture remains the
+    // default for the private implementation. The Python wrapper converts an
+    // explicit None to False to preserve stdlib-compatible public behaviour.
     Python::attach(|py| {
         let logger = FemtoLogger::new("test".to_string());
         let none_val = py.None().into_bound(py).into_any();
+        let args =
+            message_args(py, "none passed").expect("Python log arguments should be constructible");
+        let keyword_args = PyDict::new(py);
+        keyword_args
+            .set_item("exc_info", none_val)
+            .expect("keyword argument insertion should succeed");
         let result = logger
-            .py_exception_impl(py, "none passed", Some(&none_val.as_borrowed()), None)
+            .py_exception_impl(py, &args, Some(&keyword_args))
             .expect("exception(exc_info=<Python None>) should not fail");
         assert_eq!(result, Some("test [ERROR] none passed".to_string()));
     });
@@ -144,8 +166,10 @@ fn convenience_methods_merge_scoped_context() {
 
         let _guard = log_context::push_log_context([("request_id", "123")])
             .expect("context push should succeed");
+        let args =
+            message_args(py, "message").expect("Python log arguments should be constructible");
         let result = logger
-            .py_info(py, "message", None, None)
+            .py_info(py, &args, None)
             .expect("py_info should not fail");
         assert!(result.is_some());
         assert!(logger.flush_handlers());

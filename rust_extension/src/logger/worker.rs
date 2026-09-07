@@ -19,6 +19,7 @@ use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger, QueuedRecord};
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
+    #[must_use]
     pub fn with_parent(name: String, parent: Option<String>) -> Self {
         let formatter = SharedFormatter::new(DefaultFormatter);
         let handlers: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoHandlerTrait>>>> =
@@ -29,7 +30,7 @@ impl FemtoLogger {
         let (tx, rx) = bounded::<QueuedRecord>(DEFAULT_CHANNEL_CAPACITY);
         let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
         let handle = thread::spawn(move || {
-            Self::worker_thread_loop(rx, shutdown_rx);
+            Self::worker_thread_loop(&rx, &shutdown_rx);
         });
 
         Self {
@@ -49,7 +50,7 @@ impl FemtoLogger {
     }
 
     /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
-    pub(crate) fn handle_log_record(job: QueuedRecord) {
+    pub(crate) fn handle_log_record(job: &QueuedRecord) {
         for h in &job.handlers {
             if let Err(err) = h.handle(job.record.clone()) {
                 warn!("FemtoLogger: handler reported an error: {err}");
@@ -68,7 +69,7 @@ impl FemtoLogger {
     /// * `rx` - Channel receiver holding pending log records.
     pub(crate) fn drain_remaining_records(rx: &Receiver<QueuedRecord>) {
         while let Ok(job) = rx.try_recv() {
-            Self::handle_log_record(job);
+            Self::handle_log_record(&job);
         }
     }
 
@@ -140,19 +141,19 @@ impl FemtoLogger {
     /// * `rx` - Channel receiver for incoming log records.
     /// * `shutdown_rx` - Channel receiver carrying the shutdown
     ///   signal, sent by [`FemtoLogger::drop`].
-    pub(crate) fn worker_thread_loop(rx: Receiver<QueuedRecord>, shutdown_rx: Receiver<()>) {
+    pub(crate) fn worker_thread_loop(rx: &Receiver<QueuedRecord>, shutdown_rx: &Receiver<()>) {
         loop {
-            if Self::should_shutdown_now(&shutdown_rx) {
-                Self::shutdown_and_drain(&rx);
+            if Self::should_shutdown_now(shutdown_rx) {
+                Self::shutdown_and_drain(rx);
                 break;
             }
             select! {
                 recv(shutdown_rx) -> _ => {
-                    Self::shutdown_and_drain(&rx);
+                    Self::shutdown_and_drain(rx);
                     break;
                 },
                 recv(rx) -> rec => match rec {
-                    Ok(job) => Self::handle_log_record(job),
+                    Ok(job) => Self::handle_log_record(&job),
                     Err(_) => break,
                 },
             }

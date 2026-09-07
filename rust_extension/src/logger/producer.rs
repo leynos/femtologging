@@ -3,19 +3,45 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
+use std::io::Write;
 use std::time::Duration;
 
 use crossbeam_channel::bounded;
 use log::warn;
 
 use crate::filters::FilterContext;
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
-use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+
+/// Handler used internally to acknowledge logger flush operations.
+struct FlushAckHandler {
+    ack: crossbeam_channel::Sender<()>,
+}
+
+impl FlushAckHandler {
+    #[must_use]
+    const fn new(ack: crossbeam_channel::Sender<()>) -> Self {
+        Self { ack }
+    }
+}
+
+impl FemtoHandlerTrait for FlushAckHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        if self.ack.send(()).is_err() {
+            // The flush caller has stopped waiting for this acknowledgement.
+        }
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -48,7 +74,7 @@ impl FemtoLogger {
 
     /// Log a message with explicit source location metadata.
     ///
-    /// Used by the [`femtolog_info!`] family of macros and the Python
+    /// Used by the `femtolog_info!` family of macros and the Python
     /// convenience functions to attach caller-captured source information
     /// (filename, line number, module path) to the record before filtering
     /// and dispatch.
@@ -79,7 +105,13 @@ impl FemtoLogger {
         match log_context::merge_context_values(&metadata.key_values) {
             Ok(merged_key_values) => metadata.key_values = merged_key_values,
             Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                let mut stderr = std::io::stderr().lock();
+                // A stderr failure cannot be reported through this logger without
+                // recursively attempting to log the same dropped record.
+                drop(writeln!(
+                    stderr,
+                    "FemtoLogger: dropping record due to invalid context payload: {err}"
+                ));
                 return None;
             }
         }
@@ -97,8 +129,8 @@ impl FemtoLogger {
     /// The record is filtered against the logger's level and filters before
     /// being enqueued for handler processing.
     #[cfg(any(feature = "log-compat", feature = "tracing-compat"))]
-    pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
-        let mut record = record;
+    pub(crate) fn dispatch_record(&self, record_to_dispatch: FemtoLogRecord) {
+        let mut record = record_to_dispatch;
         if !self.is_enabled_for(record.level()) {
             return;
         }

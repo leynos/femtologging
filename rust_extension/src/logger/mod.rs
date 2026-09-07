@@ -1,12 +1,7 @@
-//! Core logger implementation for the FemtoLogger system.
+//! Core logger implementation for the [`FemtoLogger`] system.
 //!
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
-#![allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
-
 mod convenience_methods;
 mod producer;
 mod py_handler;
@@ -16,23 +11,15 @@ mod runtime_mutation;
 mod worker;
 
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 use pyo3::{Py, PyAny};
-use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::log_context;
+use crate::handler::FemtoHandlerTrait;
 use crate::rate_limited_warner::RateLimitedWarner;
-#[cfg(feature = "python")]
-use crate::traceback_capture;
 
-use crate::{
-    formatter::SharedFormatter,
-    level::FemtoLevel,
-    log_record::{FemtoLogRecord, RecordMetadata},
-};
+use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
 use crossbeam_channel::Sender;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
@@ -42,39 +29,18 @@ use std::thread::JoinHandle;
 pub use py_handler::{PyHandler, validate_handler};
 // Re-exported for the parameterized tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
-#[cfg(feature = "python")]
-use python_helpers::capture_exception_payload;
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
+use python_helpers::{log_python_request, parse_log_call};
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 /// Record queued for processing by the worker thread.
 pub struct QueuedRecord {
+    /// Record to process on the worker thread.
     pub record: FemtoLogRecord,
+    /// Handlers captured when the record was queued.
     pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
 }
 
@@ -98,15 +64,12 @@ pub struct FemtoLogger {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 generates Python-exposed wrappers and signature shims with many parameters"
-)]
 #[pymethods]
 impl FemtoLogger {
     /// Create a new logger with the given name.
     #[new]
     #[pyo3(text_signature = "(name)")]
+    #[must_use]
     pub fn new(name: String) -> Self {
         Self::with_parent(name, None)
     }
@@ -126,71 +89,27 @@ impl FemtoLogger {
     ///   - A 3-tuple `(type, value, traceback)`: Use directly.
     /// - `stack_info`: If `True`, capture the current call stack.
     ///
+    /// # Errors
+    ///
+    /// Returns a Python error when the call does not match the documented
+    /// signature, its level is invalid, or exception capture fails.
+    ///
     /// # Returns
     ///
     /// The formatted log message if the record passes level and filter checks,
     /// otherwise `None`.
     #[pyo3(
         name = "log",
-        signature = (level, message, /, *, exc_info=None, stack_info=false),
+        signature = (*args, **kwargs),
         text_signature = "(self, level, message, /, *, exc_info=None, stack_info=False)"
     )]
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(
-            unused_variables,
-            reason = "py parameter is only used when python feature is enabled"
-        )
-    )]
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(
-            unused_mut,
-            reason = "record is only mutated when python feature is enabled"
-        )
-    )]
-    pub fn py_log(
+    pub fn py_log<'py>(
         &self,
-        py: Python<'_>,
-        level: FemtoLevel,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
+        py: Python<'py>,
+        args: &Bound<'py, PyTuple>,
+        kwargs: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Option<String>> {
-        if !self.is_enabled_for(level) {
-            return Ok(None);
-        }
-        let explicit_key_values = BTreeMap::new();
-        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
-            Ok(key_values) => key_values,
-            Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return Ok(None);
-            }
-        };
-        let mut record = FemtoLogRecord::with_metadata(
-            &self.name,
-            level,
-            message,
-            RecordMetadata {
-                key_values: merged_key_values,
-                ..Default::default()
-            },
-        );
-
-        // Capture exception payload if exc_info is provided and truthy
-        #[cfg(feature = "python")]
-        if let Some(payload) = capture_exception_payload(py, exc_info)? {
-            record.set_exception_payload(payload);
-        }
-
-        // Capture stack payload if stack_info=True
-        #[cfg(feature = "python")]
-        if stack_info.unwrap_or(false) {
-            record.set_stack_payload(traceback_capture::capture_stack(py)?);
-        }
-
-        Ok(self.log_record(record))
+        log_python_request(self, py, &parse_log_call(args, kwargs)?)
     }
 
     /// Update the logger's minimum level.
@@ -225,6 +144,10 @@ impl FemtoLogger {
     }
 
     /// Attach a handler implemented in Python or Rust.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Python error when `handler` lacks a callable `handle` method.
     #[pyo3(name = "add_handler", text_signature = "(self, handler)")]
     pub fn py_add_handler(&self, handler: Py<PyAny>) -> PyResult<()> {
         Python::attach(|py| {
@@ -238,20 +161,21 @@ impl FemtoLogger {
 
     /// Remove a handler that was previously attached via `add_handler`.
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
-    pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
+    pub fn py_remove_handler(&self, handler: &Bound<'_, PyAny>) -> bool {
         Python::attach(|py| {
             let mut handlers = self.handlers.write();
             let matches_handler = |h: &Arc<dyn FemtoHandlerTrait>| {
                 h.as_any()
                     .downcast_ref::<PyHandler>()
-                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler))
             };
-            if let Some(pos) = handlers.iter().position(matches_handler) {
-                handlers.remove(pos);
-                true
-            } else {
-                false
-            }
+            handlers
+                .iter()
+                .position(matches_handler)
+                .is_some_and(|position| {
+                    handlers.remove(position);
+                    true
+                })
         })
     }
 
@@ -303,7 +227,7 @@ impl FemtoLogger {
         self.handlers
             .read()
             .iter()
-            .map(|h| Arc::as_ptr(h) as *const () as usize)
+            .map(|handler| Arc::as_ptr(handler).cast::<()>() as usize)
             .collect()
     }
 }
@@ -322,12 +246,13 @@ impl FemtoLogger {
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
-        if let Some(pos) = handlers.iter().position(|h| Arc::ptr_eq(h, handler)) {
-            handlers.remove(pos);
-            true
-        } else {
-            false
-        }
+        handlers
+            .iter()
+            .position(|current| Arc::ptr_eq(current, handler))
+            .is_some_and(|position| {
+                handlers.remove(position);
+                true
+            })
     }
 
     /// Remove all handlers from this logger.
@@ -339,16 +264,19 @@ impl FemtoLogger {
         self.handlers.write().clear();
     }
 
+    /// Detach a filter previously added to this logger.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
         let mut filters = self.filters.write();
-        if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
-            filters.remove(pos);
-            true
-        } else {
-            false
-        }
+        filters
+            .iter()
+            .position(|current| Arc::ptr_eq(current, filter))
+            .is_some_and(|position| {
+                filters.remove(position);
+                true
+            })
     }
 
+    /// Remove all attached filters from this logger.
     pub fn clear_filters(&self) {
         self.filters.write().clear();
     }
@@ -366,20 +294,23 @@ impl FemtoLogger {
     /// thread from exiting.
     #[cfg(feature = "test-util")]
     pub fn clone_sender_for_test(&self) -> Option<Sender<QueuedRecord>> {
-        self.tx.as_ref().cloned()
+        self.tx.clone()
     }
 }
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
+        if let Some(shutdown_tx) = self.shutdown_tx.take()
+            && shutdown_tx.send(()).is_err()
+        {
+            // The worker has already exited, but is still joined below so
+            // a panic can be observed and reported.
         }
         self.tx.take();
         // Drop the lock before joining the worker thread.
-        let handle = { self.handle.lock().take() };
-        if let Some(handle) = handle {
-            Python::attach(|py| py.detach(move || worker::log_join_result(handle)));
+        let worker_handle = { self.handle.lock().take() };
+        if let Some(handle_to_join) = worker_handle {
+            Python::attach(|py| py.detach(move || worker::log_join_result(handle_to_join)));
         }
     }
 }

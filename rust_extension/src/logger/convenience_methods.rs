@@ -8,38 +8,42 @@
 //! Unlike the stdlib, these methods accept a pre-formatted `message`
 //! string rather than `*args` / `**kwargs` lazy formatting.
 
-use pyo3::PyAny;
 use pyo3::prelude::*;
-use pyo3::types::PyBool;
+use pyo3::types::{PyBool, PyDict, PyTuple};
 
 use crate::level::FemtoLevel;
 
-use super::FemtoLogger;
+use super::{
+    FemtoLogger,
+    python_helpers::{log_python_request, parse_fixed_level_call},
+};
 
 /// Generate a convenience logging method that delegates to `py_log` with a
 /// fixed level.
 ///
-/// PyO3 does not allow macro invocations inside `#[pymethods]` blocks, so
+/// `PyO3` does not allow macro invocations inside `#[pymethods]` blocks, so
 /// each call emits its own block (the `multiple-pymethods` Cargo feature is
 /// already enabled for exactly this reason).
 macro_rules! log_method {
     ($fn_name:ident, $py_name:literal, $level:expr, $doc:expr) => {
         #[pymethods]
         impl FemtoLogger {
-            #[doc = $doc]
+            #[doc = concat!(
+                $doc,
+                "\n\n# Errors\n\nReturns a Python error when the call does not match the documented signature or exception capture fails."
+            )]
             #[pyo3(
                         name = $py_name,
-                        signature = (message, /, *, exc_info=None, stack_info=false),
+                        signature = (*args, **kwargs),
                         text_signature = "(self, message, /, *, exc_info=None, stack_info=False)"
                     )]
-            pub fn $fn_name(
+            pub fn $fn_name<'py>(
                 &self,
-                py: Python<'_>,
-                message: &str,
-                exc_info: Option<&Bound<'_, PyAny>>,
-                stack_info: Option<bool>,
+                py: Python<'py>,
+                args: &Bound<'py, PyTuple>,
+                kwargs: Option<&Bound<'py, PyDict>>,
             ) -> PyResult<Option<String>> {
-                self.py_log(py, $level, message, exc_info, stack_info)
+                log_python_request(self, py, &parse_fixed_level_call($level, args, kwargs)?)
             }
         }
     };
@@ -158,12 +162,12 @@ impl FemtoLogger {
         self.is_enabled_for(level)
     }
 
-    /// Low-level implementation of ``exception()`` for the Python wrapper.
+    /// Low-level implementation of `exception()` for the Python wrapper.
     ///
-    /// When ``exc_info`` is omitted (Rust ``None``), the method substitutes
-    /// Python ``True`` to auto-capture the active exception.  A Python-level
-    /// wrapper in ``_compat.py`` uses a sentinel to distinguish an omitted
-    /// ``exc_info`` from an explicit ``None``, forwarding ``exc_info=True``
+    /// When `exc_info` is omitted (Rust `None`), the method substitutes
+    /// Python `True` to auto-capture the active exception.  A Python-level
+    /// wrapper in `_compat.py` uses a sentinel to distinguish an omitted
+    /// `exc_info` from an explicit `None`, forwarding `exc_info=True`
     /// only when the argument was genuinely omitted.
     ///
     /// # Examples
@@ -172,27 +176,27 @@ impl FemtoLogger {
     /// # Called via the Python wrapper, not directly:
     /// logger.exception("risky_call failed")
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a Python error when the call does not match the documented
+    /// signature or exception capture fails.
     #[pyo3(
         name = "_exception_impl",
-        signature = (message, /, *, exc_info=None, stack_info=false),
+        signature = (*args, **kwargs),
         text_signature = "(self, message, /, *, exc_info=True, stack_info=False)"
     )]
-    pub fn py_exception_impl(
+    pub fn py_exception_impl<'py>(
         &self,
-        py: Python<'_>,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
+        py: Python<'py>,
+        args: &Bound<'py, PyTuple>,
+        kwargs: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Option<String>> {
         // Omitted exc_info (Rust None) → default to Python True (auto-capture).
-        // Note: PyO3 maps both omitted and explicit exc_info=None from Python to
-        // Rust None, so callers should use exc_info=False to suppress capture.
-        match exc_info {
-            None => {
-                let py_true = PyBool::new(py, true).to_owned().into_any();
-                self.py_log(py, FemtoLevel::Error, message, Some(&py_true), stack_info)
-            }
-            Some(val) => self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info),
+        let mut request = parse_fixed_level_call(FemtoLevel::Error, args, kwargs)?;
+        if request.options.exc_info.is_none() {
+            request.options.exc_info = Some(PyBool::new(py, true).to_owned().into_any());
         }
+        log_python_request(self, py, &request)
     }
 }

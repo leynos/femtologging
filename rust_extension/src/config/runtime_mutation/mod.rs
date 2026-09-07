@@ -18,11 +18,18 @@ use super::{ConfigError, types::HandlerBuilder};
 
 mod collection_mutation;
 mod commit;
+mod helpers;
 mod validation;
 
 pub(crate) use collection_mutation::CollectionMutation;
 pub(crate) use commit::{BuiltRegistries, apply_commit, build_filters, build_handlers};
+use helpers::apply_mutation_to_logger;
 pub(crate) use validation::{collection_conflict, resolve_attachment_ids, validate_remove_ids};
+
+struct MutationRegistries<'a> {
+    handlers: &'a SharedHandlers,
+    filters: &'a SharedFilters,
+}
 
 /// Builder for structured runtime mutation of a single logger.
 ///
@@ -40,6 +47,8 @@ pub struct LoggerMutationBuilder {
 }
 
 impl LoggerMutationBuilder {
+    /// Create an empty logger mutation builder.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -62,8 +71,8 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        set(&mut self, mutation(ids));
+        let normalized_ids = Self::normalize_ids(ids);
+        set(&mut self, mutation(normalized_ids));
         self
     }
 
@@ -97,16 +106,22 @@ impl LoggerMutationBuilder {
         this
     }
 
-    pub fn with_level(mut self, level: FemtoLevel) -> Self {
+    /// Set the logger level for this mutation.
+    #[must_use]
+    pub const fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
     }
 
-    pub fn with_propagate(mut self, propagate: bool) -> Self {
+    /// Set the logger propagation flag for this mutation.
+    #[must_use]
+    pub const fn with_propagate(mut self, propagate: bool) -> Self {
         self.propagate = Some(propagate);
         self
     }
 
+    /// Replace the logger's handler attachments with `ids`.
+    #[must_use]
     pub fn replace_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -115,6 +130,8 @@ impl LoggerMutationBuilder {
         self.do_replace(ids, Self::set_handlers)
     }
 
+    /// Append handler attachments from `ids` to the logger.
+    #[must_use]
     pub fn append_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -123,6 +140,8 @@ impl LoggerMutationBuilder {
         self.do_append(ids, Self::set_handlers)
     }
 
+    /// Remove handler attachments from the logger.
+    #[must_use]
     pub fn remove_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -131,10 +150,14 @@ impl LoggerMutationBuilder {
         self.do_remove(ids, Self::set_handlers)
     }
 
+    /// Remove all handler attachments from the logger.
+    #[must_use]
     pub fn clear_handlers(self) -> Self {
         self.do_clear(Self::set_handlers)
     }
 
+    /// Replace the logger's filter attachments with `ids`.
+    #[must_use]
     pub fn replace_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -143,6 +166,8 @@ impl LoggerMutationBuilder {
         self.do_replace(ids, Self::set_filters)
     }
 
+    /// Append filter attachments from `ids` to the logger.
+    #[must_use]
     pub fn append_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -151,6 +176,8 @@ impl LoggerMutationBuilder {
         self.do_append(ids, Self::set_filters)
     }
 
+    /// Remove filter attachments from the logger.
+    #[must_use]
     pub fn remove_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -159,6 +186,8 @@ impl LoggerMutationBuilder {
         self.do_remove(ids, Self::set_filters)
     }
 
+    /// Remove all filter attachments from the logger.
+    #[must_use]
     pub fn clear_filters(self) -> Self {
         self.do_clear(Self::set_filters)
     }
@@ -208,10 +237,14 @@ pub(crate) struct LoggerScalarMutation {
 }
 
 impl RuntimeConfigBuilder {
+    /// Create an empty runtime configuration builder.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Register a handler builder under `id`.
+    #[must_use]
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
         B: Into<HandlerBuilder>,
@@ -220,22 +253,33 @@ impl RuntimeConfigBuilder {
         self
     }
 
+    /// Register a filter builder under `id`.
+    #[must_use]
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
     }
 
+    /// Register a logger mutation under `name`.
+    #[must_use]
     pub fn with_logger(mut self, name: impl Into<String>, builder: LoggerMutationBuilder) -> Self {
         self.loggers.insert(name.into(), builder);
         self
     }
 
+    /// Set the mutation for the root logger.
+    #[must_use]
     pub fn with_root_logger(mut self, builder: LoggerMutationBuilder) -> Self {
         self.root_logger = Some(builder);
         self
     }
 
     /// Apply the runtime mutation transactionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested mutations conflict, a builder
+    /// cannot be built, or a referenced logger attachment is unknown.
     pub fn apply(&self) -> Result<(), ConfigError> {
         self.validate()?;
         let built = BuiltRegistries {
@@ -245,7 +289,7 @@ impl RuntimeConfigBuilder {
 
         Python::attach(|py| {
             let before = crate::manager::snapshot_runtime_state();
-            let commit = self.prepare_commit(py, before, built)?;
+            let commit = self.prepare_commit(py, &before, built)?;
             apply_commit(py, &commit)?;
             Ok(())
         })
@@ -255,7 +299,7 @@ impl RuntimeConfigBuilder {
         if self.root_logger.is_some() && self.loggers.contains_key("root") {
             return Err(ConfigError::InvalidMutation(
                 "root logger cannot be mutated via both with_root_logger() and with_logger(\"root\", ...)"
-                    .to_string(),
+                    .to_owned(),
             ));
         }
         if let Some(root) = &self.root_logger {
@@ -286,7 +330,7 @@ impl RuntimeConfigBuilder {
             .map(|(name, _)| name.clone())
             .collect::<BTreeSet<_>>();
         if self.root_logger.is_some() {
-            impacted.insert("root".to_string());
+            impacted.insert(String::from("root"));
         }
         impacted.extend(self.loggers.keys().cloned());
         impacted
@@ -300,14 +344,12 @@ impl RuntimeConfigBuilder {
     ) -> Result<(), ConfigError> {
         let root_iter = self.root_logger.iter().map(|m| ("root", m));
         let named_iter = self.loggers.iter().map(|(n, m)| (n.as_str(), m));
+        let registries = MutationRegistries {
+            handlers: handler_registry,
+            filters: filter_registry,
+        };
         for (name, mutation) in root_iter.chain(named_iter) {
-            apply_mutation_to_logger(
-                name,
-                mutation,
-                logger_states,
-                handler_registry,
-                filter_registry,
-            )?;
+            apply_mutation_to_logger(name, mutation, logger_states, &registries)?;
         }
         Ok(())
     }
@@ -316,7 +358,7 @@ impl RuntimeConfigBuilder {
         let mut out = BTreeMap::new();
         if let Some(root) = &self.root_logger {
             out.insert(
-                "root".to_string(),
+                String::from("root"),
                 LoggerScalarMutation {
                     level: root.level,
                     propagate: root.propagate,
@@ -334,42 +376,6 @@ impl RuntimeConfigBuilder {
         }
         out
     }
-}
-
-fn apply_mutation_to_logger(
-    name: &str,
-    mutation: &LoggerMutationBuilder,
-    logger_states: &mut BTreeMap<String, LoggerAttachmentState>,
-    handler_registry: &SharedHandlers,
-    filter_registry: &SharedFilters,
-) -> Result<(), ConfigError> {
-    let existing = match logger_states.get(name).cloned() {
-        Some(existing) => existing,
-        None if requires_existing_baseline(&mutation.handlers)
-            || requires_existing_baseline(&mutation.filters) =>
-        {
-            return Err(ConfigError::InvalidMutation(format!(
-                "{name}: logger has no runtime metadata; Append/Remove require prior build_and_init()",
-            )));
-        }
-        None => LoggerAttachmentState::default(),
-    };
-    validate_remove_ids(existing.handler_ids(), &mutation.handlers)?;
-    validate_remove_ids(existing.filter_ids(), &mutation.filters)?;
-    let next = LoggerAttachmentState::new(
-        mutation.handlers.apply(existing.handler_ids()),
-        mutation.filters.apply(existing.filter_ids()),
-    );
-    resolve_attachment_ids(&next, handler_registry, filter_registry)?;
-    logger_states.insert(name.to_string(), next);
-    Ok(())
-}
-
-fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
-    matches!(
-        mutation,
-        CollectionMutation::Append(ids) | CollectionMutation::Remove(ids) if !ids.is_empty()
-    )
 }
 
 #[cfg(feature = "python")]

@@ -37,7 +37,7 @@ impl RecordMetadata {
         (
             SystemTime::now(),
             current.id(),
-            current.name().map(ToString::to_string),
+            current.name().map(String::from),
         )
     }
 }
@@ -57,6 +57,7 @@ impl Default for RecordMetadata {
     }
 }
 
+/// A log event together with its message, level, and structured metadata.
 #[derive(Clone, Debug)]
 pub struct FemtoLogRecord {
     /// Name of the logger that created this record.
@@ -76,43 +77,49 @@ pub struct FemtoLogRecord {
 impl FemtoLogRecord {
     /// Returns the logger name.
     #[inline]
-    pub fn logger(&self) -> &str {
-        &self.logger
+    #[must_use]
+    pub const fn logger(&self) -> &str {
+        self.logger.as_str()
     }
 
     /// Returns the log level.
     #[inline]
-    pub fn level(&self) -> FemtoLevel {
+    #[must_use]
+    pub const fn level(&self) -> FemtoLevel {
         self.level
     }
 
     /// Returns the log message.
     #[inline]
-    pub fn message(&self) -> &str {
-        &self.message
+    #[must_use]
+    pub const fn message(&self) -> &str {
+        self.message.as_str()
     }
 
     /// Returns a reference to the record metadata.
     #[inline]
-    pub fn metadata(&self) -> &RecordMetadata {
+    #[must_use]
+    pub const fn metadata(&self) -> &RecordMetadata {
         &self.metadata
     }
 
     /// Returns a mutable reference to the record metadata.
     #[inline]
-    pub(crate) fn metadata_mut(&mut self) -> &mut RecordMetadata {
+    pub(crate) const fn metadata_mut(&mut self) -> &mut RecordMetadata {
         &mut self.metadata
     }
 
     /// Returns a reference to the exception payload, if present.
     #[inline]
-    pub fn exception_payload(&self) -> Option<&ExceptionPayload> {
+    #[must_use]
+    pub const fn exception_payload(&self) -> Option<&ExceptionPayload> {
         self.exception_payload.as_ref()
     }
 
     /// Returns a reference to the stack trace payload, if present.
     #[inline]
-    pub fn stack_payload(&self) -> Option<&StackTracePayload> {
+    #[must_use]
+    pub const fn stack_payload(&self) -> Option<&StackTracePayload> {
         self.stack_payload.as_ref()
     }
 
@@ -133,6 +140,7 @@ impl FemtoLogRecord {
 
 impl FemtoLogRecord {
     /// Construct a new log record from logger `name`, `level`, and `message`.
+    #[must_use]
     pub fn new(logger: &str, level: FemtoLevel, message: &str) -> Self {
         Self {
             logger: logger.to_owned(),
@@ -145,6 +153,7 @@ impl FemtoLogRecord {
     }
 
     /// Construct a log record with explicit source location and key-values.
+    #[must_use]
     pub fn with_metadata(
         logger: &str,
         level: FemtoLevel,
@@ -170,7 +179,8 @@ impl FemtoLogRecord {
     /// This is a zero-cost accessor that returns the canonical level name
     /// (e.g., "INFO", "ERROR") without allocation.
     #[inline]
-    pub fn level_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn level_str(&self) -> &'static str {
         self.level.as_str()
     }
 

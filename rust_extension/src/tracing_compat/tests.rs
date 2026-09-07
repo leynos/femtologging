@@ -60,7 +60,7 @@ where
 #[case(tracing::Level::WARN, FemtoLevel::Warn)]
 #[case(tracing::Level::ERROR, FemtoLevel::Error)]
 fn level_mapping_is_direct(#[case] level: tracing::Level, #[case] expected: FemtoLevel) {
-    assert_eq!(FemtoTracingLayer::map_level(&level), expected);
+    assert_eq!(FemtoTracingLayer::map_level(level), expected);
 }
 
 #[rstest]
