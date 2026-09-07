@@ -290,6 +290,22 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
     Ok(payload.contains("type_name")? && payload.contains("message")?)
 }
 
+/// Filter an already parsed payload using the caller's filter options.
+///
+/// `filter_frames` owns the public Python API documentation and parses its
+/// positional and keyword arguments before calling this implementation helper.
+fn filter_payload(
+    py: Python<'_>,
+    payload: &Bound<'_, PyDict>,
+    options: &FilterOptions,
+) -> PyResult<Py<PyAny>> {
+    if is_exception_payload(payload)? {
+        filter_exception_payload(py, payload, options)
+    } else {
+        filter_stack_payload(py, payload, options)
+    }
+}
+
 /// Filter frames from a `stack_info` or `exc_info` payload.
 ///
 /// Parameters
@@ -320,19 +336,6 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
 ///         filtered = filter_frames(exc, exclude_logging=True, max_depth=10)
 ///         # Use filtered payload...
 /// ```
-fn filter_payload(
-    py: Python<'_>,
-    payload: &Bound<'_, PyDict>,
-    options: &FilterOptions,
-) -> PyResult<Py<PyAny>> {
-    if is_exception_payload(payload)? {
-        filter_exception_payload(py, payload, options)
-    } else {
-        filter_stack_payload(py, payload, options)
-    }
-}
-
-/// Filter frames from a `stack_info` or `exc_info` payload.
 ///
 /// `payload` may be supplied positionally or by keyword. The remaining
 /// filtering options are keyword-only, matching the documented Python API.
