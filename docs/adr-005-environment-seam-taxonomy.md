@@ -59,11 +59,13 @@ remedy, because Clippy prints the reason in the diagnostic:
 `[lints.clippy]` table, so the severity travels with the crate rather than
 living in one Clippy invocation.
 
-The `lint-env-policy` Make target then runs that lint over the whole crate:
+The `lint-env-policy` Make target then runs that lint over the whole crate,
+one Cargo invocation per feature selection:
 
 ```make
 ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
-ENV_POLICY_CLIPPY_FLAGS ?= --all-targets -- -A clippy::all -D clippy::disallowed_methods
+ENV_POLICY_CARGO_ARGS ?= --all-targets
+ENV_POLICY_LINT_ARGS ?= -A clippy::all -D clippy::disallowed_methods
 ```
 
 `--all-targets` reaches integration tests and benches. The lane list is what
@@ -78,18 +80,30 @@ linted, which is a deliberate limit: the policy bans a call outright rather
 than under a condition, so a violation cannot be reachable only under a
 combination and not under a lane that enables the feature it sits behind.
 
-Each lane's Clippy call ends with `|| exit 1`. A shell `for` loop reports the
-status of its last command, so without the guard a rejection in any lane but
-the last is discarded and the target exits 0. That is not a hypothetical: the
-`none` lane is the only one that compiles a `#[cfg(not(feature = ...))]` block,
-and it runs first.
+The lanes are walked by `scripts/lint_rust_lanes.py`, not by a shell loop in
+the Makefile. This is the second attempt at that walk and the reason for the
+change is worth recording. The first attempt was a `for` loop in the recipe,
+and a shell `for` loop reports the status of its last command, so a rejection
+in any earlier lane was discarded and the target exited 0. Only the `all` lane
+could fail it, which is the wrong one: `none` is the only lane that compiles a
+`#[cfg(not(feature = ...))]` block and it runs first. The gate did not gate.
+A `|| exit 1` guard on each call fixes it, but that guard is one character
+short of absent, invisible in review, and its loss looks exactly like success.
 
-`-A clippy::all` is deliberate and temporary: the feature lanes in `lint-rust`
-omit `--all-targets` because the test tree carries a backlog of unrelated
-Clippy findings, and clearing that backlog is issue #421's job. Silencing the
-rest of Clippy in this one target lets the environment policy govern test code
-today without absorbing that work. Once issue #421 lands, these flags fold into
-its lane list and this target retires.
+Moving the walk into a script per the estate's scripting standards makes the
+failure path ordinary code with ordinary tests:
+`scripts/tests/test_lint_rust_lanes.py` covers a failing first lane, a failing
+last lane, and the all-pass case with `cmd-mox` shimming `cargo`, so no Rust is
+compiled to exercise them. The script stops at the first failing lane and names
+it, so the log ends at the lane a contributor has to reproduce. `make lint`
+runs those tests before it trusts the driver.
+
+`-A clippy::all` is deliberate and temporary: the lanes in `lint-rust` omit
+`--all-targets` because the test tree carries a backlog of unrelated Clippy
+findings, and clearing that backlog is issue #421's job. Silencing the rest of
+Clippy in this one target lets the environment policy govern test code today
+without absorbing that work. Once issue #421 lands, these settings fold into
+its lane list.
 
 ### Seam selection
 
@@ -147,7 +161,9 @@ access is governed by the Python architecture and its own lint stack.
 - `rust_extension/tests/env_access_policy.rs` fails if any of the six entries
   leaves `clippy.toml`, if the manifest stops denying the lint, or if the
   policy target stops covering every target and feature, stops failing when a
-  lane fails, or drops out of `make lint`. It also compiles
+  lane fails, or drops out of `make lint`. The failure path is held at two
+  levels: the driver's own unit tests, and a test that runs the real
+  `make lint-env-policy` with a failing lane ahead of a passing one. It also compiles
   `tests/fixtures/env_policy_probe.rs` through `clippy-driver` under this
   crate's `clippy.toml` and checks that all six methods are rejected, that each
   diagnostic carries the remedy this ADR promises, and that the

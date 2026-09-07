@@ -213,9 +213,16 @@ runs first, applies that lint with `--all-targets` over one lane per feature:
 `none` for `--no-default-features`, `all` for `--all-features`, and one lane per
 declared feature enabling that feature alone. `--all-features` on its own would
 never compile a `#[cfg(not(feature = ...))]` block, so the `none` lane is not
-optional. Each lane's Clippy call ends with `|| exit 1`, without which a shell
-`for` loop would report only the last lane's status and the target would pass
-despite an earlier rejection.
+optional.
+
+The lanes are walked by `scripts/lint_rust_lanes.py`, which follows the estate
+scripting standards: a `uv` script block, Cyclopts reading `INPUT_`-prefixed
+environment variables, and plumbum invoking Cargo. It exits non-zero on the
+first failing lane and names it. That job used to be a shell `for` loop in the
+Makefile, which reports only its last command's status and so let an earlier
+lane's rejection pass silently. `make lint-lanes-test` runs the driver's own
+tests, which use `cmd-mox` to shim `cargo`, and `lint-rust` depends on it so
+the driver is proven before it is trusted.
 
 Adding a feature to `rust_extension/Cargo.toml` means adding its lane;
 `rust_extension/tests/env_access_policy.rs` derives the required lanes from the

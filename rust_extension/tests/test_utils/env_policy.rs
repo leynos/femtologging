@@ -139,8 +139,12 @@ const LINT_RUST: Recipe = Recipe("lint-rust");
 const LINT_ENV_POLICY: Recipe = Recipe("lint-env-policy");
 /// The feature lanes the policy is linted under.
 const FEATURE_LANES: Variable = Variable("ENV_POLICY_FEATURE_LANES");
-/// The Clippy flags every policy lane carries.
-const CLIPPY_FLAGS: Variable = Variable("ENV_POLICY_CLIPPY_FLAGS");
+/// The Cargo arguments every policy lane carries.
+const CARGO_ARGS: Variable = Variable("ENV_POLICY_CARGO_ARGS");
+/// The lint-driver arguments every policy lane carries.
+const LINT_ARGS: Variable = Variable("ENV_POLICY_LINT_ARGS");
+/// The script that walks the lanes.
+const LANES_SCRIPT: Variable = Variable("LINT_LANES_SCRIPT");
 
 /// The repository `Makefile`, embedded once and queried by name.
 pub(crate) struct Makefile(&'static str);
@@ -223,39 +227,57 @@ pub(crate) fn ensure_lanes_cover_every_feature(makefile: &Makefile) -> TestResul
     }
 }
 
-/// Fail unless the policy Clippy flags reach every target kind and deny the
-/// lint outright.
+/// Fail unless the policy lint reaches every target kind and denies the lint
+/// outright.
 pub(crate) fn ensure_flags_deny_the_policy(makefile: &Makefile) -> TestResult {
-    let (selection, rustc_flags) = makefile
-        .variable(CLIPPY_FLAGS)?
-        .split_once(" -- ")
-        .ok_or_else(|| "ENV_POLICY_CLIPPY_FLAGS must pass flags through to rustc".to_string())?;
-    if !selection
+    let cargo_args = makefile.variable(CARGO_ARGS)?;
+    if !cargo_args
         .split_whitespace()
         .any(|flag| flag == "--all-targets")
     {
-        return Err("ENV_POLICY_CLIPPY_FLAGS must lint every target kind".into());
+        return Err(format!(
+            "ENV_POLICY_CARGO_ARGS must lint every target kind, found {cargo_args:?}"
+        )
+        .into());
     }
-    let denials: Vec<&str> = rustc_flags.split_whitespace().collect();
+    let lint_args = makefile.variable(LINT_ARGS)?;
+    let denials: Vec<&str> = lint_args.split_whitespace().collect();
     if denials
         .windows(2)
         .all(|pair| pair != ["-D", DISALLOWED_METHODS_LINT])
     {
         return Err(format!(
-            "ENV_POLICY_CLIPPY_FLAGS must deny {DISALLOWED_METHODS_LINT}, found {rustc_flags:?}"
+            "ENV_POLICY_LINT_ARGS must deny {DISALLOWED_METHODS_LINT}, found {lint_args:?}"
         )
         .into());
     }
     Ok(())
 }
 
-/// Fail unless `make lint` still reaches the policy lane.
+/// Fail unless `make lint` still reaches the policy lane through the driver.
+///
+/// The lane walk lives in `scripts/lint_rust_lanes.py`, so the recipe has to
+/// hand that script the lane list and both argument sets, and `make lint` has
+/// to reach it.
 pub(crate) fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestResult {
     let policy_recipe = makefile.recipe(LINT_ENV_POLICY)?;
-    if !policy_recipe.contains("$(ENV_POLICY_CLIPPY_FLAGS)")
-        || !policy_recipe.contains("$(ENV_POLICY_FEATURE_LANES)")
-    {
-        return Err("lint-env-policy must drive Clippy from both policy variables".into());
+    for exported in [
+        "INPUT_LANES=\"$(ENV_POLICY_FEATURE_LANES)\"",
+        "INPUT_CARGO_ARGS=\"$(ENV_POLICY_CARGO_ARGS)\"",
+        "INPUT_LINT_ARGS=\"$(ENV_POLICY_LINT_ARGS)\"",
+    ] {
+        if !policy_recipe.contains(exported) {
+            return Err(format!("lint-env-policy must export {exported}").into());
+        }
+    }
+    if !policy_recipe.contains("uv run --script $(LINT_LANES_SCRIPT)") {
+        return Err("lint-env-policy must run the lane driver script".into());
+    }
+    let script = makefile.variable(LANES_SCRIPT)?;
+    if script != "scripts/lint_rust_lanes.py" {
+        return Err(
+            format!("LINT_LANES_SCRIPT must name the lane driver, found {script:?}").into(),
+        );
     }
     let rust_recipe = makefile.recipe(LINT_RUST)?;
     let prerequisites = rust_recipe
@@ -264,11 +286,13 @@ pub(crate) fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestRe
         .and_then(|header| header.split_once(':'))
         .map(|(_, rest)| rest)
         .ok_or_else(|| "lint-rust must declare its prerequisites".to_string())?;
-    if !prerequisites
-        .split_whitespace()
-        .any(|word| word == "lint-env-policy")
-    {
-        return Err("lint-rust must run the lint-env-policy lane".into());
+    for required in ["lint-env-policy", "lint-lanes-test"] {
+        if !prerequisites
+            .split_whitespace()
+            .any(|word| word == required)
+        {
+            return Err(format!("lint-rust must run {required}").into());
+        }
     }
     if !makefile.recipe(LINT)?.contains("$(MAKE) lint-rust") {
         return Err("lint must delegate the Rust lanes to lint-rust".into());
@@ -345,7 +369,7 @@ pub(crate) fn policy_lane_run_succeeds(lanes: &str) -> Fallible<bool> {
         .current_dir(repository_root()?)
         .arg("lint-env-policy")
         .arg(format!("ENV_POLICY_FEATURE_LANES={lanes}"))
-        .arg("ENV_POLICY_CLIPPY_FLAGS=--all-targets -- -A clippy::all")
+        .arg("ENV_POLICY_LINT_ARGS=-A clippy::all")
         .output()
         .map_err(|error| format!("run make lint-env-policy over lanes {lanes:?}: {error}"))?
         .status;
