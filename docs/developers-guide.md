@@ -205,7 +205,6 @@ pinned release through `uv tool run --from 'ty==$(TY_VERSION)' ty`. CI installs
 `uv` and the pinned Makeutil parser, then delegates formatting, linting, type
 checking, and tests to Makefile targets.
 
-
 ## Python linting
 
 `femtologging` runs Python linting as five tiers, all reachable through
@@ -329,7 +328,6 @@ rule set — is pinned by `tests/test_skylos_lint_contract.py` and
 the pinned `makeutil` executable (`makeutil parse Makefile`, emitting JSON)
 rather than matching Makefile text, so recording a new exception requires a
 conscious update to `tests/test_skylos_lint_contract.py`.
-
 
 ### Makeutil bootstrap
 
