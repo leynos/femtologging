@@ -254,23 +254,26 @@ pub(crate) fn ensure_flags_deny_the_policy(makefile: &Makefile) -> TestResult {
     Ok(())
 }
 
-/// Fail unless `make lint` still reaches the policy lane through the driver.
-///
-/// The lane walk lives in `scripts/lint_rust_lanes.py`, so the recipe has to
-/// hand that script the lane list and both argument sets, and `make lint` has
-/// to reach it.
-pub(crate) fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestResult {
-    let policy_recipe = makefile.recipe(LINT_ENV_POLICY)?;
-    for exported in [
-        "INPUT_LANES=\"$(ENV_POLICY_FEATURE_LANES)\"",
-        "INPUT_CARGO_ARGS=\"$(ENV_POLICY_CARGO_ARGS)\"",
-        "INPUT_LINT_ARGS=\"$(ENV_POLICY_LINT_ARGS)\"",
-    ] {
-        if !policy_recipe.contains(exported) {
-            return Err(format!("lint-env-policy must export {exported}").into());
-        }
+/// The Makefile variables the policy recipe must hand to the driver.
+const POLICY_EXPORTS: [&str; 3] = [
+    "INPUT_LANES=\"$(ENV_POLICY_FEATURE_LANES)\"",
+    "INPUT_CARGO_ARGS=\"$(ENV_POLICY_CARGO_ARGS)\"",
+    "INPUT_LINT_ARGS=\"$(ENV_POLICY_LINT_ARGS)\"",
+];
+
+/// The targets `lint-rust` must run before the Whitaker suite.
+const RUST_LINT_PREREQUISITES: [&str; 2] = ["lint-env-policy", "lint-lanes-test"];
+
+/// Fail unless the policy recipe hands the driver every input it needs.
+fn ensure_policy_recipe_drives_the_script(makefile: &Makefile) -> TestResult {
+    let recipe = makefile.recipe(LINT_ENV_POLICY)?;
+    let missing = POLICY_EXPORTS
+        .into_iter()
+        .find(|exported| !recipe.contains(exported));
+    if let Some(exported) = missing {
+        return Err(format!("lint-env-policy must export {exported}").into());
     }
-    if !policy_recipe.contains("uv run --script $(LINT_LANES_SCRIPT)") {
+    if !recipe.contains("uv run --script $(LINT_LANES_SCRIPT)") {
         return Err("lint-env-policy must run the lane driver script".into());
     }
     let script = makefile.variable(LANES_SCRIPT)?;
@@ -279,6 +282,11 @@ pub(crate) fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestRe
             format!("LINT_LANES_SCRIPT must name the lane driver, found {script:?}").into(),
         );
     }
+    Ok(())
+}
+
+/// Fail unless `make lint` reaches the policy recipe.
+fn ensure_lint_reaches_lint_rust(makefile: &Makefile) -> TestResult {
     let rust_recipe = makefile.recipe(LINT_RUST)?;
     let prerequisites = rust_recipe
         .lines()
@@ -286,18 +294,27 @@ pub(crate) fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestRe
         .and_then(|header| header.split_once(':'))
         .map(|(_, rest)| rest)
         .ok_or_else(|| "lint-rust must declare its prerequisites".to_string())?;
-    for required in ["lint-env-policy", "lint-lanes-test"] {
-        if !prerequisites
-            .split_whitespace()
-            .any(|word| word == required)
-        {
-            return Err(format!("lint-rust must run {required}").into());
-        }
+    let declared: Vec<&str> = prerequisites.split_whitespace().collect();
+    let missing = RUST_LINT_PREREQUISITES
+        .into_iter()
+        .find(|required| !declared.contains(required));
+    if let Some(required) = missing {
+        return Err(format!("lint-rust must run {required}, found {declared:?}").into());
     }
     if !makefile.recipe(LINT)?.contains("$(MAKE) lint-rust") {
         return Err("lint must delegate the Rust lanes to lint-rust".into());
     }
     Ok(())
+}
+
+/// Fail unless `make lint` still reaches the policy lane through the driver.
+///
+/// The lane walk lives in `scripts/lint_rust_lanes.py`, so the recipe has to
+/// hand that script the lane list and both argument sets, and `make lint` has
+/// to reach it.
+pub(crate) fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestResult {
+    ensure_policy_recipe_drives_the_script(makefile)?;
+    ensure_lint_reaches_lint_rust(makefile)
 }
 
 /// One `clippy::disallowed_methods` diagnostic: the method Clippy named and
