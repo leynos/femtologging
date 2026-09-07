@@ -240,6 +240,28 @@ findings at source. The only permitted `#[expect]` uses are narrowly scoped,
 reasoned exceptions for macro-expansion artefacts or genuine floating-point
 arithmetic. Do not add source-level `#[allow]` suppressions.
 
+## Whitaker Dylint suite
+
+`make lint` runs `lint-clippy` before `lint-whitaker`. The former runs Ruff,
+the Rust Clippy feature lanes, the all-target workspace check, and strict
+workspace documentation. The latter invokes Whitaker through the overridable
+`WHITAKER` variable. `WHITAKER_PACKAGES` defaults to `--workspace`, which
+selects every Cargo package. Whitaker's `--all` flag separately selects all
+discovered Dylint libraries, while `--all-targets --all-features` reaches the
+package targets and feature set.
+
+CI pins `whitaker-installer` to `0.2.7`, checks a restored binary's version,
+and caches only that executable. If locked `cargo binstall` fails, CI falls
+back to locked `cargo install`, then checks the installed version before
+running the installer to prepare the suite.
+
+The `no_std_fs_operations` exclusions in `rust_extension/dylint.toml` remain
+limited to the Python-compatible logging library and the two integration-test
+crates that stage ambient filesystem fixtures. The configuration records the
+reason for each entry. New ambient filesystem use must be capability-scoped or
+receive an equally specific documented exclusion; source-level lint attributes
+do not suppress this Whitaker lint.
+
 ## Benchmarking Documentation
 
 Benchmarking work is governed by
