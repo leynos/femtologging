@@ -28,7 +28,7 @@ class CapturingHandler(logging.Handler):
     """Handler that captures emitted LogRecords for test inspection."""
 
     def __init__(self) -> None:
-        """Initialise with an empty records list."""
+        """Initialize with an empty records list."""
         super().__init__()
         self.records: list[logging.LogRecord] = []
 

@@ -28,5 +28,9 @@ def test_generator_keeps_authored_code_visible(
     config = generator.render_config(tmp_path)
     patterns = tomllib.loads(config)["default"]["extend-ignore-re"]
     for example in ("`native_identifier`", "```rust\nnative_identifier\n```"):
-        assert not any(re.search(pattern, example) for pattern in patterns)
-    assert any(re.search(pattern, "rust-analyzer") for pattern in patterns)
+        assert not any(re.search(pattern, example) for pattern in patterns), (
+            f"authored code must remain visible to the spelling gate: {example!r}"
+        )
+    assert any(re.search(pattern, "rust-analyzer") for pattern in patterns), (
+        "the fixed external tool name must retain its spelling exemption"
+    )

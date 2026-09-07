@@ -93,7 +93,7 @@ def _materialize_sections(
 
 
 def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
-    """Reject a non-empty ``[formatters]`` section; customisation is unsupported."""
+    """Reject a non-empty ``[formatters]`` section; customization is unsupported."""
     fmt_section = sections.pop("formatters", None)
     if not fmt_section:
         return
@@ -288,7 +288,7 @@ def _expand_placeholders(value: str, defaults: cabc.Mapping[str, str]) -> str:
 
 
 def _parse_bool(raw: str | None) -> bool:
-    """Parse a stdlib-style boolean token, rejecting anything not recognised."""
+    """Parse a stdlib-style boolean token, rejecting anything not recognized."""
     if raw is None:
         return False
     value = raw.strip().lower()
