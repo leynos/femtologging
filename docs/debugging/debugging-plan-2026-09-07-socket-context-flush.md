@@ -71,7 +71,7 @@ flush assertion is not needed to prove record preservation.
 
 ______________________________________________________________________
 
-### H2: Native `PyHandler` dispatch still drops context before socket serialisation
+### H2: Native `PyHandler` dispatch still drops context before socket serialization
 
 **Claim**: The record is rebuilt or converted before the socket handler
 receives it, so the server payload lacks the scoped fields.
@@ -98,7 +98,7 @@ ______________________________________________________________________
 
 ## Recommended Execution Order
 
-1. **H1** — it is the cheapest test and distinguishes the test synchronisation
+1. **H1** — it is the cheapest test and distinguishes the test synchronization
    concern from context propagation.
 2. **H2** — the same observation proves or disproves the actual requirement.
 
