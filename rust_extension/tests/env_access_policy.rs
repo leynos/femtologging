@@ -112,11 +112,20 @@ fn manifest_denies_disallowed_methods() -> TestResult {
 /// driver call", and appending a second command failed with "must be one
 /// command, found 2".
 ///
-/// `lint` reaches `lint-rust` through a prerequisite, which cannot be wrapped
-/// or made conditional at all; a whole recipe command is accepted as the
-/// equivalent. Removing the prerequisite, and moving it into a wrapped
-/// command, both failed with "lint must run lint-rust as a prerequisite or as
-/// a command of its own, not inside a wrapper".
+/// `lint` reaches `lint-rust` through a prerequisite, which cannot be wrapped,
+/// prefixed or made conditional at all; a whole recipe command whose failure
+/// reaches Make is accepted as the equivalent. Removing the prerequisite,
+/// moving it into a wrapped command, and prefixing the command with `-` or
+/// `@-` all failed with "lint must run lint-rust as a prerequisite, or as a
+/// command of its own whose failure reaches Make". A `@` prefix alone is
+/// accepted, because it only suppresses echoing.
+///
+/// Mutation proof (2026-09-07), on the policy recipe's driver call: a `-`
+/// prefix, a `-@` prefix, `|| true`, `|| :`, `; true`, and a trailing pipe
+/// each failed with "lint-env-policy must let Make see the driver fail". Two
+/// of Make's three recipe prefixes are cosmetic and one is not: stripping `-`
+/// alongside `@` and `+` would have made `-$(MAKE) lint-rust` read as the
+/// real gate.
 #[test]
 fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
     let makefile = Makefile::embedded();

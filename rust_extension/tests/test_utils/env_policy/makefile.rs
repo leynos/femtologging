@@ -43,6 +43,71 @@ fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// One recipe command, and whether Make will see it fail.
+///
+/// The distinction matters because two of Make's three recipe prefixes are
+/// cosmetic and one is not. `@` suppresses echoing and `+` forces execution
+/// under `-n`; neither changes the outcome. `-` tells Make to ignore the
+/// command's exit status, so a gate prefixed with it reports success however
+/// it ends. Stripping all three alike would make `-$(MAKE) lint-rust` read
+/// identically to the real gate.
+#[derive(Debug)]
+pub(crate) struct RecipeCommand {
+    /// The command with its recipe prefixes removed.
+    pub(crate) text: String,
+    /// Whether a `-` prefix tells Make to ignore the exit status.
+    ignores_errors: bool,
+}
+
+impl RecipeCommand {
+    /// Parse one joined recipe line.
+    fn parse(line: &str) -> Self {
+        let trimmed = line.trim_start();
+        let prefixes: String = trimmed
+            .chars()
+            .take_while(|character| matches!(character, '@' | '-' | '+'))
+            .collect();
+        Self {
+            text: collapse_whitespace(&trimmed[prefixes.len()..]),
+            ignores_errors: prefixes.contains('-'),
+        }
+    }
+
+    /// Report whether this command's failure reaches Make.
+    ///
+    /// A command whose status is discarded is a gate in name only: it runs,
+    /// it can fail, and the target still succeeds.
+    pub(crate) fn status_reaches_make(&self) -> bool {
+        !self.ignores_errors && !discards_status(&self.text)
+    }
+}
+
+/// Shell fragments that swallow the preceding command's exit status.
+const STATUS_SWALLOWING_SUFFIXES: [&str; 6] = [
+    "|| true",
+    "|| :",
+    "|| /bin/true",
+    "; true",
+    "; :",
+    "|| exit 0",
+];
+
+/// Report whether a shell command discards the status of its real work.
+///
+/// `|| exit 1` is the opposite and passes: it propagates the failure. A
+/// pipeline reports only its last stage, so an earlier failure is masked;
+/// `||` is masked out first so it is not mistaken for a pipe.
+fn discards_status(text: &str) -> bool {
+    let trimmed = text.trim_end();
+    if STATUS_SWALLOWING_SUFFIXES
+        .into_iter()
+        .any(|suffix| trimmed.ends_with(suffix))
+    {
+        return true;
+    }
+    trimmed.replace("||", "").contains('|')
+}
+
 /// The repository `Makefile`, embedded once and queried by name.
 pub(crate) struct Makefile(&'static str);
 
@@ -74,14 +139,12 @@ impl Makefile {
     /// Return the recipe's commands, one per logical line.
     ///
     /// Backslash continuations are joined and interior whitespace collapsed,
-    /// so a command spread over several lines is one string. Make's recipe
-    /// prefixes (`@`, `-`, `+`) are stripped because they change reporting,
-    /// not what runs.
+    /// so a command spread over several lines is one string.
     ///
     /// Callers judge a whole command rather than searching the recipe text.
     /// A substring search is satisfied by `if false; then <command>; fi`,
     /// which certifies a target that runs nothing.
-    pub(crate) fn commands(&self, target: Recipe) -> Fallible<Vec<String>> {
+    pub(crate) fn commands(&self, target: Recipe) -> Fallible<Vec<RecipeCommand>> {
         let body = self.recipe(target)?;
         let mut commands = Vec::new();
         let mut current = String::new();
@@ -95,9 +158,7 @@ impl Makefile {
                 current.push(' ');
                 continue;
             }
-            commands.push(collapse_whitespace(
-                current.trim_start_matches(['@', '-', '+']),
-            ));
+            commands.push(RecipeCommand::parse(&current));
             current = String::new();
         }
         Ok(commands)
@@ -215,7 +276,15 @@ fn policy_command(makefile: &Makefile) -> Fallible<String> {
         )
         .into());
     }
-    Ok(commands.remove(0))
+    let command = commands.remove(0);
+    if !command.status_reaches_make() {
+        return Err(format!(
+            "lint-env-policy must let Make see the driver fail, found {:?}",
+            command.text
+        )
+        .into());
+    }
+    Ok(command.text)
 }
 
 /// Fail unless the policy recipe hands the driver every input it needs.
@@ -259,13 +328,13 @@ fn ensure_target_runs(makefile: &Makefile, parent: Recipe, child: &str) -> TestR
     if makefile
         .commands(parent)?
         .iter()
-        .any(|command| *command == delegation)
+        .any(|command| command.text == delegation && command.status_reaches_make())
     {
         return Ok(());
     }
     Err(format!(
-        "{parent_name} must run {child} as a prerequisite or as a command of its own, \
-         not inside a wrapper"
+        "{parent_name} must run {child} as a prerequisite, or as a command of its own \
+         whose failure reaches Make: not wrapped, not `-` prefixed, and not `|| true`"
     )
     .into())
 }
