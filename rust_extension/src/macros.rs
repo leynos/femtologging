@@ -2,7 +2,7 @@
 //!
 //! This module provides the `AsPyDict` trait and associated macros to generate
 //! consistent Python dictionary representations of configuration builder
-//! structs. The macros reduce boilerplate in PyO3 bindings whilst ensuring
+//! structs. The macros reduce boilerplate in `PyO3` bindings whilst ensuring
 //! uniform serialization behaviour across all builder types.
 
 use pyo3::IntoPyObjectExt;
@@ -43,7 +43,7 @@ pub(crate) fn set_opt<'py, T>(
     _py: Python<'py>,
     dict: &Bound<'py, PyDict>,
     key: &str,
-    opt: &Option<T>,
+    opt: Option<&T>,
 ) -> PyResult<()>
 where
     T: IntoPyObject<'py> + Clone,
@@ -58,7 +58,7 @@ pub(crate) fn set_opt_to_string<T: ToString>(
     _py: Python<'_>,
     dict: &Bound<'_, PyDict>,
     key: &str,
-    opt: &Option<T>,
+    opt: Option<&T>,
 ) -> PyResult<()> {
     if let Some(v) = opt {
         dict.set_item(key, v.to_string())?;
@@ -105,7 +105,7 @@ pub(crate) fn set_optmap<V: AsPyDict>(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
     key: &str,
-    opt: &Option<V>,
+    opt: Option<&V>,
 ) -> PyResult<()> {
     if let Some(v) = opt {
         dict.set_item(key, v.as_pydict(py)?)?;
@@ -126,14 +126,39 @@ where
 }
 
 macro_rules! impl_as_pydict {
-    ($ty:ty { $( $setter:ident $field:ident => $key:expr ),* $(,)? }) => {
+    ($ty:ty { $($entries:tt)* }) => {
         impl AsPyDict for $ty {
             fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
                 let d = pyo3::types::PyDict::new(py);
-                $(crate::macros::$setter(py, &d, $key, &self.$field)?;)*
+                impl_as_pydict!(@set self, py, d; $($entries)*);
                 crate::macros::dict_into_py(d, py)
             }
         }
+    };
+    (@set $slf:ident, $py:ident, $dict:ident;) => {};
+    (@set $slf:ident, $py:ident, $dict:ident;
+        set_optional $field:ident => $key:expr, $($rest:tt)*
+    ) => {
+        crate::macros::set_opt($py, &$dict, $key, $slf.$field.as_ref())?;
+        impl_as_pydict!(@set $slf, $py, $dict; $($rest)*);
+    };
+    (@set $slf:ident, $py:ident, $dict:ident;
+        set_optional_to_string $field:ident => $key:expr, $($rest:tt)*
+    ) => {
+        crate::macros::set_opt_to_string($py, &$dict, $key, $slf.$field.as_ref())?;
+        impl_as_pydict!(@set $slf, $py, $dict; $($rest)*);
+    };
+    (@set $slf:ident, $py:ident, $dict:ident;
+        set_optional_map $field:ident => $key:expr, $($rest:tt)*
+    ) => {
+        crate::macros::set_optmap($py, &$dict, $key, $slf.$field.as_ref())?;
+        impl_as_pydict!(@set $slf, $py, $dict; $($rest)*);
+    };
+    (@set $slf:ident, $py:ident, $dict:ident;
+        $setter:ident $field:ident => $key:expr, $($rest:tt)*
+    ) => {
+        crate::macros::$setter($py, &$dict, $key, &$slf.$field)?;
+        impl_as_pydict!(@set $slf, $py, $dict; $($rest)*);
     };
 }
 pub(crate) use impl_as_pydict;
@@ -153,7 +178,7 @@ macro_rules! py_setters {
             $(
             #[doc = $doc]
             #[pyo3(name = $py_name)]
-            fn $fname<'py>(mut slf: PyRefMut<'py, Self>, val: $ty) -> PyRefMut<'py, Self> {
+            fn $fname(mut slf: PyRefMut<'_, Self>, val: $ty) -> PyRefMut<'_, Self> {
                 slf.$field = $conv(val);
                 slf
             }

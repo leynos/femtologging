@@ -29,7 +29,7 @@ impl Default for RealClock {
 
 impl Clock for RealClock {
     fn now_millis(&self) -> u64 {
-        self.start.elapsed().as_millis() as u64
+        u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 }
 
@@ -51,13 +51,14 @@ pub struct RateLimitedWarner {
 
 impl RateLimitedWarner {
     /// Create a new [`RateLimitedWarner`] using the provided interval.
+    #[must_use]
     pub fn new(interval: Duration) -> Self {
         Self::with_clock(interval, Arc::new(RealClock::default()))
     }
 
     /// Create a new [`RateLimitedWarner`] with a custom clock.
     pub fn with_clock(interval: Duration, clock: Arc<dyn Clock>) -> Self {
-        let interval_ms = interval.as_millis() as u64;
+        let interval_ms = u64::try_from(interval.as_millis()).unwrap_or(u64::MAX);
         Self {
             last_warn: AtomicU64::new(u64::MAX),
             dropped: AtomicU64::new(0),
@@ -180,6 +181,23 @@ mod tests {
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1, 1]);
+    }
+
+    #[rstest]
+    fn oversized_interval_keeps_rate_limiting(clock: Arc<FakeClock>, mut warnings: Vec<u64>) {
+        let interval = Duration::from_millis(u64::MAX).saturating_add(Duration::from_millis(1));
+        let timer = Arc::clone(&clock);
+        let limiter = RateLimitedWarner::with_clock(interval, clock);
+        limiter.record_drop();
+        limiter.warn_if_due(|count| warnings.push(count));
+        timer.advance(1);
+        limiter.record_drop();
+        limiter.warn_if_due(|count| warnings.push(count));
+        assert_eq!(
+            warnings,
+            vec![1],
+            "an oversized interval must not wrap to zero"
+        );
     }
 
     #[rstest]

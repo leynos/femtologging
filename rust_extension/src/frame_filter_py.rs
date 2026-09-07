@@ -6,7 +6,7 @@
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::exception_schema::StackFrame;
 use crate::frame_filter::{
@@ -14,20 +14,25 @@ use crate::frame_filter::{
     exclude_logging_infrastructure, limit_frames,
 };
 
+#[path = "frame_filter_py_arguments.rs"]
+mod arguments;
+
+use arguments::FilterFramesRequest;
+
 /// Filter options encapsulating all filtering parameters.
 ///
 /// This struct groups related filter parameters to reduce function argument counts
 /// and improve code clarity.
-struct FilterOptions<'a> {
-    exclude_filenames: Option<&'a [String]>,
-    exclude_functions: Option<&'a [String]>,
+struct FilterOptions {
+    exclude_filenames: Option<Vec<String>>,
+    exclude_functions: Option<Vec<String>>,
     max_depth: Option<usize>,
     exclude_logging: bool,
 }
 
 /// Helper to extract an optional field with type error reporting.
 ///
-/// If the field is present but has the wrong type, returns a TypeError instead
+/// If the field is present but has the wrong type, returns a `TypeError` instead
 /// of silently dropping the value.
 fn extract_optional<'py, T>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<T>>
 where
@@ -38,12 +43,12 @@ where
         Some(v) => v
             .extract()
             .map(Some)
-            .map_err(|_| PyTypeError::new_err(format!("frame dict key '{}' has wrong type", key))),
+            .map_err(|_| PyTypeError::new_err(format!("frame dict key '{key}' has wrong type"))),
         None => Ok(None),
     }
 }
 
-/// Extract a StackFrame from a Python dict.
+/// Extract a `StackFrame` from a Python dict.
 fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
     let filename: String = dict
         .get_item("filename")?
@@ -81,7 +86,7 @@ fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
     })
 }
 
-/// Convert a StackFrame back to a Python dict.
+/// Convert a `StackFrame` back to a Python dict.
 fn stack_frame_to_dict<'py>(py: Python<'py>, frame: &StackFrame) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("filename", &frame.filename)?;
@@ -109,9 +114,8 @@ fn stack_frame_to_dict<'py>(py: Python<'py>, frame: &StackFrame) -> PyResult<Bou
 
 /// Extract frames from a payload dict's 'frames' key.
 fn extract_frames(payload: &Bound<'_, PyDict>) -> PyResult<Vec<StackFrame>> {
-    let frames_list = match payload.get_item("frames")? {
-        Some(list) => list,
-        None => return Ok(Vec::new()),
+    let Some(frames_list) = payload.get_item("frames")? else {
+        return Ok(Vec::new());
     };
 
     let list = frames_list
@@ -129,7 +133,7 @@ fn extract_frames(payload: &Bound<'_, PyDict>) -> PyResult<Vec<StackFrame>> {
     Ok(frames)
 }
 
-/// Convert a list of StackFrames back to a Python list of dicts.
+/// Convert a list of `StackFrame`s back to a Python list of dicts.
 fn frames_to_py_list<'py>(py: Python<'py>, frames: &[StackFrame]) -> PyResult<Bound<'py, PyList>> {
     let list = PyList::empty(py);
     for frame in frames {
@@ -139,18 +143,18 @@ fn frames_to_py_list<'py>(py: Python<'py>, frames: &[StackFrame]) -> PyResult<Bo
 }
 
 /// Apply filtering options to a list of frames.
-fn apply_filters(frames: Vec<StackFrame>, opts: &FilterOptions<'_>) -> Vec<StackFrame> {
+fn apply_filters(frames: Vec<StackFrame>, opts: &FilterOptions) -> Vec<StackFrame> {
     let mut result = frames;
 
     // Apply filename exclusions
-    if let Some(patterns) = opts.exclude_filenames {
-        let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
+    if let Some(patterns) = opts.exclude_filenames.as_deref() {
+        let pattern_refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
         result = exclude_by_filename(&result, &pattern_refs);
     }
 
     // Apply function exclusions
-    if let Some(patterns) = opts.exclude_functions {
-        let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
+    if let Some(patterns) = opts.exclude_functions.as_deref() {
+        let pattern_refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
         result = exclude_by_function(&result, &pattern_refs);
     }
 
@@ -167,13 +171,13 @@ fn apply_filters(frames: Vec<StackFrame>, opts: &FilterOptions<'_>) -> Vec<Stack
     result
 }
 
-/// Filter a stack_info payload dict.
+/// Filter a `stack_info` payload dict.
 ///
 /// Preserves all keys from the original payload, only updating the frames.
 fn filter_stack_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
-    opts: &FilterOptions<'_>,
+    opts: &FilterOptions,
 ) -> PyResult<Py<PyAny>> {
     let frames = extract_frames(payload)?;
     let had_frames_key = payload.contains("frames")?;
@@ -187,14 +191,14 @@ fn filter_stack_payload(
     Ok(result.into())
 }
 
-/// Filter an exc_info payload dict, recursively filtering cause/context/exceptions.
+/// Filter an `exc_info` payload dict, recursively filtering cause/context/exceptions.
 ///
 /// Preserves all keys from the original payload, only updating the frames
 /// and recursively filtering cause/context/exceptions.
 fn filter_exception_payload(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
-    opts: &FilterOptions<'_>,
+    opts: &FilterOptions,
 ) -> PyResult<Py<PyAny>> {
     let frames = extract_frames(payload)?;
     let had_frames_key = payload.contains("frames")?;
@@ -204,8 +208,7 @@ fn filter_exception_payload(
     let result = payload.copy()?;
 
     update_frames_item(py, &result, had_frames_key, &filtered)?;
-    filter_nested_exception(py, payload, &result, "cause", opts)?;
-    filter_nested_exception(py, payload, &result, "context", opts)?;
+    filter_nested_exceptions(py, payload, &result, opts)?;
     filter_exception_group(py, payload, &result, opts)?;
 
     Ok(result.into())
@@ -233,20 +236,21 @@ fn update_frames_item(
     Ok(())
 }
 
-/// Recursively filter a nested exception payload stored under `key`.
-fn filter_nested_exception(
+/// Recursively filter nested exception payloads stored under chain keys.
+fn filter_nested_exceptions(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
     result: &Bound<'_, PyDict>,
-    key: &str,
-    opts: &FilterOptions<'_>,
+    opts: &FilterOptions,
 ) -> PyResult<()> {
-    if let Some(nested) = payload.get_item(key)? {
-        let nested_dict = nested
-            .cast::<PyDict>()
-            .map_err(|_| PyTypeError::new_err(format!("'{key}' must be a dict")))?;
-        let filtered_nested = filter_exception_payload(py, nested_dict, opts)?;
-        result.set_item(key, filtered_nested)?;
+    for key in ["cause", "context"] {
+        if let Some(nested) = payload.get_item(key)? {
+            let nested_dict = nested
+                .cast::<PyDict>()
+                .map_err(|_| PyTypeError::new_err(format!("'{key}' must be a dict")))?;
+            let filtered_nested = filter_exception_payload(py, nested_dict, opts)?;
+            result.set_item(key, filtered_nested)?;
+        }
     }
     Ok(())
 }
@@ -256,7 +260,7 @@ fn filter_exception_group(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
     result: &Bound<'_, PyDict>,
-    opts: &FilterOptions<'_>,
+    opts: &FilterOptions,
 ) -> PyResult<()> {
     if let Some(exceptions) = payload.get_item("exceptions")? {
         let exceptions_list = exceptions
@@ -277,7 +281,7 @@ fn filter_exception_group(
 
 /// Detect whether a payload is an exception payload or stack payload.
 ///
-/// Exception payloads have 'type_name' and 'message' keys.
+/// Exception payloads have `type_name` and `message` keys.
 ///
 /// # Errors
 ///
@@ -286,19 +290,35 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
     Ok(payload.contains("type_name")? && payload.contains("message")?)
 }
 
-/// Filter frames from a stack_info or exc_info payload.
+/// Filter an already parsed payload using the caller's filter options.
+///
+/// `filter_frames` owns the public Python API documentation and parses its
+/// positional and keyword arguments before calling this implementation helper.
+fn filter_payload(
+    py: Python<'_>,
+    payload: &Bound<'_, PyDict>,
+    options: &FilterOptions,
+) -> PyResult<Py<PyAny>> {
+    if is_exception_payload(payload)? {
+        filter_exception_payload(py, payload, options)
+    } else {
+        filter_stack_payload(py, payload, options)
+    }
+}
+
+/// Filter frames from a `stack_info` or `exc_info` payload.
 ///
 /// Parameters
 /// ----------
 /// payload : dict
-///     The stack_info or exc_info dict from a log record.
-/// exclude_filenames : list[str], optional
+///     The `stack_info` or `exc_info` dict from a log record.
+/// `exclude_filenames` : list[str], optional
 ///     Filename patterns to exclude (substring matching).
-/// exclude_functions : list[str], optional
+/// `exclude_functions` : list[str], optional
 ///     Function name patterns to exclude (substring matching).
-/// max_depth : int, optional
+/// `max_depth` : int, optional
 ///     Maximum number of frames to retain (keeps most recent).
-/// exclude_logging : bool, default False
+/// `exclude_logging` : bool, default False
 ///     If True, exclude common logging infrastructure frames
 ///     (femtologging, logging module internals).
 ///
@@ -316,31 +336,29 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
 ///         filtered = filter_frames(exc, exclude_logging=True, max_depth=10)
 ///         # Use filtered payload...
 /// ```
+///
+/// `payload` may be supplied positionally or by keyword. The remaining
+/// filtering options are keyword-only, matching the documented Python API.
 #[pyfunction]
-#[pyo3(signature = (payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=false))]
+#[pyo3(signature = (*args, **kwargs))]
+#[pyo3(
+    text_signature = "(payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=False)"
+)]
 pub fn filter_frames(
-    py: Python<'_>,
-    payload: &Bound<'_, PyDict>,
-    exclude_filenames: Option<Vec<String>>,
-    exclude_functions: Option<Vec<String>>,
-    max_depth: Option<usize>,
-    exclude_logging: bool,
+    args: &Bound<'_, PyTuple>,
+    kwargs: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<Py<PyAny>> {
-    let opts = FilterOptions {
-        exclude_filenames: exclude_filenames.as_deref(),
-        exclude_functions: exclude_functions.as_deref(),
-        max_depth,
-        exclude_logging,
+    let request = FilterFramesRequest::from_python(args, kwargs)?;
+    let options = FilterOptions {
+        exclude_filenames: request.exclude_filenames,
+        exclude_functions: request.exclude_functions,
+        max_depth: request.max_depth,
+        exclude_logging: request.exclude_logging,
     };
-
-    if is_exception_payload(payload)? {
-        filter_exception_payload(py, payload, &opts)
-    } else {
-        filter_stack_payload(py, payload, &opts)
-    }
+    filter_payload(request.payload.py(), &request.payload, &options)
 }
 
-/// Return the list of filename patterns used by exclude_logging.
+/// Return the list of filename patterns used by `exclude_logging`.
 ///
 /// This is useful for inspecting or extending the default patterns.
 ///
@@ -356,3 +374,7 @@ pub fn get_logging_infrastructure_patterns() -> Vec<&'static str> {
 #[cfg(test)]
 #[path = "frame_filter_py_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "frame_filter_py_boundary_tests.rs"]
+mod boundary_tests;

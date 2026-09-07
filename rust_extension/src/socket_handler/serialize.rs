@@ -1,4 +1,4 @@
-//! MessagePack serialization helpers.
+//! `MessagePack` serialization helpers.
 
 use std::io;
 
@@ -45,7 +45,7 @@ impl<'a> From<&'a FemtoLogRecord> for SerializableRecord<'a> {
     }
 }
 
-/// Serialize a record into a MessagePack payload.
+/// Serialize a record into a `MessagePack` payload.
 pub fn serialize_record(record: &FemtoLogRecord) -> io::Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(128);
     let serializable = SerializableRecord::from(record);
@@ -63,7 +63,17 @@ pub fn frame_payload(payload: &[u8], max_size: usize) -> Option<Vec<u8>> {
     let len = u32::try_from(payload.len()).ok()?;
     let capacity = payload.len().checked_add(4)?;
     let mut framed = Vec::with_capacity(capacity);
-    framed.extend(len.to_be_bytes());
+    framed.extend(protocol_length_prefix(len));
     framed.extend_from_slice(payload);
     Some(framed)
+}
+
+/// Encode the fixed four-byte big-endian length prefix required by the socket protocol.
+fn protocol_length_prefix(length: u32) -> [u8; 4] {
+    [
+        u8::try_from(length >> 24).unwrap_or_default(),
+        u8::try_from((length >> 16) & 0xff).unwrap_or_default(),
+        u8::try_from((length >> 8) & 0xff).unwrap_or_default(),
+        u8::try_from(length & 0xff).unwrap_or_default(),
+    ]
 }

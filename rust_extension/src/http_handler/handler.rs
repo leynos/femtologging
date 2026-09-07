@@ -21,7 +21,7 @@ use super::{
 #[cfg_attr(feature = "python", pyclass)]
 /// Handler forwarding records to an HTTP endpoint.
 ///
-/// Supports URL-encoded form data (CPython parity) and JSON serialization.
+/// Supports URL-encoded form data (`CPython` parity) and JSON serialization.
 /// Uses exponential backoff for transient failures (5xx, 429, network errors)
 /// and drops records on permanent failures (4xx except 429).
 pub struct FemtoHTTPHandler {
@@ -38,6 +38,7 @@ pub struct FemtoHTTPHandler {
 
 impl FemtoHTTPHandler {
     /// Construct the handler from a configuration object.
+    #[must_use]
     pub fn with_config(config: HTTPHandlerConfig) -> Self {
         let flush_timeout = config.write_timeout;
         let warner = RateLimitedWarner::new(config.warn_interval);
@@ -62,7 +63,7 @@ impl FemtoHTTPHandler {
     }
 
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
-        self.tx.as_ref().cloned()
+        self.tx.clone()
     }
 
     fn request_shutdown(&mut self) {
@@ -73,7 +74,10 @@ impl FemtoHTTPHandler {
         if tx.send(HTTPCommand::Shutdown(ack_tx)).is_err() {
             return;
         }
-        let _ = ack_rx.recv_timeout(self.flush_timeout);
+        let Ok(()) = ack_rx.recv_timeout(self.flush_timeout) else {
+            // Shutdown remains bounded even when the worker cannot acknowledge it.
+            return;
+        };
     }
 
     fn join_worker(&mut self) {
@@ -165,6 +169,9 @@ impl Drop for FemtoHTTPHandler {
 impl std::fmt::Debug for FemtoHTTPHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FemtoHTTPHandler")
+            .field("tx", &self.tx)
+            .field("handle", &self.handle)
+            .field("warner", &"RateLimitedWarner")
             .field("flush_timeout", &self.flush_timeout)
             .finish()
     }

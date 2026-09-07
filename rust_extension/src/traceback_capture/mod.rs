@@ -11,7 +11,7 @@
 //! and [`capture_stack`] for `stack_info=True` support.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyTuple};
+use pyo3::types::{PyBool, PyBoolMethods, PyDict, PyTuple};
 
 use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackTracePayload};
 use crate::traceback_frames::extract_frames_from_stack_summary;
@@ -27,9 +27,7 @@ enum ExcInfoKind {
 }
 
 fn is_py_bool_true(exc_info: &Bound<'_, PyAny>) -> bool {
-    exc_info
-        .cast::<PyBool>()
-        .is_ok_and(|bool_value| bool_value.is_true())
+    exc_info.cast::<PyBool>().is_ok_and(PyBoolMethods::is_true)
 }
 
 fn is_py_bool_false(exc_info: &Bound<'_, PyAny>) -> bool {
@@ -80,7 +78,7 @@ fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<Ex
 ///
 /// # Errors
 ///
-/// Returns an error if Python calls fail or the exc_info format is invalid.
+/// Returns an error if Python calls fail or the `exc_info` format is invalid.
 pub fn capture_exception(
     py: Python<'_>,
     exc_info: &Bound<'_, PyAny>,
@@ -164,7 +162,7 @@ fn capture_from_exception_instance(
 /// Build an `ExceptionPayload` from a Python exception value and optional traceback.
 ///
 /// When `traceback` is provided, it takes precedence over `exc_value.__traceback__`.
-/// This is important for exc_info tuples where the exception's `__traceback__` may
+/// This is important for `exc_info` tuples where the exception's `__traceback__` may
 /// have been cleared but a valid traceback was passed explicitly.
 fn build_exception_payload(
     py: Python<'_>,

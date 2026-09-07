@@ -19,8 +19,8 @@ impl AsPyDict for HandlerBuilder {
 }
 
 impl_as_pydict!(FormatterBuilder {
-    set_opt format => "format",
-    set_opt datefmt => "datefmt",
+    set_optional format => "format",
+    set_optional datefmt => "datefmt",
 });
 
 py_setters!(FormatterBuilder {
@@ -29,8 +29,8 @@ py_setters!(FormatterBuilder {
 });
 
 impl_as_pydict!(LoggerConfigBuilder {
-    set_opt_to_string level => "level",
-    set_opt propagate => "propagate",
+    set_optional_to_string level => "level",
+    set_optional propagate => "propagate",
     set_vec filters => "filters",
     set_vec handlers => "handlers",
 });
@@ -47,12 +47,12 @@ py_setters!(LoggerConfigBuilder {
 impl_as_pydict!(ConfigBuilder {
     set_val version => "version",
     set_val disable_existing_loggers => "disable_existing_loggers",
-    set_opt_to_string default_level => "default_level",
+    set_optional_to_string default_level => "default_level",
     set_map formatters => "formatters",
     set_map filters => "filters",
     set_map handlers => "handlers",
     set_map loggers => "loggers",
-    set_optmap root_logger => "root",
+    set_optional_map root_logger => "root",
 });
 
 py_setters!(ConfigBuilder {

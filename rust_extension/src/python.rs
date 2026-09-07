@@ -13,11 +13,11 @@ pub(crate) fn fq_py_type(obj: &Bound<'_, PyAny>) -> String {
     let module = ty
         .getattr("__module__")
         .and_then(|m| m.extract::<String>())
-        .unwrap_or_else(|_| "<unknown>".to_string());
+        .unwrap_or_else(|_| "<unknown>".to_owned());
     let qualname = ty
         .getattr("__qualname__")
         .and_then(|n| n.extract::<String>())
-        .unwrap_or_else(|_| "<unknown>".to_string());
+        .unwrap_or_else(|_| "<unknown>".to_owned());
     if module == "builtins" {
         qualname
     } else {

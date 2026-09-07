@@ -72,7 +72,7 @@ impl super::FilterBuilderTrait for NameFilterBuilder {
 
 #[cfg(feature = "python")]
 impl_as_pydict!(NameFilterBuilder {
-    set_opt prefix => "prefix",
+    set_optional prefix => "prefix",
 });
 
 #[cfg(feature = "python")]

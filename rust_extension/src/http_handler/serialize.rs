@@ -1,9 +1,9 @@
 //! Serialization helpers for HTTP payloads.
 //!
-//! Provides URL-encoded form data (CPython `logging.HTTPHandler` default) and
+//! Provides URL-encoded form data (`CPython logging.HTTPHandler` default) and
 //! JSON serialization formats for log records.
 //!
-//! The URL encoding uses `+` for spaces to match CPython's `urllib.parse.urlencode`
+//! The URL encoding uses `+` for spaces to match `CPython`'s `urllib.parse.urlencode`
 //! behaviour (which uses `quote_plus` internally).
 
 use std::collections::HashSet;
@@ -104,10 +104,10 @@ fn emit_all_fields(
     Ok(())
 }
 
-/// Serialize a record to URL-encoded form data (CPython parity).
+/// Serialize a record to URL-encoded form data (`CPython` parity).
 ///
 /// This produces output compatible with `urllib.parse.urlencode(record.__dict__)`,
-/// using `+` for spaces as CPython's `urlencode` does by default.
+/// using `+` for spaces as `CPython`'s `urlencode` does by default.
 ///
 /// # Arguments
 ///
