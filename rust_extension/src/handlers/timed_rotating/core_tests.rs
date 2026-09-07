@@ -25,34 +25,21 @@ use super::core::TimedFileRotationStrategy;
 use super::schedule::TimedRotationSchedule;
 use super::test_helpers::utc_datetime;
 
+#[derive(Debug)]
+struct RotationPruningCase {
+    backup_count: usize,
+    create_notes_file: bool,
+    expect_oldest_exists: bool,
+    expect_recent_exists: bool,
+    notes_assertion_msg: &'static str,
+    oldest_assertion_msg: &'static str,
+    recent_assertion_msg: &'static str,
+}
+
 #[rstest]
-#[case::prunes_with_backup_count_1(
-    1,
-    true,
-    false,
-    true,
-    "non-rotated siblings must not be pruned as backups",
-    "oldest timed backup must be pruned",
-    "most recent timed backup must remain"
-)]
-#[case::retains_all_with_backup_count_0(
-    0,
-    false,
-    true,
-    true,
-    "",
-    "first timed backup must be retained when backup_count is zero",
-    "second timed backup must be retained when backup_count is zero"
-)]
-fn rotation_and_pruning_behaviour(
-    #[case] backup_count: usize,
-    #[case] create_notes_file: bool,
-    #[case] expect_oldest_exists: bool,
-    #[case] expect_recent_exists: bool,
-    #[case] notes_assertion_msg: &str,
-    #[case] oldest_assertion_msg: &str,
-    #[case] recent_assertion_msg: &str,
-) {
+#[case::prunes_with_backup_count_1(RotationPruningCase { backup_count: 1, create_notes_file: true, expect_oldest_exists: false, expect_recent_exists: true, notes_assertion_msg: "non-rotated siblings must not be pruned as backups", oldest_assertion_msg: "oldest timed backup must be pruned", recent_assertion_msg: "most recent timed backup must remain" })]
+#[case::retains_all_with_backup_count_0(RotationPruningCase { backup_count: 0, create_notes_file: false, expect_oldest_exists: true, expect_recent_exists: true, notes_assertion_msg: "", oldest_assertion_msg: "first timed backup must be retained when backup_count is zero", recent_assertion_msg: "second timed backup must be retained when backup_count is zero" })]
+fn rotation_and_pruning_behaviour(#[case] case: RotationPruningCase) {
     let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("timed.log");
     let notes_path = dir.path().join("timed.log.notes");
@@ -66,7 +53,7 @@ fn rotation_and_pruning_behaviour(
         start + Duration::seconds(4),
     ]);
     let mut strategy =
-        TimedFileRotationStrategy::new_with_clock(path.clone(), schedule, backup_count, clock);
+        TimedFileRotationStrategy::new_with_clock(path.clone(), schedule, case.backup_count, clock);
     let mut writer = BufWriter::new(
         OpenOptions::new()
             .create(true)
@@ -89,7 +76,7 @@ fn rotation_and_pruning_behaviour(
         .expect("second record must be written");
     writer.flush().expect("second flush must succeed");
 
-    if create_notes_file {
+    if case.create_notes_file {
         fs::write(&notes_path, "keep me").expect("sibling file must be created");
     }
 
@@ -100,22 +87,24 @@ fn rotation_and_pruning_behaviour(
         .expect("third record must be written");
     writer.flush().expect("third flush must succeed");
 
-    if create_notes_file {
-        assert!(notes_path.exists(), "{notes_assertion_msg}");
+    if case.create_notes_file {
+        assert!(notes_path.exists(), "{}", case.notes_assertion_msg);
     }
 
     let oldest_path = path.with_file_name("timed.log.2026-03-12_00-00-00");
     assert_eq!(
         oldest_path.exists(),
-        expect_oldest_exists,
-        "{oldest_assertion_msg}"
+        case.expect_oldest_exists,
+        "{}",
+        case.oldest_assertion_msg
     );
 
     let recent_path = path.with_file_name("timed.log.2026-03-12_00-00-02");
     assert_eq!(
         recent_path.exists(),
-        expect_recent_exists,
-        "{recent_assertion_msg}"
+        case.expect_recent_exists,
+        "{}",
+        case.recent_assertion_msg
     );
 }
 

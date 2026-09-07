@@ -239,7 +239,8 @@ mod tests {
     }
 
     #[rstest]
-    fn context_push_pop_round_trip(_isolated_context: ()) {
+    fn context_push_pop_round_trip(isolated_context: ()) {
+        let () = isolated_context;
         push_log_context_map(BTreeMap::from([("request_id".into(), "123".into())]))
             .expect("context push should succeed");
         let merged = merge_context_values(&BTreeMap::new()).expect("merge should succeed");
@@ -248,7 +249,8 @@ mod tests {
     }
 
     #[rstest]
-    fn nested_context_overrides_outer_keys(_isolated_context: ()) {
+    fn nested_context_overrides_outer_keys(isolated_context: ()) {
+        let () = isolated_context;
         push_log_context_map(BTreeMap::from([("user".into(), "outer".into())]))
             .expect("outer context should push");
         push_log_context_map(BTreeMap::from([("user".into(), "inner".into())]))
@@ -260,7 +262,8 @@ mod tests {
     }
 
     #[rstest]
-    fn explicit_values_override_context(_isolated_context: ()) {
+    fn explicit_values_override_context(isolated_context: ()) {
+        let () = isolated_context;
         push_log_context_map(BTreeMap::from([("request_id".into(), "ctx".into())]))
             .expect("context should push");
         let explicit = BTreeMap::from([("request_id".into(), "inline".into())]);
@@ -270,13 +273,15 @@ mod tests {
     }
 
     #[rstest]
-    fn pop_on_empty_stack_errors(_isolated_context: ()) {
+    fn pop_on_empty_stack_errors(isolated_context: ()) {
+        let () = isolated_context;
         let err = pop_log_context().expect_err("empty pop should fail");
         assert_eq!(err, LogContextError::EmptyContextStack);
     }
 
     #[rstest]
-    fn reject_key_too_long(_isolated_context: ()) {
+    fn reject_key_too_long(isolated_context: ()) {
+        let () = isolated_context;
         let long_key = "k".repeat(MAX_KEY_BYTES + 1);
         let err = push_log_context_map(BTreeMap::from([(long_key.clone(), "v".into())]))
             .expect_err("long key should fail");
@@ -291,7 +296,8 @@ mod tests {
     }
 
     #[rstest]
-    fn reject_too_many_keys(_isolated_context: ()) {
+    fn reject_too_many_keys(isolated_context: ()) {
+        let () = isolated_context;
         let context = (0..=MAX_CONTEXT_KEYS)
             .map(|index| (format!("k{index}"), String::from("v")))
             .collect::<BTreeMap<_, _>>();
@@ -306,7 +312,8 @@ mod tests {
     }
 
     #[rstest]
-    fn reject_value_too_long(_isolated_context: ()) {
+    fn reject_value_too_long(isolated_context: ()) {
+        let () = isolated_context;
         let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
         let err = push_log_context_map(BTreeMap::from([(String::from("ok"), long_value)]))
             .expect_err("long value should fail");
@@ -321,7 +328,8 @@ mod tests {
     }
 
     #[rstest]
-    fn reject_total_bytes_exceeded(_isolated_context: ()) {
+    fn reject_total_bytes_exceeded(isolated_context: ()) {
+        let () = isolated_context;
         let value_len = 300usize;
         let mut context = BTreeMap::new();
         for index in 0..60usize {

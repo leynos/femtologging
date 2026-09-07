@@ -33,7 +33,9 @@ fn frame_with_wrong_type_optional_field_degrades_to_none() {
             extract_frames_from_stack_summary(list.as_any()).expect("extraction should succeed");
 
         assert_eq!(frames.len(), 1);
-        let result = &frames[0];
+        let [result] = frames.as_slice() else {
+            panic!("exactly one frame should be extracted");
+        };
         assert_frame_required_fields(result, "test.py", 42, "test_func");
         // Wrong-type optional fields degrade to None
         assert_frame_optional_fields(result, ExpectedOptionalFields::default());
@@ -68,7 +70,9 @@ fn frame_with_explicit_none_optional_fields_degrades_to_none() {
             extract_frames_from_stack_summary(list.as_any()).expect("extraction should succeed");
 
         assert_eq!(frames.len(), 1);
-        let result = &frames[0];
+        let [result] = frames.as_slice() else {
+            panic!("exactly one frame should be extracted");
+        };
         assert_frame_required_fields(result, "test.py", 10, "my_func");
         // All optional fields should be None
         assert_frame_optional_fields(result, ExpectedOptionalFields::default());
@@ -128,7 +132,7 @@ fn extract_locals_with_non_mapping_locals_degrades_gracefully() {
     Python::attach(|py| {
         let frame_dict = base_frame_dict(py).expect("base frame dict should build");
         // Set locals to a list instead of a dict
-        let non_mapping_locals = PyList::new(py, &[1, 2, 3]).expect("list creation should succeed");
+        let non_mapping_locals = PyList::new(py, [1, 2, 3]).expect("list creation should succeed");
         frame_dict
             .set_item("locals", non_mapping_locals)
             .expect("set locals should succeed");

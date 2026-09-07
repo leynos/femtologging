@@ -91,7 +91,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn next_rollover_at(&self) -> DateTime<Utc> {
+    pub(crate) const fn next_rollover_at(&self) -> DateTime<Utc> {
         self.next_rollover_at
     }
 

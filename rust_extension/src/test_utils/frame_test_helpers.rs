@@ -5,7 +5,7 @@
 
 use crate::exception_schema::{ExceptionPayload, StackFrame};
 
-/// Create a StackFrame with the given filename, line number, and function name.
+/// Create a `StackFrame` with the given filename, line number, and function name.
 pub fn make_frame(filename: &str, lineno: u32, function: &str) -> StackFrame {
     StackFrame::new(filename, lineno, function)
 }
@@ -31,13 +31,8 @@ pub fn assert_frames_by_field<F>(
         expected_values.len()
     );
     assert_eq!(frames.len(), expected_len);
-    for (i, expected) in expected_values.iter().enumerate() {
-        assert_eq!(
-            field_extractor(&frames[i]),
-            *expected,
-            "Mismatch at index {}",
-            i
-        );
+    for (i, (frame, expected)) in frames.iter().zip(expected_values).enumerate() {
+        assert_eq!(field_extractor(frame), *expected, "Mismatch at index {i}");
     }
 }
 

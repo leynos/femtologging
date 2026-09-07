@@ -249,8 +249,13 @@ mod tests {
     ) -> PyResult<()> {
         let attr = module.getattr(attr_name)?;
         let value: &str = attr.extract()?;
-        assert_eq!(value, expected);
-        Ok(())
+        if value == expected {
+            Ok(())
+        } else {
+            Err(pyo3::exceptions::PyAssertionError::new_err(format!(
+                "expected {attr_name} to be {expected:?}, received {value:?}"
+            )))
+        }
     }
 
     #[rstest]

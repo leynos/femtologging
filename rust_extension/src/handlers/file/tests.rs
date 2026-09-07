@@ -14,7 +14,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
-
 #[derive(Clone, Default)]
 struct SharedBuf {
     buffer: Arc<Mutex<Vec<u8>>>,
@@ -90,7 +89,6 @@ impl RotationStrategy<Cursor<Vec<u8>>> for FlagRotation {
         Ok(false)
     }
 }
-
 #[test]
 fn builder_options_default_provides_noop_rotation() {
     let mut options: BuilderOptions<Cursor<Vec<u8>>> = BuilderOptions::default();
@@ -98,7 +96,6 @@ fn builder_options_default_provides_noop_rotation() {
     let mut writer = Cursor::new(Vec::new());
     assert!(options.rotation.before_write(&mut writer, "entry").is_ok());
 }
-
 #[test]
 fn builder_options_new_stores_rotation_and_barrier() {
     let flag = Arc::new(AtomicBool::new(false));
@@ -118,7 +115,6 @@ fn builder_options_new_stores_rotation_and_barrier() {
         .expect("rotation should succeed");
     assert!(flag.load(Ordering::SeqCst));
 }
-
 #[test]
 fn build_from_worker_invokes_rotation_strategy() {
     let buffer = SharedBuf::default();
@@ -167,22 +163,21 @@ fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, Femt
 type RecordOutcomeRx = mpsc::Receiver<Result<(), HandlerError>>;
 
 fn spawn_record_thread(
-    handler: Arc<FemtoFileHandler>,
+    handler: &Arc<FemtoFileHandler>,
     record: FemtoLogRecord,
 ) -> (Arc<Barrier>, RecordOutcomeRx, thread::JoinHandle<()>) {
     let (done_tx, done_rx) = mpsc::channel();
     let send_barrier = Arc::new(Barrier::new(2));
-    let h = Arc::clone(&handler);
+    let h = Arc::clone(handler);
     let sb = Arc::clone(&send_barrier);
     let handle = thread::spawn(move || {
         sb.wait();
         // Deliver the outcome to the test; a dropped receiver means the
         // test has already failed, so the send error is ignored.
-        let _ = done_tx.send(h.handle(record));
+        let _send_result = done_tx.send(h.handle(record));
     });
     (send_barrier, done_rx, handle)
 }
-
 #[test]
 fn worker_config_from_handlerconfig_copies_values() {
     use super::worker::DEFAULT_BATCH_CAPACITY;
@@ -198,7 +193,6 @@ fn worker_config_from_handlerconfig_copies_values() {
     assert_eq!(worker.flush_interval, 7);
     assert!(worker.start_barrier.is_none());
 }
-
 #[test]
 fn build_from_worker_wires_handler_components() {
     let buffer = SharedBuf::default();
@@ -253,10 +247,7 @@ fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::
 
     impl RotationStrategy<SharedBuf> for FailingRotation {
         fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<bool> {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failing rotation for test",
-            ))
+            Err(io::Error::other("failing rotation for test"))
         }
     }
 
@@ -277,34 +268,32 @@ fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::
         FemtoLevel::Info,
         "after rotation failure",
     ))?;
-    assert!(
-        handler.flush(),
-        "flush should succeed even if rotation reported an error",
-    );
+    if !handler.flush() {
+        return Err(io::Error::other("flush should succeed after rotation error").into());
+    }
     handler.close();
 
     let logs = take_logged_messages();
-    assert!(
-        logs.iter().any(|record| {
-            record.level == Level::Error
-                && record
-                    .message
-                    .contains("FemtoFileHandler rotation error; writing record without rotating")
-        }),
-        "rotation error should be logged"
-    );
+    if !logs.iter().any(|record| {
+        record.level == Level::Error
+            && record
+                .message
+                .contains("FemtoFileHandler rotation error; writing record without rotating")
+    }) {
+        return Err(io::Error::other("rotation error should be logged").into());
+    }
 
-    assert_eq!(buffer.contents()?, "core [INFO] after rotation failure\n");
+    if buffer.contents()? != "core [INFO] after rotation failure\n" {
+        return Err(io::Error::other("rotation failure record was not written").into());
+    }
     Ok(())
 }
-
 #[test]
 fn femto_file_handler_invalid_file_path() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("missing").join("out.log");
     assert!(FemtoFileHandler::new(&path).is_err());
 }
-
 #[rstest]
 #[case::zero_capacity(0, 1, "capacity must be greater than zero", "zero capacity")]
 #[case::zero_flush_interval(
@@ -351,24 +340,27 @@ fn femto_file_handler_queue_overflow_drop_policy() -> Result<(), Box<dyn std::er
 
     handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))?;
     let second = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
-    assert_eq!(second, Err(HandlerError::QueueFull));
+    if second != Err(HandlerError::QueueFull) {
+        return Err(io::Error::other("second record should be rejected as queue full").into());
+    }
     start_barrier.wait();
     drop(handler);
 
-    assert_eq!(buffer.contents()?, "core [INFO] first\n");
+    if buffer.contents()? != "core [INFO] first\n" {
+        return Err(io::Error::other("only first record should be written").into());
+    }
     Ok(())
 }
-
 #[test]
 fn femto_file_handler_queue_overflow_block_policy() {
-    let (buffer, start_barrier, handler) = setup_overflow_test(OverflowPolicy::Block);
-    handler
+    let (buffer, start_barrier, raw_handler) = setup_overflow_test(OverflowPolicy::Block);
+    raw_handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
         .expect("first record queued");
 
-    let handler = Arc::new(handler);
+    let handler = Arc::new(raw_handler);
     let (send_barrier, done_rx, t) = spawn_record_thread(
-        Arc::clone(&handler),
+        &handler,
         FemtoLogRecord::new("core", FemtoLevel::Info, "second"),
     );
 

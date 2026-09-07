@@ -25,6 +25,12 @@ fn base_logger_builder() -> (ConfigBuilder, LoggerConfigBuilder) {
     (builder, root)
 }
 
+/// The configuration mutation and logger setup for an unknown-reference case.
+struct UnknownIdCase {
+    add: fn(ConfigBuilder) -> ConfigBuilder,
+    config: LoggerConfigBuilder,
+}
+
 /// Fetch the logger named `name` and report its handler count.
 ///
 /// Fallible so callers can `.expect()` at the assertion site, keeping the
@@ -65,9 +71,10 @@ fn build_rejects_missing_root() {
 #[rstest]
 #[serial]
 fn build_accepts_default_version(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    let () = manager_reset;
     let (_, root) = base_logger_builder;
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
@@ -76,62 +83,66 @@ fn build_accepts_default_version(
 #[rstest]
 #[serial]
 fn shared_handler_attached_once(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    let () = manager_reset;
     Python::attach(|py| {
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["h"]);
-        let (builder, _root) = base_logger_builder;
-        let builder = builder
+        let (base_builder, _root) = base_logger_builder;
+        let configured_builder = base_builder
             .with_logger("first", logger_cfg.clone())
             .with_logger("second", logger_cfg);
-        builder.build_and_init().expect("build should succeed");
+        configured_builder
+            .build_and_init()
+            .expect("build should succeed");
         let first = manager::get_logger(py, "first").expect("get_logger('first') should succeed");
         let second =
             manager::get_logger(py, "second").expect("get_logger('second') should succeed");
         let h1 = first.borrow(py).handlers_for_test();
         let h2 = second.borrow(py).handlers_for_test();
+        let first_handler = h1.first().expect("first logger should have a handler");
+        let second_handler = h2.first().expect("second logger should have a handler");
         assert!(
-            Arc::ptr_eq(&h1[0], &h2[0]),
+            Arc::ptr_eq(first_handler, second_handler),
             "handler Arc pointers should be shared"
         );
     });
 }
 
 #[rstest]
-#[case::handler(
-    "handler",
-    |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
-    LoggerConfigBuilder::new().with_handlers(["missing"]),
-)]
-#[case::filter(
-    "filter",
-    |b: ConfigBuilder| {
-        b.with_filter(
+#[case::handler(UnknownIdCase {
+    add: |builder: ConfigBuilder| builder.with_handler("exists", StreamHandlerBuilder::stderr()),
+    config: LoggerConfigBuilder::new().with_handlers(["missing"]),
+})]
+#[case::filter(UnknownIdCase {
+    add: |builder: ConfigBuilder| {
+        builder.with_filter(
             "exists",
             FilterBuilder::Level(LevelFilterBuilder::new().with_max_level(FemtoLevel::Info)),
         )
     },
-    LoggerConfigBuilder::new().with_filters(["missing"]),
-)]
+    config: LoggerConfigBuilder::new().with_filters(["missing"]),
+})]
 #[serial]
 fn unknown_id_rejected(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-    #[case] _kind: &str,
-    #[case] add: fn(ConfigBuilder) -> ConfigBuilder,
-    #[case] cfg: LoggerConfigBuilder,
+    #[case] case: UnknownIdCase,
 ) {
+    let () = manager_reset;
     let (_, root) = base_logger_builder;
-    let builder = add(ConfigBuilder::new()
-        .with_root_logger(root)
-        .with_logger("child", cfg));
+    let builder = (case.add)(
+        ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_logger("child", case.config),
+    );
     let err = builder
         .build_and_init()
         .expect_err("build_and_init should fail for unknown id");
     if let ConfigError::UnknownIds(mut ids) = err {
         ids.sort();
-        assert_eq!(ids, vec!["missing".to_string()]);
+        assert_eq!(ids, vec!["missing".to_owned()]);
     } else {
         panic!("expected UnknownIds");
     }
@@ -140,9 +151,10 @@ fn unknown_id_rejected(
 #[rstest]
 #[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    let () = manager_reset;
     Python::attach(|py| {
         let (_, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
@@ -171,9 +183,10 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(
 #[rstest]
 #[serial]
 fn unknown_filter_id_rejected(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    let () = manager_reset;
     let (_, root) = base_logger_builder;
     let logger_cfg = LoggerConfigBuilder::new().with_filters(["missing"]);
     let builder = ConfigBuilder::new()
@@ -182,41 +195,40 @@ fn unknown_filter_id_rejected(
     let err = builder
         .build_and_init()
         .expect_err("build_and_init should fail for unknown filter id");
-    assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
+    assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_owned()]));
 }
 
 #[rstest]
-#[case::handler(
-    "handler",
-    |b: ConfigBuilder| b.with_handler("exists", StreamHandlerBuilder::stderr()),
-    LoggerConfigBuilder::new().with_handlers(["missing1", "missing2"]),
-)]
-#[case::filter(
-    "filter",
-    |b: ConfigBuilder| {
-        b.with_filter(
+#[case::handler(UnknownIdCase {
+    add: |builder: ConfigBuilder| builder.with_handler("exists", StreamHandlerBuilder::stderr()),
+    config: LoggerConfigBuilder::new().with_handlers(["missing1", "missing2"]),
+})]
+#[case::filter(UnknownIdCase {
+    add: |builder: ConfigBuilder| {
+        builder.with_filter(
             "exists",
             FilterBuilder::Level(LevelFilterBuilder::new().with_max_level(FemtoLevel::Info)),
         )
     },
-    LoggerConfigBuilder::new().with_filters(["missing1", "missing2"]),
-)]
+    config: LoggerConfigBuilder::new().with_filters(["missing1", "missing2"]),
+})]
 #[serial]
 fn multiple_unknown_ids_rejected(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-    #[case] _kind: &str,
-    #[case] add: fn(ConfigBuilder) -> ConfigBuilder,
-    #[case] cfg: LoggerConfigBuilder,
+    #[case] case: UnknownIdCase,
 ) {
+    let () = manager_reset;
     let (_, root) = base_logger_builder;
-    let builder = add(ConfigBuilder::new()
-        .with_root_logger(root)
-        .with_logger("child", cfg));
+    let builder = (case.add)(
+        ConfigBuilder::new()
+            .with_root_logger(root)
+            .with_logger("child", case.config),
+    );
     let err = builder.build_and_init().expect_err("should fail");
     if let ConfigError::UnknownIds(mut ids) = err {
         ids.sort();
-        assert_eq!(ids, vec!["missing1".to_string(), "missing2".to_string()]);
+        assert_eq!(ids, vec!["missing1".to_owned(), "missing2".to_owned()]);
     } else {
         panic!("expected UnknownIds");
     }
@@ -228,13 +240,14 @@ fn multiple_unknown_ids_rejected(
 #[rstest]
 #[serial]
 fn disable_existing_loggers_clears_unmentioned(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    let () = manager_reset;
     Python::attach(|py| {
-        let (builder, root) = base_logger_builder;
+        let (base_builder, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
-        let builder = builder
+        let configured_builder = base_builder
             .with_filter("f", FilterBuilder::Level(filt))
             .with_logger(
                 "stale",
@@ -242,7 +255,7 @@ fn disable_existing_loggers_clears_unmentioned(
                     .with_handlers(["h"])
                     .with_filters(["f"]),
             );
-        builder
+        configured_builder
             .build_and_init()
             .expect("initial build should succeed");
 
@@ -264,10 +277,11 @@ fn disable_existing_loggers_clears_unmentioned(
 )]
 #[serial]
 fn disable_existing_loggers_keeps_ancestors(
-    _gil_and_clean_manager: (),
+    #[from(gil_and_clean_manager)] manager_reset: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     ancestor_names: &[&str],
 ) {
+    let () = manager_reset;
     Python::attach(|py| {
         let (mut builder, root) = base_logger_builder;
         for name in ancestor_names {
@@ -300,7 +314,10 @@ fn disable_existing_loggers_keeps_ancestors(
 
 #[rstest]
 #[serial]
-fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) {
+fn default_level_configures_root_when_missing_level(
+    #[from(gil_and_clean_manager)] manager_reset: (),
+) {
+    let () = manager_reset;
     Python::attach(|py| {
         let builder = ConfigBuilder::new()
             .with_handler("stderr", StreamHandlerBuilder::stderr())
@@ -326,7 +343,8 @@ fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) 
 
 #[rstest]
 #[serial]
-fn default_level_applies_to_child_loggers(_gil_and_clean_manager: ()) {
+fn default_level_applies_to_child_loggers(#[from(gil_and_clean_manager)] manager_reset: ()) {
+    let () = manager_reset;
     Python::attach(|py| {
         let child_cfg = LoggerConfigBuilder::new().with_handlers(["console"]);
         let builder = ConfigBuilder::new()

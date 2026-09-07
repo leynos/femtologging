@@ -3,7 +3,12 @@
 //! Keeping the `PyO3` expansion in this private module leaves the file handler's
 //! Rust implementation and direct API in the parent module.
 
-use super::*;
+use pyo3::prelude::*;
+
+use super::{
+    DEFAULT_CHANNEL_CAPACITY, DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait,
+    FemtoLogRecord, HandlerConfig, open_log_file, policy, validate_params,
+};
 
 #[pymethods]
 impl FemtoFileHandler {

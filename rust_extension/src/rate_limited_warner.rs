@@ -158,11 +158,11 @@ mod tests {
         mut warnings: Vec<u64>,
         #[case] drop_count: u64,
     ) {
-        let (warner, _clock) = warner;
+        let (rate_limiter, _clock) = warner;
         for _ in 0..drop_count {
-            warner.record_drop();
+            rate_limiter.record_drop();
         }
-        warner.warn_if_due(|c| warnings.push(c));
+        rate_limiter.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![drop_count]);
     }
 
@@ -171,15 +171,15 @@ mod tests {
         mut warnings: Vec<u64>,
         warner: (RateLimitedWarner, Arc<FakeClock>),
     ) {
-        let (warner, clock) = warner;
-        warner.record_drop();
-        warner.warn_if_due(|c| warnings.push(c));
-        warner.record_drop();
-        warner.warn_if_due(|c| warnings.push(c));
+        let (rate_limiter, clock) = warner;
+        rate_limiter.record_drop();
+        rate_limiter.warn_if_due(|c| warnings.push(c));
+        rate_limiter.record_drop();
+        rate_limiter.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1]);
         clock.advance(1000);
-        warner.record_drop();
-        warner.warn_if_due(|c| warnings.push(c));
+        rate_limiter.record_drop();
+        rate_limiter.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1, 1]);
     }
 
@@ -205,9 +205,9 @@ mod tests {
         warner: (RateLimitedWarner, Arc<FakeClock>),
         mut warnings: Vec<u64>,
     ) {
-        let (warner, _) = warner;
-        warner.record_drop();
-        warner.flush(|c| warnings.push(c));
+        let (rate_limiter, _) = warner;
+        rate_limiter.record_drop();
+        rate_limiter.flush(|c| warnings.push(c));
         assert_eq!(warnings, vec![1]);
     }
 
@@ -216,8 +216,8 @@ mod tests {
         warner: (RateLimitedWarner, Arc<FakeClock>),
         mut warnings: Vec<u64>,
     ) {
-        let (warner, _) = warner;
-        warner.warn_if_due(|c| warnings.push(c));
+        let (rate_limiter, _) = warner;
+        rate_limiter.warn_if_due(|c| warnings.push(c));
         assert!(warnings.is_empty());
     }
 
@@ -226,8 +226,8 @@ mod tests {
         warner: (RateLimitedWarner, Arc<FakeClock>),
         mut warnings: Vec<u64>,
     ) {
-        let (warner, _) = warner;
-        warner.flush(|c| warnings.push(c));
+        let (rate_limiter, _) = warner;
+        rate_limiter.flush(|c| warnings.push(c));
         assert!(warnings.is_empty());
     }
 }

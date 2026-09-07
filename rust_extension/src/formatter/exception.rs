@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn format_stack_frame_with_source_line() {
         let mut frame = StackFrame::new("example.py", 5, "do_something");
-        frame.source_line = Some("    result = calculate()".to_string());
+        frame.source_line = Some("    result = calculate()".to_owned());
 
         let output = frame.format_exception();
 
@@ -259,14 +259,14 @@ mod tests {
     #[test]
     fn format_stack_frame_with_column_indicators() {
         let mut frame = StackFrame::new("test.py", 10, "func");
-        frame.source_line = Some("    x = foo()".to_string());
+        frame.source_line = Some("    x = foo()".to_owned());
         frame.colno = Some(9); // 1-indexed, pointing to 'foo'
         frame.end_colno = Some(14); // end of 'foo()'
 
         let output = frame.format_exception();
 
         // Should have underline indicators
-        assert!(output.contains("^"));
+        assert!(output.contains('^'));
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn format_exception_with_module() {
         let mut exception = ExceptionPayload::new("CustomError", "custom message");
-        exception.module = Some("myapp.errors".to_string());
+        exception.module = Some("myapp.errors".to_owned());
 
         let output = format_exception_payload(&exception);
 
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn format_exception_with_notes() {
         let mut exception = ExceptionPayload::new("ValueError", "bad value");
-        exception.notes = vec!["Note 1".to_string(), "Note 2".to_string()];
+        exception.notes = vec!["Note 1".to_owned(), "Note 2".to_owned()];
 
         let output = format_exception_payload(&exception);
 

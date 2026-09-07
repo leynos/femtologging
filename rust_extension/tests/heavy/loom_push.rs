@@ -28,7 +28,7 @@ fn loom_stream_push_delivery() {
         handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "msg2"));
         t.join().expect("Thread panicked");
         drop(handler);
-        let output = read_output(&buffer);
+        let output = read_output(&buffer).expect("buffer output should be valid UTF-8");
         let mut lines: Vec<_> = output.lines().collect();
         lines.sort();
         assert_eq!(lines, vec!["core [INFO] msg", "core [INFO] msg2"]);

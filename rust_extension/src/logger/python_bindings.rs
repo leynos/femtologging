@@ -2,7 +2,13 @@
 //!
 //! This module isolates generated Python method wrappers from the logger core.
 
-use super::*;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
+use std::sync::{Arc, atomic::Ordering};
+
+use super::{FemtoLogger, PyHandler, log_python_request, parse_log_call, validate_handler};
+use crate::handler::FemtoHandlerTrait;
+use crate::level::FemtoLevel;
 
 #[pymethods]
 impl FemtoLogger {

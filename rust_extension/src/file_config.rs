@@ -19,7 +19,10 @@ type ParsedSections = Vec<(String, SectionEntries)>;
 mod python_bindings {
     //! Python function wrappers for INI file configuration parsing.
 
-    use super::*;
+    use pyo3::exceptions::PyRuntimeError;
+    use pyo3::prelude::*;
+
+    use super::{ParsedSections, decode_contents, parse_sections, read_file_bytes};
 
     #[pyfunction]
     pub(crate) fn parse_ini_file(
@@ -156,6 +159,7 @@ mod tests {
     use pyo3::types::PyAnyMethods;
     use rstest::rstest;
     use std::ffi::CString;
+    use std::io::Write;
     use std::sync::Mutex;
     use tempfile::NamedTempFile;
 
@@ -163,7 +167,7 @@ mod tests {
 
     #[rstest]
     fn parses_sections_in_order() {
-        let contents = r#"[DEFAULT]
+        let contents = r"[DEFAULT]
 key = value
 
 [loggers]
@@ -171,11 +175,13 @@ keys = root
 
 [logger_root]
 level = INFO
-"#;
+";
         let parsed = parse_sections("config.ini", contents).expect("parse_sections succeeds");
         let names: Vec<_> = parsed.iter().map(|(name, _)| name).collect();
         assert_eq!(names, &["DEFAULT", "loggers", "logger_root"]);
-        assert_eq!(parsed[0].1[0], ("key".to_string(), "value".to_string()));
+        let default_section = parsed.first().expect("default section exists");
+        let first_entry = default_section.1.first().expect("default entry exists");
+        assert_eq!(first_entry, &("key".to_owned(), "value".to_owned()));
     }
 
     #[rstest]
@@ -190,7 +196,6 @@ level = INFO
     #[rstest]
     fn parse_ini_file_reads_from_disk() {
         let mut file = NamedTempFile::new().expect("create temp ini file");
-        use std::io::Write;
         writeln!(
             file,
             "[loggers]\nkeys = root\n\n[logger_root]\nlevel = INFO\nhandlers = console"
@@ -218,7 +223,6 @@ level = INFO
         let _guard = LOCALE_MUTATION_GUARD
             .lock()
             .expect("acquire locale mutation guard");
-        use std::io::Write;
         let mut file = NamedTempFile::new().expect("create temp ini file");
         file.write_all(
             b"[loggers]\nkeys = root\n\n[logger_root]\nlevel = INF\xC9\nhandlers = console",

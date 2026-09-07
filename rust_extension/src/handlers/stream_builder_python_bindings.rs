@@ -3,8 +3,18 @@
 //! The builder macro emits both direct Rust fluent methods and `PyO3` wrappers;
 //! keeping its invocation private isolates the generated Python expansion.
 
-use super::*;
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+#[cfg(feature = "python")]
+use super::HandlerBuilderTrait;
+use super::StreamHandlerBuilder;
 use crate::handlers::builder_macros::builder_methods;
+#[cfg(feature = "python")]
+use crate::macros::AsPyDict;
+#[cfg(feature = "python")]
+use crate::stream_handler::FemtoStreamHandler;
+use std::num::NonZeroU64;
 
 builder_methods! {
     impl StreamHandlerBuilder {

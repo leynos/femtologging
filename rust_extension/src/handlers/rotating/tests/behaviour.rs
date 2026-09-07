@@ -15,49 +15,53 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use tempfile::tempdir;
 
+struct RotationPredicateCase {
+    initial: &'static str,
+    buffered: &'static str,
+    message: &'static str,
+    max_bytes: u64,
+    should_rotate: bool,
+    backup_count: usize,
+}
+
 #[rstest]
-#[case::rotates_when_existing_file_and_next_record_exceed_budget(
-    "012345678901234567890123456789",
-    "",
-    "next",
-    34,
-    true,
-    1
-)]
-#[case::stays_below_threshold("012345678901234567890123456789", "", "next", 35, false, 1)]
-#[case::counts_buffered_bytes("seed\n", "pending", "next", 15, true, 1)]
-#[case::buffered_fits_exactly("seed\n", "pending", "next", 17, false, 1)]
-#[case::multibyte_overflows("", "", "😀", 4, true, 1)]
-#[case::multibyte_boundary("", "", "😀", 5, false, 1)]
-#[case::single_record_exceeds_limit("", "", "toolong", 5, true, 1)]
-#[case::rotation_disabled("", "", "message", 0, false, 0)]
-fn rotation_predicate_respects_byte_lengths(
-    #[case] initial: &str,
-    #[case] buffered: &str,
-    #[case] message: &str,
-    #[case] max_bytes: u64,
-    #[case] should_rotate: bool,
-    #[case] backup_count: usize,
-) {
+#[case::rotates_when_existing_file_and_next_record_exceed_budget(RotationPredicateCase { initial: "012345678901234567890123456789", buffered: "", message: "next", max_bytes: 34, should_rotate: true, backup_count: 1 })]
+#[case::stays_below_threshold(RotationPredicateCase { initial: "012345678901234567890123456789", buffered: "", message: "next", max_bytes: 35, should_rotate: false, backup_count: 1 })]
+#[case::counts_buffered_bytes(RotationPredicateCase { initial: "seed\n", buffered: "pending", message: "next", max_bytes: 15, should_rotate: true, backup_count: 1 })]
+#[case::buffered_fits_exactly(RotationPredicateCase { initial: "seed\n", buffered: "pending", message: "next", max_bytes: 17, should_rotate: false, backup_count: 1 })]
+#[case::multibyte_overflows(RotationPredicateCase { initial: "", buffered: "", message: "😀", max_bytes: 4, should_rotate: true, backup_count: 1 })]
+#[case::multibyte_boundary(RotationPredicateCase { initial: "", buffered: "", message: "😀", max_bytes: 5, should_rotate: false, backup_count: 1 })]
+#[case::single_record_exceeds_limit(RotationPredicateCase { initial: "", buffered: "", message: "toolong", max_bytes: 5, should_rotate: true, backup_count: 1 })]
+#[case::rotation_disabled(RotationPredicateCase { initial: "", buffered: "", message: "message", max_bytes: 0, should_rotate: false, backup_count: 0 })]
+fn rotation_predicate_respects_byte_lengths(#[case] test_case: RotationPredicateCase) {
+    let RotationPredicateCase {
+        initial,
+        buffered,
+        message,
+        max_bytes,
+        should_rotate,
+        backup_count,
+    } = test_case;
     let dir = tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("rotating.log");
-    let mut file = OpenOptions::new()
+    let mut seed_file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&path)
         .expect("log file must open for initial seed content");
-    file.write_all(initial.as_bytes())
+    seed_file
+        .write_all(initial.as_bytes())
         .expect("initial seed content must be written");
-    file.flush().expect("initial seed content must flush");
-    drop(file);
+    seed_file.flush().expect("initial seed content must flush");
+    drop(seed_file);
 
-    let file = OpenOptions::new()
+    let reopened_file = OpenOptions::new()
         .read(true)
         .write(true)
         .open(&path)
         .expect("log file must reopen for buffered content");
-    let mut writer = BufWriter::new(file);
+    let mut writer = BufWriter::new(reopened_file);
     writer
         .write_all(buffered.as_bytes())
         .expect("buffered content must be written");
@@ -251,28 +255,22 @@ fn before_write_reports_rotation_outcome() -> io::Result<()> {
     let mut writer = BufWriter::new(file);
     let mut strategy = FileRotationStrategy::new(path.clone(), 6, 1);
 
-    let rotated = strategy.before_write(&mut writer, "x")?;
-    assert!(rotated, "first append should trigger rotation");
-    assert_eq!(
-        strategy.take_last_outcome(),
-        RotationOutcome::Rotated,
-        "rotation must record success outcome"
-    );
+    let first_rotated = strategy.before_write(&mut writer, "x")?;
+    if !first_rotated || strategy.take_last_outcome() != RotationOutcome::Rotated {
+        return Err(io::Error::other(
+            "first append should record a successful rotation",
+        ));
+    }
 
     writer.write_all(b"x\n")?;
     writer.flush()?;
 
-    let rotated = strategy.before_write(&mut writer, "ok")?;
-    assert!(
-        !rotated,
-        "second append should not rotate once log is empty"
-    );
-    assert_eq!(
-        strategy.take_last_outcome(),
-        RotationOutcome::Skipped,
-        "subsequent call must record skipped outcome"
-    );
-
+    let second_rotated = strategy.before_write(&mut writer, "ok")?;
+    if second_rotated || strategy.take_last_outcome() != RotationOutcome::Skipped {
+        return Err(io::Error::other(
+            "second append should record a skipped rotation",
+        ));
+    }
     Ok(())
 }
 
@@ -290,26 +288,29 @@ fn rotate_falls_back_to_append_when_reopen_fails() -> io::Result<()> {
     let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
 
     let _guard = force_fresh_failure_once_for_test("once");
-    let rotated = strategy.before_write(&mut writer, "next")?;
-    assert!(
-        rotated,
-        "rotation must proceed even when fresh reopen fails"
-    );
+    if !strategy.before_write(&mut writer, "next")? {
+        return Err(io::Error::other(
+            "rotation must proceed after fresh reopen failure",
+        ));
+    }
     match strategy.take_last_outcome() {
-        RotationOutcome::RotatedWithAppendFallback { error } => assert_eq!(
-            error,
-            "simulated fresh writer failure for testing (once)".to_string()
-        ),
-        other => panic!("unexpected rotation outcome: {other:?}"),
+        RotationOutcome::RotatedWithAppendFallback { error }
+            if error == "simulated fresh writer failure for testing (once)" => {}
+        outcome => {
+            return Err(io::Error::other(format!(
+                "unexpected rotation outcome: {outcome:?}"
+            )));
+        }
     }
 
     writer.write_all(b"after\n")?;
     writer.flush()?;
-
     let backup = strategy.backup_path(1);
-    assert_eq!(fs::read_to_string(&backup)?, "seed\n");
-    assert_eq!(fs::read_to_string(&path)?, "after\n");
-
+    if fs::read_to_string(&backup)? != "seed\n" || fs::read_to_string(&path)? != "after\n" {
+        return Err(io::Error::other(
+            "fallback rotation did not preserve expected files",
+        ));
+    }
     Ok(())
 }
 
@@ -318,38 +319,32 @@ fn rotate_restores_writer_when_backup_rename_fails() -> io::Result<()> {
     let dir = tempdir()?;
     let path = dir.path().join("rotating.log");
     fs::write(&path, "seed\n")?;
-
     let conflicting = path.with_extension("log.1");
     fs::create_dir(&conflicting)?;
-
     let file = OpenOptions::new().read(true).write(true).open(&path)?;
     let mut writer = BufWriter::new(file);
     let mut strategy = FileRotationStrategy::new(path.clone(), 1, 1);
 
-    let err = strategy
-        .before_write(&mut writer, "trigger")
-        .expect_err("rename conflict should fail rotation");
-    assert_ne!(err.kind(), io::ErrorKind::NotFound);
-    assert_eq!(
-        strategy.take_last_outcome(),
-        RotationOutcome::Failed {
-            error: err.to_string()
-        },
-        "failure outcome must record error message"
-    );
-
+    let Err(err) = strategy.before_write(&mut writer, "trigger") else {
+        return Err(io::Error::other("rename conflict should fail rotation"));
+    };
+    if err.kind() == io::ErrorKind::NotFound
+        || strategy.take_last_outcome()
+            != (RotationOutcome::Failed {
+                error: err.to_string(),
+            })
+    {
+        return Err(io::Error::other(
+            "failure outcome should record the rename error",
+        ));
+    }
     writer.write_all(b"after\n")?;
     writer.flush()?;
-
     let contents = fs::read_to_string(&path)?;
-    assert!(
-        contents.ends_with("after\n"),
-        "log should still receive writes after failed rotation: {contents:?}"
-    );
-    assert!(
-        conflicting.is_dir(),
-        "conflicting directory should remain after failed rename"
-    );
-
+    if !contents.ends_with("after\n") || !conflicting.is_dir() {
+        return Err(io::Error::other(
+            "writer should remain usable after failed rotation",
+        ));
+    }
     Ok(())
 }

@@ -27,7 +27,9 @@ fn frame_with_all_optional_fields_present() {
             extract_frames_from_stack_summary(list.as_any()).expect("extraction should succeed");
 
         assert_eq!(frames.len(), 1);
-        let result = &frames[0];
+        let [result] = frames.as_slice() else {
+            panic!("exactly one frame should be extracted");
+        };
         assert_eq!(result.filename, "test.py");
         assert_eq!(result.lineno, 42);
         assert_eq!(result.function, "test_function");
@@ -36,7 +38,7 @@ fn frame_with_all_optional_fields_present() {
         assert_eq!(result.end_colno, Some(20));
         assert_eq!(
             result.source_line,
-            Some("    result = compute(x)".to_string())
+            Some("    result = compute(x)".to_owned())
         );
         let locals = result.locals.as_ref().expect("locals should be present");
         assert_local_equals(locals, "x", "'10'");
@@ -76,14 +78,19 @@ fn frame_with_missing_optional_fields(
             extract_frames_from_stack_summary(list.as_any()).expect("extraction should succeed");
 
         assert_eq!(frames.len(), 1);
-        let result = &frames[0];
-        assert_eq!(result.filename, "module.py");
-        assert_eq!(result.lineno, 10);
-        assert_eq!(result.function, "my_func");
-        assert_eq!(result.end_lineno, end_lineno);
-        assert_eq!(result.colno, colno);
-        assert_eq!(result.end_colno, end_colno);
-        assert_eq!(result.source_line, line.map(String::from));
+        let [result] = frames.as_slice() else {
+            panic!("exactly one frame should be extracted");
+        };
+        assert_frame_required_fields(result, "module.py", 10, "my_func");
+        assert_frame_optional_fields(
+            result,
+            ExpectedOptionalFields {
+                end_lineno,
+                colno,
+                end_colno,
+                source_line: line,
+            },
+        );
         assert_eq!(result.locals, None);
     });
 }
@@ -187,31 +194,34 @@ fn extract_locals_handles_mixed_entries(
         let locals_dict = PyDict::new(py);
         populate_locals_dict_from_entries(&locals_dict, entries)
             .expect("locals dict should populate");
-        assert_locals_extraction_result(&locals_dict, expected, description)
-            .expect("frame arrangement should succeed");
+        check_locals_extraction_result(&locals_dict, expected, description)
+            .expect("extracted locals should match the expected entries");
     });
 }
 
 #[test]
 fn extract_frames_from_stack_summary_converts_list() {
     Python::attach(|py| {
-        let frame1 = MockFrameBuilder::new("a.py", 1, "func_a")
+        let first_summary = MockFrameBuilder::new("a.py", 1, "func_a")
             .build(py)
             .expect("mock frame should build");
-        let frame2 = MockFrameBuilder::new("b.py", 2, "func_b")
+        let second_summary = MockFrameBuilder::new("b.py", 2, "func_b")
             .build(py)
             .expect("mock frame should build");
 
-        let list = PyList::new(py, &[frame1, frame2]).expect("list creation should succeed");
+        let list = PyList::new(py, &[first_summary, second_summary])
+            .expect("list creation should succeed");
 
         let frames =
             extract_frames_from_stack_summary(list.as_any()).expect("extraction should succeed");
 
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0].filename, "a.py");
-        assert_eq!(frames[0].function, "func_a");
-        assert_eq!(frames[1].filename, "b.py");
-        assert_eq!(frames[1].function, "func_b");
+        let [first_frame, second_frame] = frames.as_slice() else {
+            panic!("expected two frames, received {}", frames.len());
+        };
+        assert_eq!(first_frame.filename, "a.py");
+        assert_eq!(first_frame.function, "func_a");
+        assert_eq!(second_frame.filename, "b.py");
+        assert_eq!(second_frame.function, "func_b");
     });
 }
 
@@ -290,12 +300,12 @@ fn extract_locals_with_skip_reasons_returns_partial(
         }
 
         let expected_array = expected.map(|(key, value)| [(key, value)]);
-        let expected_slice = expected_array.as_ref().map(|arr| arr.as_slice());
-        assert_locals_extraction_result(
+        let expected_slice = expected_array.as_ref().map(<[(&str, &str); 1]>::as_slice);
+        check_locals_extraction_result(
             &locals_dict,
             expected_slice,
             "should handle skip scenario correctly",
         )
-        .expect("frame arrangement should succeed");
+        .expect("extracted locals should match the expected entries");
     });
 }

@@ -1,5 +1,6 @@
 //! Focused unit tests for logger producer-path helpers.
 
+use crate::level::FemtoLevel;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -46,7 +47,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
 ) {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
-    let logger = FemtoLogger::new("producer".to_string());
+    let logger = FemtoLogger::new("producer".to_owned());
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
     let third_calls = Arc::new(AtomicUsize::new(0));
@@ -77,8 +78,11 @@ fn apply_filters_merges_enrichment_and_short_circuits(
         assert_eq!(result.as_deref(), Some("producer [INFO] hello"));
         wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
         let collected = collecting_handler.collected();
+        let first_record = collected
+            .first()
+            .expect("accepted record should reach the collecting handler");
         assert_eq!(
-            collected[0]
+            first_record
                 .metadata()
                 .key_values
                 .get("request_id")
@@ -86,7 +90,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
             Some("req-123")
         );
         assert_eq!(
-            collected[0]
+            first_record
                 .metadata()
                 .key_values
                 .get("user_id")
@@ -94,7 +98,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
             Some("alice")
         );
         assert_eq!(
-            collected[0]
+            first_record
                 .metadata()
                 .key_values
                 .get("ignored")
@@ -111,7 +115,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
 fn apply_filters_conflicting_enrichment_prefers_later() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
-    let logger = FemtoLogger::new("producer".to_string());
+    let logger = FemtoLogger::new("producer".to_owned());
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
 
@@ -138,8 +142,11 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
     assert_eq!(first_calls.load(Ordering::SeqCst), 1);
     assert_eq!(second_calls.load(Ordering::SeqCst), 1);
     assert_eq!(collected.len(), 1);
+    let first_record = collected
+        .first()
+        .expect("accepted record should reach the collecting handler");
     assert_eq!(
-        collected[0]
+        first_record
             .metadata()
             .key_values
             .get("request_id")
@@ -152,7 +159,7 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
 fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
-    let logger = FemtoLogger::new("producer".to_string());
+    let logger = FemtoLogger::new("producer".to_owned());
     logger.add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>);
 
     logger.dispatch_to_handlers(FemtoLogRecord::new("producer", FemtoLevel::Info, "queued"));
@@ -160,6 +167,9 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
     let collected = collecting_handler.collected();
     assert_eq!(collected.len(), 1);
-    assert_eq!(collected[0].logger(), "producer");
-    assert_eq!(collected[0].message(), "queued");
+    let first_record = collected
+        .first()
+        .expect("queued record should reach the collecting handler");
+    assert_eq!(first_record.logger(), "producer");
+    assert_eq!(first_record.message(), "queued");
 }

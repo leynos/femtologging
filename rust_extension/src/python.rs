@@ -63,7 +63,11 @@ mod tests {
             )?;
             let obj = module.getattr("Foo")?.call0()?;
             let name = fq_py_type(&obj);
-            assert_eq!(name, "mymod.Foo");
+            if name != "mymod.Foo" {
+                return Err(
+                    std::io::Error::other(format!("expected mymod.Foo, received {name}")).into(),
+                );
+            }
             Ok(())
         })
     }
@@ -92,7 +96,12 @@ mod tests {
             )?;
             let obj = module.getattr("Bar")?.call0()?;
             let name = fq_py_type(&obj);
-            assert_eq!(name, "<unknown>.<unknown>");
+            if name != "<unknown>.<unknown>" {
+                return Err(std::io::Error::other(format!(
+                    "expected fallback type name, received {name}"
+                ))
+                .into());
+            }
             Ok(())
         })
     }

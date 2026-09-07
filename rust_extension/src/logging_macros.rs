@@ -174,8 +174,11 @@ mod tests {
     ) {
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].level_str(), expected_level);
-        assert_eq!(records[0].message(), expected_message);
+        let Some(record) = records.first() else {
+            panic!("one record should be collected");
+        };
+        assert_eq!(record.level_str(), expected_level);
+        assert_eq!(record.message(), expected_message);
     }
 
     #[rstest]
@@ -195,7 +198,7 @@ mod tests {
             crate::FemtoLevel::Info => femtolog_info!(logger, message),
             crate::FemtoLevel::Warn => femtolog_warn!(logger, message),
             crate::FemtoLevel::Error => femtolog_error!(logger, message),
-            _ => unreachable!("only debug/info/warn/error are tested"),
+            crate::FemtoLevel::Trace | crate::FemtoLevel::Critical => None,
         };
         assert!(result.is_some());
         assert!(logger.flush_handlers());
@@ -211,7 +214,10 @@ mod tests {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let meta = records[0].metadata();
+        let meta = records
+            .first()
+            .expect("one record should be collected")
+            .metadata();
         assert!(
             meta.filename.contains("logging_macros.rs"),
             "filename should contain this file: got {:?}",
@@ -258,7 +264,11 @@ mod tests {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let kv = &records[0].metadata().key_values;
+        let kv = &records
+            .first()
+            .expect("one record should be collected")
+            .metadata()
+            .key_values;
         assert_eq!(kv.get("request_id").map(String::as_str), Some("42"));
         assert_eq!(kv.get("user").map(String::as_str), Some("alice"));
     }
@@ -273,8 +283,9 @@ mod tests {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].message(), "user alice");
-        let kv = &records[0].metadata().key_values;
+        let record = records.first().expect("one record should be collected");
+        assert_eq!(record.message(), "user alice");
+        let kv = &record.metadata().key_values;
         assert_eq!(kv.get("request_id").map(String::as_str), Some("42"));
     }
 
@@ -286,9 +297,9 @@ mod tests {
         log_context::clear_log_context_for_test();
 
         {
-            let _guard = log_context::push_log_context_map(::std::collections::BTreeMap::from([(
-                "trace_id".to_string(),
-                "abc123".to_string(),
+            log_context::push_log_context_map(::std::collections::BTreeMap::from([(
+                "trace_id".to_owned(),
+                "abc123".to_owned(),
             )]))
             .expect("context push should succeed");
             let result = femtolog_info!(logger, "context message");
@@ -298,7 +309,11 @@ mod tests {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let kv = &records[0].metadata().key_values;
+        let kv = &records
+            .first()
+            .expect("one record should be collected")
+            .metadata()
+            .key_values;
         assert_eq!(kv.get("trace_id").map(String::as_str), Some("abc123"));
     }
 
@@ -310,9 +325,9 @@ mod tests {
         log_context::clear_log_context_for_test();
 
         {
-            let _guard = log_context::push_log_context_map(::std::collections::BTreeMap::from([(
-                "request_id".to_string(),
-                "from_context".to_string(),
+            log_context::push_log_context_map(::std::collections::BTreeMap::from([(
+                "request_id".to_owned(),
+                "from_context".to_owned(),
             )]))
             .expect("context push should succeed");
             let result =
@@ -323,7 +338,11 @@ mod tests {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let kv = &records[0].metadata().key_values;
+        let kv = &records
+            .first()
+            .expect("one record should be collected")
+            .metadata()
+            .key_values;
         assert_eq!(kv.get("request_id").map(String::as_str), Some("from_macro"));
         assert_eq!(kv.get("extra").map(String::as_str), Some("value"));
     }

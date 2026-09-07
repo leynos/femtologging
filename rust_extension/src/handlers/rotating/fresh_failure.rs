@@ -67,10 +67,8 @@ impl FreshFailureState {
                 .owner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(owner_thread) = owner {
-                if owner_thread != current_thread {
-                    return None;
-                }
+            if owner.is_some_and(|owner_thread| owner_thread != current_thread) {
+                return None;
             }
         }
         let previous = self
@@ -162,9 +160,9 @@ pub(crate) fn force_fresh_failure_once_for_test(
 /// be reinstated after the forced failure completes.
 #[cfg(test)]
 pub(crate) struct ForcedFreshFailureGuard {
-    previous_count: usize,
-    previous_reason: Option<String>,
-    previous_owner: Option<ThreadId>,
+    count: usize,
+    reason: Option<String>,
+    owner: Option<ThreadId>,
 }
 
 #[cfg(test)]
@@ -196,9 +194,9 @@ impl ForcedFreshFailureGuard {
             owner_guard.replace(thread::current().id())
         };
         Self {
-            previous_count,
-            previous_reason,
-            previous_owner,
+            count: previous_count,
+            reason: previous_reason,
+            owner: previous_owner,
         }
     }
 }
@@ -209,20 +207,20 @@ impl Drop for ForcedFreshFailureGuard {
     fn drop(&mut self) {
         FRESH_FAILURE_STATE
             .remaining
-            .store(self.previous_count, Ordering::SeqCst);
+            .store(self.count, Ordering::SeqCst);
         // Recover from poisoning: see `set_forced`.
         let mut guard = FRESH_FAILURE_STATE
             .reason
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *guard = self.previous_reason.take();
+        *guard = self.reason.take();
         {
             // Recover from poisoning: see `set_forced`.
             let mut owner_guard = FRESH_FAILURE_STATE
                 .owner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *owner_guard = self.previous_owner;
+            *owner_guard = self.owner;
         }
     }
 }

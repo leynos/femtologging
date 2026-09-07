@@ -1,7 +1,8 @@
 //! `PyO3` methods isolated from the transport handler implementation.
 
-use super::*;
 use pyo3::prelude::*;
+
+use super::{FemtoHTTPHandler, FemtoHandlerTrait, FemtoLogRecord};
 
 #[cfg(feature = "python")]
 #[pymethods]

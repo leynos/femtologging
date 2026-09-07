@@ -15,7 +15,7 @@ use crate::traceback_capture::capture_exception;
 // Helper functions for common setup
 // --------------------------------
 
-/// Check if Python supports add_note() via capability check (Python 3.11+).
+/// Check if Python supports `add_note()` via capability check (Python 3.11+).
 ///
 /// Uses `hasattr(BaseException, "add_note")` to detect support, which is more
 /// robust than version parsing and handles interpreter variants gracefully.
@@ -148,7 +148,7 @@ except ValueError as e:
             let err = result.expect_err("code should raise an exception");
             let exc_value = err.value(py);
 
-            let payload = capture_exception(py, &exc_value)
+            let payload = capture_exception(py, exc_value)
                 .expect("capture_exception should succeed")
                 .expect("payload should be Some");
 
@@ -173,7 +173,7 @@ except ValueError as e:
         let err = result.expect_err("code should raise an exception");
         let exc_value = err.value(py);
 
-        let payload = capture_exception(py, &exc_value)
+        let payload = capture_exception(py, exc_value)
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 

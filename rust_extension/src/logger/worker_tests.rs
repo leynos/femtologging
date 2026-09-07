@@ -1,5 +1,6 @@
 //! Focused unit tests for logger worker helpers.
 
+use crate::level::FemtoLevel;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ struct FailingHandler;
 
 impl FemtoHandlerTrait for FailingHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Err(HandlerError::Message("boom".to_string()))
+        Err(HandlerError::Message("boom".to_owned()))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -37,7 +38,10 @@ fn handle_log_record_continues_after_handler_errors() {
 
     let collected = collecting_handler.collected();
     assert_eq!(collected.len(), 1);
-    assert_eq!(collected[0].message(), "survives");
+    let first_record = collected
+        .first()
+        .expect("collecting handler should receive the surviving record");
+    assert_eq!(first_record.message(), "survives");
 }
 
 #[rstest]

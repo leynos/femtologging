@@ -14,6 +14,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug)]
+struct LogDispatchCase {
+    level: FemtoLevel,
+    expected_level_str: &'static str,
+    message: &'static str,
+    set_debug_level: bool,
+}
+
 #[fixture]
 fn unique_logger_name() -> String {
     let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -37,33 +45,28 @@ fn logger_with_collecting_handler(
 }
 
 #[rstest]
-#[case::debug(FemtoLevel::Debug, "DEBUG", "debug msg", true)]
-#[case::info(FemtoLevel::Info, "INFO", "info msg", false)]
-#[case::warn(FemtoLevel::Warn, "WARN", "warn msg", false)]
-#[case::error(FemtoLevel::Error, "ERROR", "error msg", false)]
-fn log_dispatches_at_specified_level(
-    unique_logger_name: String,
-    #[case] level: FemtoLevel,
-    #[case] expected_level_str: &str,
-    #[case] message: &str,
-    #[case] set_debug_level: bool,
-) {
+#[case::debug(LogDispatchCase { level: FemtoLevel::Debug, expected_level_str: "DEBUG", message: "debug msg", set_debug_level: true })]
+#[case::info(LogDispatchCase { level: FemtoLevel::Info, expected_level_str: "INFO", message: "info msg", set_debug_level: false })]
+#[case::warn(LogDispatchCase { level: FemtoLevel::Warn, expected_level_str: "WARN", message: "warn msg", set_debug_level: false })]
+#[case::error(LogDispatchCase { level: FemtoLevel::Error, expected_level_str: "ERROR", message: "error msg", set_debug_level: false })]
+fn log_dispatches_at_specified_level(unique_logger_name: String, #[case] case: LogDispatchCase) {
     Python::attach(|py| {
         let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
             .expect("logger should be created");
-        if set_debug_level {
+        if case.set_debug_level {
             logger.borrow(py).set_level(FemtoLevel::Debug);
         }
 
-        let result =
-            log_at_level(py, level, message, Some(&unique_logger_name)).expect("should not error");
+        let result = log_at_level(py, case.level, case.message, Some(&unique_logger_name))
+            .expect("should not error");
         assert!(result.is_some());
         assert!(logger.borrow(py).flush_handlers());
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].level_str(), expected_level_str);
-        assert_eq!(records[0].message(), message);
+        let record = records.first().expect("one record should be collected");
+        assert_eq!(record.level_str(), case.expected_level_str);
+        assert_eq!(record.message(), case.message);
     });
 }
 
@@ -80,7 +83,8 @@ fn default_logger_is_root() {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].logger(), "root");
+        let record = records.first().expect("one record should be collected");
+        assert_eq!(record.logger(), "root");
 
         root.borrow(py)
             .remove_handler(&(handler.clone() as Arc<dyn FemtoHandlerTrait>));
@@ -115,7 +119,8 @@ fn source_location_falls_back_gracefully(unique_logger_name: String) {
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let meta = records[0].metadata();
+        let record = records.first().expect("one record should be collected");
+        let meta = record.metadata();
         assert_eq!(meta.filename, "", "fallback filename should be empty");
         assert_eq!(meta.line_number, 0, "fallback line number should be zero");
         assert_eq!(meta.module_path, "", "fallback module_path should be empty");
@@ -128,7 +133,7 @@ fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
 
     impl Drop for LogContextPopGuard {
         fn drop(&mut self) {
-            let _ = py_pop_log_context();
+            drop(py_pop_log_context());
         }
     }
 
@@ -141,18 +146,20 @@ fn scoped_context_is_attached_to_convenience_logs(unique_logger_name: String) {
         ctx.set_item("user", "alice").expect("set user");
         py_push_log_context(&ctx).expect("context push should succeed");
         let _guard = LogContextPopGuard;
-        let _ = log_at_level(
+        let result = log_at_level(
             py,
             FemtoLevel::Info,
             "with context",
             Some(&unique_logger_name),
         )
         .expect("log call should succeed");
+        assert!(result.is_some());
         assert!(logger.borrow(py).flush_handlers());
 
         let records = handler.collected();
         assert_eq!(records.len(), 1);
-        let key_values = &records[0].metadata().key_values;
+        let record = records.first().expect("one record should be collected");
+        let key_values = &record.metadata().key_values;
         assert_eq!(key_values.get("request_id").map(String::as_str), Some("42"));
         assert_eq!(key_values.get("user").map(String::as_str), Some("alice"));
     });

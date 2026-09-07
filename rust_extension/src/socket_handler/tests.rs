@@ -44,7 +44,7 @@ fn spawn_single_frame_server(
     thread::spawn(move || {
         // Deliver the outcome to the test; a dropped receiver means the
         // test has already failed, so the send error is ignored.
-        let _ = notify_tx.send(read_single_frame(&listener, gate));
+        let _send_result = notify_tx.send(read_single_frame(&listener, gate));
     });
     Ok((addr, notify_rx))
 }
@@ -57,7 +57,11 @@ fn read_single_frame(listener: &TcpListener, gate: Option<Arc<Barrier>>) -> io::
     }
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
+    let [first, second, third, fourth] = len_buf;
+    let len = (usize::from(first) << 24)
+        | (usize::from(second) << 16)
+        | (usize::from(third) << 8)
+        | usize::from(fourth);
     let mut payload = vec![0u8; len];
     stream.read_exact(&mut payload)?;
     Ok(payload)
@@ -133,8 +137,8 @@ fn arrange_sent_record(
 }
 
 #[rstest]
-fn sends_records_over_tcp(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn sends_records_over_tcp(#[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     let (mut handler, notify_rx) =
         arrange_sent_record(tcp_listener, None, "message").expect("arrange handler and record");
 
@@ -147,8 +151,10 @@ fn sends_records_over_tcp(tcp_listener: io::Result<TcpListener>) {
 }
 
 #[rstest]
-fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn handler_flushes_pending_records_on_close(
+    #[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>,
+) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     let barrier = Arc::new(Barrier::new(2));
     let (mut handler, notify_rx) =
         arrange_sent_record(tcp_listener, Some(barrier.clone()), "close")
@@ -162,8 +168,10 @@ fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener
 }
 
 #[rstest]
-fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
-    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+fn tls_handshake_respects_timeout(
+    #[from(tcp_listener)] tcp_listener_result: io::Result<TcpListener>,
+) {
+    let tcp_listener = tcp_listener_result.expect("bind ephemeral listener");
     let addr = tcp_listener.local_addr().expect("listener has address");
     let (accepted_tx, accepted_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -206,8 +214,7 @@ fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
     assert!(!ok, "handshake should fail for stalled peer");
     assert!(
         elapsed < Duration::from_secs(2),
-        "handshake should respect timeout, elapsed {:?}",
-        elapsed
+        "handshake should respect timeout, elapsed {elapsed:?}"
     );
 }
 
@@ -225,8 +232,11 @@ fn frame_payload_enforces_limit() {
 fn frame_payload_prefixes_length() {
     let payload = vec![1u8, 2, 3];
     let framed = frame_payload(&payload, 16).expect("payload fits frame");
-    assert_eq!(&framed[..4], &3u32.to_be_bytes());
-    assert_eq!(&framed[4..], payload);
+    let [first, second, third, fourth, payload_bytes @ ..] = framed.as_slice() else {
+        panic!("framed payload must have a four-byte length prefix");
+    };
+    assert_eq!([*first, *second, *third, *fourth], [0, 0, 0, 3]);
+    assert_eq!(payload_bytes, payload.as_slice());
 }
 
 #[rstest]
@@ -241,10 +251,12 @@ fn serialize_record_round_trips() {
 
 #[rstest]
 fn backoff_enforces_minimum_sleep() {
-    let mut policy = BackoffPolicy::default();
-    policy.base = Duration::from_millis(0);
-    policy.cap = Duration::from_millis(0);
-    policy.deadline = Duration::from_millis(50);
+    let policy = BackoffPolicy {
+        base: Duration::from_millis(0),
+        cap: Duration::from_millis(0),
+        deadline: Duration::from_millis(50),
+        ..BackoffPolicy::default()
+    };
     let mut backoff = BackoffState::new(policy);
     let now = Instant::now();
     let sleep = backoff
@@ -252,17 +264,18 @@ fn backoff_enforces_minimum_sleep() {
         .expect("first backoff value must exist");
     assert!(
         sleep >= Duration::from_millis(10),
-        "sleep {:?} should respect minimum",
-        sleep
+        "sleep {sleep:?} should respect minimum"
     );
 }
 
 #[rstest]
 fn backoff_respects_deadline() {
-    let mut policy = BackoffPolicy::default();
-    policy.base = Duration::from_millis(10);
-    policy.cap = Duration::from_millis(10);
-    policy.deadline = Duration::from_millis(20);
+    let policy = BackoffPolicy {
+        base: Duration::from_millis(10),
+        cap: Duration::from_millis(10),
+        deadline: Duration::from_millis(20),
+        ..BackoffPolicy::default()
+    };
     let mut backoff = BackoffState::new(policy);
     let now = Instant::now();
     assert!(backoff.next_sleep(now).is_some());

@@ -45,7 +45,7 @@ impl FileRotationStrategy {
     }
 
     #[cfg(test)]
-    pub(crate) fn take_last_outcome(&mut self) -> RotationOutcome {
+    pub(crate) const fn take_last_outcome(&mut self) -> RotationOutcome {
         std::mem::replace(&mut self.last_outcome, RotationOutcome::Skipped)
     }
 

@@ -3,6 +3,7 @@
 //! These tests generate random logger names, levels, and messages to verify
 //! that the handler correctly writes each record without losing data.
 
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
 use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
@@ -38,11 +39,12 @@ proptest! {
         let mut expected = String::new();
         for (logger, level, msg) in iproduct!(logger_names, log_levels, messages) {
             handler.expect_handle(FemtoLogRecord::new(logger, *level, msg));
-            expected.push_str(&format!("{} [{}] {}\n", logger, level.as_str(), msg));
+            writeln!(&mut expected, "{logger} [{}] {msg}", level.as_str())
+                .map_err(|error|TestCaseError::fail(error.to_string()))?;
         }
         drop(handler);
 
-        let output = read_output(&buffer);
+        let output = read_output(&buffer).expect("buffer output should be valid UTF-8");
         prop_assert_eq!(output, expected);
     }
 }

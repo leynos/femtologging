@@ -1,5 +1,5 @@
+//! Integration test for logger filter application via `ConfigBuilder`.
 #![cfg(feature = "python")]
-//! Integration test for logger filter application via ConfigBuilder.
 
 use _femtologging_rs::{
     ConfigBuilder, FemtoLevel, LevelFilterBuilder, LoggerConfigBuilder, manager,

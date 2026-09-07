@@ -20,6 +20,11 @@ impl DummyBuilder {
     }
 }
 
+/// Convert a Rust or Python builder label into the stored representation.
+fn convert_label(label: impl Into<String>) -> String {
+    label.into()
+}
+
 builder_methods! {
     impl DummyBuilder {
         methods {
@@ -45,7 +50,7 @@ builder_methods! {
                 py_args: (label: String),
                 self_ident: builder,
                 body: {
-                    builder.label = Some(label.into());
+                    builder.label = Some(convert_label(label));
                 }
             }
             method {

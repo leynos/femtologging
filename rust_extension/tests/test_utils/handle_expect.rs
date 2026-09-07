@@ -15,56 +15,85 @@
 
 use std::sync::Arc;
 
-use _femtologging_rs::{FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{
+    FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler, HandlerError,
+};
+
+#[track_caller]
+fn assert_handle_succeeded(result: Result<(), HandlerError>, context: &str) {
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("{context}: {error}"),
+    }
+}
 
 /// Submit a record to a handler, panicking with a descriptive message if the
 /// handler rejects it.
 pub trait HandleExpect {
     /// Submit `record`, panicking with receiver-specific context on rejection.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the handler returns an error for `record`.
     fn expect_handle(&self, record: FemtoLogRecord);
 }
 
 impl HandleExpect for FemtoFileHandler {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoFileHandler to accept record");
+        assert_handle_succeeded(
+            self.handle(record),
+            "expected FemtoFileHandler to accept record",
+        );
     }
 }
 
 impl HandleExpect for FemtoStreamHandler {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoStreamHandler to accept record");
+        assert_handle_succeeded(
+            self.handle(record),
+            "expected FemtoStreamHandler to accept record",
+        );
     }
 }
 
 impl HandleExpect for dyn FemtoHandlerTrait {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoHandlerTrait object to accept record");
+        assert_handle_succeeded(
+            self.handle(record),
+            "expected FemtoHandlerTrait object to accept record",
+        );
     }
 }
 
 impl HandleExpect for dyn FemtoHandlerTrait + Send + Sync {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
-        self.handle(record)
-            .expect("expected FemtoHandlerTrait object to accept record");
+        assert_handle_succeeded(
+            self.handle(record),
+            "expected FemtoHandlerTrait object to accept record",
+        );
     }
 }
 
 impl<T: HandleExpect + ?Sized> HandleExpect for &T {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
         (**self).expect_handle(record);
     }
 }
 
 impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
         (**self).expect_handle(record);
     }
 }
 
 impl<T: HandleExpect + ?Sized> HandleExpect for Box<T> {
+    #[track_caller]
     fn expect_handle(&self, record: FemtoLogRecord) {
         (**self).expect_handle(record);
     }

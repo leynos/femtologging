@@ -12,19 +12,17 @@ mod runtime_mutation;
 mod worker;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
-use pyo3::{Py, PyAny};
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
 use crate::rate_limited_warner::RateLimitedWarner;
 
-use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
+use crate::{formatter::SharedFormatter, log_record::FemtoLogRecord};
 use crossbeam_channel::Sender;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64};
 use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
@@ -112,6 +110,7 @@ impl FemtoLogger {
         self.filters.write().clear();
     }
 
+    /// Clone the configured handlers for internal test assertions.
     #[cfg(test)]
     pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
         self.handlers.read().clone()
@@ -129,6 +128,16 @@ impl FemtoLogger {
     }
 }
 
+impl FemtoLogger {
+    /// Take and join the worker without holding its handle mutex.
+    fn join_worker(handle: &Mutex<Option<JoinHandle<()>>>) {
+        let worker_handle = { handle.lock().take() };
+        if let Some(handle_to_join) = worker_handle {
+            Python::attach(|py| py.detach(move || worker::log_join_result(handle_to_join)));
+        }
+    }
+}
+
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take()
@@ -138,11 +147,7 @@ impl Drop for FemtoLogger {
             // a panic can be observed and reported.
         }
         self.tx.take();
-        // Drop the lock before joining the worker thread.
-        let worker_handle = { self.handle.lock().take() };
-        if let Some(handle_to_join) = worker_handle {
-            Python::attach(|py| py.detach(move || worker::log_join_result(handle_to_join)));
-        }
+        Self::join_worker(&self.handle);
     }
 }
 

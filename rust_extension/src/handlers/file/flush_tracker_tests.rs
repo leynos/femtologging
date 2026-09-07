@@ -33,26 +33,32 @@ fn writer(#[default(false)] fail: bool) -> DummyWriter {
     DummyWriter { flushed: 0, fail }
 }
 
+#[derive(Debug)]
+struct FlushIfDueCase {
+    interval: usize,
+    writes: usize,
+    fail: bool,
+    expected_flushes: usize,
+    expect_error: bool,
+}
+
 /// Verify when the periodic tracker flushes and when it propagates errors.
 #[rstest]
-#[case(2, 2, false, 1, false)]
-#[case(1, 1, true, 1, true)]
-#[case(3, 1, false, 0, false)]
-#[case(0, 5, false, 0, false)]
-#[case(2, 0, false, 0, false)]
-fn flush_if_due_cases(
-    #[case] interval: usize,
-    #[case] writes: usize,
-    #[case] _fail: bool,
-    #[case] expected_flushes: usize,
-    #[case] expect_error: bool,
-    #[with(_fail)] mut writer: DummyWriter,
-) {
-    let mut tracker = FlushTracker::new(interval);
-    tracker.writes = writes;
+#[case(FlushIfDueCase { interval: 2, writes: 2, fail: false, expected_flushes: 1, expect_error: false })]
+#[case(FlushIfDueCase { interval: 1, writes: 1, fail: true, expected_flushes: 1, expect_error: true })]
+#[case(FlushIfDueCase { interval: 3, writes: 1, fail: false, expected_flushes: 0, expect_error: false })]
+#[case(FlushIfDueCase { interval: 0, writes: 5, fail: false, expected_flushes: 0, expect_error: false })]
+#[case(FlushIfDueCase { interval: 2, writes: 0, fail: false, expected_flushes: 0, expect_error: false })]
+fn flush_if_due_cases(#[case] case: FlushIfDueCase) {
+    let mut writer = DummyWriter {
+        flushed: 0,
+        fail: case.fail,
+    };
+    let mut tracker = FlushTracker::new(case.interval);
+    tracker.writes = case.writes;
     let result = tracker.flush_if_due(&mut writer);
-    assert_eq!(writer.flushed, expected_flushes);
-    assert_eq!(result.is_err(), expect_error);
+    assert_eq!(writer.flushed, case.expected_flushes);
+    assert_eq!(result.is_err(), case.expect_error);
 }
 
 /// Confirm write-triggered flush failures are logged as warnings.

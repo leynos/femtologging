@@ -305,12 +305,14 @@ mod tests {
 
                 flush_all_handlers(py);
 
-                assert_eq!(
-                    flushes.load(Ordering::SeqCst),
-                    2,
-                    "flush should be invoked once per logger with handlers",
-                );
-                Ok(())
+                let actual_flushes = flushes.load(Ordering::SeqCst);
+                if actual_flushes == 2 {
+                    Ok(())
+                } else {
+                    Err(pyo3::exceptions::PyAssertionError::new_err(format!(
+                        "expected one flush per logger, received {actual_flushes}"
+                    )))
+                }
             })
         }
 
@@ -343,12 +345,15 @@ mod tests {
 
                 flush_all_handlers(py);
 
-                assert_eq!(
-                    flushes.load(Ordering::SeqCst),
-                    loggers.len(),
-                    "flush should be invoked once per registered logger",
-                );
-                Ok(())
+                let actual_flushes = flushes.load(Ordering::SeqCst);
+                let logger_count = loggers.len();
+                if actual_flushes == logger_count {
+                    Ok(())
+                } else {
+                    Err(pyo3::exceptions::PyAssertionError::new_err(format!(
+                        "expected {logger_count} flushes, received {actual_flushes}"
+                    )))
+                }
             })
         }
     }

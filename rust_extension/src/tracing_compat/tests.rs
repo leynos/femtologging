@@ -79,14 +79,35 @@ fn events_are_forwarded_with_structured_fields() {
     })
     .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
-    let record = &records[0];
+    let record = records.first().expect("one record should be collected");
     assert_eq!(record.logger(), logger_name);
     assert_eq!(record.level_str(), "INFO");
     assert_eq!(record.message(), "hello from tracing");
-    assert_eq!(record.metadata().key_values["answer"], "42");
-    assert_eq!(record.metadata().key_values["success"], "true");
-    assert_eq!(record.metadata().key_values["ratio"], "1.5");
-    assert_eq!(record.metadata().key_values["payload"], "[\"a\", \"b\"]");
+    let key_values = &record.metadata().key_values;
+    assert_eq!(
+        key_values
+            .get("answer")
+            .expect("answer field should be present"),
+        "42"
+    );
+    assert_eq!(
+        key_values
+            .get("success")
+            .expect("success field should be present"),
+        "true"
+    );
+    assert_eq!(
+        key_values
+            .get("ratio")
+            .expect("ratio field should be present"),
+        "1.5"
+    );
+    assert_eq!(
+        key_values
+            .get("payload")
+            .expect("payload field should be present"),
+        "[\"a\", \"b\"]"
+    );
 }
 
 #[rstest]
@@ -97,8 +118,9 @@ fn invalid_targets_fall_back_to_root() {
     })
     .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].logger(), "root");
-    assert_eq!(records[0].message(), "tracing event (request_id=abc-123)");
+    let record = records.first().expect("one record should be collected");
+    assert_eq!(record.logger(), "root");
+    assert_eq!(record.message(), "tracing event (request_id=abc-123)");
 }
 
 #[rstest]
@@ -113,10 +135,17 @@ fn event_without_message_uses_stable_fallback() {
     .expect("bridged event test must succeed");
 
     assert_eq!(records.len(), 1);
-    let record = &records[0];
+    let record = records.first().expect("one record should be collected");
     assert_eq!(record.logger(), logger_name);
     assert_eq!(record.message(), "tracing event (request_id=abc-123)");
-    assert_eq!(record.metadata().key_values["request_id"], "abc-123");
+    assert_eq!(
+        record
+            .metadata()
+            .key_values
+            .get("request_id")
+            .expect("request_id field should be present"),
+        "abc-123"
+    );
 }
 
 #[rstest]
@@ -131,7 +160,7 @@ fn event_without_message_or_fields_uses_pure_fallback() {
     .expect("bridged event test must succeed");
 
     assert_eq!(records.len(), 1);
-    let record = &records[0];
+    let record = records.first().expect("one record should be collected");
     assert_eq!(record.logger(), logger_name);
     // Empty message should also trigger the fallback message
     assert!(
@@ -164,8 +193,9 @@ fn logger_thresholds_still_apply() {
     });
     let records = handler.collected();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].message(), "visible");
-    assert_eq!(records[0].level_str(), "WARN");
+    let record = records.first().expect("one record should be collected");
+    assert_eq!(record.message(), "visible");
+    assert_eq!(record.level_str(), "WARN");
 }
 
 #[rstest]
@@ -199,12 +229,38 @@ fn active_span_fields_are_merged_into_event_metadata() {
     })
     .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
-    let key_values = &records[0].metadata().key_values;
-    assert_eq!(key_values["span.0.name"], "request");
-    assert_eq!(key_values["span.0.request_id"], "req-42");
-    assert_eq!(key_values["span.1.name"], "step");
-    assert_eq!(key_values["span.1.attempt"], "2");
-    assert_eq!(key_values["success"], "true");
+    let record = records.first().expect("one record should be collected");
+    let key_values = &record.metadata().key_values;
+    assert_eq!(
+        key_values
+            .get("span.0.name")
+            .expect("outer span name should be present"),
+        "request"
+    );
+    assert_eq!(
+        key_values
+            .get("span.0.request_id")
+            .expect("outer span request id should be present"),
+        "req-42"
+    );
+    assert_eq!(
+        key_values
+            .get("span.1.name")
+            .expect("inner span name should be present"),
+        "step"
+    );
+    assert_eq!(
+        key_values
+            .get("span.1.attempt")
+            .expect("inner span attempt should be present"),
+        "2"
+    );
+    assert_eq!(
+        key_values
+            .get("success")
+            .expect("success field should be present"),
+        "true"
+    );
 }
 
 #[rstest]
@@ -216,8 +272,9 @@ fn events_outside_spans_do_not_gain_span_metadata() {
     })
     .expect("bridged event test must succeed");
     assert_eq!(records.len(), 1);
+    let record = records.first().expect("one record should be collected");
     assert!(
-        records[0]
+        record
             .metadata()
             .key_values
             .keys()

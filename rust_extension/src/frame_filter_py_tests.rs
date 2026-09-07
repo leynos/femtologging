@@ -13,7 +13,9 @@ fn make_stack_payload_dict<'py>(
     for (i, filename) in filenames.iter().enumerate() {
         let frame = PyDict::new(py);
         frame.set_item("filename", *filename)?;
-        frame.set_item("lineno", i as u32 + 1)?;
+        let line_number = u32::try_from(i + 1)
+            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("frame index exceeds u32"))?;
+        frame.set_item("lineno", line_number)?;
         frame.set_item("function", format!("func_{i}"))?;
         frames.append(frame)?;
     }
@@ -52,9 +54,9 @@ fn filter_options(
 fn filter_and_extract_frames<'py>(
     py: Python<'py>,
     payload: &Bound<'py, PyDict>,
-    options: FilterOptions,
+    options: &FilterOptions,
 ) -> PyResult<Bound<'py, PyList>> {
-    let result = filter_payload(py, payload, &options)?;
+    let result = filter_payload(py, payload, options)?;
     let result_dict = result.cast_bound::<PyDict>(py)?;
     let frames = result_dict
         .get_item("frames")?
@@ -108,7 +110,7 @@ fn filter_stack_payload_exclude_logging() {
         .expect("payload should build");
 
         let frames_list =
-            filter_and_extract_frames(py, &payload, filter_options(None, None, None, true))
+            filter_and_extract_frames(py, &payload, &filter_options(None, None, None, true))
                 .expect("filter should succeed");
 
         assert_eq!(frames_list.len(), 1);
@@ -129,7 +131,7 @@ fn filter_stack_payload_exclude_filenames() {
         let frames_list = filter_and_extract_frames(
             py,
             &payload,
-            filter_options(Some(vec![".venv/".to_string()]), None, None, false),
+            &filter_options(Some(vec![".venv/".to_owned()]), None, None, false),
         )
         .expect("filter should succeed");
 
@@ -145,7 +147,7 @@ fn filter_stack_payload_max_depth() {
             .expect("payload should build");
 
         let frames_list =
-            filter_and_extract_frames(py, &payload, filter_options(None, None, Some(2), false))
+            filter_and_extract_frames(py, &payload, &filter_options(None, None, Some(2), false))
                 .expect("filter should succeed");
 
         assert_eq!(frames_list.len(), 2);
@@ -252,14 +254,14 @@ fn filter_stack_payload_exclude_functions() {
             .set_item("function", "_internal_helper")
             .expect("failed to set function");
 
-        let frames_list = filter_and_extract_frames(
+        let filtered_frames = filter_and_extract_frames(
             py,
             &payload,
-            filter_options(None, Some(vec!["_internal".to_string()]), None, false),
+            &filter_options(None, Some(vec!["_internal".to_owned()]), None, false),
         )
         .expect("filter should succeed");
 
-        assert_eq!(frames_list.len(), 2);
+        assert_eq!(filtered_frames.len(), 2);
     });
 }
 
@@ -285,7 +287,7 @@ fn filter_exception_payload_exclude_functions() {
         let result = filter_payload(
             py,
             &payload,
-            &filter_options(None, Some(vec!["_internal".to_string()]), None, false),
+            &filter_options(None, Some(vec!["_internal".to_owned()]), None, false),
         )
         .expect("filter_frames failed");
         let result_dict = result
@@ -296,11 +298,13 @@ fn filter_exception_payload_exclude_functions() {
         let type_name = extract_dict_value!(result_dict, "type_name", String);
         assert_eq!(type_name, "ValueError");
 
-        let frames = result_dict
+        let filtered_frames = result_dict
             .get_item("frames")
             .expect("failed to get frames key")
             .expect("frames key is None");
-        let frames_result = frames.cast::<PyList>().expect("frames is not a list");
+        let frames_result = filtered_frames
+            .cast::<PyList>()
+            .expect("frames is not a list");
         assert_eq!(frames_result.len(), 2);
     });
 }
@@ -338,15 +342,11 @@ fn filter_malformed_payload_raises_type_error(
 
         let result = filter_payload(py, &payload, &filter_options(None, None, None, false));
         let err = result.expect_err(&format!(
-            "scenario '{}' should fail with error containing '{}'",
-            scenario, expected_error_fragment
+            "scenario '{scenario}' should fail with error containing '{expected_error_fragment}'"
         ));
         assert!(
             err.to_string().contains(expected_error_fragment),
-            "error for scenario '{}' should contain '{}', got: {}",
-            scenario,
-            expected_error_fragment,
-            err
+            "error for scenario '{scenario}' should contain '{expected_error_fragment}', got: {err}"
         );
     });
 }
