@@ -1,9 +1,9 @@
 //! Public handler type exported by the crate.
+#[cfg(feature = "python")]
+#[path = "python_bindings.rs"]
+mod python_bindings;
 
 use std::{thread, time::Duration};
-
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
 
 use parking_lot::Mutex;
 
@@ -18,7 +18,7 @@ use super::{
     worker::{HTTPCommand, enqueue_record, flush_queue, spawn_worker},
 };
 
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 /// Handler forwarding records to an HTTP endpoint.
 ///
 /// Supports URL-encoded form data (`CPython` parity) and JSON serialization.
@@ -87,49 +87,6 @@ impl FemtoHTTPHandler {
         if handle.join().is_err() {
             log::warn!("FemtoHTTPHandler: worker thread panicked");
         }
-    }
-}
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl FemtoHTTPHandler {
-    #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        self.handle(FemtoLogRecord::new(logger, parsed_level, message))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
-    }
-
-    /// Flush pending log records without shutting down the worker thread.
-    ///
-    /// The flush timeout equals the ``write_timeout`` configured on the
-    /// handler (default: 30 seconds).
-    ///
-    /// Returns
-    /// -------
-    /// bool
-    ///     ``True`` when the worker acknowledges the flush within the
-    ///     configured timeout.
-    ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, or the worker
-    ///     does not acknowledge before the timeout elapses.
-    ///
-    /// Examples
-    /// --------
-    /// >>> handler.flush()
-    /// True
-    /// >>> handler.close()
-    /// >>> handler.flush()
-    /// False
-    #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
-    }
-
-    /// Close the handler and wait for the worker thread to finish.
-    #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
     }
 }
 

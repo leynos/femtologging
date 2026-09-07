@@ -16,19 +16,27 @@ use std::io::ErrorKind;
 type SectionEntries = Vec<(String, String)>;
 type ParsedSections = Vec<(String, SectionEntries)>;
 
-#[pyfunction]
-pub(crate) fn parse_ini_file(
-    py: Python<'_>,
-    path: &str,
-    encoding: Option<&str>,
-) -> PyResult<ParsedSections> {
-    let bytes = read_file_bytes(path)?;
-    if bytes.is_empty() {
-        return Err(PyRuntimeError::new_err(format!("{path} is an empty file")));
+mod python_bindings {
+    //! Python function wrappers for INI file configuration parsing.
+
+    use super::*;
+
+    #[pyfunction]
+    pub(crate) fn parse_ini_file(
+        py: Python<'_>,
+        path: &str,
+        encoding: Option<&str>,
+    ) -> PyResult<ParsedSections> {
+        let bytes = read_file_bytes(path)?;
+        if bytes.is_empty() {
+            return Err(PyRuntimeError::new_err(format!("{path} is an empty file")));
+        }
+        let text = decode_contents(py, &bytes, encoding)?;
+        parse_sections(path, &text)
     }
-    let text = decode_contents(py, &bytes, encoding)?;
-    parse_sections(path, &text)
 }
+
+pub(crate) use python_bindings::parse_ini_file;
 
 fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
     match fs::read(path) {
