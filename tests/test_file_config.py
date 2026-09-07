@@ -100,6 +100,21 @@ def test_file_config_rejects_handler_level(tmp_path: Path) -> None:
         fileConfig(ini)
 
 
+def test_file_config_rejects_nonempty_formatters_without_keys(tmp_path: Path) -> None:
+    """A formatter entry without ``keys`` remains unsupported."""
+    ini = tmp_path / "unsupported-formatter.ini"
+    ini.write_text(
+        "[formatters]\nunsupported = value\n\n"
+        "[loggers]\nkeys = root\n\n[handlers]\nkeys = h\n\n"
+        "[handler_h]\nclass = femtologging.StreamHandler\n\n"
+        "[logger_root]\nhandlers = h\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="formatters are not supported"):
+        fileConfig(ini)
+
+
 @pytest.mark.parametrize(
     "build_input",
     [

@@ -135,6 +135,21 @@ requires the spawn abstraction described in the heavy-test module
 documentation. Until that follow-up is implemented, the Loom configuration
 is still compiled to keep the models type-checked.
 
+## Configuration transaction
+
+`ConfigBuilder::build_and_init` applies a complete configuration through one
+ordered transaction. It first builds handlers and filters, prepares every
+logger plan, stages the logger objects, and commits those staged objects to the
+manager registry. When `disable_existing_loggers` is enabled, it then clears
+unmentioned loggers, applies the prepared plans, and finally replaces the
+manager's runtime attachment metadata.
+
+Handler and filter construction, identifier checks, and logger-plan preparation
+all happen before the registry commit. A failure in those validation steps
+therefore returns without changing the live logger state. `dictConfig` and
+`fileConfig` use this same builder path, so their validation and transaction
+boundary are consistent with direct builder use.
+
 ## Shared Rust test helpers and fixtures
 
 Crate unit-test support is owned by `rust_extension/src/test_utils/` and is

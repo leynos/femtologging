@@ -97,9 +97,8 @@ def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
     fmt_section = sections.pop("formatters", None)
     if not fmt_section:
         return
-    if _split_csv(fmt_section.get("keys")):
-        msg = "formatters are not supported"
-        raise ValueError(msg)
+    msg = "formatters are not supported"
+    raise ValueError(msg)
 
 
 def _merge_defaults(
