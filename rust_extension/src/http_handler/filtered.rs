@@ -28,7 +28,7 @@ const BASE_FIELDS: [&str; 8] = [
     "thread",
 ];
 
-impl<'a> FilteredRecord<'a> {
+impl FilteredRecord<'_> {
     /// Count the total number of fields that will be serialized.
     fn count_fields(&self) -> usize {
         let r = &self.record;
@@ -62,7 +62,7 @@ impl<'a> FilteredRecord<'a> {
         Ok(())
     }
 
-    /// Serialize optional fields (threadName, key_values, exc_info, stack_info).
+    /// Serialize optional fields (`threadName`, key-values, `exc_info`, and `stack_info`).
     fn serialize_optional_fields<S>(
         &self,
         map: &mut <S as Serializer>::SerializeMap,

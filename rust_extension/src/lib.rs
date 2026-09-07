@@ -1,6 +1,6 @@
-//! FemtoLogging Python bindings and public re-exports.
+//! `FemtoLogging` Python bindings and public re-exports.
 //!
-//! This module wires up PyO3 classes and functions exposed to Python and
+//! This module wires up `PyO3` classes and functions exposed to Python and
 //! re-exports Rust types used by the Python layer.
 use pyo3::prelude::*;
 
@@ -138,18 +138,18 @@ pub use tracing_compat::{FemtoTracingLayer, layer as tracing_layer};
 /// assert_eq!(crate::hello(), "hello from Rust");
 /// ```
 #[pyfunction]
-fn hello() -> &'static str {
+const fn hello() -> &'static str {
     "hello from Rust"
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
 mod py_api {
     //! Python-facing helper functions that bridge to the Rust manager.
 
-    use super::*;
+    use pyo3::prelude::{Py, PyResult, Python};
+
+    #[cfg(feature = "python")]
+    use super::manager;
+    use super::{FemtoLogger, manager_get_logger, reset_manager};
 
     /// Get or create a [`FemtoLogger`] identified by `name`.
     ///
@@ -179,11 +179,7 @@ mod py_api {
     ///     assert!(first.as_ref(py).is(second.as_ref(py)));
     /// });
     /// ```
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "PyO3 expands function wrappers with Python-call compatibility arguments"
-    )]
-    #[pyfunction]
+    #[pyo3::pyfunction]
     pub(crate) fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
         manager_get_logger(py, name)
     }
@@ -204,7 +200,7 @@ mod py_api {
     ///     assert!(!before.as_ref(py).is(after.as_ref(py)));
     /// });
     /// ```
-    #[pyfunction]
+    #[pyo3::pyfunction]
     pub(crate) fn reset_manager_py() {
         reset_manager();
     }
@@ -213,7 +209,7 @@ mod py_api {
     ///
     /// Intended for tests validating manager snapshots.
     #[cfg(feature = "python")]
-    #[pyfunction]
+    #[pyo3::pyfunction]
     pub(crate) fn runtime_attachment_state_for_test(
         name: &str,
     ) -> Option<(Vec<String>, Vec<String>)> {

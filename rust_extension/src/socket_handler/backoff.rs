@@ -6,6 +6,8 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use super::config::BackoffPolicy;
 
+const MIN_SLEEP_MS: u64 = 10;
+
 /// Tracks reconnection attempts and produces jittered delays.
 pub struct BackoffState {
     policy: BackoffPolicy,
@@ -64,9 +66,7 @@ impl BackoffState {
             self.current = self.current.saturating_mul(2).min(self.policy.cap);
         }
 
-        const MIN_SLEEP_MS: u64 = 10;
-
-        let max_ms = self.current.as_millis().min(u128::from(u64::MAX)) as u64;
+        let max_ms = u64::try_from(self.current.as_millis()).unwrap_or(u64::MAX);
         let sleep_ms = match max_ms {
             0 => MIN_SLEEP_MS,
             1..=MIN_SLEEP_MS => max_ms,

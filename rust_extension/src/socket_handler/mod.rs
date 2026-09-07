@@ -2,7 +2,7 @@
 //!
 //! This module defines `FemtoSocketHandler`, a handler that serializes
 //! [`FemtoLogRecord`](crate::log_record::FemtoLogRecord) values into
-//! MessagePack frames and forwards them to a remote socket. The consumer thread
+//! `MessagePack` frames and forwards them to a remote socket. The consumer thread
 //! maintains the underlying connection, transparently reconnects using
 //! exponential backoff, and exposes builder-friendly configuration points for
 //! transport selection, timeouts, and TLS options.

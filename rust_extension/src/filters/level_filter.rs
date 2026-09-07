@@ -62,7 +62,7 @@ impl super::FilterBuilderTrait for LevelFilterBuilder {
 
 #[cfg(feature = "python")]
 impl_as_pydict!(LevelFilterBuilder {
-    set_opt_to_string max_level => "max_level",
+    set_optional_to_string max_level => "max_level",
 });
 
 #[cfg(feature = "python")]

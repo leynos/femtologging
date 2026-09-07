@@ -42,13 +42,12 @@ fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
     }
 }
 
-fn decode_contents<'a>(py: Python<'a>, bytes: &[u8], encoding: Option<&str>) -> PyResult<String> {
-    match encoding {
-        Some(label) => decode_with_encoding(py, bytes, label),
-        None => {
-            let label = preferred_encoding(py)?;
-            decode_with_encoding(py, bytes, &label)
-        }
+fn decode_contents(py: Python<'_>, bytes: &[u8], encoding: Option<&str>) -> PyResult<String> {
+    if let Some(label) = encoding {
+        decode_with_encoding(py, bytes, label)
+    } else {
+        let label = preferred_encoding(py)?;
+        decode_with_encoding(py, bytes, &label)
     }
 }
 
@@ -58,13 +57,7 @@ fn preferred_encoding(py: Python<'_>) -> PyResult<String> {
     func.call1((false,))?.extract::<String>()
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Used only in tests; production path calls decode_with_encoding"
-    )
-)]
+#[cfg(test)]
 fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Ok(text.to_owned()),
@@ -73,7 +66,7 @@ fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
             let end = start + err.error_len().unwrap_or(1);
             Err(unicode_decode_err(
                 py,
-                UnicodeDecodeErrorInfo {
+                &UnicodeDecodeErrorInfo {
                     encoding: "utf-8",
                     bytes,
                     start,
@@ -95,7 +88,7 @@ fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<S
         // entire byte range to keep Python's UnicodeDecodeError consistent.
         return Err(unicode_decode_err(
             py,
-            UnicodeDecodeErrorInfo {
+            &UnicodeDecodeErrorInfo {
                 encoding: encoding.name(),
                 bytes,
                 start: 0,
@@ -115,13 +108,13 @@ struct UnicodeDecodeErrorInfo<'a> {
     reason: &'a str,
 }
 
-fn unicode_decode_err(_py: Python<'_>, info: UnicodeDecodeErrorInfo<'_>) -> PyErr {
+fn unicode_decode_err(_py: Python<'_>, info: &UnicodeDecodeErrorInfo<'_>) -> PyErr {
     PyUnicodeDecodeError::new_err((
-        info.encoding.to_string(),
+        info.encoding.to_owned(),
         info.bytes.to_vec(),
         info.start,
         info.end.min(info.bytes.len()),
-        info.reason.to_string(),
+        info.reason.to_owned(),
     ))
 }
 
@@ -133,14 +126,12 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
         .filter_map(|(section, props)| {
             let entries: Vec<(String, String)> = props
                 .iter()
-                .map(|(key, value)| (key.to_string(), value.to_owned()))
+                .map(|(key, value)| (key.to_owned(), value.to_owned()))
                 .collect();
             if section.is_none() && entries.is_empty() {
                 return None;
             }
-            let name = section
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "DEFAULT".to_string());
+            let name = section.map_or_else(|| "DEFAULT".to_owned(), str::to_owned);
             Some((name, entries))
         })
         .collect())

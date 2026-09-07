@@ -196,7 +196,7 @@ where
     ///
     /// This method acquires the Python GIL (Global Interpreter Lock) **for every tracing event**
     /// to resolve the logger, check level filtering, and dispatch the record. While
-    /// [`visitor::capture_event`], [`Self::resolve_logger`], [`Self::build_record_metadata`],
+    /// `visitor::capture_event`, `Self::resolve_logger`, `Self::build_record_metadata`,
     /// and [`FemtoLogRecord::with_metadata`] run before or around the GIL boundary, the per-event
     /// GIL acquisition can introduce latency in high-throughput scenarios.
     ///

@@ -11,7 +11,7 @@
 //! Two serialization formats are supported:
 //!
 //! - **URL-encoded** (default): Produces `application/x-www-form-urlencoded`
-//!   payloads matching CPython's `logging.HTTPHandler` format.
+//!   payloads matching `CPython`'s `logging.HTTPHandler` format.
 //! - **JSON**: Produces `application/json` payloads for modern HTTP APIs.
 //!
 //! # Retry Semantics

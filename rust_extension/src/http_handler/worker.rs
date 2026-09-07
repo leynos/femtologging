@@ -25,12 +25,8 @@ use super::{
 
 /// Commands processed by the worker thread.
 #[derive(Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
-)]
 pub enum HTTPCommand {
-    Record(FemtoLogRecord),
+    Record(Box<FemtoLogRecord>),
     Flush(Sender<()>),
     Shutdown(Sender<()>),
 }
@@ -53,7 +49,7 @@ pub enum ResponseClass {
 ///
 /// # Arguments
 ///
-/// * `config` - Configuration for the HTTP handler including URL, auth, timeouts, etc.
+/// * `config` - Configuration for the HTTP handler including URL, auth, and timeouts.
 ///
 /// # Returns
 ///
@@ -62,11 +58,11 @@ pub enum ResponseClass {
 /// * A join handle for the spawned thread
 pub fn spawn_worker(config: HTTPHandlerConfig) -> (Sender<HTTPCommand>, thread::JoinHandle<()>) {
     let (tx, rx) = bounded(config.capacity);
-    let handle = thread::spawn(move || worker_loop(rx, config));
+    let handle = thread::spawn(move || worker_loop(&rx, config));
     (tx, handle)
 }
 
-fn worker_loop(rx: Receiver<HTTPCommand>, config: HTTPHandlerConfig) {
+fn worker_loop(rx: &Receiver<HTTPCommand>, config: HTTPHandlerConfig) {
     Worker::new(config).run(rx);
 }
 
@@ -93,8 +89,8 @@ impl Worker {
         }
     }
 
-    fn handle_record_command(&mut self, record: FemtoLogRecord) {
-        let payload = match self.serialize_record(&record) {
+    fn handle_record_command(&mut self, record: &FemtoLogRecord) {
+        let payload = match self.serialize_record(record) {
             Ok(p) => p,
             Err(err) => {
                 warn!("FemtoHTTPHandler serialization error: {err}");
@@ -117,27 +113,32 @@ impl Worker {
         loop {
             let now = Instant::now();
             let result = self.execute_request(payload);
-            match result {
-                Ok(ResponseClass::Success) => {
-                    self.backoff.record_success(now);
-                    return;
-                }
-                Ok(ResponseClass::Retryable) => {
-                    match self.sleep_and_should_retry("server returned retryable status", now) {
-                        true => continue,
-                        false => return,
-                    }
-                }
-                Ok(ResponseClass::Permanent) => {
-                    warn!("FemtoHTTPHandler received permanent error (4xx), dropping record");
-                    self.warn_permanent_drops();
-                    return;
-                }
-                Err(err) => match self.sleep_and_should_retry(&err, now) {
-                    true => continue,
-                    false => return,
-                },
+            if !self.continue_after_request(result, now) {
+                return;
             }
+        }
+    }
+
+    /// Record the request outcome and decide whether the retry loop continues.
+    fn continue_after_request(
+        &mut self,
+        result: Result<ResponseClass, String>,
+        now: Instant,
+    ) -> bool {
+        match result {
+            Ok(ResponseClass::Success) => {
+                self.backoff.record_success(now);
+                false
+            }
+            Ok(ResponseClass::Retryable) => {
+                self.sleep_and_should_retry("server returned retryable status", now)
+            }
+            Ok(ResponseClass::Permanent) => {
+                warn!("FemtoHTTPHandler received permanent error (4xx), dropping record");
+                self.warn_permanent_drops();
+                false
+            }
+            Err(err) => self.sleep_and_should_retry(&err, now),
         }
     }
 
@@ -186,11 +187,11 @@ impl Worker {
         match &self.config.auth {
             AuthConfig::None => req,
             AuthConfig::Basic { username, password } => {
-                let credentials = format!("{}:{}", username, password);
+                let credentials = format!("{username}:{password}");
                 let encoded = base64_encode(credentials.as_bytes());
-                req.set("Authorization", &format!("Basic {}", encoded))
+                req.set("Authorization", &format!("Basic {encoded}"))
             }
-            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {}", token)),
+            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {token}")),
         }
     }
 
@@ -230,6 +231,14 @@ impl Worker {
         });
     }
 
+    /// Best-effort acknowledgement for a completed worker operation.
+    fn acknowledge(ack: &Sender<()>) {
+        let Ok(()) = ack.send(()) else {
+            // A timed-out caller may drop its receiver after the operation completes.
+            return;
+        };
+    }
+
     /// Handles a flush command by immediately acknowledging completion.
     ///
     /// Unlike file or socket handlers, HTTP has no persistent connection or
@@ -241,36 +250,33 @@ impl Worker {
     /// immediately without blocking until those retries complete. Callers
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
-        // Ignore send error: if the receiver has dropped, there's nothing to do.
-        let _ = ack.send(());
+    fn handle_flush_command(ack: &Sender<()>) {
+        Self::acknowledge(ack);
     }
 
     fn drain_pending(&mut self, rx: &Receiver<HTTPCommand>) {
         loop {
             match rx.try_recv() {
-                Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
-                Ok(HTTPCommand::Shutdown(ack)) => {
-                    let _ = ack.send(());
-                }
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                Ok(HTTPCommand::Record(record)) => self.handle_record_command(&record),
+                Ok(HTTPCommand::Flush(ack)) => Self::handle_flush_command(&ack),
+                Ok(HTTPCommand::Shutdown(ack)) => Self::acknowledge(&ack),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
     }
 
-    fn run(mut self, rx: Receiver<HTTPCommand>) {
+    fn run(mut self, rx: &Receiver<HTTPCommand>) {
         loop {
             match rx.recv() {
-                Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Record(record)) => self.handle_record_command(&record),
+                Ok(HTTPCommand::Flush(ack)) => Self::handle_flush_command(&ack),
                 Ok(HTTPCommand::Shutdown(ack)) => {
-                    self.drain_pending(&rx);
-                    self.handle_flush_command(ack);
+                    self.drain_pending(rx);
+                    Self::handle_flush_command(&ack);
                     break;
                 }
                 Err(_) => {
-                    self.drain_pending(&rx);
+                    self.drain_pending(rx);
                     break;
                 }
             }
@@ -286,11 +292,10 @@ impl Worker {
 /// * **429** → [`ResponseClass::Retryable`] - rate limited, retry with backoff
 /// * **5xx** → [`ResponseClass::Retryable`] - server error, retry with backoff
 /// * **Other** → [`ResponseClass::Permanent`] - client error (4xx except 429), do not retry
-pub(crate) fn classify_status(status: u16) -> ResponseClass {
+pub(crate) const fn classify_status(status: u16) -> ResponseClass {
     match status {
         200..=299 => ResponseClass::Success,
-        429 => ResponseClass::Retryable,
-        500..=599 => ResponseClass::Retryable,
+        429 | 500..=599 => ResponseClass::Retryable,
         _ => ResponseClass::Permanent,
     }
 }
@@ -325,7 +330,7 @@ pub fn enqueue_record(
     record: FemtoLogRecord,
     warner: &RateLimitedWarner,
 ) -> Result<(), HandlerError> {
-    match tx.try_send(HTTPCommand::Record(record)) {
+    match tx.try_send(HTTPCommand::Record(Box::new(record))) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
             warner.record_drop();

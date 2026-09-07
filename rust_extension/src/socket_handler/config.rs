@@ -29,12 +29,19 @@ pub const DEFAULT_BACKOFF_DEADLINE: Duration = Duration::from_secs(120);
 /// Configuration object describing how to construct a [`FemtoSocketHandler`](super::FemtoSocketHandler).
 #[derive(Clone, Debug)]
 pub struct SocketHandlerConfig {
+    /// Bounded channel capacity for records awaiting transmission.
     pub capacity: usize,
+    /// Timeout for establishing a transport connection.
     pub connect_timeout: Duration,
+    /// Timeout applied to individual socket writes.
     pub write_timeout: Duration,
+    /// Maximum `MessagePack` payload size before framing.
     pub max_frame_size: usize,
+    /// Destination transport and optional TLS settings.
     pub transport: SocketTransport,
+    /// Reconnection delay policy after transport failures.
     pub backoff: BackoffPolicy,
+    /// Interval between rate-limited dropped-record warnings.
     pub warn_interval: Duration,
 }
 
@@ -43,10 +50,8 @@ pub struct SocketHandlerConfig {
 /// transport defaults to `localhost:9020` so examples and tests work out of
 /// the box; real deployments should override it via
 /// [`SocketHandlerConfig::with_transport`] or the builder's
-/// [`SocketHandlerBuilder::with_tcp`]
-/// (crate::handlers::socket_builder::SocketHandlerBuilder::with_tcp)
-/// and [`SocketHandlerBuilder::with_unix_path`]
-/// (crate::handlers::socket_builder::SocketHandlerBuilder::with_unix_path).
+/// `SocketHandlerBuilder::with_tcp` and
+/// `SocketHandlerBuilder::with_unix_path`.
 impl Default for SocketHandlerConfig {
     fn default() -> Self {
         Self {
@@ -67,6 +72,7 @@ impl Default for SocketHandlerConfig {
 
 impl SocketHandlerConfig {
     /// Override the transport configuration.
+    #[must_use]
     pub fn with_transport(mut self, transport: SocketTransport) -> Self {
         self.transport = transport;
         self
@@ -76,9 +82,13 @@ impl SocketHandlerConfig {
 /// Exponential backoff policy for reconnection attempts.
 #[derive(Clone, Debug)]
 pub struct BackoffPolicy {
+    /// Initial delay before a reconnection attempt.
     pub base: Duration,
+    /// Maximum delay for exponential backoff.
     pub cap: Duration,
+    /// Healthy-write interval that resets accumulated backoff.
     pub reset_after: Duration,
+    /// Total retry window before records are dropped.
     pub deadline: Duration,
 }
 

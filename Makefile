@@ -68,7 +68,7 @@ lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
-	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(MDLINT) --
+	find . -type f -name '*.md' -not -path '*/target/*' -print0 | xargs -0 $(MDLINT) --
 
 spelling: spelling-helper-test ## Enforce en-GB-oxendict spelling in tracked source and prose
 	@$(UV_ENV) uv run scripts/generate_typos_config.py
@@ -93,7 +93,7 @@ spelling-helper-test: ## Validate the shared spelling-policy integration
 		--cov=typos_rollout_cache --cov-fail-under=90
 
 nixie: ## Validate Mermaid diagrams
-	find . -type f -name '*.md' -not -path './target/*' -print0 | xargs -0 $(NIXIE)
+	find . -type f -name '*.md' -not -path '*/target/*' -print0 | xargs -0 $(NIXIE)
 
 test: build ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check

@@ -33,23 +33,28 @@ fn make_exception_payload_dict<'py>(
     Ok(payload)
 }
 
-/// Helper to call filter_frames and extract the resulting frames list.
-fn filter_and_extract_frames<'py>(
-    py: Python<'py>,
-    payload: &Bound<'py, PyDict>,
+/// Build filtering options for a direct Rust filtering test.
+fn filter_options(
     exclude_filenames: Option<Vec<String>>,
     exclude_functions: Option<Vec<String>>,
     max_depth: Option<usize>,
     exclude_logging: bool,
-) -> PyResult<Bound<'py, PyList>> {
-    let result = filter_frames(
-        py,
-        payload,
+) -> FilterOptions {
+    FilterOptions {
         exclude_filenames,
         exclude_functions,
         max_depth,
         exclude_logging,
-    )?;
+    }
+}
+
+/// Filter a payload directly and extract its resulting frames list.
+fn filter_and_extract_frames<'py>(
+    py: Python<'py>,
+    payload: &Bound<'py, PyDict>,
+    options: FilterOptions,
+) -> PyResult<Bound<'py, PyList>> {
+    let result = filter_payload(py, payload, &options)?;
     let result_dict = result.cast_bound::<PyDict>(py)?;
     let frames = result_dict
         .get_item("frames")?
@@ -102,8 +107,9 @@ fn filter_stack_payload_exclude_logging() {
         )
         .expect("payload should build");
 
-        let frames_list = filter_and_extract_frames(py, &payload, None, None, None, true)
-            .expect("filter should succeed");
+        let frames_list =
+            filter_and_extract_frames(py, &payload, filter_options(None, None, None, true))
+                .expect("filter should succeed");
 
         assert_eq!(frames_list.len(), 1);
         assert_frame_filename!(frames_list, 0, "myapp/main.py");
@@ -123,10 +129,7 @@ fn filter_stack_payload_exclude_filenames() {
         let frames_list = filter_and_extract_frames(
             py,
             &payload,
-            Some(vec![".venv/".to_string()]),
-            None,
-            None,
-            false,
+            filter_options(Some(vec![".venv/".to_string()]), None, None, false),
         )
         .expect("filter should succeed");
 
@@ -141,8 +144,9 @@ fn filter_stack_payload_max_depth() {
         let payload = make_stack_payload_dict(py, &["a.py", "b.py", "c.py", "d.py", "e.py"])
             .expect("payload should build");
 
-        let frames_list = filter_and_extract_frames(py, &payload, None, None, Some(2), false)
-            .expect("filter should succeed");
+        let frames_list =
+            filter_and_extract_frames(py, &payload, filter_options(None, None, Some(2), false))
+                .expect("filter should succeed");
 
         assert_eq!(frames_list.len(), 2);
         // Should be the last 2 frames (d.py, e.py)
@@ -160,8 +164,8 @@ fn filter_exception_payload_detects_type() {
 
         assert!(is_exception_payload(&payload).expect("is_exception_payload failed"));
 
-        let result =
-            filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
+        let result = filter_payload(py, &payload, &filter_options(None, None, None, true))
+            .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");
@@ -198,8 +202,8 @@ fn filter_exception_payload_with_cause() {
             .set_item("cause", cause)
             .expect("failed to set cause");
 
-        let result =
-            filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
+        let result = filter_payload(py, &payload, &filter_options(None, None, None, true))
+            .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");
@@ -251,10 +255,7 @@ fn filter_stack_payload_exclude_functions() {
         let frames_list = filter_and_extract_frames(
             py,
             &payload,
-            None,
-            Some(vec!["_internal".to_string()]),
-            None,
-            false,
+            filter_options(None, Some(vec!["_internal".to_string()]), None, false),
         )
         .expect("filter should succeed");
 
@@ -281,13 +282,10 @@ fn filter_exception_payload_exclude_functions() {
             .set_item("function", "_internal_helper")
             .expect("failed to set function");
 
-        let result = filter_frames(
+        let result = filter_payload(
             py,
             &payload,
-            None,
-            Some(vec!["_internal".to_string()]),
-            None,
-            false,
+            &filter_options(None, Some(vec!["_internal".to_string()]), None, false),
         )
         .expect("filter_frames failed");
         let result_dict = result
@@ -338,7 +336,7 @@ fn filter_malformed_payload_raises_type_error(
             _ => panic!("Unknown scenario"),
         }
 
-        let result = filter_frames(py, &payload, None, None, None, false);
+        let result = filter_payload(py, &payload, &filter_options(None, None, None, false));
         let err = result.expect_err(&format!(
             "scenario '{}' should fail with error containing '{}'",
             scenario, expected_error_fragment
@@ -373,8 +371,8 @@ fn filter_exception_payload_preserves_extra_keys() {
             .set_item("thread_id", 12345)
             .expect("failed to set thread_id");
 
-        let result =
-            filter_frames(py, &payload, None, None, None, false).expect("filter_frames failed");
+        let result = filter_payload(py, &payload, &filter_options(None, None, None, false))
+            .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");

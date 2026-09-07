@@ -1,7 +1,7 @@
 //! URL encoding utilities for HTTP serialization.
 //!
-//! Provides URL encoding compatible with CPython's `urllib.parse.urlencode`,
-//! using `+` for spaces as CPython's `quote_plus` does by default.
+//! Provides URL encoding compatible with `CPython`'s `urllib.parse.urlencode`,
+//! using `+` for spaces as `CPython`'s `quote_plus` does by default.
 
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
@@ -39,7 +39,7 @@ pub(super) const QUERY_ENCODE_SET_NO_SPACE: &AsciiSet = &CONTROLS
     .add(b'}')
     .add(b'\'');
 
-/// URL-encode a string using `+` for spaces (CPython `urlencode` parity).
+/// URL-encode a string using `+` for spaces (`CPython urlencode` parity).
 ///
 /// This matches the behaviour of `urllib.parse.urlencode`, which uses
 /// `quote_plus` internally and encodes spaces as `+` rather than `%20`.
