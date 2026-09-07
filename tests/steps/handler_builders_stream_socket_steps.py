@@ -17,6 +17,7 @@ from femtologging import (
     SocketHandlerBuilder,
     StreamHandlerBuilder,
 )
+from tests.steps.handler_builders_support import build_flush_close
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
@@ -135,9 +136,7 @@ def then_stream_builder_snapshot(
     assert stream_builder.as_dict() == snapshot, (
         "stream builder dict must match snapshot"
     )
-    handler = stream_builder.build()
-    handler.flush()
-    handler.close()
+    build_flush_close(stream_builder)
 
 
 @then("the socket handler builder matches snapshot")
@@ -148,9 +147,7 @@ def then_socket_builder_snapshot(
     assert socket_builder.as_dict() == snapshot, (
         "socket builder dict must match snapshot"
     )
-    handler = socket_builder.build()
-    handler.flush()
-    handler.close()
+    build_flush_close(socket_builder)
 
 
 @then("building the stream handler fails")

@@ -20,7 +20,11 @@ from femtologging import (
 )
 
 if typ.TYPE_CHECKING:
-    from femtologging import HTTPHandlerBuilder
+    from femtologging import (
+        HTTPHandlerBuilder,
+        SocketHandlerBuilder,
+        StreamHandlerBuilder,
+    )
 
 type FileBuilder = (
     FileHandlerBuilder | RotatingFileHandlerBuilder | TimedRotatingFileHandlerBuilder
@@ -125,9 +129,12 @@ def parse_clock_time(time_value: str) -> dt.time:
     return dt.time(hours, minutes, seconds)
 
 
-def build_flush_close(builder: HTTPHandlerBuilder) -> None:
-    """Build, flush, and close a handler from a builder."""
+def build_flush_close(
+    builder: HTTPHandlerBuilder | SocketHandlerBuilder | StreamHandlerBuilder,
+) -> None:
+    """Build a handler, confirm its flush, and close it even after a failure."""
     handler = builder.build()
-    ok = handler.flush()
-    assert ok, "handler.flush() timed out"
-    handler.close()
+    try:
+        assert handler.flush(), "handler.flush() timed out"
+    finally:
+        handler.close()
