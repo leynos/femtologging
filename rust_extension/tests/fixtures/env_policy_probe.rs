@@ -5,29 +5,32 @@
 //! This file is not a crate target. It lives under `tests/fixtures/`, which
 //! Cargo does not auto-discover, and is compiled only by `clippy-driver` from
 //! the contract test. Every call below is deliberate.
-#![allow(dead_code)]
+//!
+//! The functions are public so that compiling this as a library emits no
+//! `dead_code` diagnostics, leaving the six `clippy::disallowed_methods`
+//! errors as the only output the contract test has to reason about.
 
-fn read_var() {
+pub fn read_var() {
     let _ = std::env::var("FEMTOLOGGING_PROBE");
 }
 
-fn read_var_os() {
+pub fn read_var_os() {
     let _ = std::env::var_os("FEMTOLOGGING_PROBE");
 }
 
-fn read_vars() {
+pub fn read_vars() {
     let _ = std::env::vars().count();
 }
 
-fn read_vars_os() {
+pub fn read_vars_os() {
     let _ = std::env::vars_os().count();
 }
 
-fn write_var() {
+pub fn write_var() {
     unsafe { std::env::set_var("FEMTOLOGGING_PROBE", "1") };
 }
 
-fn clear_var() {
+pub fn clear_var() {
     unsafe { std::env::remove_var("FEMTOLOGGING_PROBE") };
 }
 
@@ -36,6 +39,6 @@ fn clear_var() {
     clippy::disallowed_methods,
     reason = "composition root: fixture for the sanctioned escape hatch"
 )]
-fn composition_root() {
+pub fn composition_root() {
     let _ = std::env::var("FEMTOLOGGING_PROBE");
 }

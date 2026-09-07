@@ -73,6 +73,12 @@ lint: ## Run linters
 # then this target silences the rest of Clippy and denies only the environment
 # methods, so the policy reaches test code without absorbing that backlog.
 # Issue #421 folds these flags into its lane list and retires this target.
+#
+# Both loops below end each Clippy call with `|| exit 1`. A shell `for` loop
+# reports the status of its last command, so without the guard a rejection in
+# any lane but the last is discarded and the target exits 0 — the gate would
+# not gate. `rust_extension/tests/env_access_policy.rs` runs `lint-env-policy`
+# with a failing first lane and a passing last one to hold this to its word.
 ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
 ENV_POLICY_CLIPPY_FLAGS ?= --all-targets -- -A clippy::all -D clippy::disallowed_methods
 
@@ -84,14 +90,14 @@ lint-env-policy: ## Enforce the environment-access policy across all targets and
 			*) selection="--no-default-features --features $$features" ;; \
 		esac; \
 		echo "# Environment policy lane: $$features"; \
-		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) $$selection $(ENV_POLICY_CLIPPY_FLAGS); \
+		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) $$selection $(ENV_POLICY_CLIPPY_FLAGS) || exit 1; \
 	done
 
 lint-rust: lint-env-policy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	@for features in none python log-compat tracing-compat; do \
 		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
 		echo "# Lint Rust features: $$features"; \
-		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings; \
+		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings || exit 1; \
 	done
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 

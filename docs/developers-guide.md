@@ -209,8 +209,17 @@ The Rust extension must not read or mutate the process environment ambiently.
 `rust_extension/clippy.toml` disallows `std::env::var`, `var_os`, `vars`,
 `vars_os`, `set_var`, and `remove_var`, and `rust_extension/Cargo.toml` denies
 `clippy::disallowed_methods`. The `lint-env-policy` target, which `lint-rust`
-runs first, applies that lint with `--all-targets --all-features`, so
-integration tests and benches are governed alongside the library.
+runs first, applies that lint with `--all-targets` over one lane per feature:
+`none` for `--no-default-features`, `all` for `--all-features`, and one lane per
+declared feature enabling that feature alone. `--all-features` on its own would
+never compile a `#[cfg(not(feature = ...))]` block, so the `none` lane is not
+optional. Each lane's Clippy call ends with `|| exit 1`, without which a shell
+`for` loop would report only the last lane's status and the target would pass
+despite an earlier rejection.
+
+Adding a feature to `rust_extension/Cargo.toml` means adding its lane;
+`rust_extension/tests/env_access_policy.rs` derives the required lanes from the
+manifest and fails otherwise.
 
 Pick the lightest seam the boundary justifies:
 

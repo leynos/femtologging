@@ -67,16 +67,29 @@ ENV_POLICY_CLIPPY_FLAGS ?= --all-targets -- -A clippy::all -D clippy::disallowed
 ```
 
 `--all-targets` reaches integration tests and benches. The lane list is what
-reaches every feature arm: `--all-features` alone never compiles a
-`#[cfg(not(feature = ...))]` block, and the crate has such blocks, so the
-`none` and `all` lanes together compile both arms of every gate while the named
-lanes cover the combinations between. `-A clippy::all` is deliberate and
-temporary:
-the existing feature lanes in `lint-rust` omit `--all-targets` because the test
-tree carries a backlog of unrelated Clippy findings, and clearing that backlog
-is issue #421's job. Silencing the rest of Clippy in this one lane lets the
-environment policy govern test code today without absorbing that work. Once
-issue #421 lands, these flags fold into its lane list and this lane retires.
+reaches every feature arm. `none` maps to `--no-default-features`, `all` maps
+to `--all-features`, and every other entry maps to `--no-default-features
+--features <name>`, so a named lane enables exactly one feature and nothing
+else. `--all-features` alone would never compile a `#[cfg(not(feature = ...))]`
+block, and the crate has such blocks; `none` and `all` between them compile
+both arms of every single-feature gate, and each named lane compiles that
+feature's code with the others absent. Intermediate combinations are not
+linted, which is a deliberate limit: the policy bans a call outright rather
+than under a condition, so a violation cannot be reachable only under a
+combination and not under a lane that enables the feature it sits behind.
+
+Each lane's Clippy call ends with `|| exit 1`. A shell `for` loop reports the
+status of its last command, so without the guard a rejection in any lane but
+the last is discarded and the target exits 0. That is not a hypothetical: the
+`none` lane is the only one that compiles a `#[cfg(not(feature = ...))]` block,
+and it runs first.
+
+`-A clippy::all` is deliberate and temporary: the feature lanes in `lint-rust`
+omit `--all-targets` because the test tree carries a backlog of unrelated
+Clippy findings, and clearing that backlog is issue #421's job. Silencing the
+rest of Clippy in this one target lets the environment policy govern test code
+today without absorbing that work. Once issue #421 lands, these flags fold into
+its lane list and this target retires.
 
 ### Seam selection
 
@@ -133,12 +146,13 @@ access is governed by the Python architecture and its own lint stack.
   remedy, in every feature lane and every target kind.
 - `rust_extension/tests/env_access_policy.rs` fails if any of the six entries
   leaves `clippy.toml`, if the manifest stops denying the lint, or if the
-  policy lane stops covering every target and feature or drops out of
-  `make lint`. It also compiles `tests/fixtures/env_policy_probe.rs` through
-  `clippy-driver` under this crate's `clippy.toml` and checks that all six
-  methods are rejected, that each diagnostic carries the remedy this ADR
-  promises, and that the composition-root `expect` suppresses exactly one call.
-  Each of its assertions records the mutation that proved it.
+  policy target stops covering every target and feature, stops failing when a
+  lane fails, or drops out of `make lint`. It also compiles
+  `tests/fixtures/env_policy_probe.rs` through `clippy-driver` under this
+  crate's `clippy.toml` and checks that all six methods are rejected, that each
+  diagnostic carries the remedy this ADR promises, and that the
+  composition-root `expect` suppresses exactly one call. Each of its assertions
+  records the mutation that proved it.
 - Adding a feature to the crate manifest without adding a lane fails that test,
   so the lane list cannot drift behind the feature list.
 - Adding a new environment-dependent boundary means choosing among three named
