@@ -2,7 +2,11 @@
 //! handler attachment and removal, and the thread-safety of both.
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+    DefaultFormatter,
+    FemtoHandlerTrait,
+    FemtoLevel,
+    FemtoLogRecord,
+    FemtoStreamHandler,
 };
 use _femtologging_rs::{FemtoLogger, QueuedRecord}; // needed for clone_sender test
 use rstest::{fixture, rstest};
@@ -11,9 +15,10 @@ use rstest::{fixture, rstest};
 mod fixtures;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
+use std::sync::{Arc, Mutex};
+
 use fixtures::{handler_tuple, stream_handler_for};
 use shared_buffer::std::{SharedBuf, read_output};
-use std::sync::{Arc, Mutex};
 
 /// A shared in-memory buffer paired with the handler writing into it.
 type HandlerTuple = (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler);
@@ -301,8 +306,7 @@ fn get_level_returns_current_level() {
 
 #[test]
 fn set_level_is_thread_safe() {
-    use std::sync::Barrier;
-    use std::thread;
+    use std::{sync::Barrier, thread};
 
     let logger = Arc::new(FemtoLogger::new("concurrent".to_owned()));
     let barrier = Arc::new(Barrier::new(ALL_LEVELS.len()));

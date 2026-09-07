@@ -7,16 +7,15 @@ use std::{
 
 use pyo3::prelude::*;
 
-use crate::config::ConfigError;
+use super::types::{ConfigBuilder, HandlerBuilder, LoggerConfigBuilder};
 use crate::{
+    config::ConfigError,
     filters::{FemtoFilter, FilterBuilder},
     handler::FemtoHandlerTrait,
     level::FemtoLevel,
     logger::FemtoLogger,
     manager,
 };
-
-use super::types::{ConfigBuilder, HandlerBuilder, LoggerConfigBuilder};
 
 struct ConfiguredLoggerPlan {
     name: String,

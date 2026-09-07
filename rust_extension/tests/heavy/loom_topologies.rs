@@ -10,23 +10,25 @@
 
 use std::sync::Arc;
 
-use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
-use loom::thread;
-
 use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogger, FemtoStreamHandler,
+    DefaultFormatter,
+    FemtoHandlerTrait,
+    FemtoLevel,
+    FemtoLogger,
+    FemtoStreamHandler,
+};
+use loom::{
+    sync::{Arc as LoomArc, Mutex as LoomMutex},
+    thread,
 };
 
-use crate::shared_buffer::loom::SharedBuf as LoomBuf;
-use crate::shared_buffer::loom::read_output;
+use crate::shared_buffer::loom::{SharedBuf as LoomBuf, read_output};
 
 /// A loom-instrumented byte buffer shared with a stream handler.
 type LoomBuffer = LoomArc<LoomMutex<Vec<u8>>>;
 
 /// Return a fresh loom-instrumented output buffer.
-fn fresh_buffer() -> LoomBuffer {
-    LoomArc::new(LoomMutex::new(Vec::new()))
-}
+fn fresh_buffer() -> LoomBuffer { LoomArc::new(LoomMutex::new(Vec::new())) }
 
 /// Return a default-formatting stream handler writing into `buffer`.
 fn handler_for(buffer: &LoomBuffer) -> Arc<FemtoStreamHandler> {

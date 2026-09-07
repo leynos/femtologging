@@ -1,11 +1,12 @@
 //! Field visitors for tracing events and spans.
 
-use std::collections::BTreeMap;
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
-use tracing::Event;
-use tracing::field::{Field, Visit};
-use tracing::span::{Attributes, Record};
+use tracing::{
+    Event,
+    field::{Field, Visit},
+    span::{Attributes, Record},
+};
 
 #[derive(Debug, Default)]
 pub(crate) struct CapturedFields {
@@ -54,33 +55,19 @@ impl FieldCaptureVisitor {
 }
 
 impl Visit for FieldCaptureVisitor {
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.store(field, value.into());
-    }
+    fn record_str(&mut self, field: &Field, value: &str) { self.store(field, value.into()); }
 
-    fn record_bool(&mut self, field: &Field, value: bool) {
-        self.store(field, value.to_string());
-    }
+    fn record_bool(&mut self, field: &Field, value: bool) { self.store(field, value.to_string()); }
 
-    fn record_i64(&mut self, field: &Field, value: i64) {
-        self.store(field, value.to_string());
-    }
+    fn record_i64(&mut self, field: &Field, value: i64) { self.store(field, value.to_string()); }
 
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        self.store(field, value.to_string());
-    }
+    fn record_u64(&mut self, field: &Field, value: u64) { self.store(field, value.to_string()); }
 
-    fn record_i128(&mut self, field: &Field, value: i128) {
-        self.store(field, value.to_string());
-    }
+    fn record_i128(&mut self, field: &Field, value: i128) { self.store(field, value.to_string()); }
 
-    fn record_u128(&mut self, field: &Field, value: u128) {
-        self.store(field, value.to_string());
-    }
+    fn record_u128(&mut self, field: &Field, value: u128) { self.store(field, value.to_string()); }
 
-    fn record_f64(&mut self, field: &Field, value: f64) {
-        self.store(field, value.to_string());
-    }
+    fn record_f64(&mut self, field: &Field, value: f64) { self.store(field, value.to_string()); }
 
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
         self.store(field, value.to_string());

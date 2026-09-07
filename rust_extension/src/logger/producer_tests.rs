@@ -1,17 +1,25 @@
 //! Focused unit tests for logger producer-path helpers.
 
-use crate::level::FemtoLevel;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use rstest::rstest;
 
-use super::logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_signal};
-use super::*;
-use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
-use crate::handler::FemtoHandlerTrait;
-use crate::log_record::RecordMetadata;
+use super::{
+    logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_signal},
+    *,
+};
+use crate::{
+    filters::{FemtoFilter, FilterContext, FilterDecision},
+    handler::FemtoHandlerTrait,
+    level::FemtoLevel,
+    log_record::RecordMetadata,
+};
 
 struct TestFilter {
     accepted: bool,

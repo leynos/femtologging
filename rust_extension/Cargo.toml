@@ -8,8 +8,8 @@ authors = ["Payton McIntosh <pmcintosh@df12.net>"]
 name = "_femtologging_rs"
 crate-type = ["cdylib", "rlib"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
+[lints]
+workspace = true
 
 [dependencies]
 delegate = "0.13.4"
@@ -43,6 +43,7 @@ log-compat = ["python"]
 tracing-compat = ["python", "tracing", "tracing-subscriber"]
 
 [dev-dependencies]
+femtologging_test_macros = { workspace = true }
 criterion = "0.8"
 rstest = "0.26"
 logtest = "2.0"
@@ -54,3 +55,14 @@ _femtologging_rs = { path = ".", package = "femtologging_rs", default-features =
 static_assertions = "1"
 filetime = "0.2"
 trybuild = { version = "1", features = ["diff"] }
+
+[workspace]
+members = ["test_macros"]
+resolver = "3"
+
+[workspace.dependencies]
+# Cargo omits this private development dependency from published packages.
+femtologging_test_macros = { path = "test_macros" }
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

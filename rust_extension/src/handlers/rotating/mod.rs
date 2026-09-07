@@ -18,7 +18,9 @@ pub(crate) mod python;
 pub(crate) use python::PyRotatingFileHandler;
 #[cfg(feature = "python")]
 pub use python::{
-    HandlerOptions, ROTATION_VALIDATION_MSG, clear_rotating_fresh_failure_for_test,
+    HandlerOptions,
+    ROTATION_VALIDATION_MSG,
+    clear_rotating_fresh_failure_for_test,
     force_rotating_fresh_failure_for_test,
 };
 

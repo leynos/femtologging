@@ -22,8 +22,7 @@ use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::ExceptionPayload;
-/// use _femtologging_rs::ExceptionFormat;
+/// use _femtologging_rs::{ExceptionFormat, exception_schema::ExceptionPayload};
 ///
 /// let exc = ExceptionPayload::new("ValueError", "bad input");
 /// let output = exc.format_exception();
@@ -126,17 +125,13 @@ impl ExceptionFormat for ExceptionPayload {
 ///
 /// Follows Python's traceback formatting style. Prefer using the
 /// [`ExceptionFormat`] trait for new code.
-pub fn format_stack_payload(payload: &StackTracePayload) -> String {
-    payload.format_exception()
-}
+pub fn format_stack_payload(payload: &StackTracePayload) -> String { payload.format_exception() }
 
 /// Format an exception payload into a human-readable string.
 ///
 /// Handles exception chaining and follows Python's traceback formatting style.
 /// Prefer using the [`ExceptionFormat`] trait for new code.
-pub fn format_exception_payload(payload: &ExceptionPayload) -> String {
-    payload.format_exception()
-}
+pub fn format_exception_payload(payload: &ExceptionPayload) -> String { payload.format_exception() }
 
 // ============================================================================
 // Private Implementation Helpers

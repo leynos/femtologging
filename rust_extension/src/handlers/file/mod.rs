@@ -31,24 +31,25 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(crate) use builder_options::BuilderOptions;
+pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
 use crossbeam_channel::{Receiver, Sender};
+use io_utils::open_log_file;
 use pyo3::prelude::*;
+pub(crate) use validations::{
+    validate_capacity_nonzero,
+    validate_flush_interval_nonzero,
+    validate_params,
+};
+use worker::{FileCommand, WorkerConfig, spawn_worker};
 
-use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
+    handler::FemtoHandlerTrait,
     log_record::FemtoLogRecord,
 };
-
-pub(crate) use builder_options::BuilderOptions;
-pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
-use io_utils::open_log_file;
-pub(crate) use validations::{
-    validate_capacity_nonzero, validate_flush_interval_nonzero, validate_params,
-};
-use worker::{FileCommand, WorkerConfig, spawn_worker};
 
 /// File-based logging handler exposed to Python.
 ///
@@ -142,9 +143,7 @@ impl FemtoFileHandler {
 
     /// Flush queued records and report whether the worker acknowledged it.
     #[must_use]
-    pub fn flush(&self) -> bool {
-        self.tx.as_ref().is_some_and(Self::perform_flush)
-    }
+    pub fn flush(&self) -> bool { self.tx.as_ref().is_some_and(Self::perform_flush) }
 
     fn perform_flush(tx: &Sender<FileCommand>) -> bool {
         let deadline = Instant::now() + Duration::from_secs(1);

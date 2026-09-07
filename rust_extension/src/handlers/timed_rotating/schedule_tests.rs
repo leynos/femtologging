@@ -3,8 +3,10 @@
 use chrono::{NaiveTime, Weekday};
 use rstest::rstest;
 
-use super::schedule::{TimedRotationSchedule, TimedRotationWhen};
-use super::test_helpers::{naive_time, utc_datetime};
+use super::{
+    schedule::{TimedRotationSchedule, TimedRotationWhen},
+    test_helpers::{naive_time, utc_datetime},
+};
 
 #[rstest]
 #[case("S", TimedRotationWhen::Seconds)]

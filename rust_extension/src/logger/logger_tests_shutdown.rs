@@ -3,11 +3,14 @@
 //! Exercises `should_shutdown_now`, `shutdown_and_drain`, and the
 //! `worker_thread_loop` drain-on-shutdown guarantee.
 
-use super::*;
-use rstest::rstest;
 use std::sync::Arc;
 
-use super::super::logger_tests_helpers::{collected_messages, collecting_handler, enqueue_records};
+use rstest::rstest;
+
+use super::{
+    super::logger_tests_helpers::{collected_messages, collecting_handler, enqueue_records},
+    *,
+};
 
 // ------------------------------------------------------------------
 // should_shutdown_now

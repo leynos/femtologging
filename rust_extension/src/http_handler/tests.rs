@@ -1,20 +1,25 @@
 //! Integration tests for the HTTP handler.
 
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
+use std::{
+    io::{self, BufRead, BufReader, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
 use rstest::{fixture, rstest};
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::handlers::{HTTPHandlerBuilder, HandlerBuilderTrait};
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
-
-use super::FemtoHTTPHandler;
-use super::config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat};
+use super::{
+    FemtoHTTPHandler,
+    config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+};
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    handlers::{HTTPHandlerBuilder, HandlerBuilderTrait},
+    level::FemtoLevel,
+    log_record::FemtoLogRecord,
+};
 
 /// Spawn a mock HTTP server that captures the first request.
 fn spawn_mock_server(
@@ -111,10 +116,9 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<CapturedRequest> {
 
 // The fixture arranges state, so it returns Result and leaves the verdict
 // to the calling test.
+#[femtologging_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-fn tcp_listener() -> io::Result<TcpListener> {
-    TcpListener::bind(("127.0.0.1", 0))
-}
+fn tcp_listener() -> io::Result<TcpListener> { TcpListener::bind(("127.0.0.1", 0)) }
 
 fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
     let url = format!("http://{addr}/log");
@@ -327,7 +331,8 @@ where
     Ok(())
 }
 
-/// Verifies that the expected number of requests are received, each containing the expected message fragment.
+/// Verifies that the expected number of requests are received, each containing the expected message
+/// fragment.
 fn verify_requests_with_message(
     rx: &mpsc::Receiver<CapturedRequest>,
     count: usize,

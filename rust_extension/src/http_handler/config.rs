@@ -3,11 +3,9 @@
 //! `HTTPHandlerBuilder` constructs these values before passing them to
 //! [`FemtoHTTPHandler`](super::FemtoHTTPHandler) for runtime use.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-use crate::rate_limited_warner::DEFAULT_WARN_INTERVAL;
-use crate::socket_handler::BackoffPolicy;
+use crate::{rate_limited_warner::DEFAULT_WARN_INTERVAL, socket_handler::BackoffPolicy};
 
 /// Default bounded channel capacity used by the handler.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;

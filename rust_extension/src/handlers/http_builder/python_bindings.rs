@@ -3,15 +3,14 @@
 //! This module exposes Python APIs for constructing HTTP handlers with
 //! URL configuration, authentication, timeouts, and serialization options.
 
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
-
-use crate::handlers::HandlerBuilderTrait;
-use crate::handlers::socket_builder::BackoffOverrides;
-use crate::http_handler::{FemtoHTTPHandler, HTTPMethod};
-use crate::macros::{AsPyDict, dict_into_py};
+use pyo3::{prelude::*, types::PyDict};
 
 use super::HTTPHandlerBuilder;
+use crate::{
+    handlers::{HandlerBuilderTrait, socket_builder::BackoffOverrides},
+    http_handler::{FemtoHTTPHandler, HTTPMethod},
+    macros::{AsPyDict, dict_into_py},
+};
 
 fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
     match method.to_uppercase().as_str() {
@@ -26,9 +25,7 @@ fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
 #[pymethods]
 impl HTTPHandlerBuilder {
     #[new]
-    fn py_new() -> Self {
-        Self::new()
-    }
+    fn py_new() -> Self { Self::new() }
 
     #[pyo3(name = "with_url")]
     #[pyo3(signature = (url))]
@@ -90,7 +87,8 @@ impl HTTPHandlerBuilder {
             let (Some(username_value), Some(password_value)) = (username_item, password_item)
             else {
                 return Err(pyo3::exceptions::PyValueError::new_err(
-                    "with_auth config must specify either 'token' or both 'username' and 'password'",
+                    "with_auth config must specify either 'token' or both 'username' and \
+                     'password'",
                 ));
             };
             let username_text: String = username_value.extract()?;
@@ -198,9 +196,7 @@ impl HTTPHandlerBuilder {
     }
 
     #[pyo3(name = "build")]
-    fn py_build(&self) -> PyResult<FemtoHTTPHandler> {
-        self.build_inner().map_err(Into::into)
-    }
+    fn py_build(&self) -> PyResult<FemtoHTTPHandler> { self.build_inner().map_err(Into::into) }
 }
 
 impl AsPyDict for HTTPHandlerBuilder {
@@ -215,12 +211,13 @@ impl AsPyDict for HTTPHandlerBuilder {
 mod tests {
     //! Tests for the HTTP handler builder Python bindings.
 
-    use pyo3::Python;
-    use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods};
-
-    use crate::handlers::HandlerBuilderTrait;
+    use pyo3::{
+        Python,
+        types::{PyAnyMethods, PyDict, PyDictMethods},
+    };
 
     use super::HTTPHandlerBuilder;
+    use crate::handlers::HandlerBuilderTrait;
 
     #[test]
     fn builder_requires_url() {
@@ -345,7 +342,8 @@ mod tests {
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
             assert_eq!(
                 err.to_string(),
-                "ValueError: with_auth config must specify either 'token' or both 'username' and 'password'"
+                "ValueError: with_auth config must specify either 'token' or both 'username' and \
+                 'password'"
             );
         });
     }

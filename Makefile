@@ -1,8 +1,9 @@
 .PHONY: help all clean build release lint lint-rust fmt check-fmt \
-markdownlint tools nixie spelling spelling-helper-test test typecheck
+markdownlint tools nixie spelling spelling-helper-test test typecheck package-check
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
+FMT_TOOLCHAIN ?= nightly-2026-05-28
 BUILD_JOBS ?=
 RUFF_VERSION ?= 0.15.12
 RUFF ?= uvx ruff==$(RUFF_VERSION)
@@ -48,12 +49,12 @@ tools:
 
 fmt: tools ## Format sources
 	$(RUFF) format
-	$(CARGO) fmt --manifest-path $(RUST_MANIFEST)
+	$(CARGO) +$(FMT_TOOLCHAIN) fmt --manifest-path $(RUST_MANIFEST) --all
 	mdformat-all
 
 check-fmt: ## Verify formatting
 	$(RUFF) format --check
-	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
+	$(CARGO) +$(FMT_TOOLCHAIN) fmt --manifest-path $(RUST_MANIFEST) --all -- --check
 
 lint: ## Run linters
 	$(RUFF) check
@@ -96,7 +97,7 @@ nixie: ## Validate Mermaid diagrams
 	find . -type f -name '*.md' -not -path '*/target/*' -print0 | xargs -0 $(NIXIE)
 
 test: build ## Run tests
-	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
+	$(CARGO) +$(FMT_TOOLCHAIN) fmt --manifest-path $(RUST_MANIFEST) --all -- --check
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
 	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
@@ -107,6 +108,10 @@ test: build ## Run tests
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- --test-threads=$(TEST_THREADS)
 	uv run pytest -v
+	$(MAKE) package-check
+
+package-check: ## Verify publishable crates without private test dependencies
+	$(CARGO) package --manifest-path $(RUST_MANIFEST) --workspace --allow-dirty $(BUILD_JOBS)
 
 typecheck: build ## Static type analysis
 	# Pass the environment explicitly: ty 0.0.75 ignores the equivalent

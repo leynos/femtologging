@@ -3,11 +3,14 @@
 //! This module is shared across multiple test files so that each test module
 //! does not need its own copy of the same boilerplate.
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::log_record::FemtoLogRecord;
+use std::{any::Any, sync::Arc};
+
 use parking_lot::Mutex;
-use std::any::Any;
-use std::sync::Arc;
+
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    log_record::FemtoLogRecord,
+};
 
 /// Handler that stores every record it receives for later inspection.
 #[derive(Clone, Default)]
@@ -17,14 +20,10 @@ pub struct CollectingHandler {
 
 impl CollectingHandler {
     /// Create a new empty handler.
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Return a snapshot of all records received so far.
-    pub fn collected(&self) -> Vec<FemtoLogRecord> {
-        self.records.lock().clone()
-    }
+    pub fn collected(&self) -> Vec<FemtoLogRecord> { self.records.lock().clone() }
 }
 
 impl FemtoHandlerTrait for CollectingHandler {
@@ -33,7 +32,5 @@ impl FemtoHandlerTrait for CollectingHandler {
         Ok(())
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }

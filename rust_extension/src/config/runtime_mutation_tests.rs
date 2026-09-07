@@ -1,16 +1,17 @@
 //! Unit tests for runtime mutation builders and apply semantics.
 #![cfg(all(test, feature = "python"))]
 
-use super::test_utils::gil_and_clean_manager;
-use super::*;
-use crate::{
-    FemtoLevel, StreamHandlerBuilder,
-    filters::{FilterBuilder, LevelFilterBuilder, NameFilterBuilder},
-    manager,
-};
 use pyo3::Python;
 use rstest::{fixture, rstest};
 use serial_test::serial;
+
+use super::{test_utils::gil_and_clean_manager, *};
+use crate::{
+    FemtoLevel,
+    StreamHandlerBuilder,
+    filters::{FilterBuilder, LevelFilterBuilder, NameFilterBuilder},
+    manager,
+};
 
 fn handler_ptrs(logger: &crate::logger::FemtoLogger) -> Vec<usize> {
     logger

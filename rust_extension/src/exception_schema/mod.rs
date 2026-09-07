@@ -17,12 +17,11 @@
 //!
 //! ## Compatibility Guarantees
 //!
-//! - **Backward compatible**: Code supporting version N can read payloads from
-//!   versions [`MIN_EXCEPTION_SCHEMA_VERSION`] through N. Missing optional
-//!   fields use serde default values.
-//! - **Forward incompatible**: Code supporting version N rejects payloads with
-//!   version > N. Use [`validate_schema_version`] or the `validate_version`
-//!   methods on payload types to check before processing.
+//! - **Backward compatible**: Code supporting version N can read payloads from versions
+//!   [`MIN_EXCEPTION_SCHEMA_VERSION`] through N. Missing optional fields use serde default values.
+//! - **Forward incompatible**: Code supporting version N rejects payloads with version > N. Use
+//!   [`validate_schema_version`] or the `validate_version` methods on payload types to check before
+//!   processing.
 //!
 //! ## Version Increment Rules
 //!
@@ -41,7 +40,9 @@
 //!
 //! ```rust
 //! use _femtologging_rs::exception_schema::{
-//!     ExceptionPayload, SchemaVersionError, SchemaVersioned,
+//!     ExceptionPayload,
+//!     SchemaVersionError,
+//!     SchemaVersioned,
 //! };
 //!
 //! fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -56,7 +57,9 @@
 //!
 //! ```rust
 //! use _femtologging_rs::exception_schema::{
-//!     ExceptionPayload, StackFrame, EXCEPTION_SCHEMA_VERSION,
+//!     EXCEPTION_SCHEMA_VERSION,
+//!     ExceptionPayload,
+//!     StackFrame,
 //! };
 //!
 //! let frame = StackFrame {
@@ -75,8 +78,9 @@
 //! };
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod filtering;
@@ -101,8 +105,7 @@ pub const EXCEPTION_SCHEMA_VERSION: u16 = 1;
 pub enum SchemaVersionError {
     /// The payload schema version is newer than supported.
     #[error(
-        "unsupported exception schema version: found {found}, \
-         maximum supported is {max_supported}"
+        "unsupported exception schema version: found {found}, maximum supported is {max_supported}"
     )]
     VersionTooNew {
         /// The schema version found in the payload.
@@ -112,8 +115,7 @@ pub enum SchemaVersionError {
     },
     /// The payload schema version is older than supported.
     #[error(
-        "unsupported exception schema version: found {found}, \
-         minimum supported is {min_supported}"
+        "unsupported exception schema version: found {found}, minimum supported is {min_supported}"
     )]
     VersionTooOld {
         /// The schema version found in the payload.
@@ -139,7 +141,9 @@ pub enum SchemaVersionError {
 ///
 /// ```rust
 /// use _femtologging_rs::exception_schema::{
-///     validate_schema_version, EXCEPTION_SCHEMA_VERSION, MIN_EXCEPTION_SCHEMA_VERSION,
+///     EXCEPTION_SCHEMA_VERSION,
+///     MIN_EXCEPTION_SCHEMA_VERSION,
+///     validate_schema_version,
 /// };
 ///
 /// assert!(validate_schema_version(MIN_EXCEPTION_SCHEMA_VERSION).is_ok());
@@ -290,7 +294,9 @@ impl StackTracePayload {
     ///
     /// ```rust
     /// use _femtologging_rs::exception_schema::{
-    ///     StackFrame, StackTracePayload, EXCEPTION_SCHEMA_VERSION,
+    ///     EXCEPTION_SCHEMA_VERSION,
+    ///     StackFrame,
+    ///     StackTracePayload,
     /// };
     ///
     /// let frames = vec![StackFrame::new("test.py", 10, "main")];
@@ -307,15 +313,11 @@ impl StackTracePayload {
 }
 
 impl SchemaVersioned for StackTracePayload {
-    fn schema_version(&self) -> u16 {
-        self.schema_version
-    }
+    fn schema_version(&self) -> u16 { self.schema_version }
 }
 
 impl SchemaVersioned for ExceptionPayload {
-    fn schema_version(&self) -> u16 {
-        self.schema_version
-    }
+    fn schema_version(&self) -> u16 { self.schema_version }
 }
 
 impl ExceptionPayload {
@@ -324,9 +326,7 @@ impl ExceptionPayload {
     /// # Examples
     ///
     /// ```rust
-    /// use _femtologging_rs::exception_schema::{
-    ///     ExceptionPayload, EXCEPTION_SCHEMA_VERSION,
-    /// };
+    /// use _femtologging_rs::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload};
     ///
     /// let payload = ExceptionPayload::new("ValueError", "invalid input");
     /// assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
@@ -349,8 +349,7 @@ impl ExceptionPayload {
     /// use _femtologging_rs::exception_schema::ExceptionPayload;
     ///
     /// let cause = ExceptionPayload::new("IOError", "file not found");
-    /// let error = ExceptionPayload::new("RuntimeError", "failed")
-    ///     .with_cause(cause);
+    /// let error = ExceptionPayload::new("RuntimeError", "failed").with_cause(cause);
     /// assert!(error.cause.is_some());
     /// ```
     #[must_use]

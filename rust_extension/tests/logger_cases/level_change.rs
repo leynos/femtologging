@@ -1,8 +1,10 @@
 //! Tests logger output and level updates while a producer is active.
 
-use std::collections::BTreeSet;
-use std::sync::{Arc, Barrier};
-use std::thread;
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Barrier},
+    thread,
+};
 
 use _femtologging_rs::{FemtoHandlerTrait, FemtoLevel, FemtoLogger};
 use rstest::rstest;

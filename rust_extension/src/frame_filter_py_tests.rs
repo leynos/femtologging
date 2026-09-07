@@ -1,9 +1,10 @@
 //! Tests for Python frame filter bindings.
 
-use super::*;
 use pyo3::types::{PyDict, PyList};
 use rstest::rstest;
 use serial_test::serial;
+
+use super::*;
 
 fn make_stack_payload_dict<'py>(
     py: Python<'py>,
@@ -346,7 +347,8 @@ fn filter_malformed_payload_raises_type_error(
         ));
         assert!(
             err.to_string().contains(expected_error_fragment),
-            "error for scenario '{scenario}' should contain '{expected_error_fragment}', got: {err}"
+            "error for scenario '{scenario}' should contain '{expected_error_fragment}', got: \
+             {err}"
         );
     });
 }

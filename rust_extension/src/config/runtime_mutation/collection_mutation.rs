@@ -1,7 +1,10 @@
 //! Collection-mutation primitives shared by runtime logger builders.
 
 use pyo3::{
-    Py, PyAny, PyResult, Python,
+    Py,
+    PyAny,
+    PyResult,
+    Python,
     types::{PyDict, PyDictMethods, PyList},
 };
 
@@ -28,25 +31,19 @@ impl CollectionMutation {
     ///
     /// The provided IDs are normalized with [`normalize_vec`] before being
     /// stored, so the returned mutation carries sorted, deduplicated values.
-    pub(crate) fn replace(ids: Vec<String>) -> Self {
-        Self::Replace(normalize_vec(ids))
-    }
+    pub(crate) fn replace(ids: Vec<String>) -> Self { Self::Replace(normalize_vec(ids)) }
 
     /// Creates a mutation that appends `ids` to the current IDs.
     ///
     /// The provided IDs are normalized with [`normalize_vec`] before being
     /// stored, so append inputs are sorted and deduplicated up front.
-    pub(crate) fn append(ids: Vec<String>) -> Self {
-        Self::Append(normalize_vec(ids))
-    }
+    pub(crate) fn append(ids: Vec<String>) -> Self { Self::Append(normalize_vec(ids)) }
 
     /// Creates a mutation that removes `ids` from the current IDs.
     ///
     /// The provided IDs are normalized with [`normalize_vec`] before being
     /// stored, so removals match against sorted, deduplicated values.
-    pub(crate) fn remove(ids: Vec<String>) -> Self {
-        Self::Remove(normalize_vec(ids))
-    }
+    pub(crate) fn remove(ids: Vec<String>) -> Self { Self::Remove(normalize_vec(ids)) }
 
     /// Computes and returns a new `Vec<String>` representing the resulting ID
     /// list after applying this mutation to the provided `existing` slice.
@@ -54,9 +51,9 @@ impl CollectionMutation {
     /// Possible behaviours:
     /// - [`Unchanged`](Self::Unchanged) returns a copy of the existing IDs.
     /// - [`Replace`](Self::Replace) returns the provided replacement IDs.
-    /// - [`Append`](Self::Append) merges new IDs without duplicating existing
-    ///   ones. Existing IDs retain their original order, and new IDs are
-    ///   appended in order after removing any that are already present.
+    /// - [`Append`](Self::Append) merges new IDs without duplicating existing ones. Existing IDs
+    ///   retain their original order, and new IDs are appended in order after removing any that are
+    ///   already present.
     /// - [`Remove`](Self::Remove) filters out listed IDs.
     /// - [`Clear`](Self::Clear) returns an empty `Vec`.
     ///

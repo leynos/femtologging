@@ -11,24 +11,25 @@
 //! registry will be wired in future to resolve custom identifiers at
 //! build time.
 
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
-
 #[cfg(test)]
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 #[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+#[cfg(feature = "python")]
 use super::common::{PyOverflowPolicy, py_flush_after_records_to_nonzero};
 use super::{
-    FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    FormatterId,
+    HandlerBuildError,
+    HandlerBuilderTrait,
     common::{FileLikeBuilderState, FormatterConfig, IntoFormatterConfig},
     file::{FemtoFileHandler, OverflowPolicy},
 };
 use crate::formatter::DefaultFormatter;
 #[cfg(test)]
 use crate::level::FemtoLevel;
-
 #[cfg(feature = "python")]
 use crate::macros::{AsPyDict, dict_into_py};
 
@@ -120,13 +121,14 @@ impl HandlerBuilderTrait for FileHandlerBuilder {
 mod tests {
     //! Tests for the file handler builder.
 
-    use super::super::test_helpers::assert_build_err;
-    use super::*;
     use rstest::rstest;
     use tempfile::tempdir;
 
+    use super::{super::test_helpers::assert_build_err, *};
     use crate::{
-        formatter::FemtoFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord,
+        formatter::FemtoFormatter,
+        handler::FemtoHandlerTrait,
+        log_record::FemtoLogRecord,
     };
 
     #[derive(Clone, Copy, Debug)]

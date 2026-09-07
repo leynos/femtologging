@@ -26,6 +26,8 @@ jobs:
           python-version: '3.12'
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned nightly rustfmt
+        run: rustup toolchain install nightly-2026-05-28 --component rustfmt --profile minimal
       - name: Set up virtualenv
         run: |
           python -m venv .venv
@@ -47,7 +49,9 @@ jobs:
       - name: Run formatters and tests
         run: |
           source .venv/bin/activate
-          cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
+          # Keep the stable compiler for builds and tests; nightly is only used
+          # for the repository's formatting profile.
+          cargo +nightly-2026-05-28 fmt --manifest-path rust_extension/Cargo.toml --all -- --check
           cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
           feature_sets=("" "python" "log-compat" "python,log-compat")
           for feature_set in "${feature_sets[@]}"; do

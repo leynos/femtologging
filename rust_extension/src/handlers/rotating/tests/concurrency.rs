@@ -1,23 +1,29 @@
 //! Concurrency-focused tests for the rotating handler.
 
-use crate::formatter::DefaultFormatter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::handlers::file::{
-    BuilderOptions, FemtoFileHandler, HandlerConfig, OverflowPolicy, RotationStrategy,
+use std::{
+    fs::{File, OpenOptions},
+    io::{self, BufWriter},
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
 };
-use crate::handlers::rotating::FemtoRotatingFileHandler;
-use crate::handlers::rotating::strategy::FileRotationStrategy;
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
-use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
-use std::thread;
-use std::time::{Duration, Instant};
+
 use tempfile::tempdir;
+
+use crate::{
+    formatter::DefaultFormatter,
+    handler::{FemtoHandlerTrait, HandlerError},
+    handlers::{
+        file::{BuilderOptions, FemtoFileHandler, HandlerConfig, OverflowPolicy, RotationStrategy},
+        rotating::{FemtoRotatingFileHandler, strategy::FileRotationStrategy},
+    },
+    level::FemtoLevel,
+    log_record::FemtoLogRecord,
+};
 
 struct ObservedStrategy {
     inner: FileRotationStrategy,
@@ -108,7 +114,8 @@ fn attempt_non_blocking_writes(
             &format!("extra {idx}"),
         )) {
             Ok(()) | Err(HandlerError::QueueFull) => {
-                // Dropped records are acceptable here because the test exercises non-blocking queueing.
+                // Dropped records are acceptable here because the test exercises non-blocking
+                // queueing.
             }
             Err(other) => return Err(other),
         }

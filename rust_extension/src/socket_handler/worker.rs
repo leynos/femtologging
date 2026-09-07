@@ -1,22 +1,24 @@
 //! Worker thread driving socket I/O.
 
 use std::{
-    io, thread,
+    io,
+    thread,
     time::{Duration, Instant},
 };
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 
-use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
-};
-
 use super::{
     backoff::BackoffState,
     config::SocketHandlerConfig,
     serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
+};
+use crate::{
+    handler::HandlerError,
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
 };
 
 /// Commands processed by the worker thread.

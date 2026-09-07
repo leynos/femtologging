@@ -5,9 +5,8 @@
 
 use std::time::Duration;
 
-use crate::rate_limited_warner::DEFAULT_WARN_INTERVAL;
-
 use super::transport::{SocketTransport, TcpTransport};
+use crate::rate_limited_warner::DEFAULT_WARN_INTERVAL;
 
 /// Default bounded channel capacity used by the handler.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -26,7 +25,8 @@ pub const DEFAULT_BACKOFF_RESET: Duration = Duration::from_secs(30);
 /// Default absolute deadline for reconnection attempts.
 pub const DEFAULT_BACKOFF_DEADLINE: Duration = Duration::from_secs(120);
 
-/// Configuration object describing how to construct a [`FemtoSocketHandler`](super::FemtoSocketHandler).
+/// Configuration object describing how to construct a
+/// [`FemtoSocketHandler`](super::FemtoSocketHandler).
 #[derive(Clone, Debug)]
 pub struct SocketHandlerConfig {
     /// Bounded channel capacity for records awaiting transmission.

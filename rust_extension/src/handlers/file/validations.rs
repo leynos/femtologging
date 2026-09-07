@@ -56,8 +56,9 @@ pub(crate) fn validate_params(capacity: isize, flush_interval: isize) -> PyResul
 mod tests {
     //! Tests for file handler configuration validation.
 
-    use super::*;
     use rstest::rstest;
+
+    use super::*;
 
     #[rstest]
     #[case(0, Err(CAPACITY_ZERO_MSG))]

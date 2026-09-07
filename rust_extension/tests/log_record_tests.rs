@@ -1,11 +1,9 @@
 //! Integration tests for log-record metadata and formatting.
 
+use std::{collections::BTreeMap, fmt::Write, thread, time::SystemTime};
+
 use _femtologging_rs::{FemtoLevel, FemtoLogRecord};
 use rstest::rstest;
-use std::collections::BTreeMap;
-use std::fmt::Write;
-use std::thread;
-use std::time::SystemTime;
 
 // Exercise combinations of level, module path, filename and thread name.
 

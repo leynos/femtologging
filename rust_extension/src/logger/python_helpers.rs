@@ -3,22 +3,25 @@
 //! This module contains utility functions for Python integration, including
 //! exception capture logic and raw Python logging-call parsing.
 
-use pyo3::exceptions::PyTypeError;
-use pyo3::prelude::*;
-use pyo3::pybacked::PyBackedStr;
+use std::{collections::BTreeMap, io::Write};
+
 #[cfg(feature = "python")]
 use pyo3::types::PyBool;
-use pyo3::types::{PyDict, PyTuple};
-use std::collections::BTreeMap;
-use std::io::Write;
-
-use crate::level::FemtoLevel;
-use crate::log_context;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
-#[cfg(feature = "python")]
-use crate::traceback_capture;
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    pybacked::PyBackedStr,
+    types::{PyDict, PyTuple},
+};
 
 use super::FemtoLogger;
+#[cfg(feature = "python")]
+use crate::traceback_capture;
+use crate::{
+    level::FemtoLevel,
+    log_context,
+    log_record::{FemtoLogRecord, RecordMetadata},
+};
 
 /// Parsed options shared by the Python logging entry points.
 pub(super) struct PythonLogOptions<'py> {

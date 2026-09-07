@@ -1,12 +1,18 @@
 //! Behavioural tests for the stream handler and its worker thread lifecycle.
 
-use std::io::{self, Write};
-use std::sync::Barrier;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    io::{self, Write},
+    sync::Barrier,
+    thread,
+    time::{Duration, Instant},
+};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+    DefaultFormatter,
+    FemtoHandlerTrait,
+    FemtoLevel,
+    FemtoLogRecord,
+    FemtoStreamHandler,
 };
 use rstest::rstest;
 use serial_test::serial;
@@ -14,10 +20,13 @@ use serial_test::serial;
 #[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex, PoisonError};
-use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
-use test_utils::handle_expect::HandleExpect;
-use test_utils::shared_buffer::std::read_output;
-use test_utils::std::SharedBuf;
+
+use test_utils::{
+    fixtures::{handler_tuple, handler_tuple_custom},
+    handle_expect::HandleExpect,
+    shared_buffer::std::read_output,
+    std::SharedBuf,
+};
 
 #[derive(Clone)]
 struct BlockingBuf {
@@ -52,13 +61,9 @@ struct FlushFailingBuf {
 }
 
 impl Write for FlushFailingBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buf.write(buf)
-    }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.buf.write(buf) }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Err(io::Error::other("flush failed"))
-    }
+    fn flush(&mut self) -> io::Result<()> { Err(io::Error::other("flush failed")) }
 }
 
 #[rstest]

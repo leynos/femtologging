@@ -1,10 +1,12 @@
 //! Tests for the file handler's periodic flush tracker.
 
-use super::*;
-use crate::handlers::file::test_support;
+use std::io::{self, Write};
+
 use rstest::*;
 use serial_test::serial;
-use std::io::{self, Write};
+
+use super::*;
+use crate::handlers::file::test_support;
 
 #[derive(Default)]
 struct DummyWriter {
@@ -13,9 +15,7 @@ struct DummyWriter {
 }
 
 impl Write for DummyWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(buf.len())
-    }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { Ok(buf.len()) }
 
     fn flush(&mut self) -> io::Result<()> {
         self.flushed += 1;
@@ -28,10 +28,9 @@ impl Write for DummyWriter {
 }
 
 /// Provide a writer that can optionally fail its next flush.
+#[femtologging_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-fn writer(#[default(false)] fail: bool) -> DummyWriter {
-    DummyWriter { flushed: 0, fail }
-}
+fn writer(#[default(false)] fail: bool) -> DummyWriter { DummyWriter { flushed: 0, fail } }
 
 #[derive(Debug)]
 struct FlushIfDueCase {

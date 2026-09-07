@@ -4,8 +4,8 @@
 //! logging macros and Python convenience functions. Context key-values are
 //! merged into `RecordMetadata.key_values` on the producer thread.
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::{cell::RefCell, collections::BTreeMap};
+
 use thiserror::Error;
 
 const MAX_CONTEXT_KEYS: usize = 64;
@@ -70,9 +70,7 @@ pub struct LogContextGuard {
 }
 
 impl Drop for LogContextGuard {
-    fn drop(&mut self) {
-        let _ignored = pop_internal();
-    }
+    fn drop(&mut self) { let _ignored = pop_internal(); }
 }
 
 /// Push a map-based context frame onto the current thread's context stack.
@@ -94,9 +92,7 @@ pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), Log
 /// # Errors
 ///
 /// Returns [`LogContextError::EmptyContextStack`] when no frame is active.
-pub fn pop_log_context() -> Result<(), LogContextError> {
-    pop_internal()
-}
+pub fn pop_log_context() -> Result<(), LogContextError> { pop_internal() }
 
 /// Push a context frame and return a guard that pops it on drop.
 ///
@@ -230,13 +226,12 @@ pub(crate) fn clear_log_context_for_test() {
 mod tests {
     //! Unit tests for scoped context propagation helpers.
 
-    use super::*;
     use rstest::{fixture, rstest};
 
+    use super::*;
+
     #[fixture]
-    fn isolated_context() {
-        clear_log_context_for_test();
-    }
+    fn isolated_context() { clear_log_context_for_test(); }
 
     #[rstest]
     fn context_push_pop_round_trip(isolated_context: ()) {

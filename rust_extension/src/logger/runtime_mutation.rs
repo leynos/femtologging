@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 
-use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
-
 use super::FemtoLogger;
+use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
 
 impl FemtoLogger {
     pub(crate) fn replace_handlers(&self, handlers: Vec<Arc<dyn FemtoHandlerTrait>>) {

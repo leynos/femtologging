@@ -7,20 +7,37 @@
 use pyo3::{Bound, PyResult, prelude::*, wrap_pyfunction};
 
 use crate::{
-    ConfigBuilder, FemtoHTTPHandler, FemtoSocketHandler, FileHandlerBuilder, FilterBuildErrorPy,
-    FormatterBuilder, HTTPHandlerBuilder, LevelFilterBuilder, LoggerConfigBuilder,
-    LoggerMutationBuilder, NameFilterBuilder, PythonCallbackFilterBuilder,
-    RotatingFileHandlerBuilder, RuntimeConfigBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+    ConfigBuilder,
+    FemtoHTTPHandler,
+    FemtoSocketHandler,
+    FileHandlerBuilder,
+    FilterBuildErrorPy,
+    FormatterBuilder,
+    HTTPHandlerBuilder,
+    LevelFilterBuilder,
+    LoggerConfigBuilder,
+    LoggerMutationBuilder,
+    NameFilterBuilder,
+    PythonCallbackFilterBuilder,
+    RotatingFileHandlerBuilder,
+    RuntimeConfigBuilder,
+    SocketHandlerBuilder,
+    StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
         rotating::{
-            HandlerOptions, PyRotatingFileHandler, ROTATION_VALIDATION_MSG,
-            clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
+            HandlerOptions,
+            PyRotatingFileHandler,
+            ROTATION_VALIDATION_MSG,
+            clear_rotating_fresh_failure_for_test,
+            force_rotating_fresh_failure_for_test,
         },
         socket_builder::BackoffOverrides,
         timed_rotating::{
-            PyTimedRotatingFileHandler, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions,
+            PyTimedRotatingFileHandler,
+            TIMED_ROTATION_VALIDATION_MSG,
+            TimedHandlerOptions,
         },
     },
 };
@@ -102,7 +119,8 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
     #[cfg(feature = "test-util")]
     {
         use crate::handlers::timed_rotating::{
-            clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+            clear_timed_rotation_test_times_for_test,
+            set_timed_rotation_test_times_for_test,
         };
         m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
         m.add_function(wrap_pyfunction!(
@@ -177,12 +195,13 @@ pub(crate) fn register_tracing_compat_functions(m: &Bound<'_, PyModule>) -> PyRe
 mod tests {
     //! Ensure Python-only bindings register expected types.
 
-    use super::*;
     use pyo3::{
         Python,
         types::{PyModule, PyType},
     };
     use rstest::{fixture, rstest};
+
+    use super::*;
 
     type RegisterFn = for<'py> fn(&Bound<'py, PyModule>) -> PyResult<()>;
 

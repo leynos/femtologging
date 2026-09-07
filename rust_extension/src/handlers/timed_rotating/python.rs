@@ -10,13 +10,13 @@ use pyo3::{
     prelude::*,
 };
 
-use super::{
-    FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler, TimedRotationConfig,
-    schedule::{TimedRotationSchedule, TimedRotationWhen},
-};
-
 #[cfg(feature = "test-util")]
 use super::clock::{clear_injected_times_for_test, set_injected_times_for_test};
+use super::{
+    FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler,
+    TimedRotationConfig,
+    schedule::{TimedRotationSchedule, TimedRotationWhen},
+};
 use crate::{
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig},
     python::fq_py_type,
@@ -35,9 +35,7 @@ pub struct PyTimedRotatingFileHandler {
 }
 
 impl PyTimedRotatingFileHandler {
-    pub(crate) const fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
-        Self { inner }
-    }
+    pub(crate) const fn from_core(inner: CoreTimedRotatingFileHandler) -> Self { Self { inner } }
 }
 
 /// Error message describing supported timed rotation values.
@@ -73,9 +71,7 @@ pub struct TimedHandlerOptions {
 }
 
 impl TimedHandlerOptions {
-    pub(crate) const fn at_time_naive(&self) -> Option<NaiveTime> {
-        self.at_time
-    }
+    pub(crate) const fn at_time_naive(&self) -> Option<NaiveTime> { self.at_time }
 
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
         let capacity_input = isize::try_from(self.capacity)
@@ -124,7 +120,8 @@ mod python_bindings;
 
 #[cfg(feature = "test-util")]
 pub use python_bindings::{
-    clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+    clear_timed_rotation_test_times_for_test,
+    set_timed_rotation_test_times_for_test,
 };
 
 /// Extract a `NaiveTime` from a Python `datetime.time` object.

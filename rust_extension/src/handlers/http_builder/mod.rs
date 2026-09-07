@@ -10,15 +10,21 @@ use std::{collections::HashMap, time::Duration};
 #[cfg(feature = "python")]
 use pyo3::{Bound, prelude::*, types::PyDict};
 
-use crate::http_handler::{
-    AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
-};
-
 #[cfg(feature = "python")]
 use super::builder_macros::dict_set;
-use super::builder_macros::ensure_positive;
-use super::socket_builder::BackoffOverrides;
-use super::{HandlerBuildError, HandlerBuilderTrait};
+use super::{
+    HandlerBuildError,
+    HandlerBuilderTrait,
+    builder_macros::ensure_positive,
+    socket_builder::BackoffOverrides,
+};
+use crate::http_handler::{
+    AuthConfig,
+    FemtoHTTPHandler,
+    HTTPHandlerConfig,
+    HTTPMethod,
+    SerializationFormat,
+};
 
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
@@ -50,9 +56,7 @@ pub struct HTTPHandlerBuilder {
 impl HTTPHandlerBuilder {
     /// Create a new builder with no URL configured.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Set the target URL for HTTP requests (required).
     #[must_use]

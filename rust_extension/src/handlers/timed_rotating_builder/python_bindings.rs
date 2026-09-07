@@ -16,11 +16,13 @@ use pyo3::{
 use super::TimedRotatingFileHandlerBuilder;
 use crate::{
     handlers::{
-        HandlerBuildError, HandlerBuilderTrait,
+        HandlerBuildError,
+        HandlerBuilderTrait,
         common::{PyOverflowPolicy, py_flush_after_records_to_nonzero},
         file::policy::parse_policy_string,
         timed_rotating::{
-            PyTimedRotatingFileHandler, TimedRotationWhen,
+            PyTimedRotatingFileHandler,
+            TimedRotationWhen,
             python::{TimedHandlerOptions, extract_naive_time_from_py_time},
         },
     },
@@ -256,9 +258,7 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.as_pydict(py)
-    }
+    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { self.as_pydict(py) }
 
     fn build(&self) -> PyResult<PyTimedRotatingFileHandler> {
         <Self as HandlerBuilderTrait>::build_inner(self)

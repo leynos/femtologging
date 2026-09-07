@@ -5,8 +5,10 @@
 
 use std::collections::HashSet;
 
-use serde::Serialize;
-use serde::ser::{SerializeMap, Serializer};
+use serde::{
+    Serialize,
+    ser::{SerializeMap, Serializer},
+};
 
 use super::record::HttpSerializableRecord;
 

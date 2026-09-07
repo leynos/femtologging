@@ -9,13 +9,14 @@ use crossbeam_channel::{Receiver, TryRecvError, bounded, select};
 use log::warn;
 use parking_lot::RwLock;
 
-use crate::filters::FemtoFilter;
-use crate::formatter::{DefaultFormatter, SharedFormatter};
-use crate::handler::FemtoHandlerTrait;
-use crate::level::FemtoLevel;
-use crate::rate_limited_warner::RateLimitedWarner;
-
 use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger, QueuedRecord};
+use crate::{
+    filters::FemtoFilter,
+    formatter::{DefaultFormatter, SharedFormatter},
+    handler::FemtoHandlerTrait,
+    level::FemtoLevel,
+    rate_limited_warner::RateLimitedWarner,
+};
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
@@ -102,8 +103,7 @@ impl FemtoLogger {
     ///
     /// # Arguments
     ///
-    /// * `shutdown_rx` - Channel receiver carrying the shutdown
-    ///   signal.
+    /// * `shutdown_rx` - Channel receiver carrying the shutdown signal.
     pub(crate) fn should_shutdown_now(shutdown_rx: &Receiver<()>) -> bool {
         matches!(
             shutdown_rx.try_recv(),
@@ -116,21 +116,16 @@ impl FemtoLogger {
     /// Uses a two-phase shutdown pattern to guarantee prompt shutdown
     /// even under sustained high-throughput logging:
     ///
-    /// - **Phase 1** ([`should_shutdown_now`]): A non-blocking
-    ///   `try_recv` on the shutdown channel, executed at the top of
-    ///   every iteration *before* the blocking `select!`. This
-    ///   provides a deterministic opportunity to observe a shutdown
-    ///   signal that arrived while the previous iteration was
-    ///   servicing a log record.
+    /// - **Phase 1** ([`should_shutdown_now`]): A non-blocking `try_recv` on the shutdown channel,
+    ///   executed at the top of every iteration *before* the blocking `select!`. This provides a
+    ///   deterministic opportunity to observe a shutdown signal that arrived while the previous
+    ///   iteration was servicing a log record.
     ///
-    /// - **Phase 2** (`select!`): A blocking wait on both the
-    ///   shutdown and record channels. Although `crossbeam`'s
-    ///   `select!` uses random selection when multiple channels are
-    ///   ready, a continuously saturated record channel could still
-    ///   cause the shutdown branch to lose repeated coin-flips,
-    ///   delaying exit. Phase 1 eliminates this probabilistic delay
-    ///   by guaranteeing that every loop iteration checks for
-    ///   shutdown deterministically.
+    /// - **Phase 2** (`select!`): A blocking wait on both the shutdown and record channels.
+    ///   Although `crossbeam`'s `select!` uses random selection when multiple channels are ready, a
+    ///   continuously saturated record channel could still cause the shutdown branch to lose
+    ///   repeated coin-flips, delaying exit. Phase 1 eliminates this probabilistic delay by
+    ///   guaranteeing that every loop iteration checks for shutdown deterministically.
     ///
     /// When either phase detects a shutdown signal, all remaining
     /// queued records are drained before the thread exits so that no
@@ -139,8 +134,8 @@ impl FemtoLogger {
     /// # Arguments
     ///
     /// * `rx` - Channel receiver for incoming log records.
-    /// * `shutdown_rx` - Channel receiver carrying the shutdown
-    ///   signal, sent by [`FemtoLogger::drop`].
+    /// * `shutdown_rx` - Channel receiver carrying the shutdown signal, sent by
+    ///   [`FemtoLogger::drop`].
     pub(crate) fn worker_thread_loop(rx: &Receiver<QueuedRecord>, shutdown_rx: &Receiver<()>) {
         loop {
             if Self::should_shutdown_now(shutdown_rx) {

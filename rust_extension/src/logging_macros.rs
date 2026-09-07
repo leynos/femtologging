@@ -144,12 +144,16 @@ macro_rules! __femtolog_impl_fmt {
 mod tests {
     //! Unit tests for the femtologging macros.
 
-    use crate::handler::FemtoHandlerTrait;
-    use crate::log_context;
-    use crate::logger::FemtoLogger;
-    use crate::test_utils::collecting_handler::CollectingHandler;
-    use rstest::{fixture, rstest};
     use std::sync::Arc;
+
+    use rstest::{fixture, rstest};
+
+    use crate::{
+        handler::FemtoHandlerTrait,
+        log_context,
+        logger::FemtoLogger,
+        test_utils::collecting_handler::CollectingHandler,
+    };
 
     /// Create a logger at DEBUG level with an attached `CollectingHandler`.
     ///

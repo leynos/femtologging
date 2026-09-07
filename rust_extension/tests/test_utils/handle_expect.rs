@@ -16,7 +16,11 @@
 use std::sync::Arc;
 
 use _femtologging_rs::{
-    FemtoFileHandler, FemtoHandlerTrait, FemtoLogRecord, FemtoStreamHandler, HandlerError,
+    FemtoFileHandler,
+    FemtoHandlerTrait,
+    FemtoLogRecord,
+    FemtoStreamHandler,
+    HandlerError,
 };
 
 #[track_caller]
@@ -80,21 +84,15 @@ impl HandleExpect for dyn FemtoHandlerTrait + Send + Sync {
 
 impl<T: HandleExpect + ?Sized> HandleExpect for &T {
     #[track_caller]
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
+    fn expect_handle(&self, record: FemtoLogRecord) { (**self).expect_handle(record); }
 }
 
 impl<T: HandleExpect + ?Sized> HandleExpect for Arc<T> {
     #[track_caller]
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
+    fn expect_handle(&self, record: FemtoLogRecord) { (**self).expect_handle(record); }
 }
 
 impl<T: HandleExpect + ?Sized> HandleExpect for Box<T> {
     #[track_caller]
-    fn expect_handle(&self, record: FemtoLogRecord) {
-        (**self).expect_handle(record);
-    }
+    fn expect_handle(&self, record: FemtoLogRecord) { (**self).expect_handle(record); }
 }

@@ -6,15 +6,16 @@
 //! Python via `setup_rust_logging()`, which installs the adapter as the
 //! global Rust logger.
 
-use std::borrow::Cow;
-use std::sync::OnceLock;
+use std::{borrow::Cow, sync::OnceLock};
 
 use log::{Metadata, Record};
 use pyo3::prelude::*;
 
-use crate::level::FemtoLevel;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
-use crate::manager;
+use crate::{
+    level::FemtoLevel,
+    log_record::{FemtoLogRecord, RecordMetadata},
+    manager,
+};
 
 /// Adapter implementing the Rust `log::Log` trait.
 ///
@@ -44,9 +45,7 @@ const fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
 }
 
 impl From<log::Level> for FemtoLevel {
-    fn from(level: log::Level) -> Self {
-        map_log_level(level)
-    }
+    fn from(level: log::Level) -> Self { map_log_level(level) }
 }
 
 fn normalize_target(target: &str) -> Cow<'_, str> {
@@ -213,9 +212,7 @@ mod python_bindings {
         struct TestLogger;
 
         impl log::Log for TestLogger {
-            fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
-                true
-            }
+            fn enabled(&self, _metadata: &Metadata<'_>) -> bool { true }
 
             fn log(&self, _record: &Record<'_>) {}
 
@@ -233,23 +230,26 @@ mod python_bindings {
 
 #[cfg(feature = "python")]
 pub(crate) use python_bindings::{
-    emit_rust_log, install_test_global_rust_logger, setup_rust_logging,
+    emit_rust_log,
+    install_test_global_rust_logger,
+    setup_rust_logging,
 };
 
 #[cfg(test)]
 mod tests {
     //! Unit tests for the `log` crate bridge.
 
-    use log::{LevelFilter, Log};
-
-    use super::*;
-    use crate::handler::FemtoHandlerTrait;
-    use crate::test_utils::collecting_handler::CollectingHandler;
-    use rstest::{fixture, rstest};
     use std::sync::{
-        Arc, Once,
+        Arc,
+        Once,
         atomic::{AtomicUsize, Ordering},
     };
+
+    use log::{LevelFilter, Log};
+    use rstest::{fixture, rstest};
+
+    use super::*;
+    use crate::{handler::FemtoHandlerTrait, test_utils::collecting_handler::CollectingHandler};
 
     static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
 

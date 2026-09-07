@@ -1,16 +1,20 @@
 //! Unit tests for configuration builders.
 #![cfg(all(test, feature = "python"))]
 
-use super::test_utils::gil_and_clean_manager;
-use super::*;
-use crate::config::ConfigError;
-use crate::filters::{FilterBuilder, LevelFilterBuilder};
-use crate::manager;
-use crate::{FemtoLevel, StreamHandlerBuilder};
+use std::sync::Arc;
+
 use pyo3::Python;
 use rstest::{fixture, rstest};
 use serial_test::serial;
-use std::sync::Arc;
+
+use super::{test_utils::gil_and_clean_manager, *};
+use crate::{
+    FemtoLevel,
+    StreamHandlerBuilder,
+    config::ConfigError,
+    filters::{FilterBuilder, LevelFilterBuilder},
+    manager,
+};
 
 fn builder_with_root(root: LoggerConfigBuilder) -> ConfigBuilder {
     ConfigBuilder::new()

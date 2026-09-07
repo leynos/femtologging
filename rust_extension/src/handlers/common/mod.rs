@@ -8,7 +8,8 @@ use std::{
 };
 
 use super::{
-    FormatterId, HandlerBuildError,
+    FormatterId,
+    HandlerBuildError,
     file::{HandlerConfig, OverflowPolicy},
 };
 use crate::formatter::{FemtoFormatter, SharedFormatter};
@@ -54,15 +55,11 @@ where
 }
 
 impl IntoFormatterConfig for SharedFormatter {
-    fn into_formatter_config(self) -> FormatterConfig {
-        FormatterConfig::Instance(self)
-    }
+    fn into_formatter_config(self) -> FormatterConfig { FormatterConfig::Instance(self) }
 }
 
 impl IntoFormatterConfig for FormatterId {
-    fn into_formatter_config(self) -> FormatterConfig {
-        FormatterConfig::Id(self)
-    }
+    fn into_formatter_config(self) -> FormatterConfig { FormatterConfig::Id(self) }
 }
 
 impl IntoFormatterConfig for String {
@@ -191,9 +188,7 @@ pub(crate) struct FileLikeBuilderState {
 }
 
 impl Default for FileLikeBuilderState {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl FileLikeBuilderState {

@@ -86,17 +86,11 @@ impl FemtoHandlerTrait for FemtoFileHandler {
         }
     }
 
-    fn flush(&self) -> bool {
-        Self::flush(self)
-    }
+    fn flush(&self) -> bool { Self::flush(self) }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
 impl Drop for FemtoFileHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
+    fn drop(&mut self) { self.close(); }
 }

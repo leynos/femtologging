@@ -1,15 +1,23 @@
 //! Unit tests for `FemtoLogger`.
 
-use super::*;
-use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::level::FemtoLevel;
-use std::any::Any;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::{
+    any::Any,
+    sync::{Arc, atomic::Ordering},
+};
 
-use super::logger_tests_helpers::{
-    CollectingHandler, CountingHandler, collected_messages, enqueue_records,
+use super::{
+    logger_tests_helpers::{
+        CollectingHandler,
+        CountingHandler,
+        collected_messages,
+        enqueue_records,
+    },
+    *,
+};
+use crate::{
+    filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder},
+    handler::{FemtoHandlerTrait, HandlerError},
+    level::FemtoLevel,
 };
 
 #[test]
@@ -73,8 +81,7 @@ fn worker_thread_loop_processes_and_drains() {
 
 #[test]
 fn worker_thread_loop_shutdown_exits_under_load() {
-    use std::sync::atomic::AtomicBool;
-    use std::time::Duration;
+    use std::{sync::atomic::AtomicBool, time::Duration};
 
     let (tx, rx) = crossbeam_channel::bounded(64);
     let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
@@ -198,7 +205,8 @@ fn removing_unknown_filter_returns_false() {
 #[test]
 fn drop_counter_increments_on_queue_overflow() {
     use std::sync::{
-        Arc, Barrier,
+        Arc,
+        Barrier,
         atomic::{AtomicBool, Ordering},
     };
 
@@ -218,9 +226,7 @@ fn drop_counter_increments_on_queue_overflow() {
             Ok(())
         }
 
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
+        fn as_any(&self) -> &dyn Any { self }
     }
 
     let started = Arc::new(Barrier::new(2));

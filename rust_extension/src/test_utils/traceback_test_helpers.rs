@@ -4,16 +4,18 @@
 //! values so unit tests can exercise the conversion logic in
 //! [`crate::traceback_frames`].
 
-use pyo3::exceptions::PyRuntimeError;
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeMap;
 
-use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
+use pyo3::{
+    exceptions::PyRuntimeError,
+    prelude::*,
+    types::{PyDict, PyList},
+};
 
 // Re-exported so `use crate::test_utils::traceback_test_helpers::*;` continues
 // to bring the frame assertion helpers into scope.
 pub use crate::test_utils::frame_assertion_helpers::*;
+use crate::traceback_frames::{extract_frames_from_stack_summary, extract_locals_dict};
 
 /// Create a `types.SimpleNamespace` object from a [`PyDict`].
 pub fn create_simple_namespace<'py>(
@@ -180,26 +182,18 @@ pub struct LocalEntry {
 }
 
 impl LocalEntry {
-    pub const fn new(key: &'static str, value: &'static str) -> Self {
-        Self { key, value }
-    }
+    pub const fn new(key: &'static str, value: &'static str) -> Self { Self { key, value } }
 
-    pub const fn key(&self) -> &'static str {
-        self.key
-    }
+    pub const fn key(&self) -> &'static str { self.key }
 
-    pub const fn value(&self) -> &'static str {
-        self.value
-    }
+    pub const fn value(&self) -> &'static str { self.value }
 
     /// Returns true if the key should be inserted as an integer.
     ///
     /// This is a simple heuristic that only checks whether the first character
     /// is an ASCII digit. It is sufficient for the test cases in this module,
     /// which use single-digit integer keys like "1" or "123".
-    pub fn is_int_key(&self) -> bool {
-        self.key.chars().next().is_some_and(|c| c.is_ascii_digit())
-    }
+    pub fn is_int_key(&self) -> bool { self.key.chars().next().is_some_and(|c| c.is_ascii_digit()) }
 }
 
 /// Create a Python object whose `__repr__` raises an exception.

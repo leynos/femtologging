@@ -23,9 +23,7 @@ pub mod std {
 
     impl SharedBuf {
         /// Create a new `SharedBuf` backed by the given shared buffer.
-        pub const fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-            Self { buffer }
-        }
+        pub const fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self { Self { buffer } }
     }
 
     impl Default for SharedBuf {
@@ -94,9 +92,7 @@ pub mod loom {
     }
 
     impl SharedBuf {
-        pub const fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-            Self { buffer }
-        }
+        pub const fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self { Self { buffer } }
     }
 
     impl Default for SharedBuf {

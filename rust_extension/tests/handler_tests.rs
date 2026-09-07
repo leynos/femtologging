@@ -1,8 +1,9 @@
 //! Tests for the default `FemtoHandler` and for trait-object dispatch of
 //! `FemtoHandlerTrait` methods onto user-supplied implementations.
 
-use _femtologging_rs::{FemtoHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerError};
 use std::sync::{Mutex, PoisonError};
+
+use _femtologging_rs::{FemtoHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerError};
 
 #[derive(Default)]
 struct DummyHandler {
@@ -10,9 +11,7 @@ struct DummyHandler {
 }
 
 impl FemtoHandlerTrait for DummyHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Ok(())
-    }
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> { Ok(()) }
 
     fn flush(&self) -> bool {
         // A test double must not mask a genuine failure by panicking on a
@@ -22,9 +21,7 @@ impl FemtoHandlerTrait for DummyHandler {
         true
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 #[test]

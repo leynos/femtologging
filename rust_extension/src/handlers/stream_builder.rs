@@ -15,11 +15,12 @@ use std::{
 use pyo3::prelude::*;
 
 use super::{
-    FormatterId, HandlerBuildError, HandlerBuilderTrait,
+    FormatterId,
+    HandlerBuildError,
+    HandlerBuilderTrait,
     common::{CommonBuilder, FormatterConfig, IntoFormatterConfig},
     file::DEFAULT_CHANNEL_CAPACITY,
 };
-
 #[cfg(test)]
 use crate::level::FemtoLevel;
 #[cfg(feature = "python")]
@@ -82,9 +83,7 @@ impl StreamHandlerBuilder {
         self
     }
 
-    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()
-    }
+    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> { self.common.is_capacity_valid() }
 
     fn is_flush_after_ms_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
@@ -172,25 +171,27 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
 mod tests {
     //! Tests for the stream handler builder.
 
-    use super::super::test_helpers::assert_build_err;
-    use super::*;
+    use std::{
+        io::{self, Write},
+        sync::{Arc, Mutex},
+    };
+
     #[cfg(feature = "python")]
     use pyo3::Python;
     use rstest::rstest;
-    use std::io::{self, Write};
-    use std::sync::{Arc, Mutex};
 
+    use super::{super::test_helpers::assert_build_err, *};
     use crate::{
-        formatter::FemtoFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord,
+        formatter::FemtoFormatter,
+        handler::FemtoHandlerTrait,
+        log_record::FemtoLogRecord,
     };
 
     #[derive(Clone, Copy, Debug)]
     struct UpperFormatter;
 
     impl FemtoFormatter for UpperFormatter {
-        fn format(&self, record: &FemtoLogRecord) -> String {
-            record.message().to_uppercase()
-        }
+        fn format(&self, record: &FemtoLogRecord) -> String { record.message().to_uppercase() }
     }
 
     #[derive(Clone, Debug, Default)]
@@ -199,9 +200,7 @@ mod tests {
     }
 
     impl TestWriter {
-        fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-            Self { buffer }
-        }
+        fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self { Self { buffer } }
     }
 
     impl Write for TestWriter {
@@ -215,9 +214,7 @@ mod tests {
             Ok(buf.len())
         }
 
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
     }
 
     #[rstest]

@@ -6,9 +6,8 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
+    num::NonZeroU64,
 };
-
-use std::num::NonZeroU64;
 
 use pyo3::{
     Bound,
@@ -98,13 +97,9 @@ impl PyOverflowPolicy {
         })
     }
 
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
+    fn __str__(&self) -> String { self.__repr__() }
 
-    fn __repr__(&self) -> String {
-        format_overflow_policy(&self.inner)
-    }
+    fn __repr__(&self) -> String { format_overflow_policy(&self.inner) }
 
     fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
         let other_policy = other.extract::<PyRef<'py, Self>>().ok();
@@ -151,8 +146,11 @@ impl CommonBuilder {
                     .map_or_else(|_| "<unknown>".to_owned(), |r| r.to_string());
 
                 let msg = format!(
-                    "invalid formatter: expected a string identifier or callable.\n\
-                     - as callable: {callable_msg}",
+                    concat!(
+                        "invalid formatter: expected a string identifier or callable.\n",
+                        "- as callable: {}",
+                    ),
+                    callable_msg,
                 );
                 Err(PyTypeError::new_err(msg))
             }

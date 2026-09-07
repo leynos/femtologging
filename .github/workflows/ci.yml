@@ -42,6 +42,8 @@ jobs:
           allow-prereleases: ${{ matrix.experimental }}
       - name: Install rust
         uses: leynos/shared-actions/.github/actions/setup-rust@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
+      - name: Install pinned nightly rustfmt
+        run: rustup toolchain install nightly-2026-05-28 --component rustfmt --profile minimal
       - name: Cache ~/.cargo and target/
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
@@ -95,6 +97,8 @@ jobs:
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
       - name: Test Rust (log-compat feature)
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
+      - name: Verify Cargo packages
+        run: make package-check
       - name: Test and measure coverage
         uses: leynos/shared-actions/.github/actions/generate-coverage@bf0f7fd98756a3643e9a3af70d0df7b7cf6d1fe7
         with:

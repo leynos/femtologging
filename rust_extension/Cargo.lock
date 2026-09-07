@@ -382,6 +382,7 @@ dependencies = [
  "delegate",
  "encoding_rs",
  "femtologging_rs",
+ "femtologging_test_macros",
  "filetime",
  "itertools 0.15.0",
  "log",
@@ -407,6 +408,14 @@ dependencies = [
  "tracing-subscriber",
  "trybuild",
  "ureq",
+]
+
+[[package]]
+name = "femtologging_test_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]

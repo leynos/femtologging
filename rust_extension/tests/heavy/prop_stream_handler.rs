@@ -3,16 +3,19 @@
 //! These tests generate random logger names, levels, and messages to verify
 //! that the handler correctly writes each record without losing data.
 
-use std::fmt::Write as _;
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::Write as _,
+    sync::{Arc, Mutex},
+};
 
 use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
 use itertools::iproduct;
 use proptest::prelude::*;
 
-use crate::handle_expect::HandleExpect;
-use crate::shared_buffer::std::SharedBuf;
-use crate::shared_buffer::std::read_output;
+use crate::{
+    handle_expect::HandleExpect,
+    shared_buffer::std::{SharedBuf, read_output},
+};
 
 proptest! {
     #[test]

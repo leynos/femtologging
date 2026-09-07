@@ -2,13 +2,18 @@
 #![cfg(feature = "python")]
 
 use std::{
+    hint::black_box,
     path::PathBuf,
     sync::LazyLock,
     time::{Duration, Instant},
 };
 
 use _femtologging_rs::{
-    ConfigBuilder, FemtoLevel, LoggerConfigBuilder, StreamHandlerBuilder, manager,
+    ConfigBuilder,
+    FemtoLevel,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
+    manager,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
 use pyo3::{
@@ -16,7 +21,6 @@ use pyo3::{
     prelude::*,
     types::{PyAny, PyDict, PyList},
 };
-use std::hint::black_box;
 
 const DICT_SCHEMA_PY: &std::ffi::CStr = cr#"
 from femtologging import ConfigBuilder, LoggerConfigBuilder, StreamHandlerBuilder

@@ -2,11 +2,14 @@
 //!
 //! These tests require the `python` feature and exercise the `PyO3` bindings.
 
+use pyo3::{
+    Python,
+    types::{PyBool, PyDict, PyTuple},
+};
+use rstest::rstest;
+
 use super::*;
 use crate::level::FemtoLevel;
-use pyo3::Python;
-use pyo3::types::{PyBool, PyDict, PyTuple};
-use rstest::rstest;
 
 // --------------------------------
 // Test helpers

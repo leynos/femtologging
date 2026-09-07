@@ -1,8 +1,10 @@
 //! Tests that joining a logger worker releases its handle mutex first.
 
-use super::*;
-use parking_lot::Mutex;
 use std::sync::Arc;
+
+use parking_lot::Mutex;
+
+use super::*;
 
 fn spawn_lock_attempt_worker(
     handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
@@ -52,8 +54,7 @@ fn wait_for_join_worker_to_take_handle(
 
 #[test]
 fn join_worker_releases_handle_lock_before_joining() {
-    use std::sync::mpsc;
-    use std::time::Duration;
+    use std::{sync::mpsc, time::Duration};
     let handle = Arc::new(Mutex::new(None));
     let (start_lock_tx, start_lock_rx) = mpsc::channel();
     let (attempt_done_tx, attempt_done_rx) = mpsc::channel();

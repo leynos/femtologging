@@ -57,9 +57,7 @@ where
 pub struct NoRotation;
 
 impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
-    fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<bool> {
-        Ok(false)
-    }
+    fn before_write(&mut self, _writer: &mut W, _formatted: &str) -> io::Result<bool> { Ok(false) }
 }
 
 /// Configuration for batch draining in the worker loop.
@@ -87,9 +85,7 @@ impl BatchConfig {
     }
 
     /// Return the maximum number of commands drained in one batch.
-    pub const fn capacity(self) -> usize {
-        self.capacity
-    }
+    pub const fn capacity(self) -> usize { self.capacity }
 }
 
 impl Default for BatchConfig {
@@ -190,9 +186,7 @@ impl FlushTracker {
         Ok(())
     }
 
-    pub(crate) const fn reset(&mut self) {
-        self.writes = 0;
-    }
+    pub(crate) const fn reset(&mut self) { self.writes = 0; }
 
     /// Determines whether a flush should occur.
     ///

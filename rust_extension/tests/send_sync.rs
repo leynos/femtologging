@@ -1,8 +1,14 @@
 //! Send/Sync guarantees for core types.
 
 use _femtologging_rs::{
-    ConfigBuilder, FemtoHandler, FemtoLogger, FemtoStreamHandler, FileHandlerBuilder,
-    FormatterBuilder, LoggerConfigBuilder, StreamHandlerBuilder,
+    ConfigBuilder,
+    FemtoHandler,
+    FemtoLogger,
+    FemtoStreamHandler,
+    FileHandlerBuilder,
+    FormatterBuilder,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
 };
 use static_assertions::assert_impl_all;
 

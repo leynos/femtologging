@@ -80,9 +80,21 @@ the corpus still passes.
 The Rust extension build toolchain is pinned so local builds, CI, and the
 compatibility tests validate the same maturin and PyO3 releases:
 
+- The compiler toolchain remains the stable toolchain selected by
+  `rust-toolchain.toml`. Install the formatter toolchain used by the repository
+  with:
+
+  ```shell
+  rustup toolchain install nightly-2026-05-28 --component rustfmt --profile minimal
+  ```
+
+  `make fmt` and `make check-fmt` select this nightly rustfmt through
+  `FMT_TOOLCHAIN`; other Rust commands continue to use the stable toolchain.
+  The rustfmt configuration ignores byte-exact UI fixtures because changing
+  their formatting would shift the source spans recorded in their expectations.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
-- PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
+- PyO3 is pinned to `0.29.0` in `rust_extension/Cargo.toml`.
 
 When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
@@ -108,14 +120,14 @@ ty check --python ./.venv --extra-search-path scripts
 The `--python` option points `ty` at the project environment containing the
 extension and its dependencies. The `scripts` search path is required because
 the spelling-policy helpers import one another as top-level modules. The same
-paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the
-Makefile passes them explicitly because the pinned local `ty` version does not
-reliably apply the equivalent project settings.
+paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the Makefile
+passes them explicitly because the pinned local `ty` version does not reliably
+apply the equivalent project settings.
 
 The long-running Rust integration suite is the Cargo `heavy` test target,
 rooted at `rust_extension/tests/heavy/main.rs`. Its property-based tests are
-marked `#[ignore]` because each generated case starts a handler worker. Run
-the target explicitly when investigating it:
+marked `#[ignore]` because each generated case starts a handler worker. Run the
+target explicitly when investigating it:
 
 ```shell
 cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
@@ -123,9 +135,9 @@ cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
 ```
 
 The scheduled `heavy-tests` workflow runs ignored tests across its feature
-lanes. Loom model test functions are compiled and registered only when Cargo
-is invoked with `--cfg loom`; the ordinary heavy run does not compile or run
-them. To select the Loom configuration locally, use:
+lanes. Loom model test functions are compiled and registered only when Cargo is
+invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
+To select the Loom configuration locally, use:
 
 ```shell
 RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
@@ -134,8 +146,8 @@ RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
 
 The current handlers use `std::thread::spawn`, so executing the Loom models
 requires the spawn abstraction described in the heavy-test module
-documentation. Until that follow-up is implemented, the Loom configuration
-is still compiled to keep the models type-checked.
+documentation. Until that follow-up is implemented, the Loom configuration is
+still compiled to keep the models type-checked.
 
 ## Shared Rust test helpers and fixtures
 
@@ -168,9 +180,9 @@ The reusable integration-test support is owned by
 Each Cargo integration-test root declares only the support modules it needs.
 The stream-handler suite includes `test_utils/mod.rs` because it uses all three
 components; the file-handler and logger suites include their required files
-directly. The `heavy` root includes `shared_buffer.rs` and
-`handle_expect.rs` directly, and its Loom modules are themselves gated by
-`cfg(loom)`. Prefer these fixtures and the trait over duplicating setup or
+directly. The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs`
+directly, and its Loom modules are themselves gated by `cfg(loom)`. Prefer
+these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
 
 File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
@@ -181,14 +193,14 @@ test logger and helpers for installing it and taking captured messages.
 
 The macro unit tests in `rust_extension/src/logging_macros.rs` use the
 `logger_with_handler` `rstest` fixture. It clears the test logging context,
-creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so
-each macro case can inspect the resulting record.
+creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so each
+macro case can inspect the resulting record.
 
 `rust_extension/src/test_fixtures/explicit_traceback.py` is Python source data,
 not a package module. `traceback_capture_tests` embeds it with `include_str!`;
-the fixture raises a nested `ValueError`, preserves its explicit traceback,
-and clears the exception object's `__traceback__` so tuple-based traceback
-capture is exercised.
+the fixture raises a nested `ValueError`, preserves its explicit traceback, and
+clears the exception object's `__traceback__` so tuple-based traceback capture
+is exercised.
 
 ## Toolchain Boundaries
 
@@ -206,6 +218,11 @@ The Makefile pins the `ty` release used by `make typecheck`; local development
 should use that target rather than an independently installed version. CI
 installs `uv` and `ty`, then delegates formatting, linting, type checking, and
 tests to Makefile targets.
+
+`make package-check` runs `cargo package` for the workspace's publishable
+crates. The private `femtologging_test_macros` crate is a path-only development
+dependency, so Cargo removes it from published package metadata; this check
+keeps that packaging boundary intact. `make test` includes this check.
 
 ## Benchmarking Documentation
 

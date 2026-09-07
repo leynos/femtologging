@@ -1,14 +1,13 @@
 //! Type definitions and builder structs for femtologging configuration.
 
 use std::collections::BTreeMap;
-
 #[cfg(feature = "python")]
 use std::sync::Arc;
-#[cfg(feature = "python")]
-use thiserror::Error;
 
 #[cfg(feature = "python")]
 use pyo3::prelude::pyclass;
+#[cfg(feature = "python")]
+use thiserror::Error;
 
 mod defaults;
 pub(crate) use defaults::normalize_vec;
@@ -22,7 +21,10 @@ use crate::{
 use crate::{
     filters::FilterBuilder,
     handlers::{
-        FileHandlerBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+        FileHandlerBuilder,
+        RotatingFileHandlerBuilder,
+        SocketHandlerBuilder,
+        StreamHandlerBuilder,
         TimedRotatingFileHandlerBuilder,
     },
     level::FemtoLevel,
@@ -66,33 +68,23 @@ impl HandlerBuilder {
 }
 
 impl From<StreamHandlerBuilder> for HandlerBuilder {
-    fn from(value: StreamHandlerBuilder) -> Self {
-        Self::Stream(value)
-    }
+    fn from(value: StreamHandlerBuilder) -> Self { Self::Stream(value) }
 }
 
 impl From<FileHandlerBuilder> for HandlerBuilder {
-    fn from(value: FileHandlerBuilder) -> Self {
-        Self::File(value)
-    }
+    fn from(value: FileHandlerBuilder) -> Self { Self::File(value) }
 }
 
 impl From<RotatingFileHandlerBuilder> for HandlerBuilder {
-    fn from(value: RotatingFileHandlerBuilder) -> Self {
-        Self::Rotating(value)
-    }
+    fn from(value: RotatingFileHandlerBuilder) -> Self { Self::Rotating(value) }
 }
 
 impl From<TimedRotatingFileHandlerBuilder> for HandlerBuilder {
-    fn from(value: TimedRotatingFileHandlerBuilder) -> Self {
-        Self::TimedRotating(value)
-    }
+    fn from(value: TimedRotatingFileHandlerBuilder) -> Self { Self::TimedRotating(value) }
 }
 
 impl From<SocketHandlerBuilder> for HandlerBuilder {
-    fn from(value: SocketHandlerBuilder) -> Self {
-        Self::Socket(value)
-    }
+    fn from(value: SocketHandlerBuilder) -> Self { Self::Socket(value) }
 }
 
 /// Errors that may occur while building a configuration.
@@ -151,9 +143,7 @@ pub struct FormatterBuilder {
 impl FormatterBuilder {
     /// Create a new `FormatterBuilder`.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Set the format string.
     #[must_use]
@@ -171,15 +161,11 @@ impl FormatterBuilder {
 
     /// Return the configured format string.
     #[must_use]
-    pub fn format_string(&self) -> Option<&str> {
-        self.format.as_deref()
-    }
+    pub fn format_string(&self) -> Option<&str> { self.format.as_deref() }
 
     /// Return the configured date format string.
     #[must_use]
-    pub fn datefmt_string(&self) -> Option<&str> {
-        self.datefmt.as_deref()
-    }
+    pub fn datefmt_string(&self) -> Option<&str> { self.datefmt.as_deref() }
 }
 
 /// Builder for logger configuration.
@@ -195,9 +181,7 @@ pub struct LoggerConfigBuilder {
 impl LoggerConfigBuilder {
     /// Create a new `LoggerConfigBuilder`.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Set the logger level, replacing any existing value.
     #[must_use]
@@ -239,27 +223,19 @@ impl LoggerConfigBuilder {
 
     /// Retrieve the level if configured.
     #[must_use]
-    pub const fn level_opt(&self) -> Option<FemtoLevel> {
-        self.level
-    }
+    pub const fn level_opt(&self) -> Option<FemtoLevel> { self.level }
 
     /// Retrieve the propagate flag if configured.
     #[must_use]
-    pub const fn propagate_opt(&self) -> Option<bool> {
-        self.propagate
-    }
+    pub const fn propagate_opt(&self) -> Option<bool> { self.propagate }
 
     /// Retrieve the configured filter identifiers.
     #[must_use]
-    pub fn filter_ids(&self) -> &[String] {
-        &self.filters
-    }
+    pub fn filter_ids(&self) -> &[String] { &self.filters }
 
     /// Retrieve the configured handler identifiers.
     #[must_use]
-    pub fn handler_ids(&self) -> &[String] {
-        &self.handlers
-    }
+    pub fn handler_ids(&self) -> &[String] { &self.handlers }
 }
 
 /// Builder for the overall configuration.
@@ -283,9 +259,7 @@ pub struct ConfigBuilder {
 impl ConfigBuilder {
     /// Create a new `ConfigBuilder`.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Set the schema version, replacing any existing value.
     #[must_use]
@@ -348,45 +322,31 @@ impl ConfigBuilder {
 
     /// Determine whether existing loggers should be disabled.
     #[must_use]
-    pub const fn disable_existing_loggers(&self) -> bool {
-        self.disable_existing_loggers
-    }
+    pub const fn disable_existing_loggers(&self) -> bool { self.disable_existing_loggers }
 
     /// Retrieve the default log level if configured.
     #[must_use]
-    pub const fn default_level(&self) -> Option<FemtoLevel> {
-        self.default_level
-    }
+    pub const fn default_level(&self) -> Option<FemtoLevel> { self.default_level }
 
     /// Retrieve configured handler builders.
     #[must_use]
-    pub const fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
-        &self.handlers
-    }
+    pub const fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> { &self.handlers }
 
     /// Retrieve configured filter builders.
     #[must_use]
-    pub const fn filter_builders(&self) -> &BTreeMap<String, FilterBuilder> {
-        &self.filters
-    }
+    pub const fn filter_builders(&self) -> &BTreeMap<String, FilterBuilder> { &self.filters }
 
     /// Retrieve configured logger builders.
     #[must_use]
-    pub const fn logger_builders(&self) -> &BTreeMap<String, LoggerConfigBuilder> {
-        &self.loggers
-    }
+    pub const fn logger_builders(&self) -> &BTreeMap<String, LoggerConfigBuilder> { &self.loggers }
 
     /// Retrieve the root logger configuration if set.
     #[must_use]
-    pub const fn root_logger(&self) -> Option<&LoggerConfigBuilder> {
-        self.root_logger.as_ref()
-    }
+    pub const fn root_logger(&self) -> Option<&LoggerConfigBuilder> { self.root_logger.as_ref() }
 
     /// Return the configured version.
     #[must_use]
-    pub const fn version(&self) -> u8 {
-        self.version
-    }
+    pub const fn version(&self) -> u8 { self.version }
 }
 
 #[cfg(feature = "python")]

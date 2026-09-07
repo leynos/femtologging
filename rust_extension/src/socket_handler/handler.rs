@@ -7,16 +7,15 @@ use std::{thread, time::Duration};
 
 use parking_lot::Mutex;
 
-use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
-    log_record::FemtoLogRecord,
-    rate_limited_warner::RateLimitedWarner,
-};
-
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
     worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
+};
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
 };
 
 #[cfg_attr(feature = "python", pyo3::pyclass)]
@@ -50,9 +49,7 @@ impl FemtoSocketHandler {
     }
 
     /// Flush any pending log records.
-    pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
-    }
+    pub fn flush(&self) -> bool { <Self as FemtoHandlerTrait>::flush(self) }
 
     /// Close the handler and wait for the worker to exit.
     pub fn close(&mut self) {
@@ -60,9 +57,7 @@ impl FemtoSocketHandler {
         self.join_worker();
     }
 
-    fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
-        self.tx.clone()
-    }
+    fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> { self.tx.clone() }
 
     fn request_shutdown(&mut self) {
         let Some(tx) = self.tx.take() else {
@@ -110,15 +105,11 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
         flush_queue(&tx, self.flush_timeout)
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 impl Drop for FemtoSocketHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
+    fn drop(&mut self) { self.close(); }
 }
 
 impl std::fmt::Debug for FemtoSocketHandler {

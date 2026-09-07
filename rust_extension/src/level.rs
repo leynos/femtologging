@@ -4,12 +4,9 @@
 //! converting between strings and numeric representations so loggers can
 //! efficiently filter records.
 
-use pyo3::Borrowed;
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
-use std::fmt;
-use std::io::Write;
-use std::str::FromStr;
+use std::{fmt, io::Write, str::FromStr};
+
+use pyo3::{Borrowed, exceptions::PyValueError, prelude::*};
 
 /// A log record's severity, ordered from trace through critical.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -31,9 +28,7 @@ pub enum FemtoLevel {
 }
 
 impl fmt::Display for FemtoLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(self.as_str()) }
 }
 
 impl FromStr for FemtoLevel {
@@ -107,9 +102,7 @@ impl FemtoLevel {
 }
 
 impl From<FemtoLevel> for u8 {
-    fn from(level: FemtoLevel) -> Self {
-        level as Self
-    }
+    fn from(level: FemtoLevel) -> Self { level as Self }
 }
 
 impl TryFrom<u8> for FemtoLevel {

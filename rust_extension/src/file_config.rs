@@ -4,14 +4,20 @@
 //! can reuse the `rust-ini` crate and keep the parser consistent across
 //! platforms.
 
+use std::{fs, io::ErrorKind};
+
 use encoding_rs::Encoding;
 use ini::Ini;
-use pyo3::exceptions::{
-    PyFileNotFoundError, PyIOError, PyLookupError, PyRuntimeError, PyUnicodeDecodeError,
+use pyo3::{
+    exceptions::{
+        PyFileNotFoundError,
+        PyIOError,
+        PyLookupError,
+        PyRuntimeError,
+        PyUnicodeDecodeError,
+    },
+    prelude::*,
 };
-use pyo3::prelude::*;
-use std::fs;
-use std::io::ErrorKind;
 
 type SectionEntries = Vec<(String, String)>;
 type ParsedSections = Vec<(String, SectionEntries)>;
@@ -19,8 +25,7 @@ type ParsedSections = Vec<(String, SectionEntries)>;
 mod python_bindings {
     //! Python function wrappers for INI file configuration parsing.
 
-    use pyo3::exceptions::PyRuntimeError;
-    use pyo3::prelude::*;
+    use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
     use super::{ParsedSections, decode_contents, parse_sections, read_file_bytes};
 
@@ -152,16 +157,17 @@ fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
 mod tests {
     //! Tests for fileConfig parsing and decoding.
 
-    use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
+    use std::{ffi::CString, io::Write, sync::Mutex};
 
-    use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyUnicodeDecodeError};
-    use pyo3::prelude::*;
-    use pyo3::types::PyAnyMethods;
+    use pyo3::{
+        exceptions::{PyLookupError, PyRuntimeError, PyUnicodeDecodeError},
+        prelude::*,
+        types::PyAnyMethods,
+    };
     use rstest::rstest;
-    use std::ffi::CString;
-    use std::io::Write;
-    use std::sync::Mutex;
     use tempfile::NamedTempFile;
+
+    use super::{decode_contents, decode_utf8, parse_ini_file, parse_sections};
 
     static LOCALE_MUTATION_GUARD: Mutex<()> = Mutex::new(());
 

@@ -4,9 +4,13 @@
 //! and emits warnings at configurable intervals to avoid spamming logs while
 //! still alerting users to potential issues.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 /// Source of time for [`RateLimitedWarner`].
 pub trait Clock: Send + Sync {
@@ -68,9 +72,7 @@ impl RateLimitedWarner {
     }
 
     /// Increment the dropped-record counter.
-    pub fn record_drop(&self) {
-        self.dropped.fetch_add(1, Ordering::Relaxed);
-    }
+    pub fn record_drop(&self) { self.dropped.fetch_add(1, Ordering::Relaxed); }
 
     /// Emit a warning if the rate limit interval has elapsed.
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
@@ -88,24 +90,22 @@ impl RateLimitedWarner {
     }
 
     /// Immediately warn about any dropped records.
-    pub fn flush(&self, warn: impl FnMut(u64)) {
-        self.warn_if_due(warn);
-    }
+    pub fn flush(&self, warn: impl FnMut(u64)) { self.warn_if_due(warn); }
 }
 
 impl Default for RateLimitedWarner {
-    fn default() -> Self {
-        Self::new(DEFAULT_WARN_INTERVAL)
-    }
+    fn default() -> Self { Self::new(DEFAULT_WARN_INTERVAL) }
 }
 
 #[cfg(test)]
 mod tests {
     //! Tests for rate-limited warning emission.
 
-    use super::*;
-    use rstest::*;
     use std::sync::atomic::AtomicU64;
+
+    use rstest::*;
+
+    use super::*;
 
     struct FakeClock {
         now: AtomicU64,
@@ -120,21 +120,16 @@ mod tests {
     }
 
     impl Clock for FakeClock {
-        fn now_millis(&self) -> u64 {
-            self.now.load(Ordering::Relaxed)
-        }
+        fn now_millis(&self) -> u64 { self.now.load(Ordering::Relaxed) }
     }
 
     impl FakeClock {
-        fn advance(&self, ms: u64) {
-            self.now.fetch_add(ms, Ordering::Relaxed);
-        }
+        fn advance(&self, ms: u64) { self.now.fetch_add(ms, Ordering::Relaxed); }
     }
 
+    #[femtologging_test_macros::allow_fixture_expansion_lints]
     #[fixture]
-    fn clock() -> Arc<FakeClock> {
-        Arc::new(FakeClock::default())
-    }
+    fn clock() -> Arc<FakeClock> { Arc::new(FakeClock::default()) }
 
     #[fixture]
     fn warner() -> (RateLimitedWarner, Arc<FakeClock>) {
@@ -145,10 +140,9 @@ mod tests {
         )
     }
 
+    #[femtologging_test_macros::allow_fixture_expansion_lints]
     #[fixture]
-    fn warnings() -> Vec<u64> {
-        Vec::new()
-    }
+    fn warnings() -> Vec<u64> { Vec::new() }
 
     #[rstest]
     #[case(1)]

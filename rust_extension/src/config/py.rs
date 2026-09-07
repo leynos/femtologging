@@ -6,14 +6,18 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::handlers::{
-    FileHandlerBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
-    TimedRotatingFileHandlerBuilder,
-};
-use crate::python::fq_py_type;
-
 use super::types::HandlerBuilder;
-use crate::config::ConfigError;
+use crate::{
+    config::ConfigError,
+    handlers::{
+        FileHandlerBuilder,
+        RotatingFileHandlerBuilder,
+        SocketHandlerBuilder,
+        StreamHandlerBuilder,
+        TimedRotatingFileHandlerBuilder,
+    },
+    python::fq_py_type,
+};
 
 impl From<ConfigError> for PyErr {
     fn from(err: ConfigError) -> Self {
@@ -42,10 +46,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for HandlerBuilder {
         obj.extract::<StreamHandlerBuilder>()
             .map(Self::from)
             .or_else(|_| obj.extract::<FileHandlerBuilder>().map(Self::from))
-            .or_else(|_| {
-                obj.extract::<RotatingFileHandlerBuilder>()
-                    .map(Self::from)
-            })
+            .or_else(|_| obj.extract::<RotatingFileHandlerBuilder>().map(Self::from))
             .or_else(|_| {
                 obj.extract::<TimedRotatingFileHandlerBuilder>()
                     .map(Self::from)
@@ -54,7 +55,9 @@ impl<'a, 'py> FromPyObject<'a, 'py> for HandlerBuilder {
             .map_err(|_| {
                 let fq = fq_py_type(&obj.to_owned());
                 pyo3::exceptions::PyTypeError::new_err(format!(
-                    "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, or SocketHandlerBuilder (got Python type: {fq})"
+                    "builder must be StreamHandlerBuilder, FileHandlerBuilder, \
+                     RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, or \
+                     SocketHandlerBuilder (got Python type: {fq})"
                 ))
             })
     }

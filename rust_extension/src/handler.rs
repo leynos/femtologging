@@ -1,10 +1,12 @@
 //! Core handler trait and error types shared by every handler
 //! implementation.
 
-use crate::log_record::FemtoLogRecord;
-use pyo3::prelude::*;
 use std::{any::Any, time::Duration};
+
+use pyo3::prelude::*;
 use thiserror::Error;
+
+use crate::log_record::FemtoLogRecord;
 
 /// Errors reported by handler implementations when dispatching a log record.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -58,21 +60,13 @@ pub struct FemtoHandler;
 #[pymethods]
 impl FemtoHandler {
     #[new]
-    const fn py_new() -> Self {
-        Self
-    }
+    const fn py_new() -> Self { Self }
 }
 
 impl FemtoHandlerTrait for FemtoHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Ok(())
-    }
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> { Ok(()) }
 
-    fn flush(&self) -> bool {
-        true
-    }
+    fn flush(&self) -> bool { true }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }

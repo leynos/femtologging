@@ -1,8 +1,9 @@
 //! Tests for frame filtering utilities.
 
+use rstest::rstest;
+
 use super::*;
 use crate::test_utils::frame_test_helpers::{assert_frames, assert_frames_by_function, make_frame};
-use rstest::rstest;
 
 #[rstest]
 fn filter_frames_with_predicate() {

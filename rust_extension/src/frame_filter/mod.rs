@@ -17,8 +17,10 @@
 //! # Example
 //!
 //! ```rust
-//! use _femtologging_rs::exception_schema::{StackFrame, StackTracePayload};
-//! use _femtologging_rs::frame_filter::{exclude_logging_infrastructure, limit_frames};
+//! use _femtologging_rs::{
+//!     exception_schema::{StackFrame, StackTracePayload},
+//!     frame_filter::{exclude_logging_infrastructure, limit_frames},
+//! };
 //!
 //! let frames = vec![
 //!     StackFrame::new("app.py", 10, "main"),
@@ -68,8 +70,7 @@ pub const LOGGING_INFRA_PATTERNS: &[&str] = &[
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::StackFrame;
-/// use _femtologging_rs::frame_filter::filter_frames;
+/// use _femtologging_rs::{exception_schema::StackFrame, frame_filter::filter_frames};
 ///
 /// let frames = vec![
 ///     StackFrame::new("app.py", 10, "main"),
@@ -105,8 +106,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::StackFrame;
-/// use _femtologging_rs::frame_filter::limit_frames;
+/// use _femtologging_rs::{exception_schema::StackFrame, frame_filter::limit_frames};
 ///
 /// let frames = vec![
 ///     StackFrame::new("a.py", 1, "outer"),
@@ -153,8 +153,7 @@ fn matches_any_pattern(filename: &str, patterns: &[&str]) -> bool {
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::StackFrame;
-/// use _femtologging_rs::frame_filter::exclude_by_filename;
+/// use _femtologging_rs::{exception_schema::StackFrame, frame_filter::exclude_by_filename};
 ///
 /// let frames = vec![
 ///     StackFrame::new("myapp/main.py", 10, "main"),
@@ -186,8 +185,7 @@ pub fn exclude_by_filename(frames: &[StackFrame], patterns: &[&str]) -> Vec<Stac
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::StackFrame;
-/// use _femtologging_rs::frame_filter::exclude_by_function;
+/// use _femtologging_rs::{exception_schema::StackFrame, frame_filter::exclude_by_function};
 ///
 /// let frames = vec![
 ///     StackFrame::new("app.py", 10, "main"),
@@ -222,8 +220,10 @@ pub fn exclude_by_function(frames: &[StackFrame], patterns: &[&str]) -> Vec<Stac
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::StackFrame;
-/// use _femtologging_rs::frame_filter::exclude_logging_infrastructure;
+/// use _femtologging_rs::{
+///     exception_schema::StackFrame,
+///     frame_filter::exclude_logging_infrastructure,
+/// };
 ///
 /// let frames = vec![
 ///     StackFrame::new("myapp/main.py", 10, "run"),
@@ -248,8 +248,7 @@ pub fn exclude_logging_infrastructure(frames: &[StackFrame]) -> Vec<StackFrame> 
 /// # Examples
 ///
 /// ```rust
-/// use _femtologging_rs::exception_schema::StackFrame;
-/// use _femtologging_rs::frame_filter::is_logging_infrastructure;
+/// use _femtologging_rs::{exception_schema::StackFrame, frame_filter::is_logging_infrastructure};
 ///
 /// let app_frame = StackFrame::new("myapp/main.py", 10, "run");
 /// let log_frame = StackFrame::new("logging/__init__.py", 50, "info");

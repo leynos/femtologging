@@ -3,20 +3,20 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
-use std::io::Write;
-use std::time::Duration;
+use std::{io::Write, time::Duration};
 
 use crossbeam_channel::bounded;
 use log::warn;
 
-use crate::filters::FilterContext;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::level::FemtoLevel;
-use crate::log_context;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
-use crate::manager;
-
 use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use crate::{
+    filters::FilterContext,
+    handler::{FemtoHandlerTrait, HandlerError},
+    level::FemtoLevel,
+    log_context,
+    log_record::{FemtoLogRecord, RecordMetadata},
+    manager,
+};
 
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
@@ -25,9 +25,7 @@ struct FlushAckHandler {
 
 impl FlushAckHandler {
     #[must_use]
-    const fn new(ack: crossbeam_channel::Sender<()>) -> Self {
-        Self { ack }
-    }
+    const fn new(ack: crossbeam_channel::Sender<()>) -> Self { Self { ack } }
 }
 
 impl FemtoHandlerTrait for FlushAckHandler {
@@ -38,9 +36,7 @@ impl FemtoHandlerTrait for FlushAckHandler {
         Ok(())
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 impl FemtoLogger {
@@ -144,9 +140,7 @@ impl FemtoLogger {
     ///
     /// This method is thread-safe; the level is stored in an `AtomicU8` and
     /// read with `Ordering::Relaxed`.
-    pub fn get_level(&self) -> FemtoLevel {
-        self.load_level()
-    }
+    pub fn get_level(&self) -> FemtoLevel { self.load_level() }
 
     /// Load the current level from the atomic storage.
     ///

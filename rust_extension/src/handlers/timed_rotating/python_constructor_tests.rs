@@ -1,7 +1,8 @@
 //! Python API regression tests for `TimedHandlerOptions` construction.
 
 use pyo3::{
-    Bound, Python,
+    Bound,
+    Python,
     exceptions::PyTypeError,
     prelude::*,
     types::{PyAny, PyAnyMethods, PyDict, PyDictMethods},

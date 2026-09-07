@@ -1,15 +1,15 @@
 //! Unit tests for logger propagation behaviour.
 #![cfg(all(test, feature = "python"))]
 
-use super::test_utils::gil_and_clean_manager;
-use super::*;
-use crate::manager;
-use crate::{FemtoLevel, FemtoLogger, FileHandlerBuilder};
+use std::fs;
+
 use pyo3::{Py, Python};
 use rstest::{fixture, rstest};
 use serial_test::serial;
-use std::fs;
 use tempfile::NamedTempFile;
+
+use super::{test_utils::gil_and_clean_manager, *};
+use crate::{FemtoLevel, FemtoLogger, FileHandlerBuilder, manager};
 
 #[fixture]
 fn new_root_file_handler() -> std::io::Result<(FileHandlerBuilder, NamedTempFile)> {

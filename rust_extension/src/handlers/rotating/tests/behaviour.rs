@@ -1,19 +1,29 @@
 //! Behavioural tests for the rotating strategy.
 
-use crate::formatter::DefaultFormatter;
-use crate::handler::FemtoHandlerTrait;
-use crate::handlers::file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig};
-use crate::handlers::rotating::strategy::{FileRotationStrategy, RotationOutcome};
-use crate::handlers::rotating::{
-    FemtoRotatingFileHandler, RotationConfig, force_fresh_failure_once_for_test,
+use std::{
+    fs::{self, OpenOptions},
+    io::{self, BufWriter, Read, Seek, SeekFrom, Write},
 };
-use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
+
 use rstest::rstest;
 use serial_test::serial;
-use std::fs::{self, OpenOptions};
-use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use tempfile::tempdir;
+
+use crate::{
+    formatter::DefaultFormatter,
+    handler::FemtoHandlerTrait,
+    handlers::{
+        file::{FemtoFileHandler, HandlerConfig, RotationStrategy, TestConfig},
+        rotating::{
+            FemtoRotatingFileHandler,
+            RotationConfig,
+            force_fresh_failure_once_for_test,
+            strategy::{FileRotationStrategy, RotationOutcome},
+        },
+    },
+    level::FemtoLevel,
+    log_record::FemtoLogRecord,
+};
 
 struct RotationPredicateCase {
     initial: &'static str,
