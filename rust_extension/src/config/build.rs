@@ -75,23 +75,8 @@ impl ConfigBuilder {
                 manager::disable_existing_loggers(py, keep_names);
             }
 
-            let mut runtime_loggers = BTreeMap::new();
-            for plan in &plans {
-                let logger = committed_loggers.get(&plan.name).ok_or_else(|| {
-                    ConfigError::LoggerInit(format!(
-                        "missing committed logger for configuration plan {}",
-                        plan.name
-                    ))
-                })?;
-                self.apply_logger_plan(py, logger, plan);
-                runtime_loggers.insert(
-                    plan.name.clone(),
-                    manager::LoggerAttachmentState::new(
-                        plan.handler_ids.clone(),
-                        plan.filter_ids.clone(),
-                    ),
-                );
-            }
+            let runtime_loggers =
+                self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
             manager::replace_runtime_state(
                 built_handlers.clone(),
                 built_filters.clone(),
@@ -100,6 +85,32 @@ impl ConfigBuilder {
             Ok(())
         })?;
         Ok(())
+    }
+
+    fn apply_committed_logger_plans(
+        &self,
+        py: Python<'_>,
+        plans: &[ConfiguredLoggerPlan],
+        committed_loggers: &BTreeMap<String, Py<FemtoLogger>>,
+    ) -> Result<BTreeMap<String, manager::LoggerAttachmentState>, ConfigError> {
+        let mut runtime_loggers = BTreeMap::new();
+        for plan in plans {
+            let logger = committed_loggers.get(&plan.name).ok_or_else(|| {
+                ConfigError::LoggerInit(format!(
+                    "missing committed logger for configuration plan {}",
+                    plan.name
+                ))
+            })?;
+            self.apply_logger_plan(py, logger, plan);
+            runtime_loggers.insert(
+                plan.name.clone(),
+                manager::LoggerAttachmentState::new(
+                    plan.handler_ids.clone(),
+                    plan.filter_ids.clone(),
+                ),
+            );
+        }
+        Ok(runtime_loggers)
     }
 
     /// Include ancestors of each configured logger (e.g., `a.b.c` keeps `a.b`
