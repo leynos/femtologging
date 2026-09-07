@@ -78,6 +78,17 @@ the corpus still passes.
 The Rust extension build toolchain is pinned so local builds, CI, and the
 compatibility tests validate the same maturin and PyO3 releases:
 
+- `rust-toolchain.toml` selects the stable Rust toolchain and requires
+  `rustfmt`, `clippy`, and `rust-analyzer`. Install them with:
+
+  ```shell
+  rustup toolchain install stable --component rustfmt --component clippy \
+    --component rust-analyzer
+  ```
+
+  Cargo commands run from the repository root select that toolchain
+  automatically. `make check-fmt` and `make lint` use its formatter and
+  linter; editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.

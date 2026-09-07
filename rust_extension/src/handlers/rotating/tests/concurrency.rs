@@ -74,6 +74,7 @@ impl RotationStrategy<BufWriter<File>> for ObservedStrategy {
     }
 }
 
+/// Waits for the delayed rotation strategy to signal that rotation has begun.
 fn wait_for_rotation_start(flag: &AtomicBool, timeout: Duration) -> Result<(), &'static str> {
     let started_at = Instant::now();
     while !flag.load(Ordering::SeqCst) {
@@ -96,6 +97,7 @@ fn wait_for_rotation_start_returns_timeout_error() {
     );
 }
 
+/// Queues records without blocking and returns unexpected handler failures.
 fn attempt_non_blocking_writes(
     handler: &FemtoRotatingFileHandler,
     count: usize,

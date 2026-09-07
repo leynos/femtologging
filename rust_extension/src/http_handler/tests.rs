@@ -87,6 +87,7 @@ fn read_body(reader: &mut BufReader<TcpStream>, content_length: usize) -> io::Re
     Ok(String::from_utf8_lossy(&body).to_string())
 }
 
+/// Captures one HTTP request from a connection accepted by the mock server.
 fn read_http_request(stream: &mut TcpStream) -> io::Result<CapturedRequest> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -116,6 +117,7 @@ fn tcp_listener() -> io::Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", 0))
 }
 
+/// Builds a handler configured to send records to the mock server.
 fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
     let url = format!("http://{}/log", addr);
     let config = HTTPHandlerConfig {
@@ -128,6 +130,7 @@ fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
     FemtoHTTPHandler::with_config(config)
 }
 
+/// Queues one information record and propagates the handler result.
 fn send_info_record(handler: &FemtoHTTPHandler, message: &str) -> Result<(), HandlerError> {
     let record = FemtoLogRecord::new("test", FemtoLevel::Info, message);
     handler.handle(record)
