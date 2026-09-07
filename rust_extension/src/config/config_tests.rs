@@ -266,8 +266,7 @@ fn failed_reconfiguration_preserves_unmentioned_loggers(_gil_and_clean_manager: 
         initial
             .build_and_init()
             .expect("initial configuration should succeed");
-        assert_handler_count(py, "stale", 1, "stale logger should start active")
-            .expect("get_logger should succeed");
+        assert_handler_count!(py, "stale", 1, "stale logger should start active");
 
         let invalid = ConfigBuilder::new()
             .with_root_logger(LoggerConfigBuilder::new())
@@ -280,13 +279,22 @@ fn failed_reconfiguration_preserves_unmentioned_loggers(_gil_and_clean_manager: 
             .build_and_init()
             .expect_err("unknown handler must reject the replacement configuration");
 
-        assert_handler_count(
+        let runtime = manager::snapshot_runtime_state();
+        let stale = runtime
+            .logger_states
+            .get("stale")
+            .expect("failed replacement must preserve stale attachment metadata");
+        assert_eq!(
+            stale.handler_ids(),
+            &["h".to_string()],
+            "failed replacement must not replace runtime attachment metadata",
+        );
+        assert_handler_count!(
             py,
             "stale",
             1,
-            "failed replacement must leave unmentioned loggers unchanged",
-        )
-        .expect("get_logger should succeed");
+            "failed replacement must leave unmentioned loggers unchanged"
+        );
     });
 }
 #[rstest(

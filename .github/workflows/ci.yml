@@ -36,7 +36,7 @@ jobs:
       # Tool pins mirrored from the Makefile defaults; the contract test in
       # tests/test_lint_version_contract.py asserts the two stay in sync.
       RUFF_VERSION: '0.16.4'
-      TY_VERSION: '0.0.74'
+      TY_VERSION: '0.0.75'
       # Pinned Makefile parser used by the lint contract tests. The nightly
       # toolchain and Polonius flag are required to build Makeutil.
       MAKEUTIL_REVISION: '29fc5a1634ffbaa18a773eed9dff1b2838a45d9c'
