@@ -52,7 +52,6 @@ impl FemtoLogger {
             propagate: std::sync::atomic::AtomicBool::new(true),
             handlers,
             filters,
-            has_python_handlers: std::sync::atomic::AtomicBool::new(false),
             dropped_records: std::sync::atomic::AtomicU64::new(0),
             drop_warner: RateLimitedWarner::default(),
             tx: Some(tx),

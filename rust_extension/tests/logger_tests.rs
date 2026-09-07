@@ -3,14 +3,14 @@
 
 use std::collections::BTreeSet;
 
-use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
-};
-use _femtologging_rs::{FemtoLogger, QueuedRecord}; // needed for clone_sender test
+use _femtologging_rs::FemtoLogger;
+use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoStreamHandler};
 use rstest::{fixture, rstest};
 
 #[path = "test_utils/fixtures.rs"]
 mod fixtures;
+#[path = "logger_tests/lifecycle.rs"]
+mod logger_lifecycle_tests;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
 use fixtures::{handler_tuple, stream_handler_for};
@@ -202,46 +202,6 @@ fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple
     drop(handler);
     let output = read_output(&buffer);
     assert!(!output.contains("two"));
-}
-
-#[test]
-fn drop_with_sender_clone_exits() {
-    let logger = FemtoLogger::new("clone".to_string());
-    let tx = logger.clone_sender_for_test().expect("sender should exist");
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let thread_barrier = std::sync::Arc::clone(&barrier);
-    let t = std::thread::spawn(move || {
-        thread_barrier.wait();
-        let res = tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("clone", FemtoLevel::Info, "late"),
-            handlers: Vec::new(),
-            #[cfg(feature = "python")]
-            context: None,
-        });
-        assert!(
-            res.is_err(),
-            "Expected send to fail after logger is dropped"
-        );
-    });
-    drop(logger);
-    barrier.wait();
-    t.join().expect("Worker thread panicked");
-}
-
-#[rstest]
-fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    let handler = Arc::new(handler);
-    let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    logger.log(FemtoLevel::Info, "one");
-    logger.log(FemtoLevel::Info, "two");
-    logger.log(FemtoLevel::Info, "three");
-    drop(logger);
-    drop(handler);
-    assert_eq!(
-        read_output(&buffer),
-        "core [INFO] one\ncore [INFO] two\ncore [INFO] three\n"
-    );
 }
 
 #[test]

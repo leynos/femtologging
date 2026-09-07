@@ -63,7 +63,6 @@ pub struct FemtoLogger {
     propagate: AtomicBool,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
-    has_python_handlers: AtomicBool,
     dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
@@ -221,10 +220,6 @@ impl FemtoLogger {
             };
             if let Some(pos) = handlers.iter().position(matches_handler) {
                 handlers.remove(pos);
-                self.has_python_handlers.store(
-                    handlers.iter().any(|handler| handler.is_python_backed()),
-                    Ordering::Release,
-                );
                 true
             } else {
                 false
@@ -288,11 +283,7 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
-        let is_python_backed = handler.is_python_backed();
         self.handlers.write().push(handler);
-        if is_python_backed {
-            self.has_python_handlers.store(true, Ordering::Release);
-        }
     }
 
     /// Attach a filter to this logger.
@@ -305,10 +296,6 @@ impl FemtoLogger {
         let mut handlers = self.handlers.write();
         if let Some(pos) = handlers.iter().position(|h| Arc::ptr_eq(h, handler)) {
             handlers.remove(pos);
-            self.has_python_handlers.store(
-                handlers.iter().any(|handler| handler.is_python_backed()),
-                Ordering::Release,
-            );
             true
         } else {
             false
@@ -322,7 +309,6 @@ impl FemtoLogger {
     /// dispatched to those handlers.
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
-        self.has_python_handlers.store(false, Ordering::Release);
     }
 
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
