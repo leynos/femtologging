@@ -8,29 +8,37 @@ use pyo3::Borrowed;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::fmt;
+use std::io::Write;
 use std::str::FromStr;
 
+/// A log record's severity, ordered from trace through critical.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
 pub enum FemtoLevel {
+    /// Detailed diagnostic events.
     Trace,
+    /// Developer-oriented diagnostic events.
     Debug,
     #[default]
+    /// General operational events.
     Info,
+    /// Events indicating a potentially harmful condition.
     Warn,
+    /// Events indicating an operation failed.
     Error,
+    /// Events indicating a severe service failure.
     Critical,
 }
 
 impl fmt::Display for FemtoLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            FemtoLevel::Trace => "TRACE",
-            FemtoLevel::Debug => "DEBUG",
-            FemtoLevel::Info => "INFO",
-            FemtoLevel::Warn => "WARN",
-            FemtoLevel::Error => "ERROR",
-            FemtoLevel::Critical => "CRITICAL",
+            Self::Trace => "TRACE",
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Critical => "CRITICAL",
         };
         f.write_str(s)
     }
@@ -61,6 +69,7 @@ impl FemtoLevel {
     ///
     /// [`Display`]: std::fmt::Display
     /// [`to_string()`]: std::string::ToString::to_string
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Trace => "TRACE",
@@ -73,24 +82,32 @@ impl FemtoLevel {
     }
 
     /// Parse a string into a level, warning on invalid input.
+    #[must_use]
     pub fn parse_or_warn(s: &str) -> Self {
-        match s.parse() {
-            Ok(lvl) => lvl,
-            Err(_) => {
-                eprintln!("Warning: unrecognized log level '{s}', defaulting to INFO");
-                Self::Info
-            }
-        }
+        s.parse().unwrap_or_else(|()| Self::warn_and_default(s))
     }
 
-    /// Parse a string into a level, returning PyValueError on invalid input.
+    fn warn_and_default(s: &str) -> Self {
+        let mut stderr = std::io::stderr().lock();
+        drop(writeln!(
+            stderr,
+            "Warning: unrecognized log level '{s}', defaulting to INFO"
+        ));
+        Self::Info
+    }
+
+    /// Parse a string into a level, returning `PyValueError` on invalid input.
     ///
-    /// Use this in PyO3 bindings instead of `parse_or_warn` to propagate
+    /// Use this in `PyO3` bindings instead of [`Self::parse_or_warn`] to propagate
     /// errors to Python rather than silently defaulting.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PyValueError` when `s` does not name a supported log level.
     pub fn parse_py(s: &str) -> PyResult<Self> {
         match s.parse() {
             Ok(level) => Ok(level),
-            Err(_) => Err(PyErr::new::<PyValueError, _>(format!(
+            Err(()) => Err(PyErr::new::<PyValueError, _>(format!(
                 "invalid log level: {s}"
             ))),
         }
@@ -99,7 +116,7 @@ impl FemtoLevel {
 
 impl From<FemtoLevel> for u8 {
     fn from(level: FemtoLevel) -> Self {
-        level as u8
+        level as Self
     }
 }
 
@@ -124,6 +141,6 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FemtoLevel {
 
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let s: &str = obj.extract()?;
-        FemtoLevel::parse_py(s)
+        Self::parse_py(s)
     }
 }

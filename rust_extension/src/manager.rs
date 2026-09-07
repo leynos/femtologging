@@ -3,10 +3,14 @@
 //! Access is guarded by a `parking_lot::RwLock` and must only occur while the
 //! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
 
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use std::collections::HashSet;
 use std::collections::{HashMap, hash_map::Entry};
+#[cfg(feature = "python")]
+use std::hash::BuildHasher;
+use std::sync::LazyLock;
 #[cfg(feature = "python")]
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -23,7 +27,7 @@ pub(crate) struct LoggerAttachmentState {
 
 #[cfg(feature = "python")]
 impl LoggerAttachmentState {
-    pub(crate) fn new(handler_ids: Vec<String>, filter_ids: Vec<String>) -> Self {
+    pub(crate) const fn new(handler_ids: Vec<String>, filter_ids: Vec<String>) -> Self {
         Self {
             handler_ids,
             filter_ids,
@@ -59,7 +63,7 @@ struct Manager {
     runtime: RuntimeStateSnapshot,
 }
 
-static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
+static MANAGER: LazyLock<RwLock<Manager>> = LazyLock::new(|| RwLock::new(Manager::default()));
 
 #[cfg(feature = "python")]
 fn clear_runtime_state(mgr: &mut Manager) {
@@ -77,24 +81,29 @@ fn is_invalid_logger_name(name: &str) -> bool {
     name.is_empty()
         || name.starts_with('.')
         || name.ends_with('.')
-        || name.split('.').any(|s| s.is_empty())
+        || name.split('.').any(str::is_empty)
 }
 
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
         let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
-        mgr.loggers.insert("root".to_string(), root);
+        mgr.loggers.insert(String::from("root"), root);
     }
     Ok(())
 }
 
 fn calculate_parent_name(name: &str) -> Option<String> {
     name.rsplit_once('.')
-        .map(|(p, _)| p.to_string())
-        .or_else(|| (name != "root").then(|| "root".to_string()))
+        .map(|(parent, _)| parent.to_owned())
+        .or_else(|| (name != "root").then(|| String::from("root")))
 }
 
 /// Retrieve an existing logger or create one with a dotted-name parent.
+///
+/// # Errors
+///
+/// Returns `PyValueError` when `name` is not a valid logger identifier, or
+/// propagates a Python allocation error while creating a new logger.
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     if is_invalid_logger_name(name) {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -105,11 +114,14 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     let mut mgr = MANAGER.write();
     ensure_root_logger(py, &mut mgr)?;
 
-    match mgr.loggers.entry(name.to_string()) {
+    match mgr.loggers.entry(String::from(name)) {
         Entry::Occupied(o) => Ok(o.get().clone_ref(py)),
         Entry::Vacant(v) => {
             let parent_name = calculate_parent_name(name);
-            let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
+            let logger = Py::new(
+                py,
+                FemtoLogger::with_parent(String::from(name), parent_name),
+            )?;
             v.insert(logger.clone_ref(py));
             Ok(logger)
         }
@@ -156,11 +168,15 @@ pub(crate) fn replace_runtime_state(
 ///
 /// Iterates through all loggers and clears handlers and filters for any
 /// whose name is absent from `keep_names`.
+///
+/// # Errors
+///
+/// Returns a Python error if a registered logger cannot be borrowed.
 #[cfg(feature = "python")]
-pub fn disable_existing_loggers(
-    py: Python<'_>,
-    keep_names: &std::collections::HashSet<String>,
-) -> PyResult<()> {
+pub fn disable_existing_loggers<S>(py: Python<'_>, keep_names: &HashSet<String, S>) -> PyResult<()>
+where
+    S: BuildHasher,
+{
     let mgr = MANAGER.read();
     for (name, logger) in &mgr.loggers {
         if name != "root" && !keep_names.contains(name) {
@@ -179,10 +195,14 @@ pub fn disable_existing_loggers(
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
     let mgr = MANAGER.read();
     for logger in mgr.loggers.values() {
-        let _ = logger.borrow(py).flush_handlers();
+        let flush_completed = logger.borrow(py).flush_handlers();
+        if !flush_completed {
+            log::debug!("FemtoLogger: one or more handlers did not flush cleanly");
+        }
     }
 }
 
+/// Clear all loggers and runtime configuration from the global manager.
 #[pyfunction]
 pub fn reset_manager() {
     let mut mgr = MANAGER.write();

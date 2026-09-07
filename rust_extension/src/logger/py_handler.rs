@@ -1,4 +1,4 @@
-//! Python handler wrapper for FemtoLogger.
+//! Python handler wrapper for [`FemtoLogger`].
 //!
 //! This module provides [`PyHandler`], which wraps Python handler objects
 //! to allow them to be used by the Rust logging infrastructure.
@@ -14,7 +14,7 @@ use crate::log_record::FemtoLogRecord;
 use log::warn;
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
-fn map_py_err(py: Python<'_>, err: PyErr, method: &str) -> HandlerError {
+fn map_py_err(py: Python<'_>, err: &PyErr, method: &str) -> HandlerError {
     let message = err.to_string();
     err.print(py);
     warn!("PyHandler: error calling {method}: {message}");
@@ -59,12 +59,12 @@ pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
         let attr_type = handle
             .get_type()
             .name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
+            .and_then(|name| name.extract::<String>())
+            .unwrap_or_else(|_| String::from("<unknown>"));
         let handler_repr = obj
             .repr()
-            .map(|r| r.to_string())
-            .unwrap_or_else(|_| "<unrepresentable>".to_string());
+            .and_then(|repr| repr.extract::<String>())
+            .unwrap_or_else(|_| String::from("<unrepresentable>"));
         Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "'handler.handle' is not callable (type: {attr_type}, handler: {handler_repr})",
         )))
@@ -133,8 +133,7 @@ impl PyHandler {
     pub fn new(py: Python<'_>, obj: Py<PyAny>) -> Self {
         let has_handle_record = obj
             .getattr(py, "handle_record")
-            .map(|attr| attr.bind(py).is_callable())
-            .unwrap_or(false);
+            .is_ok_and(|attr| attr.bind(py).is_callable());
         Self {
             obj,
             has_handle_record,
@@ -148,12 +147,12 @@ impl PyHandler {
         record: &FemtoLogRecord,
     ) -> Result<(), HandlerError> {
         let record_dict =
-            record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
+            record_to_dict(py, record).map_err(|err| map_py_err(py, &err, "record_to_dict"))?;
 
         self.obj
             .call_method1(py, "handle_record", (record_dict,))
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, "handle_record"))
+            .map_err(|err| map_py_err(py, &err, "handle_record"))
     }
 
     /// Call the legacy 3-argument `handle` method.
@@ -169,7 +168,7 @@ impl PyHandler {
                 (record.logger(), record.level_str(), record.message()),
             )
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, "handle"))
+            .map_err(|err| map_py_err(py, &err, "handle"))
     }
 }
 
@@ -213,7 +212,7 @@ impl FemtoHandlerTrait for PyHandler {
                     (record.logger(), record.level_str(), record.message()),
                 )
                 .map(|_| ())
-                .map_err(|err| map_py_err(py, err, "handle"))
+                .map_err(|err| map_py_err(py, &err, "handle"))
         })
     }
 

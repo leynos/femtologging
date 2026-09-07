@@ -22,7 +22,7 @@ impl FemtoFilter for LevelFilter {
     }
 }
 
-/// Builder for [`LevelFilter`].
+/// Builder for the level filter.
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LevelFilterBuilder {
@@ -31,6 +31,7 @@ pub struct LevelFilterBuilder {
 
 impl LevelFilterBuilder {
     /// Create a new `LevelFilterBuilder`.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -38,7 +39,8 @@ impl LevelFilterBuilder {
     /// Set the maximum level allowed.
     ///
     /// When called from Python, `level` may be a `FemtoLevel` instance or a recognized level string.
-    pub fn with_max_level(mut self, level: FemtoLevel) -> Self {
+    #[must_use]
+    pub const fn with_max_level(mut self, level: FemtoLevel) -> Self {
         self.max_level = Some(level);
         self
     }

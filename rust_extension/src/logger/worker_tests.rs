@@ -29,10 +29,11 @@ fn handle_log_record_continues_after_handler_errors() {
     let failing = Arc::new(FailingHandler) as Arc<dyn FemtoHandlerTrait>;
     let collecting = collecting_handler.clone() as Arc<dyn FemtoHandlerTrait>;
 
-    FemtoLogger::handle_log_record(QueuedRecord {
+    let job = QueuedRecord {
         record: FemtoLogRecord::new("worker", FemtoLevel::Info, "survives"),
         handlers: vec![failing, collecting],
-    });
+    };
+    FemtoLogger::handle_log_record(&job);
 
     let collected = collecting_handler.collected();
     assert_eq!(collected.len(), 1);

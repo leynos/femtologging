@@ -8,18 +8,12 @@ mod py;
 mod runtime_mutation;
 mod types;
 
-#[cfg_attr(
-    not(feature = "python"),
-    expect(unused_imports, reason = "public re-exports for Python-enabled builds")
-)]
 #[cfg(feature = "python")]
 pub use runtime_mutation::{LoggerMutationBuilder, RuntimeConfigBuilder};
-#[cfg_attr(
-    not(feature = "python"),
-    expect(unused_imports, reason = "public re-exports for external consumers")
-)]
 // Re-export for external consumers
-pub use types::{ConfigBuilder, ConfigError, FormatterBuilder, LoggerConfigBuilder};
+#[cfg(feature = "python")]
+pub use types::ConfigError;
+pub use types::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
 
 #[cfg(all(test, feature = "python"))]
 mod config_tests;
