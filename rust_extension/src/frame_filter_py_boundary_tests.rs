@@ -137,3 +137,32 @@ fn filter_frames_python_boundary_rejects_invalid_argument_shapes() {
         );
     });
 }
+
+#[rstest]
+#[case("exclude_filenames")]
+#[case("exclude_functions")]
+#[case("max_depth")]
+#[serial]
+fn filter_frames_python_boundary_accepts_explicit_none(#[case] option_name: &str) {
+    Python::attach(|py| {
+        let function = python_filter_function(py).expect("Python function should build");
+        let payload = make_stack_payload_dict(py, &["main.py"]).expect("payload should build");
+        let expected = function
+            .call1((&payload,))
+            .expect("omitted options should succeed");
+        let keywords = PyDict::new(py);
+        keywords
+            .set_item(option_name, py.None())
+            .expect("explicit None keyword should be set");
+        let actual = function
+            .call((&payload,), Some(&keywords))
+            .expect("explicit None should preserve the optional argument default");
+        let matches_default = actual
+            .eq(&expected)
+            .expect("result dictionaries should support equality");
+        assert!(
+            matches_default,
+            "explicit None for {option_name} must match omission"
+        );
+    });
+}
