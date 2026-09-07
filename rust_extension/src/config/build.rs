@@ -28,6 +28,11 @@ struct ConfiguredLoggerPlan {
     propagate: Option<bool>,
 }
 
+struct BuiltConfigComponents {
+    built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+    built_filters: BTreeMap<String, Arc<dyn FemtoFilter>>,
+    resolved_handler_filters: BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
+}
 impl ConfigBuilder {
     /// Finalize the configuration and initialize loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
@@ -37,33 +42,11 @@ impl ConfigBuilder {
         if self.root_logger().is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
-        let built_formatters = self
-            .formatter_builders()
-            .iter()
-            .map(|(id, builder)| (id.clone(), builder.build()))
-            .collect::<BTreeMap<_, _>>();
-        let built_filters = Self::build_map(
-            self.filter_builders(),
-            |b| b.build(),
-            |id, source| ConfigError::FilterBuild { id, source },
-        )?;
-        let built_handlers = Self::build_map(
-            self.handler_builders(),
-            |b| b.build_with_formatters(&built_formatters),
-            |id, source| ConfigError::HandlerBuild { id, source },
-        )?;
-        let handler_filters = self
-            .handler_builders()
-            .iter()
-            .map(|(id, builder)| {
-                Self::collect_items(
-                    builder.filter_ids(),
-                    &built_filters,
-                    Self::duplicate_filter_ids,
-                )
-                .map(|filters| (id.clone(), filters))
-            })
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let BuiltConfigComponents {
+            built_handlers,
+            built_filters,
+            resolved_handler_filters,
+        } = self.build_runtime_components()?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
             let targets = self
@@ -77,7 +60,7 @@ impl ConfigBuilder {
                         name,
                         cfg,
                         &built_handlers,
-                        &handler_filters,
+                        &resolved_handler_filters,
                         &built_filters,
                     )
                 })
@@ -264,5 +247,41 @@ impl ConfigBuilder {
         if let Some(propagate) = plan.propagate {
             logger_ref.set_propagate(propagate);
         }
+    }
+
+    fn build_runtime_components(&self) -> Result<BuiltConfigComponents, ConfigError> {
+        let built_formatters = self
+            .formatter_builders()
+            .iter()
+            .map(|(id, builder)| (id.clone(), builder.build()))
+            .collect::<BTreeMap<_, _>>();
+        let built_filters = Self::build_map(
+            self.filter_builders(),
+            |b| b.build(),
+            |id, source| ConfigError::FilterBuild { id, source },
+        )?;
+        let built_handlers = Self::build_map(
+            self.handler_builders(),
+            |b| b.build_with_formatters(&built_formatters),
+            |id, source| ConfigError::HandlerBuild { id, source },
+        )?;
+        let handler_filters = self
+            .handler_builders()
+            .iter()
+            .map(|(id, builder)| {
+                Self::collect_items(
+                    builder.filter_ids(),
+                    &built_filters,
+                    Self::duplicate_filter_ids,
+                )
+                .map(|filters| (id.clone(), filters))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+
+        Ok(BuiltConfigComponents {
+            built_handlers,
+            built_filters,
+            resolved_handler_filters: handler_filters,
+        })
     }
 }
