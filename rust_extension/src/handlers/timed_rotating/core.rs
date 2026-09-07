@@ -37,6 +37,15 @@ pub(crate) struct TimedFileRotationStrategy<C = SystemClock> {
     next_rollover_at: DateTime<Utc>,
 }
 
+/// Inputs captured at the instant a timed rotation strategy is initialized.
+struct RotationSeed<C> {
+    path: PathBuf,
+    schedule: TimedRotationSchedule,
+    backup_count: usize,
+    clock: C,
+    created_at: DateTime<Utc>,
+}
+
 impl TimedFileRotationStrategy<SystemClock> {
     pub(crate) fn new(path: PathBuf, schedule: TimedRotationSchedule, backup_count: usize) -> Self {
         Self::new_with_clock(path, schedule, backup_count, SystemClock)
@@ -47,20 +56,14 @@ impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
 {
-    fn from_seed(
-        path: PathBuf,
-        schedule: TimedRotationSchedule,
-        backup_count: usize,
-        clock: C,
-        seed: DateTime<Utc>,
-    ) -> Self {
-        let next_rollover_at = schedule.next_rollover(seed);
+    fn from_seed(seed: RotationSeed<C>) -> Self {
+        let next_rollover_at = seed.schedule.next_rollover(seed.created_at);
         Self {
-            path,
-            schedule,
-            backup_count,
-            clock,
-            created_at: seed,
+            path: seed.path,
+            schedule: seed.schedule,
+            backup_count: seed.backup_count,
+            clock: seed.clock,
+            created_at: seed.created_at,
             next_rollover_at,
         }
     }
@@ -71,8 +74,14 @@ where
         backup_count: usize,
         mut clock: C,
     ) -> Self {
-        let seed = clock.now();
-        Self::from_seed(path, schedule, backup_count, clock, seed)
+        let created_at = clock.now();
+        Self::from_seed(RotationSeed {
+            path,
+            schedule,
+            backup_count,
+            clock,
+            created_at,
+        })
     }
 
     /// Re-seed `next_rollover_at` from an externally determined instant
@@ -170,11 +179,10 @@ where
     fn rotated_path(&self, rollover_at: DateTime<Utc>) -> PathBuf {
         let suffix = self.schedule.suffix_for(rollover_at);
         let mut rotated = self.path.clone();
-        let mut name = self
-            .path
-            .file_name()
-            .map(|file_name| file_name.to_os_string())
-            .unwrap_or_else(|| self.path.as_os_str().to_os_string());
+        let mut name = self.path.file_name().map_or_else(
+            || self.path.as_os_str().to_os_string(),
+            std::ffi::OsStr::to_os_string,
+        );
         name.push(format!(".{suffix}"));
         rotated.set_file_name(name);
         rotated
@@ -188,9 +196,9 @@ where
         if !has_os_prefix(name, prefix) {
             return false;
         }
-        let name = name.to_string_lossy();
-        let prefix = prefix.to_string_lossy();
-        let Some(suffix) = name.strip_prefix(prefix.as_ref()) else {
+        let name_text = name.to_string_lossy();
+        let prefix_text = prefix.to_string_lossy();
+        let Some(suffix) = name_text.strip_prefix(prefix_text.as_ref()) else {
             return false;
         };
         self.schedule.is_valid_suffix(suffix)
@@ -201,11 +209,10 @@ where
             return Ok(());
         }
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
-        let base_name = self
-            .path
-            .file_name()
-            .map(|value| value.to_os_string())
-            .unwrap_or_else(|| self.path.as_os_str().to_os_string());
+        let base_name = self.path.file_name().map_or_else(
+            || self.path.as_os_str().to_os_string(),
+            std::ffi::OsStr::to_os_string,
+        );
         let prefix = {
             let mut value = base_name.clone();
             value.push(".");
@@ -213,10 +220,10 @@ where
         };
         let mut backups = Vec::new();
         for entry in fs::read_dir(parent)? {
-            let entry = entry?;
-            let name = entry.file_name();
+            let directory_entry = entry?;
+            let name = directory_entry.file_name();
             if self.matches_rotated_file_name(&name, &prefix) {
-                backups.push(entry.path());
+                backups.push(directory_entry.path());
             }
         }
         backups.sort();
@@ -267,36 +274,37 @@ pub(crate) struct TimedRotationConfig {
 /// File handler variant configured for timed rotation.
 pub struct FemtoTimedRotatingFileHandler {
     inner: FemtoFileHandler,
+    #[cfg(feature = "python")]
     schedule: TimedRotationSchedule,
+    #[cfg(feature = "python")]
     backup_count: usize,
 }
 
 impl FemtoTimedRotatingFileHandler {
-    pub(crate) fn new_with_schedule(
+    pub(crate) const fn new_with_schedule(
         inner: FemtoFileHandler,
         schedule: TimedRotationSchedule,
         backup_count: usize,
     ) -> Self {
+        #[cfg(not(feature = "python"))]
+        let _ = (&schedule, backup_count);
+
         Self {
             inner,
+            #[cfg(feature = "python")]
             schedule,
+            #[cfg(feature = "python")]
             backup_count,
         }
     }
 
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "python-only getter")
-    )]
-    pub(crate) fn schedule(&self) -> &TimedRotationSchedule {
+    #[cfg(feature = "python")]
+    pub(crate) const fn schedule(&self) -> &TimedRotationSchedule {
         &self.schedule
     }
 
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "python-only getter")
-    )]
-    pub(crate) fn backup_count(&self) -> usize {
+    #[cfg(feature = "python")]
+    pub(crate) const fn backup_count(&self) -> usize {
         self.backup_count
     }
 
@@ -354,6 +362,7 @@ impl FemtoTimedRotatingFileHandler {
     delegate! {
         to self.inner {
             /// Flush any queued log records.
+            #[must_use]
             pub fn flush(&self) -> bool;
             /// Close the handler, waiting for the worker thread to shut down.
             pub fn close(&mut self);

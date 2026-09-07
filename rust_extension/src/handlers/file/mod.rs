@@ -79,31 +79,23 @@ impl FemtoFileHandler {
     )]
     #[pyo3(signature=(
         path,
-        capacity = DEFAULT_CHANNEL_CAPACITY as isize,
+        capacity = DEFAULT_CHANNEL_CAPACITY.cast_signed(),
         flush_interval = 1,
         policy = "drop"
     ))]
-    fn py_new(
-        path: String,
-        capacity: isize,
-        flush_interval: isize,
-        policy: &str,
-    ) -> PyResult<Self> {
+    fn py_new(path: &str, capacity: isize, flush_interval: isize, policy: &str) -> PyResult<Self> {
         let overflow_policy = policy::parse_policy_string(policy)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        let (capacity, flush_interval) = validate_params(capacity, flush_interval)?;
+        let (validated_capacity, validated_flush_interval) =
+            validate_params(capacity, flush_interval)?;
         let handler_cfg = HandlerConfig {
-            capacity,
-            flush_interval,
+            capacity: validated_capacity,
+            flush_interval: validated_flush_interval,
             overflow_policy,
         };
-        let file = open_log_file(&path)
+        let file = open_log_file(path)
             .map_err(|err| pyo3::exceptions::PyIOError::new_err(err.to_string()))?;
-        Ok(FemtoFileHandler::from_file(
-            file,
-            DefaultFormatter,
-            handler_cfg,
-        ))
+        Ok(Self::from_file(file, DefaultFormatter, handler_cfg))
     }
 
     #[pyo3(name = "handle")]
@@ -150,6 +142,11 @@ impl FemtoFileHandler {
 
 impl FemtoFileHandler {
     /// Create a handler writing to `path` with default settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the log file cannot be opened or the worker
+    /// cannot be started.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
     }
@@ -157,6 +154,11 @@ impl FemtoFileHandler {
     /// Create a handler with a custom queue `capacity` and default drop policy.
     ///
     /// The handler flushes the file after every record (`flush_interval = 1`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configuration is invalid, the log file cannot
+    /// be opened, or the worker cannot be started.
     pub fn with_capacity<P, F>(path: P, formatter: F, capacity: usize) -> io::Result<Self>
     where
         P: AsRef<Path>,
@@ -174,6 +176,11 @@ impl FemtoFileHandler {
     ///
     /// This allows callers to override the queue capacity (> 0), flush interval
     /// (> 0), and overflow policy in a single place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configuration is invalid, the log file cannot
+    /// be opened, or the worker cannot be started.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -208,14 +215,13 @@ impl FemtoFileHandler {
         )
     }
 
+    /// Flush queued records and report whether the worker acknowledged it.
+    #[must_use]
     pub fn flush(&self) -> bool {
-        match &self.tx {
-            Some(tx) => self.perform_flush(tx),
-            None => false,
-        }
+        self.tx.as_ref().is_some_and(Self::perform_flush)
     }
 
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+    fn perform_flush(tx: &Sender<FileCommand>) -> bool {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -225,14 +231,10 @@ impl FemtoFileHandler {
         {
             return false;
         }
-        self.wait_for_flush_completion(&ack_rx, deadline)
+        Self::wait_for_flush_completion(&ack_rx, deadline)
     }
 
-    fn wait_for_flush_completion(
-        &self,
-        ack_rx: &Receiver<io::Result<()>>,
-        deadline: Instant,
-    ) -> bool {
+    fn wait_for_flush_completion(ack_rx: &Receiver<io::Result<()>>, deadline: Instant) -> bool {
         let remaining = deadline.saturating_duration_since(Instant::now());
         matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
     }
@@ -288,6 +290,7 @@ impl FemtoFileHandler {
         }
     }
 
+    /// Construct a handler from test-owned writer resources.
     pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
         W: Write + Seek + Send + 'static,

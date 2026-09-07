@@ -32,10 +32,13 @@ impl TimedRotationWhen {
             "D" => Ok(Self::Days),
             "MIDNIGHT" => Ok(Self::Midnight),
             weekday if weekday.len() == 2 && weekday.starts_with('W') => {
-                let day = weekday[1..]
+                let Some(day_text) = weekday.strip_prefix('W') else {
+                    return Err(format!("unsupported timed rotation value: {value}"));
+                };
+                let day = day_text
                     .parse::<u32>()
                     .map_err(|_| format!("unsupported timed rotation value: {value}"))?;
-                let weekday = match day {
+                let parsed_weekday = match day {
                     0 => Weekday::Mon,
                     1 => Weekday::Tue,
                     2 => Weekday::Wed,
@@ -44,10 +47,10 @@ impl TimedRotationWhen {
                     5 => Weekday::Sat,
                     6 => Weekday::Sun,
                     _ => {
-                        return Err(format!("unsupported timed rotation value: {value}",));
+                        return Err(format!("unsupported timed rotation value: {value}"));
                     }
                 };
-                Ok(Self::Weekday(weekday))
+                Ok(Self::Weekday(parsed_weekday))
             }
             _ => Err(format!("unsupported timed rotation value: {value}")),
         }
@@ -95,10 +98,10 @@ impl TimedRotationSchedule {
         at_time: Option<NaiveTime>,
     ) -> Result<Self, String> {
         if interval == 0 {
-            return Err("interval must be greater than zero".to_string());
+            return Err("interval must be greater than zero".to_owned());
         }
         if matches!(when, TimedRotationWhen::Weekday(_)) && interval != 1 {
-            return Err("weekday rotation only supports interval = 1".to_string());
+            return Err("weekday rotation only supports interval = 1".to_owned());
         }
         if at_time.is_some() && !when.supports_at_time() {
             return Err(format!(
@@ -115,37 +118,25 @@ impl TimedRotationSchedule {
     }
 
     /// Return the configured cadence.
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "python-only getter")
-    )]
+    #[cfg(feature = "python")]
     pub const fn when(&self) -> TimedRotationWhen {
         self.when
     }
 
     /// Return the configured interval.
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "python-only getter")
-    )]
+    #[cfg(feature = "python")]
     pub const fn interval(&self) -> u32 {
         self.interval
     }
 
     /// Return whether UTC scheduling is enabled.
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "python-only getter")
-    )]
+    #[cfg(feature = "python")]
     pub const fn use_utc(&self) -> bool {
         self.use_utc
     }
 
     /// Return the optional time-of-day trigger.
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "python-only getter")
-    )]
+    #[cfg(feature = "python")]
     pub const fn at_time(&self) -> Option<NaiveTime> {
         self.at_time
     }
@@ -247,8 +238,8 @@ impl TimedRotationSchedule {
         let naive = self.local_naive(now);
         let trigger = self.at_time.unwrap_or(MIDNIGHT);
         let date = naive.date();
-        let mut days_ahead =
-            weekday.num_days_from_monday() as i64 - date.weekday().num_days_from_monday() as i64;
+        let mut days_ahead = i64::from(weekday.num_days_from_monday())
+            - i64::from(date.weekday().num_days_from_monday());
         if days_ahead < 0 {
             days_ahead += 7;
         }
@@ -276,23 +267,25 @@ impl TimedRotationSchedule {
             LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
             // DST gap: the requested local time doesn't exist (spring-forward).
             // Skip forward by small increments until we find a valid local time.
-            LocalResult::None => {
-                const MAX_DST_GAP_ATTEMPTS: u32 = 1_440;
-                let mut candidate = value;
-                let mut attempts = 0;
-                while attempts < MAX_DST_GAP_ATTEMPTS {
-                    attempts += 1;
-                    candidate += Duration::minutes(1);
-                    match Local.from_local_datetime(&candidate) {
-                        LocalResult::Single(dt) => return dt.with_timezone(&Utc),
-                        LocalResult::Ambiguous(earliest, _) => return earliest.with_timezone(&Utc),
-                        LocalResult::None => continue,
-                    }
-                }
-                // Fall back to interpreting the naive timestamp as UTC if the
-                // local timezone never resolves within a full day.
-                Utc.from_utc_datetime(&value)
+            LocalResult::None => Self::resolve_dst_gap(value),
+        }
+    }
+
+    fn resolve_dst_gap(value: NaiveDateTime) -> DateTime<Utc> {
+        const MAX_DST_GAP_ATTEMPTS: u32 = 1_440;
+        let mut candidate = value;
+        let mut attempts = 0;
+        while attempts < MAX_DST_GAP_ATTEMPTS {
+            attempts += 1;
+            candidate += Duration::minutes(1);
+            match Local.from_local_datetime(&candidate) {
+                LocalResult::Single(dt) => return dt.with_timezone(&Utc),
+                LocalResult::Ambiguous(earliest, _) => return earliest.with_timezone(&Utc),
+                LocalResult::None => {}
             }
         }
+        // Fall back to interpreting the naive timestamp as UTC if the local
+        // timezone never resolves within a full day.
+        Utc.from_utc_datetime(&value)
     }
 }

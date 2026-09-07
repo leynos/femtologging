@@ -1,6 +1,6 @@
 //! Python bindings for timed rotating handler APIs.
 //!
-//! This keeps PyO3 details separate from the Rust core so configuration and
+//! This keeps `PyO3` details separate from the Rust core so configuration and
 //! rotation logic stay testable without Python.
 
 use chrono::NaiveTime;
@@ -8,6 +8,7 @@ use pyo3::{
     Bound,
     exceptions::{PyIOError, PyTypeError, PyValueError},
     prelude::*,
+    types::{PyDict, PyTuple},
 };
 
 use super::{
@@ -26,6 +27,14 @@ use crate::{
     python::fq_py_type,
 };
 
+#[path = "python_constructor.rs"]
+mod constructor;
+#[cfg(test)]
+#[path = "python_constructor_tests.rs"]
+mod constructor_tests;
+
+use constructor::TimedHandlerOptionsRequest;
+
 /// Python wrapper for the timed rotating file handler core type.
 #[pyclass(name = "FemtoTimedRotatingFileHandler")]
 pub struct PyTimedRotatingFileHandler {
@@ -33,7 +42,7 @@ pub struct PyTimedRotatingFileHandler {
 }
 
 impl PyTimedRotatingFileHandler {
-    pub(crate) fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
+    pub(crate) const fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
         Self { inner }
     }
 }
@@ -46,34 +55,41 @@ pub const TIMED_ROTATION_VALIDATION_MSG: &str =
 #[pyclass(from_py_object, name = "TimedHandlerOptions")]
 #[derive(Clone)]
 pub struct TimedHandlerOptions {
+    /// Queue capacity for the file handler.
     #[pyo3(get, set)]
     pub capacity: usize,
+    /// Number of records written before a flush.
     #[pyo3(get, set)]
     pub flush_interval: isize,
+    /// Overflow policy applied when the queue is full.
     #[pyo3(get, set)]
     pub policy: String,
+    /// Rotation schedule selector.
     #[pyo3(get, set)]
     pub when: String,
+    /// Number of schedule units between rotations.
     #[pyo3(get, set)]
     pub interval: u32,
+    /// Number of rotated files retained after a rotation.
     #[pyo3(get, set)]
     pub backup_count: usize,
+    /// Whether schedule calculations use UTC.
     #[pyo3(get, set)]
     pub utc: bool,
     at_time: Option<NaiveTime>,
 }
 
 impl TimedHandlerOptions {
-    pub(crate) fn at_time_naive(&self) -> Option<NaiveTime> {
+    pub(crate) const fn at_time_naive(&self) -> Option<NaiveTime> {
         self.at_time
     }
 
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
-        let capacity = isize::try_from(self.capacity)
+        let capacity_input = isize::try_from(self.capacity)
             .map_err(|_| PyValueError::new_err("capacity must fit within isize"))?;
-        let (capacity, flush_interval) = match self.flush_interval {
-            -1 => file::validate_params(capacity, 1)?,
-            value => file::validate_params(capacity, value)?,
+        let (validated_capacity, validated_flush_interval) = match self.flush_interval {
+            -1 => file::validate_params(capacity_input, 1)?,
+            value => file::validate_params(capacity_input, value)?,
         };
         let overflow_policy = file::policy::parse_policy_string(&self.policy)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -87,8 +103,8 @@ impl TimedHandlerOptions {
         let schedule = TimedRotationSchedule::new(when, self.interval, self.utc, self.at_time)
             .map_err(PyValueError::new_err)?;
         let config = HandlerConfig {
-            capacity,
-            flush_interval,
+            capacity: validated_capacity,
+            flush_interval: validated_flush_interval,
             overflow_policy,
         };
         Ok((config, schedule, self.backup_count))
@@ -100,8 +116,8 @@ impl Default for TimedHandlerOptions {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_interval: 1,
-            policy: "drop".to_string(),
-            when: "H".to_string(),
+            policy: "drop".to_owned(),
+            when: "H".to_owned(),
             interval: 1,
             backup_count: 0,
             utc: false,
@@ -113,43 +129,13 @@ impl Default for TimedHandlerOptions {
 #[pymethods]
 impl TimedHandlerOptions {
     #[new]
+    #[pyo3(signature = (*args, **kwargs))]
     #[pyo3(
         text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', when='H', interval=1, backup_count=0, utc=False, at_time=None)"
     )]
-    #[pyo3(signature = (
-        capacity = DEFAULT_CHANNEL_CAPACITY,
-        flush_interval = 1,
-        policy = "drop".to_string(),
-        when = "H".to_string(),
-        interval = 1,
-        backup_count = 0,
-        utc = false,
-        at_time = None,
-    ))]
-    fn new(
-        capacity: usize,
-        flush_interval: isize,
-        policy: String,
-        when: String,
-        interval: u32,
-        backup_count: usize,
-        utc: bool,
-        at_time: Option<Bound<'_, PyAny>>,
-    ) -> PyResult<Self> {
-        let at_time = match at_time {
-            Some(value) => Some(extract_naive_time(value)?),
-            None => None,
-        };
-        let options = Self {
-            capacity,
-            flush_interval,
-            policy,
-            when,
-            interval,
-            backup_count,
-            utc,
-            at_time,
-        };
+    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        let request = TimedHandlerOptionsRequest::from_python(args, kwargs)?;
+        let options = Self::from(request);
         let _ = options.to_configs()?;
         Ok(options)
     }
@@ -165,11 +151,11 @@ impl PyTimedRotatingFileHandler {
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
-    fn py_new(path: String, options: Option<TimedHandlerOptions>) -> PyResult<Self> {
-        let options = options.unwrap_or_default();
-        let (config, schedule, backup_count) = options.to_configs()?;
+    fn py_new(path: &str, options: Option<TimedHandlerOptions>) -> PyResult<Self> {
+        let handler_options = options.unwrap_or_default();
+        let (config, schedule, backup_count) = handler_options.to_configs()?;
         CoreTimedRotatingFileHandler::with_capacity_flush_policy(
-            &path,
+            path,
             DefaultFormatter,
             config,
             TimedRotationConfig {
@@ -182,22 +168,22 @@ impl PyTimedRotatingFileHandler {
     }
 
     #[getter]
-    fn when(&self) -> &str {
+    const fn when(&self) -> &str {
         self.inner.schedule().when().as_str()
     }
 
     #[getter]
-    fn interval(&self) -> u32 {
+    const fn interval(&self) -> u32 {
         self.inner.schedule().interval()
     }
 
     #[getter]
-    fn backup_count(&self) -> usize {
+    const fn backup_count(&self) -> usize {
         self.inner.backup_count()
     }
 
     #[getter]
-    fn utc(&self) -> bool {
+    const fn utc(&self) -> bool {
         self.inner.schedule().use_utc()
     }
 
@@ -288,17 +274,19 @@ pub(crate) fn extract_naive_time_from_py_time(
         .map(Some)
 }
 
-fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
+fn extract_naive_time(value: &Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     // Local convenience wrapper for the common helper; this retains the
     // existing `at_time`-specific error messages.
-    match extract_naive_time_from_py_time(&value, "at_time", false)? {
-        Some(time) => Ok(time),
-        // `allow_none` is false, so the helper rejects None before reaching
-        // this arm. A defensive error keeps the contract visible.
-        None => Err(PyTypeError::new_err(
-            "at_time must be datetime.time or None",
-        )),
-    }
+    extract_naive_time_from_py_time(value, "at_time", false)?.map_or_else(
+        || {
+            // `allow_none` is false, so the helper rejects None before reaching
+            // this closure. A defensive error keeps the contract visible.
+            Err(PyTypeError::new_err(
+                "at_time must be datetime.time or None",
+            ))
+        },
+        Ok,
+    )
 }
 
 #[cfg(feature = "test-util")]

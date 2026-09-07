@@ -1,6 +1,5 @@
 //! Shared state for forcing rotating writer reopen failures during tests.
 
-use once_cell::sync::Lazy;
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -98,7 +97,8 @@ impl FreshFailureState {
     }
 }
 
-static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureState::new);
+static FRESH_FAILURE_STATE: std::sync::LazyLock<FreshFailureState> =
+    std::sync::LazyLock::new(FreshFailureState::new);
 
 /// Attempts to consume one forced fresh-file-open failure.
 ///

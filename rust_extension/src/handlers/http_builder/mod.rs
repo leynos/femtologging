@@ -23,7 +23,8 @@ use super::{HandlerBuildError, HandlerBuilderTrait};
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
         $(#[$meta])*
-        pub fn $fn_name(mut self, value: $ty) -> Self {
+        #[must_use]
+        pub const fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
         }
@@ -48,23 +49,27 @@ pub struct HTTPHandlerBuilder {
 
 impl HTTPHandlerBuilder {
     /// Create a new builder with no URL configured.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the target URL for HTTP requests (required).
+    #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
     }
 
     /// Set the HTTP method (GET or POST). Defaults to POST.
-    pub fn with_method(mut self, method: HTTPMethod) -> Self {
+    #[must_use]
+    pub const fn with_method(mut self, method: HTTPMethod) -> Self {
         self.method = Some(method);
         self
     }
 
     /// Configure HTTP Basic authentication.
+    #[must_use]
     pub fn with_basic_auth(
         mut self,
         username: impl Into<String>,
@@ -78,6 +83,7 @@ impl HTTPHandlerBuilder {
     }
 
     /// Configure Bearer token authentication.
+    #[must_use]
     pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
         self.auth = Some(AuthConfig::Bearer {
             token: token.into(),
@@ -91,12 +97,14 @@ impl HTTPHandlerBuilder {
     /// add individual headers without replacing existing ones.
     ///
     /// [`with_header`]: HTTPHandlerBuilder::with_header
+    #[must_use]
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.headers = headers;
         self
     }
 
     /// Add a single custom HTTP header.
+    #[must_use]
     pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());
         self
@@ -122,18 +130,21 @@ impl HTTPHandlerBuilder {
     );
 
     /// Override backoff timings using the provided overrides.
-    pub fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
+    #[must_use]
+    pub const fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
         self.backoff = overrides;
         self
     }
 
     /// Enable JSON serialization format instead of URL-encoded.
-    pub fn with_json_format(mut self) -> Self {
+    #[must_use]
+    pub const fn with_json_format(mut self) -> Self {
         self.format = SerializationFormat::Json;
         self
     }
 
     /// Limit serialized output to the specified fields.
+    #[must_use]
     pub fn with_record_fields(mut self, fields: Vec<String>) -> Self {
         self.record_fields = Some(fields);
         self
@@ -214,12 +225,27 @@ impl HTTPHandlerBuilder {
 
     #[cfg(feature = "python")]
     fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.extend_endpoint_dict(d)?;
+        self.extend_auth_dict(d)?;
+        self.extend_headers_dict(d)?;
+        self.extend_options_dict(d)?;
+        self.extend_backoff_dict(d)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_endpoint_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if let Some(ref url) = self.url {
             d.set_item("url", url)?;
         }
         if let Some(ref method) = self.method {
             d.set_item("method", method.as_str())?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_auth_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         match &self.auth {
             Some(AuthConfig::Basic { username, .. }) => {
                 d.set_item("auth_type", "basic")?;
@@ -230,6 +256,11 @@ impl HTTPHandlerBuilder {
             }
             Some(AuthConfig::None) | None => {}
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_headers_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if !self.headers.is_empty() {
             let headers_dict = PyDict::new(d.py());
             for (k, v) in &self.headers {
@@ -237,6 +268,11 @@ impl HTTPHandlerBuilder {
             }
             d.set_item("headers", headers_dict)?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_options_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "capacity", self.capacity);
         dict_set!(d, "connect_timeout_ms", self.connect_timeout_ms);
         dict_set!(d, "write_timeout_ms", self.write_timeout_ms);
@@ -250,6 +286,11 @@ impl HTTPHandlerBuilder {
         if let Some(ref fields) = self.record_fields {
             d.set_item("record_fields", fields.clone())?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_backoff_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "backoff_base_ms", self.backoff.base_ms());
         dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms());
         dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms());

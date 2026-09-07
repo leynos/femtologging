@@ -29,29 +29,29 @@ mod injected {
     use std::sync::Mutex;
 
     use chrono::{DateTime, TimeZone, Utc};
-    use once_cell::sync::Lazy;
-
-    static INJECTED_TIMES: Lazy<Mutex<VecDeque<i64>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
+    static INJECTED_TIMES: std::sync::LazyLock<Mutex<VecDeque<i64>>> =
+        std::sync::LazyLock::new(|| Mutex::new(VecDeque::new()));
 
     #[cfg(feature = "test-util")]
     pub(super) fn set(epoch_millis: Vec<i64>) {
         *INJECTED_TIMES
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = epoch_millis.into_iter().collect();
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            epoch_millis.into_iter().collect();
     }
 
     #[cfg(feature = "test-util")]
     pub(super) fn clear() {
         INJECTED_TIMES
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
     }
 
     pub(super) fn take() -> Option<DateTime<Utc>> {
         let mut guard = INJECTED_TIMES
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard
             .pop_front()
             .and_then(|epoch_millis| Utc.timestamp_millis_opt(epoch_millis).single())

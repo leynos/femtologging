@@ -23,6 +23,55 @@ macro_rules! builder_method_clause {
             py_text_signature: $py_text_signature:literal,
             rust_args: ( $( $rarg:ident : $rty:ty ),* ),
             py_args: ( $( $parg:ident : $pty:ty ),* ),
+            rust_const: true,
+            $(py_prelude: { $($py_prelude:tt)* },)?
+            self_ident: $self_ident:ident,
+            body: $body:block
+        },
+        remaining = [ $($rest:tt)* ],
+        extra = [ $($extra:tt)* ]
+    ) => {
+        $crate::handlers::builder_macros::builder_methods!(
+            @process_methods
+            $builder,
+            [
+                $($rust_methods)*
+                $crate::handlers::builder_macros::builder_methods!(@rust_method_tokens const $doc, $rust_name, ( $( $rarg : $rty ),* ), $self_ident, $body);
+            ],
+            [
+                $($py_methods)*
+                #[pyo3(name = $py_name)]
+                #[pyo3(signature = ( $( $parg ),* ))]
+                #[pyo3(text_signature = $py_text_signature)]
+                fn $py_fn(
+                    mut slf: pyo3::PyRefMut<'_, Self>
+                    $(, $parg : $pty )*
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'_, Self>> {
+                    $( $($py_prelude)* )?
+                    {
+                        let $self_ident = &mut *slf;
+                        $body
+                    }
+                    Ok(slf)
+                }
+            ],
+            [ $($rest)* ],
+            $($extra)*
+        );
+    };
+
+    (
+        $builder:ident,
+        [$($rust_methods:tt)*],
+        [$($py_methods:tt)*],
+        method {
+            doc: $doc:expr,
+            rust_name: $rust_name:ident,
+            py_fn: $py_fn:ident,
+            py_name: $py_name:literal,
+            py_text_signature: $py_text_signature:literal,
+            rust_args: ( $( $rarg:ident : $rty:ty ),* ),
+            py_args: ( $( $parg:ident : $pty:ty ),* ),
             $(py_prelude: { $($py_prelude:tt)* },)?
             body: $body:block
         },
@@ -135,10 +184,10 @@ macro_rules! builder_method_clause {
                 #[pyo3(name = $py_name)]
                 #[pyo3(signature = ( $( $parg ),* ))]
                 #[pyo3(text_signature = $py_text_signature)]
-                fn $py_fn<'py>(
-                    mut slf: pyo3::PyRefMut<'py, Self>
+                fn $py_fn(
+                    mut slf: pyo3::PyRefMut<'_, Self>
                     $(, $parg : $pty )*
-                ) -> pyo3::PyResult<pyo3::PyRefMut<'py, Self>> {
+                ) -> pyo3::PyResult<pyo3::PyRefMut<'_, Self>> {
                     $( $($py_prelude)* )?
                     {
                         let $self_ident = &mut *slf;

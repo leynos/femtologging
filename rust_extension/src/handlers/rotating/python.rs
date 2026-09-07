@@ -20,7 +20,7 @@ pub const ROTATION_VALIDATION_MSG: &str =
 
 /// Python wrapper for the rotating file handler core type.
 ///
-/// The wrapper keeps PyO3 attributes out of the core module whilst preserving
+/// The wrapper keeps `PyO3` attributes out of the core module whilst preserving
 /// the existing Python class name.
 #[pyclass(name = "FemtoRotatingFileHandler")]
 pub struct PyRotatingFileHandler {
@@ -29,7 +29,7 @@ pub struct PyRotatingFileHandler {
 
 impl PyRotatingFileHandler {
     /// Wrap a core rotating file handler for Python exposure.
-    pub(crate) fn from_core(inner: CoreRotatingFileHandler) -> Self {
+    pub(crate) const fn from_core(inner: CoreRotatingFileHandler) -> Self {
         Self { inner }
     }
 }
@@ -60,14 +60,19 @@ impl PyRotatingFileHandler {
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct HandlerOptions {
+    /// Queue capacity for the file handler.
     #[pyo3(get, set)]
     pub capacity: usize,
+    /// Number of records written before a flush.
     #[pyo3(get, set)]
     pub flush_interval: isize,
+    /// Overflow policy applied when the queue is full.
     #[pyo3(get, set)]
     pub policy: String,
+    /// Maximum size of the active log file before rotation.
     #[pyo3(get, set)]
     pub max_bytes: u64,
+    /// Number of rotated files retained after a rotation.
     #[pyo3(get, set)]
     pub backup_count: usize,
 }
@@ -84,20 +89,20 @@ impl HandlerOptions {
             ));
         }
 
-        let capacity = isize::try_from(self.capacity).map_err(|_| {
+        let capacity_input = isize::try_from(self.capacity).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("capacity must fit within isize")
         })?;
-        let (capacity, flush_interval) = match self.flush_interval {
-            -1 => file::validate_params(capacity, 1)?,
-            value => file::validate_params(capacity, value)?,
+        let (validated_capacity, validated_flush_interval) = match self.flush_interval {
+            -1 => file::validate_params(capacity_input, 1)?,
+            value => file::validate_params(capacity_input, value)?,
         };
 
         let overflow_policy = file::policy::parse_policy_string(&self.policy)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         let handler_cfg = HandlerConfig {
-            capacity,
-            flush_interval,
+            capacity: validated_capacity,
+            flush_interval: validated_flush_interval,
             overflow_policy,
         };
 
@@ -120,7 +125,7 @@ impl HandlerOptions {
     #[pyo3(signature = (
         capacity = DEFAULT_CHANNEL_CAPACITY,
         flush_interval = 1,
-        policy = "drop".to_string(),
+        policy = "drop".to_owned(),
         rotation = None,
     ))]
     fn new(
@@ -150,7 +155,7 @@ impl Default for HandlerOptions {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_interval: 1,
-            policy: "drop".to_string(),
+            policy: "drop".to_owned(),
             max_bytes: 0,
             backup_count: 0,
         }
@@ -162,12 +167,12 @@ impl PyRotatingFileHandler {
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
-    fn py_new(path: String, options: Option<HandlerOptions>) -> PyResult<Self> {
+    fn py_new(path: &str, options: Option<HandlerOptions>) -> PyResult<Self> {
         let opts = options.unwrap_or_default();
         let (handler_cfg, rotation) = opts.to_configs()?;
 
         CoreRotatingFileHandler::with_capacity_flush_policy(
-            &path,
+            path,
             DefaultFormatter,
             handler_cfg,
             rotation,
@@ -178,13 +183,13 @@ impl PyRotatingFileHandler {
 
     /// Expose the configured maximum number of bytes before rotation.
     #[getter]
-    fn max_bytes(&self) -> u64 {
+    const fn max_bytes(&self) -> u64 {
         self.inner.rotation_limits().0
     }
 
     /// Expose the configured backup count.
     #[getter]
-    fn backup_count(&self) -> usize {
+    const fn backup_count(&self) -> usize {
         self.inner.rotation_limits().1
     }
 
@@ -229,12 +234,12 @@ impl PyRotatingFileHandler {
 }
 
 #[pyfunction]
-pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>) -> PyResult<()> {
-    let reason = reason
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "python requested failure".to_string());
-    fresh_failure::set_forced_fresh_failure(count, reason);
-    Ok(())
+pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>) {
+    let configured_reason = reason.map_or_else(
+        || "python requested failure".to_owned(),
+        std::borrow::ToOwned::to_owned,
+    );
+    fresh_failure::set_forced_fresh_failure(count, configured_reason);
 }
 
 #[pyfunction]

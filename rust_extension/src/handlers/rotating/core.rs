@@ -74,7 +74,7 @@ impl Default for RotationConfig {
 
 /// File handler variant configured for size-based rotation.
 ///
-/// For file-backed handlers, this wrapper wires [`FileRotationStrategy`] into
+/// For file-backed handlers, this wrapper wires `FileRotationStrategy` into
 /// [`FemtoFileHandler`] so rollover executes on the worker thread. The wrapper
 /// owns rotation thresholds and delegates queueing, flushing, and shutdown to
 /// [`FemtoFileHandler`].
@@ -89,7 +89,7 @@ impl FemtoRotatingFileHandler {
     ///
     /// Internal visibility allows the builder to construct instances whilst
     /// preventing external crates from bypassing validation.
-    pub(crate) fn new_with_rotation_limits(
+    pub(crate) const fn new_with_rotation_limits(
         inner: FemtoFileHandler,
         max_bytes: u64,
         backup_count: usize,
@@ -102,11 +102,16 @@ impl FemtoRotatingFileHandler {
     }
 
     /// Return the configured rotation thresholds.
-    pub(crate) fn rotation_limits(&self) -> (u64, usize) {
+    pub(crate) const fn rotation_limits(&self) -> (u64, usize) {
         (self.max_bytes, self.backup_count)
     }
 
     /// Build a rotating handler with the supplied configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the output file cannot be opened or the supplied
+    /// configuration cannot create a file handler.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -155,7 +160,7 @@ impl FemtoRotatingFileHandler {
     ///
     /// This delegates to [`FemtoFileHandler::with_writer_for_test`], which
     /// accepts arbitrary writers and therefore does not attach
-    /// [`FileRotationStrategy`]. Rotation is disabled for this constructor.
+    /// `FileRotationStrategy`. Rotation is disabled for this constructor.
     pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
         W: std::io::Write + std::io::Seek + Send + 'static,
@@ -169,6 +174,7 @@ impl FemtoRotatingFileHandler {
     delegate! {
         to self.inner {
             /// Flush any queued log records.
+            #[must_use]
             pub fn flush(&self) -> bool;
             /// Close the handler, waiting for the worker thread to shut down.
             ///
