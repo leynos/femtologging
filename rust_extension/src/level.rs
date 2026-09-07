@@ -32,15 +32,7 @@ pub enum FemtoLevel {
 
 impl fmt::Display for FemtoLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Self::Trace => "TRACE",
-            Self::Debug => "DEBUG",
-            Self::Info => "INFO",
-            Self::Warn => "WARN",
-            Self::Error => "ERROR",
-            Self::Critical => "CRITICAL",
-        };
-        f.write_str(s)
+        f.write_str(self.as_str())
     }
 }
 
