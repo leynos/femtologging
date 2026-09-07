@@ -196,21 +196,24 @@ fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
     let mut output = String::from("  |\n");
     for (i, nested) in exceptions.iter().enumerate() {
         let entry_number = i + 1;
-        if output
-            .write_fmt(format_args!("  +---- [{entry_number}] "))
-            .is_err()
-        {
+        if append_group_entry(&mut output, entry_number, nested).is_err() {
             return output;
-        }
-        let nested_str = nested.format_exception();
-        // Indent nested exception output
-        for line in nested_str.lines() {
-            if output.write_fmt(format_args!("  |     {line}\n")).is_err() {
-                return output;
-            }
         }
     }
     output
+}
+
+/// Append one numbered exception and its indented lines to the group output.
+fn append_group_entry(
+    output: &mut String,
+    entry_number: usize,
+    nested: &ExceptionPayload,
+) -> std::fmt::Result {
+    write!(output, "  +---- [{entry_number}] ")?;
+    for line in nested.format_exception().lines() {
+        writeln!(output, "  |     {line}")?;
+    }
+    Ok(())
 }
 
 /// Format the traceback header, frames, and exception header.
