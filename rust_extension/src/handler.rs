@@ -30,6 +30,10 @@ pub enum HandlerError {
 /// consumer thread without blocking the caller.
 pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// Dispatch a log record for handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HandlerError`] when the handler cannot accept the record.
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
 
     /// Flush any pending log records.
@@ -54,7 +58,7 @@ pub struct FemtoHandler;
 #[pymethods]
 impl FemtoHandler {
     #[new]
-    fn py_new() -> Self {
+    const fn py_new() -> Self {
         Self
     }
 }

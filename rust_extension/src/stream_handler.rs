@@ -5,11 +5,6 @@
 //! records and flush commands over a bounded channel so the producer never
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
-#![allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
-
 use std::{
     io::{self, Write},
     thread::{self, JoinHandle},
@@ -33,8 +28,11 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Configuration for constructing a [`FemtoStreamHandler`].
 pub struct HandlerConfig {
+    /// Bounded channel capacity for records awaiting a write.
     pub capacity: usize,
+    /// Maximum time the caller waits for a flush acknowledgement.
     pub flush_timeout: Duration,
+    /// Counter and interval for dropped-record warnings.
     pub warner: RateLimitedWarner,
 }
 
@@ -49,24 +47,30 @@ impl Default for HandlerConfig {
 }
 
 impl HandlerConfig {
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
+    /// Set the bounded record-channel capacity.
+    #[must_use]
+    pub const fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
         self
     }
 
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+    /// Set the timeout used for flush acknowledgements.
+    #[must_use]
+    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.flush_timeout = timeout;
         self
     }
 
+    /// Supply the warning limiter used by test-only handler construction.
     #[cfg(feature = "test-util")]
+    #[must_use]
     pub fn with_warner(mut self, warner: RateLimitedWarner) -> Self {
         self.warner = warner;
         self
     }
 }
 
-/// Handler that writes formatted log records to an `io::Write` stream.
+/// Commands sent to the stream worker.
 ///
 /// Each instance owns a background thread which receives records and flush
 /// commands via a channel and writes them to the provided stream. The writer
@@ -74,12 +78,8 @@ impl HandlerConfig {
 /// blocks. The handler supports explicit flushing to ensure all queued records
 /// are written. Flush operations wait up to `flush_timeout` for the worker
 /// thread to confirm completion.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
-)]
 enum StreamCommand {
-    Record(FemtoLogRecord),
+    Record(Box<FemtoLogRecord>),
     Flush(Sender<io::Result<()>>),
 }
 
@@ -89,47 +89,51 @@ fn flush_with_warning<W: Write>(writer: &mut W) {
     }
 }
 
-fn handle_record_command<W, F>(writer: &mut W, formatter: &F, record: FemtoLogRecord)
+fn handle_record_command<W, F>(writer: &mut W, formatter: &F, record: &FemtoLogRecord)
 where
     W: Write,
     F: FemtoFormatter,
 {
-    let msg = formatter.format(&record);
+    let msg = formatter.format(record);
     if writeln!(writer, "{msg}")
-        .and_then(|_| writer.flush())
+        .and_then(|()| writer.flush())
         .is_err()
     {
         warn!("FemtoStreamHandler write error");
     }
 }
 
-fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
+fn handle_flush_command<W: Write>(writer: &mut W, ack: &Sender<io::Result<()>>) {
     let flush_result = writer.flush();
     if flush_result.is_err() {
         warn!("FemtoStreamHandler flush error");
     }
-    let _ = ack.send(flush_result);
+    drop(ack.send(flush_result));
 }
 
 fn run_stream_worker<W, F>(
     rx: Receiver<StreamCommand>,
     mut writer: W,
-    formatter: F,
-    done_tx: Sender<()>,
+    formatter: &F,
+    done_tx: &Sender<()>,
 ) where
     W: Write,
     F: FemtoFormatter,
 {
     for cmd in rx {
         match cmd {
-            StreamCommand::Record(record) => handle_record_command(&mut writer, &formatter, record),
-            StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
+            StreamCommand::Record(record) => handle_record_command(&mut writer, formatter, &record),
+            StreamCommand::Flush(ack) => handle_flush_command(&mut writer, &ack),
         }
     }
     flush_with_warning(&mut writer);
-    let _ = done_tx.send(());
+    let Ok(()) = done_tx.send(()) else {
+        // The handler may have exhausted its bounded wait before the worker finishes.
+        return;
+    };
 }
 
+/// Handler that writes formatted log records to an `io::Write` stream.
 #[pyclass]
 pub struct FemtoStreamHandler {
     tx: Option<Sender<StreamCommand>>,
@@ -141,85 +145,94 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 generates Python-facing wrappers with explicit method signatures"
-)]
-#[pymethods]
-impl FemtoStreamHandler {
-    #[new]
-    fn py_new() -> Self {
-        Self::stderr()
-    }
+mod python_bindings {
+    //! `PyO3` method wrappers for [`super::FemtoStreamHandler`].
 
-    #[staticmethod]
-    #[pyo3(name = "stdout")]
-    fn py_stdout() -> Self {
-        Self::stdout()
-    }
+    use pyo3::prelude::*;
 
-    #[staticmethod]
-    #[pyo3(name = "stderr")]
-    fn py_stderr() -> Self {
-        Self::stderr()
-    }
+    use crate::{handler::FemtoHandlerTrait, log_record::FemtoLogRecord};
 
-    /// Dispatch a log record to the handler's worker thread.
-    #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        <Self as FemtoHandlerTrait>::handle(
-            self,
-            FemtoLogRecord::new(logger, parsed_level, message),
-        )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
-    }
+    use super::FemtoStreamHandler;
 
-    /// Flush pending log records without shutting down the worker thread.
-    ///
-    /// The flush timeout is configurable (default: 1 second).
-    ///
-    /// Returns
-    /// -------
-    /// bool
-    ///     ``True`` only when the worker acknowledges the flush with
-    ///     ``Ok(())`` within the configured timeout.
-    ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, the worker
-    ///     acknowledges ``Err(io::Error)``, or the acknowledgement does not
-    ///     arrive before the timeout elapses.
-    ///
-    /// Examples
-    /// --------
-    /// >>> handler.flush()
-    /// True
-    /// >>> handler.close()
-    /// >>> handler.flush()
-    /// False
-    #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
-    }
+    #[pymethods]
+    impl FemtoStreamHandler {
+        #[new]
+        fn py_new() -> Self {
+            Self::stderr()
+        }
 
-    /// Close the handler and wait for the worker thread to finish.
-    #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+        #[staticmethod]
+        #[pyo3(name = "stdout")]
+        fn py_stdout() -> Self {
+            Self::stdout()
+        }
+
+        #[staticmethod]
+        #[pyo3(name = "stderr")]
+        fn py_stderr() -> Self {
+            Self::stderr()
+        }
+
+        /// Dispatch a log record to the handler's worker thread.
+        #[pyo3(name = "handle")]
+        fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+            let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
+            <Self as FemtoHandlerTrait>::handle(
+                self,
+                FemtoLogRecord::new(logger, parsed_level, message),
+            )
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        }
+
+        /// Flush pending log records without shutting down the worker thread.
+        ///
+        /// The flush timeout is configurable (default: 1 second).
+        ///
+        /// Returns
+        /// -------
+        /// bool
+        ///     ``True`` only when the worker acknowledges the flush with
+        ///     ``Ok(())`` within the configured timeout.
+        ///     ``False`` when the handler has already been closed, the
+        ///     internal channel to the worker has been dropped, the worker
+        ///     acknowledges ``Err(io::Error)``, or the acknowledgement does not
+        ///     arrive before the timeout elapses.
+        ///
+        /// Examples
+        /// --------
+        /// >>> handler.flush()
+        /// True
+        /// >>> handler.close()
+        /// >>> handler.flush()
+        /// False
+        #[pyo3(name = "flush")]
+        fn py_flush(&self) -> bool {
+            self.flush()
+        }
+
+        /// Close the handler and wait for the worker thread to finish.
+        #[pyo3(name = "close")]
+        fn py_close(&mut self) {
+            self.close();
+        }
     }
 }
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
+    #[must_use]
     pub fn stdout() -> Self {
         Self::new(io::stdout(), DefaultFormatter)
     }
 
     /// Create a new handler writing to `stderr` with a `DefaultFormatter`.
+    #[must_use]
     pub fn stderr() -> Self {
         Self::new(io::stderr(), DefaultFormatter)
     }
 
     /// Create a new handler from an arbitrary writer and formatter using the default capacity.
+    #[must_use]
     pub fn new<W, F>(writer: W, formatter: F) -> Self
     where
         W: Write + Send + 'static,
@@ -229,6 +242,7 @@ impl FemtoStreamHandler {
     }
 
     /// Create a new handler with a custom channel capacity.
+    #[must_use]
     pub fn with_capacity<W, F>(writer: W, formatter: F, capacity: usize) -> Self
     where
         W: Write + Send + 'static,
@@ -238,6 +252,7 @@ impl FemtoStreamHandler {
     }
 
     /// Create a new handler with custom capacity and flush timeout.
+    #[must_use]
     pub fn with_capacity_timeout<W, F>(
         writer: W,
         formatter: F,
@@ -257,7 +272,9 @@ impl FemtoStreamHandler {
         )
     }
 
+    /// Create a handler with a test-specific configuration.
     #[cfg(feature = "test-util")]
+    #[must_use]
     pub fn with_test_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
     where
         W: Write + Send + 'static,
@@ -273,7 +290,7 @@ impl FemtoStreamHandler {
     {
         let (tx, rx) = bounded(config.capacity);
         let (done_tx, done_rx) = bounded(1);
-        let handle = thread::spawn(move || run_stream_worker(rx, writer, formatter, done_tx));
+        let handle = thread::spawn(move || run_stream_worker(rx, writer, &formatter, &done_tx));
 
         Self {
             tx: Some(tx),
@@ -293,7 +310,7 @@ impl FemtoStreamHandler {
     pub fn close(&mut self) {
         self.tx.take();
         let handle = { self.handle.lock().take() };
-        if let Some(handle) = handle {
+        if let Some(worker_handle) = handle {
             let done_rx = self.done_rx.lock().clone();
             if done_rx.recv_timeout(self.flush_timeout).is_err() {
                 warn!(
@@ -302,7 +319,7 @@ impl FemtoStreamHandler {
                 );
                 return;
             }
-            if handle.join().is_err() {
+            if worker_handle.join().is_err() {
                 warn!("FemtoStreamHandler: worker thread panicked");
             }
         }
@@ -318,7 +335,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
             });
             return Err(HandlerError::Closed);
         };
-        match tx.try_send(StreamCommand::Record(record)) {
+        match tx.try_send(StreamCommand::Record(Box::new(record))) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 self.warner.record_drop();

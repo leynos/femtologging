@@ -13,7 +13,7 @@ use crate::traceback_frames::{extract_frames_from_tb_exception, get_optional_att
 ///
 /// The `exc_value` parameter is the original exception instance. It's optional
 /// because for chained exceptions we may not have direct access to the
-/// exception instance (only the TracebackException).
+/// exception instance (only the `TracebackException`).
 pub(super) fn build_payload_from_traceback_exception(
     py: Python<'_>,
     tb_exc: &Bound<'_, PyAny>,
@@ -25,18 +25,10 @@ pub(super) fn build_payload_from_traceback_exception(
     let message = format_exception_message(tb_exc)?;
 
     // Extract args_repr from original exception
-    let args_repr = if let Some(exc) = exc_value {
-        extract_args_repr_from_exc(exc)?
-    } else {
-        Vec::new()
-    };
+    let args_repr = exc_value.map_or_else(Vec::new, extract_args_repr_from_exc);
 
     // Extract notes from original exception (__notes__ attribute, Python 3.11+)
-    let notes = if let Some(exc) = exc_value {
-        extract_notes_from_exc(exc)?
-    } else {
-        Vec::new()
-    };
+    let notes = exc_value.map_or_else(Vec::new, extract_notes_from_exc);
 
     // Extract stack frames
     let frames = extract_frames_from_tb_exception(tb_exc)?;
@@ -94,7 +86,7 @@ fn extract_exception_type_info(tb_exc: &Bound<'_, PyAny>) -> PyResult<(String, O
         // Extract simple name from qualified name (e.g., "Outer.InnerError" → "InnerError")
         let type_name = qualname_str
             .rsplit_once('.')
-            .map(|(_, name)| name.to_string())
+            .map(|(_, name)| name.to_owned())
             .unwrap_or(qualname_str);
         let module = normalize_module(get_optional_attr::<String>(tb_exc, "exc_type_module"));
         return Ok((type_name, module));
@@ -112,7 +104,7 @@ fn extract_exception_type_info(tb_exc: &Bound<'_, PyAny>) -> PyResult<(String, O
     Ok((type_name, module))
 }
 
-/// Format the exception message from a TracebackException.
+/// Format the exception message from a `TracebackException`.
 fn format_exception_message(tb_exc: &Bound<'_, PyAny>) -> PyResult<String> {
     // _str is the formatted exception message
     let msg = tb_exc.getattr("_str")?;
@@ -136,18 +128,16 @@ fn format_exception_message(tb_exc: &Bound<'_, PyAny>) -> PyResult<String> {
 ///
 /// Per the ADR "partial extraction of collections" rule, individual elements
 /// whose `repr()` fails are skipped. Valid representations are preserved.
-fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
-    let args = match exc.getattr("args") {
-        Ok(value) => value,
-        Err(_) => return Ok(Vec::new()),
+fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> Vec<String> {
+    let Ok(args) = exc.getattr("args") else {
+        return Vec::new();
     };
     if args.is_none() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
 
-    let args_tuple = match args.cast::<PyTuple>() {
-        Ok(tuple) => tuple,
-        Err(_) => return Ok(Vec::new()),
+    let Ok(args_tuple) = args.cast::<PyTuple>() else {
+        return Vec::new();
     };
     let mut result = Vec::with_capacity(args_tuple.len());
     for arg in args_tuple.iter() {
@@ -156,7 +146,7 @@ fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
             result.push(repr_str);
         }
     }
-    Ok(result)
+    result
 }
 
 /// Extract exception notes from the exception instance (__notes__).
@@ -164,9 +154,9 @@ fn extract_args_repr_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
 /// Per the ADR "partial extraction of collections" rule, individual elements
 /// that are not strings are skipped. Only actual Python `str` objects are
 /// included in the result; non-strings are silently ignored.
-fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> Vec<String> {
     let Some(notes_list): Option<Bound<'_, PyList>> = get_optional_attr(exc, "__notes__") else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
     let mut result = Vec::with_capacity(notes_list.len());
     for item in notes_list.iter() {
@@ -177,7 +167,7 @@ fn extract_notes_from_exc(exc: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
             result.push(extracted);
         }
     }
-    Ok(result)
+    result
 }
 
 /// Extract a chained exception (__cause__ or __context__).
@@ -198,7 +188,7 @@ fn extract_chained_exception(
         .transpose()
 }
 
-/// Extract nested exceptions from an ExceptionGroup.
+/// Extract nested exceptions from an `ExceptionGroup`.
 fn extract_exception_group(
     py: Python<'_>,
     tb_exc: &Bound<'_, PyAny>,

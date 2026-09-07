@@ -27,8 +27,9 @@ pub enum HTTPMethod {
 }
 
 impl HTTPMethod {
-    /// Convert to the string representation used by ureq.
-    pub fn as_str(&self) -> &'static str {
+    /// Convert to the string representation used by `ureq`.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::GET => "GET",
             Self::POST => "POST",
@@ -42,16 +43,24 @@ pub enum AuthConfig {
     /// No authentication.
     #[default]
     None,
-    /// HTTP Basic authentication with username and password.
-    Basic { username: String, password: String },
+    /// HTTP Basic authentication credentials.
+    Basic {
+        /// Username sent in the Basic-authentication header.
+        username: String,
+        /// Password sent in the Basic-authentication header.
+        password: String,
+    },
     /// Bearer token authentication.
-    Bearer { token: String },
+    Bearer {
+        /// Token sent in the Bearer-authentication header.
+        token: String,
+    },
 }
 
 /// Serialization format for log records.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SerializationFormat {
-    /// URL-encoded form data (CPython `logging.HTTPHandler` default).
+    /// URL-encoded form data (`CPython logging.HTTPHandler` default).
     #[default]
     UrlEncoded,
     /// JSON serialization for modern HTTP APIs.

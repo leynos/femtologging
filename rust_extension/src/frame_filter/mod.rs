@@ -119,11 +119,14 @@ where
 /// assert_eq!(limited[0].filename, "b.py");
 /// assert_eq!(limited[1].filename, "c.py");
 /// ```
+#[must_use]
 pub fn limit_frames(frames: &[StackFrame], n: usize) -> Vec<StackFrame> {
     if frames.len() <= n {
         return frames.to_vec();
     }
-    frames[frames.len() - n..].to_vec()
+    frames
+        .get(frames.len().saturating_sub(n)..)
+        .map_or_else(Vec::new, ToOwned::to_owned)
 }
 
 /// Check if a filename matches any of the given patterns.
@@ -162,6 +165,7 @@ fn matches_any_pattern(filename: &str, patterns: &[&str]) -> bool {
 /// let filtered = exclude_by_filename(&frames, &[".venv/"]);
 /// assert_eq!(filtered.len(), 2);
 /// ```
+#[must_use]
 pub fn exclude_by_filename(frames: &[StackFrame], patterns: &[&str]) -> Vec<StackFrame> {
     filter_frames(frames, |f| !matches_any_pattern(&f.filename, patterns))
 }
@@ -195,6 +199,7 @@ pub fn exclude_by_filename(frames: &[StackFrame], patterns: &[&str]) -> Vec<Stac
 /// let filtered = exclude_by_function(&frames, &["_internal"]);
 /// assert_eq!(filtered.len(), 2);
 /// ```
+#[must_use]
 pub fn exclude_by_function(frames: &[StackFrame], patterns: &[&str]) -> Vec<StackFrame> {
     filter_frames(frames, |f| !matches_any_pattern(&f.function, patterns))
 }
@@ -230,6 +235,7 @@ pub fn exclude_by_function(frames: &[StackFrame], patterns: &[&str]) -> Vec<Stac
 /// assert_eq!(filtered.len(), 1);
 /// assert_eq!(filtered[0].filename, "myapp/main.py");
 /// ```
+#[must_use]
 pub fn exclude_logging_infrastructure(frames: &[StackFrame]) -> Vec<StackFrame> {
     exclude_by_filename(frames, LOGGING_INFRA_PATTERNS)
 }
@@ -251,6 +257,7 @@ pub fn exclude_logging_infrastructure(frames: &[StackFrame]) -> Vec<StackFrame> 
 /// assert!(!is_logging_infrastructure(&app_frame));
 /// assert!(is_logging_infrastructure(&log_frame));
 /// ```
+#[must_use]
 pub fn is_logging_infrastructure(frame: &StackFrame) -> bool {
     matches_any_pattern(&frame.filename, LOGGING_INFRA_PATTERNS)
 }

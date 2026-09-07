@@ -36,7 +36,7 @@ impl TcpTransport {
     fn socket_addrs(&self) -> io::Result<Vec<SocketAddr>> {
         (self.host.as_str(), self.port)
             .to_socket_addrs()
-            .map(|iter| iter.collect())
+            .map(Iterator::collect)
     }
 }
 
@@ -79,30 +79,30 @@ impl ActiveConnection {
     /// Update the write timeout for the underlying socket.
     pub fn set_write_timeout(&mut self, timeout: Duration) -> io::Result<()> {
         match self {
-            ActiveConnection::PlainTcp(stream) => stream.set_write_timeout(Some(timeout)),
-            ActiveConnection::Tls(stream) => stream.get_ref().set_write_timeout(Some(timeout)),
+            Self::PlainTcp(stream) => stream.set_write_timeout(Some(timeout)),
+            Self::Tls(stream) => stream.get_ref().set_write_timeout(Some(timeout)),
             #[cfg(unix)]
-            ActiveConnection::Unix(stream) => stream.set_write_timeout(Some(timeout)),
+            Self::Unix(stream) => stream.set_write_timeout(Some(timeout)),
         }
     }
 
     /// Write a full buffer to the socket.
     pub fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         match self {
-            ActiveConnection::PlainTcp(stream) => stream.write_all(buf),
-            ActiveConnection::Tls(stream) => stream.write_all(buf),
+            Self::PlainTcp(stream) => stream.write_all(buf),
+            Self::Tls(stream) => stream.write_all(buf),
             #[cfg(unix)]
-            ActiveConnection::Unix(stream) => stream.write_all(buf),
+            Self::Unix(stream) => stream.write_all(buf),
         }
     }
 
     /// Flush the underlying writer.
     pub fn flush(&mut self) -> io::Result<()> {
         match self {
-            ActiveConnection::PlainTcp(stream) => stream.flush(),
-            ActiveConnection::Tls(stream) => stream.flush(),
+            Self::PlainTcp(stream) => stream.flush(),
+            Self::Tls(stream) => stream.flush(),
             #[cfg(unix)]
-            ActiveConnection::Unix(stream) => stream.flush(),
+            Self::Unix(stream) => stream.flush(),
         }
     }
 }
@@ -110,16 +110,9 @@ impl ActiveConnection {
 fn connect_tcp(config: &TcpTransport, timeout: Duration) -> io::Result<TcpStream> {
     let addrs = config.socket_addrs()?;
     for addr in addrs {
-        match TcpStream::connect_timeout(&addr, timeout) {
-            Ok(stream) => {
-                stream.set_nonblocking(false)?;
-                return Ok(stream);
-            }
-            Err(err) => {
-                if err.kind() != io::ErrorKind::TimedOut {
-                    continue;
-                }
-            }
+        if let Ok(stream) = TcpStream::connect_timeout(&addr, timeout) {
+            stream.set_nonblocking(false)?;
+            return Ok(stream);
         }
     }
     Err(io::Error::new(
@@ -140,13 +133,13 @@ pub fn connect_transport(
                 let connector = tls.connector()?;
                 stream.set_read_timeout(Some(connect_timeout))?;
                 stream.set_write_timeout(Some(connect_timeout))?;
-                let stream = connector
+                let tls_stream = connector
                     .connect(&tls.domain, stream)
                     .map_err(io::Error::other)?;
-                let tcp_ref = stream.get_ref();
+                let tcp_ref = tls_stream.get_ref();
                 tcp_ref.set_read_timeout(None)?;
                 tcp_ref.set_write_timeout(None)?;
-                Ok(ActiveConnection::Tls(Box::new(stream)))
+                Ok(ActiveConnection::Tls(Box::new(tls_stream)))
             } else {
                 Ok(ActiveConnection::PlainTcp(stream))
             }

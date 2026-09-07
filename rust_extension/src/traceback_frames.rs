@@ -66,7 +66,7 @@ pub(crate) fn extract_frames_from_stack_summary(
     Ok(frames)
 }
 
-/// Convert a Python FrameSummary to a Rust StackFrame.
+/// Convert a Python `FrameSummary` to a Rust `StackFrame`.
 fn frame_summary_to_stack_frame(frame: &Bound<'_, PyAny>) -> PyResult<StackFrame> {
     let filename: String = frame.getattr("filename")?.extract()?;
     let lineno: u32 = frame.getattr("lineno")?.extract()?;
@@ -98,18 +98,18 @@ fn frame_summary_to_stack_frame(frame: &Bound<'_, PyAny>) -> PyResult<StackFrame
 struct LocalsSkipCounts {
     /// Entries skipped because the key was not a string.
     non_string_keys: usize,
-    /// Entries skipped because repr() failed or could not be extracted.
+    /// Entries skipped because `repr()` failed or could not be extracted.
     repr_failures: usize,
 }
 
 impl LocalsSkipCounts {
     /// Returns true if any entries were skipped.
-    fn any_skipped(&self) -> bool {
+    const fn any_skipped(&self) -> bool {
         self.non_string_keys > 0 || self.repr_failures > 0
     }
 
     /// Returns the total number of skipped entries.
-    fn total(&self) -> usize {
+    const fn total(&self) -> usize {
         self.non_string_keys + self.repr_failures
     }
 }

@@ -146,7 +146,7 @@ pub enum SchemaVersionError {
 /// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION).is_ok());
 /// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION + 1).is_err());
 /// ```
-pub fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
+pub const fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
     if version > EXCEPTION_SCHEMA_VERSION {
         return Err(SchemaVersionError::VersionTooNew {
             found: version,
@@ -230,7 +230,7 @@ pub struct StackTracePayload {
 pub struct ExceptionPayload {
     /// Schema version for forward compatibility.
     pub schema_version: u16,
-    /// Exception class name (e.g., "ValueError", "KeyError").
+    /// Exception class name (for example, `ValueError` or `KeyError`).
     pub type_name: String,
     /// Module path of the exception class.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -248,16 +248,16 @@ pub struct ExceptionPayload {
     pub frames: Vec<StackFrame>,
     /// Explicit exception cause (`__cause__` from `raise ... from ...`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cause: Option<Box<ExceptionPayload>>,
+    pub cause: Option<Box<Self>>,
     /// Implicit exception context (`__context__`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<Box<ExceptionPayload>>,
+    pub context: Option<Box<Self>>,
     /// Whether implicit context should be suppressed in display.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppress_context: bool,
     /// Nested exceptions (for `ExceptionGroup`, Python 3.11+).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub exceptions: Vec<ExceptionPayload>,
+    pub exceptions: Vec<Self>,
 }
 
 impl StackFrame {
@@ -297,7 +297,8 @@ impl StackTracePayload {
     /// let payload = StackTracePayload::new(frames);
     /// assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
     /// ```
-    pub fn new(frames: Vec<StackFrame>) -> Self {
+    #[must_use]
+    pub const fn new(frames: Vec<StackFrame>) -> Self {
         Self {
             schema_version: EXCEPTION_SCHEMA_VERSION,
             frames,
@@ -353,14 +354,14 @@ impl ExceptionPayload {
     /// assert!(error.cause.is_some());
     /// ```
     #[must_use]
-    pub fn with_cause(mut self, cause: ExceptionPayload) -> Self {
+    pub fn with_cause(mut self, cause: Self) -> Self {
         self.cause = Some(Box::new(cause));
         self
     }
 
     /// Add implicit context to the exception.
     #[must_use]
-    pub fn with_context(mut self, context: ExceptionPayload) -> Self {
+    pub fn with_context(mut self, context: Self) -> Self {
         self.context = Some(Box::new(context));
         self
     }

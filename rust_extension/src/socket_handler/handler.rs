@@ -20,7 +20,7 @@ use super::{
 };
 
 #[cfg_attr(feature = "python", pyclass)]
-/// Handler forwarding records to a socket using MessagePack framing.
+/// Handler forwarding records to a socket using `MessagePack` framing.
 pub struct FemtoSocketHandler {
     tx: Option<crossbeam_channel::Sender<SocketCommand>>,
     handle: Mutex<Option<thread::JoinHandle<()>>>,
@@ -30,11 +30,13 @@ pub struct FemtoSocketHandler {
 
 impl FemtoSocketHandler {
     /// Construct a handler targeting the provided transport with default configuration.
+    #[must_use]
     pub fn new(transport: SocketTransport) -> Self {
         Self::with_config(SocketHandlerConfig::default().with_transport(transport))
     }
 
     /// Construct the handler from a configuration object.
+    #[must_use]
     pub fn with_config(config: SocketHandlerConfig) -> Self {
         let flush_timeout = config.write_timeout;
         let warner = RateLimitedWarner::new(config.warn_interval);
@@ -59,7 +61,7 @@ impl FemtoSocketHandler {
     }
 
     fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
-        self.tx.as_ref().cloned()
+        self.tx.clone()
     }
 
     fn request_shutdown(&mut self) {
@@ -70,7 +72,10 @@ impl FemtoSocketHandler {
         if tx.send(SocketCommand::Shutdown(ack_tx)).is_err() {
             return;
         }
-        let _ = ack_rx.recv_timeout(self.flush_timeout);
+        let Ok(()) = ack_rx.recv_timeout(self.flush_timeout) else {
+            // Shutdown remains bounded even when the worker cannot acknowledge it.
+            return;
+        };
     }
 
     fn join_worker(&mut self) {
@@ -162,6 +167,9 @@ impl Drop for FemtoSocketHandler {
 impl std::fmt::Debug for FemtoSocketHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FemtoSocketHandler")
+            .field("tx", &self.tx)
+            .field("handle", &self.handle)
+            .field("warner", &"RateLimitedWarner")
             .field("flush_timeout", &self.flush_timeout)
             .finish()
     }
