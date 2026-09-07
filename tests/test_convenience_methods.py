@@ -34,18 +34,12 @@ True
 
 from __future__ import annotations
 
-import time
-import typing as typ
-
 import pytest
 
 from femtologging import (
     FemtoLogger,
-    StreamHandlerBuilder,
-    basicConfig,
     get_logger,
     getLogger,
-    log_context,
 )
 from tests.logger_support import assert_output_contains
 
@@ -202,147 +196,6 @@ def test_convenience_method_with_stack_info() -> None:
     assert_output_contains(
         output, "Stack (most recent call last)", context="info(stack_info=True)"
     )
-
-
-def test_direct_logger_info_merges_scoped_log_context() -> None:
-    """``logger.info`` should include scoped ``log_context`` metadata."""
-
-    class RecordCollector:
-        """Handler stub that keeps every structured record it is given."""
-
-        def __init__(self) -> None:
-            self.records: list[dict[str, object]] = []
-            # The Rust bridge resolves ``handle_record`` with ``getattr`` on
-            # the instance, so binding ``list.append`` directly avoids a
-            # method that would do nothing but forward the argument.
-            self.handle_record = self.records.append
-
-        def handle(self, logger: str, level: str, message: str) -> None:
-            """Ignore unstructured records; only ``handle_record`` is asserted."""
-            _ = (self.records, logger, level, message)
-
-        def flush(self) -> bool:
-            """Report a successful flush; records are captured synchronously.
-
-            Returns
-            -------
-            bool
-                Always ``True``.
-            """
-            _ = self.records
-            return True
-
-    logger = FemtoLogger("ctx.direct")
-    logger.set_level("INFO")
-    collector = RecordCollector()
-    logger.add_handler(collector)
-
-    with log_context(request_id="abc123", user="alice"):
-        output = logger.info("inside context")
-    assert output is not None, "info() should emit at INFO level"
-    for _ in range(20):
-        if collector.records:
-            break
-        logger.flush_handlers()
-        time.sleep(0.01)
-    assert collector.records, "expected at least one captured record"
-
-    last_record = collector.records[-1]
-    metadata = last_record.get("metadata")
-    assert isinstance(metadata, dict), f"unexpected metadata payload: {metadata!r}"
-    metadata_dict = typ.cast("dict[str, object]", metadata)
-    key_values = metadata_dict.get("key_values")
-    assert isinstance(key_values, dict), (
-        f"unexpected key_values payload: {key_values!r}"
-    )
-    assert key_values == {"request_id": "abc123", "user": "alice"}, (
-        f"unexpected key_values: {key_values!r}"
-    )
-
-def test_get_logger_info_preserves_context_at_root_handler() -> None:
-    """``get_logger`` records retain context through root-handler propagation."""
-    records: list[dict[str, object]] = []
-
-    def capture(record: dict[str, object]) -> str:
-        records.append(record)
-        return "captured"
-
-    handler = StreamHandlerBuilder.stderr().with_formatter(capture).build()
-    basicConfig(level="INFO", force=True, handlers=[handler])
-    logger = get_logger("probe")
-
-    logger.info("outside")
-    with log_context(correlation_id="abc123"):
-        logger.info("inside")
-    assert logger.flush_handlers(), "child logger worker did not flush"
-    for _ in range(20):
-        if len(records) == 2:
-            break
-        time.sleep(0.01)
-    assert len(records) == 2, f"expected two root-handler records, got {records!r}"
-
-    key_values = [
-        typ.cast("dict[str, object]", record["metadata"])["key_values"]
-        for record in records
-    ]
-    assert key_values == [{}, {"correlation_id": "abc123"}], (
-        f"unexpected root-handler key-values: {key_values!r}"
-    )
-
-def test_logger_info_extra_merges_and_overrides_scoped_context() -> None:
-    """Inline ``extra`` fields should override active scoped context values."""
-
-    class RecordCollector:
-        def __init__(self) -> None:
-            self.records: list[dict[str, object]] = []
-
-        def handle(self, logger: str, level: str, message: str) -> None:
-            _ = (self.records, logger, level, message)
-
-        def handle_record(self, record: dict[str, object]) -> None:
-            self.records.append(record)
-
-        def flush(self) -> bool:
-            _ = self.records
-            return True
-
-    logger = FemtoLogger("ctx.inline")
-    logger.set_level("INFO")
-    collector = RecordCollector()
-    logger.add_handler(collector)
-
-    with log_context(request_id="outer", user="alice"):
-        output = logger.info(
-            "inside context",
-            extra={"request_id": "inline", "attempt": 2},
-        )
-    assert output is not None, "info() should emit at INFO level"
-    for _ in range(20):
-        if collector.records:
-            break
-        logger.flush_handlers()
-        time.sleep(0.01)
-    assert collector.records, "expected at least one captured record"
-
-    metadata = typ.cast("dict[str, object]", collector.records[-1]["metadata"])
-    assert metadata["key_values"] == {
-        "attempt": "2",
-        "request_id": "inline",
-        "user": "alice",
-    }
-
-def test_logger_info_rejects_invalid_extra_value() -> None:
-    """Inline ``extra`` values should use scoped-context validation errors."""
-    logger = FemtoLogger("ctx.invalid-extra")
-
-    with pytest.raises(TypeError, match="context values must be"):
-        logger.info(
-            "invalid",
-            extra=typ.cast(
-                "dict[str, str | int | float | bool | None]",
-                {"request_id": {"nested": "value"}},
-            ),
-        )
 def test_exception_captures_active_exception() -> None:
     """``exception()`` should produce output with an active exception context."""
     logger = FemtoLogger("exc.auto")

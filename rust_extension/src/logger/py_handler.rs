@@ -16,7 +16,7 @@ use crate::handlers::{
 };
 use crate::log_record::FemtoLogRecord;
 #[cfg(feature = "python")]
-use crate::{FemtoFileHandler, FemtoStreamHandler};
+use crate::{FemtoFileHandler, FemtoHTTPHandler, FemtoSocketHandler, FemtoStreamHandler};
 use log::warn;
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
@@ -110,6 +110,8 @@ enum NativeHandlerKind {
     File,
     RotatingFile,
     TimedRotatingFile,
+    Socket,
+    Http,
 }
 
 #[cfg(feature = "python")]
@@ -123,6 +125,10 @@ impl NativeHandlerKind {
             Some(Self::RotatingFile)
         } else if obj.is_instance_of::<PyTimedRotatingFileHandler>() {
             Some(Self::TimedRotatingFile)
+        } else if obj.is_instance_of::<FemtoSocketHandler>() {
+            Some(Self::Socket)
+        } else if obj.is_instance_of::<FemtoHTTPHandler>() {
+            Some(Self::Http)
         } else {
             None
         }
@@ -150,6 +156,14 @@ impl NativeHandlerKind {
             Self::TimedRotatingFile => obj
                 .extract::<PyRef<'_, PyTimedRotatingFileHandler>>()
                 .map_err(|err| map_py_err(py, err.into(), "extract FemtoTimedRotatingFileHandler"))
+                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+            Self::Socket => obj
+                .extract::<PyRef<'_, FemtoSocketHandler>>()
+                .map_err(|err| map_py_err(py, err.into(), "extract FemtoSocketHandler"))
+                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+            Self::Http => obj
+                .extract::<PyRef<'_, FemtoHTTPHandler>>()
+                .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
         }
     }
@@ -252,6 +266,40 @@ impl FemtoHandlerTrait for PyHandler {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(all(test, feature = "python"))]
+mod tests {
+    //! Tests for native handler recognition in the Python wrapper.
+
+    use super::NativeHandlerKind;
+    use crate::{FemtoHTTPHandler, FemtoSocketHandler, HTTPHandlerConfig, SocketHandlerConfig};
+    use pyo3::{Py, Python};
+
+    #[test]
+    fn native_handler_kind_recognizes_network_handlers() {
+        Python::attach(|py| {
+            let socket = Py::new(
+                py,
+                FemtoSocketHandler::with_config(SocketHandlerConfig::default()),
+            )
+            .expect("socket handler should be constructible as a Python object");
+            assert!(matches!(
+                NativeHandlerKind::from_object(socket.bind(py)),
+                Some(NativeHandlerKind::Socket)
+            ));
+
+            let http = Py::new(
+                py,
+                FemtoHTTPHandler::with_config(HTTPHandlerConfig::default()),
+            )
+            .expect("HTTP handler should be constructible as a Python object");
+            assert!(matches!(
+                NativeHandlerKind::from_object(http.bind(py)),
+                Some(NativeHandlerKind::Http)
+            ));
+        });
     }
 }
 
