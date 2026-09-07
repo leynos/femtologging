@@ -223,7 +223,14 @@ def log_matches_snapshot(msg: str, level: str, snapshot: SnapshotAssertion) -> N
     logger = get_logger("root")
     formatted = logger.log(level, msg)
     if level.upper() == "DEBUG":
-        assert formatted is None
+        assert formatted is None, (
+            "root logger must suppress DEBUG records at its default level, "
+            f"but it formatted {formatted!r}"
+        )
     else:
-        assert formatted is not None
-        assert formatted == snapshot
+        assert formatted is not None, (
+            f"root logger must emit a record logged at level {level!r}"
+        )
+        assert formatted == snapshot, (
+            f"formatted root output at level {level!r} must match the recorded snapshot"
+        )

@@ -5,40 +5,42 @@ consistent between local `make` targets and CI.
 
 ## Ruff version
 
-Ruff is pinned to version `0.15.12`.
+Ruff is pinned to version `0.16.4` in the Makefile's `RUFF_VERSION`, and
+`make lint` invokes it through `uvx ruff==$(RUFF_VERSION)`.
+`.github/workflows/ci.yml` repeats the same value as the `RUFF_VERSION` job
+environment variable, and `tests/test_lint_version_contract.py` asserts the
+Makefile default and the CI environment variable stay identical, without
+pinning any specific version itself — a deliberate bump only touches the
+Makefile and the workflow file. `ty`, the project's typechecker, is pinned the
+same way through `TY_VERSION` (currently `0.0.74`) and checked by the same
+contract test.
 
-The pin was taken from the active local executable with:
-
-```shell
-$(which ruff) --version
-```
-
-which reported:
-
-```text
-ruff 0.15.12
-```
-
-The Makefile stores this value in `RUFF_VERSION` and invokes Ruff through the
-pinned `uvx ruff==$(RUFF_VERSION)` command. Pull-request CI installs `uv` and
-`ty`, then runs the same Makefile targets, so `make lint` and CI evaluate
-Python lint rules with the same Ruff release through the Makefile.
-
-When updating Ruff, first install the intended new version locally, confirm it
-with `$(which ruff) --version`, then update `RUFF_VERSION` in `Makefile`. CI
-does not install Ruff directly; it picks up the version from the Makefile's
-`uvx ruff==$(RUFF_VERSION)` invocation.
+When updating Ruff, install the intended new version locally, confirm it
+resolves through `uvx ruff==<version> --version`, then update `RUFF_VERSION`
+in `Makefile` and the matching CI environment variable together. CI does not
+install Ruff directly; it picks up the version from the Makefile's
+`uvx ruff==$(RUFF_VERSION)` invocation. See [Python
+linting](#python-linting) for the complete five-tier lint pipeline.
 
 ## Python test toolchain
 
-The Python test toolchain is pinned so local runs and CI use the same pytest
-release:
+The local development group in `pyproject.toml` and the scheduled
+`.github/workflows/heavy-tests.yml` job define the same test toolchain. The
+heavy job repeats the install explicitly because it builds its own virtualenv
+outside `uv sync --group dev`. Keep both sources aligned when changing a
+dependency or its version policy:
 
-- `pytest` is pinned to `8.4.2` in `pyproject.toml` and CI.
-- `pytest-bdd` is pinned to `8.1.0` in `pyproject.toml` and CI.
-
-Keep this policy in sync with `pyproject.toml` and the matching CI install
-steps where applicable.
+- `maturin[patchelf]` is pinned to `1.13.3` in both sources for the editable
+  Rust extension build.
+- `pytest` is pinned to `9.1.1` in both sources.
+- `pytest-bdd` is pinned to `8.1.0` in both sources.
+- `pytest-timeout`, `pytest-xdist`, and `syrupy` are currently unpinned in
+  both sources; they follow the resolver's latest compatible releases.
+- `hypothesis` is bounded to `>=6.135,<7` in both sources, so
+  property-based and generated-input coverage only shifts with a deliberate
+  compatible-version change.
+- `pyyaml` is bounded to `>=6.0.3,<7` in both sources because the lint
+  contract tests parse the CI workflow files.
 
 ## Typos spelling checker
 
@@ -133,6 +135,21 @@ requires the spawn abstraction described in the heavy-test module
 documentation. Until that follow-up is implemented, the Loom configuration
 is still compiled to keep the models type-checked.
 
+## Configuration transaction
+
+`ConfigBuilder::build_and_init` applies a complete configuration through one
+ordered transaction. It first builds handlers and filters, prepares every
+logger plan, stages the logger objects, and commits those staged objects to the
+manager registry. When `disable_existing_loggers` is enabled, it then clears
+unmentioned loggers, applies the prepared plans, and finally replaces the
+manager's runtime attachment metadata.
+
+Handler and filter construction, identifier checks, and logger-plan preparation
+all happen before the registry commit. A failure in those validation steps
+therefore returns without changing the live logger state. `dictConfig` and
+`fileConfig` use this same builder path, so their validation and transaction
+boundary are consistent with direct builder use.
+
 ## Shared Rust test helpers and fixtures
 
 Crate unit-test support is owned by `rust_extension/src/test_utils/` and is
@@ -198,10 +215,151 @@ resolve the same formatter and linter version without requiring a global Ruff
 install. CI must not add a second hard-coded Ruff installation; update
 `RUFF_VERSION` when the project intentionally changes Ruff releases.
 
-The Makefile pins the `ty` release used by `make typecheck`; local development
-should use that target rather than an independently installed version. CI
-installs `uv` and `ty`, then delegates formatting, linting, type checking, and
-tests to Makefile targets.
+The `ty` command no longer needs a separate install: `make typecheck` runs the
+pinned release through `uv tool run --from 'ty==$(TY_VERSION)' ty`. CI installs
+`uv` and the pinned Makeutil parser, then delegates formatting, linting, type
+checking, and tests to Makefile targets.
+
+## Python linting
+
+`femtologging` runs Python linting as five tiers, all reachable through
+`make lint` (`lint-python`, followed by `lint-rust`). Each stage must pass
+before the next runs. The original four-tier decision is recorded in
+[ADR-005: Four-tier Python lint architecture](adr-005-four-tier-python-lint-architecture.md);
+its addendum records the addition of the docstring-coverage tier below.
+
+1. **Ruff** — fast, broad rule set in preview mode, targeting `py312`. Pinned
+   by `RUFF_VERSION` (`0.16.4`); see [Ruff version](#ruff-version) for the
+   pin-sync scheme with CI.
+2. **interrogate** (`1.7.0`) — enforces 100% docstring coverage over the
+   production package only (`femtologging`). Tests are excluded
+   deliberately: Ruff's `D` rules already govern docstrings in tests, and
+   `tests/steps/*.py` ignores `undocumented-public-function` (D103) because
+   pytest-bdd step function names document themselves. Without that
+   exclusion, interrogate would also demand docstrings on nested helper
+   closures for little value.
+3. **Pylint** (`4.0.7`) — runs through the pinned `leynos/pylint-pypy-shim`
+   revision under managed PyPy, isolated from the project virtual
+   environment. Configuration lives in `pyproject.toml`'s `[tool.pylint]`
+   tables: `py-version = "3.12"`, `max-module-lines = 400`, and a curated
+   `enable` list covering logging interpolation, pattern matching, generator
+   control flow, environment handling, and subprocess safety.
+4. **`df12-python-lints`** and its companion **`ambrleaks`** — run under
+   CPython 3.14 so the house-rule parser stays ahead of the project's 3.12
+   syntax baseline. `df12-python-lints` is pinned to a specific commit of the
+   `v0.3.0` release and enables the message set
+   `R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112`.
+   `ambrleaks` sweeps Syrupy `.ambr` snapshots under `tests` and
+   `femtologging/unittests` for unredacted secrets.
+5. **Skylos** (`4.33.2`) — a blocking production dead-code gate, run under
+   Python 3.14 so Skylos parses the project's syntax with its own runtime
+   `ast` implementation rather than an older one that could produce phantom
+   findings. See [Skylos dead-code gate](#skylos-dead-code-gate) below.
+
+Run the full lint gate with:
+
+```shell
+make lint
+```
+
+To run any of the five tiers locally, invoke the underlying tool directly:
+
+```shell
+
+# Tier 1: Ruff
+uvx ruff==0.16.4 check
+
+# Tier 2: interrogate (docstring coverage, production package only)
+uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 \
+  --ignore-regex '^basicConfig$' femtologging
+
+# Tier 3: Pylint under managed PyPy
+uv tool run --python pypy --from \
+  'git+https://github.com/leynos/pylint-pypy-shim.git@726d09f968b4d729ee4b29c71fc732e744854f3b' \
+  --with 'pylint==4.0.7' pylint-pypy femtologging tests scripts
+
+# Tier 4: df12-python-lints
+uv tool run --python 3.14 --from 'pylint==4.0.7' \
+  --with 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
+  pylint --disable=all --load-plugins=df12_python_lints \
+  --enable=R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112 \
+  femtologging tests scripts
+
+# Tier 4: ambrleaks (same df12-python-lints package, different entry point)
+uv tool run --python 3.14 \
+  --from 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
+  ambrleaks tests femtologging/unittests
+
+# Tier 5: Skylos
+uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
+  --config-file pyproject.toml femtologging \
+  --exclude femtologging/unittests --exclude femtologging/_femtologging_rs.pyi \
+  --category dead_code --gate --format concise --no-upload --no-provenance \
+  --no-grep-verify
+```
+
+Prefer running the exact Makefile-derived commands (for example,
+`make lint-python`) over hand-copied invocations, since the Makefile is the
+single source of truth for tool pins, targets, and flags.
+
+### Skylos dead-code gate
+
+Skylos analyses production code only: `femtologging/unittests` and the native
+`femtologging/_femtologging_rs.pyi` stub are excluded, so test-only
+references cannot keep a production symbol alive and the stub's inherently
+"unused" native parameters never trigger findings. `--no-grep-verify`
+prevents a repository-wide text match from masking a genuinely dead
+production symbol, and `[tool.skylos.gate] strict = true` in `pyproject.toml`
+enforces the strict gate.
+
+Investigate every Skylos finding before suppressing it:
+
+- **Genuine dead code** must be removed.
+- A **verified false positive** — an implicit runtime caller such as a
+  re-exported native module, a test-util hook, or a protocol-shaped
+  parameter — should first be modelled as a typed
+  `[[tool.skylos.dead_code.entrypoints]]` rule in `pyproject.toml`, giving the
+  fully qualified symbol, its `type` (for example, `"import"`, `"variable"`,
+  or `"parameter"`; use `"method"` for methods), and a caller-specific
+  reason.
+- Only when an entry-point rule cannot describe the boundary should a named
+  allow-list exception be recorded:
+
+  ```bash
+  make skylos-allow SYMBOL=handler REASON="Loaded by plugin registry"
+  ```
+
+  Both `SYMBOL` and `REASON` are required; the target rejects empty or
+  whitespace-only values with exit code 2. Use `SYMBOL` rather than `NAME`,
+  because Windows Subsystem for Linux (WSL) may inject `NAME` with the host
+  name. The target serializes whitelist writes with `flock` against the
+  ignored `.skylos-whitelist.lock` file, so concurrent invocations do not
+  overwrite one another. Never record a broad or unreasoned exception.
+
+The complete Skylos Makefile contract — the scan command, its exclusions, the
+strict gate configuration, the documented-whitelist set, and the entry-point
+rule set — is pinned by `tests/test_skylos_lint_contract.py` and
+`tests/test_skylos_whitelist_boundary.py`. Both parse the Makefile through
+the pinned `makeutil` executable (`makeutil parse Makefile`, emitting JSON)
+rather than matching Makefile text, so recording a new exception requires a
+conscious update to `tests/test_skylos_lint_contract.py`.
+
+### Makeutil bootstrap
+
+`makeutil` is a prerequisite of `make test` (the `test` target depends on the
+`makeutil` target, which only verifies the executable is present) and of
+every full-suite CI job — `ci.yml`'s `build-test` job and
+`heavy-tests.yml`'s `heavy` job each install their own pinned copy before
+running tests. Install the same pinned revision and toolchain locally before
+running `make test`:
+
+```bash
+rustup toolchain install nightly-2026-05-28 --profile minimal
+RUSTFLAGS="-Zpolonius=next" cargo +nightly-2026-05-28 install \
+  --git https://github.com/leynos/makeutil \
+  --rev 29fc5a1634ffbaa18a773eed9dff1b2838a45d9c \
+  --locked --force makeutil
+```
 
 ## Benchmarking Documentation
 

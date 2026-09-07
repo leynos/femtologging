@@ -15,18 +15,6 @@ def _try_import_module(module_name: str) -> object | None:
         return None
 
 
-def _resolve_attrs(base: object, attrs: list[str], dotted_path: str) -> object:
-    """Resolve ``attrs`` from ``base`` or raise the existing ValueError."""
-    resolved = base
-    try:
-        for attr in attrs:
-            resolved = getattr(resolved, attr)
-    except AttributeError as exc:
-        msg = f"failed to resolve filter factory {dotted_path!r}"
-        raise ValueError(msg) from exc
-    return resolved
-
-
 def _resolve_from_root(parts: list[str], dotted_path: str) -> object:
     """Resolve a dotted path using stdlib-style attribute-first traversal."""
     module_name = parts[0]

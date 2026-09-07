@@ -13,6 +13,10 @@ Factory functions:
     - make_stack_payload(filenames) -> StackPayload
     - make_exception_payload(filenames, type_name, message) -> ExceptionPayload
 
+Assertion helpers:
+    - assert_frame_filenames(payload, expected, context)
+    - assert_frame_functions(payload, expected, context)
+
 Example usage::
 
     from tests.frame_filter.conftest import make_stack_payload, StackPayload
@@ -27,6 +31,17 @@ Example usage::
 from __future__ import annotations
 
 import typing as typ
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+type FilteredPayload = cabc.Mapping[str, typ.Any]
+"""Loose view of a payload returned by ``filter_frames``.
+
+``filter_frames`` crosses the PyO3 boundary and yields plain dictionaries, so
+assertion helpers accept any string-keyed mapping rather than the TypedDicts
+used to build inputs.
+"""
 
 
 class FrameDict(typ.TypedDict, total=False):
@@ -90,4 +105,33 @@ def make_exception_payload(
         frames=frames,
         type_name=type_name,
         message=message,
+    )
+
+
+def assert_frame_filenames(
+    payload: FilteredPayload,
+    expected: list[str],
+    context: str,
+) -> None:
+    """Assert a filtered payload retains exactly ``expected`` filenames, in order.
+
+    Checking the full ordered list rather than a count plus a spot check keeps
+    the assertion discriminating: dropping, reordering, or duplicating a frame
+    all fail, and the message reports the whole mismatch at once.
+    """
+    actual = [frame.get("filename", "") for frame in payload.get("frames", [])]
+    assert actual == expected, (
+        f"{context}: expected frame filenames {expected}, got {actual}"
+    )
+
+
+def assert_frame_functions(
+    payload: FilteredPayload,
+    expected: list[str],
+    context: str,
+) -> None:
+    """Assert a filtered payload retains exactly ``expected`` functions, in order."""
+    actual = [frame.get("function", "") for frame in payload.get("frames", [])]
+    assert actual == expected, (
+        f"{context}: expected frame functions {expected}, got {actual}"
     )

@@ -32,7 +32,7 @@ def raises[E: BaseException](
     msg: str | None = ...,
 ) -> AbstractContextManager[E]: ...
 
-class mark:  # noqa: N801 - pytest exports lowercase marker namespace
+class mark:  # ruff: ignore[invalid-class-name] - pytest exports lowercase marker namespace
     @staticmethod
     def parametrize(
         argnames: str | list[str],

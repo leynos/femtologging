@@ -34,8 +34,11 @@ def call_basic_config(level: str, force: str | None) -> None:
 
 @then(parsers.parse("root logger has {count:d} handler"))
 def root_handler_count(count: int) -> None:
-    logger = get_logger("root")
-    assert len(logger.handler_ptrs_for_test()) == count
+    handlers = get_logger("root").handler_ptrs_for_test()
+    assert len(handlers) == count, (
+        f"basicConfig must leave the root logger with {count} handler(s), "
+        f"found {len(handlers)}"
+    )
 
 
 def _assert_basic_config_handler_conflict(

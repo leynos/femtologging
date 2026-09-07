@@ -8,16 +8,19 @@ import re
 import threading
 import time
 import typing as typ
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager, closing, contextmanager
 from pathlib import Path
 
 import pytest
 
 from femtologging import FemtoFileHandler, FileHandlerBuilder, OverflowPolicy
 
-FileHandlerFactory = cabc.Callable[
-    [Path, int, int], typ.ContextManager[FemtoFileHandler]
+type FileHandlerFactory = cabc.Callable[
+    [Path, int, int], AbstractContextManager[FemtoFileHandler]
 ]
+
+type LevelledRecord = tuple[str, str]
+"""A ``(level, message)`` pair handled by the ``core`` logger in these tests."""
 
 
 class FormatterRecord(typ.TypedDict):
@@ -26,6 +29,22 @@ class FormatterRecord(typ.TypedDict):
     logger: str
     level: str
     message: str
+
+
+def _rendered(records: cabc.Sequence[LevelledRecord]) -> list[str]:
+    """Return the lines the default formatter produces for ``records``."""
+    return [f"core [{level}] {message}" for level, message in records]
+
+
+def _assert_log_lines(
+    path: Path, expected: cabc.Sequence[str], context: str
+) -> list[str]:
+    """Assert the file holds exactly ``expected`` lines and return them."""
+    actual = path.read_text().splitlines() if path.exists() else []
+    assert actual == list(expected), (
+        f"{context}: handler output diverged from the expected record sequence"
+    )
+    return actual
 
 
 def _read_lines_with_retry(
@@ -45,29 +64,52 @@ def _read_lines_with_retry(
     return read_lines()
 
 
-def test_file_handler_writes_to_file(
-    tmp_path: Path, file_handler_factory: FileHandlerFactory
+@pytest.mark.parametrize(
+    ("handler_kwargs", "records"),
+    [
+        pytest.param(
+            {},
+            [("INFO", "first"), ("INFO", "second")],
+            id="default-constructor-flushes-every-record",
+        ),
+        pytest.param(
+            {"capacity": 8, "flush_interval": 1, "policy": "drop"},
+            [("INFO", "hello")],
+            id="single-record-reaches-disk",
+        ),
+        pytest.param(
+            {"capacity": 8, "flush_interval": 1, "policy": "drop"},
+            [("INFO", "first"), ("WARN", "second"), ("ERROR", "third")],
+            id="mixed-levels-preserve-handling-order",
+        ),
+        pytest.param(
+            {"capacity": 8, "flush_interval": 2, "policy": "drop"},
+            [("INFO", "first"), ("INFO", "second"), ("INFO", "third")],
+            id="buffered-flush-interval-still-writes-every-record",
+        ),
+        pytest.param(
+            {"capacity": 2, "flush_interval": 1, "policy": "block"},
+            [("INFO", "first"), ("INFO", "second"), ("INFO", "third")],
+            id="block-policy-waits-rather-than-dropping",
+        ),
+        pytest.param(
+            {"policy": " Drop "},
+            [("INFO", "msg")],
+            id="policy-string-normalized-for-case-and-whitespace",
+        ),
+    ],
+)
+def test_handled_records_persist_in_order(
+    tmp_path: Path,
+    handler_kwargs: dict[str, object],
+    records: list[LevelledRecord],
 ) -> None:
-    """A single record should persist to disk."""
+    """Every handled record is written, in order, for each configuration."""
     path = tmp_path / "out.log"
-    with file_handler_factory(path, 8, 1) as handler:
-        handler.handle("core", "INFO", "hello")
-    assert path.read_text() == "core [INFO] hello\n"
-
-
-def test_file_handler_multiple_records(
-    tmp_path: Path, file_handler_factory: FileHandlerFactory
-) -> None:
-    """Records are appended in the order they are handled."""
-    path = tmp_path / "multi.log"
-    with file_handler_factory(path, 8, 1) as handler:
-        handler.handle("core", "INFO", "first")
-        handler.handle("core", "WARN", "second")
-        handler.handle("core", "ERROR", "third")
-    assert (
-        path.read_text()
-        == "core [INFO] first\ncore [WARN] second\ncore [ERROR] third\n"
-    )
+    with closing(FemtoFileHandler(str(path), **handler_kwargs)) as handler:
+        for level, message in records:
+            handler.handle("core", level, message)
+    _assert_log_lines(path, _rendered(records), f"configuration {handler_kwargs!r}")
 
 
 def test_file_handler_concurrent_usage(
@@ -85,9 +127,11 @@ def test_file_handler_concurrent_usage(
             t.start()
         for t in threads:
             t.join()
-    data = path.read_text()
-    for i in range(10):
-        assert f"core [INFO] msg{i}" in data
+    written = set(path.read_text().splitlines())
+    expected = set(_rendered([("INFO", f"msg{i}") for i in range(10)]))
+    assert expected <= written, (
+        f"concurrent handling dropped records: missing {sorted(expected - written)!r}"
+    )
 
 
 def test_file_handler_flush(tmp_path: Path) -> None:
@@ -97,12 +141,18 @@ def test_file_handler_flush(tmp_path: Path) -> None:
 
         def send(msg: str) -> None:
             handler.handle("core", "INFO", msg)
-            assert handler.flush() is True
+            assert handler.flush() is True, (
+                f"flush() must report success after handling {msg!r}"
+            )
 
         send("one")
-        assert path.read_text() == "core [INFO] one\n"
+        _assert_log_lines(path, _rendered([("INFO", "one")]), "after first flush")
         send("two")
-        assert path.read_text() == "core [INFO] one\ncore [INFO] two\n"
+        _assert_log_lines(
+            path,
+            _rendered([("INFO", "one"), ("INFO", "two")]),
+            "after second flush",
+        )
 
 
 def test_file_handler_flush_concurrent(
@@ -114,7 +164,9 @@ def test_file_handler_flush_concurrent(
 
         def send_and_flush() -> None:
             handler.handle("core", "INFO", "msg")
-            assert handler.flush() is True
+            assert handler.flush() is True, (
+                "concurrent flush() must report success for every caller"
+            )
 
         threads = [threading.Thread(target=send_and_flush) for _ in range(5)]
         for t in threads:
@@ -122,7 +174,7 @@ def test_file_handler_flush_concurrent(
         for t in threads:
             t.join()
 
-    assert len(path.read_text().splitlines()) == 5
+    _assert_log_lines(path, _rendered([("INFO", "msg")] * 5), "five concurrent writers")
 
 
 def test_file_handler_open_failure(tmp_path: Path) -> None:
@@ -131,37 +183,16 @@ def test_file_handler_open_failure(tmp_path: Path) -> None:
     path = bad_dir / "out.log"
     with pytest.raises(OSError, match=re.escape(str(path))) as excinfo:
         FemtoFileHandler(str(path))
-    assert excinfo.value.errno in {None, errno.ENOENT}
-
-
-def test_file_handler_custom_flush_interval(
-    tmp_path: Path,
-    file_handler_factory: FileHandlerFactory,
-) -> None:
-    """Flush only after ``flush_interval`` records."""
-    path = tmp_path / "interval.log"
-    with file_handler_factory(path, 8, 2) as handler:
-        handler.handle("core", "INFO", "first")
-        handler.handle("core", "INFO", "second")
-        handler.handle("core", "INFO", "third")
-    assert path.read_text() == (
-        "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
+    assert excinfo.value.errno in {None, errno.ENOENT}, (
+        "a missing parent directory must surface as ENOENT (or an unset errno), "
+        f"not {excinfo.value.errno!r}"
     )
 
 
-def test_file_handler_flush_interval_one(
-    tmp_path: Path, file_handler_factory: FileHandlerFactory
-) -> None:
-    """Records flush after every write when flush_interval is one."""
-    path = tmp_path / "flush_one.log"
-    with file_handler_factory(path, 8, 1) as handler:
-        handler.handle("core", "INFO", "message")
-    assert path.read_text() == "core [INFO] message\n"
-
-
 def test_file_handler_flush_interval_large(tmp_path: Path) -> None:
-    """Large flush_interval flushes all messages on close."""
+    """Large flush_interval buffers records until the handler closes."""
     path = tmp_path / "large_flush.log"
+    records: list[LevelledRecord] = [("INFO", f"msg {i}") for i in range(5)]
     with closing(
         FemtoFileHandler(
             str(path),
@@ -170,30 +201,10 @@ def test_file_handler_flush_interval_large(tmp_path: Path) -> None:
             policy="drop",
         )
     ) as handler:
-        for i in range(5):
-            handler.handle("core", "INFO", f"msg {i}")
-        assert path.read_text() == ""
-    expected = "".join(f"core [INFO] msg {i}\n" for i in range(5))
-    assert path.read_text() == expected
-
-
-def test_overflow_policy_block(tmp_path: Path) -> None:
-    """Block policy waits for space instead of dropping records."""
-    path = tmp_path / "block.log"
-    with closing(
-        FemtoFileHandler(
-            str(path),
-            capacity=2,
-            flush_interval=1,
-            policy="block",
-        )
-    ) as handler:
-        handler.handle("core", "INFO", "first")
-        handler.handle("core", "INFO", "second")
-        handler.handle("core", "INFO", "third")
-    assert (
-        path.read_text() == "core [INFO] first\ncore [INFO] second\ncore [INFO] third\n"
-    )
+        for level, message in records:
+            handler.handle("core", level, message)
+        _assert_log_lines(path, [], "before close with a flush interval of 10000")
+    _assert_log_lines(path, _rendered(records), "after close flushes the buffer")
 
 
 def test_overflow_policy_timeout(tmp_path: Path) -> None:
@@ -234,89 +245,117 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
         handler.handle("core", "INFO", "second")
         with pytest.raises(RuntimeError, match="timed out"):
             handler.handle("core", "INFO", "third")
-    expected = [
-        "core [INFO] first",
-        "core [INFO] second",
-    ]
+    expected = _rendered([("INFO", "first"), ("INFO", "second")])
     lines = _read_lines_with_retry(path, expected)
     assert lines == expected, "expected timeout policy to drop the third record"
 
 
-def test_overflow_policy_drop(tmp_path: Path) -> None:
-    """Drop policy discards records once the queue is full."""
+_QUEUE_FULL_ERRORS = frozenset({
+    "Handler error: queue full",
+    "Handler error: handler is closed",
+})
+
+
+def _handle_tolerating_overflow(
+    handler: FemtoFileHandler, level: str, message: str
+) -> None:
+    """Handle a record, allowing the documented overflow errors to surface."""
+    error_msg: str | None = None
+    try:
+        handler.handle("core", level, message)
+    except RuntimeError as err:
+        error_msg = str(err)
+    if error_msg is not None:
+        assert error_msg in _QUEUE_FULL_ERRORS, (
+            "drop policy must only reject records with a queue-full or "
+            f"handler-closed error, got {error_msg!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("flush_interval", "record_count"),
+    [
+        pytest.param(1, 3, id="unbuffered-writes"),
+        pytest.param(5, 10, id="buffered-writes"),
+    ],
+)
+def test_overflow_policy_drop_keeps_earliest_records(
+    tmp_path: Path, flush_interval: int, record_count: int
+) -> None:
+    """Drop policy discards excess records but preserves the earliest ones."""
     path = tmp_path / "drop.log"
     with closing(
         FemtoFileHandler(
             str(path),
             capacity=2,
-            flush_interval=1,
+            flush_interval=flush_interval,
             policy="drop",
         )
     ) as handler:
-        handler.handle("core", "INFO", "first")
-        handler.handle("core", "INFO", "second")
-        error_msg: str | None = None
-        try:
-            handler.handle("core", "INFO", "third")
-        except RuntimeError as err:
-            error_msg = str(err)
-        if error_msg is not None:
-            assert error_msg in {
-                "Handler error: queue full",
-                "Handler error: handler is closed",
-            }
-    # The consumer runs concurrently; on faster CI machines it may
-    # dequeue between sends. Assert the first two messages are present
-    # in order, without requiring the third to be dropped deterministically.
-    assert path.read_text().splitlines()[:2] == [
-        "core [INFO] first",
-        "core [INFO] second",
-    ]
+        for i in range(record_count):
+            _handle_tolerating_overflow(handler, "INFO", f"msg{i}")
+    # The consumer runs concurrently; on faster CI machines it may dequeue
+    # between sends. Assert the first two messages are present in order,
+    # without requiring later records to be dropped deterministically.
+    leading = path.read_text().splitlines()[:2]
+    assert leading == _rendered([("INFO", "msg0"), ("INFO", "msg1")]), (
+        "drop policy must retain the earliest accepted records in order, "
+        f"got {leading!r}"
+    )
 
 
-def test_overflow_policy_drop_flush_interval_gt_one(tmp_path: Path) -> None:
-    """Drop policy with buffered writes still discards excess records."""
-    path = tmp_path / "drop_flush_gt_one.log"
-    with closing(
-        FemtoFileHandler(
-            str(path),
-            capacity=2,
-            flush_interval=5,
-            policy="drop",
-        )
-    ) as handler:
-        for i in range(10):
-            error_msg: str | None = None
-            try:
-                handler.handle("core", "INFO", f"msg{i}")
-            except RuntimeError as err:
-                error_msg = str(err)
-            if error_msg is not None:
-                assert error_msg in {
-                    "Handler error: queue full",
-                    "Handler error: handler is closed",
-                }
-    assert path.read_text().splitlines()[:2] == [
-        "core [INFO] msg0",
-        "core [INFO] msg1",
-    ]
-
-
-def test_overflow_policy_invalid(tmp_path: Path) -> None:
-    """Invalid policy strings raise ``ValueError``."""
+@pytest.mark.parametrize(
+    ("handler_kwargs", "expected_message"),
+    [
+        pytest.param(
+            {"capacity": 0},
+            "capacity must be greater than zero",
+            id="zero-capacity",
+        ),
+        pytest.param(
+            {"flush_interval": 0},
+            "flush_interval must be greater than zero",
+            id="zero-flush-interval",
+        ),
+        pytest.param(
+            {"flush_interval": -1},
+            "flush_interval must be greater than zero",
+            id="negative-flush-interval",
+        ),
+        pytest.param(
+            {"policy": "bogus"},
+            "invalid overflow policy",
+            id="unknown-policy-name",
+        ),
+        pytest.param(
+            {"policy": "timeout"},
+            r"timeout requires a positive integer N, use 'timeout:N'",
+            id="timeout-policy-without-duration",
+        ),
+        pytest.param(
+            {"policy": "timeout:0"},
+            "timeout must be greater than zero",
+            id="timeout-policy-zero-duration",
+        ),
+        pytest.param(
+            {"policy": "timeout:-1"},
+            r"timeout must be a positive integer \(N in 'timeout:N'\)",
+            id="timeout-policy-negative-duration",
+        ),
+        pytest.param(
+            {"policy": "timeout:abc"},
+            r"timeout must be a positive integer \(N in 'timeout:N'\)",
+            id="timeout-policy-non-numeric-duration",
+        ),
+    ],
+)
+def test_constructor_rejects_invalid_configuration(
+    tmp_path: Path, handler_kwargs: dict[str, object], expected_message: str
+) -> None:
+    """Invalid handler configuration is rejected with an explanatory error."""
     path = tmp_path / "invalid.log"
-    with pytest.raises(ValueError, match="invalid overflow policy"):
-        FemtoFileHandler(str(path), policy="bogus")
-
-
-def test_overflow_policy_timeout_missing_ms(tmp_path: Path) -> None:
-    """Timeout policy without a timeout is rejected."""
-    path = tmp_path / "missing_ms.log"
-    with pytest.raises(
-        ValueError,
-        match=r"timeout requires a positive integer N, use 'timeout:N'",
-    ):
-        FemtoFileHandler(str(path), policy="timeout")
+    with pytest.raises(ValueError, match=expected_message):
+        FemtoFileHandler(str(path), **handler_kwargs)
 
 
 def test_file_handler_handle_after_close_raises(tmp_path: Path) -> None:
@@ -326,58 +365,3 @@ def test_file_handler_handle_after_close_raises(tmp_path: Path) -> None:
     handler.close()
     with pytest.raises(RuntimeError, match="Handler error: handler is closed"):
         handler.handle("core", "INFO", "after close")
-
-
-def test_capacity_validation(tmp_path: Path) -> None:
-    """Capacity must be greater than zero."""
-    path = tmp_path / "bad_capacity.log"
-    with pytest.raises(ValueError, match="capacity must be greater than zero"):
-        FemtoFileHandler(str(path), capacity=0)
-
-
-def test_flush_interval_validation(tmp_path: Path) -> None:
-    """Flush interval must be greater than zero."""
-    path = tmp_path / "bad_flush.log"
-    with pytest.raises(ValueError, match="flush_interval must be greater than zero"):
-        FemtoFileHandler(str(path), flush_interval=0)
-    with pytest.raises(ValueError, match="flush_interval must be greater than zero"):
-        FemtoFileHandler(str(path), flush_interval=-1)
-
-
-def test_timeout_policy_validation(tmp_path: Path) -> None:
-    """Timeout policy requires a positive timeout."""
-    path = tmp_path / "bad_timeout.log"
-    with pytest.raises(ValueError, match="timeout must be greater than zero"):
-        FemtoFileHandler(str(path), policy="timeout:0")
-    with pytest.raises(
-        ValueError,
-        match=r"timeout must be a positive integer \(N in 'timeout:N'\)",
-    ):
-        FemtoFileHandler(str(path), policy="timeout:-1")
-
-
-def test_timeout_policy_non_numeric(tmp_path: Path) -> None:
-    """Non-numeric timeout values are rejected."""
-    path = tmp_path / "timeout_non_numeric.log"
-    with pytest.raises(
-        ValueError,
-        match=r"timeout must be a positive integer \(N in 'timeout:N'\)",
-    ):
-        FemtoFileHandler(str(path), policy="timeout:abc")
-
-
-def test_default_constructor(tmp_path: Path) -> None:
-    """Default arguments apply drop policy and flush after every record."""
-    path = tmp_path / "defaults.log"
-    with closing(FemtoFileHandler(str(path))) as handler:
-        handler.handle("core", "INFO", "first")
-        handler.handle("core", "INFO", "second")
-    assert path.read_text() == "core [INFO] first\ncore [INFO] second\n"
-
-
-def test_policy_normalization(tmp_path: Path) -> None:
-    """Policy strings are normalized for case and whitespace."""
-    path = tmp_path / "policy.log"
-    with closing(FemtoFileHandler(str(path), policy=" Drop ")) as handler:
-        handler.handle("core", "INFO", "msg")
-    assert path.read_text() == "core [INFO] msg\n"

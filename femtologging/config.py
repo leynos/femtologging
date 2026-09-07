@@ -33,16 +33,9 @@ from ._timed_handler_config import parse_timed_args
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
 
-Callable = cabc.Callable
-Mapping = cabc.Mapping
-Sequence = cabc.Sequence
-Any = typ.Any
-Final = typ.Final
-cast = typ.cast
-
 # The Rust extension module is dynamically loaded; cast to Any so static
 # type checkers do not reject attribute access on the opaque module.
-rust = typ.cast("Any", rust)
+rust = typ.cast("typ.Any", rust)
 HandlerConfigError: type[Exception] = getattr(rust, "HandlerConfigError", Exception)
 HandlerIOError: type[Exception] = getattr(rust, "HandlerIOError", Exception)
 
@@ -87,12 +80,12 @@ def _evaluate_string_safely(value: str, context: str) -> object:
         raise ValueError(msg) from exc
 
 
-def _validate_mapping_type(value: object, name: str) -> Mapping[object, object]:
+def _validate_mapping_type(value: object, name: str) -> cabc.Mapping[object, object]:
     """Ensure ``value`` is a mapping and not bytes-like."""
-    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Mapping):
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, cabc.Mapping):
         msg = f"{name} must be a mapping"
         raise TypeError(msg)
-    return cast("Mapping[object, object]", value)
+    return typ.cast("cabc.Mapping[object, object]", value)
 
 
 def _validate_no_bytes(value: object, name: str) -> None:
@@ -103,14 +96,14 @@ def _validate_no_bytes(value: object, name: str) -> None:
 
 
 def _validate_string_keys(
-    mapping: Mapping[object, object], name: str
-) -> Mapping[str, object]:
+    mapping: cabc.Mapping[object, object], name: str
+) -> cabc.Mapping[str, object]:
     """Ensure all keys in ``mapping`` are strings."""
     for key in mapping:
         if not isinstance(key, str):
             msg = f"{name} keys must be strings"
             raise TypeError(msg)
-    return cast("Mapping[str, object]", mapping)
+    return typ.cast("cabc.Mapping[str, object]", mapping)
 
 
 def _coerce_args(args: object, ctx: str) -> list[object]:
@@ -120,7 +113,7 @@ def _coerce_args(args: object, ctx: str) -> list[object]:
     if args is None:
         return []
     _validate_no_bytes(args, f"{ctx} args")
-    if not isinstance(args, Sequence):
+    if not isinstance(args, cabc.Sequence):
         msg = f"{ctx} args must be a sequence"
         raise TypeError(msg)
     return list(args)
@@ -150,7 +143,7 @@ def _resolve_handler_class(name: str) -> object:
     return cls
 
 
-def _validate_handler_keys(hid: str, data: Mapping[str, object]) -> None:
+def _validate_handler_keys(hid: str, data: cabc.Mapping[str, object]) -> None:
     """Validate that ``data`` contains only supported handler keys."""
     allowed = {"class", "level", "filters", "args", "kwargs", "formatter"}
     unknown = set(data.keys()) - allowed
@@ -167,7 +160,7 @@ def _validate_handler_class(hid: str, cls_name: object) -> str:
     return cls_name
 
 
-def _validate_unsupported_features(data: Mapping[str, object]) -> None:
+def _validate_unsupported_features(data: cabc.Mapping[str, object]) -> None:
     """Reject handler features not yet implemented."""
     if "level" in data:
         msg = "handler level is not supported"
@@ -178,7 +171,7 @@ def _validate_unsupported_features(data: Mapping[str, object]) -> None:
 
 
 def _validate_handler_config(
-    hid: str, data: Mapping[str, object]
+    hid: str, data: cabc.Mapping[str, object]
 ) -> tuple[str, list[object], dict[str, object], object | None]:
     """Validate handler ``data`` and return construction parameters."""
     _validate_handler_keys(hid, data)
@@ -205,16 +198,18 @@ def _create_handler_instance(
         if builder_cls is TimedRotatingFileHandlerBuilder:
             path, options = parse_timed_args(args_t, kwargs_d)
             return builder_cls(path, options)
-        return cast("Any", builder_cls)(*args_t, **kwargs_d)  # pyright: ignore[reportCallIssue]
+        # Builder classes come from the dynamically loaded Rust module, so
+        # their signatures are opaque; widen to Any to forward config args.
+        return typ.cast("typ.Any", builder_cls)(*args_t, **kwargs_d)
     except (TypeError, ValueError, HandlerConfigError, HandlerIOError) as exc:
         msg = f"failed to construct handler {hid!r}: {exc}"
         raise ValueError(msg) from exc
 
 
-def _build_handler_from_dict(hid: str, data: Mapping[str, object]) -> object:
+def _build_handler_from_dict(hid: str, data: cabc.Mapping[str, object]) -> object:
     """Create a handler builder from ``dictConfig`` handler data."""
     cls_name, args, kwargs, fmt = _validate_handler_config(hid, data)
-    builder = cast("Any", _create_handler_instance(hid, cls_name, args, kwargs))
+    builder = typ.cast("typ.Any", _create_handler_instance(hid, cls_name, args, kwargs))
     if fmt is not None:
         if not isinstance(fmt, str):
             msg = "formatter must be a string"
@@ -228,14 +223,14 @@ def _validate_string_list(value: object, label: str) -> list[str]:
     if not isinstance(value, (list, tuple)):
         msg = f"logger {label} must be a list or tuple of strings"
         raise TypeError(msg)
-    seq = cast("Sequence[object]", value)
+    seq = typ.cast("cabc.Sequence[object]", value)
     if not all(isinstance(item, str) for item in seq):
         msg = f"logger {label} must be a list or tuple of strings"
         raise TypeError(msg)
-    return list(cast("Sequence[str]", seq))
+    return list(typ.cast("cabc.Sequence[str]", seq))
 
 
-def _validate_logger_config_keys(name: str, data: Mapping[str, object]) -> None:
+def _validate_logger_config_keys(name: str, data: cabc.Mapping[str, object]) -> None:
     """Ensure ``data`` uses only supported logger keys."""
     allowed = {"level", "handlers", "propagate", "filters"}
     unknown = set(data.keys()) - allowed
@@ -252,7 +247,7 @@ def _validate_propagate_value(value: object) -> bool:
     return value
 
 
-def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
+def _build_logger_from_dict(name: str, data: cabc.Mapping[str, object]) -> object:
     """Create a ``LoggerConfigBuilder`` from ``dictConfig`` logger data."""
     _validate_logger_config_keys(name, data)
     builder = LoggerConfigBuilder()
@@ -270,19 +265,19 @@ def _build_logger_from_dict(name: str, data: Mapping[str, object]) -> object:
     return builder
 
 
-def _validate_dict_config(config: Mapping[str, object]) -> int:
+def _validate_dict_config(config: cabc.Mapping[str, object]) -> int:
     """Validate top-level configuration and return the version."""
     if "incremental" in config:
         msg = "incremental configuration is not supported"
         raise ValueError(msg)
-    version = int(cast("int", config.get("version", 1)))
+    version = int(typ.cast("int", config.get("version", 1)))
     if version != 1:
         msg = f"unsupported configuration version {version}"
         raise ValueError(msg)
     return version
 
 
-def _create_config_builder(version: int, config: Mapping[str, object]) -> object:
+def _create_config_builder(version: int, config: cabc.Mapping[str, object]) -> object:
     """Initialize a ``ConfigBuilder`` with global options."""
     cb = ConfigBuilder()
     builder = cb.with_version(version)
@@ -296,7 +291,7 @@ def _create_config_builder(version: int, config: Mapping[str, object]) -> object
 
 
 def _validate_formatter_field(
-    fcfg: Mapping[str, object], field: str, field_type: str
+    fcfg: cabc.Mapping[str, object], field: str, field_type: str
 ) -> str | None:
     """Return the string value for ``field`` or ``None`` if absent."""
     if field not in fcfg:
@@ -308,7 +303,7 @@ def _validate_formatter_field(
     return value
 
 
-def _build_formatter(fcfg: Mapping[str, object]) -> object:
+def _build_formatter(fcfg: cabc.Mapping[str, object]) -> object:
     """Build a :class:`FormatterBuilder` from configuration."""
     allowed = {"format", "datefmt"}
     unknown = set(fcfg.keys()) - allowed
@@ -325,17 +320,13 @@ def _build_formatter(fcfg: Mapping[str, object]) -> object:
     return fb
 
 
-def _validate_section_mapping(section: object, name: str) -> Mapping[object, object]:
-    """Ensure a configuration ``section`` is a mapping."""
-    return _validate_mapping_type(section, name)
-
-
-def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
+# ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.dictConfig
+def dictConfig(config: cabc.Mapping[str, object]) -> None:
     """Configure logging using a ``dictConfig``-style dictionary.
 
     Parameters
     ----------
-    config : Mapping[str, object]
+    config : cabc.Mapping[str, object]
         A dictionary compatible with :mod:`logging.config`. Unsupported
         features (handler ``level``, handler ``filters``) raise ``ValueError``.
 
@@ -353,7 +344,7 @@ def dictConfig(config: Mapping[str, object]) -> None:  # noqa: N802
     from . import config_sections
 
     version = _validate_dict_config(config)
-    builder = cast("Any", _create_config_builder(version, config))
+    builder = typ.cast("typ.Any", _create_config_builder(version, config))
     builder = config_sections._process_filters(builder, config)
     builder = config_sections._process_formatters(builder, config)
     builder = config_sections._process_handlers(builder, config)

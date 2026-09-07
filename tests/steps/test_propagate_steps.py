@@ -256,27 +256,39 @@ def _read_handler_file(propagate_ctx: PropagateContext, hid: str) -> str:
     return handler_ctx.path.read_text() if handler_ctx.path.exists() else ""
 
 
+def _assert_handler_file_contains(
+    propagate_ctx: PropagateContext, hid: str, text: str, *, expected: bool
+) -> None:
+    """Assert the presence or absence of ``text`` in handler ``hid``'s file."""
+    contents = _read_handler_file(propagate_ctx, hid)
+    if expected:
+        assert text in contents, (
+            f"propagation should have delivered {text!r} to handler {hid!r}; "
+            f"file contained: {contents!r}"
+        )
+    else:
+        assert text not in contents, (
+            f"propagation should not have delivered {text!r} to handler {hid!r}; "
+            f"file contained: {contents!r}"
+        )
+
+
 @then(parsers.parse('the root handler file contains "{text}"'))
 def then_root_contains(propagate_ctx: PropagateContext, text: str) -> None:
     """Assert that the root handler file contains the specified text."""
-    contents = _read_handler_file(propagate_ctx, "root_handler")
-    assert text in contents, f"Expected '{text}' in root handler file, got: {contents}"
+    _assert_handler_file_contains(propagate_ctx, "root_handler", text, expected=True)
 
 
 @then(parsers.parse('the root handler file does not contain "{text}"'))
 def then_root_not_contains(propagate_ctx: PropagateContext, text: str) -> None:
     """Assert that the root handler file does not contain the specified text."""
-    contents = _read_handler_file(propagate_ctx, "root_handler")
-    assert text not in contents, (
-        f"Expected '{text}' NOT in root handler file, got: {contents}"
-    )
+    _assert_handler_file_contains(propagate_ctx, "root_handler", text, expected=False)
 
 
 @then(parsers.parse('the child handler file contains "{text}"'))
 def then_child_contains(propagate_ctx: PropagateContext, text: str) -> None:
     """Assert that the child handler file contains the specified text."""
-    contents = _read_handler_file(propagate_ctx, "child_handler")
-    assert text in contents, f"Expected '{text}' in child handler file, got: {contents}"
+    _assert_handler_file_contains(propagate_ctx, "child_handler", text, expected=True)
 
 
 @then("the configuration matches propagate enabled snapshot")
@@ -285,7 +297,9 @@ def then_propagate_enabled_snapshot(
 ) -> None:
     """Assert that configuration with propagate=true matches snapshot."""
     config = config_builder.as_dict()
-    assert config == snapshot
+    assert config == snapshot, (
+        "serialized config with propagate=true must match the recorded snapshot"
+    )
 
 
 @then("the configuration matches propagate disabled snapshot")
@@ -294,4 +308,6 @@ def then_propagate_disabled_snapshot(
 ) -> None:
     """Assert that configuration with propagate=false matches snapshot."""
     config = config_builder.as_dict()
-    assert config == snapshot
+    assert config == snapshot, (
+        "serialized config with propagate=false must match the recorded snapshot"
+    )

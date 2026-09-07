@@ -79,7 +79,9 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
 def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
-    assert config_builder.as_dict() == snapshot
+    assert config_builder.as_dict() == snapshot, (
+        "the builder's serialized configuration must match the recorded snapshot"
+    )
 
 
 @then("the configuration is built and initialized")
@@ -114,11 +116,11 @@ def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
 
 @then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
 def loggers_share_handler(first: str, second: str, hid: str) -> None:
-    # pytest-bdd requires the parameter name to match the placeholder in the step
-    # pattern; keep `hid` even though it is not used directly.
-    _ = hid
-    first_logger = get_logger(first)
-    second_logger = get_logger(second)
-    h1 = first_logger.handler_ptrs_for_test()
-    h2 = second_logger.handler_ptrs_for_test()
-    assert h1[0] == h2[0], "handlers should be shared"
+    first_handlers = get_logger(first).handler_ptrs_for_test()
+    second_handlers = get_logger(second).handler_ptrs_for_test()
+    assert first_handlers, f"logger '{first}' must have handler '{hid}' attached"
+    assert second_handlers, f"logger '{second}' must have handler '{hid}' attached"
+    assert first_handlers[0] == second_handlers[0], (
+        f"loggers '{first}' and '{second}' must share the same '{hid}' handler "
+        f"instance, got {first_handlers[0]} and {second_handlers[0]}"
+    )

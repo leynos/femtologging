@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses as dc
 import os
-import subprocess  # noqa: S404 - FIXME: required to test fresh-process global logger semantics.
+import subprocess  # ruff: ignore[suspicious-subprocess-import] a fresh interpreter is the only way to exercise install-once global logger semantics
 import sys
 import time
 import typing as typ
@@ -27,9 +27,6 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from syrupy.assertion import SnapshotAssertion
-
-    Iterator = cabc.Iterator
-    Sequence = cabc.Sequence
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -58,7 +55,7 @@ scenarios(str(FEATURES / "rust_log_compat.feature"))
     parsers.parse('a stream handler attached to logger "{name}"'),
     target_fixture="handler_ctx",
 )
-def given_stream_handler(name: str) -> Iterator[tuple[FemtoStreamHandler, str]]:
+def given_stream_handler(name: str) -> cabc.Iterator[tuple[FemtoStreamHandler, str]]:
     """Attach a stderr stream handler to the named logger."""
     handler = StreamHandlerBuilder.stderr().build()
     logger = get_logger(name)
@@ -192,7 +189,7 @@ except RuntimeError as exc:
 print("setup_rust_logging unexpectedly succeeded")
 raise SystemExit(1)
 """.strip()
-    result = subprocess.run(  # noqa: S603 - FIXME: required to validate subprocess failure semantics.
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed interpreter path and inline script
         [sys.executable, "-c", script],
         check=False,
         capture_output=True,
@@ -207,14 +204,22 @@ raise SystemExit(1)
 
 @then("the rust logging bridge error matches snapshot")
 def then_bridge_error_snapshot(
-    rust_bridge_error: Sequence[str],
+    rust_bridge_error: cabc.Sequence[str],
     snapshot: SnapshotAssertion,
 ) -> None:
     """Assert bridge failure output equals the stored snapshot."""
-    assert rust_bridge_error == snapshot, "error output must match snapshot"
+    assert rust_bridge_error == snapshot, (
+        "the double-install failure message must match the recorded snapshot; "
+        f"got {rust_bridge_error!r}"
+    )
 
 
 @then("the captured stderr output matches snapshot")
-def then_stderr_snapshot(output: Sequence[str], snapshot: SnapshotAssertion) -> None:
+def then_stderr_snapshot(
+    output: cabc.Sequence[str], snapshot: SnapshotAssertion
+) -> None:
     """Assert captured stderr output equals the stored snapshot."""
-    assert output == snapshot, "stderr output must match snapshot"
+    assert output == snapshot, (
+        "records bridged from the Rust log crate must match the recorded "
+        f"snapshot; got {output!r}"
+    )

@@ -16,15 +16,18 @@ from pathlib import Path
 
 from . import _femtologging_rs as rust
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 _DEFAULT_SECTION = "DEFAULT"
 _PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
 # Note: Error messages are assigned to variables before raising to satisfy
 # TRY003/EM101 lint rules throughout this module.
 
 
-def fileConfig(  # noqa: N802
+def fileConfig(  # ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.fileConfig
     fname: str | bytes | PathLike[str] | PathLike[bytes],
-    defaults: typ.Mapping[str, object] | None = None,
+    defaults: cabc.Mapping[str, object] | None = None,
     *,
     disable_existing_loggers: bool = True,
     encoding: str | None = None,
@@ -52,10 +55,11 @@ def fileConfig(  # noqa: N802
 
 def _ini_to_dict_config(
     sections: list[tuple[str, list[tuple[str, str]]]],
-    defaults: typ.Mapping[str, object] | None,
+    defaults: cabc.Mapping[str, object] | None,
     *,
     disable_existing: bool,
 ) -> dict[str, typ.Any]:
+    """Translate parsed INI sections into a ``dictConfig``-style mapping."""
     section_map = _materialise_sections(sections)
     _reject_formatters(section_map)
     default_pool = _merge_defaults(section_map.pop(_DEFAULT_SECTION, {}), defaults)
@@ -79,6 +83,7 @@ def _ini_to_dict_config(
 def _materialise_sections(
     sections: list[tuple[str, list[tuple[str, str]]]],
 ) -> dict[str, dict[str, str]]:
+    """Flatten ordered (section, entries) pairs, letting later duplicates win."""
     result: dict[str, dict[str, str]] = {}
     for name, entries in sections:
         mapping = result.setdefault(name, {})
@@ -88,18 +93,19 @@ def _materialise_sections(
 
 
 def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
+    """Reject a non-empty ``[formatters]`` section; customisation is unsupported."""
     fmt_section = sections.pop("formatters", None)
     if not fmt_section:
         return
-    if _split_csv(fmt_section.get("keys")):
-        msg = "formatters are not supported"
-        raise ValueError(msg)
+    msg = "formatters are not supported"
+    raise ValueError(msg)
 
 
 def _merge_defaults(
-    ini_defaults: typ.Mapping[str, str],
-    user_defaults: typ.Mapping[str, object] | None,
+    ini_defaults: cabc.Mapping[str, str],
+    user_defaults: cabc.Mapping[str, object] | None,
 ) -> dict[str, str]:
+    """Merge defaults, with the INI ``[DEFAULT]`` section overriding *user_defaults*."""
     merged: dict[str, str] = {}
     if user_defaults:
         for key, value in user_defaults.items():
@@ -111,6 +117,7 @@ def _merge_defaults(
 def _parse_formatters(
     sections: dict[str, dict[str, str]],
 ) -> dict[str, dict[str, str]]:
+    """Parse ``formatter_*`` sections, rejecting options other than format/datefmt."""
     fmt_section = sections.get("formatters")
     if not fmt_section:
         return {}
@@ -141,6 +148,7 @@ def _check_unsupported_handler_options(section: dict[str, str]) -> None:
 
 
 def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
+    """Reject unknown handler options, a missing ``class``, or unsupported ones."""
     allowed = {"class", "args", "kwargs", "formatter", "level"}
     if unknown := set(section) - allowed:
         msg = f"handler {hid!r} has unsupported options: {sorted(unknown)!r}"
@@ -153,8 +161,9 @@ def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
 
 def _build_handler_config(
     section: dict[str, str],
-    defaults: typ.Mapping[str, str],
+    defaults: cabc.Mapping[str, str],
 ) -> dict[str, typ.Any]:
+    """Build a handler config, expanding ``%(name)s`` placeholders in args/kwargs."""
     cfg: dict[str, typ.Any] = {
         "class": section["class"],
         "args": _expand_placeholders(section.get("args") or "()", defaults),
@@ -168,8 +177,9 @@ def _build_handler_config(
 
 def _parse_handlers(
     sections: dict[str, dict[str, str]],
-    defaults: typ.Mapping[str, str],
+    defaults: cabc.Mapping[str, str],
 ) -> dict[str, dict[str, typ.Any]]:
+    """Parse ``[handlers]`` and its ``handler_*`` sections into handler configs."""
     handler_section = sections.get("handlers")
     handler_ids = _split_csv(handler_section.get("keys")) if handler_section else []
     handlers: dict[str, dict[str, typ.Any]] = {}
@@ -181,6 +191,7 @@ def _parse_handlers(
 
 
 def _validate_logger_options(lid: str, section: dict[str, str]) -> None:
+    """Reject any logger option outside the supported set."""
     allowed = {"level", "handlers", "qualname", "propagate"}
     if unknown := set(section) - allowed:
         msg = f"logger {lid!r} has unsupported options: {sorted(unknown)!r}"
@@ -188,6 +199,7 @@ def _validate_logger_options(lid: str, section: dict[str, str]) -> None:
 
 
 def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, typ.Any]:
+    """Build a logger config, omitting ``propagate`` for the root logger."""
     config: dict[str, typ.Any] = {}
     if section.get("level") is not None:
         config["level"] = section["level"]
@@ -201,6 +213,7 @@ def _build_logger_config(section: dict[str, str], qualname: str) -> dict[str, ty
 def _parse_loggers(
     sections: dict[str, dict[str, str]],
 ) -> tuple[dict[str, dict[str, typ.Any]], dict[str, typ.Any]]:
+    """Parse ``[loggers]`` and its sections, requiring exactly one ``root`` logger."""
     logger_section = sections.get("loggers")
     logger_ids = _split_csv(logger_section.get("keys")) if logger_section else []
     loggers: dict[str, dict[str, typ.Any]] = {}
@@ -222,6 +235,7 @@ def _parse_loggers(
 
 
 def _split_csv(raw: str | None) -> list[str]:
+    """Split a comma-separated value into stripped, non-empty tokens."""
     if not raw:
         return []
     return [value.strip() for value in raw.split(",") if value.strip()]
@@ -232,8 +246,13 @@ def _normalize_path(
 ) -> str:
     """Return a normalized string path for ``pathlib`` and the Rust parser.
 
-    Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance and always
-    returns a string suitable for downstream parsing.
+    Accepts ``str``, ``bytes``, or any ``os.PathLike`` instance.
+
+    Returns
+    -------
+    str
+        A string path suitable for downstream parsing.
+
     """
     path_like = fname if isinstance(fname, (str, bytes)) else fspath(fname)
     if isinstance(path_like, bytes):
@@ -245,17 +264,20 @@ def _require_section(
     sections: dict[str, dict[str, str]],
     name: str,
 ) -> dict[str, str]:
+    """Return the named section, rejecting a reference to a missing one."""
     if name not in sections:
         msg = f"section [{name}] is missing"
         raise ValueError(msg)
     return sections[name]
 
 
-def _expand_placeholders(value: str, defaults: typ.Mapping[str, str]) -> str:
-    if not defaults or "%(" not in value:
+def _expand_placeholders(value: str, defaults: cabc.Mapping[str, str]) -> str:
+    """Expand ``%(name)s`` placeholders, rejecting names absent from *defaults*."""
+    if "%(" not in value:
         return value
 
     def replacer(match: re.Match[str]) -> str:
+        """Resolve one ``%(name)s`` regex match against *defaults*."""
         key = match.group(1)
         if key not in defaults:
             msg = f"unknown placeholder {key!r} in {value!r}"
@@ -266,6 +288,7 @@ def _expand_placeholders(value: str, defaults: typ.Mapping[str, str]) -> str:
 
 
 def _parse_bool(raw: str | None) -> bool:
+    """Parse a stdlib-style boolean token, rejecting anything not recognised."""
     if raw is None:
         return False
     value = raw.strip().lower()

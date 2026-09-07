@@ -2,80 +2,115 @@
 
 from __future__ import annotations
 
+import typing as typ
 from os import PathLike, fsencode
 from pathlib import Path
 
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+
 from femtologging.file_config import _normalize_path
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
-class _StrPathLike(PathLike[str]):
-    """Simple ``PathLike`` returning ``str`` for testing."""
+# Every spelling ``_normalize_path`` accepts for a single filesystem path.
+type PathInput = str | bytes | PathLike[str] | PathLike[bytes]
+# Builds one such spelling from a source path, so the tests can sweep them.
+type PathRepresentation = cabc.Callable[[Path], PathInput]
 
-    def __init__(self, value: str) -> None:
+
+class _FixedPathLike[AnyStr: (str, bytes)](PathLike[AnyStr]):
+    """``PathLike`` returning a fixed ``str`` or ``bytes`` value."""
+
+    def __init__(self, value: AnyStr) -> None:
         self._value = value
 
-    def __fspath__(self) -> str:  # pragma: no cover - invoked implicitly
+    @typ.override
+    def __fspath__(self) -> AnyStr:
         return self._value
 
 
-class _BytesPathLike(PathLike[bytes]):
-    """Simple ``PathLike`` returning ``bytes`` for testing."""
+# Each representation must normalize to the same string as the source path.
+PATH_REPRESENTATIONS = [
+    pytest.param(str, id="str"),
+    pytest.param(lambda path: path, id="path"),
+    pytest.param(lambda path: fsencode(str(path)), id="bytes"),
+    pytest.param(lambda path: _FixedPathLike(str(path)), id="pathlike-str"),
+    pytest.param(
+        lambda path: _FixedPathLike(fsencode(str(path))),
+        id="pathlike-bytes",
+    ),
+]
 
-    def __init__(self, value: bytes) -> None:
-        self._value = value
-
-    def __fspath__(self) -> bytes:  # pragma: no cover - invoked implicitly
-        return self._value
-
-
-def test_normalize_path_accepts_str(tmp_path: Path) -> None:
-    """Str input should round-trip via _normalize_path."""
-    path = tmp_path / "config.ini"
-
-    assert _normalize_path(str(path)) == str(path)
-
-
-def test_normalize_path_accepts_path(tmp_path: Path) -> None:
-    """Path input should round-trip via _normalize_path."""
-    path = tmp_path / "config.ini"
-
-    assert _normalize_path(path) == str(path)
+# Path segments that survive ``Path`` normalization unchanged, so the
+# generated property can compare against the source path directly.
+_PATH_SEGMENTS = st.text(
+    alphabet=st.characters(codec="utf-8", exclude_characters="/\x00"),
+    min_size=1,
+    max_size=12,
+).filter(lambda segment: segment not in {".", ".."})
 
 
-def test_normalize_path_accepts_bytes(tmp_path: Path) -> None:
-    """Bytes input should decode using UTF-8."""
-    path = tmp_path / "config.ini"
-    as_bytes = fsencode(str(path))
+@pytest.mark.parametrize("build_input", PATH_REPRESENTATIONS)
+@pytest.mark.parametrize(
+    "filename",
+    [
+        pytest.param("config.ini", id="ascii"),
+        pytest.param("umlaut-ü.ini", id="non-ascii"),
+    ],
+)
+def test_normalize_path_accepts_every_representation(
+    tmp_path: Path,
+    build_input: PathRepresentation,
+    filename: str,
+) -> None:
+    """Absolute paths normalize identically however they are spelled."""
+    path = tmp_path / filename
 
-    assert _normalize_path(as_bytes) == str(path)
+    normalized = _normalize_path(build_input(path))
+
+    assert normalized == str(path), (
+        f"_normalize_path must map every spelling of {path} to its string form, "
+        f"but the {filename!r} case produced {normalized!r}"
+    )
 
 
-def test_normalize_path_accepts_pathlike_str(tmp_path: Path) -> None:
-    """PathLike[str] input should be accepted."""
-    path = tmp_path / "config.ini"
-    path_like = _StrPathLike(str(path))
-
-    assert _normalize_path(path_like) == str(path)
-
-
-def test_normalize_path_accepts_pathlike_bytes(tmp_path: Path) -> None:
-    """PathLike[bytes] input should be accepted."""
-    path = tmp_path / "config.ini"
-    path_like = _BytesPathLike(fsencode(str(path)))
-
-    assert _normalize_path(path_like) == str(path)
-
-
-def test_normalize_path_handles_relative_input() -> None:
-    """Relative paths should be returned unchanged as strings."""
+@pytest.mark.parametrize("build_input", PATH_REPRESENTATIONS)
+def test_normalize_path_keeps_relative_paths_relative(
+    build_input: PathRepresentation,
+) -> None:
+    """Relative paths must not be resolved against the working directory."""
     path = Path("relative/config.ini")
 
-    assert _normalize_path(path) == str(path)
+    normalized = _normalize_path(build_input(path))
+
+    assert normalized == str(path), (
+        "_normalize_path must leave relative paths relative, but it returned "
+        f"{normalized!r} for {path}"
+    )
 
 
-def test_normalize_path_decodes_utf8_bytes(tmp_path: Path) -> None:
-    """UTF-8 bytes should decode and preserve non-ASCII characters."""
-    path = tmp_path / "umlaut-\u00fc.ini"
-    as_bytes = str(path).encode("utf-8")
+@given(segments=st.lists(_PATH_SEGMENTS, min_size=1, max_size=4))
+def test_normalize_path_is_representation_agnostic(segments: list[str]) -> None:
+    """All accepted spellings of one path normalize to the same string.
 
-    assert _normalize_path(as_bytes) == str(path)
+    This is the invariant the parametrized cases sample: ``_normalize_path``
+    is a decoder, so the input representation must never affect its result.
+    """
+    path = Path(*segments)
+    expected = str(path)
+
+    normalized = {
+        "str": _normalize_path(expected),
+        "path": _normalize_path(path),
+        "bytes": _normalize_path(fsencode(expected)),
+        "pathlike-str": _normalize_path(_FixedPathLike(expected)),
+        "pathlike-bytes": _normalize_path(_FixedPathLike(fsencode(expected))),
+    }
+
+    assert set(normalized.values()) == {expected}, (
+        f"every representation of {expected!r} must normalize identically, "
+        f"but the spellings disagreed: {normalized}"
+    )

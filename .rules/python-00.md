@@ -1,4 +1,4 @@
-# Python 3.13 Code Style Guidelines (with Ruff, Pyright, and pytest)
+# Python 3.12 Code Style Guidelines (with Ruff, Pyright, and pytest)
 
 ## Naming Conventions
 
@@ -123,11 +123,11 @@ def test_login_success():
 
 
 def test_login_failure():
-    assert login_user("alice", "wrong-password") is False
+    assert not login_user("alice", "wrong-password")
 ```
 
 ______________________________________________________________________
 
-This style guide aims to foster clean, consistent, and maintainable Python 3.13
+This style guide aims to foster clean, consistent, and maintainable Python 3.12
 code with modern tooling. The priority is correctness, clarity, and developer
 empathy.

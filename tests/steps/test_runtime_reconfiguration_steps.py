@@ -66,14 +66,14 @@ def runtime_configured_logger(name: str) -> str:
 )
 def append_runtime_handler(hid: str, target: str, name: str) -> None:
     """Append a new stream handler to the named logger."""
-    target = target.lower()
-    if target == "stderr":
-        builder = StreamHandlerBuilder.stderr()
-    elif target == "stdout":
-        builder = StreamHandlerBuilder.stdout()
-    else:
-        msg = f"unsupported stream target: {target}"
-        raise ValueError(msg)
+    match target.lower():
+        case "stderr":
+            builder = StreamHandlerBuilder.stderr()
+        case "stdout":
+            builder = StreamHandlerBuilder.stdout()
+        case unsupported:
+            msg = f"unsupported stream target: {unsupported}"
+            raise ValueError(msg)
     (
         RuntimeConfigBuilder()
         .with_handler(hid, builder)
@@ -177,7 +177,9 @@ def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> No
         "propagate": logger.propagate,
         "handler_count": len(handler_ptrs),
     }
-    assert state == snapshot
+    assert state == snapshot, (
+        f"runtime state for {name} must match the recorded snapshot; got {state!r}"
+    )
 
 
 @when(parsers.parse('logger "{name}" runtime handlers and filters are cleared'))
@@ -196,7 +198,8 @@ def clear_runtime_handlers_and_filters(name: str) -> None:
 @then(parsers.parse('logger "{name}" has no runtime handlers'))
 def logger_has_no_runtime_handlers(name: str) -> None:
     """Assert that the logger has no runtime handlers after mutation."""
-    logger = get_logger(name)
-    assert len(logger.handler_ptrs_for_test()) == 0, (
-        f"expected {name} to have no runtime handlers"
+    remaining = get_logger(name).handler_ptrs_for_test()
+    assert not remaining, (
+        f"clearing runtime handlers must leave {name} with none, "
+        f"but {len(remaining)} remain"
     )

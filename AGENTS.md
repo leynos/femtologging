@@ -205,6 +205,8 @@ directory:
   conventions
 - [Python Context Managers](.rules/python-context-managers.md) — Best
   practices for context managers
+- [Python Exception Design](.rules/python-exception-design-raising-handling-and-logging.md)
+  — Exception hierarchies, raising, handling, and logging conventions
 - [Python Generators](.rules/python-generators.md) — Generator and iterator
   patterns
 - [Python Project Configuration](.rules/python-pyproject.md) — pyproject.toml
@@ -212,6 +214,33 @@ directory:
 - [Python Return Patterns](.rules/python-return.md) — Function return
   conventions
 - [Python Typing](.rules/python-typing.md) — Type annotation best practices
+
+### Python lint and dead-code gate
+
+`make lint` runs five Python stages in order: Ruff, `interrogate` for
+production docstring coverage, Pylint (through the PyPy-backed `pylint-pypy`
+shim), `df12-python-lints` with its companion `ambrleaks` snapshot scanner,
+and a strict Skylos production dead-code gate. See
+[Python linting](docs/developers-guide.md#python-linting) for the full
+pipeline and pin details, recorded in
+[ADR-005](docs/adr-005-four-tier-python-lint-architecture.md).
+
+Suppressions must carry reasons; prefer `# ruff: ignore[CODE] reason` over an
+unexplained `# noqa`-style suppression.
+
+Skylos exceptions are only for verified false positives, after investigating
+every finding and removing genuine dead code. Prefer a typed
+`[[tool.skylos.dead_code.entrypoints]]` rule in `pyproject.toml` for implicit
+runtime callers. Only when an entry-point rule cannot describe the boundary,
+record a named exception with
+`make skylos-allow SYMBOL=<symbol> REASON="<reason>"` — use `SYMBOL`, not
+`NAME` (WSL may inject `NAME` with the host name), and both values must be
+non-whitespace.
+
+Contract tests pin the lint interface — including Skylos's scan command,
+exclusions, gate strictness, and every recorded exception — through the
+pinned `makeutil` Makefile parser. Any interface change requires updating
+`tests/test_skylos_lint_contract.py`.
 
 ## Markdown Guidance
 

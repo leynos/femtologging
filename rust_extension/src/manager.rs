@@ -133,6 +133,56 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("logger {name:?} not found")))
 }
 
+/// Build logger objects without adding them to the global registry.
+///
+/// Configuration validation uses this to ensure every requested logger can be
+/// created before it changes any live logging state.
+#[cfg(feature = "python")]
+pub(crate) fn stage_loggers<'a>(
+    py: Python<'_>,
+    names: impl IntoIterator<Item = &'a str>,
+) -> PyResult<BTreeMap<String, Py<FemtoLogger>>> {
+    let mgr = MANAGER.read();
+    names
+        .into_iter()
+        .map(|name| {
+            if is_invalid_logger_name(name) {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "logger name cannot be empty, start or end with '.', or contain consecutive dots",
+                ));
+            }
+            let logger = match mgr.loggers.get(name) {
+                Some(logger) => logger.clone_ref(py),
+                None => Py::new(
+                    py,
+                    FemtoLogger::with_parent(name.to_string(), calculate_parent_name(name)),
+                )?,
+            };
+            Ok((name.to_string(), logger))
+        })
+        .collect()
+}
+
+/// Add fully staged loggers to the registry and return the committed objects.
+#[cfg(feature = "python")]
+pub(crate) fn commit_staged_loggers(
+    py: Python<'_>,
+    staged: BTreeMap<String, Py<FemtoLogger>>,
+) -> BTreeMap<String, Py<FemtoLogger>> {
+    let mut mgr = MANAGER.write();
+    staged
+        .into_iter()
+        .map(|(name, logger)| {
+            let committed = mgr
+                .loggers
+                .entry(name.clone())
+                .or_insert(logger)
+                .clone_ref(py);
+            (name, committed)
+        })
+        .collect()
+}
+
 #[cfg(feature = "python")]
 pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
@@ -157,10 +207,7 @@ pub(crate) fn replace_runtime_state(
 /// Iterates through all loggers and clears handlers and filters for any
 /// whose name is absent from `keep_names`.
 #[cfg(feature = "python")]
-pub fn disable_existing_loggers(
-    py: Python<'_>,
-    keep_names: &std::collections::HashSet<String>,
-) -> PyResult<()> {
+pub fn disable_existing_loggers(py: Python<'_>, keep_names: &std::collections::HashSet<String>) {
     let mgr = MANAGER.read();
     for (name, logger) in &mgr.loggers {
         if name != "root" && !keep_names.contains(name) {
@@ -169,7 +216,6 @@ pub fn disable_existing_loggers(
             logger_ref.clear_filters();
         }
     }
-    Ok(())
 }
 
 /// Flush handlers attached to every registered logger.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import importlib
 import importlib.util
 import typing as typ
@@ -10,8 +11,8 @@ import pytest
 
 from tests.steps.conftest import _SYSTEM_EXIT_PYTEST_LINES
 
-type _PropertyDecorator = typ.Callable[
-    [typ.Callable[..., object]], typ.Callable[..., object]
+type _PropertyDecorator = cabc.Callable[
+    [cabc.Callable[..., object]], cabc.Callable[..., object]
 ]
 
 
@@ -44,8 +45,7 @@ def _entrypoint_property_cases() -> _PropertyDecorator:
         return pytest.mark.skip(
             reason=(
                 "Hypothesis has no CPython 3.15 distribution yet; "
-                "remove this skip with "
-                "https://github.com/leynos/femtologging/issues/385"
+                "remove this skip with femtologging issue #385"
             )
         )
 

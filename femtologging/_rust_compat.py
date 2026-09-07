@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import typing as typ
 
-from typing_extensions import TypedDict
-
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 from . import _femtologging_rs as rust
 
 
-class _RustCompatPayload(TypedDict):
+class _RustCompatPayload(typ.TypedDict):
     """Typed schema for Rust extension compatibility layer."""
 
     _force_rotating_fresh_failure_for_test: cabc.Callable[[int, str | None], None]
@@ -27,17 +25,14 @@ class _RustCompatPayload(TypedDict):
 
 
 def _make_zero_arg_hook(fn: object, error_msg: str = "") -> cabc.Callable[[], None]:
-    """Return *fn* cast as a no-arg callable, or a fallback.
-
-    When *error_msg* is non-empty the fallback raises :class:`RuntimeError`;
-    otherwise it is a silent no-op.
-    """
+    """Return *fn* as a callable, or a fallback that raises/no-ops per *error_msg*."""
     if callable(fn):
         return typ.cast("cabc.Callable[[], None]", fn)
 
     if error_msg:
 
         def _fallback() -> None:
+            """Raise the captured missing-feature error."""
             raise RuntimeError(error_msg)
 
         return _fallback
@@ -52,6 +47,7 @@ def _make_rotating_fresh_failure_hooks(
     cabc.Callable[[int, str | None], None],
     cabc.Callable[[], None],
 ]:
+    """Pair *force*/*clear* if both are callable, else fall back to raising stubs."""
     if callable(force) and callable(clear):
         return (
             typ.cast("cabc.Callable[[int, str | None], None]", force),
@@ -59,6 +55,7 @@ def _make_rotating_fresh_failure_hooks(
         )
 
     def _force(count: int, reason: str | None = None) -> None:
+        """Raise because the 'test-util' feature was not compiled in."""
         msg = (
             "rotating fresh-failure hook requires the extension built with the "
             "'test-util' feature"
@@ -75,6 +72,7 @@ def _make_timed_rotation_hooks(
     cabc.Callable[[list[int]], None],
     cabc.Callable[[], None],
 ]:
+    """Pair *setter*/*clearer* if both are callable, else fall back to raising stubs."""
     if callable(setter) and callable(clearer):
         return (
             typ.cast("cabc.Callable[[list[int]], None]", setter),
@@ -82,6 +80,7 @@ def _make_timed_rotation_hooks(
         )
 
     def _set(epoch_millis: list[int]) -> None:
+        """Raise because the 'test-util' feature was not compiled in."""
         msg = (
             "timed rotation test clock requires the extension built with the "
             "'test-util' feature"
@@ -94,10 +93,12 @@ def _make_timed_rotation_hooks(
 def _make_runtime_attachment_state(
     fn: object,
 ) -> cabc.Callable[[str], tuple[list[str], list[str]] | None]:
+    """Return *fn* if callable, else a fallback that raises for the missing feature."""
     if callable(fn):
         return typ.cast("cabc.Callable[[str], tuple[list[str], list[str]] | None]", fn)
 
     def _fallback(name: str) -> tuple[list[str], list[str]] | None:
+        """Raise because the 'test-util' feature was not compiled in."""
         del name
         msg = (
             "runtime attachment state requires the extension built with the "
@@ -114,12 +115,7 @@ def _has_timed_rotation_test_util_support(setter: object, clearer: object) -> bo
 
 
 def _initialize_rust_compat() -> _RustCompatPayload:
-    """Initialize Rust extension compatibility layer.
-
-    Extracts all optional Rust extension functions and wraps them with
-    appropriate fallback behavior. Returns a typed payload of initialized
-    module-level variables.
-    """
+    """Extract optional Rust extension functions and wrap them with fallbacks."""
     force_rotating, clear_rotating = _make_rotating_fresh_failure_hooks(
         getattr(rust, "force_rotating_fresh_failure_for_test", None),
         getattr(rust, "clear_rotating_fresh_failure_for_test", None),

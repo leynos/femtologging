@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import typing as typ
 
 import pytest
@@ -24,6 +25,11 @@ if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 
+# Fragment of the error raised when a root mutation is requested through both
+# ``with_root_logger()`` and ``with_logger("root", ...)``.
+ROOT_OVERLAP_MESSAGE = 'with_root_logger() and with_logger("root", ...)'
+
+
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> cabc.Iterator[None]:
     """Reset the global manager around each test."""
@@ -32,7 +38,13 @@ def reset_logger_state() -> cabc.Iterator[None]:
     reset_manager()
 
 
-def _configure_core_logger() -> None:
+@pytest.fixture(name="core_config")
+def fixture_core_config(reset_logger_state: None) -> None:
+    """Install the baseline ``core`` logger used by the mutation tests.
+
+    Depends on ``reset_logger_state`` so the configuration is installed after
+    the manager has been reset, never before it.
+    """
     (
         ConfigBuilder()
         .with_handler("stderr", StreamHandlerBuilder.stderr())
@@ -61,12 +73,16 @@ def test_runtime_builder_dict_matches_snapshot(snapshot: SnapshotAssertion) -> N
             .append_handlers(["stdout"]),
         )
     )
-    assert runtime.as_dict() == snapshot
+    assert runtime.as_dict() == snapshot, (
+        "RuntimeConfigBuilder.as_dict() must keep the documented wire shape "
+        "that dictConfig-style callers depend on"
+    )
 
 
-def test_runtime_apply_appends_handler_and_replaces_filters() -> None:
+def test_runtime_apply_appends_handler_and_replaces_filters(
+    core_config: None,
+) -> None:
     """Happy-path runtime mutation should take effect immediately."""
-    _configure_core_logger()
     logger = get_logger("core")
     before = logger.handler_ptrs_for_test()
 
@@ -84,14 +100,24 @@ def test_runtime_apply_appends_handler_and_replaces_filters() -> None:
     )
 
     after = logger.handler_ptrs_for_test()
-    assert len(after) == 2
-    assert after[0] == before[0]
-    assert logger.log("ERROR", "now allowed") is not None
+    assert after[: len(before)] == before, (
+        "append_handlers must retain the pre-existing handlers in order, but "
+        f"{after} does not start with {before}"
+    )
+    assert len(after) == len(before) + 1, (
+        "append_handlers(['stdout']) must add exactly one handler, taking the "
+        f"core logger from {len(before)} to {len(after)} handlers"
+    )
+    assert logger.log("ERROR", "now allowed") is not None, (
+        "replace_filters(['name']) must swap out the DEBUG-only level filter "
+        "so ERROR records reach the handlers"
+    )
 
 
-def test_runtime_apply_unknown_filter_preserves_previous_state() -> None:
+def test_runtime_apply_unknown_filter_preserves_previous_state(
+    core_config: None,
+) -> None:
     """Failed runtime mutation must leave the prior runtime configuration intact."""
-    _configure_core_logger()
     logger = get_logger("core")
 
     with pytest.raises(KeyError, match="missing"):
@@ -112,10 +138,10 @@ def test_runtime_apply_unknown_filter_preserves_previous_state() -> None:
     )
 
 
-def test_runtime_apply_rejects_conflicting_collection_modes() -> None:
+def test_runtime_apply_rejects_conflicting_collection_modes(
+    core_config: None,
+) -> None:
     """One logger mutation may not request multiple handler modes."""
-    _configure_core_logger()
-
     with pytest.raises(ValueError, match="multiple handlers mutation modes"):
         (
             RuntimeConfigBuilder()
@@ -129,13 +155,11 @@ def test_runtime_apply_rejects_conflicting_collection_modes() -> None:
         )
 
 
-def test_runtime_apply_rejects_root_name_overlap() -> None:
+def test_runtime_apply_rejects_root_name_overlap(core_config: None) -> None:
     """Root mutations must not be provided through both root builder paths."""
-    _configure_core_logger()
-
     with pytest.raises(
         ValueError,
-        match='with_root_logger\\(\\) and with_logger\\("root", \\.\\.\\.\\)',
+        match=re.escape(ROOT_OVERLAP_MESSAGE),
     ):
         (
             RuntimeConfigBuilder()

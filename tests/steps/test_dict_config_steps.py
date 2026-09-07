@@ -50,6 +50,7 @@ def configure_with_handler_class(cls: str) -> ValueError:
 
 @then("dictConfig raises ValueError")
 def dict_config_raises_value_error(config_error: ValueError) -> None:
-    assert config_error, (
-        "config_error fixture did not capture ValueError from dictConfig"
+    assert str(config_error), (
+        "dictConfig must reject the unsupported handler class with an "
+        "explanatory message, but the raised ValueError carried no text"
     )
