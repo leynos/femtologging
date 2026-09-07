@@ -28,11 +28,13 @@ def test_log_adapter_preserves_python_call_contract() -> None:
 
     assert str(inspect.signature(FemtoLogger.log)) == (
         "(self, level, message, /, *, exc_info=None, stack_info=False)"
+    ), "log must retain its documented positional and keyword-only parameters"
+    assert log_call("INFO", "defaults") == "contract [INFO] defaults", (
+        "log must retain its default option values"
     )
-    assert log_call("INFO", "defaults") == "contract [INFO] defaults"
     assert log_call("INFO", "none options", exc_info=None, stack_info=None) == (
         "contract [INFO] none options"
-    )
+    ), "log must preserve explicit None options"
 
     assert_invalid_calls_raise_type_error([
         lambda: log_call("INFO"),
@@ -52,11 +54,13 @@ def test_convenience_adapter_preserves_python_call_contract() -> None:
 
     assert str(inspect.signature(FemtoLogger.info)) == (
         "(self, message, /, *, exc_info=None, stack_info=False)"
+    ), "info must retain its documented positional and keyword-only parameters"
+    assert info_call("defaults") == "adapter.contract [INFO] defaults", (
+        "info must retain its default option values"
     )
-    assert info_call("defaults") == "adapter.contract [INFO] defaults"
     assert info_call("none options", exc_info=None, stack_info=None) == (
         "adapter.contract [INFO] none options"
-    )
+    ), "info must preserve explicit None options"
 
     assert_invalid_calls_raise_type_error([
         info_call,

@@ -123,7 +123,7 @@ impl ConfigBuilder {
                     plan.name
                 ))
             })?;
-                Self::apply_logger_plan(py, logger, plan);
+            Self::apply_logger_plan(py, logger, plan);
             runtime_loggers.insert(
                 plan.name.clone(),
                 manager::LoggerAttachmentState::new(
