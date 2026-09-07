@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use log::warn;
-use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -18,11 +17,12 @@ use crate::log_record::FemtoLogRecord;
 use crate::macros::{AsPyDict, dict_into_py};
 use crate::python::fq_py_type;
 
-use super::python_callback_validation::{
-    extract_supported_value, is_reserved_enrichment_key, validate_enrichment_key,
-    validate_enrichment_total, validate_enrichment_value,
-};
+use super::python_callback_validation::is_reserved_enrichment_key;
 use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait, FilterContext, FilterDecision};
+
+#[path = "python_callback_enrichment.rs"]
+mod enrichment;
+use enrichment::extract_enrichment;
 
 type SerializedEnrichment = BTreeMap<String, String>;
 type TypedEnrichment = BTreeMap<String, Py<PyAny>>;
@@ -51,27 +51,34 @@ impl PythonCallbackFilter {
         Python::attach(|py| {
             let record_view = get_or_create_filter_record(py, record, context)?;
             let before = snapshot_record_attrs(&record_view)?;
-            let outcome = (|| -> Result<FilterDecision, PyErr> {
-                let result = self.invoke(py, &record_view)?;
-                let accepted = result.is_truthy()?;
-                let (enrichment, typed_enrichment) =
-                    extract_enrichment(py, &record_view, &before, &self.description)?;
-                restore_record_attrs(&record_view, &before)?;
-                if !accepted {
-                    return Ok(FilterDecision::accept(false));
-                }
-                apply_enrichment_to_record_view(&record_view, &enrichment, &typed_enrichment)?;
-                Ok(FilterDecision {
-                    accepted: true,
-                    enrichment,
-                })
-            })();
+            let outcome = self.evaluate_record_view(py, &record_view, &before);
 
             if outcome.is_err() {
                 context.python_record_view = None;
-                let _ = restore_record_attrs(&record_view, &before);
+                warn_if_record_restore_fails(&record_view, &before);
             }
             outcome
+        })
+    }
+
+    fn evaluate_record_view<'py>(
+        &self,
+        py: Python<'py>,
+        record_view: &Bound<'py, PyAny>,
+        before: &BTreeMap<String, Py<PyAny>>,
+    ) -> PyResult<FilterDecision> {
+        let result = self.invoke(py, record_view)?;
+        let accepted = result.is_truthy()?;
+        let (enrichment, typed_enrichment) =
+            extract_enrichment(py, record_view, before, &self.description)?;
+        restore_record_attrs(record_view, before)?;
+        if !accepted {
+            return Ok(FilterDecision::accept(false));
+        }
+        apply_enrichment_to_record_view(record_view, &enrichment, &typed_enrichment)?;
+        Ok(FilterDecision {
+            accepted: true,
+            enrichment,
         })
     }
 
@@ -80,14 +87,14 @@ impl PythonCallbackFilter {
         py: Python<'py>,
         record_view: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let callback = self
+        let callback_object = self
             .callback
             .lock()
             .map_err(|_| {
                 pyo3::exceptions::PyRuntimeError::new_err("python callback filter mutex poisoned")
             })?
             .clone_ref(py);
-        let callback = callback.bind(py);
+        let callback = callback_object.bind(py);
         if callback.is_callable() {
             callback.call1((record_view,))
         } else {
@@ -97,6 +104,15 @@ impl PythonCallbackFilter {
 
     pub(crate) fn description(&self) -> &str {
         &self.description
+    }
+}
+
+fn warn_if_record_restore_fails(
+    record_view: &Bound<'_, PyAny>,
+    before: &BTreeMap<String, Py<PyAny>>,
+) {
+    if let Err(restore_err) = restore_record_attrs(record_view, before) {
+        warn!("failed to restore Python filter record after an error: {restore_err}");
     }
 }
 
@@ -124,6 +140,11 @@ pub struct PythonCallbackFilterBuilder {
 
 impl PythonCallbackFilterBuilder {
     /// Create a new builder from a validated callback object.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Python error when `obj` is neither callable nor an object with
+    /// a callable `filter` method.
     pub fn from_callback_obj(obj: Bound<'_, PyAny>) -> PyResult<Self> {
         validate_filter_target(&obj)?;
         let description = fq_py_type(&obj);
@@ -210,8 +231,8 @@ fn create_filter_record<'py>(
     let metadata = record_dict
         .get_item("metadata")?
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("record dict missing metadata"))?;
-    let metadata = metadata.cast::<PyDict>()?;
-    let extra_binding = metadata.get_item("key_values")?.ok_or_else(|| {
+    let metadata_dict = metadata.cast::<PyDict>()?;
+    let extra_binding = metadata_dict.get_item("key_values")?.ok_or_else(|| {
         pyo3::exceptions::PyRuntimeError::new_err("record dict missing key_values")
     })?;
     let extra = extra_binding.cast::<PyDict>()?;
@@ -237,11 +258,11 @@ fn create_filter_record<'py>(
         log_record_payload.set_item("stack_info", stack_info)?;
     }
     for (key, value) in extra.iter() {
-        let key = key.extract::<String>()?;
-        if is_reserved_enrichment_key(&key) {
+        let key_string = key.extract::<String>()?;
+        if is_reserved_enrichment_key(&key_string) {
             continue;
         }
-        log_record_payload.set_item(key, value)?;
+        log_record_payload.set_item(key_string, value)?;
     }
 
     let logging = py.import("logging")?;
@@ -270,9 +291,9 @@ fn restore_record_attrs(
     let dict = binding.cast::<PyDict>()?;
     let keys = dict.keys();
     for key in keys.iter() {
-        let key = key.extract::<String>()?;
-        if !before.contains_key(&key) {
-            dict.del_item(&key)?;
+        let key_string = key.extract::<String>()?;
+        if !before.contains_key(&key_string) {
+            dict.del_item(&key_string)?;
         }
     }
     for (key, value) in before {
@@ -293,101 +314,18 @@ fn apply_enrichment_to_record_view(
         dict.set_item(key, value.bind(py))?;
     }
     if let Some(metadata) = dict.get_item("metadata")? {
-        let metadata = metadata.cast::<PyDict>()?;
-        if let Some(key_values) = metadata.get_item("key_values")? {
-            let key_values = key_values.cast::<PyDict>()?;
+        let metadata_dict = metadata.cast::<PyDict>()?;
+        if let Some(key_values) = metadata_dict.get_item("key_values")? {
+            let key_values_dict = key_values.cast::<PyDict>()?;
             for (key, value) in typed_enrichment {
-                key_values.set_item(key, value.bind(py))?;
+                key_values_dict.set_item(key, value.bind(py))?;
             }
         }
     }
-    debug_assert_eq!(enrichment.len(), typed_enrichment.len());
+    debug_assert_eq!(
+        enrichment.len(),
+        typed_enrichment.len(),
+        "validated enrichment maps must have matching lengths"
+    );
     Ok(())
-}
-
-fn try_validate_and_insert_enrichment(
-    py: Python<'_>,
-    description: &str,
-    key: String,
-    value: &Bound<'_, PyAny>,
-    previous: Option<&Py<PyAny>>,
-    enrichment: &mut SerializedEnrichment,
-    typed_enrichment: &mut TypedEnrichment,
-) -> PyResult<bool> {
-    let has_changed = match previous {
-        Some(previous) => !python_values_equal(py, previous, value)?,
-        None => true,
-    };
-    if !has_changed {
-        return Ok(false);
-    }
-
-    let candidate = match extract_supported_value(&key, value) {
-        Ok(candidate) => candidate,
-        Err(err) => {
-            warn!("Python filter callback '{description}' ignored enrichment: {err}");
-            return Ok(false);
-        }
-    };
-    if let Err(err) = validate_enrichment_key(&key) {
-        warn!("Python filter callback '{description}' ignored enrichment: {err}");
-        return Ok(false);
-    }
-    if let Err(err) = validate_enrichment_value(&key, &candidate) {
-        warn!("Python filter callback '{description}' ignored enrichment: {err}");
-        return Ok(false);
-    }
-
-    enrichment.insert(key.clone(), candidate);
-    typed_enrichment.insert(key.clone(), value.clone().unbind());
-    if let Err(err) = validate_enrichment_total(enrichment) {
-        enrichment.remove(&key);
-        typed_enrichment.remove(&key);
-        warn!("Python filter callback '{description}' ignored enrichment: {err}");
-        return Ok(false);
-    }
-
-    Ok(true)
-}
-
-fn extract_enrichment(
-    py: Python<'_>,
-    record_view: &Bound<'_, PyAny>,
-    before: &BTreeMap<String, Py<PyAny>>,
-    description: &str,
-) -> PyResult<(SerializedEnrichment, TypedEnrichment)> {
-    let binding = record_view.getattr("__dict__")?;
-    let after = binding.cast::<PyDict>()?;
-    let mut enrichment = SerializedEnrichment::new();
-    let mut typed_enrichment = TypedEnrichment::new();
-
-    for (key, value) in after.iter() {
-        let key = key.extract::<String>()?;
-        if is_reserved_enrichment_key(&key) {
-            continue;
-        }
-        let previous = before.get(&key);
-        let _ = try_validate_and_insert_enrichment(
-            py,
-            description,
-            key,
-            &value,
-            previous,
-            &mut enrichment,
-            &mut typed_enrichment,
-        )?;
-    }
-
-    Ok((enrichment, typed_enrichment))
-}
-
-fn python_values_equal(
-    py: Python<'_>,
-    previous: &Py<PyAny>,
-    current: &Bound<'_, PyAny>,
-) -> PyResult<bool> {
-    previous
-        .bind(py)
-        .rich_compare(current, CompareOp::Eq)?
-        .is_truthy()
 }

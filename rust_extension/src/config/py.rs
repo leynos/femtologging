@@ -21,9 +21,9 @@ impl From<ConfigError> for PyErr {
             ConfigError::UnknownIds(ids) => {
                 use pyo3::types::PyTuple;
                 Python::attach(|py| match PyTuple::new(py, ids) {
-                    Ok(tup) => PyErr::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
+                    Ok(tup) => Self::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
                     Err(cause) => {
-                        let key_err = PyErr::new::<PyKeyError, _>("unknown handler identifiers");
+                        let key_err = Self::new::<PyKeyError, _>("unknown handler identifiers");
                         key_err.set_cause(py, Some(cause));
                         key_err
                     }
@@ -39,21 +39,23 @@ impl<'a, 'py> FromPyObject<'a, 'py> for HandlerBuilder {
     type Error = PyErr;
 
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
-        if let Ok(b) = obj.extract::<StreamHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<FileHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<RotatingFileHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<TimedRotatingFileHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<SocketHandlerBuilder>() {
-            Ok(b.into())
-        } else {
-            let fq = fq_py_type(&obj.to_owned());
-            Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, or SocketHandlerBuilder (got Python type: {fq})"
-            )))
-        }
+        obj.extract::<StreamHandlerBuilder>()
+            .map(Self::from)
+            .or_else(|_| obj.extract::<FileHandlerBuilder>().map(Self::from))
+            .or_else(|_| {
+                obj.extract::<RotatingFileHandlerBuilder>()
+                    .map(Self::from)
+            })
+            .or_else(|_| {
+                obj.extract::<TimedRotatingFileHandlerBuilder>()
+                    .map(Self::from)
+            })
+            .or_else(|_| obj.extract::<SocketHandlerBuilder>().map(Self::from))
+            .map_err(|_| {
+                let fq = fq_py_type(&obj.to_owned());
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, or SocketHandlerBuilder (got Python type: {fq})"
+                ))
+            })
     }
 }

@@ -105,7 +105,7 @@ fn worker_loop_drains_all_queued_records_on_shutdown() {
         .expect("Failed to send shutdown signal");
 
     let worker = std::thread::spawn(move || {
-        FemtoLogger::worker_thread_loop(rx, shutdown_rx);
+        FemtoLogger::worker_thread_loop(&rx, &shutdown_rx);
     });
 
     worker.join().expect("Worker thread panicked");

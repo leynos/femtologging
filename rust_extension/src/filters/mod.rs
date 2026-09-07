@@ -23,7 +23,7 @@ pub struct FilterDecision {
 impl FilterDecision {
     /// Build a decision with no enrichment payload.
     #[must_use]
-    pub(crate) fn accept(accepted: bool) -> Self {
+    pub(crate) const fn accept(accepted: bool) -> Self {
         Self {
             accepted,
             enrichment: BTreeMap::new(),
@@ -76,10 +76,21 @@ pub enum FilterBuildError {
 
 /// Trait implemented by all filter builders.
 pub trait FilterBuilderTrait: Send + Sync {
+    /// Concrete filter type produced by this builder.
     type Filter: FemtoFilter + 'static;
 
+    /// Build the concrete filter without wrapping it in a trait object.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterBuildError`] when the builder configuration is invalid.
     fn build_inner(&self) -> Result<Self::Filter, FilterBuildError>;
 
+    /// Build the filter as a shared trait object.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterBuildError`] when the builder configuration is invalid.
     fn build(&self) -> Result<Arc<dyn FemtoFilter>, FilterBuildError> {
         Ok(Arc::new(self.build_inner()?))
     }
@@ -137,7 +148,14 @@ mod py_helpers {
     //!
     //! Provides filter-specific Python helpers (exceptions, conversions, dict
     //! adapters).
-    use super::*;
+    #![expect(
+        missing_docs,
+        reason = "create_exception! generates a public Python exception without a source item that can carry documentation"
+    )]
+    use super::{
+        FilterBuildError, FilterBuilder, LevelFilterBuilder, NameFilterBuilder,
+        PythonCallbackFilterBuilder,
+    };
     use crate::macros::AsPyDict;
     use crate::python::fq_py_type;
     use pyo3::prelude::{Py, PyAny, PyErr, PyResult, Python};
@@ -150,7 +168,7 @@ mod py_helpers {
     );
 
     impl From<FilterBuildError> for PyErr {
-        fn from(err: FilterBuildError) -> PyErr {
+        fn from(err: FilterBuildError) -> Self {
             FilterBuildErrorPy::new_err(err.to_string())
         }
     }
@@ -170,19 +188,19 @@ mod py_helpers {
 
         fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
             if let Ok(builder) = obj.extract::<LevelFilterBuilder>() {
-                return Ok(FilterBuilder::Level(builder));
+                return Ok(Self::Level(builder));
             }
 
             if let Ok(builder) = obj.extract::<NameFilterBuilder>() {
-                return Ok(FilterBuilder::Name(builder));
+                return Ok(Self::Name(builder));
             }
 
             if let Ok(builder) = obj.extract::<PythonCallbackFilterBuilder>() {
-                return Ok(FilterBuilder::PythonCallback(builder));
+                return Ok(Self::PythonCallback(builder));
             }
 
             if let Ok(builder) = PythonCallbackFilterBuilder::from_callback_obj(obj.to_owned()) {
-                return Ok(FilterBuilder::PythonCallback(builder));
+                return Ok(Self::PythonCallback(builder));
             }
 
             let fq = fq_py_type(&obj.to_owned());

@@ -23,7 +23,7 @@ use crate::manager;
 /// logger's handler queue.
 pub struct FemtoLogAdapter;
 
-fn map_log_level(level: log::Level) -> FemtoLevel {
+const fn map_log_level(level: log::Level) -> FemtoLevel {
     match level {
         log::Level::Trace => FemtoLevel::Trace,
         log::Level::Debug => FemtoLevel::Debug,
@@ -33,7 +33,7 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
     }
 }
 
-fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
+const fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
         FemtoLevel::Debug => log::Level::Debug,
@@ -76,7 +76,7 @@ fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
     }
 }
 
-fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
+fn resolve_logger(py: Python<'_>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
     match manager::get_logger(py, normalized.as_ref()) {
         Ok(logger) => Some((normalized.into_owned(), logger)),
@@ -90,7 +90,7 @@ fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crat
                 err
             );
             let logger = manager::get_logger(py, "root").ok()?;
-            Some(("root".to_string(), logger))
+            Some((String::from("root"), logger))
         }
     }
 }
@@ -120,8 +120,8 @@ impl log::Log for FemtoLogAdapter {
             }
 
             let metadata = RecordMetadata {
-                module_path: record.module_path().unwrap_or_default().to_string(),
-                filename: record.file().unwrap_or_default().to_string(),
+                module_path: String::from(record.module_path().unwrap_or_default()),
+                filename: String::from(record.file().unwrap_or_default()),
                 line_number: record.line().unwrap_or(0),
                 ..Default::default()
             };
@@ -189,10 +189,10 @@ pub(crate) fn setup_rust_logging() -> PyResult<()> {
 pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
     let mapped = map_femto_to_log_level(level);
 
-    if let Some(target) = target {
-        log::log!(target: target, mapped, "{}", message);
+    if let Some(target_name) = target {
+        log::log!(target: target_name, mapped, "{message}");
     } else {
-        log::log!(mapped, "{}", message);
+        log::log!(mapped, "{message}");
     }
 }
 

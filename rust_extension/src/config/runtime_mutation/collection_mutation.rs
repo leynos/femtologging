@@ -106,7 +106,7 @@ impl CollectionMutation {
     }
 
     /// Returns the serialized `"mode"` value for this mutation.
-    fn mode_name(&self) -> &'static str {
+    const fn mode_name(&self) -> &'static str {
         match self {
             Self::Unchanged => "unchanged",
             Self::Replace(_) => "replace",

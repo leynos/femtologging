@@ -63,6 +63,7 @@ impl fmt::Debug for SharedFormatter {
     }
 }
 
+/// Formatter that renders records using the default text layout.
 #[derive(Copy, Clone, Debug)]
 pub struct DefaultFormatter;
 

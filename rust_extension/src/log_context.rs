@@ -27,16 +27,40 @@ pub enum LogContextError {
     EmptyContextStack,
     /// Too many key-values were supplied for one merged context payload.
     #[error("context has {count} keys; maximum is {max}")]
-    TooManyKeys { count: usize, max: usize },
+    TooManyKeys {
+        /// Number of supplied keys.
+        count: usize,
+        /// Maximum permitted keys.
+        max: usize,
+    },
     /// A context key exceeded the byte-length limit.
     #[error("context key '{key}' is {len} bytes; maximum is {max}")]
-    KeyTooLong { key: String, len: usize, max: usize },
+    KeyTooLong {
+        /// Key that exceeded the limit.
+        key: String,
+        /// Observed byte length.
+        len: usize,
+        /// Maximum permitted byte length.
+        max: usize,
+    },
     /// A context value exceeded the byte-length limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
-    ValueTooLong { key: String, len: usize, max: usize },
+    ValueTooLong {
+        /// Key associated with the oversized value.
+        key: String,
+        /// Observed byte length.
+        len: usize,
+        /// Maximum permitted byte length.
+        max: usize,
+    },
     /// Total serialized context exceeded the aggregate byte limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
-    TotalBytesExceeded { total: usize, max: usize },
+    TotalBytesExceeded {
+        /// Observed aggregate byte count.
+        total: usize,
+        /// Maximum permitted aggregate byte count.
+        max: usize,
+    },
 }
 
 /// RAII guard that pops one context frame on drop.
@@ -52,6 +76,10 @@ impl Drop for LogContextGuard {
 }
 
 /// Push a map-based context frame onto the current thread's context stack.
+///
+/// # Errors
+///
+/// Returns [`LogContextError`] when the supplied or merged context exceeds a limit.
 pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), LogContextError> {
     validate_context_map(&context)?;
     let mut merged = active_context();
@@ -62,11 +90,19 @@ pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), Log
 }
 
 /// Pop the latest context frame from the current thread's context stack.
+///
+/// # Errors
+///
+/// Returns [`LogContextError::EmptyContextStack`] when no frame is active.
 pub fn pop_log_context() -> Result<(), LogContextError> {
     pop_internal()
 }
 
 /// Push a context frame and return a guard that pops it on drop.
+///
+/// # Errors
+///
+/// Returns [`LogContextError`] when the supplied or merged context exceeds a limit.
 pub fn push_log_context<I, K, V>(fields: I) -> Result<LogContextGuard, LogContextError>
 where
     I: IntoIterator<Item = (K, V)>,
@@ -82,6 +118,10 @@ where
 }
 
 /// Run a closure with a pushed context frame and pop it afterwards.
+///
+/// # Errors
+///
+/// Returns [`LogContextError`] when the supplied or merged context exceeds a limit.
 pub fn with_log_context<I, K, V, F, R>(fields: I, f: F) -> Result<R, LogContextError>
 where
     I: IntoIterator<Item = (K, V)>,

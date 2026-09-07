@@ -30,7 +30,7 @@ impl FemtoFilter for NameFilter {
     }
 }
 
-/// Builder for [`NameFilter`].
+/// Builder for a name filter.
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct NameFilterBuilder {
@@ -39,11 +39,13 @@ pub struct NameFilterBuilder {
 
 impl NameFilterBuilder {
     /// Create a new `NameFilterBuilder`.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the prefix that logger names must start with.
+    #[must_use]
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = Some(prefix.into());
         self
