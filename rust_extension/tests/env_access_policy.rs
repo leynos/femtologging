@@ -118,17 +118,35 @@ fn disallowed_method_entry(entry: &Value) -> Fallible<(String, String)> {
     Ok((path.to_owned(), reason.to_owned()))
 }
 
-/// Return the configured severity of a manifest lint, whether it is written as
-/// a bare string or as a table with a `level` key.
-fn lint_level(lints: &Value, lint: &str) -> Option<String> {
-    let entry = lints.get(lint)?;
+/// Return the severity configured for `clippy::disallowed_methods`, whether it
+/// is written as a bare string or as a table with a `level` key.
+fn configured_severity(lints: &Value) -> Option<&str> {
+    let entry = lints.get("disallowed_methods")?;
     entry
         .as_str()
         .or_else(|| entry.get("level").and_then(Value::as_str))
-        .map(str::to_owned)
 }
 
-/// The repository `Makefile`, read once and queried by name.
+/// The name of a Makefile recipe this contract depends on.
+#[derive(Clone, Copy)]
+struct Recipe(&'static str);
+
+/// The name of a Makefile variable this contract depends on.
+#[derive(Clone, Copy)]
+struct Variable(&'static str);
+
+/// The aggregate lint target CI invokes.
+const LINT: Recipe = Recipe("lint");
+/// The Rust lint target, which must run the policy lane first.
+const LINT_RUST: Recipe = Recipe("lint-rust");
+/// The policy lane itself.
+const LINT_ENV_POLICY: Recipe = Recipe("lint-env-policy");
+/// The feature lanes the policy is linted under.
+const FEATURE_LANES: Variable = Variable("ENV_POLICY_FEATURE_LANES");
+/// The Clippy flags every policy lane carries.
+const CLIPPY_FLAGS: Variable = Variable("ENV_POLICY_CLIPPY_FLAGS");
+
+/// The repository `Makefile`, embedded once and queried by name.
 struct Makefile(&'static str);
 
 impl Makefile {
@@ -138,12 +156,13 @@ impl Makefile {
     }
 
     /// Return the body of the named recipe, including its own line.
-    fn recipe(&self, target: &str) -> Fallible<String> {
-        let prefix = format!("{target}:");
+    fn recipe(&self, target: Recipe) -> Fallible<String> {
+        let Recipe(name) = target;
+        let prefix = format!("{name}:");
         let mut lines = self.0.lines().skip_while(|line| !line.starts_with(&prefix));
         let header = lines
             .next()
-            .ok_or_else(|| format!("Makefile has no `{target}` target"))?;
+            .ok_or_else(|| format!("Makefile has no `{name}` target"))?;
         let mut recipe = String::from(header);
         for line in lines {
             if !line.starts_with('\t') && !line.trim().is_empty() {
@@ -156,7 +175,8 @@ impl Makefile {
     }
 
     /// Return the value of a `?=` variable.
-    fn variable(&self, name: &str) -> Fallible<&'static str> {
+    fn variable(&self, variable: Variable) -> Fallible<&'static str> {
+        let Variable(name) = variable;
         let prefix = format!("{name} ?=");
         self.0
             .lines()
@@ -181,7 +201,11 @@ fn declared_features() -> Fallible<Vec<String>> {
 }
 
 /// Fail unless the policy lane list covers both arms of every feature gate.
-fn ensure_lanes_cover_every_feature(lanes: &[&str]) -> TestResult {
+fn ensure_lanes_cover_every_feature(makefile: &Makefile) -> TestResult {
+    let lanes: Vec<&str> = makefile
+        .variable(FEATURE_LANES)?
+        .split_whitespace()
+        .collect();
     let missing_lane = REQUIRED_FEATURE_LANES
         .into_iter()
         .find(|required| !lanes.contains(required));
@@ -205,8 +229,9 @@ fn ensure_lanes_cover_every_feature(lanes: &[&str]) -> TestResult {
 
 /// Fail unless the policy Clippy flags reach every target kind and deny the
 /// lint outright.
-fn ensure_flags_deny_the_policy(flags: &str) -> TestResult {
-    let (selection, rustc_flags) = flags
+fn ensure_flags_deny_the_policy(makefile: &Makefile) -> TestResult {
+    let (selection, rustc_flags) = makefile
+        .variable(CLIPPY_FLAGS)?
         .split_once(" -- ")
         .ok_or_else(|| "ENV_POLICY_CLIPPY_FLAGS must pass flags through to rustc".to_string())?;
     if !selection
@@ -230,13 +255,13 @@ fn ensure_flags_deny_the_policy(flags: &str) -> TestResult {
 
 /// Fail unless `make lint` still reaches the policy lane.
 fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestResult {
-    let policy_recipe = makefile.recipe("lint-env-policy")?;
+    let policy_recipe = makefile.recipe(LINT_ENV_POLICY)?;
     if !policy_recipe.contains("$(ENV_POLICY_CLIPPY_FLAGS)")
         || !policy_recipe.contains("$(ENV_POLICY_FEATURE_LANES)")
     {
         return Err("lint-env-policy must drive Clippy from both policy variables".into());
     }
-    let rust_recipe = makefile.recipe("lint-rust")?;
+    let rust_recipe = makefile.recipe(LINT_RUST)?;
     let prerequisites = rust_recipe
         .lines()
         .next()
@@ -249,7 +274,7 @@ fn ensure_lint_reaches_the_policy_lane(makefile: &Makefile) -> TestResult {
     {
         return Err("lint-rust must run the lint-env-policy lane".into());
     }
-    if !makefile.recipe("lint")?.contains("$(MAKE) lint-rust") {
+    if !makefile.recipe(LINT)?.contains("$(MAKE) lint-rust") {
         return Err("lint must delegate the Rust lanes to lint-rust".into());
     }
     Ok(())
@@ -299,7 +324,7 @@ fn manifest_denies_disallowed_methods() -> TestResult {
         .get("lints")
         .and_then(|lints| lints.get("clippy"))
         .ok_or_else(|| format!("{} must declare [lints.clippy]", CRATE_MANIFEST.name))?;
-    match lint_level(lints, "disallowed_methods").as_deref() {
+    match configured_severity(lints) {
         Some("deny" | "forbid") => Ok(()),
         other => Err(format!(
             "disallowed_methods must be denied in {}, found {other:?}",
@@ -329,12 +354,8 @@ fn manifest_denies_disallowed_methods() -> TestResult {
 #[test]
 fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
     let makefile = Makefile::embedded();
-    let lanes: Vec<&str> = makefile
-        .variable("ENV_POLICY_FEATURE_LANES")?
-        .split_whitespace()
-        .collect();
-    ensure_lanes_cover_every_feature(&lanes)?;
-    ensure_flags_deny_the_policy(makefile.variable("ENV_POLICY_CLIPPY_FLAGS")?)?;
+    ensure_lanes_cover_every_feature(&makefile)?;
+    ensure_flags_deny_the_policy(&makefile)?;
     ensure_lint_reaches_the_policy_lane(&makefile)
 }
 
