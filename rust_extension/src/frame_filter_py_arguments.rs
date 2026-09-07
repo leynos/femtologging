@@ -110,16 +110,13 @@ impl<'py> FilterFramesRequest<'py> {
         let payload = payload_value.cast::<PyDict>()?.clone();
         let exclude_filenames = arguments
             .value(1)?
-            .map(|value| value.extract())
-            .transpose()?;
+            .map_or(Ok(None), |value| value.extract())?;
         let exclude_functions = arguments
             .value(2)?
-            .map(|value| value.extract())
-            .transpose()?;
+            .map_or(Ok(None), |value| value.extract())?;
         let max_depth = arguments
             .value(3)?
-            .map(|value| value.extract())
-            .transpose()?;
+            .map_or(Ok(None), |value| value.extract())?;
         let exclude_logging = arguments
             .value(4)?
             .map_or(Ok(false), |value| value.extract())?;
