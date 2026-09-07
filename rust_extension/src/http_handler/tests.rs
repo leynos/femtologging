@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rstest::{fixture, rstest};
 
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::handlers::{HTTPHandlerBuilder, HandlerBuilderTrait};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
@@ -128,9 +128,9 @@ fn build_http_handler(addr: SocketAddr) -> FemtoHTTPHandler {
     FemtoHTTPHandler::with_config(config)
 }
 
-fn send_info_record(handler: &FemtoHTTPHandler, message: &str) {
+fn send_info_record(handler: &FemtoHTTPHandler, message: &str) -> Result<(), HandlerError> {
     let record = FemtoLogRecord::new("test", FemtoLevel::Info, message);
-    let _ = handler.handle(record);
+    handler.handle(record)
 }
 
 #[rstest]
@@ -138,7 +138,7 @@ fn sends_records_over_http(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let handler = build_http_handler(addr);
-    send_info_record(&handler, "test message");
+    send_info_record(&handler, "test message").expect("record should be queued");
 
     let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
     assert_eq!(captured.method, "POST");
@@ -162,7 +162,7 @@ fn sends_json_format(tcp_listener: io::Result<TcpListener>) {
         ..Default::default()
     };
     let handler = FemtoHTTPHandler::with_config(config);
-    send_info_record(&handler, "json test");
+    send_info_record(&handler, "json test").expect("record should be queued");
 
     let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
     let content_type = captured
@@ -198,7 +198,7 @@ where
     let url = format!("http://{}/log", addr);
     let builder = HTTPHandlerBuilder::new().with_url(url);
     let handler = configure_auth(builder).build_inner()?;
-    send_info_record(&handler, message);
+    send_info_record(&handler, message)?;
 
     let captured = rx.recv_timeout(Duration::from_secs(5))?;
     let auth = captured
@@ -246,11 +246,24 @@ fn sends_bearer_token(tcp_listener: io::Result<TcpListener>) {
 #[rstest]
 fn handler_closes_gracefully(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, _rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
+    let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
     let mut handler = build_http_handler(addr);
-    send_info_record(&handler, "close test");
+    send_info_record(&handler, "close test").expect("record should be queued");
     handler.close();
-    // Should not panic or hang
+    assert!(
+        !handler.flush(),
+        "closed handler should reject further flushes"
+    );
+    let error = send_info_record(&handler, "after close")
+        .expect_err("closed handler should reject new records");
+    assert_eq!(error, HandlerError::Closed);
+    let captured = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("close should let the worker process the queued request");
+    assert!(
+        captured.body.contains("msg=close+test"),
+        "close should let the worker deliver the queued record"
+    );
 }
 
 /// Spawn a mock HTTP server that returns different status codes on successive requests.
@@ -321,7 +334,7 @@ where
         ..Default::default()
     };
     let handler = FemtoHTTPHandler::with_config(config);
-    send_info_record(&handler, message);
+    send_info_record(&handler, message).map_err(io::Error::other)?;
 
     verify(rx);
 

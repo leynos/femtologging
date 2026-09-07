@@ -74,17 +74,32 @@ impl RotationStrategy<BufWriter<File>> for ObservedStrategy {
     }
 }
 
-fn wait_for_rotation_start(flag: &AtomicBool, timeout: Duration) {
+fn wait_for_rotation_start(flag: &AtomicBool, timeout: Duration) -> Result<(), &'static str> {
     let started_at = Instant::now();
     while !flag.load(Ordering::SeqCst) {
         if started_at.elapsed() > timeout {
-            panic!("rotation did not begin within the expected time window");
+            return Err("rotation did not begin within the expected time window");
         }
         thread::sleep(Duration::from_millis(1));
     }
+    Ok(())
 }
 
-fn attempt_non_blocking_writes(handler: &FemtoRotatingFileHandler, count: usize) -> Duration {
+#[test]
+fn wait_for_rotation_start_returns_timeout_error() {
+    let started = AtomicBool::new(false);
+    let result = wait_for_rotation_start(&started, Duration::ZERO);
+
+    assert!(
+        result.is_err(),
+        "waiting for a rotation that never starts should return an error"
+    );
+}
+
+fn attempt_non_blocking_writes(
+    handler: &FemtoRotatingFileHandler,
+    count: usize,
+) -> Result<Duration, HandlerError> {
     let started_at = Instant::now();
     for idx in 0..count {
         match handler.handle(FemtoLogRecord::new(
@@ -96,10 +111,10 @@ fn attempt_non_blocking_writes(handler: &FemtoRotatingFileHandler, count: usize)
             Err(HandlerError::QueueFull) => {
                 // Dropped records are acceptable here because the test exercises non-blocking queueing.
             }
-            Err(other) => panic!("unexpected handler error during rotation: {other:?}"),
+            Err(other) => return Err(other),
         }
     }
-    started_at.elapsed()
+    Ok(started_at.elapsed())
 }
 
 #[test]
@@ -183,9 +198,11 @@ fn rotation_keeps_producers_non_blocking() {
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "trigger"))
         .expect("trigger record should be written to trigger rotation");
 
-    wait_for_rotation_start(&started, Duration::from_secs(2));
+    wait_for_rotation_start(&started, Duration::from_secs(2))
+        .expect("rotation should begin within the expected time window");
 
-    let elapsed = attempt_non_blocking_writes(&handler, 8);
+    let elapsed = attempt_non_blocking_writes(&handler, 8)
+        .expect("writes should only fail with queue-full during rotation");
     assert!(
         elapsed < Duration::from_millis(200),
         "additional writes must not block while rotation is in progress"
