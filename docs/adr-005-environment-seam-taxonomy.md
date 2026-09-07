@@ -136,8 +136,9 @@ access is governed by the Python architecture and its own lint stack.
   policy lane stops covering every target and feature or drops out of
   `make lint`. It also compiles `tests/fixtures/env_policy_probe.rs` through
   `clippy-driver` under this crate's `clippy.toml` and checks that all six
-  methods are rejected and that the composition-root `expect` suppresses
-  exactly one call. Each of its assertions records the mutation that proved it.
+  methods are rejected, that each diagnostic carries the remedy this ADR
+  promises, and that the composition-root `expect` suppresses exactly one call.
+  Each of its assertions records the mutation that proved it.
 - Adding a feature to the crate manifest without adding a lane fails that test,
   so the lane list cannot drift behind the feature list.
 - Adding a new environment-dependent boundary means choosing among three named
@@ -145,10 +146,12 @@ access is governed by the Python architecture and its own lint stack.
   call-site count warrants.
 - The suite keeps only the serialization it structurally needs, leaving the
   route to parallel test execution open.
-- The contract test reads three checked-in configuration files, one of which
-  sits above the crate directory, so its crate joins the
-  `no_std_fs_operations` exclusion list in `rust_extension/dylint.toml` with a
-  rationale. Whitaker ignores in-source suppression for that lint.
+- The contract test embeds the three checked-in configuration files with
+  `include_str!`, which resolves relative to the test source at compile time
+  and so reaches the `Makefile` above `CARGO_MANIFEST_DIR` without any runtime
+  filesystem access. Whitaker's `no_std_fs_operations` therefore never fires
+  and the crate needs no `dylint.toml` exclusion, while moving or deleting one
+  of the three files becomes a compile error rather than a runtime failure.
 
 ## Alternatives considered
 

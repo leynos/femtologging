@@ -9,14 +9,22 @@
 //!
 //! A fourth test closes the loop by compiling a fixture: it runs
 //! `clippy-driver` against `tests/fixtures/env_policy_probe.rs` with this
-//! crate's `clippy.toml`, and checks that all six methods are rejected and
-//! that the sanctioned item-scoped `expect` is honoured.
+//! crate's `clippy.toml`, and checks that all six methods are rejected with
+//! their reason strings and that the sanctioned item-scoped `expect` is
+//! honoured.
+//!
+//! The three configuration files are embedded with `include_str!`, which
+//! resolves relative to this source file at compile time. That reaches the
+//! `Makefile` above `CARGO_MANIFEST_DIR` without any runtime filesystem
+//! access, so Whitaker's `no_std_fs_operations` never fires and this crate
+//! needs no `dylint.toml` exclusion. Moving or deleting one of the three
+//! files becomes a compile error rather than a runtime failure.
 //!
 //! See `docs/adr-005-environment-seam-taxonomy.md` for the policy itself.
 
 use std::error::Error;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use toml::Value;
@@ -46,49 +54,52 @@ const REQUIRED_FEATURE_LANES: [&str; 2] = ["none", "all"];
 /// Manifest feature keys that name no lane of their own.
 const LANE_EXEMPT_FEATURES: [&str; 1] = ["default"];
 
-/// Return the crate directory, which holds `clippy.toml` and `Cargo.toml`.
+/// A checked-in configuration file, embedded at compile time.
+#[derive(Clone, Copy)]
+struct Embedded {
+    /// Repository-relative path, used only in failure messages.
+    name: &'static str,
+    /// The file's contents as of the last build.
+    text: &'static str,
+}
+
+impl Embedded {
+    /// Parse the file as a TOML document, naming it in any failure.
+    fn parse(self) -> Fallible<Value> {
+        // `str::parse` reads a single TOML *value*, not a document; use the
+        // deserializer so the whole file is parsed.
+        toml::from_str::<Value>(self.text)
+            .map_err(|error| format!("parse {}: {error}", self.name).into())
+    }
+}
+
+/// The Clippy policy this crate is linted under.
+const CLIPPY_POLICY: Embedded = Embedded {
+    name: "rust_extension/clippy.toml",
+    text: include_str!("../clippy.toml"),
+};
+
+/// The crate manifest, which carries the lint severity and the feature list.
+const CRATE_MANIFEST: Embedded = Embedded {
+    name: "rust_extension/Cargo.toml",
+    text: include_str!("../Cargo.toml"),
+};
+
+/// Return the crate directory, which holds `clippy.toml` and the fixture.
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Return the repository root, which holds the `Makefile`.
-fn repository_root() -> Fallible<PathBuf> {
-    crate_dir()
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "crate directory has no parent".into())
-}
-
-/// Read a file, naming it in any failure.
-fn read(path: &Path) -> Fallible<String> {
-    std::fs::read_to_string(path)
-        .map_err(|error| format!("read {}: {error}", path.display()).into())
-}
-
-/// Parse a TOML document, naming the file in any failure.
-fn parse_toml(path: &Path) -> Fallible<Value> {
-    // `str::parse` reads a single TOML *value*, not a document; use the
-    // deserializer so the whole file is parsed.
-    toml::from_str::<Value>(&read(path)?)
-        .map_err(|error| format!("parse {}: {error}", path.display()).into())
-}
-
-/// Read the crate manifest.
-fn manifest() -> Fallible<Value> {
-    parse_toml(&crate_dir().join("Cargo.toml"))
-}
-
 /// Return the `disallowed-methods` entries declared in the Clippy policy.
 fn disallowed_methods() -> Fallible<Vec<(String, String)>> {
-    let policy_path = crate_dir().join("clippy.toml");
-    let policy = parse_toml(&policy_path)?;
+    let policy = CLIPPY_POLICY.parse()?;
     let entries = policy
         .get("disallowed-methods")
         .and_then(Value::as_array)
         .ok_or_else(|| {
             format!(
                 "{} must declare a disallowed-methods array",
-                policy_path.display()
+                CLIPPY_POLICY.name
             )
         })?;
     entries.iter().map(disallowed_method_entry).collect()
@@ -118,12 +129,12 @@ fn lint_level(lints: &Value, lint: &str) -> Option<String> {
 }
 
 /// The repository `Makefile`, read once and queried by name.
-struct Makefile(String);
+struct Makefile(&'static str);
 
 impl Makefile {
-    /// Read the Makefile from the repository root.
-    fn read() -> Fallible<Self> {
-        Ok(Self(read(&repository_root()?.join("Makefile"))?))
+    /// Return the repository Makefile, embedded at compile time.
+    fn embedded() -> Self {
+        Self(include_str!("../../Makefile"))
     }
 
     /// Return the body of the named recipe, including its own line.
@@ -145,7 +156,7 @@ impl Makefile {
     }
 
     /// Return the value of a `?=` variable.
-    fn variable(&self, name: &str) -> Fallible<&str> {
+    fn variable(&self, name: &str) -> Fallible<&'static str> {
         let prefix = format!("{name} ?=");
         self.0
             .lines()
@@ -157,7 +168,7 @@ impl Makefile {
 
 /// Return the optional-feature names declared by the crate manifest.
 fn declared_features() -> Fallible<Vec<String>> {
-    let manifest = manifest()?;
+    let manifest = CRATE_MANIFEST.parse()?;
     let features = manifest
         .get("features")
         .and_then(Value::as_table)
@@ -283,17 +294,16 @@ fn clippy_policy_disallows_every_ambient_environment_method() -> TestResult {
 /// "disallowed_methods must be denied ... found Some(\"warn\")".
 #[test]
 fn manifest_denies_disallowed_methods() -> TestResult {
-    let manifest_path = crate_dir().join("Cargo.toml");
-    let manifest = manifest()?;
+    let manifest = CRATE_MANIFEST.parse()?;
     let lints = manifest
         .get("lints")
         .and_then(|lints| lints.get("clippy"))
-        .ok_or_else(|| format!("{} must declare [lints.clippy]", manifest_path.display()))?;
+        .ok_or_else(|| format!("{} must declare [lints.clippy]", CRATE_MANIFEST.name))?;
     match lint_level(lints, "disallowed_methods").as_deref() {
         Some("deny" | "forbid") => Ok(()),
         other => Err(format!(
             "disallowed_methods must be denied in {}, found {other:?}",
-            manifest_path.display()
+            CRATE_MANIFEST.name
         )
         .into()),
     }
@@ -318,7 +328,7 @@ fn manifest_denies_disallowed_methods() -> TestResult {
 /// lane".
 #[test]
 fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
-    let makefile = Makefile::read()?;
+    let makefile = Makefile::embedded();
     let lanes: Vec<&str> = makefile
         .variable("ENV_POLICY_FEATURE_LANES")?
         .split_whitespace()
@@ -328,9 +338,16 @@ fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
     ensure_lint_reaches_the_policy_lane(&makefile)
 }
 
-/// Return the `clippy::disallowed_methods` diagnostics Clippy emits for the
-/// fixture, as `(method, line)` pairs.
-fn probe_diagnostics() -> Fallible<Vec<(String, u64)>> {
+/// One `clippy::disallowed_methods` diagnostic: the method Clippy named and
+/// the note it printed underneath.
+#[derive(Debug)]
+struct Violation {
+    method: String,
+    notes: Vec<String>,
+}
+
+/// Return the policy violations Clippy reports for the fixture.
+fn probe_violations() -> Fallible<Vec<Violation>> {
     let fixture = crate_dir().join("tests/fixtures/env_policy_probe.rs");
     let out_dir = tempfile::tempdir()?;
     let output = Command::new("clippy-driver")
@@ -357,41 +374,58 @@ fn probe_diagnostics() -> Fallible<Vec<(String, u64)>> {
     Ok(found)
 }
 
-/// Return the method and line of one diagnostic, if it is a policy violation.
-fn policy_violation(diagnostic: &serde_json::Value) -> Option<(String, u64)> {
+/// Return one diagnostic as a violation, if it is one.
+fn policy_violation(diagnostic: &serde_json::Value) -> Option<Violation> {
     let code = diagnostic.get("code")?.get("code")?.as_str()?;
     if code != DISALLOWED_METHODS_LINT {
         return None;
     }
-    let line = diagnostic
-        .get("spans")?
-        .as_array()?
-        .first()?
-        .get("line_start")?
-        .as_u64()?;
     let message = diagnostic.get("message")?.as_str()?;
     let method = message.split('`').nth(1)?.to_owned();
-    Some((method, line))
+    let notes = diagnostic
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .map(|children| {
+            children
+                .iter()
+                .filter_map(|child| child.get("message")?.as_str())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Violation { method, notes })
 }
 
 /// Scenario: Clippy compiles code that calls each banned method, and code that
 /// calls one from a sanctioned composition root.
 ///
-/// Invariant: every banned method is rejected under this crate's `clippy.toml`,
-/// and the item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`
-/// escape hatch suppresses exactly one call and nothing more. The count is what
-/// proves the escape hatch is honoured rather than merely tolerated.
+/// Invariant: every banned method is rejected under this crate's `clippy.toml`
+/// and the diagnostic carries the remedy the policy promises, so a contributor
+/// who trips the lint is told what to do instead. The item-scoped
+/// `#[expect(clippy::disallowed_methods, reason = "...")]` escape hatch
+/// suppresses exactly one call and nothing more; the count is what proves the
+/// hatch is honoured rather than merely tolerated.
 ///
-/// Mutation proof (2026-09-06): removing the `#[expect]` attribute from the
-/// fixture's `composition_root` raised the violation count to seven and failed
-/// this test with "the composition-root expect must suppress exactly one call".
+/// Mutation proof (2026-09-07): removing the `#[expect]` attribute from the
+/// fixture's `composition_root` raised the count to seven and failed with "the
+/// composition-root expect must suppress exactly one call"; deleting the
+/// `std::env::vars_os` entry from `clippy.toml` dropped the count to five and
+/// failed with "Clippy must reject std::env::vars_os"; and changing that
+/// entry's reason string failed with "Clippy must print the remedy".
 #[test]
 fn clippy_rejects_every_banned_method_in_a_compiled_fixture() -> TestResult {
-    let violations = probe_diagnostics()?;
-    for (banned, _) in REQUIRED_DISALLOWED_METHODS {
-        if !violations.iter().any(|(method, _)| method == banned) {
+    let violations = probe_violations()?;
+    for (banned, remedy) in REQUIRED_DISALLOWED_METHODS {
+        let Some(violation) = violations.iter().find(|found| found.method == banned) else {
             return Err(format!(
                 "Clippy must reject {banned} in the fixture, found {violations:?}"
+            )
+            .into());
+        };
+        if !violation.notes.iter().any(|note| note == remedy) {
+            return Err(format!(
+                "Clippy must print the remedy {remedy:?} for {banned}, found {:?}",
+                violation.notes
             )
             .into());
         }
