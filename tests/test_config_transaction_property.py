@@ -37,6 +37,8 @@ def _logger_state(name: str) -> LoggerState:
     return tuple(logger.handler_ptrs_for_test()), _attachment_state(name)
 
 
+# This stateful property resets global workers between examples. It checks
+# atomicity, not elapsed time, so shared-host contention must not affect it.
 @settings(max_examples=25, deadline=None)
 @given(
     logger_order=st.lists(
