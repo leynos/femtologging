@@ -162,68 +162,77 @@ pub(crate) fn install_global_logger() -> bool {
     })
 }
 
-/// Python-facing entrypoint for enabling the `log` crate bridge.
-///
-/// Installs the adapter as the global Rust logger. The operation is
-/// idempotent: repeated calls after a successful install are no-ops.
 #[cfg(feature = "python")]
-#[pyfunction]
-pub(crate) fn setup_rust_logging() -> PyResult<()> {
-    if install_global_logger() {
-        Ok(())
-    } else {
-        Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "global Rust logger is already set; femtologging cannot install the log bridge",
-        ))
+mod python_bindings {
+    //! Python function wrappers for the `log` compatibility bridge.
+
+    use super::*;
+
+    /// Python-facing entrypoint for enabling the `log` crate bridge.
+    ///
+    /// Installs the adapter as the global Rust logger. The operation is
+    /// idempotent: repeated calls after a successful install are no-ops.
+    #[pyfunction]
+    pub(crate) fn setup_rust_logging() -> PyResult<()> {
+        if install_global_logger() {
+            Ok(())
+        } else {
+            Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "global Rust logger is already set; femtologging cannot install the log bridge",
+            ))
+        }
     }
-}
 
-/// Emit a Rust log record via the `log` crate.
-///
-/// This is an internal helper used by the Python behavioural tests to validate
-/// the bridge. `CRITICAL` maps to `ERROR` because the `log` crate has no
-/// critical level.
-#[cfg(feature = "python")]
-#[pyfunction]
-#[pyo3(name = "_emit_rust_log")]
-pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
-    let mapped = map_femto_to_log_level(level);
+    /// Emit a Rust log record via the `log` crate.
+    ///
+    /// This is an internal helper used by the Python behavioural tests to validate
+    /// the bridge. `CRITICAL` maps to `ERROR` because the `log` crate has no
+    /// critical level.
+    #[pyfunction]
+    #[pyo3(name = "_emit_rust_log")]
+    pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
+        let mapped = map_femto_to_log_level(level);
 
-    if let Some(target_name) = target {
-        log::log!(target: target_name, mapped, "{message}");
-    } else {
-        log::log!(mapped, "{message}");
+        if let Some(target_name) = target {
+            log::log!(target: target_name, mapped, "{message}");
+        } else {
+            log::log!(mapped, "{message}");
+        }
     }
-}
 
-/// Install a dummy global Rust logger for behavioural tests.
-///
-/// This helper is intended for subprocess-based test scenarios that need to
-/// verify `setup_rust_logging()` fails when a different global logger has
-/// already been configured.
-#[cfg(feature = "python")]
-#[pyfunction]
-#[pyo3(name = "_install_test_global_rust_logger")]
-pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
-    struct TestLogger;
+    /// Install a dummy global Rust logger for behavioural tests.
+    ///
+    /// This helper is intended for subprocess-based test scenarios that need to
+    /// verify `setup_rust_logging()` fails when a different global logger has
+    /// already been configured.
+    #[pyfunction]
+    #[pyo3(name = "_install_test_global_rust_logger")]
+    pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
+        struct TestLogger;
 
-    impl log::Log for TestLogger {
-        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
-            true
+        impl log::Log for TestLogger {
+            fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+                true
+            }
+
+            fn log(&self, _record: &Record<'_>) {}
+
+            fn flush(&self) {}
         }
 
-        fn log(&self, _record: &Record<'_>) {}
-
-        fn flush(&self) {}
+        static TEST_LOGGER: TestLogger = TestLogger;
+        log::set_logger(&TEST_LOGGER).map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("global Rust logger is already set")
+        })?;
+        log::set_max_level(log::LevelFilter::Trace);
+        Ok(())
     }
-
-    static TEST_LOGGER: TestLogger = TestLogger;
-    log::set_logger(&TEST_LOGGER).map_err(|_| {
-        pyo3::exceptions::PyRuntimeError::new_err("global Rust logger is already set")
-    })?;
-    log::set_max_level(log::LevelFilter::Trace);
-    Ok(())
 }
+
+#[cfg(feature = "python")]
+pub(crate) use python_bindings::{
+    emit_rust_log, install_test_global_rust_logger, setup_rust_logging,
+};
 
 #[cfg(test)]
 mod tests {
