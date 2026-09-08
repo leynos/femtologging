@@ -22,6 +22,10 @@ impl DummyBuilder {
     }
 }
 
+fn into_label(value: impl Into<String>) -> String {
+    value.into()
+}
+
 builder_methods! {
     impl DummyBuilder {
         methods {
@@ -47,7 +51,7 @@ builder_methods! {
                 py_args: (label: String),
                 self_ident: builder,
                 body: {
-                    builder.label = Some(label.into());
+                    builder.label = Some(into_label(label));
                 }
             }
             method {
@@ -154,9 +158,9 @@ builder_methods! {
     impl CapacityDummy {
         capacity {
             self_ident = builder,
-            setter = |builder, capacity| {
-                builder.capacity_attempted = true;
-                builder.capacity = NonZeroUsize::new(capacity).map(NonZeroUsize::get);
+            setter = |capacity_builder, capacity| {
+                capacity_builder.capacity_attempted = true;
+                capacity_builder.capacity = NonZeroUsize::new(capacity).map(NonZeroUsize::get);
             }
         };
         methods { }

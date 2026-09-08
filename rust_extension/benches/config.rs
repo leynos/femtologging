@@ -86,10 +86,12 @@ impl PythonApis {
     }
 }
 
-fn init_python_imports(py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+type PythonImports = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
+
+fn init_python_imports(py: Python<'_>) -> PyResult<PythonImports> {
     let sys = py.import("sys")?;
     let sys_any = sys.as_any();
-    inject_repo_to_path(&sys_any)?;
+    inject_repo_to_path(sys_any)?;
     let femto = py.import("femtologging")?;
     let config_mod = py.import("femtologging.config")?;
     let reset_manager = femto.getattr("reset_manager")?.unbind();
