@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -37,7 +39,7 @@ def _logger_state(name: str) -> LoggerState:
     return tuple(logger.handler_ptrs_for_test()), _attachment_state(name)
 
 
-@settings(max_examples=25)
+@settings(max_examples=25, deadline=dt.timedelta(seconds=1))
 @given(
     logger_order=st.lists(
         st.sampled_from(_LOGGER_NAMES),

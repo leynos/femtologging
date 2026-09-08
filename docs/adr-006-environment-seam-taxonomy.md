@@ -98,12 +98,11 @@ compiled to exercise them. The script stops at the first failing lane and names
 it, so the log ends at the lane a contributor has to reproduce. `make lint`
 runs those tests before it trusts the driver.
 
-`-A clippy::all` is deliberate and temporary: the lanes in `lint-rust` omit
-`--all-targets` because the test tree carries a backlog of unrelated Clippy
-findings, and clearing that backlog is issue #421's job. Silencing the rest of
-Clippy in this one target lets the environment policy govern test code today
-without absorbing that work. Once issue #421 lands, these settings fold into
-its lane list.
+`-A clippy::all` keeps the policy lane focused on its contract. The ordinary
+`lint-rust` matrix separately denies all warnings with `--all-targets` in the
+`none`, single-feature, and `all` lanes. Test and benchmark warnings therefore
+remain build failures while the focused policy lane continues to prove its
+diagnostic contract.
 
 ### Seam selection
 
