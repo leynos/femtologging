@@ -324,7 +324,6 @@ Tests that use it carry `#[serial]` and `#[ignore]`, and the scheduled
 emits alongside them. Under `--include-ignored` the ordinary tests in the same
 file run too and do emit, which is why the assertions name their records.
 
-
 ## Structured logging contracts
 
 Python structured fields use one conversion and validation path in

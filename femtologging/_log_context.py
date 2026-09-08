@@ -30,13 +30,6 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
         Context manager that pushes the provided fields onto the thread-local
         logging context stack on entry and pops them on exit.
 
-    Raises
-    ------
-    ValueError
-        If the context exceeds a key-count or byte-size limit.
-    TypeError
-        If a value has an unsupported type (not str/int/float/bool/None).
-
     Notes
     -----
     Context values are merged on the producer thread before queueing. The
@@ -44,6 +37,9 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
     ``info()``, ``warning()``, ``error()``, and ``critical()`` overrides
     scoped context keys with the same name. Rust
     ``tracing``-bridge events use span fields instead of this scoped context.
+    The Rust ``_push_log_context`` primitive raises ``ValueError`` when a
+    key is invalid or the context exceeds a limit, and ``TypeError`` when a
+    value has an unsupported type.
 
     The context stack is thread-local, not task-local. Holding this context
     across an ``await`` in a single-threaded event loop can share fields with

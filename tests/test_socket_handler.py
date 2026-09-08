@@ -75,6 +75,7 @@ def test_socket_handler_sends_records(
         "received an empty payload"
     )
 
+
 def test_python_registered_socket_handler_preserves_context() -> None:
     """A socket handler registered through Python must retain metadata fields."""
     with _RecordingTCPServer(("127.0.0.1", 0)) as server:
@@ -95,12 +96,14 @@ def test_python_registered_socket_handler_preserves_context() -> None:
             logger.info("message")
 
         payload = server.queue.get(timeout=2)
-        assert b"correlation_id" in payload
-        assert b"abc123" in payload
+        assert b"correlation_id" in payload, "socket payload omitted the context key"
+        assert b"abc123" in payload, "socket payload omitted the context value"
 
         handler.close()
         server.shutdown()
         thread.join(timeout=1)
+
+
 def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:
     """TLS configuration must be rejected when no TCP transport is configured."""
     socket_path = tmp_path / "socket.sock"
