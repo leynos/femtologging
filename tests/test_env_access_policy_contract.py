@@ -350,6 +350,9 @@ def run_policy_lane(lanes: str) -> int:
     ).returncode
 
 
+# This integration contract deliberately runs Cargo, which may wait on the
+# shared package cache while another repository validates its own Rust changes.
+@pytest.mark.timeout(180)
 def test_a_failing_lane_fails_the_policy_target() -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 
