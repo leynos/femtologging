@@ -11,6 +11,12 @@ time rather than by searching their text, because a substring search is
 satisfied by `if false; then <command>; fi`. And a command's status is judged
 as well as its text, because `-` prefixes and `|| true` leave a gate that runs,
 can fail, and still reports success.
+
+The scan for `allow` attributes that would switch the policy off lives in
+`rust_extension/tests/env_policy_source_scan.rs`, which parses each source with
+`syn`. It began here as a line-start text scan and moved because a text scan
+cannot follow `cfg_attr`, cannot tell an attribute from attribute-shaped prose,
+and misses a suppression that names the lint's group rather than the lint.
 """
 
 from __future__ import annotations
@@ -34,9 +40,6 @@ from tests.make_contract_helpers import (
     variable_tokens,
     workflow_job,
 )
-
-if typ.TYPE_CHECKING:
-    from pathlib import Path
 
 type Tokens = tuple[str, ...]
 
@@ -364,93 +367,4 @@ def test_a_failing_lane_fails_the_policy_target() -> None:
     )
     assert run_policy_lane("none") == 0, (
         "lint-env-policy must succeed when every lane passes"
-    )
-
-
-#: Attributes that would switch the policy off wholesale. `clippy::all` and
-#: `warnings` are included because either silences the policy lint along with
-#: everything else.
-POLICY_DISABLING_LINTS: typ.Final[Tokens] = (
-    DISALLOWED_METHODS,
-    "clippy::all",
-    "warnings",
-)
-
-
-def rust_sources() -> list[Path]:
-    """Return every Rust source file in the extension.
-
-    Returns
-    -------
-    list[Path]
-        Sources under `src`, `tests` and `benches`.
-    """
-    crate = repo_root() / "rust_extension"
-    return sorted(
-        path
-        for directory in ("src", "tests", "benches")
-        for path in (crate / directory).rglob("*.rs")
-    )
-
-
-def allow_attributes(source: str) -> list[str]:
-    """Return every `allow` attribute written at the start of a line.
-
-    Only a line that *begins* with the attribute counts. An attribute quoted
-    inside a doc comment or a string is discussion, not policy, and this file's
-    own mutation records quote attributes. Continuation lines are joined, since
-    rustfmt wraps a long attribute across several.
-
-    Returns
-    -------
-    list[str]
-        Each attribute on one line.
-    """
-    found: list[str] = []
-    pending = ""
-    for line in source.splitlines():
-        stripped = line.strip()
-        if not pending and not stripped.startswith(("#[allow(", "#![allow(")):
-            continue
-        pending = f"{pending} {stripped}".strip()
-        if pending.count("(") <= pending.count(")"):
-            found.append(" ".join(pending.split()))
-            pending = ""
-    return found
-
-
-def test_no_source_switches_the_policy_off_with_an_allow() -> None:
-    """Scenario: a contributor silences the policy with an `allow` attribute.
-
-    Invariant: no Rust source allows the policy lint, `clippy::all`, or
-    `warnings`, inner or outer.
-
-    A crate-level inner attribute is the dangerous one and no other contract
-    sees it. `#![allow(clippy::disallowed_methods, reason = "...")]` at the top
-    of a file disables the policy for that whole crate while the Clippy
-    configuration, the manifest severity, the lane list and the compiled
-    fixture all stay exactly as they are, and every one of their contracts
-    stays green. `clippy::allow_attributes`, which would otherwise object to an
-    `allow` where an `expect` belongs, does not fire on inner attributes.
-
-    The sanctioned exception is `expect`, not `allow`, and is item-scoped; that
-    shape is checked separately.
-
-    Mutation proof (2026-09-08): adding
-    `#![allow(clippy::disallowed_methods, reason = "...")]` to
-    `rust_extension/src/lib.rs` with a real `std::env::var` call beneath it
-    failed only this test. The four Rust contracts passed and `make
-    lint-env-policy` exited 0, which is exactly the hole. An item-level
-    `#[allow(warnings, ...)]`, and the inner attribute wrapped across lines as
-    rustfmt writes it, each failed here too.
-    """
-    offences = [
-        f"{path.relative_to(repo_root())}: {attribute}"
-        for path in rust_sources()
-        for attribute in allow_attributes(path.read_text(encoding="utf-8"))
-        if any(lint in attribute for lint in POLICY_DISABLING_LINTS)
-    ]
-    assert not offences, (
-        "no Rust source may switch the environment-access policy off with an "
-        f"allow; use an item-scoped expect with a reason instead: {offences}"
     )

@@ -126,14 +126,28 @@ only under an item-scoped attribute:
 #[expect(clippy::disallowed_methods, reason = "composition root: <what and why>")]
 ```
 
-`allow` is not an alternative anywhere, and a source scan enforces that: no
-Rust source may allow `clippy::disallowed_methods`, `clippy::all`, or
-`warnings`, inner or outer. A crate-level `#![allow(...)]` is the dangerous
-shape, because it disables the policy for a whole crate while the Clippy
-configuration, the manifest severity, the lane list and the compiled fixture
-all stay exactly as they are, and `clippy::allow_attributes` does not fire on
-inner attributes. Measured: with that one line added and a real `std::env::var`
-call beneath it, every other contract stayed green and the policy lane exited 0.
+`allow` is not an alternative anywhere, and a source scan enforces that. Every
+Rust source is parsed and every attribute walked, following `cfg_attr`, and no
+source may allow `clippy::disallowed_methods`, the `clippy::style` group that
+contains it, the wider `clippy::all`, or `warnings`, inner or outer.
+
+A crate-level `#![allow(...)]` is the dangerous shape, because it disables the
+policy for a whole crate while the Clippy configuration, the manifest severity,
+the lane list and the compiled fixture all stay exactly as they are, and
+`clippy::allow_attributes` does not fire on inner attributes. Measured: with
+that one line added and a real `std::env::var` call beneath it, every other
+contract stayed green and the policy lane exited 0.
+
+Naming the lint is not required to silence it, which is why the scan parses
+rather than searches. Measured against Clippy 0.1.98, each on a probe reporting
+one diagnostic without an attribute: `#![allow(clippy::style)]` and
+`#![allow(clippy::all)]` each reduce it to none, as does
+`#![cfg_attr(all(), allow(clippy::disallowed_methods))]`, which is honoured by
+Clippy, unreported by `clippy::allow_attributes`, and invisible to a scan
+looking for a line that begins with an attribute. `warnings` silences the lint
+only where it sits at its configured level; the policy lane denies it on the
+command line, so `warnings` does not evade that lane. It is guarded anyway,
+against the manifest severity ever softening.
 
 `expect` rather than `allow` is deliberate. The expectation goes unfulfilled,
 and therefore warns, once the site is migrated, so the backlog removes itself
