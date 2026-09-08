@@ -25,8 +25,11 @@ use super::{
 /// Uses exponential backoff for transient failures (5xx, 429, network errors)
 /// and drops records on permanent failures (4xx except 429).
 pub struct FemtoHTTPHandler {
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     tx: Option<crossbeam_channel::Sender<HTTPCommand>>,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     warner: RateLimitedWarner,
     /// Timeout for flush and shutdown operations.
     ///
@@ -61,10 +64,12 @@ impl FemtoHTTPHandler {
         self.join_worker();
     }
 
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
 
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     fn request_shutdown(&mut self) {
         let Some(tx) = self.tx.take() else {
             return;
@@ -76,6 +81,7 @@ impl FemtoHTTPHandler {
         let _ = ack_rx.recv_timeout(self.flush_timeout);
     }
 
+    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
     fn join_worker(&mut self) {
         let Some(handle) = self.handle.lock().take() else {
             return;
@@ -89,6 +95,7 @@ impl FemtoHTTPHandler {
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoHTTPHandler {
+    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;

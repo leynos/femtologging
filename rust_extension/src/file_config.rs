@@ -13,9 +13,12 @@ use pyo3::prelude::*;
 use std::fs;
 use std::io::ErrorKind;
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 type SectionEntries = Vec<(String, String)>;
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 type ParsedSections = Vec<(String, SectionEntries)>;
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 #[pyfunction]
 pub(crate) fn parse_ini_file(
     py: Python<'_>,
@@ -30,6 +33,7 @@ pub(crate) fn parse_ini_file(
     parse_sections(path, &text)
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
     match fs::read(path) {
         Ok(bytes) => Ok(bytes),
@@ -42,6 +46,7 @@ fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
     }
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 fn decode_contents<'a>(py: Python<'a>, bytes: &[u8], encoding: Option<&str>) -> PyResult<String> {
     match encoding {
         Some(label) => decode_with_encoding(py, bytes, label),
@@ -52,12 +57,14 @@ fn decode_contents<'a>(py: Python<'a>, bytes: &[u8], encoding: Option<&str>) -> 
     }
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 fn preferred_encoding(py: Python<'_>) -> PyResult<String> {
     let locale = py.import("locale")?;
     let func = locale.getattr("getpreferredencoding")?;
     func.call1((false,))?.extract::<String>()
 }
 
+/// Decodes UTF-8 directly so tests can exercise the same Python error shape as configured decoding.
 #[cfg_attr(
     not(test),
     expect(
@@ -85,6 +92,7 @@ fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
     }
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<String> {
     let normalized_label = label.trim().to_ascii_lowercase();
     let encoding = Encoding::for_label(normalized_label.as_bytes())
@@ -107,14 +115,21 @@ fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<S
     Ok(decoded.into_owned())
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 struct UnicodeDecodeErrorInfo<'a> {
+    /// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
     encoding: &'a str,
+    /// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
     bytes: &'a [u8],
+    /// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
     start: usize,
+    /// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
     end: usize,
+    /// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
     reason: &'a str,
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 fn unicode_decode_err(_py: Python<'_>, info: UnicodeDecodeErrorInfo<'_>) -> PyErr {
     PyUnicodeDecodeError::new_err((
         info.encoding.to_string(),
@@ -125,6 +140,7 @@ fn unicode_decode_err(_py: Python<'_>, info: UnicodeDecodeErrorInfo<'_>) -> PyEr
     ))
 }
 
+/// Builds and validates Python configuration before it may mutate shared logger, filter, or handler state.
 fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
     let ini = Ini::load_from_str(text)
         .map_err(|err| PyRuntimeError::new_err(format!("{path} is invalid: {err}")))?;

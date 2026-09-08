@@ -15,13 +15,19 @@ use tempfile::NamedTempFile;
 use super::fresh_failure::take_forced_fresh_failure_reason;
 use crate::handlers::file::RotationStrategy;
 
+/// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
 pub(crate) struct FileRotationStrategy {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     path: PathBuf,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     max_bytes: u64,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     backup_count: usize,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     last_outcome: RotationOutcome,
 }
 
+/// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RotationOutcome {
     /// Rotation was not required for the previous record.
@@ -29,12 +35,19 @@ pub(crate) enum RotationOutcome {
     /// Rotation succeeded using the freshly re-opened file handle.
     Rotated,
     /// Rotation succeeded after falling back to append because the fresh open failed.
-    RotatedWithAppendFallback { error: String },
+    RotatedWithAppendFallback {
+        /// Records why reopening failed while preserving the successfully reopened append path.
+        error: String,
+    },
     /// Rotation failed and propagated an I/O error.
-    Failed { error: String },
+    Failed {
+        /// Carries the terminal filesystem error back to the worker's error-handling path.
+        error: String,
+    },
 }
 
 impl FileRotationStrategy {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn new(path: PathBuf, max_bytes: u64, backup_count: usize) -> Self {
         Self {
             path,
@@ -49,10 +62,12 @@ impl FileRotationStrategy {
         std::mem::replace(&mut self.last_outcome, RotationOutcome::Skipped)
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn next_record_bytes(message: &str) -> u64 {
         message.len() as u64 + 1
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn should_rotate(
         &self,
         writer: &BufWriter<File>,
@@ -66,6 +81,7 @@ impl FileRotationStrategy {
         Ok(current_file_len + buffered_bytes + next_record_bytes > self.max_bytes)
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<Option<String>> {
         writer.flush()?;
         if self.backup_count == 0 {
@@ -81,6 +97,7 @@ impl FileRotationStrategy {
         self.finalize_rotation(writer, original_file, capacity)
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn swap_writer_with_temp(
         &self,
         writer: &mut BufWriter<File>,
@@ -103,6 +120,7 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn perform_rotation_with_rollback(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -116,6 +134,7 @@ impl FileRotationStrategy {
         Ok(original_file)
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn finalize_rotation(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -152,6 +171,7 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
         if let Some(reason) = take_forced_fresh_failure_reason() {
             return Err(io::Error::other(format!(
@@ -166,6 +186,7 @@ impl FileRotationStrategy {
         Ok(BufWriter::with_capacity(capacity, file))
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn open_append_file(path: &Path) -> io::Result<File> {
         OpenOptions::new()
             .create(true)
@@ -174,6 +195,7 @@ impl FileRotationStrategy {
             .open(path)
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn remove_file_if_exists(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -182,6 +204,7 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn rename_file_if_exists(src: &Path, dst: &Path) -> io::Result<()> {
         match fs::rename(src, dst) {
             Ok(()) => Ok(()),
@@ -190,6 +213,7 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn remove_excess_backups(&self) -> io::Result<()> {
         let mut extra = self.backup_count + 1;
         loop {
@@ -209,6 +233,7 @@ impl FileRotationStrategy {
         Ok(())
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn cascade_backups(&self) -> io::Result<()> {
         for idx in (1..self.backup_count).rev() {
             let src = self.backup_path(idx);
@@ -220,6 +245,7 @@ impl FileRotationStrategy {
         Ok(())
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn rotate_backups(&self) -> io::Result<()> {
         if self.backup_count == 0 {
             return Ok(());
@@ -231,6 +257,7 @@ impl FileRotationStrategy {
         Ok(())
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     pub(crate) fn backup_path(&self, index: usize) -> PathBuf {
         let mut backup = self.path.clone();
         let mut name = self

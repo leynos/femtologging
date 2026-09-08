@@ -29,15 +29,22 @@ use crate::{
 
 /// Rotation strategy for time-based file rollover.
 pub(crate) struct TimedFileRotationStrategy<C = SystemClock> {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     path: PathBuf,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     schedule: TimedRotationSchedule,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     backup_count: usize,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     clock: C,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     created_at: DateTime<Utc>,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     next_rollover_at: DateTime<Utc>,
 }
 
 impl TimedFileRotationStrategy<SystemClock> {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn new(path: PathBuf, schedule: TimedRotationSchedule, backup_count: usize) -> Self {
         Self::new_with_clock(path, schedule, backup_count, SystemClock)
     }
@@ -47,6 +54,7 @@ impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
 {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn from_seed(
         path: PathBuf,
         schedule: TimedRotationSchedule,
@@ -65,6 +73,7 @@ where
         }
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn new_with_clock(
         path: PathBuf,
         schedule: TimedRotationSchedule,
@@ -86,6 +95,7 @@ where
         self.next_rollover_at
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn rotate(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -136,6 +146,7 @@ where
         }
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn swap_writer_with_temp(
         &self,
         writer: &mut BufWriter<File>,
@@ -158,6 +169,7 @@ where
         }
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
         let file = OpenOptions::new()
             .create(true)
@@ -167,6 +179,7 @@ where
         Ok(BufWriter::with_capacity(capacity, file))
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn rotated_path(&self, rollover_at: DateTime<Utc>) -> PathBuf {
         let suffix = self.schedule.suffix_for(rollover_at);
         let mut rotated = self.path.clone();
@@ -196,6 +209,7 @@ where
         self.schedule.is_valid_suffix(suffix)
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn prune_backups(&self) -> io::Result<()> {
         if self.backup_count == 0 {
             return Ok(());
@@ -227,6 +241,7 @@ where
         Ok(())
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn remove_file_if_exists(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -251,6 +266,7 @@ where
     }
 }
 
+/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
 pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
     value
         .as_os_str()
@@ -260,18 +276,24 @@ pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
 
 /// Bundles timed-rotation parameters passed to the handler constructor.
 pub(crate) struct TimedRotationConfig {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) schedule: TimedRotationSchedule,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) backup_count: usize,
 }
 
 /// File handler variant configured for timed rotation.
 pub struct FemtoTimedRotatingFileHandler {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     inner: FemtoFileHandler,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     schedule: TimedRotationSchedule,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     backup_count: usize,
 }
 
 impl FemtoTimedRotatingFileHandler {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn new_with_schedule(
         inner: FemtoFileHandler,
         schedule: TimedRotationSchedule,
@@ -288,6 +310,7 @@ impl FemtoTimedRotatingFileHandler {
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
     )]
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn schedule(&self) -> &TimedRotationSchedule {
         &self.schedule
     }
@@ -296,10 +319,10 @@ impl FemtoTimedRotatingFileHandler {
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
     )]
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn backup_count(&self) -> usize {
         self.backup_count
     }
-
     /// Build a timed rotating handler with the supplied configuration.
     pub(crate) fn with_capacity_flush_policy<P, F>(
         path: P,
@@ -350,7 +373,6 @@ impl FemtoTimedRotatingFileHandler {
             rotation.backup_count,
         ))
     }
-
     delegate! {
         to self.inner {
             /// Flush any queued log records.
@@ -360,7 +382,6 @@ impl FemtoTimedRotatingFileHandler {
         }
     }
 }
-
 impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
     delegate! {
         to self.inner {
@@ -368,12 +389,10 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
             fn flush(&self) -> bool;
         }
     }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
-
 impl Drop for FemtoTimedRotatingFileHandler {
     fn drop(&mut self) {
         self.close();

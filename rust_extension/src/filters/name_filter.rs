@@ -12,9 +12,12 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
+/// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
 #[derive(Debug)]
 pub struct NameFilter {
+    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
     prefix: String,
+    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
     prefix_dot: String,
 }
 
@@ -34,6 +37,7 @@ impl FemtoFilter for NameFilter {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct NameFilterBuilder {
+    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
     prefix: Option<String>,
 }
 

@@ -47,15 +47,19 @@ use python_helpers::capture_exception_payload;
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 
+/// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+/// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     ack: Sender<()>,
 }
 
 impl FlushAckHandler {
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn new(ack: Sender<()>) -> Self {
         Self { ack }
     }
@@ -86,15 +90,25 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     formatter: SharedFormatter,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     level: AtomicU8,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     propagate: AtomicBool,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     dropped_records: AtomicU64,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     drop_warner: RateLimitedWarner,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     tx: Option<Sender<QueuedRecord>>,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     shutdown_tx: Option<Sender<()>>,
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -266,7 +280,6 @@ impl FemtoLogger {
     pub fn py_clear_filters(&self) {
         self.clear_filters();
     }
-
     /// Return the number of records dropped due to a full queue.
     ///
     /// Useful for tests and monitoring dashboards.
@@ -274,7 +287,6 @@ impl FemtoLogger {
     pub fn get_dropped(&self) -> u64 {
         self.dropped_records.load(Ordering::Relaxed)
     }
-
     /// Flush all handlers attached to this logger.
     ///
     /// First waits up to 2 seconds for the internal worker thread to drain
@@ -298,7 +310,7 @@ impl FemtoLogger {
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
-
+    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -307,18 +319,15 @@ impl FemtoLogger {
             .collect()
     }
 }
-
 impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
     }
-
     /// Attach a filter to this logger.
     pub fn add_filter(&self, filter: Arc<dyn FemtoFilter>) {
         self.filters.write().push(filter);
     }
-
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
@@ -329,7 +338,6 @@ impl FemtoLogger {
             false
         }
     }
-
     /// Remove all handlers from this logger.
     ///
     /// Note: This affects only records enqueued after the call. Any records
@@ -338,7 +346,6 @@ impl FemtoLogger {
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
     }
-
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
         let mut filters = self.filters.write();
         if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
@@ -348,16 +355,13 @@ impl FemtoLogger {
             false
         }
     }
-
     pub fn clear_filters(&self) {
         self.filters.write().clear();
     }
-
     #[cfg(test)]
     pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
         self.handlers.read().clone()
     }
-
     /// Clone the internal sender for use in tests.
     ///
     /// # Warning
@@ -369,7 +373,6 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
-
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
@@ -383,7 +386,6 @@ impl Drop for FemtoLogger {
         }
     }
 }
-
 #[cfg(test)]
 #[path = "logger_tests.rs"]
 mod logger_tests;

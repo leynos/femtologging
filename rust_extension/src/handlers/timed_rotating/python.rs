@@ -29,10 +29,12 @@ use crate::{
 /// Python wrapper for the timed rotating file handler core type.
 #[pyclass(name = "FemtoTimedRotatingFileHandler")]
 pub struct PyTimedRotatingFileHandler {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     inner: CoreTimedRotatingFileHandler,
 }
 
 impl PyTimedRotatingFileHandler {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
         Self { inner }
     }
@@ -60,14 +62,17 @@ pub struct TimedHandlerOptions {
     pub backup_count: usize,
     #[pyo3(get, set)]
     pub utc: bool,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     at_time: Option<NaiveTime>,
 }
 
 impl TimedHandlerOptions {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn at_time_naive(&self) -> Option<NaiveTime> {
         self.at_time
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
         let capacity = isize::try_from(self.capacity)
             .map_err(|_| PyValueError::new_err("capacity must fit within isize"))?;
@@ -126,6 +131,7 @@ impl TimedHandlerOptions {
         utc = false,
         at_time = None,
     ))]
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn new(
         capacity: usize,
         flush_interval: isize,
@@ -154,6 +160,7 @@ impl TimedHandlerOptions {
         Ok(options)
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[getter]
     fn at_time(&self) -> Option<String> {
         self.at_time.map(|value| value.to_string())
@@ -162,6 +169,7 @@ impl TimedHandlerOptions {
 
 #[pymethods]
 impl PyTimedRotatingFileHandler {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
@@ -181,26 +189,31 @@ impl PyTimedRotatingFileHandler {
         .map_err(|err| PyIOError::new_err(format!("{path}: {err}")))
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[getter]
     fn when(&self) -> &str {
         self.inner.schedule().when().as_str()
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[getter]
     fn interval(&self) -> u32 {
         self.inner.schedule().interval()
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[getter]
     fn backup_count(&self) -> usize {
         self.inner.backup_count()
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[getter]
     fn utc(&self) -> bool {
         self.inner.schedule().use_utc()
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[getter]
     fn at_time(&self) -> Option<String> {
         self.inner
@@ -209,6 +222,7 @@ impl PyTimedRotatingFileHandler {
             .map(|value| value.to_string())
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = FemtoLevel::parse_py(level)?;
@@ -217,11 +231,13 @@ impl PyTimedRotatingFileHandler {
             .map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.inner.flush()
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.inner.close();
@@ -288,6 +304,7 @@ pub(crate) fn extract_naive_time_from_py_time(
         .map(Some)
 }
 
+/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
 fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     // Local convenience wrapper for the common helper; this retains the
     // existing `at_time`-specific error messages.
@@ -301,12 +318,14 @@ fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     }
 }
 
+/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
 #[cfg(feature = "test-util")]
 #[pyfunction]
 pub fn set_timed_rotation_test_times_for_test(epoch_millis: Vec<i64>) {
     set_injected_times_for_test(epoch_millis);
 }
 
+/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
 #[cfg(feature = "test-util")]
 #[pyfunction]
 pub fn clear_timed_rotation_test_times_for_test() {

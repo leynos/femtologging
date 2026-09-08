@@ -8,14 +8,18 @@ use std::sync::{
 #[cfg(test)]
 use std::thread::{self, ThreadId};
 
+/// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
 struct FreshFailureState {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     remaining: AtomicUsize,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     reason: Mutex<Option<String>>,
     #[cfg(test)]
     owner: Mutex<Option<ThreadId>>,
 }
 
 impl FreshFailureState {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     const fn new() -> Self {
         Self {
             remaining: AtomicUsize::new(0),
@@ -25,6 +29,7 @@ impl FreshFailureState {
         }
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     #[cfg(feature = "python")]
     fn set_forced(&self, count: usize, reason: String) {
         self.remaining.store(count, Ordering::SeqCst);
@@ -36,6 +41,7 @@ impl FreshFailureState {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     #[cfg(feature = "python")]
     fn clear_forced(&self) {
         self.remaining.store(0, Ordering::SeqCst);
@@ -68,10 +74,10 @@ impl FreshFailureState {
                 .owner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(owner_thread) = owner {
-                if owner_thread != current_thread {
-                    return None;
-                }
+            if let Some(owner_thread) = owner
+                && owner_thread != current_thread
+            {
+                return None;
             }
         }
         let previous = self
@@ -98,6 +104,7 @@ impl FreshFailureState {
     }
 }
 
+/// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
 static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureState::new);
 
 /// Attempts to consume one forced fresh-file-open failure.

@@ -253,10 +253,7 @@ fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::
 
     impl RotationStrategy<SharedBuf> for FailingRotation {
         fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<bool> {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failing rotation for test",
-            ))
+            Err(io::Error::other("failing rotation for test"))
         }
     }
 

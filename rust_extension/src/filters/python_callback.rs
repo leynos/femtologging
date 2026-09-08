@@ -24,13 +24,17 @@ use super::python_callback_validation::{
 };
 use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait, FilterContext, FilterDecision};
 
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 type SerializedEnrichment = BTreeMap<String, String>;
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 type TypedEnrichment = BTreeMap<String, Py<PyAny>>;
 
 /// A filter backed by a Python callable or `logging.Filter`-style object.
 #[derive(Clone, Debug)]
 pub struct PythonCallbackFilter {
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     callback: Arc<Mutex<Py<PyAny>>>,
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     description: String,
 }
 
@@ -43,6 +47,7 @@ impl PythonCallbackFilter {
         }
     }
 
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     fn decision_with_context(
         &self,
         record: &FemtoLogRecord,
@@ -75,6 +80,7 @@ impl PythonCallbackFilter {
         })
     }
 
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     fn invoke<'py>(
         &self,
         py: Python<'py>,
@@ -95,6 +101,7 @@ impl PythonCallbackFilter {
         }
     }
 
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     pub(crate) fn description(&self) -> &str {
         &self.description
     }
@@ -119,6 +126,7 @@ impl FemtoFilter for PythonCallbackFilter {
 #[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PythonCallbackFilterBuilder {
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     filter: PythonCallbackFilter,
 }
 
@@ -151,17 +159,20 @@ impl AsPyDict for PythonCallbackFilterBuilder {
 
 #[pymethods]
 impl PythonCallbackFilterBuilder {
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     #[new]
     #[pyo3(text_signature = "(callback, /)")]
     fn py_new(callback: Bound<'_, PyAny>) -> PyResult<Self> {
         Self::from_callback_obj(callback)
     }
 
+    /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_pydict(py)
     }
 }
 
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 pub(crate) fn validate_filter_target(obj: &Bound<'_, PyAny>) -> PyResult<()> {
     if obj.is_callable() {
         return Ok(());
@@ -183,6 +194,7 @@ pub(crate) fn validate_filter_target(obj: &Bound<'_, PyAny>) -> PyResult<()> {
     }
 }
 
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn get_or_create_filter_record<'py>(
     py: Python<'py>,
     record: &FemtoLogRecord,
@@ -201,6 +213,7 @@ fn get_or_create_filter_record<'py>(
         .clone())
 }
 
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn create_filter_record<'py>(
     py: Python<'py>,
     record: &FemtoLogRecord,
@@ -243,11 +256,10 @@ fn create_filter_record<'py>(
         }
         log_record_payload.set_item(key, value)?;
     }
-
     let logging = py.import("logging")?;
     logging.call_method1("makeLogRecord", (log_record_payload,))
 }
-
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn snapshot_record_attrs(record_view: &Bound<'_, PyAny>) -> PyResult<BTreeMap<String, Py<PyAny>>> {
     let py = record_view.py();
     let copy = py.import("copy")?;
@@ -260,7 +272,7 @@ fn snapshot_record_attrs(record_view: &Bound<'_, PyAny>) -> PyResult<BTreeMap<St
     }
     Ok(attrs)
 }
-
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn restore_record_attrs(
     record_view: &Bound<'_, PyAny>,
     before: &BTreeMap<String, Py<PyAny>>,
@@ -280,7 +292,7 @@ fn restore_record_attrs(
     }
     Ok(())
 }
-
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn apply_enrichment_to_record_view(
     record_view: &Bound<'_, PyAny>,
     enrichment: &SerializedEnrichment,
@@ -304,7 +316,7 @@ fn apply_enrichment_to_record_view(
     debug_assert_eq!(enrichment.len(), typed_enrichment.len());
     Ok(())
 }
-
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn try_validate_and_insert_enrichment(
     py: Python<'_>,
     description: &str,
@@ -321,7 +333,6 @@ fn try_validate_and_insert_enrichment(
     if !has_changed {
         return Ok(false);
     }
-
     let candidate = match extract_supported_value(&key, value) {
         Ok(candidate) => candidate,
         Err(err) => {
@@ -337,7 +348,6 @@ fn try_validate_and_insert_enrichment(
         warn!("Python filter callback '{description}' ignored enrichment: {err}");
         return Ok(false);
     }
-
     enrichment.insert(key.clone(), candidate);
     typed_enrichment.insert(key.clone(), value.clone().unbind());
     if let Err(err) = validate_enrichment_total(enrichment) {
@@ -346,10 +356,9 @@ fn try_validate_and_insert_enrichment(
         warn!("Python filter callback '{description}' ignored enrichment: {err}");
         return Ok(false);
     }
-
     Ok(true)
 }
-
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn extract_enrichment(
     py: Python<'_>,
     record_view: &Bound<'_, PyAny>,
@@ -360,7 +369,6 @@ fn extract_enrichment(
     let after = binding.cast::<PyDict>()?;
     let mut enrichment = SerializedEnrichment::new();
     let mut typed_enrichment = TypedEnrichment::new();
-
     for (key, value) in after.iter() {
         let key = key.extract::<String>()?;
         if is_reserved_enrichment_key(&key) {
@@ -377,10 +385,9 @@ fn extract_enrichment(
             &mut typed_enrichment,
         )?;
     }
-
     Ok((enrichment, typed_enrichment))
 }
-
+/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 fn python_values_equal(
     py: Python<'_>,
     previous: &Py<PyAny>,

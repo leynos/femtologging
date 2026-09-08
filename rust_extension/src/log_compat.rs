@@ -23,6 +23,7 @@ use crate::manager;
 /// logger's handler queue.
 pub struct FemtoLogAdapter;
 
+/// Maps facade levels without changing the ordering used by logger enablement checks.
 fn map_log_level(level: log::Level) -> FemtoLevel {
     match level {
         log::Level::Trace => FemtoLevel::Trace,
@@ -33,6 +34,7 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
     }
 }
 
+/// Maps internal levels back to the facade for callers that observe forwarded records.
 fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
@@ -49,6 +51,7 @@ impl From<log::Level> for FemtoLevel {
     }
 }
 
+/// Normalises the global facade target before it selects a Python-owned logger.
 fn normalize_target(target: &str) -> Cow<'_, str> {
     if target.contains("::") {
         Cow::Owned(target.replace("::", "."))
@@ -57,10 +60,12 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
     }
 }
 
+/// Distinguishes a missing Python logger from an error that must not be swallowed.
 fn is_unknown_logger_error(py: Python<'_>, err: &PyErr) -> bool {
     err.is_instance_of::<pyo3::exceptions::PyKeyError>(py)
 }
 
+/// Recognises invalid names so facade records can be rejected without masking Python faults.
 fn is_invalid_logger_error(py: Python<'_>, err: &PyErr) -> bool {
     err.is_instance_of::<pyo3::exceptions::PyValueError>(py)
 }
@@ -76,6 +81,7 @@ fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
     }
 }
 
+/// Resolves a facade target while attached to the GIL, returning an owned logger for later use.
 fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
     match manager::get_logger(py, normalized.as_ref()) {
@@ -95,6 +101,7 @@ fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crat
     }
 }
 
+/// Applies the facade's global maximum before crossing into Python logger resolution.
 fn is_enabled_by_global_max(level: log::Level) -> bool {
     log::max_level() >= level.to_level_filter()
 }
@@ -144,7 +151,9 @@ impl log::Log for FemtoLogAdapter {
     }
 }
 
+/// Provides the single global adapter required by the `log` facade installation contract.
 static FEMTO_LOG_ADAPTER: FemtoLogAdapter = FemtoLogAdapter;
+/// Records the one-time installation result so competing initialisers observe a stable outcome.
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
 
 /// Install femtologging as the global Rust logger.
