@@ -26,6 +26,7 @@ dev = [
     "hypothesis>=6.135,<7",
     # The lint contract tests parse the CI workflows.
     "pyyaml>=6.0.3,<7",
+    "numpy",
     "pytest==9.1.1",
     "pytest-timeout",
     "pytest-bdd==8.1.0",

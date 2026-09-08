@@ -9,6 +9,8 @@ libraries. Use the links below to explore each topic.
   - Describes Makefile commands for building, linting, formatting and tests.
 - [developers-guide.md](./developers-guide.md)
   - Records developer toolchain ownership and validation boundaries.
+- [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
+  - Describes the next-minor structured logging additions and migration notes.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)

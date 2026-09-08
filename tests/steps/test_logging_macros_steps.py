@@ -46,6 +46,8 @@ if typ.TYPE_CHECKING:
 
     from syrupy import SnapshotAssertion
 
+pytest_plugins = ("tests.steps.logging_context_steps",)
+
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "logging_macros.feature"))
@@ -247,11 +249,6 @@ def push_invalid_context_value() -> ErrorPayload:
     except TypeError as exc:
         message = str(exc)
     return {"value": message}
-
-
-# ---------------------------------------------------------------------------
-# Then steps
-# ---------------------------------------------------------------------------
 
 
 @then("the result is not None")

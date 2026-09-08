@@ -8,6 +8,13 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+#[cfg(feature = "python")]
+use pyo3::exceptions::PyTypeError;
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::{PyBool, PyFloat, PyInt, PyTuple};
+
 const MAX_CONTEXT_KEYS: usize = 64;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 1024;
@@ -121,6 +128,61 @@ pub(crate) fn merge_context_values(
     );
     validate_context_map(&active)?;
     Ok(active)
+}
+
+/// Convert a Python mapping into the validated scalar representation used for
+/// both scoped and inline structured fields.
+#[cfg(feature = "python")]
+pub(crate) fn extract_python_context_map(
+    context: &Bound<'_, PyAny>,
+) -> PyResult<BTreeMap<String, String>> {
+    let items = context.call_method0("items").map_err(|_| {
+        PyTypeError::new_err("context must be a mapping[str, str|int|float|bool|None]")
+    })?;
+    let mut result = BTreeMap::new();
+    for item in items.try_iter().map_err(|_| {
+        PyTypeError::new_err("context must be a mapping[str, str|int|float|bool|None]")
+    })? {
+        let item = item?;
+        let pair = item
+            .cast::<PyTuple>()
+            .map_err(|_| PyTypeError::new_err("context items must contain key-value pairs"))?;
+        if pair.len() != 2 {
+            return Err(PyTypeError::new_err(
+                "context items must contain key-value pairs",
+            ));
+        }
+        let key = pair
+            .get_item(0)?
+            .extract::<String>()
+            .map_err(|_| PyTypeError::new_err("context keys must be strings"))?;
+        let value = extract_python_context_value(&pair.get_item(1)?)?;
+        result.insert(key, value);
+    }
+    Ok(result)
+}
+
+/// Convert one Python structured-field value into its string representation.
+#[cfg(feature = "python")]
+fn extract_python_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
+    if raw_value.is_none() {
+        return Ok(String::from("None"));
+    }
+    if raw_value.is_instance_of::<PyBool>() {
+        return Ok(raw_value.str()?.to_str()?.to_owned());
+    }
+    if raw_value.is_instance_of::<PyInt>() {
+        return Ok(raw_value.str()?.to_str()?.to_owned());
+    }
+    if raw_value.is_instance_of::<PyFloat>() {
+        return Ok(raw_value.str()?.to_str()?.to_owned());
+    }
+    if let Ok(value) = raw_value.extract::<String>() {
+        return Ok(value);
+    }
+    Err(PyTypeError::new_err(
+        "context values must be str, int, float, bool, or None",
+    ))
 }
 
 fn pop_internal() -> Result<(), LogContextError> {

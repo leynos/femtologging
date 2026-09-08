@@ -9,6 +9,7 @@ use pyo3::{
     exceptions::{PyIOError, PyTypeError, PyValueError},
     prelude::*,
 };
+use std::any::Any;
 
 use super::{
     FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler, TimedRotationConfig,
@@ -35,6 +36,20 @@ pub struct PyTimedRotatingFileHandler {
 impl PyTimedRotatingFileHandler {
     pub(crate) fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
         Self { inner }
+    }
+}
+
+impl FemtoHandlerTrait for PyTimedRotatingFileHandler {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), crate::handler::HandlerError> {
+        self.inner.handle(record)
+    }
+
+    fn flush(&self) -> bool {
+        self.inner.flush()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
