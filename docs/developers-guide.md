@@ -277,17 +277,21 @@ To run any of the five tiers locally, invoke the underlying tool directly:
 
 ```shell
 
+
 # Tier 1: Ruff
 uvx ruff==0.16.4 check
+
 
 # Tier 2: interrogate (docstring coverage, production package only)
 uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 \
   --ignore-regex '^basicConfig$' femtologging
 
+
 # Tier 3: Pylint under managed PyPy
 uv tool run --python pypy --from \
   'git+https://github.com/leynos/pylint-pypy-shim.git@726d09f968b4d729ee4b29c71fc732e744854f3b' \
   --with 'pylint==4.0.7' pylint-pypy femtologging tests scripts
+
 
 # Tier 4: df12-python-lints
 uv tool run --python 3.14 --from 'pylint==4.0.7' \
@@ -296,10 +300,12 @@ uv tool run --python 3.14 --from 'pylint==4.0.7' \
   --enable=R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112 \
   femtologging tests scripts
 
+
 # Tier 4: ambrleaks (same df12-python-lints package, different entry point)
 uv tool run --python 3.14 \
   --from 'git+https://github.com/leynos/df12-python-lints.git@4cf41736cce2f7ba2778882a5c629c044568a0e5' \
   ambrleaks tests femtologging/unittests
+
 
 # Tier 5: Skylos
 uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
@@ -371,6 +377,57 @@ RUSTFLAGS="-Zpolonius=next" cargo +nightly-2026-05-28 install \
   --rev 29fc5a1634ffbaa18a773eed9dff1b2838a45d9c \
   --locked --force makeutil
 ```
+
+## Environment Access in the Rust Extension
+
+The Rust extension must not read or mutate the process environment ambiently.
+`rust_extension/clippy.toml` disallows `std::env::var`, `var_os`, `vars`,
+`vars_os`, `set_var`, and `remove_var`, and `rust_extension/Cargo.toml` denies
+`clippy::disallowed_methods`. The `lint-env-policy` target, which `lint-rust`
+runs first, applies that lint with `--all-targets` over one lane per feature:
+`none` for `--no-default-features`, `all` for `--all-features`, and one lane per
+declared feature enabling that feature alone. `--all-features` on its own would
+never compile a `#[cfg(not(feature = ...))]` block, so the `none` lane is not
+optional.
+
+The lanes are walked by `scripts/lint_rust_lanes.py`, which follows the estate
+scripting standards: a `uv` script block, Cyclopts reading `INPUT_`-prefixed
+environment variables, and plumbum invoking Cargo. It exits non-zero on the
+first failing lane and names it. That job used to be a shell `for` loop in the
+Makefile, which reports only its last command's status and so let an earlier
+lane's rejection pass silently. `make lint-lanes-test` runs the driver's own
+tests, which use `cmd-mox` to shim `cargo`, and `lint-rust` depends on it so
+the driver is proven before it is trusted.
+
+Adding a feature to `rust_extension/Cargo.toml` means adding its lane;
+`rust_extension/tests/env_access_policy.rs` derives the required lanes from the
+manifest and fails otherwise.
+
+Pick the lightest seam the boundary justifies:
+
+- an explicit value, for one-off configuration;
+- a narrow reader closure, for a small reusable boundary;
+- a shared environment trait, only when several variables and tests justify it.
+
+Tests never change the parent process environment. A test that needs the code
+under test to observe a value passes it through the seam. A test that needs a
+child process to see a variable builds the child's environment explicitly.
+`Command::env` alone keeps the parent's environment, so where an inherited
+variable could change the outcome, call `Command::env_clear` first and then add
+back every variable the child legitimately needs, `PATH` included.
+
+Serialization, whether `#[serial]` or a lowered `TEST_THREADS`, stays only
+where a structural reason such as the global manager or the Python interpreter
+demands it.
+
+A direct read is permitted only at a genuine composition root, under an
+item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`. Use
+`expect`, not `allow`, so the attribute warns once the site is migrated.
+
+`rust_extension/tests/env_access_policy.rs` holds this configuration to that
+contract. See
+[adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
+for the decision and its rationale.
 
 ## Benchmarking Documentation
 

@@ -152,6 +152,14 @@ project:
 - Prefer `.expect()` over `.unwrap()`.
 - Use `concat!()` to combine long string literals rather than escaping newlines
   with a backslash.
+- Never read or mutate the process environment ambiently. `std::env::var`,
+  `var_os`, `vars`, `vars_os`, `set_var`, and `remove_var` are disallowed by
+  Clippy; inject the value, a reader closure, or an environment trait instead,
+  and build a child process's environment explicitly. `Command::env` alone
+  keeps the parent's environment, so where an inherited variable could change
+  the outcome, call `Command::env_clear` first and add back only what the
+  child needs, `PATH` included. See
+  [docs/adr-006-environment-seam-taxonomy.md](docs/adr-006-environment-seam-taxonomy.md).
 
 ### Dependency Management
 

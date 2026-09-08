@@ -35,6 +35,18 @@ dev = [
     "pytest-xdist",
 ]
 
+[tool.ty.src]
+# `scripts/lint_rust_lanes.py` and its tests declare their dependencies in the
+# script's own `uv` block rather than in the project's dev group, per the
+# estate scripting standards, so the project environment cannot resolve
+# Cyclopts, plumbum or cmd-mox. `make lint-lanes-test` runs them in that
+# environment; excluding them here keeps `make typecheck` honest about what it
+# can actually see.
+exclude = [
+    "scripts/lint_rust_lanes.py",
+    "scripts/tests/test_lint_rust_lanes.py",
+]
+
 [tool.ty.environment]
 # Newer ty releases resolve against their own tool environment unless the
 # project virtual environment is named explicitly; `make build` creates it

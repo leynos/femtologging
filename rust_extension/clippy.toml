@@ -1,2 +1,23 @@
 too-many-arguments-threshold = 8
 excessive-nesting-threshold = 5
+
+# Environment-access policy (issue #423, mirroring leynos/netsuke).
+#
+# Behaviour that depends on a process environment variable takes that value as
+# an argument instead of reading the process directly. The reason strings
+# surface in the Clippy diagnostic, so a contributor who trips one is told what
+# to do instead.
+#
+# A genuine composition root may read the process directly under an
+# item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`; the
+# expectation warns once the site is migrated, so the backlog removes itself.
+#
+# `docs/adr-006-environment-seam-taxonomy.md` records how to choose a seam.
+disallowed-methods = [
+  { path = "std::env::var", reason = "inject an environment reader" },
+  { path = "std::env::var_os", reason = "inject an environment reader" },
+  { path = "std::env::vars", reason = "inject an environment reader" },
+  { path = "std::env::vars_os", reason = "inject an environment reader" },
+  { path = "std::env::set_var", reason = "use a stub environment in tests" },
+  { path = "std::env::remove_var", reason = "use a stub environment in tests" },
+]

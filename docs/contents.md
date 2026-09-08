@@ -41,6 +41,9 @@ libraries. Use the links below to explore each topic.
 - [adr-005-four-tier-python-lint-architecture.md](./adr-005-four-tier-python-lint-architecture.md)
   - Records the Python lint pipeline: Ruff, interrogate, PyPy-backed Pylint,
     df12-python-lints/ambrleaks, and the strict Skylos dead-code gate.
+- [adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
+  - Records the ban on ambient process-environment access in the Rust
+    extension and the injection shapes that replace it.
 
 ## Logging Architecture
 

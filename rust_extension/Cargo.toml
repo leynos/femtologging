@@ -8,6 +8,13 @@ authors = ["Payton McIntosh <pmcintosh@df12.net>"]
 name = "_femtologging_rs"
 crate-type = ["cdylib", "rlib"]
 
+[lints.clippy]
+# Enforce the environment-access policy from
+# `docs/adr-006-environment-seam-taxonomy.md` in every target kind and every
+# feature lane. The banned paths live in `clippy.toml`; this is the severity.
+# Issue #420 will widen this table to the full Netsuke lint baseline.
+disallowed_methods = "deny"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
@@ -54,3 +61,6 @@ _femtologging_rs = { path = ".", package = "femtologging_rs", default-features =
 static_assertions = "1"
 filetime = "0.2"
 trybuild = { version = "1", features = ["diff"] }
+# Parses `clippy.toml` and this manifest in the environment-access policy
+# contract test (`tests/env_access_policy.rs`).
+toml = "1"

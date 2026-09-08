@@ -1,4 +1,5 @@
-.PHONY: help all clean build release lint lint-python lint-rust fmt \
+.PHONY: help all clean build release lint lint-python lint-rust \
+        lint-env-policy lint-lanes-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
 
@@ -138,12 +139,65 @@ skylos-allow: ## Document one named Skylos exception, not an entry point
 	@case "$${SKYLOS_REASON}" in *[![:space:]]*) ;; *) printf "Error: REASON is required for a named whitelist exception\\n" >&2; exit 2;; esac
 	flock "$(SKYLOS_WHITELIST_LOCK)" env $(SKYLOS_CLI) whitelist "$${SKYLOS_SYMBOL}" --reason "$${SKYLOS_REASON}"
 
-lint-rust: ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
-	@for features in none python log-compat tracing-compat; do \
-		if [ "$$features" = none ]; then flags=""; else flags="--features $$features"; fi; \
-		echo "# Lint Rust features: $$features"; \
-		$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features $$flags -- -D warnings; \
-	done
+# The environment-access policy (issue #423) has to hold in every target kind
+# and every feature, including tests and benches, because a test that mutates
+# the parent environment forces the whole suite to serialize.
+#
+# One lane per declared feature, plus `none` and `all`. `--all-features` alone
+# would never compile a `#[cfg(not(feature = ...))]` block, and the crate has
+# such blocks; `none` and `all` between them compile both arms of every feature
+# gate, and each named lane compiles that feature's code with the others
+# absent.
+#
+# The lanes are walked by `scripts/lint_rust_lanes.py` rather than by a shell
+# loop here. A shell `for` loop reports the status of its last command, so a
+# rejection in any earlier lane is discarded unless every call carries a
+# guard — a guard that is easy to drop and whose absence leaves a gate that
+# still looks green. The script fails on the first failing lane and names it,
+# and `scripts/tests/test_lint_rust_lanes.py` covers that path directly.
+#
+# `-A clippy::all` in the policy lint arguments is deliberate and temporary:
+# the lanes in `lint-rust` omit `--all-targets` because the test tree carries a
+# backlog of unrelated Clippy findings, and clearing that backlog is issue
+# #421's job. Silencing the rest of Clippy in this one target lets the
+# environment policy govern test code today without absorbing that work. Once
+# issue #421 lands, these settings fold into its lane list.
+LINT_LANES_SCRIPT ?= scripts/lint_rust_lanes.py
+
+ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
+ENV_POLICY_CARGO_ARGS ?= --all-targets
+ENV_POLICY_LINT_ARGS ?= -A clippy::all -D clippy::disallowed_methods
+
+RUST_LINT_FEATURE_LANES ?= none python log-compat tracing-compat
+RUST_LINT_ARGS ?= -D warnings
+
+lint-env-policy: ## Enforce the environment-access policy across all targets and features
+	@$(CARGO_BUILD_ENV) $(UV_ENV) \
+		INPUT_MANIFEST=$(RUST_MANIFEST) \
+		INPUT_LANES="$(ENV_POLICY_FEATURE_LANES)" \
+		INPUT_CARGO_ARGS="$(ENV_POLICY_CARGO_ARGS)" \
+		INPUT_LINT_ARGS="$(ENV_POLICY_LINT_ARGS)" \
+		uv run --script $(LINT_LANES_SCRIPT)
+
+lint-lanes-test: ## Unit-test the Rust lint lane driver
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
+		--target-version py313 --check $(LINT_LANES_SCRIPT) \
+		scripts/tests/test_lint_rust_lanes.py scripts/tests/conftest.py
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
+		--target-version py313 $(LINT_LANES_SCRIPT) \
+		scripts/tests/test_lint_rust_lanes.py scripts/tests/conftest.py
+	@LINT_LANES_TEST=1 PYTHONPATH=scripts $(UV_ENV) uv run --no-project \
+		--python 3.13 --with pytest==9.0.2 --with cmd-mox==0.2.0 \
+		--with cyclopts --with plumbum --with hypothesis==6.167.1 \
+		python -m pytest scripts/tests/test_lint_rust_lanes.py \
+		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
+
+lint-rust: lint-lanes-test lint-env-policy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+	@$(CARGO_BUILD_ENV) $(UV_ENV) \
+		INPUT_MANIFEST=$(RUST_MANIFEST) \
+		INPUT_LANES="$(RUST_LINT_FEATURE_LANES)" \
+		INPUT_LINT_ARGS="$(RUST_LINT_ARGS)" \
+		uv run --script $(LINT_LANES_SCRIPT)
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
