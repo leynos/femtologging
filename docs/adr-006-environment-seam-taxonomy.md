@@ -128,8 +128,9 @@ only under an item-scoped attribute:
 
 `allow` is not an alternative anywhere, and a source scan enforces that. Every
 Rust source is parsed and every attribute walked, following `cfg_attr`, and no
-source may allow `clippy::disallowed_methods`, the `clippy::style` group that
-contains it, the wider `clippy::all`, or `warnings`, inner or outer.
+source may suppress `clippy::disallowed_methods`, the `clippy::style` group
+that contains it, the wider `clippy::all`, or `warnings`. Suppression means an
+`allow` at either scope, inner or outer, or an `expect` at crate scope.
 
 A crate-level `#![allow(...)]` is the dangerous shape, because it disables the
 policy for a whole crate while the Clippy configuration, the manifest severity,
@@ -137,6 +138,19 @@ the lane list and the compiled fixture all stay exactly as they are, and
 `clippy::allow_attributes` does not fire on inner attributes. Measured: with
 that one line added and a real `std::env::var` call beneath it, every other
 contract stayed green and the policy lane exited 0.
+
+Scope decides whether an `expect` is the sanctioned form or a way round it. An
+item-scoped `#[expect(..., reason = "...")]` is sanctioned, and warns once the
+site grows a seam. A crate-scoped `#![expect(...)]` is not: one call anywhere in
+the crate fulfils it and every other goes unreported, and no unfulfilled
+expectation is raised either, so nothing is left to notice. Measured: with that
+attribute at a crate root, the probe reports neither the disallowed method nor
+an unfulfilled expectation. The scan judges `expect` by scope, and a `cfg_attr`
+carries the outermost scope down however deeply it nests.
+
+Raw identifiers are the same identifiers. `#![r#allow(...)]` and
+`clippy::r#style` each silence the lint, so paths are normalized before they
+are compared.
 
 Nor is writing the attribute where a reader can see it. An `allow` emitted
 from a `macro_rules!` arm is expanded and honoured by Clippy while `syn` keeps
