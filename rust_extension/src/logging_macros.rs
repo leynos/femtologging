@@ -154,7 +154,7 @@ mod tests {
     /// Create a logger at DEBUG level with an attached `CollectingHandler`.
     ///
     /// The logger threshold is set to DEBUG so that all levels are accepted,
-    /// allowing parameterised tests to exercise every macro variant.
+    /// allowing parameterized tests to exercise every macro variant.
     #[fixture]
     fn logger_with_handler() -> (FemtoLogger, Arc<CollectingHandler>) {
         log_context::clear_log_context_for_test();

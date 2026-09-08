@@ -1,7 +1,7 @@
 //! Python bindings for [`TimedRotatingFileHandlerBuilder`].
 //!
 //! The Rust builder remains the source of truth; this module only adapts
-//! Python inputs and serialisation helpers.
+//! Python inputs and serialization helpers.
 
 use std::num::NonZeroU64;
 

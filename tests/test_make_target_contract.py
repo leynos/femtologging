@@ -14,7 +14,7 @@ _SPELLING_SOURCES: Tokens = (
     "scripts/generate_typos_config.py",
     "scripts/typos_rollout.py",
     "scripts/typos_rollout_cache.py",
-    "scripts/tests/test_typos_rollout.py",
+    "scripts/tests",
 )
 _MARKDOWN_FILES: Tokens = (
     "git",
@@ -38,7 +38,6 @@ _SPELLING_COMMANDS: tuple[Tokens, ...] = (
         "--cached",
         "--others",
         "--exclude-standard",
-        "*.md",
         "|",
         "xargs",
         "-0",
@@ -95,7 +94,7 @@ _SPELLING_HELPER_COMMANDS: tuple[Tokens, ...] = (
         "python",
         "-m",
         "pytest",
-        "scripts/tests/test_typos_rollout.py",
+        "scripts/tests",
         "-c",
         "/dev/null",
         "--rootdir=.",
@@ -150,7 +149,7 @@ def test_spelling_recipe_generates_policy_and_runs_the_pinned_checker() -> None:
         "spelling must validate policy helpers before regenerating typos.toml"
     )
     assert _commands("spelling") == _SPELLING_COMMANDS, (
-        "spelling must preserve its generator and pinned typos invocations"
+        "spelling must check tracked and non-ignored source and prose with pinned typos"
     )
 
 

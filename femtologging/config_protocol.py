@@ -24,10 +24,10 @@ class _ConfigBuilder(typ.Protocol):
         """Register the root logger's configuration, returning ``self`` for chaining."""
 
     def build_and_init(self) -> None:
-        """Materialise all registered components and install them globally.
+        """Materialize all registered components and install them globally.
 
         Implementors must apply the accumulated configuration atomically:
-        callers rely on there being no partially-initialised logging state
+        callers rely on there being no partially-initialized logging state
         if construction fails partway through.
         """
 

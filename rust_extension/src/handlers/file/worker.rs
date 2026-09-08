@@ -103,7 +103,7 @@ impl Default for BatchConfig {
 /// Configuration for the background worker thread.
 ///
 /// Specifies the channel `capacity`, batch-drain configuration, `flush_interval`,
-/// and optional synchronisation `start_barrier` for tests.
+/// and optional synchronization `start_barrier` for tests.
 pub struct WorkerConfig {
     /// Capacity of the command channel.
     pub capacity: usize,
@@ -111,7 +111,7 @@ pub struct WorkerConfig {
     pub batch: BatchConfig,
     /// Number of writes between automatic flushes (0 disables periodic flushing).
     pub flush_interval: usize,
-    /// Optional barrier for synchronising worker startup in tests.
+    /// Optional barrier for synchronizing worker startup in tests.
     pub start_barrier: Option<Arc<Barrier>>,
 }
 

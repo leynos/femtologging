@@ -1,7 +1,7 @@
 //! Macros for generating shared builder methods.
 //!
 //! The builder structs expose identical fluent APIs to Rust and Python callers.
-//! These macros centralise the shared method definitions so the two bindings
+//! These macros centralize the shared method definitions so the two bindings
 //! remain in sync and avoid repetitive boilerplate.
 
 /// Validate that a value is greater than zero, returning an error otherwise.

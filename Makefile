@@ -84,18 +84,18 @@ SKYLOS_EXCLUDE_FOLDERS ?= femtologging/unittests femtologging/_femtologging_rs.p
 SKYLOS_EXCLUDE_FLAGS = $(foreach path,$(SKYLOS_EXCLUDE_FOLDERS),--exclude $(path))
 SKYLOS_WHITELIST_LOCK ?= .skylos-whitelist.lock
 
-all: release spelling ## Build the release artifact and enforce spelling
+all: release spelling ## Build the release artefact and enforce spelling
 
-build: ## Build dev artifact and install into venv
+build: ## Build dev artefact and install into venv
 	UV_VENV_CLEAR=1 uv venv
 	$(CARGO_BUILD_ENV) uv sync --group dev
 	# Install the mixed Rust/Python package into the venv for tests/tools
 	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST) --features python,test-util
 
-release: ## Build release artifact
+release: ## Build release artefact
 	$(CARGO_BUILD_ENV) $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
 
-clean: ## Remove build artifacts
+clean: ## Remove build artefacts
 	$(CARGO) clean --manifest-path $(RUST_MANIFEST)
 	find . -type f -name '*.log' -not -path './target/*' -delete
 
@@ -207,9 +207,9 @@ markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spellin
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(MDLINT) --
 
-spelling: spelling-helper-test ## Enforce en-GB-oxendict spelling in Markdown prose
+spelling: spelling-helper-test ## Enforce en-GB-oxendict spelling in tracked source and prose
 	@$(UV_ENV) uv run scripts/generate_typos_config.py
-	@git ls-files -z --cached --others --exclude-standard '*.md' | \
+	@git ls-files -z --cached --others --exclude-standard | \
 		xargs -0 -r env $(UV_ENV) uv tool run typos@$(TYPOS_VERSION) \
 		--config typos.toml --force-exclude
 
@@ -217,14 +217,14 @@ spelling-helper-test: ## Validate the shared spelling-policy integration
 	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
 		--target-version py313 --check scripts/generate_typos_config.py \
 		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
-		scripts/tests/test_typos_rollout.py
+		scripts/tests
 	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
 		--target-version py313 scripts/generate_typos_config.py \
 		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
-		scripts/tests/test_typos_rollout.py
+		scripts/tests
 	@PYTHONPATH=scripts $(UV_ENV) uv run --no-project --python 3.13 \
 		--with pytest==9.0.2 --with pytest-cov==7.0.0 \
-		python -m pytest scripts/tests/test_typos_rollout.py \
+		python -m pytest scripts/tests \
 		-c /dev/null --rootdir=. -p no:cacheprovider \
 		--cov=generate_typos_config --cov=typos_rollout \
 		--cov=typos_rollout_cache --cov-fail-under=90

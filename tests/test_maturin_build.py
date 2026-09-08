@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from tests.maturin_compat import (
-    build_native_wheel_artifact,
+    build_native_wheel_artefact,
     read_expected_maturin_version,
     read_maturin_pins,
     toolchain_available,
@@ -80,7 +80,7 @@ def test_maturin_wheel_build_snapshot(
     )
     expected_payload["generator"] = expected
 
-    wheel_path = build_native_wheel_artifact(root, tmp_path / "wheelhouse")
+    wheel_path = build_native_wheel_artefact(root, tmp_path / "wheelhouse")
     snapshot_payload = wheel_build_snapshot(wheel_path)
     assert snapshot_payload == expected_payload, (
         "built wheel metadata and layout must match the recorded manifest in "

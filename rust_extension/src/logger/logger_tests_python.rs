@@ -23,7 +23,7 @@ fn create_py_exception<'py>(
 /// Assert that output contains the base log message and all expected substrings.
 ///
 /// A macro rather than a function so the panic points at the calling test
-/// and the expect lint sees the unwrap inside a recognised test body.
+/// and the expect lint sees the unwrap inside a recognized test body.
 macro_rules! assert_output_contains {
     ($output:expr, $expected_substrings:expr) => {{
         let text = $output.expect("Should produce output");
@@ -36,7 +36,7 @@ macro_rules! assert_output_contains {
     }};
 }
 
-/// Test inputs for `should_capture_exc_info` parameterised testing.
+/// Test inputs for `should_capture_exc_info` parameterized testing.
 #[derive(Debug)]
 enum ExcInfoInput {
     True,

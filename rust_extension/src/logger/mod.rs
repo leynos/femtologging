@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
-// Re-exported for the parameterised tests in `logger_tests_python.rs`;
+// Re-exported for the parameterized tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
 #[cfg(feature = "python")]
 use python_helpers::capture_exception_payload;

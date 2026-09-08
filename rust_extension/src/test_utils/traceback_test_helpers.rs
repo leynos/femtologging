@@ -170,7 +170,7 @@ impl MockFrameBuilder {
     }
 }
 
-/// Key descriptor for parameterised locals extraction tests.
+/// Key descriptor for parameterized locals extraction tests.
 ///
 /// Keys starting with digits are parsed as integers; others are strings.
 #[derive(Debug, Clone)]

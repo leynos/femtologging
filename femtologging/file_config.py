@@ -60,7 +60,7 @@ def _ini_to_dict_config(
     disable_existing: bool,
 ) -> dict[str, typ.Any]:
     """Translate parsed INI sections into a ``dictConfig``-style mapping."""
-    section_map = _materialise_sections(sections)
+    section_map = _materialize_sections(sections)
     _reject_formatters(section_map)
     default_pool = _merge_defaults(section_map.pop(_DEFAULT_SECTION, {}), defaults)
     formatters = _parse_formatters(section_map)
@@ -80,7 +80,7 @@ def _ini_to_dict_config(
     return cfg
 
 
-def _materialise_sections(
+def _materialize_sections(
     sections: list[tuple[str, list[tuple[str, str]]]],
 ) -> dict[str, dict[str, str]]:
     """Flatten ordered (section, entries) pairs, letting later duplicates win."""
@@ -93,7 +93,7 @@ def _materialise_sections(
 
 
 def _reject_formatters(sections: dict[str, dict[str, str]]) -> None:
-    """Reject a non-empty ``[formatters]`` section; customisation is unsupported."""
+    """Reject a non-empty ``[formatters]`` section; customization is unsupported."""
     fmt_section = sections.pop("formatters", None)
     if not fmt_section:
         return
@@ -288,7 +288,7 @@ def _expand_placeholders(value: str, defaults: cabc.Mapping[str, str]) -> str:
 
 
 def _parse_bool(raw: str | None) -> bool:
-    """Parse a stdlib-style boolean token, rejecting anything not recognised."""
+    """Parse a stdlib-style boolean token, rejecting anything not recognized."""
     if raw is None:
         return False
     value = raw.strip().lower()
