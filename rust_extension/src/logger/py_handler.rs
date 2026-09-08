@@ -245,9 +245,13 @@ impl PyHandler {
             .getattr("handle_record")
             .map_err(|err| map_py_err(py, err, "get handle_record"))?;
         let result = match context {
-            Some(context) => context
-                .bind(py)
-                .call_method1("run", (handle_record, record_dict)),
+            Some(context) => {
+                let invocation_context = context
+                    .bind(py)
+                    .call_method0("copy")
+                    .map_err(|err| map_py_err(py, err, "copy context"))?;
+                invocation_context.call_method1("run", (handle_record, record_dict))
+            }
             None => handle_record.call1((record_dict,)),
         };
 
@@ -269,15 +273,21 @@ impl PyHandler {
             .getattr("handle")
             .map_err(|err| map_py_err(py, err, "get handle"))?;
         let result = match context {
-            Some(context) => context.bind(py).call_method1(
-                "run",
-                (
-                    handle,
-                    record.logger(),
-                    record.level_str(),
-                    record.message(),
-                ),
-            ),
+            Some(context) => {
+                let invocation_context = context
+                    .bind(py)
+                    .call_method0("copy")
+                    .map_err(|err| map_py_err(py, err, "copy context"))?;
+                invocation_context.call_method1(
+                    "run",
+                    (
+                        handle,
+                        record.logger(),
+                        record.level_str(),
+                        record.message(),
+                    ),
+                )
+            }
             None => handle.call1((record.logger(), record.level_str(), record.message())),
         };
 
