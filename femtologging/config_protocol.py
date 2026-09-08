@@ -31,12 +31,17 @@ class _ConfigBuilder(typ.Protocol):
         if construction fails partway through.
         """
 
+
 class _HandlerBuilder(typ.Protocol):
     """Protocol for handler builders constructed by ``dictConfig``."""
 
-    def with_formatter(self, formatter: str) -> typ.Self: ...
+    def with_formatter(self, formatter: str) -> typ.Self:
+        """Set a named formatter, returning ``self`` for chaining."""
 
-    def with_filters(self, filters: list[str]) -> typ.Self: ...
+    def with_filters(self, filters: list[str]) -> typ.Self:
+        """Attach filter identifiers, returning ``self`` for chaining."""
+
+
 class _LoggerMutationBuilder(typ.Protocol):
     """Protocol matching the concrete ``LoggerMutationBuilder`` API."""
 
