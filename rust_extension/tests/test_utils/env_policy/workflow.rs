@@ -95,15 +95,37 @@ fn is_conditional(node: &Yaml<'_>) -> bool {
     node.as_mapping_get("if").is_some()
 }
 
-/// Report whether a job tolerates its own failure outright.
+/// Report whether a job's failure tolerance is acceptable for a gate.
 ///
-/// A matrix-driven expression is fine, since it can single out an experimental
-/// leg. A literal `true` makes every failure advisory, which is the same hole
-/// as a condition wearing different clothes.
-fn is_always_tolerated(job: &Yaml<'_>) -> bool {
-    job.as_mapping_get("continue-on-error")
-        .and_then(Yaml::as_bool)
-        == Some(true)
+/// The rule is an allow-list of shapes, not a deny-list of spellings. A
+/// deny-list would have to enumerate every constant-true expression, and
+/// `${{ true }}` is only the first of them. Two shapes are accepted: no
+/// `continue-on-error` at all, and an expression that consults the matrix,
+/// which is how an experimental leg is singled out. Everything else, the
+/// literal `true` included, makes the gate advisory.
+fn job_tolerance_is_acceptable(job: &Yaml<'_>) -> bool {
+    let Some(tolerance) = job.as_mapping_get("continue-on-error") else {
+        return true;
+    };
+    if tolerance.as_bool() == Some(false) {
+        return true;
+    }
+    tolerance
+        .as_str()
+        .is_some_and(|expression| expression.contains("matrix."))
+}
+
+/// Report whether a step's failure tolerance is acceptable for a gate.
+///
+/// Stricter than the job rule, and deliberately so. A matrix expression on a
+/// job describes which leg is experimental; on a required step it would say
+/// that this particular gate may fail, which is the thing being prevented.
+/// Only absence, or an explicit `false`, is accepted.
+fn step_tolerance_is_acceptable(step: &Yaml<'_>) -> bool {
+    match step.as_mapping_get("continue-on-error") {
+        None => true,
+        Some(tolerance) => tolerance.as_bool() == Some(false),
+    }
 }
 
 /// Fail unless some job runs `command` as a whole step, unconditionally.
@@ -115,22 +137,33 @@ fn ensure_command_runs(workflow: &Yaml<'_>, command: &str) -> TestResult {
         else {
             continue;
         };
-        if is_conditional(step) {
-            return Err(
-                format!("the {command:?} step in job {name} must carry no condition").into(),
-            );
-        }
-        if is_conditional(job) {
-            return Err(format!("job {name} runs {command:?} but carries a condition").into());
-        }
-        if is_always_tolerated(job) {
-            return Err(
-                format!("job {name} runs {command:?} but tolerates its own failure").into(),
-            );
-        }
+        ensure_step_gates(&name, command, job, step)?;
         return Ok(());
     }
     Err(format!("{CI_WORKFLOW_PATH} must run {command:?} as a step's whole command").into())
+}
+
+/// Fail unless the located step and its job both let the gate stop CI.
+fn ensure_step_gates(name: &str, command: &str, job: &Yaml<'_>, step: &Yaml<'_>) -> TestResult {
+    if is_conditional(step) {
+        return Err(format!("the {command:?} step in job {name} must carry no condition").into());
+    }
+    if is_conditional(job) {
+        return Err(format!("job {name} runs {command:?} but carries a condition").into());
+    }
+    if !step_tolerance_is_acceptable(step) {
+        return Err(format!(
+            "the {command:?} step in job {name} must not tolerate its own failure"
+        )
+        .into());
+    }
+    if !job_tolerance_is_acceptable(job) {
+        return Err(format!(
+            "job {name} runs {command:?} but tolerates failure outside a matrix leg"
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Fail unless CI runs every policy gate unconditionally on pull requests.

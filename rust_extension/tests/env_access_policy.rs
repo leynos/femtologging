@@ -220,14 +220,28 @@ fn a_failing_lane_fails_the_policy_target() -> TestResult {
 /// and no list of falsy spellings is reliable: YAML resolves `false` to a
 /// boolean whose string form is `False`.
 ///
+/// Failure tolerance is judged by an allow-list of shapes rather than a
+/// deny-list of spellings, because a deny-list would have to enumerate every
+/// constant-true expression and `${{ true }}` is only the first. A job may
+/// consult the matrix, which is how an experimental leg is singled out; a
+/// required step may not, since on a step that would say this gate may fail.
+///
 /// Mutation proof (2026-09-07): `if: false` on the Lint step failed with "the
 /// \"make lint\" step in job build-test must carry no condition"; the same on
 /// the job failed with "job build-test runs \"make lint\" but carries a
-/// condition"; a push-only condition failed identically; `continue-on-error:
-/// true` on the job failed with "tolerates its own failure"; wrapping the
-/// command and appending `|| true` each failed with "must run \"make lint\" as
-/// a step's whole command", as did renaming the command; and deleting the
+/// condition"; a push-only condition failed identically; wrapping the command
+/// and appending `|| true` each failed with "must run \"make lint\" as a
+/// step's whole command", as did renaming the command; and deleting the
 /// `pull_request` trigger failed with "must trigger on pull_request".
+/// Renaming the job changes nothing, correctly, since the command is sought
+/// in any job rather than in one by name.
+///
+/// Mutation proof (2026-09-08): on the job, `continue-on-error: true`,
+/// `${{ true }}` and `'yes'` each failed with "tolerates failure outside a
+/// matrix leg", while `false` and the matrix expression were accepted. On the
+/// Lint step, `true`, `${{ true }}` and even `${{ matrix.experimental }}`
+/// each failed with "must not tolerate its own failure", while `false` was
+/// accepted.
 #[test]
 fn ci_runs_the_policy_gates_unconditionally() -> TestResult {
     ensure_ci_runs_the_policy_gates()

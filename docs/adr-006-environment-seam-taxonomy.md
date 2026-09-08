@@ -128,15 +128,33 @@ only under an item-scoped attribute:
 
 `expect` rather than `allow` is deliberate. The expectation goes unfulfilled,
 and therefore warns, once the site is migrated, so the backlog removes itself
-instead of rotting. The Rust extension is loaded as a Python extension module
-and has no `main`, so it has no composition root of its own today; the attribute
-exists for a future binary target.
+instead of rotting.
+
+The Rust extension is loaded as a Python extension module and has no `main`,
+so it has no composition root of its own. It has one all the same, in the
+tests: the point where a child process's environment is built. Clearing that
+environment is what makes a subprocess test hermetic, and a cleared
+environment has no `PATH`, so the child could not be found at all. That single
+read of the parent's `PATH`, at the site where the child's environment is
+composed, is the one sanctioned exception, and it carries the item-scoped
+attribute like any other. `option_env!` is not a way around it: it resolves at
+compile time and would bake in the building machine's `PATH`.
+
+The exception is narrow on purpose. It covers the value a cleared environment
+cannot supply and nothing else; every other variable the child needs is set
+explicitly, and a second read for a different variable would be a new decision
+rather than an extension of this one.
 
 ### Tests
 
-A test never mutates the parent process environment. Where a test needs a child
-process to see a variable, it builds the child's environment explicitly rather
-than setting the variable in the harness and letting the child inherit it.
+A test never mutates the parent process environment, and never reads it
+ambiently either. Where a test needs a child process to see a variable, it
+builds the child's environment explicitly rather than setting the variable in
+the harness and letting the child inherit it. `tests/env_access_policy.rs`
+holds itself to this: its `clippy-driver` probe clears the environment and
+adds back only `CLIPPY_CONF_DIR` and `PATH`, so the diagnostics it counts
+cannot be perturbed by an inherited `RUSTFLAGS`, `CLIPPY_ARGS`, or a
+`CLIPPY_CONF_DIR` pointing at another configuration.
 `Command::env` alone leaves the parent's environment in place, so a test whose
 outcome could depend on an inherited variable calls `Command::env_clear` first
 and then adds back every variable the child legitimately needs, `PATH`

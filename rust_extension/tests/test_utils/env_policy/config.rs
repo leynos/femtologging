@@ -4,6 +4,7 @@
 //! moves or disappears is a build failure rather than a runtime one, and no
 //! test reads the filesystem to find them.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -103,11 +104,41 @@ pub(crate) struct Violation {
     pub(crate) notes: Vec<String>,
 }
 
+/// Return the host `PATH`, the one inherited value the probe cannot do without.
+///
+/// This is the composition root for the child process: the point where its
+/// environment is built. Clearing the environment is what makes the probe
+/// hermetic, and a cleared environment has no `PATH`, so `clippy-driver`
+/// could not be found at all. The value has to come from the parent, and
+/// reading it here is the ADR's sanctioned item-scoped exception rather than
+/// an ambient read scattered through the code.
+///
+/// `option_env!` is not an alternative: it resolves at compile time and would
+/// bake in the building machine's `PATH`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "composition root: the child's PATH must come from the parent, and \
+              a cleared environment has none"
+)]
+fn host_path() -> Fallible<OsString> {
+    std::env::var_os("PATH").ok_or_else(|| "PATH must be set to find clippy-driver".into())
+}
+
 /// Return the policy violations Clippy reports for the fixture.
 pub(crate) fn probe_violations() -> Fallible<Vec<Violation>> {
     let fixture = crate_dir().join("tests/fixtures/env_policy_probe.rs");
     let out_dir = tempfile::tempdir()?;
+    // Build the child's environment rather than inheriting one. A probe for
+    // the environment-access policy that reads host state would be testing
+    // this machine as much as the policy: an inherited CLIPPY_CONF_DIR would
+    // point the lint at another configuration, and RUSTFLAGS or CLIPPY_ARGS
+    // would change the diagnostics it counts. PATH is forwarded because it is
+    // how `clippy-driver` is found at all, which is the one ambient input this
+    // cannot remove; the ADR's own rule is to clear and then add back what the
+    // child legitimately needs.
     let output = Command::new("clippy-driver")
+        .env_clear()
+        .env("PATH", host_path()?)
         .env("CLIPPY_CONF_DIR", crate_dir())
         .arg("--edition=2024")
         .arg("--crate-type=lib")
