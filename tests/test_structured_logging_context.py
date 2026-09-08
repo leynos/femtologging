@@ -17,6 +17,9 @@ from femtologging import (
     log_context,
 )
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 
 class RecordCollector:
     """Collect structured records delivered through ``handle_record``."""
@@ -30,8 +33,8 @@ class RecordCollector:
         _ = (self.records, logger, level, message)
 
     def handle_record(self, record: dict[str, object]) -> None:
-        """Store the record emitted by the logger worker."""
-        self.records.append(record)
+        """Store a record snapshot emitted by the logger worker."""
+        self.records.append(dict(record))
 
     def flush(self) -> bool:
         """Acknowledge the flush protocol used by ``FemtoLogger``."""
@@ -72,7 +75,7 @@ def test_direct_logger_info_merges_scoped_log_context() -> None:
     assert emitted_key_values(logger, collector) == {
         "request_id": "abc123",
         "user": "alice",
-    }
+    }, "scoped context fields were not attached to logger.info()"
 
 
 def test_get_logger_info_preserves_context_at_root_handler() -> None:
@@ -125,7 +128,7 @@ def test_logger_log_extra_merges_and_overrides_scoped_context() -> None:
         "attempt": "2",
         "request_id": "inline",
         "user": "alice",
-    }
+    }, "inline fields did not override or merge with scoped context"
 
 
 @pytest.mark.parametrize(
@@ -137,12 +140,14 @@ def test_convenience_methods_accept_extra(method_name: str) -> None:
     logger.set_level("DEBUG")
     collector = RecordCollector()
     logger.add_handler(collector)
-    emit = typ.cast("typ.Callable[..., str | None]", getattr(logger, method_name))
+    emit = typ.cast("cabc.Callable[..., str | None]", getattr(logger, method_name))
 
     output = emit("structured", extra={"method": method_name})
 
     assert output is not None, f"{method_name}() should emit at DEBUG level"
-    assert emitted_key_values(logger, collector) == {"method": method_name}
+    assert emitted_key_values(logger, collector) == {"method": method_name}, (
+        f"{method_name}() did not forward extra fields"
+    )
 
 
 def test_logger_info_rejects_invalid_extra_value_when_disabled() -> None:

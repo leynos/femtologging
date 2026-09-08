@@ -493,24 +493,14 @@ filterwarnings = [
 strict = true
 
 [[tool.skylos.dead_code.entrypoints]]
-type = "parameter"
-full_name = [
-    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.count",
-    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.reason",
-    "femtologging._rust_compat._make_timed_rotation_hooks._set.epoch_millis",
-    "femtologging._rust_compat._make_runtime_attachment_state._fallback.name",
-]
-reason = "Fallback hooks preserve the test-util protocol signatures when the extension lacks the feature."
+type = "import"
+full_name = ["femtologging._femtologging_rs"]
+reason = "The package re-exports the native extension as femtologging.rust for tests and downstream consumers."
 
 [[tool.skylos.dead_code.entrypoints]]
-type = "parameter"
-full_name = [
-    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.count",
-    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.reason",
-    "femtologging._rust_compat._make_timed_rotation_hooks._set.epoch_millis",
-    "femtologging._rust_compat._make_runtime_attachment_state._fallback.name",
-]
-reason = "Fallback hooks preserve the test-util protocol signatures when the extension lacks the feature."
+type = "variable"
+full_name = ["femtologging._rust_compat._runtime_attachment_state_for_test"]
+reason = "The behavioural suite imports this test-util hook; tests are excluded from the production scan."
 
 [[tool.skylos.dead_code.entrypoints]]
 type = "parameter"

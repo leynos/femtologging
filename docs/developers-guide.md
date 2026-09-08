@@ -197,7 +197,6 @@ directly, and its Loom modules are themselves gated by `cfg(loom)`. Prefer
 these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
 
-
 ## Structured logging contracts
 
 Python structured fields use one conversion and validation path in
