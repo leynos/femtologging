@@ -18,7 +18,6 @@ mod worker;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
@@ -160,7 +159,10 @@ impl FemtoLogger {
         if !self.is_enabled_for(level) {
             return Ok(None);
         }
-        let explicit_key_values = BTreeMap::new();
+        #[cfg(feature = "python")]
+        let explicit_key_values = log_context::current_python_context(py)?;
+        #[cfg(not(feature = "python"))]
+        let explicit_key_values = std::collections::BTreeMap::new();
         let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
             Ok(key_values) => key_values,
             Err(err) => {
