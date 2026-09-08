@@ -195,7 +195,21 @@ impl FemtoLogger {
         };
         let handlers = self.handlers.read().clone();
         #[cfg(feature = "python")]
-        let context = Self::capture_python_context(&handlers);
+        let context = match Self::capture_python_context(&handlers) {
+            Ok(context) => context,
+            Err(err) => {
+                pyo3::Python::attach(|py| err.print(py));
+                self.dropped_records
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.drop_warner.record_drop();
+                self.drop_warner.warn_if_due(|count| {
+                    warn!(
+                        "FemtoLogger: dropped {count} records because contextvars capture failed"
+                    );
+                });
+                return;
+            }
+        };
         if tx
             .try_send(QueuedRecord {
                 record,
@@ -222,19 +236,15 @@ impl FemtoLogger {
     #[cfg(feature = "python")]
     pub(super) fn capture_python_context(
         handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
-    ) -> Option<pyo3::Py<pyo3::PyAny>> {
+    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
         if !handlers.iter().any(|handler| handler.is_python_backed()) {
-            return None;
+            return Ok(None);
         }
         pyo3::Python::attach(|py| {
             py.import("contextvars")
                 .and_then(|module| module.call_method0("copy_context"))
                 .map(pyo3::Bound::unbind)
-                .map_err(|err| {
-                    err.print(py);
-                    warn!("FemtoLogger: unable to capture contextvars context: {err}");
-                })
-                .ok()
+                .map(Some)
         })
     }
 

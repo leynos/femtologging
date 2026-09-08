@@ -102,6 +102,7 @@ fn capture_python_context_uses_queued_handler_snapshot() {
 
         assert!(logger.remove_handler(&handler));
         let captured = FemtoLogger::capture_python_context(&queued_handlers)
+            .expect("context capture should succeed")
             .expect("queued Python handler should capture its producer context");
         let value = captured
             .bind(py)
