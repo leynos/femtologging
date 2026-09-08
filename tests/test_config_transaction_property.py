@@ -37,7 +37,7 @@ def _logger_state(name: str) -> LoggerState:
     return tuple(logger.handler_ptrs_for_test()), _attachment_state(name)
 
 
-@settings(max_examples=25)
+@settings(max_examples=25, deadline=None)
 @given(
     logger_order=st.lists(
         st.sampled_from(_LOGGER_NAMES),
@@ -60,7 +60,10 @@ def test_failed_reconfiguration_preserves_generated_logger_state(
 
     The generated logger order covers dotted logger names and their ancestors.
     Each example resets the global manager itself because Hypothesis invokes the
-    test body repeatedly inside pytest's single autouse-fixture lifetime.
+    test body repeatedly inside pytest's single autouse-fixture lifetime. The
+    extension crosses the Python/Rust boundary and acquires shared registry
+    locks, so its wall-clock time varies with unrelated Cargo and test work;
+    the property constrains state, not latency.
     """
     femtologging.reset_manager()
     try:
