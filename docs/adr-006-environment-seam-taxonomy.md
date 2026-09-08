@@ -138,8 +138,15 @@ the lane list and the compiled fixture all stay exactly as they are, and
 that one line added and a real `std::env::var` call beneath it, every other
 contract stayed green and the policy lane exited 0.
 
-Naming the lint is not required to silence it, which is why the scan parses
-rather than searches. Measured against Clippy 0.1.98, each on a probe reporting
+Nor is writing the attribute where a reader can see it. An `allow` emitted
+from a `macro_rules!` arm is expanded and honoured by Clippy while `syn` keeps
+the arm's body an opaque token stream, so the scan walks macro token streams as
+well as parsed attributes. Measured: a macro arm emitting
+`#[allow(clippy::disallowed_methods)]` around a `std::env::var` call reports
+zero diagnostics where the same file without it reports one.
+
+Naming the lint is not required to silence it either, which is why the scan
+parses rather than searches. Measured against Clippy 0.1.98, each on a probe reporting
 one diagnostic without an attribute: `#![allow(clippy::style)]` and
 `#![allow(clippy::all)]` each reduce it to none, as does
 `#![cfg_attr(all(), allow(clippy::disallowed_methods))]`, which is honoured by
