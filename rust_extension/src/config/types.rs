@@ -19,11 +19,16 @@ use crate::{
     filters::{FilterBuildError, FilterBuilder},
     handler::FemtoHandlerTrait,
     handlers::{
-        FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, RotatingFileHandlerBuilder,
-        SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
+        FileHandlerBuilder, HTTPHandlerBuilder, HandlerBuildError, HandlerBuilderTrait,
+        RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
+        TimedRotatingFileHandlerBuilder,
     },
     level::FemtoLevel,
 };
+
+use super::FormatterBuilder;
+#[cfg(feature = "python")]
+use crate::formatter::SharedFormatter;
 
 /// Concrete handler builder variants.
 #[derive(Clone, Debug)]
@@ -38,6 +43,8 @@ pub enum HandlerBuilder {
     TimedRotating(TimedRotatingFileHandlerBuilder),
     /// Build a [`FemtoSocketHandler`].
     Socket(SocketHandlerBuilder),
+    /// Build a [`FemtoHTTPHandler`].
+    Http(HTTPHandlerBuilder),
 }
 
 impl HandlerBuilder {
@@ -61,6 +68,39 @@ impl HandlerBuilder {
             }
             Self::Socket(b) => <SocketHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
                 .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
+            Self::Http(b) => <HTTPHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
+                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
+        }
+    }
+
+    /// Build this handler after resolving its configured formatter identifier.
+    #[cfg(feature = "python")]
+    pub(crate) fn build_with_formatters(
+        &self,
+        formatters: &BTreeMap<String, SharedFormatter>,
+    ) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
+        let mut builder = self.clone();
+        match &mut builder {
+            Self::Stream(builder) => builder.resolve_formatter(formatters)?,
+            Self::File(builder) => builder.resolve_formatter(formatters)?,
+            Self::Rotating(builder) => builder.resolve_formatter(formatters)?,
+            Self::TimedRotating(builder) => builder.resolve_formatter(formatters)?,
+            Self::Socket(_) => {}
+            Self::Http(_) => {}
+        }
+        builder.build()
+    }
+
+    /// Return filter identifiers configured on this handler.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        match self {
+            Self::Stream(builder) => builder.filter_ids(),
+            Self::File(builder) => builder.filter_ids(),
+            Self::Rotating(builder) => builder.filter_ids(),
+            Self::TimedRotating(builder) => builder.filter_ids(),
+            Self::Socket(builder) => builder.filter_ids(),
+            Self::Http(builder) => builder.filter_ids(),
         }
     }
 }
@@ -92,6 +132,12 @@ impl From<TimedRotatingFileHandlerBuilder> for HandlerBuilder {
 impl From<SocketHandlerBuilder> for HandlerBuilder {
     fn from(value: SocketHandlerBuilder) -> Self {
         Self::Socket(value)
+    }
+}
+
+impl From<HTTPHandlerBuilder> for HandlerBuilder {
+    fn from(value: HTTPHandlerBuilder) -> Self {
+        Self::Http(value)
     }
 }
 
@@ -141,43 +187,6 @@ pub enum ConfigError {
     /// The runtime mutation request contains conflicting collection updates.
     #[error("invalid runtime mutation: {0}")]
     InvalidMutation(String),
-}
-
-/// Builder for formatter definitions.
-#[cfg_attr(feature = "python", pyclass(from_py_object))]
-#[derive(Clone, Debug, Default)]
-pub struct FormatterBuilder {
-    format: Option<String>,
-    datefmt: Option<String>,
-}
-
-impl FormatterBuilder {
-    /// Create a new `FormatterBuilder`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the format string.
-    pub fn with_format(mut self, format: impl Into<String>) -> Self {
-        self.format = Some(format.into());
-        self
-    }
-
-    /// Set the date format string.
-    pub fn with_datefmt(mut self, datefmt: impl Into<String>) -> Self {
-        self.datefmt = Some(datefmt.into());
-        self
-    }
-
-    /// Return the configured format string.
-    pub fn format_string(&self) -> Option<&str> {
-        self.format.as_deref()
-    }
-
-    /// Return the configured date format string.
-    pub fn datefmt_string(&self) -> Option<&str> {
-        self.datefmt.as_deref()
-    }
 }
 
 /// Builder for logger configuration.
@@ -354,6 +363,12 @@ impl ConfigBuilder {
     /// Retrieve configured handler builders.
     pub fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
         &self.handlers
+    }
+
+    /// Retrieve configured formatter builders.
+    #[cfg(feature = "python")]
+    pub(crate) fn formatter_builders(&self) -> &BTreeMap<String, FormatterBuilder> {
+        &self.formatters
     }
 
     /// Retrieve configured filter builders.

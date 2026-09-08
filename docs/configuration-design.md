@@ -314,10 +314,14 @@ new Rust builder variant requires updating this extraction logic.
 
 Filters run only after the logger has accepted the record based on its level.
 Records failing the logger's level check are dropped before any filter runs, so
-filters merely further narrow which records proceed to handlers. Reconfiguring
-a logger replaces its filter set: `apply_logger_config` clears any existing
-filters only after all filter IDs validate, replacing them with the newly
-specified set.
+filters merely further narrow which records proceed to handlers. A logger
+filter runs only on the logger receiving the logging call: it does not cascade
+to descendants or records propagated from descendants, matching CPython. Attach
+a filter to a handler with `with_filters(...)` for application-wide enrichment.
+Handler filters run on the producer thread for every record routed to that
+handler, including propagated records. Reconfiguring a logger replaces its
+filter set: `apply_logger_config` clears any existing filters only after all
+filter IDs validate, replacing them with the newly specified set.
 
 ADR 003 defines the accepted direction for Python standard library parity:
 logger and root filters will also support Python callback filters
@@ -527,11 +531,9 @@ reset-after, deadline) tune the reconnection strategy. The `as_dict()` helper
 surfaced through PyO3 keeps snapshot tests deterministic and documents the
 resolved configuration.
 
-Formatter support for `RotatingFileHandlerBuilder` is intentionally narrow.
-Only the default formatter can be selected today; providing a custom identifier
-causes `build()` to return `HandlerConfigError`. Once the rotation pipeline can
-serialize custom formatters, support for custom formatters will be added to the
-builder.
+`RotatingFileHandlerBuilder` accepts formatter callables, a direct
+`FormatterBuilder`, or a named formatter registered through `ConfigBuilder`.
+Named formatter IDs resolve while `build_and_init()` constructs the handler.
 
 #### Overflow policy options
 
@@ -844,8 +846,9 @@ components in a fixed order to honour dependencies:
      accepted targets.
    - Unsupported handler classes in any handler class mapping raise a
      `ValueError`.
-   - Handler `level` and `filters` settings are currently unsupported and
-     produce `ValueError`.
+   - Handler `level` settings are unsupported and produce `ValueError`.
+     Handler `filters` values are string lists resolved against the top-level
+     filter registry.
 6. **Loggers** are processed next. Each definition yields a
    `LoggerConfigBuilder` with optional `level`, `handlers`, `filters`, and
    `propagate` settings. Logger and root `filters` values are lists of filter
@@ -1197,8 +1200,9 @@ sequenceDiagram
 **Figure 6.1:** Log record propagation through a three-level logger hierarchy.
 When a child logger emits a record with `propagate=true`, the record first
 passes through any local handlers, then propagates to the parent logger. Each
-ancestor applies its own filters and handlers before forwarding the record
-further up the chain until the root logger is reached.
+ancestor applies its own handler filters and handlers before forwarding the
+record further up the chain until the root logger is reached. Logger filters do
+not run during propagation, matching CPython.
 
 ## 7. Testing and Benchmarking Coverage
 

@@ -44,6 +44,7 @@ pub struct HTTPHandlerBuilder {
     backoff: BackoffOverrides,
     format: SerializationFormat,
     record_fields: Option<Vec<String>>,
+    filters: Vec<String>,
 }
 
 impl HTTPHandlerBuilder {
@@ -137,6 +138,23 @@ impl HTTPHandlerBuilder {
     pub fn with_record_fields(mut self, fields: Vec<String>) -> Self {
         self.record_fields = Some(fields);
         self
+    }
+
+    /// Attach filters by identifier.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.filters =
+            crate::config::normalize_vec(filter_ids.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filters
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
@@ -254,6 +272,9 @@ impl HTTPHandlerBuilder {
         dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms());
         dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms());
         dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms());
+        if !self.filters.is_empty() {
+            d.set_item("filters", self.filters.clone())?;
+        }
         Ok(())
     }
 }
