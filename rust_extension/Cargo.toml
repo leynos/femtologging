@@ -64,3 +64,12 @@ trybuild = { version = "1", features = ["diff"] }
 # Parses `clippy.toml` and this manifest in the environment-access policy
 # contract test (`tests/env_access_policy.rs`).
 toml = "1"
+# Parses Rust sources in `tests/env_policy_source_scan.rs`. A text scan cannot
+# follow `cfg_attr` or tell an attribute from attribute-shaped prose.
+syn = { version = "2", features = ["full", "visit", "parsing", "printing"] }
+# Walks macro token streams, which syn keeps opaque.
+proc-macro2 = "1"
+# Reads those sources through a capability handle, which the Dylint suite
+# requires in place of `std::fs`.
+cap-std = { version = "3.4.4", features = ["fs_utf8"] }
+camino = "1.2.0"

@@ -126,14 +126,49 @@ only under an item-scoped attribute:
 #[expect(clippy::disallowed_methods, reason = "composition root: <what and why>")]
 ```
 
-`allow` is not an alternative anywhere, and a source scan enforces that: no
-Rust source may allow `clippy::disallowed_methods`, `clippy::all`, or
-`warnings`, inner or outer. A crate-level `#![allow(...)]` is the dangerous
-shape, because it disables the policy for a whole crate while the Clippy
-configuration, the manifest severity, the lane list and the compiled fixture
-all stay exactly as they are, and `clippy::allow_attributes` does not fire on
-inner attributes. Measured: with that one line added and a real `std::env::var`
-call beneath it, every other contract stayed green and the policy lane exited 0.
+`allow` is not an alternative anywhere, and a source scan enforces that. Every
+Rust source is parsed and every attribute walked, following `cfg_attr`, and no
+source may suppress `clippy::disallowed_methods`, the `clippy::style` group
+that contains it, the wider `clippy::all`, or `warnings`. Suppression means an
+`allow` at either scope, inner or outer, or an `expect` at crate scope.
+
+A crate-level `#![allow(...)]` is the dangerous shape, because it disables the
+policy for a whole crate while the Clippy configuration, the manifest severity,
+the lane list and the compiled fixture all stay exactly as they are, and
+`clippy::allow_attributes` does not fire on inner attributes. Measured: with
+that one line added and a real `std::env::var` call beneath it, every other
+contract stayed green and the policy lane exited 0.
+
+Scope decides whether an `expect` is the sanctioned form or a way round it. An
+item-scoped `#[expect(..., reason = "...")]` is sanctioned, and warns once the
+site grows a seam. A crate-scoped `#![expect(...)]` is not: one call anywhere in
+the crate fulfils it and every other goes unreported, and no unfulfilled
+expectation is raised either, so nothing is left to notice. Measured: with that
+attribute at a crate root, the probe reports neither the disallowed method nor
+an unfulfilled expectation. The scan judges `expect` by scope, and a `cfg_attr`
+carries the outermost scope down however deeply it nests.
+
+Raw identifiers are the same identifiers. `#![r#allow(...)]` and
+`clippy::r#style` each silence the lint, so paths are normalized before they
+are compared.
+
+Nor is writing the attribute where a reader can see it. An `allow` emitted
+from a `macro_rules!` arm is expanded and honoured by Clippy while `syn` keeps
+the arm's body an opaque token stream, so the scan walks macro token streams as
+well as parsed attributes. Measured: a macro arm emitting
+`#[allow(clippy::disallowed_methods)]` around a `std::env::var` call reports
+zero diagnostics where the same file without it reports one.
+
+Naming the lint is not required to silence it either, which is why the scan
+parses rather than searches. Measured against Clippy 0.1.98, each on a probe reporting
+one diagnostic without an attribute: `#![allow(clippy::style)]` and
+`#![allow(clippy::all)]` each reduce it to none, as does
+`#![cfg_attr(all(), allow(clippy::disallowed_methods))]`, which is honoured by
+Clippy, unreported by `clippy::allow_attributes`, and invisible to a scan
+looking for a line that begins with an attribute. `warnings` silences the lint
+only where it sits at its configured level; the policy lane denies it on the
+command line, so `warnings` does not evade that lane. It is guarded anyway,
+against the manifest severity ever softening.
 
 `expect` rather than `allow` is deliberate. The expectation goes unfulfilled,
 and therefore warns, once the site is migrated, so the backlog removes itself
