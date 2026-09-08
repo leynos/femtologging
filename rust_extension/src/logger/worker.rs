@@ -3,19 +3,31 @@
 //! These helpers own queue draining, shutdown coordination, and construction of
 //! the background logging worker.
 
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, TryRecvError, bounded, select};
 use log::warn;
 use parking_lot::RwLock;
+#[cfg(feature = "python")]
+use pyo3::{Py, PyAny};
 
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
+use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 
-use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger, QueuedRecord};
+use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
+
+/// Record queued for processing by the worker thread.
+pub struct QueuedRecord {
+    pub record: FemtoLogRecord,
+    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    #[cfg(feature = "python")]
+    pub context: Option<Py<PyAny>>,
+}
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
@@ -51,7 +63,11 @@ impl FemtoLogger {
     /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
     pub(crate) fn handle_log_record(job: QueuedRecord) {
         for h in &job.handlers {
-            if let Err(err) = h.handle(job.record.clone()) {
+            #[cfg(feature = "python")]
+            let result = h.handle_with_context(job.record.clone(), job.context.as_ref());
+            #[cfg(not(feature = "python"))]
+            let result = h.handle(job.record.clone());
+            if let Err(err) = result {
                 warn!("FemtoLogger: handler reported an error: {err}");
             }
         }

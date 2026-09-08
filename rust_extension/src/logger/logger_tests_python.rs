@@ -4,8 +4,12 @@
 
 use super::*;
 use pyo3::Python;
-use pyo3::types::{PyBool, PyTuple};
+use pyo3::types::{PyAnyMethods, PyBool, PyTuple};
 use rstest::rstest;
+use std::any::Any;
+use std::sync::Arc;
+
+use crate::handler::HandlerError;
 
 // --------------------------------
 // Test helpers
@@ -63,6 +67,54 @@ enum PyLogExcInfoInput {
         exc_type: &'static str,
         exc_msg: &'static str,
     },
+}
+
+struct SnapshotPythonHandler;
+
+impl FemtoHandlerTrait for SnapshotPythonHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn is_python_backed(&self) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[test]
+fn capture_python_context_uses_queued_handler_snapshot() {
+    Python::attach(|py| {
+        let context_var = py
+            .import("contextvars")
+            .and_then(|module| module.call_method1("ContextVar", ("correlation_id",)))
+            .expect("ContextVar construction should succeed");
+        let token = context_var
+            .call_method1("set", ("request-42",))
+            .expect("ContextVar set should succeed");
+        let logger = FemtoLogger::new("test".to_string());
+        let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(SnapshotPythonHandler);
+        logger.add_handler(Arc::clone(&handler));
+        let queued_handlers = logger.handlers_for_test();
+
+        assert!(logger.remove_handler(&handler));
+        let captured = FemtoLogger::capture_python_context(&queued_handlers)
+            .expect("context capture should succeed")
+            .expect("queued Python handler should capture its producer context");
+        let value = captured
+            .bind(py)
+            .call_method1("get", (&context_var,))
+            .and_then(|value| value.extract::<String>())
+            .expect("captured context should hold the correlation ID");
+        context_var
+            .call_method1("reset", (&token,))
+            .expect("ContextVar reset should succeed");
+
+        assert_eq!(value, "request-42");
+    });
 }
 
 #[rstest]

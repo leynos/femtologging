@@ -146,6 +146,33 @@ requires the spawn abstraction described in the heavy-test module
 documentation. Until that follow-up is implemented, the Loom configuration
 is still compiled to keep the models type-checked.
 
+## Producer/worker context propagation
+
+The logger's producer path snapshots the configured handler list while holding
+the handler read lock. That same snapshot is stored in each `QueuedRecord`,
+along with the record and, when needed, a Python `contextvars` context. The
+context decision must be derived from this snapshot, not from a separate
+logger-wide flag: handler mutation may otherwise make the decision disagree
+with the handlers that will actually receive the record.
+
+`FemtoHandlerTrait::is_python_backed()` identifies handlers that can invoke
+Python. When the queued snapshot contains one of these handlers, the producer
+captures `contextvars.copy_context()` and stores it in `QueuedRecord::context`.
+An absent context means that the snapshot contains no Python-backed handler; it
+must not also be used to represent a failed capture. Capture failures are
+therefore handled at the producer command boundary and must not be silently
+converted into that absence case.
+
+The logger worker passes the queued context by reference to
+`FemtoHandlerTrait::handle_with_context()` for every handler in the snapshot.
+The default trait implementation delegates to `handle()`, so native Rust
+handlers retain their existing behaviour. `PyHandler` copies the captured
+context for each callback and runs either `handle_record(record_dict)` or the
+legacy `handle(logger, level, message)` call through `Context.run()`. This
+keeps Python filters and formatters in the captured producer context without
+allowing one Python handler to modify another's view of it, while leaving
+non-Python handlers on their existing path.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` applies a complete configuration through one

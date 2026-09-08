@@ -57,6 +57,8 @@ pub(super) fn enqueue_records(
         tx.send(QueuedRecord {
             record: FemtoLogRecord::new("core", FemtoLevel::Info, message),
             handlers: vec![handler.clone()],
+            #[cfg(feature = "python")]
+            context: None,
         })?;
     }
     Ok(())

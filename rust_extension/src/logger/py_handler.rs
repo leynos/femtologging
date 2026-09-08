@@ -4,6 +4,8 @@
 //! to allow them to be used by the Rust logging infrastructure.
 
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::PyAnyMethods;
 use pyo3::{Py, PyAny};
 use std::any::Any;
 
@@ -146,12 +148,27 @@ impl PyHandler {
         &self,
         py: Python<'_>,
         record: &FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
         let record_dict =
             record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
+        let handle_record = self
+            .obj
+            .bind(py)
+            .getattr("handle_record")
+            .map_err(|err| map_py_err(py, err, "get handle_record"))?;
+        let result = match context {
+            Some(context) => {
+                let invocation_context = context
+                    .bind(py)
+                    .call_method0("copy")
+                    .map_err(|err| map_py_err(py, err, "copy context"))?;
+                invocation_context.call_method1("run", (handle_record, record_dict))
+            }
+            None => handle_record.call1((record_dict,)),
+        };
 
-        self.obj
-            .call_method1(py, "handle_record", (record_dict,))
+        result
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, "handle_record"))
     }
@@ -161,13 +178,33 @@ impl PyHandler {
         &self,
         py: Python<'_>,
         record: &FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
-        self.obj
-            .call_method1(
-                py,
-                "handle",
-                (record.logger(), record.level_str(), record.message()),
-            )
+        let handle = self
+            .obj
+            .bind(py)
+            .getattr("handle")
+            .map_err(|err| map_py_err(py, err, "get handle"))?;
+        let result = match context {
+            Some(context) => {
+                let invocation_context = context
+                    .bind(py)
+                    .call_method0("copy")
+                    .map_err(|err| map_py_err(py, err, "copy context"))?;
+                invocation_context.call_method1(
+                    "run",
+                    (
+                        handle,
+                        record.logger(),
+                        record.level_str(),
+                        record.message(),
+                    ),
+                )
+            }
+            None => handle.call1((record.logger(), record.level_str(), record.message())),
+        };
+
+        result
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, "handle"))
     }
@@ -176,12 +213,25 @@ impl PyHandler {
 #[cfg(feature = "python")]
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.handle_with_context(record, None)
+    }
+
+    /// Python handlers run inside the producer's captured context when given.
+    fn handle_with_context(
+        &self,
+        record: FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
+    ) -> Result<(), HandlerError> {
         Python::attach(|py| {
             if self.has_handle_record {
-                return self.call_handle_record(py, &record);
+                return self.call_handle_record(py, &record, context);
             }
-            self.call_legacy_handle(py, &record)
+            self.call_legacy_handle(py, &record, context)
         })
+    }
+
+    fn is_python_backed(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -215,6 +265,10 @@ impl FemtoHandlerTrait for PyHandler {
                 .map(|_| ())
                 .map_err(|err| map_py_err(py, err, "handle"))
         })
+    }
+
+    fn is_python_backed(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {

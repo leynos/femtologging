@@ -17,12 +17,11 @@ mod worker;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
-use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
@@ -40,6 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
+pub use worker::QueuedRecord;
 // Re-exported for the parameterised tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
 #[cfg(feature = "python")]
@@ -49,34 +49,6 @@ pub(crate) use python_helpers::should_capture_exc_info;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
-
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-}
 
 /// Basic logger used for early experimentation.
 #[pyclass]

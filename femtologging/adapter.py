@@ -1,9 +1,7 @@
 """Adapter bridging stdlib ``logging.Handler`` subclasses to femtologging.
 
-Femtologging dispatches to handlers via ``handle_record(record)`` where
-*record* is a plain dictionary.  Stdlib handlers expect ``emit(LogRecord)``.
-``StdlibHandlerAdapter`` translates between the two interfaces so that any
-``logging.Handler`` subclass can be attached to a ``FemtoLogger``.
+Femtologging passes plain-dict records to ``handle_record``; this adapter
+translates them into ``LogRecord`` instances for stdlib handlers.
 """
 
 from __future__ import annotations
@@ -112,9 +110,8 @@ def _stdlib_levelno(record: FemtoRecord) -> int:
     Returns
     -------
     int
-        The level mapped from the numeric ``levelno``, else from the
-        ``level`` name, else ``logging.WARNING`` when neither resolves.
-
+        The mapped level, preferring ``levelno``, then ``level``, and finally
+        ``logging.WARNING`` when neither resolves.
     """
     levelno = record.get("levelno")
     if isinstance(levelno, int) and levelno in _FEMTO_TO_STDLIB_LEVEL:
@@ -226,8 +223,7 @@ def _populate_thread_info(
     if thread_id is None:
         return
 
-    # femtologging formats thread_id as a Rust debug string; try to
-    # extract a numeric value but fall back gracefully.
+    # Extract the numeric value from femtologging's Rust debug string.
     try:
         tid_str = str(thread_id).strip()
         # Rust formats ThreadId as "ThreadId(N)"
@@ -246,6 +242,12 @@ class StdlibHandlerAdapter:
     record, the adapter constructs a ``logging.LogRecord`` and calls
     the wrapped handler's ``handle()`` method so that attached filters
     and I/O locking are applied.
+
+    Femtologging invokes ``handle_record`` on a dedicated worker thread.
+    Before queueing the record, it captures the producer's ``contextvars``
+    context and runs the wrapped handler's filters and formatters inside that
+    captured context. Other thread-local state, such as ``threading.local``,
+    remains associated with the worker thread.
 
     Parameters
     ----------
@@ -295,11 +297,10 @@ class StdlibHandlerAdapter:
     def handle(_logger: str, _level: str, _message: str) -> None:
         """Fallback required by femtologging's handler validation.
 
-        ``StdlibHandlerAdapter`` always exposes ``handle_record``, so
-        this method should never be called at runtime.  It exists solely
-        to satisfy the ``add_handler()`` check for a callable ``handle``
-        attribute.  A ``RuntimeWarning`` is emitted to surface
-        accidental use.
+        ``StdlibHandlerAdapter`` always exposes ``handle_record``, so this
+        method should never be called at runtime.  It exists solely to satisfy
+        the ``add_handler()`` check for a callable ``handle`` attribute.  A
+        ``RuntimeWarning`` is emitted to surface accidental use.
         """
         warnings.warn(
             "StdlibHandlerAdapter.handle() was called directly; "

@@ -3,19 +3,44 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
+use std::any::Any;
 use std::time::Duration;
 
-use crossbeam_channel::bounded;
+use crossbeam_channel::{Sender, bounded};
 use log::warn;
+#[cfg(feature = "python")]
+use pyo3::types::PyAnyMethods;
 
 use crate::filters::FilterContext;
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
-use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+
+/// Handler used internally to acknowledge logger flush operations.
+struct FlushAckHandler {
+    ack: Sender<()>,
+}
+
+impl FlushAckHandler {
+    fn new(ack: Sender<()>) -> Self {
+        Self { ack }
+    }
+}
+
+impl FemtoHandlerTrait for FlushAckHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let _ = self.ack.send(());
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -169,7 +194,31 @@ impl FemtoLogger {
             return;
         };
         let handlers = self.handlers.read().clone();
-        if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
+        #[cfg(feature = "python")]
+        let context = match Self::capture_python_context(&handlers) {
+            Ok(context) => context,
+            Err(err) => {
+                pyo3::Python::attach(|py| err.print(py));
+                self.dropped_records
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.drop_warner.record_drop();
+                self.drop_warner.warn_if_due(|count| {
+                    warn!(
+                        "FemtoLogger: dropped {count} records because contextvars capture failed"
+                    );
+                });
+                return;
+            }
+        };
+        if tx
+            .try_send(QueuedRecord {
+                record,
+                handlers,
+                #[cfg(feature = "python")]
+                context,
+            })
+            .is_ok()
+        {
             return;
         }
         self.dropped_records
@@ -178,6 +227,25 @@ impl FemtoLogger {
         self.drop_warner.warn_if_due(|count| {
             warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
         });
+    }
+
+    /// Capture the emitting thread's context when the queued handlers need it.
+    ///
+    /// Inspecting `handlers` rather than logger-wide mutable state keeps the
+    /// context paired with the exact handler snapshot that the worker receives.
+    #[cfg(feature = "python")]
+    pub(super) fn capture_python_context(
+        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+        if !handlers.iter().any(|handler| handler.is_python_backed()) {
+            return Ok(None);
+        }
+        pyo3::Python::attach(|py| {
+            py.import("contextvars")
+                .and_then(|module| module.call_method0("copy_context"))
+                .map(pyo3::Bound::unbind)
+                .map(Some)
+        })
     }
 
     pub(super) fn flush_handlers_blocking(&self) -> bool {
@@ -196,6 +264,8 @@ impl FemtoLogger {
             .send(QueuedRecord {
                 record,
                 handlers: vec![ack_handler],
+                #[cfg(feature = "python")]
+                context: None,
             })
             .is_err()
         {
