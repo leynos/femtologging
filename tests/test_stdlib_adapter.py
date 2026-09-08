@@ -21,6 +21,9 @@ import pytest
 from femtologging import FemtoLogger, StdlibHandlerAdapter
 from femtologging.adapter import TRACE_LEVEL_NUM
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 _REQUEST_ID = contextvars.ContextVar[str | None]("request_id", default=None)
 
 
@@ -35,7 +38,7 @@ class _LevelCase:
     handler_level: int | None = None
 
 
-def _wait_for(predicate: typ.Callable[[], bool], timeout: float = 1.0) -> bool:
+def _wait_for(predicate: cabc.Callable[[], bool], timeout: float = 1.0) -> bool:
     """Poll *predicate* until it succeeds or the deadline expires."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

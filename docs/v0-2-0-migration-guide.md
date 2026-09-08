@@ -46,6 +46,22 @@ cfg.filename_backup = "app.log.bak"
 
 ______________________________________________________________________
 
+## `StdlibHandlerAdapter` propagates `contextvars`
+
+When a record is sent through `StdlibHandlerAdapter`, femtologging captures
+the producer thread's `contextvars` context before queueing the record. The
+wrapped stdlib handler's filters and formatters then run inside that captured
+context on the handler's worker thread. Existing filters that read a
+`contextvars.ContextVar` therefore observe the value set by the thread that
+emitted the record.
+
+No code changes are required for this behaviour. Only `contextvars` are
+propagated; other thread-local state, including `threading.local`, still
+belongs to the worker thread. Update filters that depend on such state to use
+`contextvars` when they need values from the emitting thread.
+
+______________________________________________________________________
+
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`,
