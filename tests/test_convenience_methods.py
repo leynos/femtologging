@@ -34,6 +34,8 @@ True
 
 from __future__ import annotations
 
+import typing as typ
+
 import pytest
 
 from femtologging import (
@@ -196,6 +198,8 @@ def test_convenience_method_with_stack_info() -> None:
     assert_output_contains(
         output, "Stack (most recent call last)", context="info(stack_info=True)"
     )
+
+
 def test_exception_captures_active_exception() -> None:
     """``exception()`` should produce output with an active exception context."""
     logger = FemtoLogger("exc.auto")
