@@ -5,15 +5,12 @@
 //! test reads the filesystem to find them.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use toml::Value;
 
-use super::{DISALLOWED_METHODS_LINT, Fallible};
-
-/// Manifest feature keys that name no lane of their own.
-const LANE_EXEMPT_FEATURES: [&str; 1] = ["default"];
+use super::{DISALLOWED_METHODS_LINT, Fallible, TestResult};
 
 /// A checked-in configuration file, embedded at compile time.
 #[derive(Clone, Copy)]
@@ -45,14 +42,6 @@ pub(crate) const CRATE_MANIFEST: Embedded = Embedded {
     name: "rust_extension/Cargo.toml",
     text: include_str!("../../../Cargo.toml"),
 };
-
-/// Return the repository root, which is where `make` must run.
-pub(crate) fn repository_root() -> Fallible<PathBuf> {
-    crate_dir()
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "crate directory has no parent".into())
-}
 
 /// Return the crate directory, which holds `clippy.toml` and the fixture.
 pub(crate) fn crate_dir() -> PathBuf {
@@ -102,6 +91,95 @@ pub(crate) fn configured_severity(lints: &Value) -> Option<&str> {
 pub(crate) struct Violation {
     pub(crate) method: String,
     pub(crate) notes: Vec<String>,
+}
+
+/// The fixture's source, embedded so a moved or deleted file is a compile
+/// error rather than a silently skipped assertion.
+pub(crate) const PROBE_FIXTURE: Embedded = Embedded {
+    name: "rust_extension/tests/fixtures/env_policy_probe.rs",
+    text: include_str!("../../fixtures/env_policy_probe.rs"),
+};
+
+/// The fixture function that stands in for a sanctioned composition root.
+const COMPOSITION_ROOT: &str = "pub fn composition_root()";
+
+/// Return the attribute attached to the fixture's composition root, if any.
+///
+/// The attribute must sit immediately above the function item. An expectation
+/// written inside the body would suppress the same diagnostic and keep the
+/// count at six, so counting diagnostics cannot tell the two apart: only the
+/// shape can.
+fn composition_root_attribute() -> Fallible<String> {
+    let (before, _) = PROBE_FIXTURE
+        .text
+        .split_once(COMPOSITION_ROOT)
+        .ok_or_else(|| format!("{} must define composition_root", PROBE_FIXTURE.name))?;
+    let attribute: String = before
+        .rsplit_once("#[expect(")
+        .map(|(_, rest)| format!("#[expect({rest}"))
+        .unwrap_or_default();
+    if attribute.contains("fn ") || attribute.contains("}") {
+        // Something else stands between the attribute and the function, so the
+        // attribute is not this item's.
+        return Ok(String::new());
+    }
+    Ok(attribute)
+}
+
+/// Fail unless the fixture's composition root carries the sanctioned shape.
+///
+/// Three things are asserted together because each alone can be satisfied
+/// while the policy is evaded: the direct call must still be there, the
+/// expectation must be item-scoped rather than statement-scoped, and it must
+/// carry a non-empty reason.
+pub(crate) fn ensure_composition_root_is_item_scoped() -> TestResult {
+    let (_, after) = PROBE_FIXTURE
+        .text
+        .split_once(COMPOSITION_ROOT)
+        .ok_or_else(|| format!("{} must define composition_root", PROBE_FIXTURE.name))?;
+    let body = after.split_once("\n}").map_or(after, |(body, _)| body);
+    if !body.contains("std::env::var") {
+        return Err(format!(
+            "{}'s composition_root must still make the direct call it exempts",
+            PROBE_FIXTURE.name
+        )
+        .into());
+    }
+    let attribute = composition_root_attribute()?;
+    if attribute.is_empty() {
+        return Err(format!(
+            "{}'s composition_root must carry an item-scoped #[expect(...)], not one \
+             written inside its body",
+            PROBE_FIXTURE.name
+        )
+        .into());
+    }
+    if !attribute.contains(DISALLOWED_METHODS_LINT) {
+        return Err(format!(
+            "{}'s composition_root must expect {DISALLOWED_METHODS_LINT}, found {attribute:?}",
+            PROBE_FIXTURE.name
+        )
+        .into());
+    }
+    ensure_attribute_has_a_reason(&attribute)
+}
+
+/// Fail unless an expectation records why it is there.
+fn ensure_attribute_has_a_reason(attribute: &str) -> TestResult {
+    let reason = attribute
+        .split_once("reason =")
+        .map(|(_, rest)| rest.trim_start())
+        .and_then(|rest| rest.strip_prefix('"'))
+        .and_then(|rest| rest.split_once('"'))
+        .map(|(reason, _)| reason.trim());
+    match reason {
+        Some(text) if !text.is_empty() => Ok(()),
+        _ => Err(format!(
+            "the composition-root expectation must carry a non-empty reason, found \
+             {attribute:?}"
+        )
+        .into()),
+    }
 }
 
 /// Return the host `PATH`, the one inherited value the probe cannot do without.
@@ -182,18 +260,4 @@ fn policy_violation(diagnostic: &serde_json::Value) -> Option<Violation> {
         })
         .unwrap_or_default();
     Some(Violation { method, notes })
-}
-
-/// Return the optional-feature names declared by the crate manifest.
-pub(crate) fn declared_features() -> Fallible<Vec<String>> {
-    let manifest = CRATE_MANIFEST.parse()?;
-    let features = manifest
-        .get("features")
-        .and_then(Value::as_table)
-        .ok_or_else(|| "Cargo.toml must declare [features]".to_string())?;
-    Ok(features
-        .keys()
-        .filter(|name| !LANE_EXEMPT_FEATURES.contains(&name.as_str()))
-        .cloned()
-        .collect())
 }

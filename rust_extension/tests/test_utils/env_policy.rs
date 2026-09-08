@@ -5,8 +5,6 @@
 //! Whitaker enforces.
 //!
 //! - [`config`] reads the three checked-in configuration files.
-//! - [`makefile`] queries and judges the lint recipes.
-//! - [`workflow`] proves CI runs those recipes at all.
 //!
 //! The configuration files are embedded with `include_str!`, which resolves
 //! relative to the source file at compile time. That reaches the `Makefile`
@@ -17,13 +15,9 @@
 
 use std::error::Error;
 
-// Paths are relative to this file's own directory, `tests/test_utils/`.
+// The path is relative to this file's own directory, `tests/test_utils/`.
 #[path = "env_policy/config.rs"]
 pub(crate) mod config;
-#[path = "env_policy/makefile.rs"]
-pub(crate) mod makefile;
-#[path = "env_policy/workflow.rs"]
-pub(crate) mod workflow;
 
 pub(crate) type TestResult = Result<(), Box<dyn Error>>;
 pub(crate) type Fallible<T> = Result<T, Box<dyn Error>>;
@@ -43,10 +37,6 @@ pub(crate) const REQUIRED_DISALLOWED_METHODS: [(&str, &str); 6] = [
 ];
 
 pub(crate) use config::{
-    CRATE_MANIFEST, configured_severity, disallowed_methods, probe_violations,
+    CRATE_MANIFEST, configured_severity, disallowed_methods,
+    ensure_composition_root_is_item_scoped, probe_violations,
 };
-pub(crate) use makefile::{
-    Makefile, ensure_flags_deny_the_policy, ensure_lanes_cover_every_feature,
-    ensure_lint_reaches_the_policy_lane, policy_lane_run_succeeds,
-};
-pub(crate) use workflow::ensure_ci_runs_the_policy_gates;

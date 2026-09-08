@@ -1,19 +1,21 @@
-//! Contract coverage for the environment-access lint policy.
+//! Contract coverage for the environment-access lint policy, Rust side.
 //!
-//! The policy has four load-bearing parts and losing any one of them silently
-//! restores ambient environment access: the banned `std::env` paths in
-//! `clippy.toml`, the `deny` severity in the manifest, the lane list and flags
-//! that carry the lint across every target kind and feature arm, and the shell
-//! guard that lets a failing lane fail the build. This file asserts each
-//! mechanism rather than prose describing it.
+//! Three things here are facts about Rust rather than about the build: the
+//! banned `std::env` paths in `clippy.toml`, the `deny` severity in the
+//! manifest, and the shape of the one sanctioned exception. Losing any of them
+//! silently restores ambient environment access.
 //!
 //! Two of the tests execute rather than inspect. One runs `clippy-driver` over
-//! `tests/fixtures/env_policy_probe.rs` under this crate's `clippy.toml`; the
-//! other runs `make lint-env-policy` with a failing lane ahead of a passing
-//! one.
+//! `tests/fixtures/env_policy_probe.rs` under this crate's `clippy.toml` and
+//! counts the diagnostics; the other reads the fixture's source, because
+//! counting cannot tell an item-scoped expectation from one written inside the
+//! body.
 //!
-//! The machinery lives in `tests/test_utils/env_policy.rs`, keeping both files
-//! inside the 400-line limit in `AGENTS.md`.
+//! The Makefile and workflow half of the policy lives in
+//! `tests/test_env_access_policy_contract.py`, which uses the repository's
+//! pinned `makeutil` parser and PyYAML rather than a second parser written
+//! here. That file also holds the source scan for `allow` attributes that
+//! would switch the policy off wholesale.
 //!
 //! See `docs/adr-006-environment-seam-taxonomy.md` for the policy itself.
 
@@ -21,10 +23,8 @@
 mod env_policy;
 
 use env_policy::{
-    CRATE_MANIFEST, Makefile, REQUIRED_DISALLOWED_METHODS, TestResult, configured_severity,
-    disallowed_methods, ensure_ci_runs_the_policy_gates, ensure_flags_deny_the_policy,
-    ensure_lanes_cover_every_feature, ensure_lint_reaches_the_policy_lane,
-    policy_lane_run_succeeds, probe_violations,
+    CRATE_MANIFEST, REQUIRED_DISALLOWED_METHODS, TestResult, configured_severity,
+    disallowed_methods, ensure_composition_root_is_item_scoped, probe_violations,
 };
 
 /// Scenario: a contributor edits `clippy.toml`.
@@ -81,59 +81,6 @@ fn manifest_denies_disallowed_methods() -> TestResult {
     }
 }
 
-/// Scenario: a contributor edits the Rust lint targets or adds a feature.
-///
-/// Invariant: the policy lane keeps denying `clippy::disallowed_methods` over
-/// every target kind and both arms of every feature gate, and `make lint`
-/// still reaches it. `--all-features` alone would never compile a
-/// `#[cfg(not(feature = ...))]` block, so the `none` lane is not optional.
-///
-/// Mutation proof (2026-09-06): narrowing `ENV_POLICY_CLIPPY_FLAGS` from
-/// `--all-targets` to `--lib` failed this test with "ENV_POLICY_CLIPPY_FLAGS
-/// must lint every target kind"; dropping `-D clippy::disallowed_methods` from
-/// those flags failed it with "ENV_POLICY_CLIPPY_FLAGS must deny
-/// clippy::disallowed_methods"; dropping the `none` lane failed it with
-/// "ENV_POLICY_FEATURE_LANES must include the \"none\" lane"; dropping the
-/// `test-util` lane failed it with "ENV_POLICY_FEATURE_LANES must lint the
-/// Mutation proof (2026-09-07): narrowing `ENV_POLICY_CARGO_ARGS` from
-/// `--all-targets` to `--lib` failed with "must lint every target kind";
-/// dropping `-D clippy::disallowed_methods` from `ENV_POLICY_LINT_ARGS`
-/// failed with "must deny clippy::disallowed_methods"; dropping the `none`
-/// lane and the `test-util` lane each failed by name; and removing the
-/// `lint-lanes-test` prerequisite failed with "lint-rust must run
-/// lint-lanes-test".
-///
-/// Recipes are judged one whole command at a time, which is what kills the
-/// two ways a command can survive review while doing nothing. Wrapping
-/// `$(MAKE) lint-rust` in `if false; then ...; fi` and appending `|| true` to
-/// it both failed with "lint must run \"$(MAKE) lint-rust\" as a command of
-/// its own, not inside a wrapper". The same two mutations on the policy
-/// recipe's driver call failed with "lint-env-policy must end in the lane
-/// driver call", and appending a second command failed with "must be one
-/// command, found 2".
-///
-/// `lint` reaches `lint-rust` through a prerequisite, which cannot be wrapped,
-/// prefixed or made conditional at all; a whole recipe command whose failure
-/// reaches Make is accepted as the equivalent. Removing the prerequisite,
-/// moving it into a wrapped command, and prefixing the command with `-` or
-/// `@-` all failed with "lint must run lint-rust as a prerequisite, or as a
-/// command of its own whose failure reaches Make". A `@` prefix alone is
-/// accepted, because it only suppresses echoing.
-///
-/// Mutation proof (2026-09-07), on the policy recipe's driver call: a `-`
-/// prefix, a `-@` prefix, `|| true`, `|| :`, `; true`, and a trailing pipe
-/// each failed with "lint-env-policy must let Make see the driver fail". Two
-/// of Make's three recipe prefixes are cosmetic and one is not: stripping `-`
-/// alongside `@` and `+` would have made `-$(MAKE) lint-rust` read as the
-/// real gate.
-#[test]
-fn environment_policy_lane_covers_every_target_and_feature() -> TestResult {
-    let makefile = Makefile::embedded();
-    ensure_lanes_cover_every_feature(&makefile)?;
-    ensure_flags_deny_the_policy(&makefile)?;
-    ensure_lint_reaches_the_policy_lane(&makefile)
-}
-
 /// Scenario: Clippy compiles code that calls each banned method, and code that
 /// calls one from a sanctioned composition root.
 ///
@@ -179,70 +126,24 @@ fn clippy_rejects_every_banned_method_in_a_compiled_fixture() -> TestResult {
     Ok(())
 }
 
-/// Scenario: one feature lane rejects the code and a later lane accepts it.
+/// Scenario: a contributor edits the fixture's sanctioned composition root.
 ///
-/// Invariant: `make lint-env-policy` fails. A shell `for` loop reports the
-/// status of its last command, so without a per-lane guard a rejection in any
-/// lane but the last is discarded and the gate silently stops gating. That is
-/// exactly the case the lane list exists to catch, since a violation inside a
-/// `#[cfg(not(feature = ...))]` block is reachable only from the `none` lane.
+/// Invariant: the exception keeps its shape. The direct call stays, the
+/// expectation is attached to the function item, and it carries a non-empty
+/// reason.
 ///
-/// The run is driven through the real recipe with the lane list overridden, so
-/// it tests the Makefile rather than a description of it. `badfeature` is not
-/// a declared feature, so Cargo rejects that lane before building anything.
+/// Counting diagnostics cannot see this. An expectation written inside the
+/// body suppresses the same warning and leaves the count at six, so the
+/// fixture would still look correct while the policy's one permitted shape
+/// had quietly become two.
 ///
-/// Mutation proof (2026-09-07): removing `|| exit 1` from the `lint-env-policy`
-/// Clippy call made this run exit 0 and failed the test with "a failing lane
-/// must fail lint-env-policy". That mutation is the state the target shipped
-/// in before this test existed.
+/// Mutation proof (2026-09-08): moving the attribute inside the function body
+/// failed with "must carry an item-scoped #[expect(...)], not one written
+/// inside its body"; emptying the reason failed with "must carry a non-empty
+/// reason"; and removing the `std::env::var` call failed with "must still
+/// make the direct call it exempts". The diagnostic-count test passed
+/// throughout the first two, which is why this test exists.
 #[test]
-fn a_failing_lane_fails_the_policy_target() -> TestResult {
-    if policy_lane_run_succeeds("badfeature none")? {
-        return Err(
-            "a failing lane must fail lint-env-policy, even when a later lane passes".into(),
-        );
-    }
-    if !policy_lane_run_succeeds("none")? {
-        return Err("lint-env-policy must succeed when every lane passes".into());
-    }
-    Ok(())
-}
-
-/// Scenario: a contributor edits the CI workflow.
-///
-/// Invariant: CI still runs both policy gates on every pull request, each as
-/// a step's whole command, with no condition on the step or its job and no
-/// blanket tolerance of that job's failure. Everything else in this file
-/// proves the policy holds when the gates run; this proves they run.
-///
-/// The workflow is parsed rather than searched, because a text search is
-/// satisfied by `if false; then make lint; fi` and by `make lint || true`,
-/// and no list of falsy spellings is reliable: YAML resolves `false` to a
-/// boolean whose string form is `False`.
-///
-/// Failure tolerance is judged by an allow-list of shapes rather than a
-/// deny-list of spellings, because a deny-list would have to enumerate every
-/// constant-true expression and `${{ true }}` is only the first. A job may
-/// consult the matrix, which is how an experimental leg is singled out; a
-/// required step may not, since on a step that would say this gate may fail.
-///
-/// Mutation proof (2026-09-07): `if: false` on the Lint step failed with "the
-/// \"make lint\" step in job build-test must carry no condition"; the same on
-/// the job failed with "job build-test runs \"make lint\" but carries a
-/// condition"; a push-only condition failed identically; wrapping the command
-/// and appending `|| true` each failed with "must run \"make lint\" as a
-/// step's whole command", as did renaming the command; and deleting the
-/// `pull_request` trigger failed with "must trigger on pull_request".
-/// Renaming the job changes nothing, correctly, since the command is sought
-/// in any job rather than in one by name.
-///
-/// Mutation proof (2026-09-08): on the job, `continue-on-error: true`,
-/// `${{ true }}` and `'yes'` each failed with "tolerates failure outside a
-/// matrix leg", while `false` and the matrix expression were accepted. On the
-/// Lint step, `true`, `${{ true }}` and even `${{ matrix.experimental }}`
-/// each failed with "must not tolerate its own failure", while `false` was
-/// accepted.
-#[test]
-fn ci_runs_the_policy_gates_unconditionally() -> TestResult {
-    ensure_ci_runs_the_policy_gates()
+fn the_composition_root_exception_keeps_its_shape() -> TestResult {
+    ensure_composition_root_is_item_scoped()
 }

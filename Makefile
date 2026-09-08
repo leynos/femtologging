@@ -188,7 +188,7 @@ lint-lanes-test: ## Unit-test the Rust lint lane driver
 		scripts/tests/test_lint_rust_lanes.py scripts/tests/conftest.py
 	@LINT_LANES_TEST=1 PYTHONPATH=scripts $(UV_ENV) uv run --no-project \
 		--python 3.13 --with pytest==9.0.2 --with cmd-mox==0.2.0 \
-		--with cyclopts --with plumbum \
+		--with cyclopts --with plumbum --with hypothesis==6.167.1 \
 		python -m pytest scripts/tests/test_lint_rust_lanes.py \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 

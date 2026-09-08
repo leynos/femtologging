@@ -15,10 +15,13 @@ exact argument vector was used.
 
 from __future__ import annotations
 
+import dataclasses as dc
 import typing as typ
 
 import lint_rust_lanes
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -281,3 +284,95 @@ def test_an_empty_lane_list_is_not_success() -> None:
         )
         != 0
     ), "an empty lane list must not report success"
+
+
+@dc.dataclass(slots=True)
+class RecordingRunner:
+    """A runner that replays fixed outcomes and records what it was asked to do."""
+
+    outcomes: list[int]
+    calls: list[tuple[str, ...]] = dc.field(default_factory=list)
+
+    def __call__(self, argv: cabc.Sequence[str]) -> int:
+        """Record one invocation and return its scripted outcome.
+
+        Returns
+        -------
+            The next scripted exit code.
+        """
+        self.calls.append(tuple(argv))
+        return self.outcomes[len(self.calls) - 1]
+
+
+#: Lane names, including duplicates and the two reserved names, since a caller
+#: may repeat a lane and the driver must not care.
+LANE_NAMES = st.sampled_from(["none", "all", "python", "log-compat", "test-util"])
+
+#: Exit codes a lane may report. 0 passes; the rest are the varied non-zero
+#: codes Cargo and Clippy actually use.
+EXIT_CODES = st.sampled_from([0, 1, 2, 101, 130, 255])
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    lanes=st.lists(LANE_NAMES, min_size=1, max_size=6),
+    outcomes=st.lists(EXIT_CODES, min_size=6, max_size=6),
+)
+def test_the_run_stops_at_the_first_failing_lane(
+    lanes: list[str], outcomes: list[int]
+) -> None:
+    """Scenario: any lane list, with failures at any positions.
+
+    Invariant: the driver invokes Cargo once per lane up to and including the
+    first failure, never afterwards, and returns that lane's exit code. With
+    no failure it invokes every lane and returns 0.
+
+    Stated as a property because the interesting input is the position of the
+    first failure, which no example list enumerates: the example tests cover a
+    failing first lane, a failing last lane and the all-pass case, and this
+    covers the middle, repeated failures, duplicate lane names and exit codes
+    other than 101.
+    """
+    runner = RecordingRunner(outcomes=list(outcomes))
+    plan = lint_rust_lanes.LanePlan(
+        manifest=manifest_path(), lanes=tuple(lanes), lint_args=LINT_ARGS
+    )
+
+    result = lint_rust_lanes.lint_lanes(plan, runner)
+
+    first_failure = next(
+        (index for index, code in enumerate(outcomes[: len(lanes)]) if code != 0), None
+    )
+    if first_failure is None:
+        assert result == 0, "a run with no failing lane must succeed"
+        assert len(runner.calls) == len(lanes), "every lane must be linted"
+        return
+    assert result == outcomes[first_failure], (
+        "the run must return the first failing lane's exit code"
+    )
+    assert len(runner.calls) == first_failure + 1, (
+        "the run must stop at the first failing lane"
+    )
+    for index, call in enumerate(runner.calls):
+        assert selects(call, lanes[index]), (
+            "each invocation must carry its own lane's selection"
+        )
+
+
+@settings(max_examples=50, deadline=None)
+@given(lanes=st.lists(LANE_NAMES, min_size=1, max_size=4))
+def test_a_run_of_passing_lanes_never_stops_early(lanes: list[str]) -> None:
+    """Scenario: every lane accepts the code.
+
+    Invariant: the driver succeeds and invokes every lane exactly once, so a
+    clean result can never come from skipping work.
+    """
+    runner = RecordingRunner(outcomes=[0] * len(lanes))
+    plan = lint_rust_lanes.LanePlan(
+        manifest=manifest_path(), lanes=tuple(lanes), lint_args=LINT_ARGS
+    )
+
+    assert lint_rust_lanes.lint_lanes(plan, runner) == 0, "every lane passing succeeds"
+    assert [call[-len(LINT_ARGS) :] for call in runner.calls] == [
+        tuple(LINT_ARGS) for _ in lanes
+    ], "every lane must carry the lint arguments"

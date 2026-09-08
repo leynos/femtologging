@@ -37,6 +37,7 @@ exports names rather than assembling an argument array.
 
 from __future__ import annotations
 
+import dataclasses as dc
 import os
 import typing as typ
 
@@ -50,6 +51,9 @@ from plumbum import RETCODE, local
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+    #: Runs one Cargo invocation and reports its exit code.
+    type Runner = cabc.Callable[[cabc.Sequence[str]], int]
 
 app = App(config=cyclopts.config.Env("INPUT_", command=False))
 
@@ -111,6 +115,58 @@ def lane_command(
     return argv
 
 
+@dc.dataclass(frozen=True, slots=True)
+class LanePlan:
+    """Everything one lint run needs, so the walk takes a plan and a runner."""
+
+    manifest: Path
+    lanes: tuple[str, ...]
+    cargo_args: tuple[str, ...] = ()
+    lint_args: tuple[str, ...] = ()
+
+
+def run_cargo(argv: cabc.Sequence[str]) -> int:
+    """Run Cargo with the given arguments, streaming its output.
+
+    plumbum snapshots the process environment when it is imported, so a change
+    made afterwards is invisible to the child: the executable is resolved
+    against the stale PATH and later variables are not passed on. Re-exporting
+    the live environment keeps the child's view equal to this script's, which
+    is what lets a test harness shim `cargo` at all.
+
+    Returns
+    -------
+        Cargo's exit code.
+    """
+    with local.env(**os.environ):
+        return int(local[CARGO][list(argv)] & RETCODE(FG=True))
+
+
+def lint_lanes(plan: LanePlan, run: Runner = run_cargo) -> int:
+    """Lint every lane in turn, stopping at the first lane that fails.
+
+    The runner is a parameter so the ordering invariant can be exercised
+    without spawning a process per lane.
+
+    Returns
+    -------
+        The failing lane's exit code, or 0 when every lane passes. An empty
+        lane list returns non-zero rather than reporting a clean run it never
+        made.
+    """
+    if not plan.lanes:
+        print("no lanes requested; refusing to report success", flush=True)
+        return 2
+    for lane in plan.lanes:
+        print(f"# Rust lint lane: {lane}", flush=True)
+        argv = lane_command(plan.manifest, lane, plan.cargo_args, plan.lint_args)
+        retcode = run(argv)
+        if retcode != 0:
+            print(f"# Rust lint lane failed: {lane} (exit {retcode})", flush=True)
+            return retcode
+    return 0
+
+
 @app.default
 def main(
     *,
@@ -123,27 +179,16 @@ def main(
 
     Returns
     -------
-        The failing lane's exit code, or 0 when every lane passes. An empty
-        lane list returns non-zero rather than reporting a clean run it never
-        made.
+        The failing lane's exit code, or 0 when every lane passes.
     """
-    if not lanes:
-        print("no lanes requested; refusing to report success", flush=True)
-        return 2
-    # plumbum snapshots the process environment when it is imported, so a
-    # change made afterwards is invisible to the child: the executable is
-    # resolved against the stale PATH and later variables are not passed on.
-    # Re-exporting the live environment keeps the child's view equal to this
-    # script's, which is what lets a test harness shim `cargo` at all.
-    with local.env(**os.environ):
-        for lane in lanes:
-            print(f"# Rust lint lane: {lane}", flush=True)
-            argv = lane_command(manifest, lane, cargo_args or [], lint_args or [])
-            retcode = local[CARGO][argv] & RETCODE(FG=True)
-            if retcode != 0:
-                print(f"# Rust lint lane failed: {lane} (exit {retcode})", flush=True)
-                return retcode
-    return 0
+    return lint_lanes(
+        LanePlan(
+            manifest=manifest,
+            lanes=tuple(lanes),
+            cargo_args=tuple(cargo_args or ()),
+            lint_args=tuple(lint_args or ()),
+        )
+    )
 
 
 if __name__ == "__main__":

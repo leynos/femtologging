@@ -64,6 +64,3 @@ trybuild = { version = "1", features = ["diff"] }
 # Parses `clippy.toml` and this manifest in the environment-access policy
 # contract test (`tests/env_access_policy.rs`).
 toml = "1"
-# Parses `.github/workflows/ci.yml` in the same contract, so the workflow is
-# judged as a document rather than as text.
-saphyr = "0.0.12"

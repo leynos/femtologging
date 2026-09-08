@@ -126,6 +126,15 @@ only under an item-scoped attribute:
 #[expect(clippy::disallowed_methods, reason = "composition root: <what and why>")]
 ```
 
+`allow` is not an alternative anywhere, and a source scan enforces that: no
+Rust source may allow `clippy::disallowed_methods`, `clippy::all`, or
+`warnings`, inner or outer. A crate-level `#![allow(...)]` is the dangerous
+shape, because it disables the policy for a whole crate while the Clippy
+configuration, the manifest severity, the lane list and the compiled fixture
+all stay exactly as they are, and `clippy::allow_attributes` does not fire on
+inner attributes. Measured: with that one line added and a real `std::env::var`
+call beneath it, every other contract stayed green and the policy lane exited 0.
+
 `expect` rather than `allow` is deliberate. The expectation goes unfulfilled,
 and therefore warns, once the site is migrated, so the backlog removes itself
 instead of rotting.
