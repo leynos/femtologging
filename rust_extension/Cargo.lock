@@ -436,6 +436,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "percent-encoding",
+ "proc-macro2",
  "proptest",
  "pyo3",
  "rand 0.8.5",

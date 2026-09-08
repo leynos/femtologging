@@ -41,8 +41,9 @@ use std::collections::VecDeque;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{ambient_authority, fs_utf8::Dir};
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::{
-    AttrStyle, Attribute, Meta, MetaList, Path, Token, punctuated::Punctuated, visit::Visit,
+    AttrStyle, Attribute, Macro, Meta, MetaList, Path, Token, punctuated::Punctuated, visit::Visit,
 };
 
 /// Lints whose suppression disarms the environment-access policy.
@@ -110,14 +111,62 @@ fn rust_sources(root: &Utf8Path, relative: &str) -> Result<Vec<(Utf8PathBuf, Str
 ///
 /// A visitor is used rather than a hand-rolled walk so attributes on nested
 /// items, on function-local items and on expressions are all reached.
+///
+/// Macro bodies are walked too, as token streams. `syn` keeps the body of a
+/// `macro_rules!` arm opaque, so an attribute written there never reaches
+/// `visit_attribute`, and Clippy expands and honours it. Measured on this
+/// crate's `clippy.toml`: a macro arm emitting
+/// `#[allow(clippy::disallowed_methods)]` around a function that calls
+/// `std::env::var` reports zero diagnostics, where the same file without the
+/// attribute reports one.
 #[derive(Default)]
 struct AttributeCollector {
-    attributes: Vec<Attribute>,
+    /// Each suppression found, as the meta to judge and the text to report.
+    attributes: Vec<(String, Meta)>,
 }
 
 impl<'ast> Visit<'ast> for AttributeCollector {
     fn visit_attribute(&mut self, attribute: &'ast Attribute) {
-        self.attributes.push(attribute.clone());
+        self.attributes
+            .push((render_attribute(attribute), attribute.meta.clone()));
+    }
+
+    fn visit_macro(&mut self, mac: &'ast Macro) {
+        collect_from_tokens(mac.tokens.clone(), &mut self.attributes);
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Collect attribute-shaped token sequences from a macro body.
+///
+/// An attribute is `#`, optionally `!`, then a bracketed group. Recursing
+/// through every group reaches an attribute at any depth, including one inside
+/// a nested macro. A token walk cannot mistake prose for policy the way a text
+/// scan can: a string literal is one token, never a `#` followed by brackets.
+fn collect_from_tokens(stream: TokenStream, found: &mut Vec<(String, Meta)>) {
+    let tokens: Vec<TokenTree> = stream.into_iter().collect();
+    for (index, token) in tokens.iter().enumerate() {
+        if let TokenTree::Group(group) = token {
+            collect_from_tokens(group.stream(), found);
+        }
+        if !matches!(token, TokenTree::Punct(punct) if punct.as_char() == '#') {
+            continue;
+        }
+        let mut next = index + 1;
+        let mut bang = "";
+        if matches!(tokens.get(next), Some(TokenTree::Punct(punct)) if punct.as_char() == '!') {
+            bang = "!";
+            next += 1;
+        }
+        let Some(TokenTree::Group(group)) = tokens.get(next) else {
+            continue;
+        };
+        if group.delimiter() != Delimiter::Bracket {
+            continue;
+        }
+        if let Ok(meta) = syn::parse2::<Meta>(group.stream()) {
+            found.push((format!("#{bang}[{}]", group.stream()), meta));
+        }
     }
 }
 
@@ -148,11 +197,11 @@ fn allowed_lints(list: &MetaList) -> Vec<String> {
 }
 
 /// Return the lint names one attribute suppresses, following `cfg_attr`.
-fn suppressed_by(attribute: &Attribute) -> Vec<String> {
-    let Ok(list) = attribute.meta.require_list() else {
+fn suppressed_by(meta: &Meta) -> Vec<String> {
+    let Ok(list) = meta.require_list() else {
         return Vec::new();
     };
-    match render_path(attribute.path()).as_str() {
+    match render_path(meta.path()).as_str() {
         "allow" => allowed_lints(list),
         "cfg_attr" => suppressed_by_cfg_attr(list),
         _ => Vec::new(),
@@ -208,10 +257,10 @@ fn suppressed_lints(contents: &str) -> Result<Vec<(String, String)>, String> {
     collector.visit_file(&parsed);
 
     let mut found = Vec::new();
-    for attribute in &collector.attributes {
-        for lint in suppressed_by(attribute) {
+    for (rendered, meta) in &collector.attributes {
+        for lint in suppressed_by(meta) {
             if PROTECTED_LINTS.contains(&lint.as_str()) {
-                found.push((lint, render_attribute(attribute)));
+                found.push((lint, rendered.clone()));
             }
         }
     }
@@ -233,6 +282,10 @@ fn suppressed_lints(contents: &str) -> Result<Vec<(String, String)>, String> {
 /// - `#![cfg_attr(all(), allow(clippy::disallowed_methods))]` fails;
 /// - `#![allow(clippy::all)]` spread over several lines fails;
 /// - `#[allow(warnings)]` on an item fails;
+/// - a `macro_rules!` arm emitting `#[allow(clippy::disallowed_methods)]`
+///   around a call to `std::env::var` fails, which is the route both reviewers
+///   found: Clippy expands and honours it, reporting zero diagnostics where the
+///   same file without the attribute reports one;
 /// - `#[allow(clippy::allow_attributes)]` must, and does, keep passing.
 #[test]
 fn no_source_file_allows_a_policy_lint() -> Result<(), String> {
@@ -296,6 +349,21 @@ fn the_scan_follows_groups_and_cfg_attr() -> Result<(), String> {
         "#![cfg_attr(unix, cfg_attr(all(), allow(clippy::style)))]",
         r##"#![allow(clippy::disallowed_methods, reason = "a reason with (parentheses)")]"##,
         "#[allow(clippy::all)]\nfn wrapped() {}",
+        // A macro arm's body is an opaque token stream to `syn`, but Clippy
+        // expands it and honours the attribute.
+        concat!(
+            "macro_rules! bypass { () => {\n",
+            "    #[allow(clippy::disallowed_methods)]\n",
+            "    pub fn ambient() { let _ = std::env::var(\"X\"); }\n",
+            "}; }\nbypass!();"
+        ),
+        // Nested one macro deeper, to show the walk recurses rather than
+        // peeking one level.
+        concat!(
+            "macro_rules! outer { () => {\n",
+            "    macro_rules! inner { () => { #[allow(clippy::style)] fn f() {} }; }\n",
+            "}; }"
+        ),
     ] {
         if suppressed_lints(source)?.is_empty() {
             return Err(format!("the scan must report {source:?}"));
