@@ -149,12 +149,12 @@ impl FemtoLogger {
         true
     }
 
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Return whether this logger currently propagates to an existing parent.
     fn should_propagate_to_parent(&self) -> bool {
         self.propagate.load(std::sync::atomic::Ordering::SeqCst) && self.parent.is_some()
     }
 
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Re-enter Python to find the parent and enqueue a cloned record there.
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {
         let Some(parent_name) = &self.parent else {
             return;
@@ -166,7 +166,7 @@ impl FemtoLogger {
         });
     }
 
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Enqueue the record with a handler snapshot, or count and warn about a drop.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
@@ -183,12 +183,15 @@ impl FemtoLogger {
         });
     }
 
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Acknowledge the worker reaching a queue marker, then flush current handlers.
+    ///
+    /// The acknowledgement orders flushing after all records already queued;
+    /// handler flushing then covers output buffered inside each live handler.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }
 
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Wait for the worker to process a marker after all earlier queued records.
     fn wait_for_worker_idle(&self) -> bool {
         let Some(tx) = &self.tx else {
             return true;
@@ -211,7 +214,7 @@ impl FemtoLogger {
             .is_ok()
     }
 
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Flush handlers visible under the read lock after queue delivery is idle.
     fn flush_configured_handlers(&self) -> bool {
         self.handlers.read().iter().all(|handler| handler.flush())
     }

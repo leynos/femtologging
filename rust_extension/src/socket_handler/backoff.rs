@@ -8,15 +8,15 @@ use super::config::BackoffPolicy;
 
 /// Tracks reconnection attempts and produces jittered delays.
 pub struct BackoffState {
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Retry policy supplying base, cap, reset, and deadline limits.
     policy: BackoffPolicy,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Current exponential delay, reset after a successful or idle connection.
     current: Duration,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Start of the current failure window, used to enforce the retry deadline.
     failure_since: Option<Instant>,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Worker-owned random source used to jitter each retry delay.
     rng: StdRng,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Most recent successful write; sustained idleness restores initial state.
     last_success: Option<Instant>,
 }
 

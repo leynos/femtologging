@@ -160,7 +160,8 @@ impl FemtoLogger {
     }
 }
 
-/// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+/// Join the worker and warn if it panicked; the panic is not propagated across
+/// the Python boundary because logger shutdown is best-effort.
 pub(super) fn log_join_result(handle: JoinHandle<()>) {
     if handle.join().is_err() {
         warn!("FemtoLogger: worker thread panicked");

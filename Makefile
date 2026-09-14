@@ -165,7 +165,7 @@ ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tr
 ENV_POLICY_CARGO_ARGS ?= --all-targets
 ENV_POLICY_LINT_ARGS ?= -A clippy::all -D clippy::disallowed_methods
 
-RUST_LINT_FEATURE_LANES ?= none python log-compat tracing-compat test-util default
+RUST_LINT_FEATURE_LANES ?= none extension-module python log-compat tracing-compat test-util default all
 RUST_LINT_CARGO_ARGS ?= --all-targets
 RUST_LINT_ARGS ?= -D warnings
 

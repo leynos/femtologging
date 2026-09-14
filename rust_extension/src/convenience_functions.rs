@@ -75,7 +75,9 @@ fn log_at_level(
         .log_with_metadata(level, message, metadata))
 }
 
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Converts a Python dictionary into the ordered string map used for a
+/// thread-local logging context, rejecting non-string keys and unsupported
+/// values before the context is published.
 fn extract_context_dict(
     context: &Bound<'_, PyAny>,
 ) -> PyResult<std::collections::BTreeMap<String, String>> {
@@ -93,7 +95,9 @@ fn extract_context_dict(
     Ok(result)
 }
 
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Converts supported Python context values (`None`, booleans, integers,
+/// floats, and strings) using their Python string representation, returning a
+/// `TypeError` for values that cannot be stored in a context frame.
 fn extract_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String> {
     if raw_value.is_none() {
         return Ok(String::from("None"));

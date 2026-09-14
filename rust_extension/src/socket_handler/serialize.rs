@@ -7,28 +7,28 @@ use serde::Serialize;
 
 use crate::log_record::FemtoLogRecord;
 
-/// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+/// MessagePack record shape sent after the socket frame length prefix.
 #[derive(Serialize)]
 struct SerializableRecord<'a> {
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Logger name encoded in the socket record.
     logger: &'a str,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Level name encoded in the socket record.
     level: &'a str,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Message text encoded in the socket record.
     message: &'a str,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Record timestamp in nanoseconds since the UNIX epoch.
     timestamp_ns: u128,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Source filename carried in the socket payload.
     filename: &'a str,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Source line number carried in the socket payload.
     line_number: u32,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Source module path carried in the socket payload.
     module_path: &'a str,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Thread identifier converted to an owned string before encoding.
     thread_id: String,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Optional thread name, omitted when the source record has no name.
     thread_name: Option<&'a str>,
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
+    /// Structured record metadata encoded as key-value entries.
     key_values: &'a std::collections::BTreeMap<String, String>,
 }
 

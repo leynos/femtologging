@@ -27,7 +27,7 @@ use crate::{
     macros::{AsPyDict, dict_into_py},
 };
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Extracts a positive signed integer from a Python value for builder fields.
 fn extract_positive_i128(value: Bound<'_, PyAny>, field: &str) -> PyResult<i128> {
     let value = value.extract::<i128>()?;
     if value <= 0 {
@@ -38,13 +38,15 @@ fn extract_positive_i128(value: Bound<'_, PyAny>, field: &str) -> PyResult<i128>
     Ok(value)
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Converts a zero interval into the Python validation error expected by the
+/// builder API.
 fn nonzero_interval(value: u64) -> PyResult<NonZeroU64> {
     NonZeroU64::new(value)
         .ok_or_else(|| PyValueError::new_err("interval must be greater than zero"))
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Maps internal builder errors to Python value errors where configuration was
+/// invalid, preserving other domain errors.
 fn map_config_error(err: HandlerBuildError) -> PyErr {
     match err {
         HandlerBuildError::InvalidConfig(message) => PyValueError::new_err(message),
@@ -52,12 +54,12 @@ fn map_config_error(err: HandlerBuildError) -> PyErr {
     }
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Extracts an optional naive at_time value, accepting Python None.
 fn extract_optional_time(value: Bound<'_, PyAny>) -> PyResult<Option<NaiveTime>> {
     extract_naive_time_from_py_time(&value, "at_time", true)
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Serializes builder state into the Python dictionary representation.
 fn fill_pydict(builder: &TimedRotatingFileHandlerBuilder, d: &Bound<'_, PyDict>) -> PyResult<()> {
     d.set_item("path", builder.path.to_string_lossy().as_ref())?;
     builder.common.extend_py_dict(d)?;
@@ -71,7 +73,7 @@ fn fill_pydict(builder: &TimedRotatingFileHandlerBuilder, d: &Bound<'_, PyDict>)
     Ok(())
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Applies one validated mutation while retaining the Python mutable reference.
 fn apply_builder_update<'py, F>(
     mut slf: PyRefMut<'py, TimedRotatingFileHandlerBuilder>,
     update: F,
@@ -85,7 +87,8 @@ where
 
 #[pymethods]
 impl TimedRotatingFileHandlerBuilder {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Creates a builder and applies all supplied queue and rotation options,
+    /// reporting invalid values before a handler is built.
     #[new]
     #[pyo3(signature = (path, options = None))]
     fn py_new(path: String, options: Option<Bound<'_, TimedHandlerOptions>>) -> PyResult<Self> {
@@ -128,7 +131,7 @@ impl TimedRotatingFileHandlerBuilder {
             })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Validates and stores a positive queue capacity.
     #[pyo3(name = "with_capacity")]
     fn py_with_capacity<'py>(
         slf: PyRefMut<'py, Self>,
@@ -143,7 +146,7 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Stores the positive record count at which the worker flushes.
     #[pyo3(name = "with_flush_after_records")]
     fn py_with_flush_after_records<'py>(
         slf: PyRefMut<'py, Self>,
@@ -156,7 +159,8 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Validates and stores the cadence, rejecting incompatible at_time and
+    /// weekday interval combinations.
     #[pyo3(name = "with_when")]
     fn py_with_when<'py>(slf: PyRefMut<'py, Self>, when: String) -> PyResult<PyRefMut<'py, Self>> {
         apply_builder_update(slf, |builder| {
@@ -180,7 +184,8 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Validates and stores a positive cadence interval, preserving the
+    /// weekday interval invariant.
     #[pyo3(name = "with_interval")]
     fn py_with_interval<'py>(
         slf: PyRefMut<'py, Self>,
@@ -202,7 +207,7 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Stores the number of rotated files retained by the worker.
     #[pyo3(name = "with_backup_count")]
     fn py_with_backup_count<'py>(
         slf: PyRefMut<'py, Self>,
@@ -215,7 +220,7 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Selects UTC or local-time rollover calculations.
     #[pyo3(name = "with_utc")]
     fn py_with_utc<'py>(slf: PyRefMut<'py, Self>, use_utc: bool) -> PyResult<PyRefMut<'py, Self>> {
         apply_builder_update(slf, |builder| {
@@ -224,7 +229,8 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Converts and validates an optional at_time value, rejecting it for
+    /// cadences that do not support a time-of-day trigger.
     #[pyo3(name = "with_at_time")]
     fn py_with_at_time<'py>(
         slf: PyRefMut<'py, Self>,
@@ -246,7 +252,7 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Replaces the queue overflow policy used during record delivery.
     #[pyo3(name = "with_overflow_policy")]
     fn py_with_overflow_policy<'py>(
         slf: PyRefMut<'py, Self>,
@@ -258,7 +264,7 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Stores the Python formatter callable after validating its boundary.
     #[pyo3(name = "with_formatter")]
     fn py_with_formatter<'py>(
         slf: PyRefMut<'py, Self>,
@@ -270,12 +276,13 @@ impl TimedRotatingFileHandlerBuilder {
         })
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Serializes this builder for Python callers.
     fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_pydict(py)
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Builds the worker-backed timed rotating handler and maps build errors to
+    /// Python exceptions.
     fn build(&self) -> PyResult<PyTimedRotatingFileHandler> {
         <Self as HandlerBuilderTrait>::build_inner(self)
             .map(PyTimedRotatingFileHandler::from_core)

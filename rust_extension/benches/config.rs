@@ -86,6 +86,7 @@ impl PythonApis {
     }
 }
 
+/// Python callables retained by the configuration benchmark between samples.
 type PythonConfigImports = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
 
 fn init_python_imports(py: Python<'_>) -> PyResult<PythonConfigImports> {

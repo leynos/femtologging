@@ -47,19 +47,19 @@ use python_helpers::capture_exception_payload;
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 
-/// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+/// Maximum number of records held before producers report a dropped record.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
-/// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+/// Maximum time a flush waits for the worker's acknowledgement, in milliseconds.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// One-shot channel notified when the worker reaches the flush marker.
     ack: Sender<()>,
 }
 
 impl FlushAckHandler {
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Build the marker handler that acknowledges delivery of its queued record.
     fn new(ack: Sender<()>) -> Self {
         Self { ack }
     }
@@ -90,25 +90,25 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Shared formatter used by producer threads before records enter the queue.
     formatter: SharedFormatter,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Atomically readable level threshold updated by logger configuration calls.
     level: AtomicU8,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Whether records are copied to the dotted-name parent after local dispatch.
     propagate: AtomicBool,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Lock-protected live handlers; each queued record owns the snapshot it captured.
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Lock-protected filters consulted by producers before queueing a record.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Number of records rejected because the worker queue could not accept them.
     dropped_records: AtomicU64,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Rate-limits warnings emitted for queue drops across concurrent producers.
     drop_warner: RateLimitedWarner,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Producer endpoint for records; taking it during drop prevents new sends.
     tx: Option<Sender<QueuedRecord>>,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Worker shutdown signal sent before the worker join during logger drop.
     shutdown_tx: Option<Sender<()>>,
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Mutex-protected worker handle so dropping the logger can join without a lock held.
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -310,7 +310,7 @@ impl FemtoLogger {
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
-    /// Maintains logger lifecycle and propagation semantics across Python calls and the background delivery runtime.
+    /// Capture handler addresses for tests that verify attachment replacement.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()

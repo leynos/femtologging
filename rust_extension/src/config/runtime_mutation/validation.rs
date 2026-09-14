@@ -6,7 +6,7 @@ use crate::{config::ConfigError, manager::LoggerAttachmentState};
 
 use super::{CollectionMutation, SharedFilters, SharedHandlers};
 
-/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+/// Detects incompatible modes requested for the same attachment collection.
 pub(crate) fn collection_conflict(
     kind: &str,
     current: &CollectionMutation,
@@ -19,7 +19,7 @@ pub(crate) fn collection_conflict(
     }
 }
 
-/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+/// Verifies every handler and filter ID in a prospective state has a registry entry.
 pub(crate) fn resolve_attachment_ids(
     state: &LoggerAttachmentState,
     handlers: &SharedHandlers,
@@ -43,7 +43,7 @@ pub(crate) fn resolve_attachment_ids(
     }
 }
 
-/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+/// Ensures a removal names only attachments present in the logger's current state.
 pub(crate) fn validate_remove_ids(
     existing: &[String],
     mutation: &CollectionMutation,

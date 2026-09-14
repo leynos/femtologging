@@ -8,13 +8,13 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Maximum number of keys permitted in one merged context.
 const MAX_CONTEXT_KEYS: usize = 64;
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Maximum UTF-8 byte length of a context key.
 const MAX_KEY_BYTES: usize = 64;
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Maximum UTF-8 byte length of a context value.
 const MAX_VALUE_BYTES: usize = 1024;
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Maximum combined key/value byte length of a merged context.
 const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
 thread_local! {
@@ -46,7 +46,7 @@ pub enum LogContextError {
 /// RAII guard that pops one context frame on drop.
 #[must_use = "hold the guard for as long as the scoped log context should remain active"]
 pub struct LogContextGuard {
-    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+    /// Zero-sized private state; dropping the guard pops the matching frame.
     _private: (),
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn merge_context_values(
     Ok(active)
 }
 
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Pop one frame and report an error when the thread-local stack is empty.
 fn pop_internal() -> Result<(), LogContextError> {
     CONTEXT_STACK.with(|stack| {
         if stack.borrow_mut().pop().is_some() {
@@ -139,7 +139,7 @@ fn pop_internal() -> Result<(), LogContextError> {
     })
 }
 
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Merge thread-local frames in insertion order, with inner frames overriding outer keys.
 fn active_context() -> BTreeMap<String, String> {
     CONTEXT_STACK.with(|stack| {
         let mut merged = BTreeMap::new();
@@ -150,7 +150,7 @@ fn active_context() -> BTreeMap<String, String> {
     })
 }
 
-/// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+/// Enforce key-count, per-field, and aggregate byte limits before context use.
 fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogContextError> {
     if context.len() > MAX_CONTEXT_KEYS {
         return Err(LogContextError::TooManyKeys {

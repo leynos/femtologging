@@ -8,7 +8,8 @@ use std::time::Duration;
 use super::config::OverflowPolicy;
 use thiserror::Error;
 
-/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+/// Lists the policy spellings accepted by the Python-facing parser and used in
+/// its unknown-policy error message.
 const VALID_POLICIES: &str = "drop, block, timeout:N";
 
 /// Errors produced while parsing overflow policy inputs.
@@ -26,8 +27,7 @@ pub(crate) enum ParseOverflowPolicyError {
     /// A timeout policy without inline value requires an external timeout.
     #[error("timeout_ms required for timeout policy")]
     MissingExternalTimeout,
-    /// Provided policy name is not recognized.
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Retains a normalised policy value that was rejected by the parser.
     #[error("invalid overflow policy: '{policy}'. Valid options are: {VALID_POLICIES}")]
     UnknownPolicy {
         /// Retains the rejected input so callers can report an actionable configuration error.
@@ -35,7 +35,7 @@ pub(crate) enum ParseOverflowPolicyError {
     },
 }
 
-/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+/// Parses a positive millisecond value for inline `timeout:N` syntax.
 fn parse_timeout_ms(raw: &str) -> Result<u64, ParseOverflowPolicyError> {
     let ms: u64 = raw
         .trim()
@@ -48,7 +48,8 @@ fn parse_timeout_ms(raw: &str) -> Result<u64, ParseOverflowPolicyError> {
     }
 }
 
-/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+/// Resolves a timeout policy when its duration is supplied separately by the
+/// caller, rejecting missing or zero durations.
 fn parse_timeout_policy(
     timeout_ms: Option<u64>,
     expects_external_timeout: bool,
@@ -66,7 +67,8 @@ fn parse_timeout_policy(
     }
 }
 
-/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+/// Normalises and dispatches an overflow-policy string, preserving whether the
+/// caller expects a separate timeout value for the bare `timeout` spelling.
 fn parse_overflow_policy(
     policy: &str,
     timeout_ms: Option<u64>,

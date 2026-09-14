@@ -4,7 +4,7 @@ use super::*;
 use crate::macros::AsPyDict;
 use pyo3::{Bound, IntoPyObjectExt, types::PyDict};
 
-/// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+/// Serializes a string-keyed builder map by delegating each value's Python conversion.
 fn collection_to_pydict<'py, V: AsPyDict>(
     py: Python<'py>,
     map: &BTreeMap<String, V>,
@@ -52,20 +52,20 @@ impl AsPyDict for RuntimeConfigBuilder {
 
 #[pymethods]
 impl LoggerMutationBuilder {
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Creates an empty Python-facing logger mutation builder.
     #[new]
     fn py_new() -> Self {
         Self::new()
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Sets the scalar level override and returns the same Python-owned builder.
     #[pyo3(name = "with_level")]
     fn py_with_level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
         slf.level = Some(level);
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Sets the scalar propagation override and returns the same Python-owned builder.
     #[pyo3(name = "with_propagate")]
     fn py_with_propagate<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -75,7 +75,7 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests replacement of handler IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "replace_handlers")]
     fn py_replace_handlers<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -85,7 +85,7 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests appending handler IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "append_handlers")]
     fn py_append_handlers<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -95,7 +95,7 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests removal of handler IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "remove_handlers")]
     fn py_remove_handlers<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -105,14 +105,14 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests clearing all handler IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "clear_handlers")]
     fn py_clear_handlers<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
         slf.set_handlers(CollectionMutation::Clear);
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests replacement of filter IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "replace_filters")]
     fn py_replace_filters<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -122,7 +122,7 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests appending filter IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "append_filters")]
     fn py_append_filters<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -132,7 +132,7 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests removal of filter IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "remove_filters")]
     fn py_remove_filters<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -142,14 +142,14 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Requests clearing all filter IDs, recording a mode conflict if another mode was set.
     #[pyo3(name = "clear_filters")]
     fn py_clear_filters<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
         slf.set_filters(CollectionMutation::Clear);
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Serializes scalar and collection mutation state to the documented Python dictionary shape.
     fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_pydict(py)
     }
@@ -157,13 +157,13 @@ impl LoggerMutationBuilder {
 
 #[pymethods]
 impl RuntimeConfigBuilder {
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Creates an empty Python-facing runtime configuration builder.
     #[new]
     fn py_new() -> Self {
         Self::new()
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Extracts and stores a handler builder under an ID, returning a Python error on type mismatch.
     #[pyo3(name = "with_handler")]
     fn py_with_handler<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -175,7 +175,7 @@ impl RuntimeConfigBuilder {
         Ok(slf)
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Extracts and stores a filter builder under an ID, returning a Python error on type mismatch.
     #[pyo3(name = "with_filter")]
     fn py_with_filter<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -187,7 +187,7 @@ impl RuntimeConfigBuilder {
         Ok(slf)
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Stores a named logger mutation builder in the pending runtime request.
     #[pyo3(name = "with_logger")]
     fn py_with_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -198,7 +198,7 @@ impl RuntimeConfigBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Stores the pending mutation for the root logger.
     #[pyo3(name = "with_root_logger")]
     fn py_with_root_logger<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -208,13 +208,13 @@ impl RuntimeConfigBuilder {
         slf
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Validates and atomically applies the request, converting `ConfigError` into a Python exception.
     #[pyo3(name = "apply")]
     fn py_apply(&self) -> PyResult<()> {
         self.apply().map_err(Into::into)
     }
 
-    /// Stages Python-visible runtime mutations before a single commit publishes them, preventing partial shared-state updates.
+    /// Serializes the complete runtime mutation request to a Python dictionary.
     fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_pydict(py)
     }

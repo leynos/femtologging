@@ -28,7 +28,8 @@ pub trait FemtoFormatter: Send + Sync {
 /// Shared formatter trait object used across handlers.
 #[derive(Clone)]
 pub struct SharedFormatter {
-    /// Bridges formatter execution without retaining Python objects across an unsafe GIL boundary or losing record context.
+    /// Shared ownership keeps one formatter available to concurrent handlers;
+    /// Python-backed implementations reacquire the GIL when formatting.
     inner: Arc<dyn FemtoFormatter + Send + Sync>,
 }
 

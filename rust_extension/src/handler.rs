@@ -53,7 +53,7 @@ pub struct FemtoHandler;
 
 #[pymethods]
 impl FemtoHandler {
-    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+    /// Creates the empty Python-facing marker handler; its default methods intentionally accept records and flush requests without side effects.
     #[new]
     fn py_new() -> Self {
         Self

@@ -22,11 +22,11 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Owns the rotation strategy transferred to the file worker, which performs all rollover I/O on its own thread.
     pub(crate) rotation: R,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Holds an optional test barrier released by the worker after startup; production construction leaves it unset.
     pub(crate) start_barrier: Option<Arc<Barrier>>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Retains the writer type at compile time without storing a second writer value.
     _phantom: PhantomData<W>,
 }
 

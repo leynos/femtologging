@@ -12,12 +12,12 @@ use crate::{
     log_record::FemtoLogRecord,
 };
 
-/// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
+/// Accepts a logger and its dotted descendants, but not similarly prefixed names.
 #[derive(Debug)]
 pub struct NameFilter {
-    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
+    /// Exact logger name accepted by the filter.
     prefix: String,
-    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
+    /// Cached `prefix + "."` boundary used for descendant matching.
     prefix_dot: String,
 }
 
@@ -37,7 +37,7 @@ impl FemtoFilter for NameFilter {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct NameFilterBuilder {
-    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
+    /// Optional logger-name prefix, rejected when absent or empty during build.
     prefix: Option<String>,
 }
 
