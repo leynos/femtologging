@@ -25,10 +25,13 @@ use pyo3::{PyAny, exceptions::PyModuleNotFoundError};
 
 /// Maximum number of keys permitted in one merged context.
 pub(crate) const MAX_CONTEXT_KEYS: usize = 64;
+
 /// Maximum UTF-8 byte length of a context key.
 pub(crate) const MAX_KEY_BYTES: usize = 64;
+
 /// Maximum UTF-8 byte length of a context value.
 pub(crate) const MAX_VALUE_BYTES: usize = 1024;
+
 /// Maximum combined key/value byte length of a merged context.
 pub(crate) const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
@@ -387,3 +390,4 @@ pub(crate) fn clear_log_context_for_test() {
 #[cfg(test)]
 #[path = "log_context_tests.rs"]
 mod tests;
+// weave: run 'weave explain rust_extension/src/log_context.rs' for per-hunk detail, 'weave check' to verify your resolution
