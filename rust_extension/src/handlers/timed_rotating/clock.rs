@@ -31,10 +31,12 @@ mod injected {
     use chrono::{DateTime, TimeZone, Utc};
     use once_cell::sync::Lazy;
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Queues test-supplied epoch milliseconds behind a mutex so concurrent
+    /// workers consume deterministic clock values safely.
     static INJECTED_TIMES: Lazy<Mutex<VecDeque<i64>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Replaces the queued test times; available only to deterministic test
+    /// builds.
     #[cfg(feature = "test-util")]
     pub(super) fn set(epoch_millis: Vec<i64>) {
         *INJECTED_TIMES
@@ -42,7 +44,7 @@ mod injected {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = epoch_millis.into_iter().collect();
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Discards all queued test times before the next deterministic scenario.
     #[cfg(feature = "test-util")]
     pub(super) fn clear() {
         INJECTED_TIMES
@@ -51,7 +53,8 @@ mod injected {
             .clear();
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Pops one queued timestamp and converts it to UTC, recovering a poisoned
+    /// mutex rather than losing the test clock.
     pub(super) fn take() -> Option<DateTime<Utc>> {
         let mut guard = INJECTED_TIMES
             .lock()
@@ -62,29 +65,29 @@ mod injected {
     }
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Provides the production fallback for builds without the Python test clock.
 #[cfg(not(feature = "python"))]
 mod injected {
     use chrono::{DateTime, Utc};
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Reports no injected time when test support is unavailable.
     pub(super) fn take() -> Option<DateTime<Utc>> {
         None
     }
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Reads the next deterministic timestamp, or none when the queue is empty.
 fn take_injected_time() -> Option<DateTime<Utc>> {
     injected::take()
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Installs epoch-millisecond values for Python timed-rotation tests.
 #[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn set_injected_times_for_test(epoch_millis: Vec<i64>) {
     injected::set(epoch_millis);
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Clears the Python test clock after a deterministic rotation scenario.
 #[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn clear_injected_times_for_test() {
     injected::clear();

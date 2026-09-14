@@ -34,7 +34,7 @@ impl FilterDecision {
 /// Per-record state shared across filters during evaluation.
 #[derive(Default)]
 pub struct FilterContext {
-    /// Defines a private implementation contract whose behaviour is constrained by the surrounding logging runtime.
+    /// Optional Python record view shared by Python-aware filters for one decision.
     #[cfg(feature = "python")]
     pub(crate) python_record_view: Option<Py<PyAny>>,
 }
@@ -100,7 +100,7 @@ pub enum FilterBuilder {
 }
 
 impl FilterBuilder {
-    /// Defines producer-side filter decisions so rejected records never enter an asynchronous handler queue.
+    /// Validate the selected builder and return its shared filter implementation.
     pub fn build(&self) -> Result<Arc<dyn FemtoFilter>, FilterBuildError> {
         match self {
             Self::Level(b) => <LevelFilterBuilder as FilterBuilderTrait>::build(b),

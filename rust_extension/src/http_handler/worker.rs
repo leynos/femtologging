@@ -30,11 +30,11 @@ use super::{
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
 )]
 pub enum HTTPCommand {
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Record to serialise and deliver in queue order.
     Record(FemtoLogRecord),
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Request an immediate acknowledgement after previously queued records.
     Flush(Sender<()>),
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Drain queued records, acknowledge, and terminate the worker.
     Shutdown(Sender<()>),
 }
 
@@ -69,25 +69,25 @@ pub fn spawn_worker(config: HTTPHandlerConfig) -> (Sender<HTTPCommand>, thread::
     (tx, handle)
 }
 
-/// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+/// Transfers the configured endpoint and queue to the dedicated HTTP worker.
 fn worker_loop(rx: Receiver<HTTPCommand>, config: HTTPHandlerConfig) {
     Worker::new(config).run(rx);
 }
 
-/// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+/// Worker-owned state for endpoint I/O, retries, and dropped-record reporting.
 struct Worker {
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Immutable endpoint, authentication, serialisation, and queue policy owned by this worker.
     config: HTTPHandlerConfig,
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Connection-pooling client used only on the worker thread.
     agent: Agent,
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Retry state kept with the worker so producers never coordinate backoff.
     backoff: BackoffState,
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Rate-limits warnings for records lost during serialisation or delivery.
     warner: RateLimitedWarner,
 }
 
 impl Worker {
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Builds the worker-owned HTTP client and initialises retry and warning state.
     fn new(config: HTTPHandlerConfig) -> Self {
         let agent = AgentBuilder::new()
             .timeout_connect(config.connect_timeout)
@@ -103,7 +103,7 @@ impl Worker {
         }
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Serialises one queued record, warning and dropping it when conversion fails.
     fn handle_record_command(&mut self, record: FemtoLogRecord) {
         let payload = match self.serialize_record(&record) {
             Ok(p) => p,
@@ -116,7 +116,7 @@ impl Worker {
         self.send_request(&payload);
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Selects the configured wire format and optional field projection.
     fn serialize_record(&self, record: &FemtoLogRecord) -> io::Result<String> {
         let fields = self.config.record_fields.as_deref();
         match self.config.format {
@@ -125,7 +125,7 @@ impl Worker {
         }
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Sends a payload, retrying transient failures until the backoff deadline.
     fn send_request(&mut self, payload: &str) {
         loop {
             let now = Instant::now();
@@ -154,7 +154,7 @@ impl Worker {
         }
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Builds and executes the configured request, mapping status and transport failures.
     fn execute_request(&self, payload: &str) -> Result<ResponseClass, String> {
         // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
         let request = match self.config.method {
@@ -171,7 +171,7 @@ impl Worker {
         }
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Adds the configured query payload and authentication before issuing a GET.
     fn build_get_request(&self, payload: &str) -> Result<ureq::Response, Box<ureq::Error>> {
         let url = if self.config.url.contains('?') {
             format!("{}&{}", self.config.url, payload)
@@ -184,7 +184,7 @@ impl Worker {
         req.call().map_err(Box::new)
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Applies authentication, headers, and content type before issuing a POST.
     fn build_post_request(&self, payload: &str) -> Result<ureq::Response, Box<ureq::Error>> {
         let mut req = self.agent.post(&self.config.url);
         req = self.apply_auth(req);
@@ -198,7 +198,7 @@ impl Worker {
         req.send_string(payload).map_err(Box::new)
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Adds no header for anonymous requests and the configured Basic or Bearer header otherwise.
     fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
         match &self.config.auth {
             AuthConfig::None => req,
@@ -211,7 +211,7 @@ impl Worker {
         }
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Copies configured headers onto the worker-owned request.
     fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
         for (key, value) in &self.config.headers {
             req = req.set(key, value);
@@ -236,14 +236,14 @@ impl Worker {
         true
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Emits a warning when serialisation has discarded records.
     fn warn_serialization_drops(&self) {
         warn_drops(&self.warner, |count| {
             warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
         });
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Emits a warning when permanent HTTP responses discard records.
     fn warn_permanent_drops(&self) {
         warn_drops(&self.warner, |count| {
             warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
@@ -266,7 +266,7 @@ impl Worker {
         let _ = ack.send(());
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Drains queued commands after shutdown is observed, preserving FIFO delivery.
     fn drain_pending(&mut self, rx: &Receiver<HTTPCommand>) {
         loop {
             match rx.try_recv() {
@@ -280,7 +280,7 @@ impl Worker {
         }
     }
 
-    /// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+    /// Runs the command loop until shutdown or channel disconnection, then drains pending work.
     fn run(mut self, rx: Receiver<HTTPCommand>) {
         loop {
             match rx.recv() {
@@ -317,7 +317,7 @@ pub(crate) fn classify_status(status: u16) -> ResponseClass {
     }
 }
 
-/// Supports HTTP delivery while preserving record ordering, response classification, and worker-owned retry state.
+/// Records a drop and emits the callback only when the warning interval permits it.
 fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.record_drop();
     warner.warn_if_due(log);

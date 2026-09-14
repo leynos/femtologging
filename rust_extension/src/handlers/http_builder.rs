@@ -20,7 +20,7 @@ use super::builder_macros::ensure_positive;
 use super::socket_builder::BackoffOverrides;
 use super::{HandlerBuildError, HandlerBuilderTrait};
 
-/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+/// Generates fluent setters that store optional builder values for later validation.
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
         $(#[$meta])*
@@ -35,25 +35,25 @@ macro_rules! option_setter {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct HTTPHandlerBuilder {
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Required destination URL, validated before a worker is spawned.
     url: Option<String>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// HTTP method, defaulting to POST when omitted.
     method: Option<HTTPMethod>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Optional Basic or Bearer credentials copied into the worker configuration.
     auth: Option<AuthConfig>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Headers copied into each worker request; duplicate keys are replaced.
     headers: HashMap<String, String>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Bounded worker queue capacity, validated as non-zero when provided.
     capacity: Option<usize>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Optional TCP connection timeout in milliseconds; zero is rejected.
     connect_timeout_ms: Option<u64>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Optional request-write timeout in milliseconds; zero is rejected.
     write_timeout_ms: Option<u64>,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Per-worker retry timing overrides, each validated before construction.
     backoff: BackoffOverrides,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Request encoding, URL-encoded by default or JSON when selected.
     format: SerializationFormat,
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Optional allow-list of record fields sent in each request.
     record_fields: Option<Vec<String>>,
 }
 
@@ -150,7 +150,7 @@ impl HTTPHandlerBuilder {
         self
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Checks all builder values before creating worker-owned HTTP state.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.validate_url()?;
         self.validate_capacity()?;
@@ -159,7 +159,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Rejects JSON GET requests because GET payloads are appended as query data.
     fn validate_method_format_combination(&self) -> Result<(), HandlerBuildError> {
         let method = self.method.clone().unwrap_or_default();
         if method == HTTPMethod::GET && matches!(self.format, SerializationFormat::Json) {
@@ -170,7 +170,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Ensures a non-empty URL is available before the worker starts.
     fn validate_url(&self) -> Result<(), HandlerBuildError> {
         match &self.url {
             None => Err(HandlerBuildError::InvalidConfig(
@@ -183,7 +183,7 @@ impl HTTPHandlerBuilder {
         }
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Rejects a zero queue capacity, which would prevent channel construction.
     fn validate_capacity(&self) -> Result<(), HandlerBuildError> {
         if let Some(capacity) = self.capacity {
             ensure_positive!(capacity, "capacity")?;
@@ -191,7 +191,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Rejects zero-valued connection and write timeouts.
     fn validate_timeouts(&self) -> Result<(), HandlerBuildError> {
         if let Some(timeout) = self.connect_timeout_ms {
             ensure_positive!(timeout, "connect_timeout_ms")?;
@@ -202,7 +202,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Resolves defaults, validates overrides, and returns the worker configuration.
     fn build_config(&self) -> Result<HTTPHandlerConfig, HandlerBuildError> {
         self.validate()?;
 
@@ -229,7 +229,7 @@ impl HTTPHandlerBuilder {
         Ok(config)
     }
 
-    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
+    /// Exposes explicitly configured Python builder values as a dictionary.
     #[cfg(feature = "python")]
     fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if let Some(ref url) = self.url {
