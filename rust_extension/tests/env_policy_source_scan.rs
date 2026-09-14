@@ -52,6 +52,8 @@ use std::collections::VecDeque;
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proptest::prelude::*;
+use rstest::rstest;
 use syn::{
     AttrStyle, Attribute, Macro, Meta, MetaList, Path, Token, ext::IdentExt,
     punctuated::Punctuated, visit::Visit,
@@ -82,10 +84,14 @@ fn crate_dir() -> Utf8PathBuf {
 /// repository's Dylint suite disallows: the scan needs to see files that do
 /// not exist yet, so `include_str!` is not an option here as it is elsewhere
 /// in this suite.
+///
+/// A root that cannot be opened is an error, not an empty result. An earlier
+/// draft returned `Ok(Vec::new())` there, which made a renamed, deleted or
+/// unreadable governed directory indistinguishable from one holding no
+/// suppression: the scan reported success having read nothing.
 fn rust_sources(root: &Utf8Path, relative: &str) -> Result<Vec<(Utf8PathBuf, String)>, String> {
-    let Ok(directory) = Dir::open_ambient_dir(root, ambient_authority()) else {
-        return Ok(Vec::new());
-    };
+    let directory = Dir::open_ambient_dir(root, ambient_authority())
+        .map_err(|error| format!("open {relative}: {error}"))?;
     let mut pending = VecDeque::from([(directory, Utf8PathBuf::from(relative))]);
     let mut sources = Vec::new();
 
@@ -257,16 +263,7 @@ fn suppressed_by_cfg_attr(list: &MetaList, inner: bool) -> Vec<String> {
     nested
         .iter()
         .skip(1)
-        .filter_map(|meta| match meta {
-            Meta::List(nested_list) => Some(match render_path(&nested_list.path).as_str() {
-                "allow" => allowed_lints(nested_list),
-                "expect" if inner => allowed_lints(nested_list),
-                "cfg_attr" => suppressed_by_cfg_attr(nested_list, inner),
-                _ => Vec::new(),
-            }),
-            Meta::Path(_) | Meta::NameValue(_) => None,
-        })
-        .flatten()
+        .flat_map(|meta| suppressed_by(meta, inner))
         .collect()
 }
 
@@ -333,6 +330,10 @@ fn suppressed_lints(contents: &str) -> Result<Vec<(String, String)>, String> {
 /// - `#[expect(clippy::disallowed_methods, reason = "...")]` on an item must,
 ///   and does, keep passing: it is the sanctioned form;
 /// - `#[allow(clippy::allow_attributes)]` must, and does, keep passing.
+///
+/// Re-proved on 2026-09-14, after `suppressed_by_cfg_attr` was folded back
+/// into `suppressed_by` rather than repeating its dispatch: the `cfg_attr`
+/// mutation above still fails this test through the build.
 #[test]
 fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
     let crate_dir = crate_dir();
@@ -355,6 +356,55 @@ fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
          form: {}",
         offences.join("; ")
     ))
+}
+
+/// A source each governed root must yield, to prove the walk reached it.
+///
+/// One per root, and the `src` entry is nested so a walk that read only a
+/// root's immediate children would fail rather than pass on `lib.rs`.
+const EXPECTED_SOURCES: [(&str, &str); 3] = [
+    ("src", "src/config/mod.rs"),
+    ("tests", "tests/env_policy_source_scan.rs"),
+    ("benches", "benches/config.rs"),
+];
+
+/// Scenario: the scan's source discovery is asked what it actually read.
+///
+/// Invariant: every governed root opens, yields at least one `.rs` file, and
+/// contains the nested source named for it, whose contents are non-empty.
+/// Without this, [`no_source_file_suppresses_a_policy_lint`] has a vacuous
+/// path: it fails only on a non-empty offence list, so a root that yielded
+/// nothing would report success having read nothing at all.
+///
+/// Mutation proof (2026-09-14), each applied alone, run through the build and
+/// reverted:
+///
+/// - renaming `SOURCE_ROOTS`' `benches` entry to `benchmarks` fails
+///   [`no_source_file_suppresses_a_policy_lint`] with
+///   `open benchmarks: No such file or directory`. Before [`rust_sources`]
+///   stopped swallowing the open failure, the same mutation passed;
+/// - stopping the walk from descending into subdirectories fails this test's
+///   `src` case with `src did not yield src/config/mod.rs`, and nothing else
+///   in the file notices. That is why the named source is nested rather than
+///   `src/lib.rs`.
+#[rstest]
+#[case::src(0)]
+#[case::tests(1)]
+#[case::benches(2)]
+fn every_governed_root_yields_its_sources(#[case] index: usize) -> Result<(), String> {
+    let (root, expected) = EXPECTED_SOURCES[index];
+    let sources = rust_sources(&crate_dir().join(root), root)?;
+    if sources.is_empty() {
+        return Err(format!("{root} yielded no Rust source"));
+    }
+    let found = sources
+        .iter()
+        .find(|(path, _)| path.as_str() == expected)
+        .ok_or_else(|| format!("{root} did not yield {expected}"))?;
+    if found.1.is_empty() {
+        return Err(format!("{expected} was read as empty"));
+    }
+    Ok(())
 }
 
 /// Scenario: the scan meets shapes that are not suppressions.
@@ -387,45 +437,139 @@ fn different_lint_whose_name_starts_with_clippy_all() {}
 
 /// Scenario: a suppression is written in a shape a text scan cannot see.
 ///
-/// Invariant: each is reported. These are the measured evasions, kept as unit
+/// Invariant: each is reported. These are the measured evasions, kept as
 /// cases so the parser's behaviour is pinned without editing a real source
-/// file, alongside the mutation proofs that do edit one.
-#[test]
-fn the_scan_follows_groups_and_cfg_attr() -> Result<(), String> {
-    for source in [
-        "#![allow(clippy::style)]",
-        "#![allow(clippy::all)]",
-        "#![allow(warnings)]",
-        "#![cfg_attr(all(), allow(clippy::disallowed_methods))]",
-        "#![cfg_attr(unix, cfg_attr(all(), allow(clippy::style)))]",
-        r##"#![allow(clippy::disallowed_methods, reason = "a reason with (parentheses)")]"##,
-        "#[allow(clippy::all)]\nfn wrapped() {}",
-        // A macro arm's body is an opaque token stream to `syn`, but Clippy
-        // expands it and honours the attribute.
-        concat!(
-            "macro_rules! bypass { () => {\n",
-            "    #[allow(clippy::disallowed_methods)]\n",
-            "    pub fn ambient() { let _ = std::env::var(\"X\"); }\n",
-            "}; }\nbypass!();"
-        ),
-        // Crate-scoped `expect`: one call fulfils it crate-wide, so nothing is
-        // reported and no unfulfilled expectation is raised either.
-        "#![expect(clippy::disallowed_methods)]",
-        "#![cfg_attr(all(), expect(clippy::disallowed_methods))]",
-        // Raw identifiers, in the attribute name and in the lint path.
-        "#![r#allow(clippy::disallowed_methods)]",
-        "#![allow(clippy::r#style)]",
-        // Nested one macro deeper, to show the walk recurses rather than
-        // peeking one level.
-        concat!(
-            "macro_rules! outer { () => {\n",
-            "    macro_rules! inner { () => { #[allow(clippy::style)] fn f() {} }; }\n",
-            "}; }"
-        ),
-    ] {
-        if suppressed_lints(source)?.is_empty() {
-            return Err(format!("the scan must report {source:?}"));
-        }
+/// file, alongside the mutation proofs that do edit one. One case per
+/// spelling, so a regression names the spelling that regressed rather than
+/// stopping at the first.
+#[rstest]
+#[case::lint_group("#![allow(clippy::style)]")]
+#[case::wider_group("#![allow(clippy::all)]")]
+#[case::warnings("#![allow(warnings)]")]
+#[case::cfg_attr("#![cfg_attr(all(), allow(clippy::disallowed_methods))]")]
+#[case::nested_cfg_attr("#![cfg_attr(unix, cfg_attr(all(), allow(clippy::style)))]")]
+#[case::reason_with_parentheses(
+    r##"#![allow(clippy::disallowed_methods, reason = "a reason with (parentheses)")]"##
+)]
+#[case::item_scoped("#[allow(clippy::all)]\nfn wrapped() {}")]
+// A macro arm's body is an opaque token stream to `syn`, but Clippy expands
+// it and honours the attribute.
+#[case::macro_arm(concat!(
+    "macro_rules! bypass { () => {\n",
+    "    #[allow(clippy::disallowed_methods)]\n",
+    "    pub fn ambient() { let _ = std::env::var(\"X\"); }\n",
+    "}; }\nbypass!();"
+))]
+// Crate-scoped `expect`: one call fulfils it crate-wide, so nothing is
+// reported and no unfulfilled expectation is raised either.
+#[case::crate_scoped_expect("#![expect(clippy::disallowed_methods)]")]
+#[case::cfg_attr_crate_scoped_expect("#![cfg_attr(all(), expect(clippy::disallowed_methods))]")]
+// Raw identifiers, in the attribute name and in the lint path.
+#[case::raw_attribute_name("#![r#allow(clippy::disallowed_methods)]")]
+#[case::raw_lint_path("#![allow(clippy::r#style)]")]
+// Nested one macro deeper, to show the walk recurses rather than peeking one
+// level.
+#[case::macro_within_macro(concat!(
+    "macro_rules! outer { () => {\n",
+    "    macro_rules! inner { () => { #[allow(clippy::style)] fn f() {} }; }\n",
+    "}; }"
+))]
+fn the_scan_follows_groups_and_cfg_attr(#[case] source: &str) -> Result<(), String> {
+    if suppressed_lints(source)?.is_empty() {
+        return Err(format!("the scan must report {source:?}"));
     }
     Ok(())
+}
+
+/// How a suppression is wrapped before the scan sees it.
+///
+/// Each variant is a route measured against Clippy and closed by the scan.
+/// Generating them rather than listing them is the point: the invariant is
+/// over the shapes, not over the thirteen spellings the case list pins.
+#[derive(Clone, Debug)]
+enum Wrapping {
+    /// The attribute as written.
+    Bare,
+    /// Nested in `cfg_attr` to the given depth, at least one level.
+    CfgAttr(u8),
+    /// Emitted from a `macro_rules!` arm, nested to the given depth.
+    Macro(u8),
+}
+
+/// Render an `allow` of `lint`, inner or outer, raw-identified or not.
+fn allow_attribute(lint: &str, inner: bool, raw: bool) -> String {
+    let keyword = if raw { "r#allow" } else { "allow" };
+    let bang = if inner { "!" } else { "" };
+    format!("#{bang}[{keyword}({lint})]")
+}
+
+/// Nest an inner attribute's contents in `depth` levels of `cfg_attr`.
+fn nested_in_cfg_attr(attribute: &str, depth: u8) -> String {
+    let mut rendered = attribute
+        .trim_start_matches("#![")
+        .trim_end_matches(']')
+        .to_owned();
+    for _ in 0..depth {
+        rendered = format!("cfg_attr(all(), {rendered})");
+    }
+    format!("#![{rendered}]\n")
+}
+
+/// Put an outer attribute in `depth` levels of `macro_rules!` arm.
+fn nested_in_macro(attribute: &str, depth: u8) -> String {
+    let mut rendered = format!("{attribute} fn probe() {{}}");
+    for level in 0..depth {
+        rendered = format!("macro_rules! m{level} {{ () => {{ {rendered} }}; }}");
+    }
+    format!("{rendered}\n")
+}
+
+/// Render `attribute` wrapped as `wrapping` says, as a whole source file.
+fn wrapped_source(attribute: &str, wrapping: &Wrapping) -> String {
+    match wrapping {
+        Wrapping::Bare => format!("{attribute}\n"),
+        Wrapping::CfgAttr(depth) => nested_in_cfg_attr(attribute, *depth),
+        Wrapping::Macro(depth) => nested_in_macro(attribute, *depth),
+    }
+}
+
+/// A strategy over the protected lint names.
+fn protected_lint() -> impl Strategy<Value = String> {
+    prop::sample::select(PROTECTED_LINTS.to_vec()).prop_map(str::to_owned)
+}
+
+/// A strategy over the wrappings, bounded so each case stays small.
+fn wrapping() -> impl Strategy<Value = Wrapping> {
+    prop_oneof![
+        Just(Wrapping::Bare),
+        (1u8..=6).prop_map(Wrapping::CfgAttr),
+        (1u8..=5).prop_map(Wrapping::Macro),
+    ]
+}
+
+proptest! {
+    /// Scenario: a protected lint is allowed through a generated wrapping.
+    ///
+    /// Invariant: the scan reports it, whatever the nesting depth, whichever
+    /// protected lint it names, and whether or not the attribute keyword is
+    /// written as a raw identifier. The cases above pin the spellings that
+    /// were measured; this pins the shape they are instances of, and reaches
+    /// depths no case spells out.
+    ///
+    /// Mutation proof (2026-09-14), run through the build and reverted:
+    /// capping [`suppressed_by_cfg_attr`] at two levels of recursion fails
+    /// this property on
+    /// `#![cfg_attr(all(), cfg_attr(all(), cfg_attr(all(), allow(clippy::disallowed_methods))))]`,
+    /// a depth the case list does not reach.
+    #[test]
+    fn every_wrapped_allow_of_a_protected_lint_is_reported(
+        lint in protected_lint(),
+        shape in wrapping(),
+        raw in prop::bool::ANY,
+    ) {
+        let inner = !matches!(shape, Wrapping::Macro(_));
+        let source = wrapped_source(&allow_attribute(&lint, inner, raw), &shape);
+        let found = suppressed_lints(&source).map_err(TestCaseError::fail)?;
+        prop_assert!(!found.is_empty(), "the scan must report {source:?}");
+    }
 }

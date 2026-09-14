@@ -425,6 +425,42 @@ contract. See
 [adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
 for the decision and its rationale.
 
+### The source scan
+
+Clippy cannot see an attribute that switches its own lint off, so
+`rust_extension/tests/env_policy_source_scan.rs` reads the crate's sources and
+rejects any suppression of the policy. It governs three roots under
+`rust_extension`: `src`, `tests` and `benches`. Each must open and yield at
+least one `.rs` file; a root that cannot be read is a failure, not an empty
+result.
+
+Run it with `cargo test --manifest-path rust_extension/Cargo.toml
+--no-default-features --test env_policy_source_scan`, or as part of
+`make test`. It needs four development dependencies, all declared in
+`rust_extension/Cargo.toml`:
+
+| Crate | Why it is needed |
+| --- | --- |
+| `syn` | Parses each source and walks its attributes with a visitor |
+| `proc-macro2` | Walks `macro_rules!` token streams, which `syn` keeps opaque |
+| `cap-std` | Reads sources through a capability-scoped directory handle |
+| `camino` | Carries the UTF-8 paths those handles return |
+
+Sources are read through a `cap_std` `fs_utf8::Dir` handle rather than
+`std::fs`, which the Dylint suite disallows, and each directory is opened
+through its parent's handle so the walk cannot leave the tree it was given.
+`include_str!` is not an option here as it is for the configuration contracts,
+because the scan has to see files that do not exist yet.
+
+The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
+cannot tell an attribute from attribute-shaped text in a string or a doc
+comment, and breaks on a parenthesis inside a `reason`. It protects
+`clippy::disallowed_methods`, its group `clippy::style`, the wider
+`clippy::all`, and `warnings`, comparing lint names as whole paths with raw
+identifiers normalized. An item-scoped `#[expect(..., reason = "...")]` is the
+sanctioned form and passes; a crate-scoped `#![expect(...)]` does not, because
+one call anywhere in the crate fulfils it and the rest go unreported.
+
 ## Benchmarking Documentation
 
 Benchmarking work is governed by
