@@ -324,9 +324,10 @@ def test_ci_runs_each_policy_gate_unconditionally(command: str) -> None:
 def run_policy_lane(lanes: str) -> int:
     """Run `make lint-env-policy` over the given lanes.
 
-    The lint flags are narrowed so the run exercises the recipe's exit-status
-    handling rather than the policy itself. A lane naming a feature the crate
-    does not declare fails immediately, before any build.
+    The lint and Cargo flags are narrowed so the run exercises the recipe's
+    exit-status handling rather than the policy itself. Production policy
+    coverage remains separately asserted as `--all-targets`. A lane naming a
+    feature the crate does not declare fails immediately, before any build.
 
     Returns
     -------
@@ -342,6 +343,7 @@ def run_policy_lane(lanes: str) -> int:
             make,
             "lint-env-policy",
             f"ENV_POLICY_FEATURE_LANES={lanes}",
+            "ENV_POLICY_CARGO_ARGS=--lib",
             "ENV_POLICY_LINT_ARGS=-A clippy::all",
         ],
         cwd=repo_root(),

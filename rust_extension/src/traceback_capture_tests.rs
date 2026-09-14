@@ -65,11 +65,8 @@ fn capture_exception_with_tuple() {
             .expect("KeyError constructor should succeed");
         let exc_tb = py.None();
 
-        let tuple = PyTuple::new(
-            py,
-            &[exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)],
-        )
-        .expect("tuple creation should succeed");
+        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)])
+            .expect("tuple creation should succeed");
 
         let result = capture_exception(py, tuple.as_any())
             .expect("capture_exception should succeed with tuple");
@@ -85,7 +82,7 @@ fn capture_exception_with_none_value_tuple() {
     Python::attach(|py| {
         // 3-tuple with None value means no exception
         let none = py.None();
-        let tuple = PyTuple::new(py, &[none.bind(py), none.bind(py), none.bind(py)])
+        let tuple = PyTuple::new(py, [none.bind(py), none.bind(py), none.bind(py)])
             .expect("tuple creation should succeed");
 
         let result = capture_exception(py, tuple.as_any())
@@ -128,7 +125,7 @@ fn capture_exception_tuple_preserves_explicit_traceback() {
         );
 
         // Create tuple with explicit traceback
-        let tuple = PyTuple::new(py, &[&exc_type, &exc_value, &exc_tb])
+        let tuple = PyTuple::new(py, [&exc_type, &exc_value, &exc_tb])
             .expect("tuple creation should succeed");
 
         let result =

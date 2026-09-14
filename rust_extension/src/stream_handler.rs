@@ -29,6 +29,7 @@ use crate::{
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
 
+/// Default queue capacity used when a stream builder does not provide one.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Configuration for constructing a [`FemtoStreamHandler`].
@@ -79,16 +80,20 @@ impl HandlerConfig {
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
 )]
 enum StreamCommand {
+    /// Owned record consumed by the worker in queue order.
     Record(FemtoLogRecord),
+    /// Flush request carrying the worker's I/O result acknowledgement channel.
     Flush(Sender<io::Result<()>>),
 }
 
+/// Flushes the writer during worker shutdown and logs, but does not propagate, errors.
 fn flush_with_warning<W: Write>(writer: &mut W) {
     if writer.flush().is_err() {
         warn!("FemtoStreamHandler flush error");
     }
 }
 
+/// Formats one queued record, writes a newline, and flushes the worker-owned writer.
 fn handle_record_command<W, F>(writer: &mut W, formatter: &F, record: FemtoLogRecord)
 where
     W: Write,
@@ -103,6 +108,7 @@ where
     }
 }
 
+/// Flushes the writer and sends the exact I/O result to the waiting producer.
 fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
     let flush_result = writer.flush();
     if flush_result.is_err() {
@@ -111,6 +117,7 @@ fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
     let _ = ack.send(flush_result);
 }
 
+/// Owns the writer and formatter on the background thread until the queue closes.
 fn run_stream_worker<W, F>(
     rx: Receiver<StreamCommand>,
     mut writer: W,
@@ -132,8 +139,11 @@ fn run_stream_worker<W, F>(
 
 #[pyclass]
 pub struct FemtoStreamHandler {
+    /// Queue sender taken during close so no records can be submitted afterwards.
     tx: Option<Sender<StreamCommand>>,
+    /// Worker join handle protected so close and drop cannot join twice.
     handle: Mutex<Option<JoinHandle<()>>>,
+    /// Worker-completion receiver used to bound shutdown acknowledgement waits.
     done_rx: Mutex<Receiver<()>>,
     /// Tracks dropped records and rate-limits warnings.
     warner: RateLimitedWarner,
@@ -147,24 +157,27 @@ pub struct FemtoStreamHandler {
 )]
 #[pymethods]
 impl FemtoStreamHandler {
+    /// Constructs the Python-facing default handler, which writes to stderr.
     #[new]
     fn py_new() -> Self {
         Self::stderr()
     }
 
+    /// Constructs a handler writing to process stdout with the default formatter.
     #[staticmethod]
     #[pyo3(name = "stdout")]
     fn py_stdout() -> Self {
         Self::stdout()
     }
 
+    /// Constructs a handler writing to process stderr with the default formatter.
     #[staticmethod]
     #[pyo3(name = "stderr")]
     fn py_stderr() -> Self {
         Self::stderr()
     }
 
-    /// Dispatch a log record to the handler's worker thread.
+    /// Parses the Python level, creates a record, and queues it for the worker.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -266,6 +279,7 @@ impl FemtoStreamHandler {
         Self::with_config(writer, formatter, config)
     }
 
+    /// Builds a worker and moves the writer and formatter into it; capacity and timeout govern acknowledgements.
     fn with_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
     where
         W: Write + Send + 'static,

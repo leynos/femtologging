@@ -15,13 +15,22 @@ use tempfile::NamedTempFile;
 use super::fresh_failure::take_forced_fresh_failure_reason;
 use crate::handlers::file::RotationStrategy;
 
+/// Owns size-based rotation state; only the file worker mutates it while
+/// producers continue to submit records through the queue.
 pub(crate) struct FileRotationStrategy {
+    /// Active path that is renamed before a fresh writer is opened.
     path: PathBuf,
+    /// Maximum active-file size, including buffered bytes and the next record.
     max_bytes: u64,
+    /// Number of numbered backups retained beside the active file.
     backup_count: usize,
+    /// Outcome consumed by tests to distinguish fresh-open fallback from
+    /// terminal rotation failure.
     last_outcome: RotationOutcome,
 }
 
+/// Describes whether the previous record caused rotation and which recovery
+/// path was used when reopening the active file failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RotationOutcome {
     /// Rotation was not required for the previous record.
@@ -29,12 +38,19 @@ pub(crate) enum RotationOutcome {
     /// Rotation succeeded using the freshly re-opened file handle.
     Rotated,
     /// Rotation succeeded after falling back to append because the fresh open failed.
-    RotatedWithAppendFallback { error: String },
+    RotatedWithAppendFallback {
+        /// Records why reopening failed while preserving the successfully reopened append path.
+        error: String,
+    },
     /// Rotation failed and propagated an I/O error.
-    Failed { error: String },
+    Failed {
+        /// Carries the terminal filesystem error back to the worker's error-handling path.
+        error: String,
+    },
 }
 
 impl FileRotationStrategy {
+    /// Creates rotation state with no prior rotation outcome.
     pub(crate) fn new(path: PathBuf, max_bytes: u64, backup_count: usize) -> Self {
         Self {
             path,
@@ -49,10 +65,12 @@ impl FileRotationStrategy {
         std::mem::replace(&mut self.last_outcome, RotationOutcome::Skipped)
     }
 
+    /// Calculates the encoded record size used for the pre-write threshold.
     pub(crate) fn next_record_bytes(message: &str) -> u64 {
         message.len() as u64 + 1
     }
 
+    /// Checks metadata and buffered bytes without mutating the writer.
     pub(crate) fn should_rotate(
         &self,
         writer: &BufWriter<File>,
@@ -66,6 +84,8 @@ impl FileRotationStrategy {
         Ok(current_file_len + buffered_bytes + next_record_bytes > self.max_bytes)
     }
 
+    /// Flushes, rotates backups, and installs a fresh or append-mode writer;
+    /// with no backups configured it truncates and rewinds the active file.
     pub(crate) fn rotate(&mut self, writer: &mut BufWriter<File>) -> io::Result<Option<String>> {
         writer.flush()?;
         if self.backup_count == 0 {
@@ -81,6 +101,8 @@ impl FileRotationStrategy {
         self.finalize_rotation(writer, original_file, capacity)
     }
 
+    /// Temporarily replaces the writer so its file can be renamed while
+    /// restoring the original writer if buffered extraction fails.
     fn swap_writer_with_temp(
         &self,
         writer: &mut BufWriter<File>,
@@ -103,6 +125,8 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Renames existing backups and restores the original writer if that
+    /// filesystem operation fails.
     fn perform_rotation_with_rollback(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -116,6 +140,8 @@ impl FileRotationStrategy {
         Ok(original_file)
     }
 
+    /// Renames the active file, preferring a truncated fresh writer and falling
+    /// back to append mode while retaining the original on total failure.
     fn finalize_rotation(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -152,6 +178,8 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Opens a truncated active writer, with the test hook able to inject a
+    /// deterministic failure before touching the filesystem.
     fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
         if let Some(reason) = take_forced_fresh_failure_reason() {
             return Err(io::Error::other(format!(
@@ -166,6 +194,7 @@ impl FileRotationStrategy {
         Ok(BufWriter::with_capacity(capacity, file))
     }
 
+    /// Opens the active path in append mode for fresh-writer recovery.
     fn open_append_file(path: &Path) -> io::Result<File> {
         OpenOptions::new()
             .create(true)
@@ -174,6 +203,7 @@ impl FileRotationStrategy {
             .open(path)
     }
 
+    /// Removes a file when present and treats an absent path as success.
     pub(crate) fn remove_file_if_exists(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -182,6 +212,7 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Renames a file when present and treats an absent source as success.
     pub(crate) fn rename_file_if_exists(src: &Path, dst: &Path) -> io::Result<()> {
         match fs::rename(src, dst) {
             Ok(()) => Ok(()),
@@ -190,6 +221,8 @@ impl FileRotationStrategy {
         }
     }
 
+    /// Removes backups above the configured retention count until the first
+    /// missing numbered path is encountered.
     pub(crate) fn remove_excess_backups(&self) -> io::Result<()> {
         let mut extra = self.backup_count + 1;
         loop {
@@ -209,6 +242,8 @@ impl FileRotationStrategy {
         Ok(())
     }
 
+    /// Shifts retained backups from oldest to newest before the active file is
+    /// installed as backup one.
     pub(crate) fn cascade_backups(&self) -> io::Result<()> {
         for idx in (1..self.backup_count).rev() {
             let src = self.backup_path(idx);
@@ -220,6 +255,8 @@ impl FileRotationStrategy {
         Ok(())
     }
 
+    /// Prunes and cascades numbered backups, doing nothing when retention is
+    /// disabled.
     pub(crate) fn rotate_backups(&self) -> io::Result<()> {
         if self.backup_count == 0 {
             return Ok(());
@@ -231,6 +268,7 @@ impl FileRotationStrategy {
         Ok(())
     }
 
+    /// Builds the numbered backup path beside the active log path.
     pub(crate) fn backup_path(&self, index: usize) -> PathBuf {
         let mut backup = self.path.clone();
         let mut name = self

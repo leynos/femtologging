@@ -32,10 +32,15 @@ pub(crate) use validation::{collection_conflict, resolve_attachment_ids, validat
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerMutationBuilder {
+    /// Optional level override applied when this mutation is committed.
     level: Option<FemtoLevel>,
+    /// Optional propagation override applied when this mutation is committed.
     propagate: Option<bool>,
+    /// The one permitted handler collection operation, or unchanged by default.
     handlers: CollectionMutation,
+    /// The one permitted filter collection operation, or unchanged by default.
     filters: CollectionMutation,
+    /// First collection-mode conflict encountered while building this request.
     invalid: Option<String>,
 }
 
@@ -44,6 +49,7 @@ impl LoggerMutationBuilder {
         Self::default()
     }
 
+    /// Converts generic ID inputs without changing their order; mutation constructors perform deduplication.
     fn normalize_ids<I, S>(ids: I) -> Vec<String>
     where
         I: IntoIterator<Item = S>,
@@ -52,6 +58,7 @@ impl LoggerMutationBuilder {
         ids.into_iter().map(Into::into).collect()
     }
 
+    /// Converts IDs to the requested mutation and records it in the selected collection field.
     fn apply_ids_mutation<I, S>(
         mut self,
         ids: I,
@@ -67,6 +74,7 @@ impl LoggerMutationBuilder {
         self
     }
 
+    /// Applies a replacement operation to one attachment collection.
     fn do_replace<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -75,6 +83,7 @@ impl LoggerMutationBuilder {
         self.apply_ids_mutation(ids, CollectionMutation::replace, setter)
     }
 
+    /// Applies an append operation to one attachment collection.
     fn do_append<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -83,6 +92,7 @@ impl LoggerMutationBuilder {
         self.apply_ids_mutation(ids, CollectionMutation::append, setter)
     }
 
+    /// Applies a removal operation to one attachment collection.
     fn do_remove<I, S>(self, ids: I, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -91,6 +101,7 @@ impl LoggerMutationBuilder {
         self.apply_ids_mutation(ids, CollectionMutation::remove, setter)
     }
 
+    /// Applies the clear operation to one attachment collection.
     fn do_clear(self, setter: impl FnOnce(&mut Self, CollectionMutation)) -> Self {
         let mut this = self;
         setter(&mut this, CollectionMutation::Clear);
@@ -163,6 +174,7 @@ impl LoggerMutationBuilder {
         self.do_clear(Self::set_filters)
     }
 
+    /// Records a conflicting handler mode while retaining the newest requested mode.
     fn set_handlers(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
             self.invalid = collection_conflict("handlers", &self.handlers, &mutation);
@@ -170,6 +182,7 @@ impl LoggerMutationBuilder {
         self.handlers = mutation;
     }
 
+    /// Records a conflicting filter mode while retaining the newest requested mode.
     fn set_filters(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
             self.invalid = collection_conflict("filters", &self.filters, &mutation);
@@ -177,6 +190,7 @@ impl LoggerMutationBuilder {
         self.filters = mutation;
     }
 
+    /// Converts a recorded collection conflict into a logger-qualified configuration error.
     fn ensure_valid(&self, logger_name: &str) -> Result<(), ConfigError> {
         self.invalid
             .clone()
@@ -193,17 +207,26 @@ impl LoggerMutationBuilder {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeConfigBuilder {
+    /// Handler definitions to build and add to the commit registry.
     handlers: BTreeMap<String, HandlerBuilder>,
+    /// Filter definitions to build and add to the commit registry.
     filters: BTreeMap<String, FilterBuilder>,
+    /// Named logger mutations applied during the commit.
     loggers: BTreeMap<String, LoggerMutationBuilder>,
+    /// Optional mutation for the root logger; mutually exclusive with a named `root` entry.
     root_logger: Option<LoggerMutationBuilder>,
 }
 
+/// Shared handler registry carried between runtime snapshots and commits.
 pub(crate) type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
+/// Shared filter registry carried between runtime snapshots and commits.
 pub(crate) type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 
+/// Scalar logger changes separated from attachment collection changes for commit application.
 pub(crate) struct LoggerScalarMutation {
+    /// Replacement level, when the request supplied one.
     pub(crate) level: Option<FemtoLevel>,
+    /// Replacement propagation flag, when the request supplied one.
     pub(crate) propagate: Option<bool>,
 }
 
@@ -251,6 +274,7 @@ impl RuntimeConfigBuilder {
         })
     }
 
+    /// Rejects duplicate root addressing and any previously recorded collection conflict.
     fn validate(&self) -> Result<(), ConfigError> {
         if self.root_logger.is_some() && self.loggers.contains_key("root") {
             return Err(ConfigError::InvalidMutation(
@@ -267,6 +291,7 @@ impl RuntimeConfigBuilder {
         Ok(())
     }
 
+    /// Finds loggers affected by new registry entries or explicit logger mutations.
     fn collect_impacted(&self, before: &RuntimeStateSnapshot) -> BTreeSet<String> {
         let overridden_handler_ids = self.handlers.keys().cloned().collect::<BTreeSet<_>>();
         let overridden_filter_ids = self.filters.keys().cloned().collect::<BTreeSet<_>>();
@@ -291,7 +316,7 @@ impl RuntimeConfigBuilder {
         impacted.extend(self.loggers.keys().cloned());
         impacted
     }
-
+    /// Applies root and named collection mutations to a private state map before publication.
     fn apply_logger_mutations(
         &self,
         logger_states: &mut BTreeMap<String, LoggerAttachmentState>,
@@ -311,7 +336,7 @@ impl RuntimeConfigBuilder {
         }
         Ok(())
     }
-
+    /// Extracts scalar overrides for the logger names addressed by this request.
     fn build_scalar_mutations(&self) -> BTreeMap<String, LoggerScalarMutation> {
         let mut out = BTreeMap::new();
         if let Some(root) = &self.root_logger {
@@ -335,7 +360,7 @@ impl RuntimeConfigBuilder {
         out
     }
 }
-
+/// Applies one logger's attachment mutation, validating its baseline and registry IDs.
 fn apply_mutation_to_logger(
     name: &str,
     mutation: &LoggerMutationBuilder,
@@ -364,13 +389,12 @@ fn apply_mutation_to_logger(
     logger_states.insert(name.to_string(), next);
     Ok(())
 }
-
+/// Reports whether a non-empty append or remove operation needs existing metadata.
 fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
     matches!(
         mutation,
         CollectionMutation::Append(ids) | CollectionMutation::Remove(ids) if !ids.is_empty()
     )
 }
-
 #[cfg(feature = "python")]
 mod python_bindings;

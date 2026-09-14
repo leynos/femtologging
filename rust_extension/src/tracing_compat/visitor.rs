@@ -7,15 +7,21 @@ use tracing::Event;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Record};
 
+/// Captured tracing values split into an event message and structured fields.
 #[derive(Debug, Default)]
 pub(crate) struct CapturedFields {
+    /// Event message, when the event supplies a field named `message`.
     pub(crate) message: Option<String>,
+    /// Stringified fields retained for metadata or span context merging.
     pub(crate) key_values: BTreeMap<String, String>,
 }
 
+/// Accumulates tracing fields while deciding whether `message` is special.
 #[derive(Debug, Default)]
 struct FieldCaptureVisitor {
+    /// Event message captured separately when not preserving message fields.
     message: Option<String>,
+    /// Stringified fields captured in tracing visitation order.
     key_values: BTreeMap<String, String>,
     /// If true, treat "message" as a regular field instead of extracting it.
     /// This is used for spans, where "message" is just a structured field.
@@ -23,6 +29,7 @@ struct FieldCaptureVisitor {
 }
 
 impl FieldCaptureVisitor {
+    /// Start an event visitor that extracts `message` from structured fields.
     fn for_event() -> Self {
         Self {
             preserve_message_field: false,
@@ -30,6 +37,7 @@ impl FieldCaptureVisitor {
         }
     }
 
+    /// Start a span visitor that keeps every field, including `message`.
     fn for_span() -> Self {
         Self {
             preserve_message_field: true,
@@ -37,6 +45,7 @@ impl FieldCaptureVisitor {
         }
     }
 
+    /// Store a stringified field as the event message or a keyed field.
     fn store(&mut self, field: &Field, value: String) {
         if field.name() == "message" && !self.preserve_message_field {
             self.message = Some(value);
@@ -45,6 +54,7 @@ impl FieldCaptureVisitor {
         }
     }
 
+    /// Finish visitation and return owned message and field data.
     fn finish(self) -> CapturedFields {
         CapturedFields {
             message: self.message,
@@ -95,18 +105,21 @@ impl Visit for FieldCaptureVisitor {
     }
 }
 
+/// Capture an event's fields, extracting its `message` field when present.
 pub(crate) fn capture_event(event: &Event<'_>) -> CapturedFields {
     let mut visitor = FieldCaptureVisitor::for_event();
     event.record(&mut visitor);
     visitor.finish()
 }
 
+/// Capture span-creation attributes while preserving `message` as a field.
 pub(crate) fn capture_attributes(attrs: &Attributes<'_>) -> CapturedFields {
     let mut visitor = FieldCaptureVisitor::for_span();
     attrs.record(&mut visitor);
     visitor.finish()
 }
 
+/// Capture later span-record updates with the same field-preserving semantics.
 pub(crate) fn capture_record(record: &Record<'_>) -> CapturedFields {
     let mut visitor = FieldCaptureVisitor::for_span();
     record.record(&mut visitor);

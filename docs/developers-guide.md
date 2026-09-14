@@ -93,6 +93,13 @@ compatibility tests validate the same maturin and PyO3 releases:
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
 
+The Rust extension denies `clippy::missing_docs_in_private_items`, so private
+items and Rust test support must have meaningful documentation alongside the
+public API. This includes integration tests, benchmarks, unit-test modules,
+and feature-gated compatibility code. `make lint` runs Clippy with
+`-D warnings` and `--all-targets` across every supported Rust feature lane, so
+each lane applies the same documentation and warning policy.
+
 When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization

@@ -192,11 +192,13 @@ impl FemtoHandlerTrait for PyHandler {
 /// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]
 pub struct PyHandler {
+    /// Python handler object retained by the feature-disabled wrapper.
     pub obj: Py<PyAny>,
 }
 
 #[cfg(not(feature = "python"))]
 impl PyHandler {
+    /// Wrap the Python object without feature-specific capability inspection.
     pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
         Self { obj }
     }

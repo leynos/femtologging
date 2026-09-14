@@ -29,10 +29,13 @@ use crate::{
 /// Python wrapper for the timed rotating file handler core type.
 #[pyclass(name = "FemtoTimedRotatingFileHandler")]
 pub struct PyTimedRotatingFileHandler {
+    /// Owns the core handler and exposes its timed-rotation operations to
+    /// Python without duplicating worker state.
     inner: CoreTimedRotatingFileHandler,
 }
 
 impl PyTimedRotatingFileHandler {
+    /// Wraps a constructed core handler for Python ownership.
     pub(crate) fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
         Self { inner }
     }
@@ -60,14 +63,19 @@ pub struct TimedHandlerOptions {
     pub backup_count: usize,
     #[pyo3(get, set)]
     pub utc: bool,
+    /// Optional local time at which daily-style schedules roll over.
     at_time: Option<NaiveTime>,
 }
 
 impl TimedHandlerOptions {
+    /// Returns the stored local trigger without converting it to a Python
+    /// object.
     pub(crate) fn at_time_naive(&self) -> Option<NaiveTime> {
         self.at_time
     }
 
+    /// Converts Python option values into validated queue, policy, schedule,
+    /// and retention configuration; invalid values become Python errors.
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
         let capacity = isize::try_from(self.capacity)
             .map_err(|_| PyValueError::new_err("capacity must fit within isize"))?;
@@ -112,6 +120,8 @@ impl Default for TimedHandlerOptions {
 
 #[pymethods]
 impl TimedHandlerOptions {
+    /// Constructs options, converts an optional Python time, and validates the
+    /// complete configuration before returning it.
     #[new]
     #[pyo3(
         text_signature = "(capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop', when='H', interval=1, backup_count=0, utc=False, at_time=None)"
@@ -154,6 +164,7 @@ impl TimedHandlerOptions {
         Ok(options)
     }
 
+    /// Returns the optional trigger in the Python-facing string form.
     #[getter]
     fn at_time(&self) -> Option<String> {
         self.at_time.map(|value| value.to_string())
@@ -162,6 +173,8 @@ impl TimedHandlerOptions {
 
 #[pymethods]
 impl PyTimedRotatingFileHandler {
+    /// Validates options, opens the path, and starts the worker-backed timed
+    /// handler, mapping filesystem failures to Python I/O errors.
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
@@ -181,26 +194,31 @@ impl PyTimedRotatingFileHandler {
         .map_err(|err| PyIOError::new_err(format!("{path}: {err}")))
     }
 
+    /// Returns the canonical cadence string from the validated schedule.
     #[getter]
     fn when(&self) -> &str {
         self.inner.schedule().when().as_str()
     }
 
+    /// Returns the validated cadence multiplier.
     #[getter]
     fn interval(&self) -> u32 {
         self.inner.schedule().interval()
     }
 
+    /// Returns the configured number of retained rotated files.
     #[getter]
     fn backup_count(&self) -> usize {
         self.inner.backup_count()
     }
 
+    /// Returns whether rollover calculations use UTC rather than local time.
     #[getter]
     fn utc(&self) -> bool {
         self.inner.schedule().use_utc()
     }
 
+    /// Returns the optional local trigger as a Python string.
     #[getter]
     fn at_time(&self) -> Option<String> {
         self.inner
@@ -209,6 +227,8 @@ impl PyTimedRotatingFileHandler {
             .map(|value| value.to_string())
     }
 
+    /// Parses the level and dispatches a record through the worker queue,
+    /// mapping delivery failures to a Python value error.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = FemtoLevel::parse_py(level)?;
@@ -217,11 +237,14 @@ impl PyTimedRotatingFileHandler {
             .map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
     }
 
+    /// Requests a worker flush and returns whether it acknowledged in time.
     #[pyo3(name = "flush")]
     fn py_flush(&self) -> bool {
         self.inner.flush()
     }
 
+    /// Closes the worker-backed handler and releases its Python-owned lifecycle
+    /// state.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.inner.close();
@@ -288,6 +311,7 @@ pub(crate) fn extract_naive_time_from_py_time(
         .map(Some)
 }
 
+/// Converts a Python datetime.time value using the common validation helper.
 fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     // Local convenience wrapper for the common helper; this retains the
     // existing `at_time`-specific error messages.
@@ -301,12 +325,14 @@ fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     }
 }
 
+/// Injects deterministic epoch-millisecond values for timed-rotation tests.
 #[cfg(feature = "test-util")]
 #[pyfunction]
 pub fn set_timed_rotation_test_times_for_test(epoch_millis: Vec<i64>) {
     set_injected_times_for_test(epoch_millis);
 }
 
+/// Clears deterministic timed-rotation values after a test scenario.
 #[cfg(feature = "test-util")]
 #[pyfunction]
 pub fn clear_timed_rotation_test_times_for_test() {

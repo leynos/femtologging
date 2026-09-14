@@ -22,8 +22,11 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
+    /// Owns the rotation strategy transferred to the file worker, which performs all rollover I/O on its own thread.
     pub(crate) rotation: R,
+    /// Holds an optional test barrier released by the worker after startup; production construction leaves it unset.
     pub(crate) start_barrier: Option<Arc<Barrier>>,
+    /// Retains the writer type at compile time without storing a second writer value.
     _phantom: PhantomData<W>,
 }
 

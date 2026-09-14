@@ -7,17 +7,28 @@ use serde::Serialize;
 
 use crate::log_record::FemtoLogRecord;
 
+/// MessagePack record shape sent after the socket frame length prefix.
 #[derive(Serialize)]
 struct SerializableRecord<'a> {
+    /// Logger name encoded in the socket record.
     logger: &'a str,
+    /// Level name encoded in the socket record.
     level: &'a str,
+    /// Message text encoded in the socket record.
     message: &'a str,
+    /// Record timestamp in nanoseconds since the UNIX epoch.
     timestamp_ns: u128,
+    /// Source filename carried in the socket payload.
     filename: &'a str,
+    /// Source line number carried in the socket payload.
     line_number: u32,
+    /// Source module path carried in the socket payload.
     module_path: &'a str,
+    /// Thread identifier converted to an owned string before encoding.
     thread_id: String,
+    /// Optional thread name, omitted when the source record has no name.
     thread_name: Option<&'a str>,
+    /// Structured record metadata encoded as key-value entries.
     key_values: &'a std::collections::BTreeMap<String, String>,
 }
 

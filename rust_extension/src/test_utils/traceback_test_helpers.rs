@@ -340,11 +340,11 @@ pub fn populate_locals_dict_from_entries(
     entries: &[LocalEntry],
 ) -> PyResult<()> {
     for entry in entries {
-        if entry.is_int_key() {
-            if let Ok(int_key) = entry.key().parse::<i32>() {
-                locals_dict.set_item(int_key, entry.value())?;
-                continue;
-            }
+        if entry.is_int_key()
+            && let Ok(int_key) = entry.key().parse::<i32>()
+        {
+            locals_dict.set_item(int_key, entry.value())?;
+            continue;
         }
         // Fallback: insert as string key (either not an int key, or parsing failed)
         locals_dict.set_item(entry.key(), entry.value())?;

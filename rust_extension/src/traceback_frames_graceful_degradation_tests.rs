@@ -128,7 +128,7 @@ fn extract_locals_with_non_mapping_locals_degrades_gracefully() {
     Python::attach(|py| {
         let frame_dict = base_frame_dict(py).expect("base frame dict should build");
         // Set locals to a list instead of a dict
-        let non_mapping_locals = PyList::new(py, &[1, 2, 3]).expect("list creation should succeed");
+        let non_mapping_locals = PyList::new(py, [1, 2, 3]).expect("list creation should succeed");
         frame_dict
             .set_item("locals", non_mapping_locals)
             .expect("set locals should succeed");

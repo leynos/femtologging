@@ -241,11 +241,12 @@ fn serialize_record_round_trips() {
 
 #[rstest]
 fn backoff_enforces_minimum_sleep() {
-    let mut policy = BackoffPolicy::default();
-    policy.base = Duration::from_millis(0);
-    policy.cap = Duration::from_millis(0);
-    policy.deadline = Duration::from_millis(50);
-    let mut backoff = BackoffState::new(policy);
+    let mut backoff = BackoffState::new(BackoffPolicy {
+        base: Duration::from_millis(0),
+        cap: Duration::from_millis(0),
+        deadline: Duration::from_millis(50),
+        ..BackoffPolicy::default()
+    });
     let now = Instant::now();
     let sleep = backoff
         .next_sleep(now)
@@ -259,11 +260,12 @@ fn backoff_enforces_minimum_sleep() {
 
 #[rstest]
 fn backoff_respects_deadline() {
-    let mut policy = BackoffPolicy::default();
-    policy.base = Duration::from_millis(10);
-    policy.cap = Duration::from_millis(10);
-    policy.deadline = Duration::from_millis(20);
-    let mut backoff = BackoffState::new(policy);
+    let mut backoff = BackoffState::new(BackoffPolicy {
+        base: Duration::from_millis(10),
+        cap: Duration::from_millis(10),
+        deadline: Duration::from_millis(20),
+        ..BackoffPolicy::default()
+    });
     let now = Instant::now();
     assert!(backoff.next_sleep(now).is_some());
     let expired = now + Duration::from_millis(25);

@@ -13,6 +13,7 @@ use crate::macros::{AsPyDict, dict_into_py};
 
 use super::HTTPHandlerBuilder;
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
     match method.to_uppercase().as_str() {
         "GET" => Ok(HTTPMethod::GET),
@@ -25,11 +26,13 @@ fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
 
 #[pymethods]
 impl HTTPHandlerBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[new]
     fn py_new() -> PyResult<Self> {
         Ok(Self::new())
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_url")]
     #[pyo3(signature = (url))]
     fn py_with_url<'py>(mut slf: PyRefMut<'py, Self>, url: String) -> PyRefMut<'py, Self> {
@@ -38,6 +41,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_method")]
     #[pyo3(signature = (method))]
     fn py_with_method<'py>(
@@ -99,6 +103,7 @@ impl HTTPHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_basic_auth")]
     #[pyo3(signature = (username, password))]
     fn py_with_basic_auth<'py>(
@@ -111,6 +116,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_bearer_token")]
     #[pyo3(signature = (token))]
     fn py_with_bearer_token<'py>(
@@ -122,6 +128,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_headers")]
     #[pyo3(signature = (headers))]
     fn py_with_headers<'py>(
@@ -139,6 +146,7 @@ impl HTTPHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_capacity")]
     #[pyo3(signature = (capacity))]
     fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
@@ -147,6 +155,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_connect_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
     fn py_with_connect_timeout<'py>(
@@ -158,6 +167,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_write_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
     fn py_with_write_timeout<'py>(
@@ -169,6 +179,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_backoff")]
     fn py_with_backoff<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -179,6 +190,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_json_format")]
     fn py_with_json_format<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
         let updated = slf.clone().with_json_format();
@@ -186,6 +198,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_record_fields")]
     #[pyo3(signature = (fields))]
     fn py_with_record_fields<'py>(
@@ -197,6 +210,7 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "as_dict")]
     fn py_as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
@@ -204,6 +218,7 @@ impl HTTPHandlerBuilder {
         Ok(dict.into())
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "build")]
     fn py_build(&self) -> PyResult<FemtoHTTPHandler> {
         self.build_inner().map_err(Into::into)

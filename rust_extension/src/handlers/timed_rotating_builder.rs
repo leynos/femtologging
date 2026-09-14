@@ -21,12 +21,19 @@ use crate::formatter::{DefaultFormatter, FemtoFormatter};
 #[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct TimedRotatingFileHandlerBuilder {
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     path: PathBuf,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     common: FileLikeBuilderState,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     when: TimedRotationWhen,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     interval: NonZeroU64,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     backup_count: usize,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     use_utc: bool,
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     at_time: Option<NaiveTime>,
 }
 
@@ -71,6 +78,7 @@ impl TimedRotatingFileHandlerBuilder {
         self
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn validate_at_time_supported(&self) -> Result<(), HandlerBuildError> {
         if self.at_time.is_some() && !self.when.supports_at_time() {
             return Err(HandlerBuildError::InvalidConfig(format!(
@@ -119,6 +127,7 @@ impl TimedRotatingFileHandlerBuilder {
         Ok(self)
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn schedule(&self) -> Result<TimedRotationSchedule, HandlerBuildError> {
         let interval = u32::try_from(self.interval.get()).map_err(|_| {
             HandlerBuildError::InvalidConfig("interval exceeds supported range".to_string())
@@ -127,12 +136,14 @@ impl TimedRotatingFileHandlerBuilder {
             .map_err(HandlerBuildError::InvalidConfig)
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.common.validate()?;
         let _ = self.schedule()?;
         Ok(())
     }
 
+    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn build_handler_with_formatter<F>(
         &self,
         formatter: F,

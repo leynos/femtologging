@@ -17,8 +17,7 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogger, FemtoStreamHandler,
 };
 
-use crate::shared_buffer::loom::SharedBuf as LoomBuf;
-use crate::shared_buffer::loom::read_output;
+use crate::shared_buffer_loom::{SharedBuf as LoomBuf, read_output};
 
 /// A loom-instrumented byte buffer shared with a stream handler.
 type LoomBuffer = LoomArc<LoomMutex<Vec<u8>>>;

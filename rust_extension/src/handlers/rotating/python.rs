@@ -24,6 +24,7 @@ pub const ROTATION_VALIDATION_MSG: &str =
 /// the existing Python class name.
 #[pyclass(name = "FemtoRotatingFileHandler")]
 pub struct PyRotatingFileHandler {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     inner: CoreRotatingFileHandler,
 }
 
@@ -123,6 +124,7 @@ impl HandlerOptions {
         policy = "drop".to_string(),
         rotation = None,
     ))]
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     fn new(
         capacity: usize,
         flush_interval: isize,
@@ -159,6 +161,7 @@ impl Default for HandlerOptions {
 
 #[pymethods]
 impl PyRotatingFileHandler {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
@@ -188,6 +191,7 @@ impl PyRotatingFileHandler {
         self.inner.rotation_limits().1
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = FemtoLevel::parse_py(level)?;
@@ -222,12 +226,14 @@ impl PyRotatingFileHandler {
         self.inner.flush()
     }
 
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.inner.close();
     }
 }
 
+/// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
 #[pyfunction]
 pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>) -> PyResult<()> {
     let reason = reason
@@ -237,6 +243,7 @@ pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>)
     Ok(())
 }
 
+/// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
 #[pyfunction]
 pub fn clear_rotating_fresh_failure_for_test() {
     fresh_failure::clear_forced_fresh_failure();

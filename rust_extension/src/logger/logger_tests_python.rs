@@ -125,11 +125,9 @@ fn should_capture_exc_info_cases(
                     .expect("exception construction should succeed");
                 let exc_type = exc_value.get_type();
                 let exc_tb = py.None();
-                let tuple = PyTuple::new(
-                    py,
-                    &[exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)],
-                )
-                .expect("tuple creation should succeed");
+                let tuple =
+                    PyTuple::new(py, [exc_type.as_any(), exc_value.as_any(), exc_tb.bind(py)])
+                        .expect("tuple creation should succeed");
                 should_capture_exc_info(tuple.as_any())
             }
             ExcInfoInput::Integer => {

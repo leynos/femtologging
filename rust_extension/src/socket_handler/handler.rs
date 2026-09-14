@@ -22,9 +22,13 @@ use super::{
 #[cfg_attr(feature = "python", pyclass)]
 /// Handler forwarding records to a socket using MessagePack framing.
 pub struct FemtoSocketHandler {
+    /// Sender for records and lifecycle commands; taking it prevents further delivery.
     tx: Option<crossbeam_channel::Sender<SocketCommand>>,
+    /// Join handle consumed by close after the worker acknowledges shutdown.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Tracks records dropped by a full or disconnected queue for rate-limited warnings.
     warner: RateLimitedWarner,
+    /// Upper bound used while awaiting flush and shutdown acknowledgements.
     flush_timeout: Duration,
 }
 
@@ -58,10 +62,12 @@ impl FemtoSocketHandler {
         self.join_worker();
     }
 
+    /// Clones the live queue sender, or returns `None` after shutdown takes it.
     fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
         self.tx.as_ref().cloned()
     }
 
+    /// Takes the sender, requests worker shutdown, and waits only up to `flush_timeout`.
     fn request_shutdown(&mut self) {
         let Some(tx) = self.tx.take() else {
             return;
@@ -73,6 +79,7 @@ impl FemtoSocketHandler {
         let _ = ack_rx.recv_timeout(self.flush_timeout);
     }
 
+    /// Takes and joins the worker handle, warning if the worker panicked.
     fn join_worker(&mut self) {
         let Some(handle) = self.handle.lock().take() else {
             return;
@@ -86,6 +93,7 @@ impl FemtoSocketHandler {
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoSocketHandler {
+    /// Parses the Python level, queues one record, and maps handler failures to `PyRuntimeError`.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;

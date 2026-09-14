@@ -148,7 +148,7 @@ except ValueError as e:
             let err = result.expect_err("code should raise an exception");
             let exc_value = err.value(py);
 
-            let payload = capture_exception(py, &exc_value)
+            let payload = capture_exception(py, exc_value)
                 .expect("capture_exception should succeed")
                 .expect("payload should be Some");
 
@@ -173,7 +173,7 @@ except ValueError as e:
         let err = result.expect_err("code should raise an exception");
         let exc_value = err.value(py);
 
-        let payload = capture_exception(py, &exc_value)
+        let payload = capture_exception(py, exc_value)
             .expect("capture_exception should succeed")
             .expect("payload should be Some");
 

@@ -29,7 +29,7 @@ impl FemtoHandlerTrait for DummyHandler {
 
 #[test]
 fn default_handler_flush_returns_true() {
-    let handler = FemtoHandler::default();
+    let handler = FemtoHandler;
     assert!(handler.flush());
 }
 

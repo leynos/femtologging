@@ -9,8 +9,10 @@ use crate::level::FemtoLevel;
 
 use super::layer;
 
+/// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
 
+/// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
 fn install_global_tracing_subscriber() -> bool {
     *INSTALL_RESULT.get_or_init(|| {
         let subscriber = tracing_subscriber::registry().with(layer());
@@ -18,6 +20,7 @@ fn install_global_tracing_subscriber() -> bool {
     })
 }
 
+/// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
 fn emit_message_event(level: FemtoLevel, message: &str) {
     match level {
         FemtoLevel::Trace => {

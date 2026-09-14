@@ -31,13 +31,7 @@ const ALL_LEVELS: [FemtoLevel; 6] = [
 ];
 
 #[fixture]
-fn dual_handler_setup() -> (
-    Arc<Mutex<Vec<u8>>>,
-    Arc<Mutex<Vec<u8>>>,
-    Arc<dyn FemtoHandlerTrait>,
-    Arc<dyn FemtoHandlerTrait>,
-    FemtoLogger,
-) {
+fn dual_handler_setup() -> DualHandlerSetup {
     let buf1 = Arc::new(Mutex::new(Vec::new()));
     let buf2 = Arc::new(Mutex::new(Vec::new()));
     let handler1: Arc<dyn FemtoHandlerTrait> = Arc::new(FemtoStreamHandler::new(
@@ -113,13 +107,7 @@ fn level_parsing_and_filtering() {
 
 #[rstest]
 fn logger_routes_to_multiple_handlers(
-    #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, logger): (
-        Arc<Mutex<Vec<u8>>>,
-        Arc<Mutex<Vec<u8>>>,
-        Arc<dyn FemtoHandlerTrait>,
-        Arc<dyn FemtoHandlerTrait>,
-        FemtoLogger,
-    ),
+    #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, logger): DualHandlerSetup,
 ) {
     logger.add_handler(handler1.clone());
     logger.add_handler(handler2.clone());
@@ -164,13 +152,7 @@ fn adding_same_handler_multiple_times_duplicates_output(
 
 #[rstest]
 fn handler_added_after_logging_only_sees_future_records(
-    #[from(dual_handler_setup)] (buf1, buf2, h1, h2, logger): (
-        Arc<Mutex<Vec<u8>>>,
-        Arc<Mutex<Vec<u8>>>,
-        Arc<dyn FemtoHandlerTrait>,
-        Arc<dyn FemtoHandlerTrait>,
-        FemtoLogger,
-    ),
+    #[from(dual_handler_setup)] (buf1, buf2, h1, h2, logger): DualHandlerSetup,
 ) {
     logger.add_handler(h1.clone());
     logger.log(FemtoLevel::Info, "before");
@@ -397,3 +379,12 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
         "output identities should match accepted records"
     );
 }
+
+/// Shares the dual-handler fixture shape without repeating a complex test signature.
+type DualHandlerSetup = (
+    Arc<Mutex<Vec<u8>>>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<dyn FemtoHandlerTrait>,
+    Arc<dyn FemtoHandlerTrait>,
+    FemtoLogger,
+);
