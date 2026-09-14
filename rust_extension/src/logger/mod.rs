@@ -40,7 +40,9 @@ pub use py_handler::{PyHandler, validate_handler};
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use worker::QueuedRecord;
 
+/// Maximum number of records held before producers report a dropped record.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+/// Maximum time a flush waits for the worker's acknowledgement, in milliseconds.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
@@ -51,13 +53,20 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
+    /// Shared formatter used by producer threads before records enter the queue.
     formatter: SharedFormatter,
+    /// Atomically readable level threshold updated by logger configuration calls.
     level: AtomicU8,
+    /// Whether records are copied to the dotted-name parent after local dispatch.
     propagate: AtomicBool,
+    /// Lock-protected live handlers; each queued record owns the snapshot it captured.
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    /// Lock-protected filters consulted by producers before queueing a record.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    /// Number of records rejected because the worker queue could not accept them.
     dropped_records: AtomicU64,
     context_dropped_records: AtomicU64,
+    /// Rate-limits warnings emitted for queue drops across concurrent producers.
     drop_warner: RateLimitedWarner,
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
@@ -65,10 +74,14 @@ pub struct FemtoLogger {
     context_capture_failures: AtomicU64,
     #[cfg(feature = "python")]
     context_capture_warner: RateLimitedWarner,
+    /// Producer endpoint for records; taking it during drop prevents new sends.
     tx: Option<Sender<QueuedRecord>>,
+    /// Worker shutdown signal sent before the worker join during logger drop.
     shutdown_tx: Option<Sender<()>>,
+    /// Mutex-protected worker handle so dropping the logger can join without a lock held.
     handle: Mutex<Option<JoinHandle<()>>>,
 }
+
 
 #[allow(
     clippy::too_many_arguments,
@@ -196,6 +209,7 @@ impl FemtoLogger {
         self.flush_handlers_blocking()
     }
 
+    /// Capture handler addresses for tests that verify attachment replacement.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -204,6 +218,7 @@ impl FemtoLogger {
             .collect()
     }
 }
+
 
 impl FemtoLogger {
     /// Attach a handler to this logger.
@@ -279,6 +294,7 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
+
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {

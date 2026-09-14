@@ -29,22 +29,22 @@ use crate::{
 
 /// Rotation strategy for time-based file rollover.
 pub(crate) struct TimedFileRotationStrategy<C = SystemClock> {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Active log path renamed when a scheduled rollover occurs.
     path: PathBuf,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Validated cadence and timezone rules used to calculate deadlines.
     schedule: TimedRotationSchedule,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Maximum number of timestamped files retained after rotation.
     backup_count: usize,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Clock source owned by the worker, with a deterministic test implementation.
     clock: C,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Instant from which the current file's schedule was seeded.
     created_at: DateTime<Utc>,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Next deadline at which the worker must rotate before writing.
     next_rollover_at: DateTime<Utc>,
 }
 
 impl TimedFileRotationStrategy<SystemClock> {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Creates a system-clock strategy for the supplied schedule and retention.
     pub(crate) fn new(path: PathBuf, schedule: TimedRotationSchedule, backup_count: usize) -> Self {
         Self::new_with_clock(path, schedule, backup_count, SystemClock)
     }
@@ -54,7 +54,7 @@ impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
 {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Builds strategy state from a known seed so tests and mtime recovery share the same deadline calculation.
     fn from_seed(
         path: PathBuf,
         schedule: TimedRotationSchedule,
@@ -73,7 +73,7 @@ where
         }
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Samples the supplied clock and seeds the first rollover deadline from that instant.
     pub(crate) fn new_with_clock(
         path: PathBuf,
         schedule: TimedRotationSchedule,
@@ -84,8 +84,8 @@ where
         Self::from_seed(path, schedule, backup_count, clock, seed)
     }
 
-    /// Re-seed `next_rollover_at` from an externally determined instant
-    /// (e.g. an existing log file's modification time).
+    /// Re-seed `next_rollover_at` from an externally determined instant, such as
+    /// an existing log file's modification time.
     pub(crate) fn seed_rollover_from(&mut self, seed: DateTime<Utc>) {
         self.next_rollover_at = self.schedule.next_rollover(seed);
     }
@@ -95,7 +95,7 @@ where
         self.next_rollover_at
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Rotates the file at a deadline and restores the original writer if any rename or fresh-open step fails.
     fn rotate(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -121,17 +121,15 @@ where
             Ok(fresh_writer) => {
                 let _ = original_file;
                 *writer = fresh_writer;
-                // Advance the rollover deadline before pruning so that a
-                // prune failure does not cause repeated rollovers on the
-                // next write.
+                // Advance the rollover deadline before pruning so a prune failure
+                // does not cause repeated rollovers on the next write.
                 self.next_rollover_at = self.schedule.next_rollover(now);
                 self.prune_backups()?;
                 Ok(())
             }
             Err(err) => {
-                // Restore the writer before attempting a filesystem
-                // rollback so that the handler remains usable even if the
-                // rename also fails.
+                // Restore the writer before filesystem rollback so the handler
+                // remains usable even if the rename also fails.
                 *writer = BufWriter::with_capacity(capacity, original_file);
                 if let Err(rollback_err) = fs::rename(&rotated_path, &self.path) {
                     return Err(io::Error::new(
@@ -146,7 +144,8 @@ where
         }
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Temporarily swaps in a placeholder writer so the active file can be
+    /// renamed without losing the original on extraction failure.
     fn swap_writer_with_temp(
         &self,
         writer: &mut BufWriter<File>,
@@ -169,7 +168,7 @@ where
         }
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Opens a truncated writer for the active path after a rollover.
     fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
         let file = OpenOptions::new()
             .create(true)
@@ -179,7 +178,7 @@ where
         Ok(BufWriter::with_capacity(capacity, file))
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Builds the timestamped filename for a completed rotation period.
     fn rotated_path(&self, rollover_at: DateTime<Utc>) -> PathBuf {
         let suffix = self.schedule.suffix_for(rollover_at);
         let mut rotated = self.path.clone();
@@ -209,7 +208,7 @@ where
         self.schedule.is_valid_suffix(suffix)
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Removes timestamped files beyond the configured retention count.
     fn prune_backups(&self) -> io::Result<()> {
         if self.backup_count == 0 {
             return Ok(());
@@ -241,7 +240,8 @@ where
         Ok(())
     }
 
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Treats an absent file as already removed while propagating other I/O
+    /// failures.
     fn remove_file_if_exists(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -266,7 +266,7 @@ where
     }
 }
 
-/// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+/// Compares encoded path prefixes without requiring UTF-8 conversion.
 pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
     value
         .as_os_str()
@@ -276,24 +276,24 @@ pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
 
 /// Bundles timed-rotation parameters passed to the handler constructor.
 pub(crate) struct TimedRotationConfig {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Validated schedule used by the worker before each record write.
     pub(crate) schedule: TimedRotationSchedule,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Number of timestamped backups retained by the timed handler.
     pub(crate) backup_count: usize,
 }
 
 /// File handler variant configured for timed rotation.
 pub struct FemtoTimedRotatingFileHandler {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Core file handler used for record delivery and lifecycle operations.
     inner: FemtoFileHandler,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Schedule retained for Python getters and worker construction.
     schedule: TimedRotationSchedule,
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Retention count exposed by the Python-facing timed handler.
     backup_count: usize,
 }
 
 impl FemtoTimedRotatingFileHandler {
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
+    /// Wraps an existing file handler with timed-rotation metadata.
     pub(crate) fn new_with_schedule(
         inner: FemtoFileHandler,
         schedule: TimedRotationSchedule,
@@ -306,20 +306,20 @@ impl FemtoTimedRotatingFileHandler {
         }
     }
 
+    /// Returns the validated schedule used by this handler.
     #[cfg_attr(
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
     )]
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn schedule(&self) -> &TimedRotationSchedule {
         &self.schedule
     }
 
+    /// Returns the configured number of timestamped backups.
     #[cfg_attr(
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
     )]
-    /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     pub(crate) fn backup_count(&self) -> usize {
         self.backup_count
     }

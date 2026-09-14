@@ -1,3 +1,5 @@
+//! Integration tests for log-record metadata and its cross-thread preservation.
+
 use _femtologging_rs::{FemtoLevel, FemtoLogRecord};
 use rstest::rstest;
 use std::collections::BTreeMap;
