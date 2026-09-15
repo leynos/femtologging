@@ -7,7 +7,7 @@
 //! supplies, and an `include!` of a file the scan cannot read.
 
 use camino::Utf8Path;
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use syn::{AttrStyle, Attribute, LitStr, Macro, Meta, visit::Visit};
 
 use super::SOURCE_EXTENSION;
@@ -133,14 +133,23 @@ fn could_cover_a_policy_call(pattern: &TokenStream, transcriber: &TokenStream) -
         return true;
     }
     let tokens: Vec<TokenTree> = pattern.clone().into_iter().collect();
-    tokens.iter().enumerate().any(|(index, token)| {
-        matches!(token, TokenTree::Punct(punct) if punct.as_char() == ':')
-            && matches!(
-                tokens.get(index + 1),
-                Some(TokenTree::Ident(ident))
-                    if CODE_FRAGMENTS.contains(&ident.to_string().as_str())
-            )
-    })
+    (0..tokens.len()).any(|index| declares_code_fragment(&tokens, index))
+}
+
+/// Return whether a fragment specifier at `index` names something that can
+/// carry code.
+///
+/// A specifier is written `$name:kind`, so the colon marks one and the
+/// identifier after it is the kind. The kinds that can carry a call are in
+/// [`CODE_FRAGMENTS`]; an `ident`, a `ty`, a `lifetime` or a `literal` cannot.
+fn declares_code_fragment(tokens: &[TokenTree], index: usize) -> bool {
+    if !matches!(tokens.get(index), Some(TokenTree::Punct(punct)) if punct.as_char() == ':') {
+        return false;
+    }
+    matches!(
+        tokens.get(index + 1),
+        Some(TokenTree::Ident(ident)) if CODE_FRAGMENTS.contains(&ident.to_string().as_str())
+    )
 }
 
 /// Return a finding if an `include!` names a target that is not Rust source.
@@ -198,30 +207,54 @@ fn collect_from_tokens(stream: TokenStream, reachable: bool, collector: &mut Att
         if let TokenTree::Group(group) = token {
             collect_from_tokens(group.stream(), reachable, collector);
         }
-        if !matches!(token, TokenTree::Punct(punct) if punct.as_char() == '#') {
-            continue;
-        }
-        let mut next = index + 1;
-        let mut bang = "";
-        if matches!(tokens.get(next), Some(TokenTree::Punct(punct)) if punct.as_char() == '!') {
-            bang = "!";
-            next += 1;
-        }
-        let Some(TokenTree::Group(group)) = tokens.get(next) else {
-            continue;
-        };
-        if group.delimiter() != Delimiter::Bracket {
-            continue;
-        }
-        if let Some(finding) = forwarded_path(&group.stream(), bang, reachable) {
-            collector.structural.push(finding);
-        } else if let Ok(meta) = syn::parse2::<Meta>(group.stream()) {
-            collector.attributes.push((
-                format!("#{bang}[{}]", group.stream()),
-                meta,
-                !bang.is_empty(),
-            ));
-        }
+        record_attribute(&tokens, index, reachable, collector);
+    }
+}
+
+/// Return the scope marker and bracketed group of the attribute at `index`.
+///
+/// An attribute is `#`, optionally `!`, then a bracketed group. Reading that
+/// shape is a question of its own, separate from what is then done with the
+/// group, and naming it keeps the walk above about walking.
+fn attribute_shape_at(tokens: &[TokenTree], index: usize) -> Option<(&'static str, &Group)> {
+    if !matches!(tokens.get(index), Some(TokenTree::Punct(punct)) if punct.as_char() == '#') {
+        return None;
+    }
+    let mut next = index + 1;
+    let mut bang = "";
+    if matches!(tokens.get(next), Some(TokenTree::Punct(punct)) if punct.as_char() == '!') {
+        bang = "!";
+        next += 1;
+    }
+    let TokenTree::Group(group) = tokens.get(next)? else {
+        return None;
+    };
+    (group.delimiter() == Delimiter::Bracket).then_some((bang, group))
+}
+
+/// Record the attribute at `index`, as a structural finding or as a meta.
+///
+/// A forwarded path is refused where it is written, because it is not an
+/// attribute a `Meta` can describe. Anything else that parses is kept for the
+/// same judgement a parsed attribute gets, rather than a second, weaker test
+/// written for tokens.
+fn record_attribute(
+    tokens: &[TokenTree],
+    index: usize,
+    reachable: bool,
+    collector: &mut AttributeCollector,
+) {
+    let Some((bang, group)) = attribute_shape_at(tokens, index) else {
+        return;
+    };
+    if let Some(finding) = forwarded_path(&group.stream(), bang, reachable) {
+        collector.structural.push(finding);
+    } else if let Ok(meta) = syn::parse2::<Meta>(group.stream()) {
+        collector.attributes.push((
+            format!("#{bang}[{}]", group.stream()),
+            meta,
+            !bang.is_empty(),
+        ));
     }
 }
 
