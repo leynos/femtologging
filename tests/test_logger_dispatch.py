@@ -11,6 +11,8 @@ import contextvars
 import threading
 import typing as typ
 
+import pytest
+
 from femtologging import FemtoLogger
 from tests.logger_support import (
     CollectingHandler,
@@ -111,11 +113,18 @@ def test_handle_record_fallback_to_handle() -> None:
     )
 
 
-def test_contextvar_mutation_does_not_cross_structured_handlers() -> None:
-    """Each structured handler should receive an independent context snapshot."""
-    request_id = contextvars.ContextVar[str | None]("request_id", default=None)
-    observed: list[str | None] = []
-    observed_event = threading.Event()
+type _ContextHandlerPairFactory = cabc.Callable[
+    [contextvars.ContextVar[str | None], list[str | None], threading.Event],
+    tuple[object, object],
+]
+
+
+def _structured_context_handler_pair(
+    request_id: contextvars.ContextVar[str | None],
+    observed: list[str | None],
+    observed_event: threading.Event,
+) -> tuple[object, object]:
+    """Return structured handlers that mutate then observe ``request_id``."""
 
     class MutatingHandler:
         """Change the request ID to prove the next handler uses its own copy."""
@@ -142,25 +151,15 @@ def test_contextvar_mutation_does_not_cross_structured_handlers() -> None:
             observed.append(request_id.get())
             observed_event.set()
 
-    logger = FemtoLogger("contextvars.structured")
-    logger.add_handler(MutatingHandler())
-    logger.add_handler(ObservingHandler())
-    token = request_id.set("request-42")
-    try:
-        logger.info("test")
-    finally:
-        request_id.reset(token)
-
-    assert observed_event.wait(timeout=1.0), "second handler did not run"
-    assert logger.flush_handlers(), "logger worker did not flush"
-    assert observed == ["request-42"], f"handlers shared context: {observed!r}"
+    return MutatingHandler(), ObservingHandler()
 
 
-def test_contextvar_mutation_does_not_cross_legacy_handlers() -> None:
-    """Each legacy handler should receive an independent context snapshot."""
-    request_id = contextvars.ContextVar[str | None]("request_id", default=None)
-    observed: list[str | None] = []
-    observed_event = threading.Event()
+def _legacy_context_handler_pair(
+    request_id: contextvars.ContextVar[str | None],
+    observed: list[str | None],
+    observed_event: threading.Event,
+) -> tuple[object, object]:
+    """Return legacy handlers that mutate then observe ``request_id``."""
 
     class MutatingHandler:
         """Change the request ID to prove the next handler uses its own copy."""
@@ -179,9 +178,25 @@ def test_contextvar_mutation_does_not_cross_legacy_handlers() -> None:
             observed.append(request_id.get())
             observed_event.set()
 
-    logger = FemtoLogger("contextvars.legacy")
-    logger.add_handler(MutatingHandler())
-    logger.add_handler(ObservingHandler())
+    return MutatingHandler(), ObservingHandler()
+
+
+def _assert_contextvar_isolation(
+    handler_pair_factory: _ContextHandlerPairFactory,
+    logger_name: str,
+) -> None:
+    """Assert the second handler sees the emitting thread's ``request_id``."""
+    request_id = contextvars.ContextVar[str | None]("request_id", default=None)
+    observed: list[str | None] = []
+    observed_event = threading.Event()
+    mutating_handler, observing_handler = handler_pair_factory(
+        request_id,
+        observed,
+        observed_event,
+    )
+    logger = FemtoLogger(logger_name)
+    logger.add_handler(mutating_handler)
+    logger.add_handler(observing_handler)
     token = request_id.set("request-42")
     try:
         logger.info("test")
@@ -191,6 +206,22 @@ def test_contextvar_mutation_does_not_cross_legacy_handlers() -> None:
     assert observed_event.wait(timeout=1.0), "second handler did not run"
     assert logger.flush_handlers(), "logger worker did not flush"
     assert observed == ["request-42"], f"handlers shared context: {observed!r}"
+
+
+@pytest.mark.parametrize(
+    ("handler_pair_factory", "logger_name"),
+    [
+        (_structured_context_handler_pair, "contextvars.structured"),
+        (_legacy_context_handler_pair, "contextvars.legacy"),
+    ],
+    ids=["structured", "legacy"],
+)
+def test_contextvar_mutation_does_not_cross_handlers(
+    handler_pair_factory: _ContextHandlerPairFactory,
+    logger_name: str,
+) -> None:
+    """Each handler path should receive independent context snapshots."""
+    _assert_contextvar_isolation(handler_pair_factory, logger_name)
 
 
 def test_handle_record_includes_stack_info() -> None:
