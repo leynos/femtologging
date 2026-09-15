@@ -68,10 +68,10 @@ impl FreshFailureState {
                 .owner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(owner_thread) = owner {
-                if owner_thread != current_thread {
-                    return None;
-                }
+            if let Some(owner_thread) = owner
+                && owner_thread != current_thread
+            {
+                return None;
             }
         }
         let previous = self

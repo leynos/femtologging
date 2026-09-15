@@ -1,4 +1,4 @@
-.PHONY: help all clean build release lint lint-python lint-rust \
+.PHONY: help all clean build release lint lint-python lint-rust lint-rust-clippy \
         lint-env-policy lint-lanes-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
@@ -156,19 +156,17 @@ skylos-allow: ## Document one named Skylos exception, not an entry point
 # still looks green. The script fails on the first failing lane and names it,
 # and `scripts/tests/test_lint_rust_lanes.py` covers that path directly.
 #
-# `-A clippy::all` in the policy lint arguments is deliberate and temporary:
-# the lanes in `lint-rust` omit `--all-targets` because the test tree carries a
-# backlog of unrelated Clippy findings, and clearing that backlog is issue
-# #421's job. Silencing the rest of Clippy in this one target lets the
-# environment policy govern test code today without absorbing that work. Once
-# issue #421 lands, these settings fold into its lane list.
+# `-A clippy::all` in the policy lint arguments keeps its contract focused on
+# environment access. The ordinary lint matrix below denies every warning over
+# every target, so unrelated test and benchmark warnings remain build failures.
 LINT_LANES_SCRIPT ?= scripts/lint_rust_lanes.py
 
 ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
 ENV_POLICY_CARGO_ARGS ?= --all-targets
 ENV_POLICY_LINT_ARGS ?= -A clippy::all -D clippy::disallowed_methods
 
-RUST_LINT_FEATURE_LANES ?= none python log-compat tracing-compat
+RUST_LINT_FEATURE_LANES ?= none python log-compat tracing-compat all
+RUST_LINT_CARGO_ARGS ?= --all-targets
 RUST_LINT_ARGS ?= -D warnings
 
 lint-env-policy: ## Enforce the environment-access policy across all targets and features
@@ -192,12 +190,15 @@ lint-lanes-test: ## Unit-test the Rust lint lane driver
 		python -m pytest scripts/tests/test_lint_rust_lanes.py \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 
-lint-rust: lint-lanes-test lint-env-policy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+lint-rust-clippy: ## Run standard Rust Clippy feature lanes across every target
 	@$(CARGO_BUILD_ENV) $(UV_ENV) \
 		INPUT_MANIFEST=$(RUST_MANIFEST) \
 		INPUT_LANES="$(RUST_LINT_FEATURE_LANES)" \
+		INPUT_CARGO_ARGS="$(RUST_LINT_CARGO_ARGS)" \
 		INPUT_LINT_ARGS="$(RUST_LINT_ARGS)" \
 		uv run --script $(LINT_LANES_SCRIPT)
+
+lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
@@ -233,12 +234,8 @@ nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(NIXIE)
 
-test: build makeutil ## Run tests
+test: build makeutil lint-rust-clippy ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- -D warnings
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)

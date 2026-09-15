@@ -64,10 +64,10 @@ fn wait_for_drop_to_acquire_lock(
     let handle_mutex = unsafe { handle_ptr.as_ref() };
     let probe_start = Instant::now();
     while probe_start.elapsed() < timeout {
-        if let Some(guard) = handle_mutex.try_lock() {
-            if guard.is_none() {
-                return Ok(());
-            }
+        if let Some(guard) = handle_mutex.try_lock()
+            && guard.is_none()
+        {
+            return Ok(());
         }
         std::thread::yield_now();
     }

@@ -30,6 +30,8 @@ jobs:
           python-version: '3.12'
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
       - name: Install Makefile parser
         run: |
           rustup toolchain install "${MAKEUTIL_TOOLCHAIN}" --profile minimal
@@ -63,7 +65,9 @@ jobs:
         run: |
           source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
-          cargo clippy --manifest-path rust_extension/Cargo.toml -- -D warnings
+          make lint-rust-clippy
+          RUSTFLAGS="--cfg loom" cargo clippy --manifest-path rust_extension/Cargo.toml \
+            --no-default-features --all-targets -- -D warnings
           feature_sets=("" "python" "log-compat" "python,log-compat")
           for feature_set in "${feature_sets[@]}"; do
             if [ -z "$feature_set" ]; then

@@ -52,12 +52,13 @@ pub(super) fn enqueue_records(
     tx: &Sender<QueuedRecord>,
     handler: &Arc<dyn FemtoHandlerTrait>,
     messages: &[&str],
-) -> Result<(), SendError<QueuedRecord>> {
+) -> Result<(), Box<SendError<QueuedRecord>>> {
     for message in messages {
         tx.send(QueuedRecord {
             record: FemtoLogRecord::new("core", FemtoLevel::Info, message),
             handlers: vec![handler.clone()],
-        })?;
+        })
+        .map_err(Box::new)?;
     }
     Ok(())
 }
@@ -120,10 +121,10 @@ impl CountingHandler {
 
 impl FemtoHandlerTrait for CountingHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        if self.count.fetch_add(1, Ordering::SeqCst) == 0 {
-            if let Some(first_tx) = &self.first_tx {
-                let _ = first_tx.send(());
-            }
+        if self.count.fetch_add(1, Ordering::SeqCst) == 0
+            && let Some(first_tx) = &self.first_tx
+        {
+            let _ = first_tx.send(());
         }
         Ok(())
     }
