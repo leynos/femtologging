@@ -50,6 +50,8 @@ REQUIRED_LANES: typ.Final[Tokens] = ("none", "all")
 LANE_EXEMPT_FEATURES: typ.Final[Tokens] = ("default",)
 #: The workflow that must run the gates, and the commands it must run.
 CI_WORKFLOW: typ.Final = ".github/workflows/ci.yml"
+HEAVY_TESTS_WORKFLOW: typ.Final = ".github/workflows/heavy-tests.yml"
+STANDARD_CLIPPY_TARGET: typ.Final = "lint-rust-clippy"
 RUST_TEST_COMMAND: typ.Final = (
     "cargo test --manifest-path rust_extension/Cargo.toml "
     "--no-default-features -- --test-threads=1"
@@ -223,7 +225,7 @@ def test_make_lint_reaches_the_policy_lane() -> None:
         sole_recipe_rule("lint-rust", require_recipes=False).get("prerequisites"),
         subject="lint-rust",
     )
-    for required in ("lint-env-policy", "lint-lanes-test"):
+    for required in ("lint-env-policy", "lint-lanes-test", STANDARD_CLIPPY_TARGET):
         assert required in prerequisites, (
             f"lint-rust must run {required}, found {prerequisites}"
         )
@@ -231,6 +233,76 @@ def test_make_lint_reaches_the_policy_lane() -> None:
         "lint must run lint-rust as a prerequisite, or as a command of its own "
         "whose failure reaches Make"
     )
+
+
+def test_standard_clippy_matrix_has_one_make_target() -> None:
+    """Scenario: a contributor edits the standard Rust Clippy feature lanes.
+
+    Invariant: the shared target covers the exact supported matrix, every
+    target kind, and warning denial. Both local linting and tests reach it.
+    """
+    lanes = variable_tokens("RUST_LINT_FEATURE_LANES")
+    assert lanes == (
+        "none",
+        "python",
+        "log-compat",
+        "tracing-compat",
+        "all",
+    ), f"RUST_LINT_FEATURE_LANES must define the standard matrix, found {lanes}"
+    cargo_args = variable_tokens("RUST_LINT_CARGO_ARGS")
+    assert "--all-targets" in cargo_args, (
+        f"RUST_LINT_CARGO_ARGS must lint every target, found {cargo_args}"
+    )
+    lint_args = variable_tokens("RUST_LINT_ARGS")
+    assert ("-D", "warnings") in itertools.pairwise(lint_args), (
+        f"RUST_LINT_ARGS must deny warnings, found {lint_args}"
+    )
+    recipe = sole_recipe(STANDARD_CLIPPY_TARGET)
+    text = recipe_text(recipe)
+    for exported in (
+        'INPUT_LANES="$(RUST_LINT_FEATURE_LANES)"',
+        'INPUT_CARGO_ARGS="$(RUST_LINT_CARGO_ARGS)"',
+        'INPUT_LINT_ARGS="$(RUST_LINT_ARGS)"',
+    ):
+        assert exported in text, f"{STANDARD_CLIPPY_TARGET} must export {exported}"
+    assert text.endswith("uv run --script $(LINT_LANES_SCRIPT)"), (
+        f"{STANDARD_CLIPPY_TARGET} must end in the lane driver, found {text!r}"
+    )
+    assert status_reaches_make(recipe), (
+        f"{STANDARD_CLIPPY_TARGET} must let the driver failure reach Make"
+    )
+    for parent in ("lint-rust", "test"):
+        assert runs_target(parent, STANDARD_CLIPPY_TARGET), (
+            f"{parent} must run {STANDARD_CLIPPY_TARGET}"
+        )
+
+
+def test_heavy_workflow_delegates_the_standard_clippy_matrix() -> None:
+    """Scenario: a contributor adds Clippy work to the heavy workflow.
+
+    Invariant: the workflow delegates the standard lanes to Make and keeps its
+    Loom-only Clippy command separate because its Rust flags alter compilation.
+    """
+    job = workflow_job(HEAVY_TESTS_WORKFLOW, "heavy")
+    steps = objects(job.get("steps"), subject="heavy-tests steps")
+    matches = [step for step in steps if step.get("name") == "Run formatters and tests"]
+    assert len(matches) == 1, "heavy-tests must have one formatter-and-test step"
+    run = matches[0].get("run")
+    assert isinstance(run, str), "the heavy-test step must have a shell script"
+    normalized_run = " ".join(run.replace("\\\n", " ").split())
+    assert "make lint-rust-clippy" in normalized_run, (
+        "heavy-tests must delegate standard Clippy lanes to the Make target"
+    )
+    assert "clippy_feature_sets" not in normalized_run, (
+        "heavy-tests must not define a separate standard Clippy matrix"
+    )
+    assert normalized_run.count("cargo clippy") == 1, (
+        "heavy-tests must retain only its separate Loom Clippy invocation"
+    )
+    assert (
+        'RUSTFLAGS="--cfg loom" cargo clippy --manifest-path '
+        "rust_extension/Cargo.toml --no-default-features --all-targets -- -D warnings"
+    ) in normalized_run, "the separate Loom Clippy command must retain its flags"
 
 
 def workflow_steps(job_name: str) -> list[dict[str, object]]:

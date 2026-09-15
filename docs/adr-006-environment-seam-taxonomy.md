@@ -121,7 +121,7 @@ Choose the lightest shape the boundary justifies:
 A direct read is permitted only at a genuine executable composition root, and
 only under an item-scoped attribute:
 
-```rust
+```rust,no_run
 #[expect(clippy::disallowed_methods, reason = "composition root: <what and why>")]
 ```
 

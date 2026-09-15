@@ -1,4 +1,4 @@
-.PHONY: help all clean build release lint lint-python lint-rust \
+.PHONY: help all clean build release lint lint-python lint-rust lint-rust-clippy \
         lint-env-policy lint-lanes-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
@@ -190,13 +190,15 @@ lint-lanes-test: ## Unit-test the Rust lint lane driver
 		python -m pytest scripts/tests/test_lint_rust_lanes.py \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 
-lint-rust: lint-lanes-test lint-env-policy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+lint-rust-clippy: ## Run standard Rust Clippy feature lanes across every target
 	@$(CARGO_BUILD_ENV) $(UV_ENV) \
 		INPUT_MANIFEST=$(RUST_MANIFEST) \
 		INPUT_LANES="$(RUST_LINT_FEATURE_LANES)" \
 		INPUT_CARGO_ARGS="$(RUST_LINT_CARGO_ARGS)" \
 		INPUT_LINT_ARGS="$(RUST_LINT_ARGS)" \
 		uv run --script $(LINT_LANES_SCRIPT)
+
+lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
@@ -232,13 +234,8 @@ nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(NIXIE)
 
-test: build makeutil ## Run tests
+test: build makeutil lint-rust-clippy ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --all-targets -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features python --all-targets -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat --all-targets -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat --all-targets -- -D warnings
-	$(CARGO_BUILD_ENV) cargo clippy --manifest-path $(RUST_MANIFEST) --all-features --all-targets -- -D warnings
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)
