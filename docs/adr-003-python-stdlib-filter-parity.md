@@ -175,3 +175,31 @@ threads. It also closes a practical interoperability gap with middleware that
 depends on stdlib filter semantics for contextual logging.
 
 [^1]: <https://raw.githubusercontent.com/leynos/falcon-correlate/refs/heads/implement-contextual-log-filter-nlw4m4/docs/falcon-correlation-id-middleware-design.md>
+
+## Addendum: producer context propagation (2026-09-15)
+
+The accepted producer-path filter decision remains unchanged: Python callback
+filters execute on the producer thread, and their supported enrichments are
+persisted in Rust-owned record metadata before asynchronous dispatch.
+
+To preserve `contextvars` semantics for Python-backed handlers, the producer
+now captures `contextvars.copy_context()` when it queues a record whose exact
+handler snapshot contains a Python-backed handler. The captured context is
+carried in the Python-only `QueuedRecord::context` field. An absent context
+means that the queued handler snapshot contains no Python-backed handler; a
+capture failure is handled explicitly and is not represented by that absence.
+
+At the worker boundary, `FemtoHandlerTrait::handle_with_context` receives the
+captured context. Its default implementation delegates directly to `handle`,
+so native Rust handlers retain their existing behaviour. `PyHandler` copies
+the captured context immediately before each callback and invokes both its
+structured and legacy handler paths through `Context.run()`. This keeps the
+entire Python handler call, including stdlib filters, formatters, and emission,
+inside the producer's context while preventing one handler from mutating the
+context observed by the next.
+
+This is a narrow exception to the original queue-boundary constraint against
+retaining Python objects: only the captured `contextvars.Context` is retained
+for queued records that need Python-backed dispatch. Python callback filters
+still run on the producer thread, and arbitrary Python record objects are not
+retained across the queue.

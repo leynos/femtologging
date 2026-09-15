@@ -199,14 +199,6 @@ impl FemtoLogger {
             Ok(context) => context,
             Err(err) => {
                 pyo3::Python::attach(|py| err.print(py));
-                self.dropped_records
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.drop_warner.record_drop();
-                self.drop_warner.warn_if_due(|count| {
-                    warn!(
-                        "FemtoLogger: dropped {count} records because contextvars capture failed"
-                    );
-                });
                 return;
             }
         };

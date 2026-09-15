@@ -110,6 +110,7 @@ ______________________________________________________________________
 
 ## Unchanged APIs
 
-Reading and assigning the five declared fields (`level`, `filename`, `stream`,
-`force`, `handlers`) is unchanged. `BasicConfig` construction, `basicConfig()`,
-and every other public API are unaffected by the slotted-dataclass change.
+Reading and assigning the five declared fields (`level`, `filename`,
+`stream`, `force`, `handlers`) is unchanged. Construction of `BasicConfig`,
+calls to `basicConfig()`, and all other public APIs are unaffected by the
+slotted-dataclass and `contextvars` propagation changes.
