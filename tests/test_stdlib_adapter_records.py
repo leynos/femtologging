@@ -47,6 +47,10 @@ def _sole_emitted_record(capturing: CapturingHandler) -> logging.LogRecord:
 
     Examples
     --------
+    >>> capturing = CapturingHandler()
+    >>> capturing.emit(
+    ...     logging.LogRecord("app", logging.INFO, "probe.py", 1, "hi", None, None)
+    ... )
     >>> _sole_emitted_record(capturing).levelname
     'INFO'
 

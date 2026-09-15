@@ -42,6 +42,41 @@ dependency or its version policy:
 - `pyyaml` is bounded to `>=6.0.3,<7` in both sources because the lint
   contract tests parse the CI workflow files.
 
+### Docstring examples
+
+`make test` runs pytest with `--doctest-modules`, so every `>>>` example in a
+module pytest walks is executed as part of the suite. Before it was wired the
+suite collected 621 items and no examples; with it, 655. The 34 new items are
+the examples, and five of them were failing: `poll_file_for_text`,
+`capture_records`, `latest_key_values`, `AdapterProbe.capture` and
+`_sole_emitted_record` each opened with a name nothing bound, so each raised
+on its first execution. An example nobody executes is a comment that looks
+like evidence.
+
+Two rules follow from that.
+
+Write an example so it runs on its own. Bind every name it uses, and show a
+value rather than an assertion, so a wrong answer is a failure and not a
+silent pass.
+
+Skip an example only with a written reason beside it. `capture_records` is the
+one skipped here: running it would need a live logger, an emission through the
+process-wide macros, and a bounded wait on the worker that delivers the
+record, and an example that waits on a race is the shape
+[issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
+skipped example is inert text, never compiled, so it cannot be trusted the way
+an executed one can.
+
+`--doctest-modules` imports every module it walks, not only `test_*.py`. Two
+settings keep that import working. `pythonpath = ["scripts"]` in
+`[tool.pytest.ini_options]` lets the helper scripts import each other as
+top-level modules, which is what `[tool.ty.environment] extra-paths` already
+records for type checking. `scripts/conftest.py` excludes
+`scripts/lint_rust_lanes.py`, whose dependencies live in its own `uv` script
+block and cannot be resolved from the project environment; `make
+lint-lanes-test` runs that script, and its examples, in the environment that
+can.
+
 ## Typos spelling checker
 
 Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)

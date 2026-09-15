@@ -197,7 +197,15 @@ def capture_records(logger: FlushableLogger) -> cabc.Iterator[RecordCollector]:
 
     Examples
     --------
-    >>> with capture_records(logger) as collector:
+    The example is skipped rather than executed. Running it would need a live
+    logger, an emission through the process-wide macros, and then a bounded
+    wait on the worker that delivers the record, because `flush_handlers`
+    cannot synchronize here (issue #451). An example that waits on a race is
+    the shape issue #476 is about. The step module that owns this helper does
+    all three inside a scenario, where the waiting is named.
+
+    >>> logger = get_logger("app")  # doctest: +SKIP
+    >>> with capture_records(logger) as collector:  # doctest: +SKIP
     ...     info("hello", name="app")
 
     """
@@ -249,6 +257,10 @@ def latest_key_values(collector: RecordCollector) -> dict[str, object]:
 
     Examples
     --------
+    >>> collector = RecordCollector()
+    >>> collector.handle_record(
+    ...     {"metadata": {"key_values": {"request_id": "42"}}}
+    ... )
     >>> latest_key_values(collector)
     {'request_id': '42'}
 
