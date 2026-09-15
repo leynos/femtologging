@@ -6,9 +6,11 @@
 //! structurally rather than by their meta: an attribute whose path the caller
 //! supplies, and an `include!` of a file the scan cannot read.
 
+use camino::Utf8Path;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
-use syn::{AttrStyle, Attribute, Macro, Meta, visit::Visit};
+use syn::{AttrStyle, Attribute, LitStr, Macro, Meta, visit::Visit};
 
+use super::SOURCE_EXTENSION;
 use super::meta::{render_attribute, render_path};
 
 /// Collect every attribute in a parsed file, wherever it sits.
@@ -153,27 +155,35 @@ fn could_cover_a_policy_call(pattern: &TokenStream, transcriber: &TokenStream) -
 /// A literal `.rs` path is not a finding: such a file is scanned in its own
 /// right, being a `.rs` file under a governed root. `include_str!` and
 /// `include_bytes!` are not source inclusion at all and never reach here.
+///
+/// The target is parsed as one [`LitStr`] and judged by its *value*, not by
+/// how it was written. `r"support.rs"` and `"support\x2Ers"` name the same
+/// file as `"support.rs"`, and rendering the literal back to text would report
+/// two of the three as targets the scan cannot see. Parsing the whole token
+/// stream as a single literal is also what keeps a computed target refused:
+/// `concat!(env!("OUT_DIR"), "/probe")` is not one literal and does not parse.
+///
+/// The extension is compared the way the traversal selects sources, against
+/// [`SOURCE_EXTENSION`], rather than by a suffix test on the rendered path. A
+/// suffix test is case-sensitive in a way the path reader is not, and it
+/// accepts `include!(".rs")`, a name that is a bare extension and that the walk
+/// never collects, so the file would go unread and unscanned.
 fn foreign_inclusion(tokens: &TokenStream) -> Option<String> {
-    let rendered = tokens.to_string();
-    let target = tokens.clone().into_iter().next().and_then(|token| {
-        let TokenTree::Literal(literal) = token else {
-            return None;
-        };
-        let text = literal.to_string();
-        let trimmed = text.strip_prefix('"')?.strip_suffix('"')?;
-        Some(trimmed.to_owned())
-    });
-    match target {
-        Some(path) if path.ends_with(".rs") => None,
-        Some(path) => Some(format!(
-            "include!(\"{path}\") compiles a file the scan cannot see as Rust; \
-             name a `.rs` path, which is scanned in its own right"
-        )),
-        None => Some(format!(
+    let Ok(target) = syn::parse2::<LitStr>(tokens.clone()) else {
+        let rendered = tokens.to_string();
+        return Some(format!(
             "include!({rendered}) names a target the scan cannot resolve; \
              name a literal `.rs` path, which is scanned in its own right"
-        )),
+        ));
+    };
+    let path = target.value();
+    if Utf8Path::new(&path).extension() == Some(SOURCE_EXTENSION) {
+        return None;
     }
+    Some(format!(
+        "include!(\"{path}\") compiles a file the scan cannot see as Rust; \
+         name a `.rs` path, which is scanned in its own right"
+    ))
 }
 
 /// Collect attribute-shaped token sequences from a `macro_rules!` transcriber.

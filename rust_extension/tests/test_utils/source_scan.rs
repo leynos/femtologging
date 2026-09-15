@@ -75,6 +75,14 @@ mod meta;
 #[path = "source_scan/tokens.rs"]
 mod tokens;
 
+/// The extension a file must carry for the traversal to collect it.
+///
+/// Shared with the `include!` rule in [`tokens`], which has to judge an
+/// inclusion target by the same standard the walk selects sources by. Written
+/// once so the two cannot drift: a target the walk would not collect is a file
+/// the scan never reads, whatever the inclusion looks like.
+pub(crate) const SOURCE_EXTENSION: &str = "rs";
+
 pub(crate) use discovery::{SOURCE_ROOTS, crate_dir, rust_sources};
 
 use meta::suppressed_by;

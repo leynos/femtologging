@@ -76,6 +76,22 @@ use source_scan::{PROTECTED_LINTS, SOURCE_ROOTS, crate_dir, rust_sources, suppre
 ///   the macro throws away. Nothing in the crate's own sources discriminates
 ///   that rule, so the fixture carries it: a narrowing nothing can fail is a
 ///   narrowing nobody has tested.
+///
+/// The `include!` target is judged by its decoded value and by the extension
+/// the walk selects on, which was proved on 2026-09-15 in both directions:
+///
+/// - reading the literal as written, by trimming quotes off
+///   `Literal::to_string`, fails the benign fixture on `r"fixtures/raw.rs"`
+///   and on `"fixtures/escaped\x2Ers"`, which name `.rs` files the walk does
+///   collect;
+/// - accepting a `.rs` literal found anywhere in the argument, rather than the
+///   whole argument parsed as one literal, fails
+///   `include_of_a_computed_rust_path`, whose target is assembled at compile
+///   time from a directory the scan cannot know;
+/// - returning `None` for every target fails both `include!` cases here;
+/// - comparing the rendered path with `ends_with(".rs")` fails
+///   `include_of_a_bare_extension`, since `.rs` ends with `.rs` while naming a
+///   file the walk never collects.
 #[test]
 fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
     let crate_dir = crate_dir();
@@ -167,8 +183,10 @@ fn every_governed_root_yields_its_sources(#[case] index: usize) -> Result<(), St
 /// `#[allow(dead_code, ...)]` names no protected lint; `discards!` is handed
 /// an attribute by an invocation and throws it away, which is why only a
 /// `macro_rules!` transcriber is walked; `include_str!` and `include_bytes!`
-/// embed bytes rather than compiling source; and `include!` of a literal
-/// `.rs` path names a file the scan reads in its own right.
+/// embed bytes rather than compiling source; and the three `include!` calls
+/// name `.rs` paths the scan reads in their own right, written plainly, as a
+/// raw string and with the dot escaped, because the rule judges what the
+/// literal means rather than how it was typed.
 #[test]
 fn the_scan_reports_neither_prose_nor_the_sanctioned_form() -> Result<(), String> {
     let benign = r##"
@@ -196,6 +214,8 @@ discards!(#[allow(clippy::all)]);
 const EMBEDDED: &str = include_str!("fixtures/env_policy_probe.rs.txt");
 const BYTES: &[u8] = include_bytes!("fixtures/table.dat");
 include!("fixtures/generated.rs");
+include!(r"fixtures/raw.rs");
+include!("fixtures/escaped\x2Ers");
 "##;
     let found = suppressed_lints(benign)?;
     if found.is_empty() {
@@ -266,6 +286,12 @@ include!("fixtures/generated.rs");
 #[case::include_of_a_foreign_extension("include!(\"fixtures/probe.rs.txt\");")]
 // An `include!` whose target is not a literal cannot be judged at all.
 #[case::include_of_a_computed_path("include!(concat!(env!(\"OUT_DIR\"), \"/probe\"));")]
+// A bare extension is a name the walk never collects, so the file it names is
+// never scanned however the inclusion reads.
+#[case::include_of_a_bare_extension("include!(\".rs\");")]
+// A computed target that happens to hold a `.rs` literal is still a target the
+// scan cannot resolve; the whole argument has to be one literal.
+#[case::include_of_a_computed_rust_path("include!(concat!(env!(\"OUT_DIR\"), \"/probe.rs\"));")]
 fn the_scan_follows_groups_and_cfg_attr(#[case] source: &str) -> Result<(), String> {
     if suppressed_lints(source)?.is_empty() {
         return Err(format!("the scan must report {source:?}"));

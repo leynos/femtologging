@@ -188,6 +188,15 @@ finding unless it names a literal `.rs` path, which is scanned in its own
 right. `include_str!` and `include_bytes!` embed bytes rather than compiling
 source and are not inclusions at all.
 
+The target is judged by what the literal means, not by how it was typed.
+`r"support.rs"` and `"support\x2Ers"` name the same file as `"support.rs"`, so
+the whole argument is parsed as one string literal and its value read; parsing
+it as one literal is also what refuses a target assembled at compile time,
+which the scan cannot resolve however much of it looks like a path. The
+extension is then compared the way the walk selects sources, against the same
+constant, so `include!(".rs")` is a finding: a bare extension is a name the
+walk never collects, and the file it reaches would go unread.
+
 Naming the lint is not required to silence it either, which is why the scan
 parses rather than searches. Measured against Clippy 0.1.98, each on a probe
 reporting one diagnostic without an attribute: `#![allow(clippy::style)]` and

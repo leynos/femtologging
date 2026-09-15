@@ -467,6 +467,11 @@ literal `.rs` path, since `rustc` parses an included file as Rust whatever its
 extension; `include_str!` and `include_bytes!` embed bytes and are not
 inclusions.
 
+That target is read as one parsed string literal and judged by its value, so a
+raw string and an escaped dot name the same file a plain string does, and by
+its extension as the walk selects sources, against the one shared constant, so
+a bare `.rs` is a finding rather than an accepted target.
+
 The walk covers a `macro_rules!` transcriber, not the arguments of an ordinary
 invocation, which the macro it is handed to may discard. The forwarded-path
 rule is what makes that narrowing safe: any attribute a macro emits has to be

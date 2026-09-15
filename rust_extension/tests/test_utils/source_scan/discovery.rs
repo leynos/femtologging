@@ -10,6 +10,8 @@ use std::collections::VecDeque;
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{ambient_authority, fs_utf8::Dir};
 
+use super::SOURCE_EXTENSION;
+
 /// Directories under the crate holding Rust sources the policy governs.
 pub(crate) const SOURCE_ROOTS: [&str; 3] = ["src", "tests", "benches"];
 
@@ -56,7 +58,7 @@ pub(crate) fn rust_sources(
                     .open_dir(&name)
                     .map_err(|error| format!("open {path}: {error}"))?;
                 pending.push_back((child, path));
-            } else if path.extension() == Some("rs") {
+            } else if path.extension() == Some(SOURCE_EXTENSION) {
                 let contents = current
                     .read_to_string(&name)
                     .map_err(|error| format!("read {path}: {error}"))?;
