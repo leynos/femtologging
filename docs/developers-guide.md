@@ -452,6 +452,18 @@ through its parent's handle so the walk cannot leave the tree it was given.
 `include_str!` is not an option here as it is for the configuration contracts,
 because the scan has to see files that do not exist yet.
 
+Two shapes are refused structurally rather than by their meta, because neither
+is a complete attribute where it is written. A `macro_rules!` arm that forwards
+an attribute's *path* (`#[$attr]`) lets its caller supply `allow`, so it is
+refused at inner scope, and at outer scope where the arm writes an `env` access
+itself or forwards a fragment the caller fills with code. The
+`$(#[$meta:meta])*` idiom for carrying doc comments onto a generated setter is
+therefore untouched, as are `#[doc = $text]` and `#[derive($traits)]`, whose
+paths are written out. And an `include!` is refused unless its target is a
+literal `.rs` path, since `rustc` parses an included file as Rust whatever its
+extension; `include_str!` and `include_bytes!` embed bytes and are not
+inclusions.
+
 The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
 cannot tell an attribute from attribute-shaped text in a string or a doc
 comment, and breaks on a parenthesis inside a `reason`. It protects

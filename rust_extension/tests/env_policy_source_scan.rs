@@ -141,6 +141,8 @@ struct AttributeCollector {
     /// Each suppression found: the text to report, the meta to judge, and
     /// whether it was written at inner scope.
     attributes: Vec<(String, Meta, bool)>,
+    /// Each finding no meta describes, already worded as a report line.
+    structural: Vec<String>,
 }
 
 impl<'ast> Visit<'ast> for AttributeCollector {
@@ -153,22 +155,151 @@ impl<'ast> Visit<'ast> for AttributeCollector {
     }
 
     fn visit_macro(&mut self, mac: &'ast Macro) {
-        collect_from_tokens(mac.tokens.clone(), &mut self.attributes);
+        match render_path(&mac.path).rsplit("::").next() {
+            Some("macro_rules") => {
+                for (pattern, transcriber) in macro_arms(mac.tokens.clone()) {
+                    let reachable = could_cover_a_policy_call(&pattern, &transcriber);
+                    collect_from_tokens(transcriber, reachable, self);
+                }
+            }
+            Some("include") => {
+                if let Some(finding) = foreign_inclusion(&mac.tokens) {
+                    self.structural.push(finding);
+                }
+            }
+            _ => {}
+        }
         syn::visit::visit_macro(self, mac);
     }
 }
 
-/// Collect attribute-shaped token sequences from a macro body.
+/// Return each arm of a `macro_rules!` body as its pattern and transcriber.
+///
+/// Only a transcriber is expanded, so only a transcriber can suppress
+/// anything. The arms' patterns are not output, and the arguments of an
+/// ordinary macro invocation may be discarded by the macro it is handed to:
+/// walking either reports an attribute that never reaches the compiler, and a
+/// contract that reports a false positive gets switched off.
+///
+/// The pattern comes back with it because the fragment specifiers declared
+/// there decide whether a forwarded attribute in the transcriber could bear on
+/// the policy.
+///
+/// An arm is `(pattern) => {transcriber};`, so each group following a `=>` is
+/// a transcriber and the group before the `=>` is its pattern.
+fn macro_arms(stream: TokenStream) -> Vec<(TokenStream, TokenStream)> {
+    let tokens: Vec<TokenTree> = stream.into_iter().collect();
+    let mut found = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if !matches!(token, TokenTree::Punct(punct) if punct.as_char() == '=') {
+            continue;
+        }
+        if !matches!(tokens.get(index + 1), Some(TokenTree::Punct(punct)) if punct.as_char() == '>')
+        {
+            continue;
+        }
+        let Some(TokenTree::Group(transcriber)) = tokens.get(index + 2) else {
+            continue;
+        };
+        let pattern = match index.checked_sub(1).and_then(|before| tokens.get(before)) {
+            Some(TokenTree::Group(group)) => group.stream(),
+            _ => TokenStream::new(),
+        };
+        found.push((pattern, transcriber.stream()));
+    }
+    found
+}
+
+/// Fragment specifiers whose value can carry an environment access.
+///
+/// A caller supplying one of these supplies code, so an attribute forwarded
+/// over it can cover a call the arm never mentions. An `ident`, a `ty`, a
+/// `lifetime` or a `literal` cannot carry a call, which is what keeps the
+/// doc-forwarding idiom below out of the findings.
+const CODE_FRAGMENTS: [&str; 5] = ["item", "block", "stmt", "expr", "tt"];
+
+/// Return whether `stream` names the `env` module at any depth.
+///
+/// The call the arm writes sits inside the item's block, which is one group
+/// down, so the search recurses. Reading only the top level found nothing and
+/// let the route through.
+fn mentions_env(stream: &TokenStream) -> bool {
+    stream.clone().into_iter().any(|token| match token {
+        TokenTree::Ident(ident) => ident == "env",
+        TokenTree::Group(group) => mentions_env(&group.stream()),
+        TokenTree::Punct(_) | TokenTree::Literal(_) => false,
+    })
+}
+
+/// Return whether an arm could put a forwarded attribute over a policy call.
+///
+/// Either the arm writes the access itself, in which case `env` appears among
+/// its tokens, or it forwards a fragment that the caller fills with code.
+/// `$(#[$meta:meta])* $name:ident, $field:ident, $ty:ty` does neither: it is
+/// the ordinary way to carry doc comments onto a generated setter, it appears
+/// twice in this crate's own builders, and reporting it would be the false
+/// positive that gets a contract switched off.
+fn could_cover_a_policy_call(pattern: &TokenStream, transcriber: &TokenStream) -> bool {
+    if mentions_env(transcriber) {
+        return true;
+    }
+    let tokens: Vec<TokenTree> = pattern.clone().into_iter().collect();
+    tokens.iter().enumerate().any(|(index, token)| {
+        matches!(token, TokenTree::Punct(punct) if punct.as_char() == ':')
+            && matches!(
+                tokens.get(index + 1),
+                Some(TokenTree::Ident(ident))
+                    if CODE_FRAGMENTS.contains(&ident.to_string().as_str())
+            )
+    })
+}
+
+/// Return a finding if an `include!` names a target that is not Rust source.
+///
+/// `rustc` parses an included file as Rust whatever its extension, so
+/// `include!("fixture.rs.txt")` compiles the fixture's contents into this
+/// crate. An `allow` written there suppresses the policy for the calls around
+/// it, and an enclosing `expect` stays fulfilled, so nothing warns. The scan
+/// cannot read the target, because the target need not exist when the scan
+/// runs, so the inclusion itself is the finding.
+///
+/// A literal `.rs` path is not a finding: such a file is scanned in its own
+/// right, being a `.rs` file under a governed root. `include_str!` and
+/// `include_bytes!` are not source inclusion at all and never reach here.
+fn foreign_inclusion(tokens: &TokenStream) -> Option<String> {
+    let rendered = tokens.to_string();
+    let target = tokens.clone().into_iter().next().and_then(|token| {
+        let TokenTree::Literal(literal) = token else {
+            return None;
+        };
+        let text = literal.to_string();
+        let trimmed = text.strip_prefix('"')?.strip_suffix('"')?;
+        Some(trimmed.to_owned())
+    });
+    match target {
+        Some(path) if path.ends_with(".rs") => None,
+        Some(path) => Some(format!(
+            "include!(\"{path}\") compiles a file the scan cannot see as Rust; \
+             name a `.rs` path, which is scanned in its own right"
+        )),
+        None => Some(format!(
+            "include!({rendered}) names a target the scan cannot resolve; \
+             name a literal `.rs` path, which is scanned in its own right"
+        )),
+    }
+}
+
+/// Collect attribute-shaped token sequences from a `macro_rules!` transcriber.
 ///
 /// An attribute is `#`, optionally `!`, then a bracketed group. Recursing
 /// through every group reaches an attribute at any depth, including one inside
 /// a nested macro. A token walk cannot mistake prose for policy the way a text
 /// scan can: a string literal is one token, never a `#` followed by brackets.
-fn collect_from_tokens(stream: TokenStream, found: &mut Vec<(String, Meta, bool)>) {
+fn collect_from_tokens(stream: TokenStream, reachable: bool, collector: &mut AttributeCollector) {
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
     for (index, token) in tokens.iter().enumerate() {
         if let TokenTree::Group(group) = token {
-            collect_from_tokens(group.stream(), found);
+            collect_from_tokens(group.stream(), reachable, collector);
         }
         if !matches!(token, TokenTree::Punct(punct) if punct.as_char() == '#') {
             continue;
@@ -185,14 +316,51 @@ fn collect_from_tokens(stream: TokenStream, found: &mut Vec<(String, Meta, bool)
         if group.delimiter() != Delimiter::Bracket {
             continue;
         }
-        if let Ok(meta) = syn::parse2::<Meta>(group.stream()) {
-            found.push((
+        if let Some(finding) = forwarded_path(&group.stream(), bang, reachable) {
+            collector.structural.push(finding);
+        } else if let Ok(meta) = syn::parse2::<Meta>(group.stream()) {
+            collector.attributes.push((
                 format!("#{bang}[{}]", group.stream()),
                 meta,
                 !bang.is_empty(),
             ));
         }
     }
+}
+
+/// Return a finding if an attribute in a transcriber forwards its own path.
+///
+/// `#[$attr]` is written by the arm and completed by the caller, so the arm
+/// cannot be read for what it applies and the invocation carries no `#` for a
+/// walk to notice. Neither half is a suppression on its own, and together they
+/// are: invoked as `forward!(allow(clippy::disallowed_methods), ...)`, the
+/// expansion silences every call the item contains.
+///
+/// Two things keep the rule narrow. Only a forwarded *path* is refused: an
+/// attribute whose path is written out cannot become `allow`, however much of
+/// its argument is forwarded, so `#[doc = $text]` and `#[derive($traits)]` are
+/// judged as any other attribute and report nothing. And an outer forwarded
+/// path is refused only where the arm could put it over a policy call, which
+/// leaves the `$(#[$meta:meta])*` doc-forwarding idiom alone.
+///
+/// An inner forwarded path is refused wherever it appears. `#![$attr]` applies
+/// to everything enclosing it rather than to one item, so there is no call it
+/// could fail to cover, and nothing to weigh.
+fn forwarded_path(stream: &TokenStream, bang: &str, reachable: bool) -> Option<String> {
+    let mut tokens = stream.clone().into_iter();
+    let first = tokens.next()?;
+    if !matches!(&first, TokenTree::Punct(punct) if punct.as_char() == '$') {
+        return None;
+    }
+    let inner = !bang.is_empty();
+    if !inner && !reachable {
+        return None;
+    }
+    Some(format!(
+        "#{bang}[{stream}] forwards its own path, which the caller can complete \
+         with `allow`; write the attribute out, or take the item rather than \
+         the attribute"
+    ))
 }
 
 /// Render a lint path with raw identifiers normalized.
@@ -286,16 +454,16 @@ fn render_attribute(attribute: &Attribute) -> String {
 /// draft compared by substring and would have reported
 /// `#[allow(clippy::allow_attributes)]` as suppressing `clippy::all`, whose
 /// name it contains.
-fn suppressed_lints(contents: &str) -> Result<Vec<(String, String)>, String> {
+fn suppressed_lints(contents: &str) -> Result<Vec<String>, String> {
     let parsed = syn::parse_file(contents).map_err(|error| format!("parse: {error}"))?;
     let mut collector = AttributeCollector::default();
     collector.visit_file(&parsed);
 
-    let mut found = Vec::new();
+    let mut found = collector.structural.clone();
     for (rendered, meta, inner) in &collector.attributes {
         for lint in suppressed_by(meta, *inner) {
             if PROTECTED_LINTS.contains(&lint.as_str()) {
-                found.push((lint, rendered.clone()));
+                found.push(format!("suppresses {lint} via {rendered}"));
             }
         }
     }
@@ -334,16 +502,34 @@ fn suppressed_lints(contents: &str) -> Result<Vec<(String, String)>, String> {
 /// Re-proved on 2026-09-14, after `suppressed_by_cfg_attr` was folded back
 /// into `suppressed_by` rather than repeating its dispatch: the `cfg_attr`
 /// mutation above still fails this test through the build.
+///
+/// Two further routes were closed on 2026-09-14, each measured elsewhere
+/// against Clippy before being closed here, and each proved in both
+/// directions through the build. A rule that reaches nothing and a rule that
+/// reaches everything both pass a one-sided proof, and the second gets the
+/// contract switched off:
+///
+/// - the forwarded-path rule never firing fails the three cases that
+///   exercise it;
+/// - refusing every forwarded path, rather than only a reachable or inner
+///   one, fails the benign fixture and this test, on the
+///   `$(#[$meta:meta])*` doc-forwarding idiom in `src/handlers/`;
+/// - refusing any metavariable anywhere in the attribute, rather than in its
+///   path, fails on `#[doc = $doc]` and on a forwarded `#[pyo3(name = ...)]`;
+/// - accepting `.txt` alongside `.rs` as an `include!` target fails the case
+///   that exercises it;
+/// - judging `include_str!` as source inclusion fails this test on the three
+///   real `include_str!` calls in the crate, and the benign fixture with it.
 #[test]
 fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
     let crate_dir = crate_dir();
     let mut offences = Vec::new();
     for root in SOURCE_ROOTS {
         for (path, contents) in rust_sources(&crate_dir.join(root), root)? {
-            for (lint, attribute) in
+            for finding in
                 suppressed_lints(&contents).map_err(|error| format!("{path}: {error}"))?
             {
-                offences.push(format!("{path} suppresses {lint} via {attribute}"));
+                offences.push(format!("{path} {finding}"));
             }
         }
     }
@@ -412,6 +598,19 @@ fn every_governed_root_yields_its_sources(#[case] index: usize) -> Result<(), St
 /// Invariant: it reports none of them. A lint name inside a string or a doc
 /// comment is discussion, an `expect` is the sanctioned form, and
 /// `clippy::allow_attributes` merely contains the text of `clippy::all`.
+///
+/// The last six are the narrowness half of the two routes closed alongside
+/// them, and they matter as much as the reach half: a contract that reports a
+/// false positive gets switched off, and then it reports nothing at all.
+/// `#[doc = $text]` and `#[derive($traits)]` forward an argument but write
+/// their own path, which cannot become `allow`; `option_setter` forwards the
+/// path itself, in the ordinary idiom for carrying doc comments onto a
+/// generated setter, but over an `ident`, an `ident` and a `ty`, none of which
+/// can carry a call, and this crate's own builders use it twice; a transcriber
+/// emitting
+/// `#[allow(dead_code, ...)]` names no protected lint; `include_str!` and
+/// `include_bytes!` embed bytes rather than compiling source; and `include!`
+/// of a literal `.rs` path names a file the scan reads in its own right.
 #[test]
 fn the_scan_reports_neither_prose_nor_the_sanctioned_form() -> Result<(), String> {
     let benign = r##"
@@ -425,6 +624,18 @@ fn tolerated() {}
 fn also_root() { let _ = std::env::var("Y"); }
 #[allow(clippy::alloc_instead_of_core)]
 fn different_lint_whose_name_starts_with_clippy_all() {}
+macro_rules! documented { ($text:expr) => { #[doc = $text] pub fn described() {} }; }
+macro_rules! option_setter {
+    ($(#[$meta:meta])* $name:ident, $field:ident, $ty:ty) => {
+        $(#[$meta])*
+        pub fn $name(mut self, value: $ty) -> Self { self.$field = Some(value); self }
+    };
+}
+macro_rules! derived { ($traits:path) => { #[derive($traits)] pub struct Held; }; }
+macro_rules! generated { () => { #[allow(dead_code, reason = "generated")] fn unused() {} }; }
+const EMBEDDED: &str = include_str!("fixtures/env_policy_probe.rs.txt");
+const BYTES: &[u8] = include_bytes!("fixtures/table.dat");
+include!("fixtures/generated.rs");
 "##;
     let found = suppressed_lints(benign)?;
     if found.is_empty() {
@@ -474,6 +685,27 @@ fn different_lint_whose_name_starts_with_clippy_all() {}
     "    macro_rules! inner { () => { #[allow(clippy::style)] fn f() {} }; }\n",
     "}; }"
 ))]
+// A transcriber that writes the attribute but forwards its path. The arm
+// cannot be read for what it applies, and the invocation carries no `#`, so
+// neither half is a suppression alone.
+#[case::forwarded_attribute_path(concat!(
+    "macro_rules! forward { ($attr:meta) => {\n",
+    "    #[$attr]\n",
+    "    pub fn ambient() { let _ = std::env::var(\"X\"); }\n",
+    "}; }\nforward!(allow(clippy::disallowed_methods));"
+))]
+// The same forwarding at inner scope, which is the quieter half of the route.
+#[case::forwarded_inner_attribute_path("macro_rules! forward { ($attr:meta) => { #![$attr] }; }")]
+// Forwarding over an item the caller supplies: the arm names no `env` itself,
+// but whatever it is handed comes under the forwarded attribute.
+#[case::forwarded_over_a_supplied_item(
+    "macro_rules! forward { ($attr:meta, $body:item) => { #[$attr] $body }; }"
+)]
+// `include!` of a target the scan cannot see: rustc parses it as Rust whatever
+// the extension, so an `allow` written there reaches the compiler.
+#[case::include_of_a_foreign_extension("include!(\"fixtures/probe.rs.txt\");")]
+// An `include!` whose target is not a literal cannot be judged at all.
+#[case::include_of_a_computed_path("include!(concat!(env!(\"OUT_DIR\"), \"/probe\"));")]
 fn the_scan_follows_groups_and_cfg_attr(#[case] source: &str) -> Result<(), String> {
     if suppressed_lints(source)?.is_empty() {
         return Err(format!("the scan must report {source:?}"));

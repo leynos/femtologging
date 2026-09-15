@@ -159,6 +159,29 @@ as parsed attributes. Measured: a macro arm emitting
 `#[allow(clippy::disallowed_methods)]` around a `std::env::var` call reports
 zero diagnostics where the same file without it reports one.
 
+Nor need the attribute be complete where it is written. A `macro_rules!` arm
+may write `#[$attr]` and let its caller supply the path, and neither half is a
+suppression alone: the arm's attribute does not parse, and the invocation
+carries no `#` for a walk to notice. Invoked as
+`forward!(allow(clippy::disallowed_methods))`, the expansion silences every
+call the item contains. The scan refuses a forwarded path, but only where it
+could bear on the policy: at inner scope, which applies to everything around
+it, or where the arm either writes an `env` access itself or forwards a
+fragment the caller fills with code. That leaves the `$(#[$meta:meta])*`
+idiom for carrying doc comments onto a generated setter alone, which this
+crate's own builders use twice. Only the path counts, so `#[doc = $text]` and
+`#[derive($traits)]` report nothing however much of their argument is
+forwarded.
+
+Nor need the suppression be in the file at all. `rustc` parses an `include!`
+target as Rust whatever its extension, so an `allow` inside a `.rs.txt`
+fixture silences the calls around the inclusion while an enclosing `expect`
+stays fulfilled and warns about nothing. The scan cannot read the target,
+which need not exist when the scan runs, so the inclusion itself is the
+finding unless it names a literal `.rs` path, which is scanned in its own
+right. `include_str!` and `include_bytes!` embed bytes rather than compiling
+source and are not inclusions at all.
+
 Naming the lint is not required to silence it either, which is why the scan
 parses rather than searches. Measured against Clippy 0.1.98, each on a probe
 reporting one diagnostic without an attribute: `#![allow(clippy::style)]` and
