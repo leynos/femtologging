@@ -459,9 +459,10 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 
 The adapter runs on femtologging's dedicated worker thread. Before a record is
 queued, femtologging captures the producer's `contextvars` context and runs the
-wrapped handler's filters and formatters inside it. A `contextvars.ContextVar`
-therefore observes the value set by the log caller, even though the handler
-dispatch itself is asynchronous.
+wrapped handler's entire `handle()` call inside it, including its filters,
+formatters, and `emit()`. A `contextvars.ContextVar` therefore observes the
+value set by the log caller, even though the handler dispatch itself is
+asynchronous on the worker thread.
 
 **Limitations:**
 

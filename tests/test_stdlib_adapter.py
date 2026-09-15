@@ -38,14 +38,28 @@ class _LevelCase:
     handler_level: int | None = None
 
 
-def _wait_for(predicate: cabc.Callable[[], bool], timeout: float = 1.0) -> bool:
-    """Poll *predicate* until it succeeds or the deadline expires."""
+def _poll_until(predicate: cabc.Callable[[], bool], timeout: float) -> bool:
+    """Poll *predicate* with a monotonic deadline and make one final check."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             return True
         time.sleep(0.01)
     return predicate()
+
+
+def _wait_for(predicate: cabc.Callable[[], bool], timeout: float = 1.0) -> bool:
+    """Return whether *predicate* succeeds before the deadline."""
+    return bool(_poll_until(predicate, timeout))
+
+
+def _assert_eventually(
+    predicate: cabc.Callable[[], bool],
+    message: str,
+    timeout: float = 1.0,
+) -> None:
+    """Assert that *predicate* succeeds before the monotonic deadline."""
+    assert _wait_for(predicate, timeout), message
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -233,8 +247,9 @@ class TestContextVarPropagation:
         finally:
             _REQUEST_ID.reset(token)
 
-        assert _wait_for(lambda: "cid=REQ-42 via adapter" in probe.stream.getvalue()), (
-            f"filter did not observe producer context: {probe.stream.getvalue()!r}"
+        _assert_eventually(
+            lambda: "cid=REQ-42 via adapter" in probe.stream.getvalue(),
+            f"filter did not observe producer context: {probe.stream.getvalue()!r}",
         )
         assert logger.flush_handlers(), "logger worker did not flush"
 
@@ -280,8 +295,9 @@ class TestContextVarPropagation:
         for thread in threads:
             thread.join()
 
-        assert _wait_for(lambda: len(observed) == len(expected)), (
-            f"expected {len(expected)} filter invocations, got {observed!r}"
+        _assert_eventually(
+            lambda: len(observed) == len(expected),
+            f"expected {len(expected)} filter invocations, got {observed!r}",
         )
         assert logger.flush_handlers(), "logger worker did not flush"
         assert dict(observed) == expected, (
