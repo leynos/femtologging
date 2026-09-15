@@ -429,15 +429,18 @@ for the decision and its rationale.
 
 Clippy cannot see an attribute that switches its own lint off, so
 `rust_extension/tests/env_policy_source_scan.rs` reads the crate's sources and
-rejects any suppression of the policy. It governs three roots under
-`rust_extension`: `src`, `tests` and `benches`. Each must open and yield at
-least one `.rs` file; a root that cannot be read is a failure, not an empty
-result.
+rejects any suppression of the policy; its machinery lives in
+`rust_extension/tests/test_utils/source_scan.rs` and the modules beside it.
+It governs three roots under `rust_extension`: `src`, `tests`, and `benches`.
+Each must open and yield at least one `.rs` file; a root that cannot be read
+is a failure, not an empty result.
 
 Run it with `cargo test --manifest-path rust_extension/Cargo.toml
 --no-default-features --test env_policy_source_scan`, or as part of
 `make test`. It needs four development dependencies, all declared in
 `rust_extension/Cargo.toml`:
+
+*Table: Development dependencies the source scan needs.*
 
 | Crate | Why it is needed |
 | --- | --- |
@@ -463,6 +466,11 @@ paths are written out. And an `include!` is refused unless its target is a
 literal `.rs` path, since `rustc` parses an included file as Rust whatever its
 extension; `include_str!` and `include_bytes!` embed bytes and are not
 inclusions.
+
+The walk covers a `macro_rules!` transcriber, not the arguments of an ordinary
+invocation, which the macro it is handed to may discard. The forwarded-path
+rule is what makes that narrowing safe: any attribute a macro emits has to be
+written in a transcriber first.
 
 The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
 cannot tell an attribute from attribute-shaped text in a string or a doc

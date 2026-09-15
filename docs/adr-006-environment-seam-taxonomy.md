@@ -173,6 +173,12 @@ crate's own builders use twice. Only the path counts, so `#[doc = $text]` and
 `#[derive($traits)]` report nothing however much of their argument is
 forwarded.
 
+Only a `macro_rules!` transcriber is walked, not the arguments of an ordinary
+invocation. An attribute handed to a macro that discards it never reaches the
+compiler, and a contract that reports a false positive gets switched off.
+Narrowing the walk is safe only because the forwarded-path rule above catches
+the definition any emitted attribute has to pass through.
+
 Nor need the suppression be in the file at all. `rustc` parses an `include!`
 target as Rust whatever its extension, so an `allow` inside a `.rs.txt`
 fixture silences the calls around the inclusion while an enclosing `expect`
