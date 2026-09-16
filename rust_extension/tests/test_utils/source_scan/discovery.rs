@@ -8,7 +8,10 @@
 use std::collections::VecDeque;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{ambient_authority, fs_utf8::Dir};
+use cap_std::{
+    ambient_authority,
+    fs_utf8::{Dir, DirEntry},
+};
 
 use super::SOURCE_EXTENSION;
 
@@ -74,28 +77,55 @@ pub(crate) fn rust_sources(
             .map_err(|error| format!("read {prefix}: {error}"))?;
         for candidate in entries {
             let entry = candidate.map_err(|error| format!("entry under {prefix}: {error}"))?;
-            let name = entry
-                .file_name()
-                .map_err(|error| format!("name under {prefix}: {error}"))?;
-            let path = prefix.join(&name);
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("type of {path}: {error}"))?;
-            if file_type.is_dir() {
-                if !is_walkable(&name) {
-                    continue;
-                }
-                let child = current
-                    .open_dir(&name)
-                    .map_err(|error| format!("open {path}: {error}"))?;
-                pending.push_back((child, path));
-            } else if path.extension() == Some(SOURCE_EXTENSION) {
-                let contents = current
-                    .read_to_string(&name)
-                    .map_err(|error| format!("read {path}: {error}"))?;
-                sources.push((path, contents));
+            match classify(&current, &prefix, &entry)? {
+                Found::Directory(child, path) => pending.push_back((child, path)),
+                Found::Source(path, contents) => sources.push((path, contents)),
+                Found::Ignored => {}
             }
         }
     }
     Ok(sources)
+}
+
+/// What one directory entry turned out to be.
+enum Found {
+    /// A directory to walk, with its handle and path.
+    Directory(Dir, Utf8PathBuf),
+    /// A Rust source, with its path and contents.
+    Source(Utf8PathBuf, String),
+    /// Anything the walk does not read: build output, tool state, or a file
+    /// that is not Rust source.
+    Ignored,
+}
+
+/// Classify one directory entry, reading it if it is a Rust source.
+///
+/// Split out from [`rust_sources`] so the walk reads as a walk. Naming the
+/// entry, asking its type, opening a directory and reading a file are four
+/// more fallible steps that otherwise sit between the loop and the one
+/// decision it makes.
+fn classify(current: &Dir, prefix: &Utf8Path, entry: &DirEntry) -> Result<Found, String> {
+    let name = entry
+        .file_name()
+        .map_err(|error| format!("name under {prefix}: {error}"))?;
+    let path = prefix.join(&name);
+    let file_type = entry
+        .file_type()
+        .map_err(|error| format!("type of {path}: {error}"))?;
+    if file_type.is_dir() {
+        if !is_walkable(&name) {
+            return Ok(Found::Ignored);
+        }
+        let child = current
+            .open_dir(&name)
+            .map_err(|error| format!("open {path}: {error}"))?;
+        return Ok(Found::Directory(child, path));
+    }
+    if path.extension() != Some(SOURCE_EXTENSION) {
+        return Ok(Found::Ignored);
+    }
+    let contents = current
+        .read_to_string(&name)
+        .map_err(|error| format!("read {path}: {error}"))?;
+    Ok(Found::Source(path, contents))
 }

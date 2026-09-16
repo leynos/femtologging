@@ -72,6 +72,8 @@ use syn::visit::Visit;
 pub(crate) mod discovery;
 #[path = "source_scan/inclusion.rs"]
 mod inclusion;
+#[path = "source_scan/matcher.rs"]
+mod matcher;
 #[path = "source_scan/meta.rs"]
 mod meta;
 #[path = "source_scan/tokens.rs"]

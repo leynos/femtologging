@@ -7,7 +7,7 @@
 //! 400-line module limit and separates what the scan refuses from the evidence
 //! that it refuses it.
 
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use proptest::prelude::*;
 use rstest::rstest;
 
@@ -99,22 +99,8 @@ use source_scan::{
 #[test]
 fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
     let sources = crate_sources()?;
-    for required in SOURCE_ROOTS {
-        if !sources.iter().any(|(path, _)| is_under(path, required)) {
-            return Err(format!(
-                "the walk should reach {required}, saw {} sources",
-                sources.len()
-            ));
-        }
-    }
-    let mut offences = Vec::new();
-    for (path, contents) in &sources {
-        for finding in
-            suppressed_lints(path, contents).map_err(|error| format!("{path}: {error}"))?
-        {
-            offences.push(format!("{path} {finding}"));
-        }
-    }
+    every_root_is_represented(&sources)?;
+    let offences = policy_offences(&sources)?;
     if offences.is_empty() {
         return Ok(());
     }
@@ -132,6 +118,37 @@ fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
 /// that depends on where the file sits is exercised somewhere real. An
 /// `include!` in a fixture therefore resolves against `src`.
 const FIXTURE_PATH: &str = "src/fixture.rs";
+
+/// Check that each named root is represented among the sources walked.
+///
+/// The tripwire half of [`no_source_file_suppresses_a_policy_lint`], stated
+/// apart from the offence search so each reads as the one question it asks.
+fn every_root_is_represented(sources: &[(Utf8PathBuf, String)]) -> Result<(), String> {
+    for required in SOURCE_ROOTS {
+        if !sources.iter().any(|(path, _)| is_under(path, required)) {
+            return Err(format!(
+                "the walk should reach {required}, saw {} sources",
+                sources.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Return every protected-lint suppression across the walked sources.
+fn policy_offences(sources: &[(Utf8PathBuf, String)]) -> Result<Vec<String>, String> {
+    let mut offences = Vec::new();
+    for (path, contents) in sources {
+        let findings =
+            suppressed_lints(path, contents).map_err(|error| format!("{path}: {error}"))?;
+        offences.extend(
+            findings
+                .into_iter()
+                .map(|finding| format!("{path} {finding}")),
+        );
+    }
+    Ok(offences)
+}
 
 /// Return whether `path` sits under the directory named `root`.
 ///
