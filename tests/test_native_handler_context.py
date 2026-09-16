@@ -8,6 +8,8 @@ import threading
 import time
 import typing as typ
 
+import pytest
+
 from femtologging import (
     FemtoHandler,
     FemtoLogger,
@@ -90,36 +92,50 @@ def _assert_file_handler_context(
         logger.clear_handlers()
 
 
-def test_python_registered_file_handler_preserves_context(tmp_path: Path) -> None:
-    """A Python-registered file handler must persist scoped context."""
-    path = tmp_path / "file.log"
-    handler = FileHandlerBuilder(str(path)).with_formatter(_format_context).build()
-
-    _assert_file_handler_context(path, handler, "native.context.file")
-
-
-def test_python_registered_rotating_handler_preserves_context(tmp_path: Path) -> None:
-    """A Python-registered rotating handler must persist scoped context."""
-    path = tmp_path / "rotating.log"
-    handler = (
-        RotatingFileHandlerBuilder(str(path)).with_formatter(_format_context).build()
-    )
-
-    _assert_file_handler_context(path, handler, "native.context.rotating")
-
-
-def test_python_registered_timed_rotating_handler_preserves_context(
+@pytest.mark.parametrize(
+    ("factory", "filename", "logger_name"),
+    [
+        pytest.param(
+            lambda path: (
+                FileHandlerBuilder(str(path)).with_formatter(_format_context).build()
+            ),
+            "file.log",
+            "native.context.file",
+            id="file",
+        ),
+        pytest.param(
+            lambda path: (
+                RotatingFileHandlerBuilder(str(path))
+                .with_formatter(_format_context)
+                .build()
+            ),
+            "rotating.log",
+            "native.context.rotating",
+            id="rotating",
+        ),
+        pytest.param(
+            lambda path: (
+                TimedRotatingFileHandlerBuilder(str(path))
+                .with_formatter(_format_context)
+                .build()
+            ),
+            "timed.log",
+            "native.context.timed",
+            id="timed-rotating",
+        ),
+    ],
+)
+def test_python_registered_file_handlers_preserve_context(
     tmp_path: Path,
+    factory: cabc.Callable[[Path], FemtoHandler],
+    filename: str,
+    logger_name: str,
 ) -> None:
-    """A Python-registered timed handler must persist scoped context."""
-    path = tmp_path / "timed.log"
-    handler = (
-        TimedRotatingFileHandlerBuilder(str(path))
-        .with_formatter(_format_context)
-        .build()
-    )
+    """Python-registered file-handler variants must persist scoped context."""
+    path = tmp_path / filename
+    handler = factory(path)
 
-    _assert_file_handler_context(path, handler, "native.context.timed")
+    _assert_file_handler_context(path, handler, logger_name)
 
 
 class _HTTPContextCaptureHandler(http.server.BaseHTTPRequestHandler):
