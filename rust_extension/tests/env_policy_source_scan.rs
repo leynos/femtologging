@@ -8,8 +8,10 @@
 //! that it refuses it.
 
 use camino::{Utf8Path, Utf8PathBuf};
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use proptest::prelude::*;
 use rstest::rstest;
+use tempfile::TempDir;
 
 // The path is relative to this file's own directory, `tests/`.
 #[path = "test_utils/source_scan.rs"]
@@ -96,6 +98,49 @@ use source_scan::{
 /// - comparing the rendered path with `ends_with(".rs")` fails
 ///   `include_of_a_bare_extension`, since `.rs` ends with `.rs` while naming a
 ///   file the walk never collects.
+///
+/// Six further routes were closed on 2026-09-16, each raised in review against
+/// a measured evasion. Each is proved in both directions, every mutation
+/// applied alone, run through the build and reverted, because a rule that
+/// reaches nothing and a rule that reaches everything both pass a one-sided
+/// proof:
+///
+/// - an unreadable `allow` argument list. Returning an empty lint list on a
+///   parse failure, which is what the scan did, fails `forwarded_lint_name`;
+///   returning every protected lint for a list that *did* parse fails this
+///   test on the crate's own sources and the benign fixture with it;
+/// - an item-scoped `expect` without a reason. Exempting every item-scoped
+///   `expect`, which is what the scan did, fails
+///   `item_scoped_expect_without_a_reason` and
+///   `item_scoped_expect_with_a_blank_reason`; judging every `expect`
+///   whatever its scope and reason fails this test and the benign fixture, on
+///   the two sanctioned reasoned forms; accepting a blank reason fails
+///   `item_scoped_expect_with_a_blank_reason` alone, which is why the reason
+///   is trimmed before it is weighed;
+/// - an identifier merely named `env`. Treating any such identifier as an
+///   environment access, which is what the scan did, fails the benign fixture
+///   on `takes_an_env`, a doc-forwarding arm over a parameter named `env`;
+///   treating an arm as never writing an access fails
+///   `forwarded_attribute_path`, whose transcriber writes `std::env::var`
+///   itself and forwards a `meta` that carries no code;
+/// - a code fragment declared inside a repetition. Reading the matcher only at
+///   its top level, which is what the scan did, fails
+///   `forwarded_over_a_repeated_item`; counting an `ident` among the
+///   code-carrying fragments fails this test and the benign fixture, on the
+///   `option_setter` idiom this crate's own builders use twice;
+/// - an `include!` target that resolves somewhere the walk never reaches.
+///   Accepting any `.rs` extension, which is what the scan did, fails
+///   `include_under_a_dot_directory`, `include_under_build_output`,
+///   `include_above_the_crate` and `include_of_an_absolute_path`; judging the
+///   target's own file name as well as the directories it passes through
+///   fails the benign fixture on `include!(".hidden.rs")`, a dot-prefixed file
+///   the walk does collect;
+/// - an ordinary macro invocation's arguments. Descending into every group,
+///   which is what the scan did, fails the benign fixture on `quoted!`, whose
+///   `stringify!` argument becomes a string, and `discards!`, whose argument
+///   is thrown away; descending into none fails `macro_within_macro`,
+///   `forwarded_over_a_repeated_item` and the generated-wrapping property,
+///   whose attributes sit inside a nested transcriber.
 #[test]
 fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
     let sources = crate_sources()?;
@@ -517,4 +562,80 @@ proptest! {
         let found = suppressed_lints(Utf8Path::new(FIXTURE_PATH), &source).map_err(TestCaseError::fail)?;
         prop_assert!(!found.is_empty(), "the scan must report {source:?}");
     }
+}
+
+/// Build a crate-shaped tree and return the paths the walk collects from it.
+///
+/// A real directory rather than an inline fixture, because what is under test
+/// is the traversal itself: which directories it enters and which files it
+/// reads. The crate's own sources cannot discriminate the rule, since it has
+/// no Cargo target outside the three named roots and builds into a target
+/// directory outside itself, so the shapes have to be built.
+///
+/// Written through a `cap_std` handle for the same reason the walk reads
+/// through one: the repository's Dylint suite disallows `std::fs`.
+fn walked_paths() -> Result<Vec<String>, String> {
+    let held = TempDir::new().map_err(|error| format!("temporary directory: {error}"))?;
+    let root = Utf8Path::from_path(held.path()).ok_or("temporary path is not UTF-8")?;
+    let directory = Dir::open_ambient_dir(root, ambient_authority())
+        .map_err(|error| format!("open temporary directory: {error}"))?;
+    for (parent, name) in [
+        ("src", "lib.rs"),
+        ("examples", "probe.rs"),
+        ("target", "generated.rs"),
+        (".generated", "bypass.rs"),
+    ] {
+        directory
+            .create_dir(parent)
+            .map_err(|error| format!("create {parent}: {error}"))?;
+        directory
+            .write(format!("{parent}/{name}"), "fn f() {}\n")
+            .map_err(|error| format!("write {parent}/{name}: {error}"))?;
+    }
+    let mut paths: Vec<String> = rust_sources(root, "")?
+        .into_iter()
+        .map(|(path, _)| path.to_string())
+        .collect();
+    paths.sort();
+    Ok(paths)
+}
+
+/// Scenario: the walk is pointed at a crate holding a Cargo target outside the
+/// named roots, build output, and a dot-prefixed directory.
+///
+/// Invariant: it reads the sources and the added target, and neither the build
+/// output nor the tool state. `lint-env-policy` passes `--all-targets`, which
+/// compiles an `examples` target when one exists, so a walk restricted to
+/// [`SOURCE_ROOTS`] would leave every example ungoverned; and a walk that
+/// entered `target` would scan generated code the policy does not govern.
+///
+/// This is the only place either direction can fail, because the crate holds
+/// no Rust file outside `src`, `tests` and `benches`: every other assertion in
+/// this file reads the crate's own sources and cannot tell a walk of the whole
+/// crate from a walk of the three roots.
+///
+/// Mutation proof (2026-09-16), each applied alone, run through the build and
+/// reverted:
+///
+/// - letting `is_walkable` accept `target` fails this test on
+///   `target/generated.rs`, the `build_output` case above, and
+///   `include_under_build_output`, which judges an inclusion target by the
+///   same function;
+/// - removing the traversal's descent into a directory outside the named roots
+///   is not expressible against the crate as it stands. Collecting the
+///   [`SOURCE_ROOTS`] one at a time instead of walking the crate directory,
+///   the shape the scan shipped with, was run and passed everything: with no
+///   Cargo target outside those three, the two walks read exactly the same
+///   files. The difference is latent until an `examples` target is added,
+///   which is what this test builds and reads.
+#[test]
+fn the_walk_reads_an_added_target_and_neither_build_output_nor_tool_state() -> Result<(), String> {
+    let found = walked_paths()?;
+    let expected = ["examples/probe.rs", "src/lib.rs"];
+    if found == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "expected the walk to read {expected:?}, it read {found:?}"
+    ))
 }
