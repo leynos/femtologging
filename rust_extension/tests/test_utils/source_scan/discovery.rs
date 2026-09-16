@@ -12,8 +12,36 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 
 use super::SOURCE_EXTENSION;
 
-/// Directories under the crate holding Rust sources the policy governs.
+/// Directories the walk expects to find sources under.
+///
+/// These are not a filter. The walk starts at the crate directory and reads
+/// every `.rs` file it can reach, so a Cargo target added outside them is
+/// governed like anything else. They are a tripwire: a walk that silently
+/// returned nothing, or stopped at the first directory, reports a failure
+/// rather than a clean crate.
+///
+/// An earlier draft used them as the list of places to read. `lint-env-policy`
+/// passes `--all-targets`, which compiles an `examples` target if one exists,
+/// and no list written in advance governs a directory nobody has added yet.
 pub(crate) const SOURCE_ROOTS: [&str; 3] = ["src", "tests", "benches"];
+
+/// Directory names the walk does not descend into.
+///
+/// `target` holds build output, and a dot-prefixed name holds tool state such
+/// as `.git`. Neither is a place a contributor writes a source Cargo compiles.
+/// Everything else is walked, so an example, a build script or a second binary
+/// is read wherever it is added.
+pub(crate) fn is_walkable(name: &str) -> bool {
+    !name.starts_with('.') && name != "target"
+}
+
+/// Read every `.rs` file in the crate, wherever it sits.
+///
+/// This is what the policy scan reads. `rust_sources` remains for the
+/// per-root coverage assertions, which name a directory deliberately.
+pub(crate) fn crate_sources() -> Result<Vec<(Utf8PathBuf, String)>, String> {
+    rust_sources(&crate_dir(), "")
+}
 
 /// Return the crate directory, which holds every governed source.
 pub(crate) fn crate_dir() -> Utf8PathBuf {
@@ -54,6 +82,9 @@ pub(crate) fn rust_sources(
                 .file_type()
                 .map_err(|error| format!("type of {path}: {error}"))?;
             if file_type.is_dir() {
+                if !is_walkable(&name) {
+                    continue;
+                }
                 let child = current
                     .open_dir(&name)
                     .map_err(|error| format!("open {path}: {error}"))?;

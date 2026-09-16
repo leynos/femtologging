@@ -7,6 +7,7 @@
 //! 400-line module limit and separates what the scan refuses from the evidence
 //! that it refuses it.
 
+use camino::Utf8Path;
 use proptest::prelude::*;
 use rstest::rstest;
 
@@ -14,7 +15,10 @@ use rstest::rstest;
 #[path = "test_utils/source_scan.rs"]
 mod source_scan;
 
-use source_scan::{PROTECTED_LINTS, SOURCE_ROOTS, crate_dir, rust_sources, suppressed_lints};
+use source_scan::{
+    PROTECTED_LINTS, SOURCE_ROOTS, crate_dir, crate_sources, is_walkable, rust_sources,
+    suppressed_lints,
+};
 
 /// Scenario: a source file switches the policy lint off for itself.
 ///
@@ -94,15 +98,19 @@ use source_scan::{PROTECTED_LINTS, SOURCE_ROOTS, crate_dir, rust_sources, suppre
 ///   file the walk never collects.
 #[test]
 fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
-    let crate_dir = crate_dir();
+    let sources = crate_sources()?;
+    for required in SOURCE_ROOTS {
+        if !sources.iter().any(|(path, _)| is_under(path, required)) {
+            return Err(format!(
+                "the walk should reach {required}, saw {} sources",
+                sources.len()
+            ));
+        }
+    }
     let mut offences = Vec::new();
-    for root in SOURCE_ROOTS {
-        for (path, contents) in rust_sources(&crate_dir.join(root), root)? {
-            for finding in
-                suppressed_lints(&contents).map_err(|error| format!("{path}: {error}"))?
-            {
-                offences.push(format!("{path} {finding}"));
-            }
+    for (path, contents) in &sources {
+        for finding in suppressed_lints(contents).map_err(|error| format!("{path}: {error}"))? {
+            offences.push(format!("{path} {finding}"));
         }
     }
     if offences.is_empty() {
@@ -113,6 +121,49 @@ fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
          item-scoped expect with a reason instead, which is the one sanctioned \
          form: {}",
         offences.join("; ")
+    ))
+}
+
+/// Return whether `path` sits under the directory named `root`.
+///
+/// The first component is compared rather than a string prefix, because the
+/// walk joins with the platform separator: on Windows every path reads
+/// `src\config\mod.rs`, and a `starts_with("src/")` test would match nothing
+/// there while matching here.
+fn is_under(path: &Utf8Path, root: &str) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|component| component.as_str() == root)
+}
+
+/// Scenario: the walk is asked which directory names it descends into.
+///
+/// Invariant: everything except build output and tool state. The walk reads
+/// the whole crate, so what it refuses to enter is the whole of what it
+/// cannot govern, and that is worth stating directly: nothing else in this
+/// file can fail the rule, because this worktree builds into a target
+/// directory outside the crate and has no dot-prefixed directory under it.
+///
+/// A guard no test can fail is a comment. Both directions are named here: a
+/// rule that let `target` through would read every generated source under it,
+/// and a rule that refused an ordinary directory would stop governing real
+/// code.
+#[rstest]
+#[case::sources("src", true)]
+#[case::an_added_target("examples", true)]
+#[case::build_output("target", false)]
+#[case::version_control(".git", false)]
+#[case::tool_state(".cargo", false)]
+fn the_walk_descends_into_everything_but_build_output_and_tool_state(
+    #[case] name: &str,
+    #[case] walkable: bool,
+) -> Result<(), String> {
+    if is_walkable(name) == walkable {
+        return Ok(());
+    }
+    Err(format!(
+        "expected is_walkable({name:?}) to be {walkable}, got {}",
+        is_walkable(name)
     ))
 }
 
@@ -134,17 +185,17 @@ const EXPECTED_SOURCES: [(&str, &str); 3] = [
 /// path: it fails only on a non-empty offence list, so a root that yielded
 /// nothing would report success having read nothing at all.
 ///
-/// Mutation proof (2026-09-14), each applied alone, run through the build and
-/// reverted:
+/// Mutation proof, each applied alone, run through the build and reverted:
 ///
-/// - renaming `SOURCE_ROOTS`' `benches` entry to `benchmarks` fails
-///   [`no_source_file_suppresses_a_policy_lint`] with
-///   `open benchmarks: No such file or directory`. Before [`rust_sources`]
-///   stopped swallowing the open failure, the same mutation passed;
-/// - stopping the walk from descending into subdirectories fails this test's
-///   `src` case with `src did not yield src/config/mod.rs`, and nothing else
-///   in the file notices. That is why the named source is nested rather than
-///   `src/lib.rs`.
+/// - (2026-09-16) making the walk refuse `benches` fails
+///   [`no_source_file_suppresses_a_policy_lint`] with `the walk should reach
+///   benches, saw 181 sources`. The roots are a tripwire on the whole-crate
+///   walk now rather than the list of places it reads, so this is where a
+///   root going unread is caught;
+/// - (2026-09-14) stopping the walk from descending into subdirectories fails
+///   this test's `src` case with `src did not yield src/config/mod.rs`, and
+///   nothing else in the file notices. That is why the named source is nested
+///   rather than `src/lib.rs`.
 #[rstest]
 #[case::src(0)]
 #[case::tests(1)]

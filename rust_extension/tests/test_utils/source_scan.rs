@@ -83,7 +83,7 @@ mod tokens;
 /// the scan never reads, whatever the inclusion looks like.
 pub(crate) const SOURCE_EXTENSION: &str = "rs";
 
-pub(crate) use discovery::{SOURCE_ROOTS, crate_dir, rust_sources};
+pub(crate) use discovery::{SOURCE_ROOTS, crate_dir, crate_sources, is_walkable, rust_sources};
 
 use meta::suppressed_by;
 use tokens::AttributeCollector;
