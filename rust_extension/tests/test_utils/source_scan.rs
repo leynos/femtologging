@@ -70,6 +70,8 @@ use syn::visit::Visit;
 // Paths are relative to this file's own directory, `tests/test_utils/`.
 #[path = "source_scan/discovery.rs"]
 pub(crate) mod discovery;
+#[path = "source_scan/inclusion.rs"]
+mod inclusion;
 #[path = "source_scan/meta.rs"]
 mod meta;
 #[path = "source_scan/tokens.rs"]
