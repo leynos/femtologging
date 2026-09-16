@@ -233,7 +233,12 @@ fn every_governed_root_yields_its_sources(#[case] index: usize) -> Result<(), St
 /// emitting
 /// `#[allow(dead_code, ...)]` names no protected lint; `discards!` is handed
 /// an attribute by an invocation and throws it away, which is why only a
-/// `macro_rules!` transcriber is walked; `include_str!` and `include_bytes!`
+/// `macro_rules!` transcriber is walked; `quoted!` writes an attribute inside
+/// `stringify!`, whose argument becomes a string rather than an attribute, so
+/// the walk does not descend into an ordinary invocation's arguments;
+/// `takes_an_env` forwards the doc idiom over a parameter *named* `env`, which
+/// is not an environment access and must not make the arm reachable;
+/// `include_str!` and `include_bytes!`
 /// embed bytes rather than compiling source; and the three `include!` calls
 /// name `.rs` paths the scan reads in their own right, written plainly, as a
 /// raw string and with the dot escaped, because the rule judges what the
@@ -262,6 +267,10 @@ macro_rules! derived { ($traits:path) => { #[derive($traits)] pub struct Held; }
 macro_rules! generated { () => { #[allow(dead_code, reason = "generated")] fn unused() {} }; }
 macro_rules! discards { ($ignored:tt) => {}; }
 discards!(#[allow(clippy::all)]);
+macro_rules! quoted { () => { stringify!(#[allow(clippy::all)]) }; }
+macro_rules! takes_an_env { ($(#[$meta:meta])* $name:ident) => {
+    $(#[$meta])* pub fn $name(env: &str) -> usize { env.len() }
+}; }
 const EMBEDDED: &str = include_str!("fixtures/env_policy_probe.rs.txt");
 const BYTES: &[u8] = include_bytes!("fixtures/table.dat");
 include!("fixtures/generated.rs");
@@ -362,6 +371,14 @@ include!("fixtures/escaped\x2Ers");
 #[case::item_scoped_expect_with_a_blank_reason(concat!(
     "#[expect(clippy::disallowed_methods, reason = \"   \")]\n",
     "fn f() { let _ = std::env::var(\"X\"); }"
+))]
+// A code fragment declared inside a repetition. The arm names no `env`
+// itself, and a matcher read only at its top level never sees the `item`, so
+// the forwarded attribute went unreported.
+#[case::forwarded_over_a_repeated_item(concat!(
+    "macro_rules! forward { ($(#[$attr:meta])? $($body:item)*) => {\n",
+    "    $(#[$attr])? $($body)*\n",
+    "}; }"
 ))]
 fn the_scan_follows_groups_and_cfg_attr(#[case] source: &str) -> Result<(), String> {
     if suppressed_lints(source)?.is_empty() {

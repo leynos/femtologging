@@ -107,17 +107,43 @@ fn macro_arms(stream: TokenStream) -> Vec<(TokenStream, TokenStream)> {
 /// doc-forwarding idiom below out of the findings.
 const CODE_FRAGMENTS: [&str; 5] = ["item", "block", "stmt", "expr", "tt"];
 
-/// Return whether `stream` names the `env` module at any depth.
+/// Return whether `stream` writes an environment access at any depth.
 ///
 /// The call the arm writes sits inside the item's block, which is one group
 /// down, so the search recurses. Reading only the top level found nothing and
 /// let the route through.
+///
+/// `env` alone is not an access. An earlier draft matched any identifier of
+/// that name, so `fn build(env: &str)` entered the environment branch and a
+/// forwarded attribute over it became a finding the arm had not earned. What
+/// makes it an access is what follows: `env::var` and `std::env::var` read the
+/// module, and `env!` and `option_env!` read the environment at compile time.
+/// A parameter, a field or a local named `env` is followed by a single colon,
+/// a comma or a closing delimiter, and none of those is a path or a macro.
 fn mentions_env(stream: &TokenStream) -> bool {
-    stream.clone().into_iter().any(|token| match token {
-        TokenTree::Ident(ident) => ident == "env",
+    let tokens: Vec<TokenTree> = stream.clone().into_iter().collect();
+    tokens.iter().enumerate().any(|(index, token)| match token {
+        TokenTree::Ident(ident) => {
+            (ident == "env" || ident == "option_env") && reads_the_module(&tokens, index)
+        }
         TokenTree::Group(group) => mentions_env(&group.stream()),
         TokenTree::Punct(_) | TokenTree::Literal(_) => false,
     })
+}
+
+/// Return whether the identifier at `index` is used as a path or a macro.
+///
+/// `env::var` is a path, and `env!("HOME")` is a macro; both read the
+/// environment. A `:` that is not part of a `::` introduces a type, which is
+/// how a parameter or a field named `env` is written, and is not an access.
+fn reads_the_module(tokens: &[TokenTree], index: usize) -> bool {
+    match tokens.get(index + 1) {
+        Some(TokenTree::Punct(punct)) if punct.as_char() == '!' => true,
+        Some(TokenTree::Punct(punct)) if punct.as_char() == ':' => {
+            matches!(tokens.get(index + 2), Some(TokenTree::Punct(next)) if next.as_char() == ':')
+        }
+        _ => false,
+    }
 }
 
 /// Return whether an arm could put a forwarded attribute over a policy call.
@@ -132,8 +158,24 @@ fn could_cover_a_policy_call(pattern: &TokenStream, transcriber: &TokenStream) -
     if mentions_env(transcriber) {
         return true;
     }
+    declares_code_fragment_anywhere(pattern)
+}
+
+/// Return whether a matcher declares a code-carrying fragment at any depth.
+///
+/// A repetition puts its specifier inside a group: `$($body:item)*` declares
+/// an `item` that a top-level read never sees. Reading only the matcher's own
+/// tokens therefore judged such an arm unreachable, and a forwarded attribute
+/// over the items its caller supplies produced no finding at all.
+fn declares_code_fragment_anywhere(pattern: &TokenStream) -> bool {
     let tokens: Vec<TokenTree> = pattern.clone().into_iter().collect();
-    (0..tokens.len()).any(|index| declares_code_fragment(&tokens, index))
+    if (0..tokens.len()).any(|index| declares_code_fragment(&tokens, index)) {
+        return true;
+    }
+    tokens.iter().any(|token| match token {
+        TokenTree::Group(group) => declares_code_fragment_anywhere(&group.stream()),
+        _ => false,
+    })
 }
 
 /// Return whether a fragment specifier at `index` names something that can
@@ -204,11 +246,42 @@ fn foreign_inclusion(tokens: &TokenStream) -> Option<String> {
 fn collect_from_tokens(stream: TokenStream, reachable: bool, collector: &mut AttributeCollector) {
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
     for (index, token) in tokens.iter().enumerate() {
-        if let TokenTree::Group(group) = token {
+        if let TokenTree::Group(group) = token
+            && !is_invocation_argument(&tokens, index)
+        {
             collect_from_tokens(group.stream(), reachable, collector);
         }
         record_attribute(&tokens, index, reachable, collector);
     }
+}
+
+/// Return whether the group at `index` is an ordinary macro's argument list.
+///
+/// A macro decides what its arguments become, and some of them become nothing
+/// that carries policy: `stringify!(#[allow(clippy::all)])` emits a string, and
+/// `discards!(#[allow(...)] fn f() {})` emits whatever its own arms say. The
+/// tokens between the brackets are an argument, not an attribute, so reading
+/// them as one is a false positive the arm never wrote, and a contract that
+/// reports a false positive gets switched off.
+///
+/// An invocation is `ident !` then a delimited group.
+///
+/// A `macro_rules!` definition needs no exception. Its name sits between the
+/// bang and the body, so the body is preceded by that name rather than by `!`
+/// and is never read as an argument group. An exception for it was written
+/// first and removed: no fixture could fail its absence, and a branch nothing
+/// can fail is a comment that looks like a rule.
+fn is_invocation_argument(tokens: &[TokenTree], index: usize) -> bool {
+    let Some(TokenTree::Punct(bang)) = index.checked_sub(1).and_then(|at| tokens.get(at)) else {
+        return false;
+    };
+    if bang.as_char() != '!' {
+        return false;
+    }
+    matches!(
+        index.checked_sub(2).and_then(|at| tokens.get(at)),
+        Some(TokenTree::Ident(_))
+    )
 }
 
 /// Return the scope marker and bracketed group of the attribute at `index`.
