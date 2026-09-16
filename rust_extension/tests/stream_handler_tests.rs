@@ -216,14 +216,26 @@ fn stream_handler_drop_timeout() {
 /// Scenario: one caller emits a record and ends without reading it, then
 /// another asks for the logger.
 ///
-/// Invariant: the second caller sees an empty queue. `logtest::Logger` holds
-/// no state; the records live in a queue inside `logtest` that outlives the
-/// test that produced them, so a test asserting on an exact count would
-/// otherwise read an earlier test's output as its own. A test that panics
-/// part way through leaves exactly this residue.
+/// Invariant: the record the first caller left is gone. `logtest::Logger`
+/// holds no state; the records live in a queue inside `logtest` that outlives
+/// the test that produced them, so a test asserting on an exact count would
+/// otherwise read an earlier test's output as its own. A test that panics part
+/// way through leaves exactly this residue.
 ///
 /// Written as one test rather than two so it proves the drain without
 /// depending on the order the harness chooses.
+///
+/// The assertion names the marker rather than asking whether anything is left.
+/// The capture is process-wide and the mutex scopes only the callers that take
+/// it, so "the queue is empty" is a claim about every record the binary emits,
+/// while "the record I left is gone" is a claim about the drain. Only the
+/// second is this test's business.
+///
+/// Nothing emits alongside it in the lane that runs it: `heavy-tests` passes
+/// `-- --ignored`, which runs these three tests and no others, and they are
+/// `#[serial]`. Under `--include-ignored` the ordinary tests in this file run
+/// too and do emit, which is the measurement below. Naming the marker is what
+/// makes the test mean the same thing in both.
 ///
 /// `#[ignore]` for the same reason its two neighbours carry it. Installing
 /// the capture logger makes every record emitted anywhere in this process its
@@ -232,18 +244,33 @@ fn stream_handler_drop_timeout() {
 /// rate-limiting test three warnings where it requires two, because those
 /// tests are not serialized against it and emit while it counts. The three
 /// logger tests therefore share a lane in which nothing else runs.
+///
+/// Mutation proof (2026-09-16), each applied alone against
+/// `--no-default-features -- --ignored`, and reverted:
+///
+/// - removing the drain from `captured_log` fails this test, which reports the
+///   record it was handed back;
+/// - emitting one unrelated record between the drain and the assertion, which
+///   is what a caller outside the mutex does, passes. The assertion this
+///   replaced, that the queue was empty, fails on that same record, which is
+///   the flake it was carrying.
 #[rstest]
 #[serial]
 #[ignore]
 fn captured_log_hands_out_no_records_an_earlier_caller_left() {
+    const MARKER: &str = "left behind by a caller that never read it";
     {
         let _logger = captured_log();
-        log::warn!("left behind by a caller that never read it");
+        log::warn!("{MARKER}");
     }
     let mut logger = captured_log();
+    let stale = logger
+        .by_ref()
+        .find(|record| record.args().to_string().contains(MARKER));
     assert!(
-        logger.next().is_none(),
-        "captured_log must drain the records an earlier caller left behind"
+        stale.is_none(),
+        "captured_log must drain the records an earlier caller left behind, \
+         it handed back {stale:?}"
     );
 }
 
