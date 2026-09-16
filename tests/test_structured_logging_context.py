@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import typing as typ
+from contextlib import ExitStack
 from decimal import Decimal
 
-import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from femtologging import (
     FemtoLogger,
@@ -45,11 +48,11 @@ class RecordCollector:
 def emitted_key_values(
     logger: FemtoLogger, collector: RecordCollector
 ) -> dict[str, str]:
-    """Flush *logger* and return the structured fields on its latest record."""
+    """Return the structured fields on *logger*'s latest captured record."""
+    _ = logger
     for _ in range(20):
         if collector.records:
             break
-        logger.flush_handlers()
         time.sleep(0.01)
     assert collector.records, "expected at least one captured record"
     metadata = collector.records[-1].get("metadata")
@@ -59,6 +62,17 @@ def emitted_key_values(
         f"unexpected key_values payload: {key_values!r}"
     )
     return typ.cast("dict[str, str]", key_values)
+
+
+def assert_invalid_info_extra_rejected(
+    logger_name: str, extra: dict[str, str | int | float | bool | None]
+) -> None:
+    """Assert that ``logger.info`` rejects invalid ``extra`` before level filtering."""
+    logger = FemtoLogger(logger_name)
+    logger.set_level("ERROR")
+
+    with pytest.raises(TypeError, match="context values must be"):
+        logger.info("invalid", extra=extra)
 
 
 def test_direct_logger_info_merges_scoped_log_context() -> None:
@@ -152,17 +166,13 @@ def test_convenience_methods_accept_extra(method_name: str) -> None:
 
 def test_logger_info_rejects_invalid_extra_value_when_disabled() -> None:
     """Invalid ``extra`` must fail before the level gate can drop the record."""
-    logger = FemtoLogger("ctx.invalid-extra")
-    logger.set_level("ERROR")
-
-    with pytest.raises(TypeError, match="context values must be"):
-        logger.info(
-            "invalid",
-            extra=typ.cast(
-                "dict[str, str | int | float | bool | None]",
-                {"request_id": {"nested": "value"}},
-            ),
-        )
+    assert_invalid_info_extra_rejected(
+        "ctx.invalid-extra",
+        typ.cast(
+            "dict[str, str | int | float | bool | None]",
+            {"request_id": {"nested": "value"}},
+        ),
+    )
 
 
 class FloatConvertible:
@@ -173,21 +183,123 @@ class FloatConvertible:
         return 1.0
 
 
+class BoolConvertible:
+    """Expose ``__bool__`` without being a Python ``bool`` instance."""
+
+    def __bool__(self) -> bool:
+        """Return a truth value for protocol-based conversion callers."""
+        return True
+
+
 @pytest.mark.parametrize(
-    "invalid_value", [Decimal("1.5"), FloatConvertible(), np.bool_("true")]
+    "invalid_value", [Decimal("1.5"), FloatConvertible(), BoolConvertible()]
 )
 def test_logger_extra_rejects_protocol_convertible_values(
     invalid_value: object,
 ) -> None:
     """Only documented scalar instances may appear in ``extra`` fields."""
-    logger = FemtoLogger("ctx.invalid-scalar")
-    logger.set_level("ERROR")
+    assert_invalid_info_extra_rejected(
+        "ctx.invalid-scalar",
+        typ.cast(
+            "dict[str, str | int | float | bool | None]",
+            {"value": invalid_value},
+        ),
+    )
 
-    with pytest.raises(TypeError, match="context values must be"):
-        logger.info(
-            "invalid",
-            extra=typ.cast(
-                "dict[str, str | int | float | bool | None]",
-                {"value": invalid_value},
-            ),
+
+def test_log_context_leaks_between_asyncio_tasks_on_one_thread() -> None:
+    """Scoped context follows the thread, rather than asyncio task, until #433."""
+    logger = FemtoLogger("ctx.asyncio-thread-local")
+    logger.set_level("INFO")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    async def interleave_contexts() -> None:
+        """Force two request contexts to overlap on the event-loop thread."""
+        first_entered = asyncio.Event()
+        second_entered = asyncio.Event()
+        first_emitted = asyncio.Event()
+
+        async def emit_first_request() -> None:
+            """Emit after the second task pushes its context frame."""
+            with log_context(correlation_id="first"):
+                first_entered.set()
+                await second_entered.wait()
+                logger.info("first request")
+                first_emitted.set()
+
+        async def emit_second_request() -> None:
+            """Emit after the first task has popped the shared top frame."""
+            await first_entered.wait()
+            with log_context(correlation_id="second"):
+                second_entered.set()
+                await first_emitted.wait()
+                logger.info("second request")
+
+        await asyncio.gather(emit_first_request(), emit_second_request())
+
+    try:
+        asyncio.run(interleave_contexts())
+        deadline = time.monotonic() + 2
+        while len(collector.records) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        observed_key_values = [
+            typ.cast("dict[str, object]", record["metadata"])["key_values"]
+            for record in collector.records
+        ]
+        assert observed_key_values == [
+            {"correlation_id": "second"},
+            {"correlation_id": "first"},
+        ], "thread-local context did not expose the controlled task interference"
+    finally:
+        logger.remove_handler(collector)
+
+
+@pytest.fixture(scope="module")
+def fixture_property_logger() -> cabc.Iterator[FemtoLogger]:
+    """Provide one isolated logger worker for generated merge examples."""
+    logger = FemtoLogger("ctx.generated-merge")
+    logger.set_level("INFO")
+    try:
+        yield logger
+    finally:
+        logger.clear_handlers()
+
+
+_CONTEXT_KEYS = st.sampled_from(("request_id", "region", "tenant", "user"))
+_CONTEXT_VALUES = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", max_size=24)
+_CONTEXT_MAP = st.dictionaries(
+    keys=_CONTEXT_KEYS,
+    values=_CONTEXT_VALUES,
+    max_size=4,
+)
+
+
+@settings(max_examples=25, deadline=None)
+@given(
+    scoped_frames=st.lists(_CONTEXT_MAP, max_size=4),
+    explicit_fields=_CONTEXT_MAP,
+)
+def test_generated_context_merge_matches_last_write_wins_model(
+    fixture_property_logger: FemtoLogger,
+    scoped_frames: list[dict[str, str]],
+    explicit_fields: dict[str, str],
+) -> None:
+    """Scoped frames merge in order and inline fields override every collision."""
+    collector = RecordCollector()
+    fixture_property_logger.add_handler(collector)
+    expected: dict[str, str] = {}
+    try:
+        with ExitStack() as context_stack:
+            for frame in scoped_frames:
+                context_stack.enter_context(log_context(**frame))
+                expected.update(frame)
+            expected.update(explicit_fields)
+            fixture_property_logger.info("generated merge", extra=explicit_fields)
+
+        assert emitted_key_values(fixture_property_logger, collector) == expected, (
+            "generated scoped and inline fields did not follow last-write-wins"
         )
+    finally:
+        fixture_property_logger.flush_handlers()
+        fixture_property_logger.remove_handler(collector)
