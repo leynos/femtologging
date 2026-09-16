@@ -49,20 +49,20 @@ module pytest walks is executed as part of the suite. Before it was wired the
 suite collected 621 items and no examples; with it, 655. The 34 new items are
 the examples, and five of them were failing: `poll_file_for_text`,
 `capture_records`, `latest_key_values`, `AdapterProbe.capture` and
-`_sole_emitted_record` each opened with a name nothing bound, so each raised
-on its first execution. An example nobody executes is a comment that looks
-like evidence.
+`_sole_emitted_record` each opened with a name nothing bound, so each raised on
+its first execution. An example nobody executes is a comment that looks like
+evidence.
 
 Two rules follow from that.
 
 Write an example so it runs on its own. Bind every name it uses, and show a
-value rather than an assertion, so a wrong answer is a failure and not a
-silent pass.
+value rather than an assertion, so a wrong answer is a failure and not a silent
+pass.
 
 Skip an example only with a written reason beside it. `capture_records` is the
 one skipped here: running it would need a live logger, an emission through the
-process-wide macros, and a bounded wait on the worker that delivers the
-record, and an example that waits on a race is the shape
+process-wide macros, and a bounded wait on the worker that delivers the record,
+and an example that waits on a race is the shape
 [issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
 skipped example is inert text, never compiled, so it cannot be trusted the way
 an executed one can.
@@ -73,9 +73,9 @@ settings keep that import working. `pythonpath = ["scripts"]` in
 top-level modules, which is what `[tool.ty.environment] extra-paths` already
 records for type checking. `scripts/conftest.py` excludes
 `scripts/lint_rust_lanes.py`, whose dependencies live in its own `uv` script
-block and cannot be resolved from the project environment; `make
-lint-lanes-test` runs that script, and its examples, in the environment that
-can.
+block and cannot be resolved from the project environment;
+`make lint-lanes-test` runs that script, and its examples, in the environment
+that can.
 
 ## Typos spelling checker
 
@@ -465,12 +465,12 @@ for the decision and its rationale.
 Clippy cannot see an attribute that switches its own lint off, so
 `rust_extension/tests/env_policy_source_scan.rs` reads the crate's sources and
 rejects any suppression of the policy; its machinery lives in
-`rust_extension/tests/test_utils/source_scan.rs` and the modules beside it.
-The walk starts at the crate directory and reads every `.rs` file it can
-reach, so a build script, a bench, an example or a second binary is governed
-wherever it appears. `lint-env-policy` passes `--all-targets`, which compiles
-an `examples` target when one exists, and no list of directories written today
-governs one nobody has added yet.
+`rust_extension/tests/test_utils/source_scan.rs` and the modules beside it. The
+walk starts at the crate directory and reads every `.rs` file it can reach, so
+a build script, a bench, an example or a second binary is governed wherever it
+appears. `lint-env-policy` passes `--all-targets`, which compiles an `examples`
+target when one exists, and no list of directories written today governs one
+nobody has added yet.
 
 It skips `target` and every dot-prefixed directory, being build output and tool
 state rather than anywhere code Cargo compiles is written. `src`, `tests` and
@@ -479,19 +479,20 @@ represented among the sources the walk returned, so a walk that silently read
 nothing reports a failure instead of a clean crate. A directory that cannot be
 read is a failure, not an empty result.
 
-Run it with `cargo test --manifest-path rust_extension/Cargo.toml
---no-default-features --test env_policy_source_scan`, or as part of
-`make test`. It needs four development dependencies, all declared in
-`rust_extension/Cargo.toml`:
+Run it with
+`cargo test --manifest-path rust_extension/Cargo.toml
+--no-default-features --test env_policy_source_scan`,
+or as part of `make test`. It needs four development dependencies, all
+declared in `rust_extension/Cargo.toml`:
 
 *Table: Development dependencies the source scan needs.*
 
-| Crate | Why it is needed |
-| --- | --- |
-| `syn` | Parses each source and walks its attributes with a visitor |
+| Crate         | Why it is needed                                             |
+| ------------- | ------------------------------------------------------------ |
+| `syn`         | Parses each source and walks its attributes with a visitor   |
 | `proc-macro2` | Walks `macro_rules!` token streams, which `syn` keeps opaque |
-| `cap-std` | Reads sources through a capability-scoped directory handle |
-| `camino` | Carries the UTF-8 paths those handles return |
+| `cap-std`     | Reads sources through a capability-scoped directory handle   |
+| `camino`      | Carries the UTF-8 paths those handles return                 |
 
 Sources are read through a `cap_std` `fs_utf8::Dir` handle rather than
 `std::fs`, which the Dylint suite disallows, and each directory is opened
@@ -519,10 +520,10 @@ a bare `.rs` is a finding rather than an accepted target.
 
 A `.rs` extension alone is not enough. `include!(".generated/bypass.rs")` names
 a real Rust file under a directory the walk skips, so the target is resolved
-against the including source and every directory it passes through is judged
-by the same function the walk descends with. A target that climbs out of the
-crate is refused for the same reason. Only the directories are judged, because
-the walk selects a file by its extension alone and reads `.hidden.rs` like any
+against the including source and every directory it passes through is judged by
+the same function the walk descends with. A target that climbs out of the crate
+is refused for the same reason. Only the directories are judged, because the
+walk selects a file by its extension alone and reads `.hidden.rs` like any
 other.
 
 The walk covers a `macro_rules!` transcriber, not the arguments of an ordinary
@@ -540,9 +541,10 @@ name is not an access. And a fragment specifier is looked for at any depth, so
 
 An argument list the scan cannot read reports every protected lint rather than
 none. `#[allow($lint)]` in a transcriber is a list `syn` accepts and whose
-contents it cannot parse, and invoked as `suppress!(clippy::disallowed_methods)`
-it expands to a real suppression. Failing closed costs a contributor who writes
-an unreadable argument an explanation; failing open costs the policy.
+contents it cannot parse, and invoked as
+`suppress!(clippy::disallowed_methods)` it expands to a real suppression.
+Failing closed costs a contributor who writes an unreadable argument an
+explanation; failing open costs the policy.
 
 The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
 cannot tell an attribute from attribute-shaped text in a string or a doc

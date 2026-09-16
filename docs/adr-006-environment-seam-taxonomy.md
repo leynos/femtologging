@@ -141,8 +141,8 @@ contract stayed green and the policy lane exited 0.
 
 Scope decides whether an `expect` is the sanctioned form or a way round it. An
 item-scoped `#[expect(..., reason = "...")]` is sanctioned, and warns once the
-site grows a seam. A crate-scoped `#![expect(...)]` is not: one call anywhere in
-the crate fulfils it and every other goes unreported, and no unfulfilled
+site grows a seam. A crate-scoped `#![expect(...)]` is not: one call anywhere
+in the crate fulfils it and every other goes unreported, and no unfulfilled
 expectation is raised either, so nothing is left to notice. Measured: with that
 attribute at a crate root, the probe reports neither the disallowed method nor
 an unfulfilled expectation. The scan judges `expect` by scope, and a `cfg_attr`
@@ -154,8 +154,8 @@ are compared.
 
 The attribute need not sit where a reader can see it. An `allow` emitted from a
 `macro_rules!` arm is expanded and honoured by Clippy while `syn` keeps the
-arm's body an opaque token stream, so the scan walks macro token streams as well
-as parsed attributes. Measured: a macro arm emitting
+arm's body an opaque token stream, so the scan walks macro token streams as
+well as parsed attributes. Measured: a macro arm emitting
 `#[allow(clippy::disallowed_methods)]` around a `std::env::var` call reports
 zero diagnostics where the same file without it reports one.
 
@@ -167,11 +167,10 @@ carries no `#` for a walk to notice. Invoked as
 call the item contains. The scan refuses a forwarded path, but only where it
 could bear on the policy: at inner scope, which applies to everything around
 it, or where the arm either writes an `env` access itself or forwards a
-fragment the caller fills with code. That leaves the `$(#[$meta:meta])*`
-idiom for carrying doc comments onto a generated setter alone, which this
-crate's own builders use twice. Only the path counts, so `#[doc = $text]` and
-`#[derive($traits)]` report nothing however much of their argument is
-forwarded.
+fragment the caller fills with code. That leaves the `$(#[$meta:meta])*` idiom
+for carrying doc comments onto a generated setter alone, which this crate's own
+builders use twice. Only the path counts, so `#[doc = $text]` and
+`#[derive($traits)]` report nothing however much of their argument is forwarded.
 
 Only a `macro_rules!` transcriber is walked, not the arguments of an ordinary
 invocation. An attribute handed to a macro that discards it never reaches the
@@ -180,13 +179,13 @@ Narrowing the walk is safe only because the forwarded-path rule above catches
 the definition any emitted attribute has to pass through.
 
 Nor need the suppression be in the file at all. `rustc` parses an `include!`
-target as Rust whatever its extension, so an `allow` inside a `.rs.txt`
-fixture silences the calls around the inclusion while an enclosing `expect`
-stays fulfilled and warns about nothing. The scan cannot read the target,
-which need not exist when the scan runs, so the inclusion itself is the
-finding unless it names a literal `.rs` path, which is scanned in its own
-right. `include_str!` and `include_bytes!` embed bytes rather than compiling
-source and are not inclusions at all.
+target as Rust whatever its extension, so an `allow` inside a `.rs.txt` fixture
+silences the calls around the inclusion while an enclosing `expect` stays
+fulfilled and warns about nothing. The scan cannot read the target, which need
+not exist when the scan runs, so the inclusion itself is the finding unless it
+names a literal `.rs` path, which is scanned in its own right. `include_str!`
+and `include_bytes!` embed bytes rather than compiling source and are not
+inclusions at all.
 
 The target is judged by what the literal means, not by how it was typed.
 `r"support.rs"` and `"support\x2Ers"` name the same file as `"support.rs"`, so
