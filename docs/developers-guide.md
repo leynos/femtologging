@@ -53,6 +53,9 @@ so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
 - The `make markdownlint` target runs
   `typos --config typos.toml --force-exclude` across the tracked Markdown files
   after `markdownlint-cli2`.
+- The target enumerates tracked and new non-ignored Markdown files with
+  `git ls-files --exclude-standard`, so ignored build output (including
+  `target/`) and the local `.venv/` are excluded from both Markdown checks.
 
 ### Configuration
 
@@ -196,6 +199,31 @@ directly. The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs`
 directly, and its Loom modules are themselves gated by `cfg(loom)`. Prefer
 these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
+
+## Structured logging contracts
+
+Python structured fields use one conversion and validation path in
+`rust_extension/src/log_context.rs`. `extract_python_context_map` converts the
+mapping accepted by both `_push_log_context` and `FemtoLogger.py_log` into the
+Rust-owned scalar representation. Keep Python type checks, string conversion,
+and the key, value, and aggregate-size bounds in that shared function so scoped
+and inline fields cannot drift apart.
+
+`merge_context_values` is the producer-side merge boundary. It combines the
+active thread-local context with explicit fields, with explicit fields taking
+precedence on collisions. `FemtoLogger.py_log` performs this merge before level
+gating and record construction. Conversion failures are reported to Python as
+type errors, while merge and size-validation failures are reported as
+`ValueError`; invalid context must not be silently dropped.
+
+`PyHandler` inspects handler capabilities when a Python handler is registered.
+For built-in stream, file, rotating-file, timed-rotating-file, socket, and HTTP
+handlers, native dispatch passes the original `FemtoLogRecord` to the
+`FemtoHandlerTrait` implementation, preserving `RecordMetadata.key_values`
+through the handler queue. Other Python handlers use the structured
+`handle_record` dictionary interface when available, or the legacy three-
+argument `handle` interface as a fallback. This boundary is described in more
+detail in [the Rust extension design notes](rust-extension.md).
 
 File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
 The `impl_unsupported_seek!` macro supplies the required `Seek` implementation

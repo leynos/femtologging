@@ -76,6 +76,30 @@ def test_socket_handler_sends_records(
     )
 
 
+def test_python_registered_socket_handler_preserves_context(
+    recording_server: _RecordingTCPServer,
+) -> None:
+    """A socket handler registered through Python must retain metadata fields."""
+    host, port = recording_server.server_address[:2]
+    handler = femtologging.SocketHandlerBuilder().with_tcp(str(host), int(port)).build()
+    logger = femtologging.FemtoLogger("socket.context")
+    logger.set_level("INFO")
+    logger.add_handler(handler)
+
+    try:
+        with femtologging.log_context(correlation_id="abc123"):
+            logger.info("message")
+
+        payload = recording_server.queue.get(timeout=2)
+        assert b"correlation_id" in payload, "socket payload omitted the context key"
+        assert b"abc123" in payload, "socket payload omitted the context value"
+        assert handler.flush(), "socket handler did not flush"
+        logger.flush_handlers()
+    finally:
+        handler.close()
+        logger.clear_handlers()
+
+
 def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:
     """TLS configuration must be rejected when no TCP transport is configured."""
     socket_path = tmp_path / "socket.sock"

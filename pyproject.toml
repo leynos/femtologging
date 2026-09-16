@@ -24,6 +24,8 @@ dependencies = []
 dev = [
     # Bounded so generated-input behaviour only shifts with a deliberate bump.
     "hypothesis>=6.135,<7",
+    # NumPy 2.3.5 supports the 3.12–3.15 CI lanes; cap unplanned major upgrades.
+    "numpy>=2.3.5,<3",
     # The lint contract tests parse the CI workflows.
     "pyyaml>=6.0.3,<7",
     "pytest==9.1.1",

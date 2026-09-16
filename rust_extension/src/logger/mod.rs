@@ -18,21 +18,13 @@ mod worker;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::log_context;
 use crate::rate_limited_warner::RateLimitedWarner;
-#[cfg(feature = "python")]
-use crate::traceback_capture;
 
-use crate::{
-    formatter::SharedFormatter,
-    level::FemtoLevel,
-    log_record::{FemtoLogRecord, RecordMetadata},
-};
+use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
 use crossbeam_channel::Sender;
 // parking_lot avoids poisoning and matches crate-wide locking strategy
 use parking_lot::{Mutex, RwLock};
@@ -40,10 +32,6 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
-// Re-exported for the parameterised tests in `logger_tests_python.rs`;
-// production code reaches it through `capture_exception_payload`.
-#[cfg(feature = "python")]
-use python_helpers::capture_exception_payload;
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 
@@ -109,88 +97,6 @@ impl FemtoLogger {
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> Self {
         Self::with_parent(name, None)
-    }
-
-    /// Format a message at the provided level and return it.
-    ///
-    /// This method builds a log record, optionally capturing exception and
-    /// stack trace information if `exc_info` or `stack_info` are provided.
-    ///
-    /// # Parameters
-    ///
-    /// - `level`: The log level (e.g., "INFO", "ERROR").
-    /// - `message`: The log message.
-    /// - `exc_info`: Optional exception information. Accepts:
-    ///   - `True`: Capture the current exception via `sys.exc_info()`.
-    ///   - An exception instance: Capture that exception's traceback.
-    ///   - A 3-tuple `(type, value, traceback)`: Use directly.
-    /// - `stack_info`: If `True`, capture the current call stack.
-    ///
-    /// # Returns
-    ///
-    /// The formatted log message if the record passes level and filter checks,
-    /// otherwise `None`.
-    #[pyo3(
-        name = "log",
-        signature = (level, message, /, *, exc_info=None, stack_info=false),
-        text_signature = "(self, level, message, /, *, exc_info=None, stack_info=False)"
-    )]
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(
-            unused_variables,
-            reason = "py parameter is only used when python feature is enabled"
-        )
-    )]
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(
-            unused_mut,
-            reason = "record is only mutated when python feature is enabled"
-        )
-    )]
-    pub fn py_log(
-        &self,
-        py: Python<'_>,
-        level: FemtoLevel,
-        message: &str,
-        exc_info: Option<&Bound<'_, PyAny>>,
-        stack_info: Option<bool>,
-    ) -> PyResult<Option<String>> {
-        if !self.is_enabled_for(level) {
-            return Ok(None);
-        }
-        let explicit_key_values = BTreeMap::new();
-        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
-            Ok(key_values) => key_values,
-            Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return Ok(None);
-            }
-        };
-        let mut record = FemtoLogRecord::with_metadata(
-            &self.name,
-            level,
-            message,
-            RecordMetadata {
-                key_values: merged_key_values,
-                ..Default::default()
-            },
-        );
-
-        // Capture exception payload if exc_info is provided and truthy
-        #[cfg(feature = "python")]
-        if let Some(payload) = capture_exception_payload(py, exc_info)? {
-            record.set_exception_payload(payload);
-        }
-
-        // Capture stack payload if stack_info=True
-        #[cfg(feature = "python")]
-        if stack_info.unwrap_or(false) {
-            record.set_stack_payload(traceback_capture::capture_stack(py)?);
-        }
-
-        Ok(self.log_record(record))
     }
 
     /// Update the logger's minimum level.
