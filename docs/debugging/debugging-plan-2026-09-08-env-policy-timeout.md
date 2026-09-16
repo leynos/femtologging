@@ -1,12 +1,9 @@
 # Debugging Plan: Environment-policy lane timeout after rebase
 
-**Generated**: 2026-09-08
-**Issue ID**: Rebase validation for #417
-**Severity**: Medium
-**Falsification sub-agent**: alchemist
-**Planning agent boundary**: This document was prepared by the planning agent.
-Falsification must be executed by the named sub-agent, not by the planning
-agent.
+**Generated**: 2026-09-08 **Issue ID**: Rebase validation for #417
+**Severity**: Medium **Falsification sub-agent**: alchemist **Planning agent
+boundary**: This document was prepared by the planning agent. Falsification
+must be executed by the named sub-agent, not by the planning agent.
 
 ## Problem Statement
 
