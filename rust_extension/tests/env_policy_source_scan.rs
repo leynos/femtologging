@@ -109,7 +109,9 @@ fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
     }
     let mut offences = Vec::new();
     for (path, contents) in &sources {
-        for finding in suppressed_lints(contents).map_err(|error| format!("{path}: {error}"))? {
+        for finding in
+            suppressed_lints(path, contents).map_err(|error| format!("{path}: {error}"))?
+        {
             offences.push(format!("{path} {finding}"));
         }
     }
@@ -123,6 +125,13 @@ fn no_source_file_suppresses_a_policy_lint() -> Result<(), String> {
         offences.join("; ")
     ))
 }
+
+/// The path an inline fixture pretends to be.
+///
+/// Every fixture below is judged as an ordinary source under `src`, so a rule
+/// that depends on where the file sits is exercised somewhere real. An
+/// `include!` in a fixture therefore resolves against `src`.
+const FIXTURE_PATH: &str = "src/fixture.rs";
 
 /// Return whether `path` sits under the directory named `root`.
 ///
@@ -242,7 +251,10 @@ fn every_governed_root_yields_its_sources(#[case] index: usize) -> Result<(), St
 /// embed bytes rather than compiling source; and the three `include!` calls
 /// name `.rs` paths the scan reads in their own right, written plainly, as a
 /// raw string and with the dot escaped, because the rule judges what the
-/// literal means rather than how it was typed.
+/// literal means rather than how it was typed. The last names a dot-prefixed
+/// *file*, which the walk collects like any other because it selects a file by
+/// its extension alone: only the directories a target passes through are
+/// judged.
 #[test]
 fn the_scan_reports_neither_prose_nor_the_sanctioned_form() -> Result<(), String> {
     let benign = r##"
@@ -276,8 +288,9 @@ const BYTES: &[u8] = include_bytes!("fixtures/table.dat");
 include!("fixtures/generated.rs");
 include!(r"fixtures/raw.rs");
 include!("fixtures/escaped\x2Ers");
+include!(".hidden.rs");
 "##;
-    let found = suppressed_lints(benign)?;
+    let found = suppressed_lints(Utf8Path::new(FIXTURE_PATH), benign)?;
     if found.is_empty() {
         return Ok(());
     }
@@ -380,8 +393,17 @@ include!("fixtures/escaped\x2Ers");
     "    $(#[$attr])? $($body)*\n",
     "}; }"
 ))]
+// A `.rs` target the walk never reaches. `rustc` resolves it against the file
+// that writes it, and the walk skips `target` and every dot-prefixed
+// directory, so each of these names a real Rust file the compiler reads and
+// the scan does not open.
+#[case::include_under_a_dot_directory("include!(\".generated/bypass.rs\");")]
+#[case::include_under_build_output("include!(\"../target/debug/bypass.rs\");")]
+// And two that leave the crate the walk reads altogether.
+#[case::include_above_the_crate("include!(\"../../bypass.rs\");")]
+#[case::include_of_an_absolute_path("include!(\"/tmp/bypass.rs\");")]
 fn the_scan_follows_groups_and_cfg_attr(#[case] source: &str) -> Result<(), String> {
-    if suppressed_lints(source)?.is_empty() {
+    if suppressed_lints(Utf8Path::new(FIXTURE_PATH), source)?.is_empty() {
         return Err(format!("the scan must report {source:?}"));
     }
     Ok(())
@@ -475,7 +497,7 @@ proptest! {
     ) {
         let inner = !matches!(shape, Wrapping::Macro(_));
         let source = wrapped_source(&allow_attribute(&lint, inner, raw), &shape);
-        let found = suppressed_lints(&source).map_err(TestCaseError::fail)?;
+        let found = suppressed_lints(Utf8Path::new(FIXTURE_PATH), &source).map_err(TestCaseError::fail)?;
         prop_assert!(!found.is_empty(), "the scan must report {source:?}");
     }
 }

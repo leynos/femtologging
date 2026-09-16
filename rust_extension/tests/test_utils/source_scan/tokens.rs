@@ -6,11 +6,12 @@
 //! structurally rather than by their meta: an attribute whose path the caller
 //! supplies, and an `include!` of a file the scan cannot read.
 
-use camino::Utf8Path;
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use syn::{AttrStyle, Attribute, LitStr, Macro, Meta, visit::Visit};
 
 use super::SOURCE_EXTENSION;
+use super::discovery::is_walkable;
 use super::meta::{render_attribute, render_path};
 
 /// Collect every attribute in a parsed file, wherever it sits.
@@ -32,6 +33,11 @@ pub(super) struct AttributeCollector {
     pub(super) attributes: Vec<(String, Meta, bool)>,
     /// Each finding no meta describes, already worded as a report line.
     pub(super) structural: Vec<String>,
+    /// The file being visited, relative to the crate directory.
+    ///
+    /// `rustc` resolves an `include!` against the file that writes it, so the
+    /// inclusion rule cannot judge a target without knowing where it sits.
+    pub(super) path: Utf8PathBuf,
 }
 
 impl<'ast> Visit<'ast> for AttributeCollector {
@@ -52,7 +58,7 @@ impl<'ast> Visit<'ast> for AttributeCollector {
                 }
             }
             Some("include") => {
-                if let Some(finding) = foreign_inclusion(&mac.tokens) {
+                if let Some(finding) = foreign_inclusion(&mac.tokens, &self.path) {
                     self.structural.push(finding);
                 }
             }
@@ -203,9 +209,20 @@ fn declares_code_fragment(tokens: &[TokenTree], index: usize) -> bool {
 /// cannot read the target, because the target need not exist when the scan
 /// runs, so the inclusion itself is the finding.
 ///
-/// A literal `.rs` path is not a finding: such a file is scanned in its own
-/// right, being a `.rs` file under a governed root. `include_str!` and
-/// `include_bytes!` are not source inclusion at all and never reach here.
+/// A literal `.rs` path is not a finding *if the walk would reach it*, since
+/// such a file is then scanned in its own right. A `.rs` extension alone is
+/// not enough: `rustc` resolves the target against the file that writes it,
+/// and the walk skips `target` and every dot-prefixed directory, so
+/// `include!(".generated/bypass.rs")` names a real Rust file the compiler
+/// reads and the scan never opens. The target is resolved against the
+/// including source and every directory it passes through is judged by
+/// [`is_walkable`], the same function the walk descends with, so the two
+/// cannot drift. A target that climbs out of the crate is refused for the same
+/// reason. Only the directories are judged, because the walk collects a file by
+/// its extension alone and reads a dot-prefixed *file* like any other.
+///
+/// `include_str!` and `include_bytes!` are not source inclusion at all and
+/// never reach here.
 ///
 /// The target is parsed as one [`LitStr`] and judged by its *value*, not by
 /// how it was written. `r"support.rs"` and `"support\x2Ers"` name the same
@@ -219,7 +236,7 @@ fn declares_code_fragment(tokens: &[TokenTree], index: usize) -> bool {
 /// suffix test is case-sensitive in a way the path reader is not, and it
 /// accepts `include!(".rs")`, a name that is a bare extension and that the walk
 /// never collects, so the file would go unread and unscanned.
-fn foreign_inclusion(tokens: &TokenStream) -> Option<String> {
+fn foreign_inclusion(tokens: &TokenStream, including: &Utf8Path) -> Option<String> {
     let Ok(target) = syn::parse2::<LitStr>(tokens.clone()) else {
         let rendered = tokens.to_string();
         return Some(format!(
@@ -228,13 +245,55 @@ fn foreign_inclusion(tokens: &TokenStream) -> Option<String> {
         ));
     };
     let path = target.value();
-    if Utf8Path::new(&path).extension() == Some(SOURCE_EXTENSION) {
-        return None;
+    if Utf8Path::new(&path).extension() != Some(SOURCE_EXTENSION) {
+        return Some(format!(
+            "include!(\"{path}\") compiles a file the scan cannot see as Rust; \
+             name a `.rs` path, which is scanned in its own right"
+        ));
     }
+    let Some(resolved) = resolve_against(including, Utf8Path::new(&path)) else {
+        return Some(format!(
+            "include!(\"{path}\") from {including} resolves outside the crate the \
+             walk reads; name a `.rs` path inside it, which is scanned in its own right"
+        ));
+    };
+    let skipped = resolved
+        .components()
+        .rev()
+        .skip(1)
+        .find_map(|component| match component {
+            Utf8Component::Normal(name) if !is_walkable(name) => Some(name.to_owned()),
+            _ => None,
+        })?;
     Some(format!(
-        "include!(\"{path}\") compiles a file the scan cannot see as Rust; \
-         name a `.rs` path, which is scanned in its own right"
+        "include!(\"{path}\") from {including} resolves to {resolved}, under \
+         `{skipped}`, which the walk skips; name a `.rs` path the walk collects, \
+         which is scanned in its own right"
     ))
+}
+
+/// Resolve `target` against the directory holding `including`, lexically.
+///
+/// Lexical rather than filesystem resolution, because the scan has to judge a
+/// target that need not exist when it runs, and because a walk that followed
+/// links or canonicalised paths could be led outside the tree it was handed.
+///
+/// `None` means the target climbs above the crate directory, or names an
+/// absolute path: either way no walk rooted there reaches it.
+fn resolve_against(including: &Utf8Path, target: &Utf8Path) -> Option<Utf8PathBuf> {
+    let base = including.parent().unwrap_or_else(|| Utf8Path::new(""));
+    let mut parts: Vec<&str> = Vec::new();
+    for component in base.components().chain(target.components()) {
+        match component {
+            Utf8Component::CurDir => {}
+            Utf8Component::ParentDir => {
+                parts.pop()?;
+            }
+            Utf8Component::Normal(name) => parts.push(name),
+            Utf8Component::RootDir | Utf8Component::Prefix(_) => return None,
+        }
+    }
+    Some(parts.iter().collect())
 }
 
 /// Collect attribute-shaped token sequences from a `macro_rules!` transcriber.

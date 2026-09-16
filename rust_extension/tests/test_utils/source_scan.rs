@@ -85,6 +85,8 @@ pub(crate) const SOURCE_EXTENSION: &str = "rs";
 
 pub(crate) use discovery::{SOURCE_ROOTS, crate_dir, crate_sources, is_walkable, rust_sources};
 
+use camino::Utf8Path;
+
 use meta::suppressed_by;
 use tokens::AttributeCollector;
 
@@ -101,13 +103,21 @@ pub(crate) const PROTECTED_LINTS: [&str; 4] = [
 
 /// Return every protected lint suppressed in one source file.
 ///
+/// `path` is the file's path relative to the crate directory. It is needed
+/// because `rustc` resolves an `include!` against the file that writes it, so
+/// an inclusion cannot be judged without knowing where it was written. Inline
+/// fixtures pass the path they are pretending to be.
+///
 /// Lint names are compared as whole paths, never as substrings. An earlier
 /// draft compared by substring and would have reported
 /// `#[allow(clippy::allow_attributes)]` as suppressing `clippy::all`, whose
 /// name it contains.
-pub(crate) fn suppressed_lints(contents: &str) -> Result<Vec<String>, String> {
+pub(crate) fn suppressed_lints(path: &Utf8Path, contents: &str) -> Result<Vec<String>, String> {
     let parsed = syn::parse_file(contents).map_err(|error| format!("parse: {error}"))?;
-    let mut collector = AttributeCollector::default();
+    let mut collector = AttributeCollector {
+        path: path.to_owned(),
+        ..AttributeCollector::default()
+    };
     collector.visit_file(&parsed);
 
     let mut found = collector.structural.clone();
