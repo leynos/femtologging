@@ -716,8 +716,8 @@ current, tested surface area of femtologging.
 
 ## Scoped structured context
 
-Use `log_context(...)` to add structured key-values to every record emitted on
-the current thread while the context is active:
+Use `log_context(...)` to add structured key-values to every record emitted in
+the current Python task while the context is active:
 
 ```python
 import femtologging
@@ -729,7 +729,12 @@ with femtologging.log_context(request_id=42, user="alice"):
 
 Behavioural guarantees:
 
-- Context values are merged on the producer thread before queueing.
+- Python context uses `contextvars.ContextVar` semantics. It is safe to hold
+  `log_context(...)` across an `await`: another task on the same event-loop
+  thread cannot observe its fields. A child task inherits the snapshot that was
+  active when it was created, and later changes stay task-local.
+- Python context values are captured when a Python logging API creates its
+  record and are merged before queueing.
 - Inline structured fields emitted by Rust macros override outer context keys.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
 - Callback-filter enrichment uses the same scalar contract: keys must be
@@ -740,6 +745,20 @@ Behavioural guarantees:
 - Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
   1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
   enrichment per record.
+
+### Rust context and bridge boundaries
+
+Rust `push_log_context` remains OS-thread-local. Its `LogContextGuard` is
+neither `Send` nor `Sync`, records the thread that created it, and removes only
+its own frame when dropped. Do not hold a Rust guard across an `.await` in a
+future that may migrate between executor threads; use a task-local API supplied
+by that runtime instead.
+
+Python task-local fields and Rust scoped fields do not transfer implicitly.
+Python `FemtoLogger` methods and module-level functions capture the active
+Python fields. Rust macros plus the `log` and `tracing` bridges use only Rust
+scoped fields active on their emitting OS thread. If a Rust event needs request
+metadata, establish Rust context explicitly at the Rust emission boundary.
 
 ### Callback enrichment validation
 
