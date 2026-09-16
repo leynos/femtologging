@@ -466,9 +466,18 @@ Clippy cannot see an attribute that switches its own lint off, so
 `rust_extension/tests/env_policy_source_scan.rs` reads the crate's sources and
 rejects any suppression of the policy; its machinery lives in
 `rust_extension/tests/test_utils/source_scan.rs` and the modules beside it.
-It governs three roots under `rust_extension`: `src`, `tests`, and `benches`.
-Each must open and yield at least one `.rs` file; a root that cannot be read
-is a failure, not an empty result.
+The walk starts at the crate directory and reads every `.rs` file it can
+reach, so a build script, a bench, an example or a second binary is governed
+wherever it appears. `lint-env-policy` passes `--all-targets`, which compiles
+an `examples` target when one exists, and no list of directories written today
+governs one nobody has added yet.
+
+It skips `target` and every dot-prefixed directory, being build output and tool
+state rather than anywhere code Cargo compiles is written. `src`, `tests` and
+`benches` remain named, as a tripwire rather than a filter: each must be
+represented among the sources the walk returned, so a walk that silently read
+nothing reports a failure instead of a clean crate. A directory that cannot be
+read is a failure, not an empty result.
 
 Run it with `cargo test --manifest-path rust_extension/Cargo.toml
 --no-default-features --test env_policy_source_scan`, or as part of
@@ -498,8 +507,9 @@ itself or forwards a fragment the caller fills with code. The
 `$(#[$meta:meta])*` idiom for carrying doc comments onto a generated setter is
 therefore untouched, as are `#[doc = $text]` and `#[derive($traits)]`, whose
 paths are written out. And an `include!` is refused unless its target is a
-literal `.rs` path, since `rustc` parses an included file as Rust whatever its
-extension; `include_str!` and `include_bytes!` embed bytes and are not
+literal `.rs` path *that the walk would reach*, since `rustc` parses an
+included file as Rust whatever its extension and resolves it against the file
+that writes it; `include_str!` and `include_bytes!` embed bytes and are not
 inclusions.
 
 That target is read as one parsed string literal and judged by its value, so a
@@ -507,10 +517,32 @@ raw string and an escaped dot name the same file a plain string does, and by
 its extension as the walk selects sources, against the one shared constant, so
 a bare `.rs` is a finding rather than an accepted target.
 
+A `.rs` extension alone is not enough. `include!(".generated/bypass.rs")` names
+a real Rust file under a directory the walk skips, so the target is resolved
+against the including source and every directory it passes through is judged
+by the same function the walk descends with. A target that climbs out of the
+crate is refused for the same reason. Only the directories are judged, because
+the walk selects a file by its extension alone and reads `.hidden.rs` like any
+other.
+
 The walk covers a `macro_rules!` transcriber, not the arguments of an ordinary
-invocation, which the macro it is handed to may discard. The forwarded-path
-rule is what makes that narrowing safe: any attribute a macro emits has to be
-written in a transcriber first.
+invocation, which the macro it is handed to may discard. That holds inside a
+transcriber too: `stringify!(#[allow(clippy::all)])` writes an argument that
+becomes a string, not an attribute. The forwarded-path rule is what makes the
+narrowing safe: any attribute a macro emits has to be written in a transcriber
+first.
+
+Two readings keep the forwarded-path rule honest. An arm counts as writing an
+environment access when it uses `env` as a path or a macro, `env::var` or
+`env!`, not merely when some identifier is spelled `env`; a parameter of that
+name is not an access. And a fragment specifier is looked for at any depth, so
+`$($body:item)*` declares an `item` the way `$body:item` does.
+
+An argument list the scan cannot read reports every protected lint rather than
+none. `#[allow($lint)]` in a transcriber is a list `syn` accepts and whose
+contents it cannot parse, and invoked as `suppress!(clippy::disallowed_methods)`
+it expands to a real suppression. Failing closed costs a contributor who writes
+an unreadable argument an explanation; failing open costs the policy.
 
 The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
 cannot tell an attribute from attribute-shaped text in a string or a doc
@@ -518,8 +550,10 @@ comment, and breaks on a parenthesis inside a `reason`. It protects
 `clippy::disallowed_methods`, its group `clippy::style`, the wider
 `clippy::all`, and `warnings`, comparing lint names as whole paths with raw
 identifiers normalized. An item-scoped `#[expect(..., reason = "...")]` is the
-sanctioned form and passes; a crate-scoped `#![expect(...)]` does not, because
-one call anywhere in the crate fulfils it and the rest go unreported.
+sanctioned form and passes, but only with a reason that is not blank, since the
+reason is the whole of what distinguishes it from a quieter `allow`; a
+crate-scoped `#![expect(...)]` does not, because one call anywhere in the crate
+fulfils it and the rest go unreported.
 
 ## Benchmarking Documentation
 
