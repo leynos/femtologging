@@ -196,14 +196,14 @@ type StrDict = dict[str, str]
 This replaces `StrDict = TypeAlias = ...` and is preferred in modern Python.
 
 This project's `pyproject.toml` sets `requires-python = ">=3.12"` and declares
-no runtime dependencies, so the `type` keyword is available without a
-backport. If pre-3.12 compatibility is ever required, keep the older
-`typing.TypeAlias` syntax instead and suppress the resulting lint, giving a
-reason for the suppression (this project requires every suppression to carry
-one), preferring Ruff's native `# ruff: ignore[non-pep695-type-alias] reason`
-form over a bare `# noqa: UP040`. Place alias definitions after the import
-block and group shared aliases in a single module within the `femtologging`
-package to avoid duplication.
+no runtime dependencies, so the `type` keyword is available without a backport.
+If pre-3.12 compatibility is ever required, keep the older `typing.TypeAlias`
+syntax instead and suppress the resulting lint, giving a reason for the
+suppression (this project requires every suppression to carry one), preferring
+Ruff's native `# ruff: ignore[non-pep695-type-alias] reason` form over a bare
+`# noqa: UP040`. Place alias definitions after the import block and group
+shared aliases in a single module within the `femtologging` package to avoid
+duplication.
 
 ## `from __future__ import annotations`
 

@@ -16,11 +16,11 @@ same way through `TY_VERSION` (currently `0.0.74`) and checked by the same
 contract test.
 
 When updating Ruff, install the intended new version locally, confirm it
-resolves through `uvx ruff==<version> --version`, then update `RUFF_VERSION`
-in `Makefile` and the matching CI environment variable together. CI does not
+resolves through `uvx ruff==<version> --version`, then update `RUFF_VERSION` in
+`Makefile` and the matching CI environment variable together. CI does not
 install Ruff directly; it picks up the version from the Makefile's
-`uvx ruff==$(RUFF_VERSION)` invocation. See [Python
-linting](#python-linting) for the complete five-tier lint pipeline.
+`uvx ruff==$(RUFF_VERSION)` invocation. See [Python linting](#python-linting)
+for the complete five-tier lint pipeline.
 
 ## Python test toolchain
 
@@ -87,8 +87,8 @@ compatibility tests validate the same maturin and PyO3 releases:
   ```
 
   Cargo commands run from the repository root select that toolchain
-  automatically. `make check-fmt` and `make lint` use its formatter and
-  linter; editor integrations use the installed language server.
+  automatically. `make check-fmt` and `make lint` use its formatter and linter;
+  editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
@@ -117,14 +117,14 @@ ty check --python ./.venv --extra-search-path scripts
 The `--python` option points `ty` at the project environment containing the
 extension and its dependencies. The `scripts` search path is required because
 the spelling-policy helpers import one another as top-level modules. The same
-paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the
-Makefile passes them explicitly because the pinned local `ty` version does not
-reliably apply the equivalent project settings.
+paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the Makefile
+passes them explicitly because the pinned local `ty` version does not reliably
+apply the equivalent project settings.
 
 The long-running Rust integration suite is the Cargo `heavy` test target,
 rooted at `rust_extension/tests/heavy/main.rs`. Its property-based tests are
-marked `#[ignore]` because each generated case starts a handler worker. Run
-the target explicitly when investigating it:
+marked `#[ignore]` because each generated case starts a handler worker. Run the
+target explicitly when investigating it:
 
 ```shell
 cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
@@ -132,9 +132,9 @@ cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
 ```
 
 The scheduled `heavy-tests` workflow runs ignored tests across its feature
-lanes. Loom model test functions are compiled and registered only when Cargo
-is invoked with `--cfg loom`; the ordinary heavy run does not compile or run
-them. To select the Loom configuration locally, use:
+lanes. Loom model test functions are compiled and registered only when Cargo is
+invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
+To select the Loom configuration locally, use:
 
 ```shell
 RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
@@ -143,8 +143,8 @@ RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
 
 The current handlers use `std::thread::spawn`, so executing the Loom models
 requires the spawn abstraction described in the heavy-test module
-documentation. Until that follow-up is implemented, the Loom configuration
-is still compiled to keep the models type-checked.
+documentation. Until that follow-up is implemented, the Loom configuration is
+still compiled to keep the models type-checked.
 
 ## Configuration transaction
 
@@ -192,9 +192,9 @@ The reusable integration-test support is owned by
 Each Cargo integration-test root declares only the support modules it needs.
 The stream-handler suite includes `test_utils/mod.rs` because it uses all three
 components; the file-handler and logger suites include their required files
-directly. The `heavy` root includes `shared_buffer.rs` and
-`handle_expect.rs` directly, and its Loom modules are themselves gated by
-`cfg(loom)`. Prefer these fixtures and the trait over duplicating setup or
+directly. The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs`
+directly, and its Loom modules are themselves gated by `cfg(loom)`. Prefer
+these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
 
 File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
@@ -205,14 +205,14 @@ test logger and helpers for installing it and taking captured messages.
 
 The macro unit tests in `rust_extension/src/logging_macros.rs` use the
 `logger_with_handler` `rstest` fixture. It clears the test logging context,
-creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so
-each macro case can inspect the resulting record.
+creates a DEBUG-level `FemtoLogger`, and attaches a `CollectingHandler` so each
+macro case can inspect the resulting record.
 
 `rust_extension/src/test_fixtures/explicit_traceback.py` is Python source data,
 not a package module. `traceback_capture_tests` embeds it with `include_str!`;
-the fixture raises a nested `ValueError`, preserves its explicit traceback,
-and clears the exception object's `__traceback__` so tuple-based traceback
-capture is exercised.
+the fixture raises a nested `ValueError`, preserves its explicit traceback, and
+clears the exception object's `__traceback__` so tuple-based traceback capture
+is exercised.
 
 ## Toolchain Boundaries
 
@@ -243,18 +243,17 @@ its addendum records the addition of the docstring-coverage tier below.
    by `RUFF_VERSION` (`0.16.4`); see [Ruff version](#ruff-version) for the
    pin-sync scheme with CI.
 2. **interrogate** (`1.7.0`) — enforces 100% docstring coverage over the
-   production package only (`femtologging`). Tests are excluded
-   deliberately: Ruff's `D` rules already govern docstrings in tests, and
-   `tests/steps/*.py` ignores `undocumented-public-function` (D103) because
-   pytest-bdd step function names document themselves. Without that
-   exclusion, interrogate would also demand docstrings on nested helper
-   closures for little value.
+   production package only (`femtologging`). Tests are excluded deliberately:
+   Ruff's `D` rules already govern docstrings in tests, and `tests/steps/*.py`
+   ignores `undocumented-public-function` (D103) because pytest-bdd step
+   function names document themselves. Without that exclusion, interrogate
+   would also demand docstrings on nested helper closures for little value.
 3. **Pylint** (`4.0.7`) — runs through the pinned `leynos/pylint-pypy-shim`
-   revision under managed PyPy, isolated from the project virtual
-   environment. Configuration lives in `pyproject.toml`'s `[tool.pylint]`
-   tables: `py-version = "3.12"`, `max-module-lines = 400`, and a curated
-   `enable` list covering logging interpolation, pattern matching, generator
-   control flow, environment handling, and subprocess safety.
+   revision under managed PyPy, isolated from the project virtual environment.
+   Configuration lives in `pyproject.toml`'s `[tool.pylint]` tables:
+   `py-version = "3.12"`, `max-module-lines = 400`, and a curated `enable` list
+   covering logging interpolation, pattern matching, generator control flow,
+   environment handling, and subprocess safety.
 4. **`df12-python-lints`** and its companion **`ambrleaks`** — run under
    CPython 3.14 so the house-rule parser stays ahead of the project's 3.12
    syntax baseline. `df12-python-lints` is pinned to a specific commit of the
@@ -263,9 +262,9 @@ its addendum records the addition of the docstring-coverage tier below.
    `ambrleaks` sweeps Syrupy `.ambr` snapshots under `tests` and
    `femtologging/unittests` for unredacted secrets.
 5. **Skylos** (`4.33.2`) — a blocking production dead-code gate, run under
-   Python 3.14 so Skylos parses the project's syntax with its own runtime
-   `ast` implementation rather than an older one that could produce phantom
-   findings. See [Skylos dead-code gate](#skylos-dead-code-gate) below.
+   Python 3.14 so Skylos parses the project's syntax with its own runtime `ast`
+   implementation rather than an older one that could produce phantom findings.
+   See [Skylos dead-code gate](#skylos-dead-code-gate) below.
 
 Run the full lint gate with:
 
@@ -322,23 +321,21 @@ single source of truth for tool pins, targets, and flags.
 ### Skylos dead-code gate
 
 Skylos analyses production code only: `femtologging/unittests` and the native
-`femtologging/_femtologging_rs.pyi` stub are excluded, so test-only
-references cannot keep a production symbol alive and the stub's inherently
-"unused" native parameters never trigger findings. `--no-grep-verify`
-prevents a repository-wide text match from masking a genuinely dead
-production symbol, and `[tool.skylos.gate] strict = true` in `pyproject.toml`
-enforces the strict gate.
+`femtologging/_femtologging_rs.pyi` stub are excluded, so test-only references
+cannot keep a production symbol alive and the stub's inherently "unused" native
+parameters never trigger findings. `--no-grep-verify` prevents a
+repository-wide text match from masking a genuinely dead production symbol, and
+`[tool.skylos.gate] strict = true` in `pyproject.toml` enforces the strict gate.
 
 Investigate every Skylos finding before suppressing it:
 
 - **Genuine dead code** must be removed.
 - A **verified false positive** — an implicit runtime caller such as a
-  re-exported native module, a test-util hook, or a protocol-shaped
-  parameter — should first be modelled as a typed
-  `[[tool.skylos.dead_code.entrypoints]]` rule in `pyproject.toml`, giving the
-  fully qualified symbol, its `type` (for example, `"import"`, `"variable"`,
-  or `"parameter"`; use `"method"` for methods), and a caller-specific
-  reason.
+  re-exported native module, a test-util hook, or a protocol-shaped parameter —
+  should first be modelled as a typed `[[tool.skylos.dead_code.entrypoints]]`
+  rule in `pyproject.toml`, giving the fully qualified symbol, its `type` (for
+  example, `"import"`, `"variable"`, or `"parameter"`; use `"method"` for
+  methods), and a caller-specific reason.
 - Only when an entry-point rule cannot describe the boundary should a named
   allow-list exception be recorded:
 
@@ -349,26 +346,25 @@ Investigate every Skylos finding before suppressing it:
   Both `SYMBOL` and `REASON` are required; the target rejects empty or
   whitespace-only values with exit code 2. Use `SYMBOL` rather than `NAME`,
   because Windows Subsystem for Linux (WSL) may inject `NAME` with the host
-  name. The target serializes whitelist writes with `flock` against the
-  ignored `.skylos-whitelist.lock` file, so concurrent invocations do not
-  overwrite one another. Never record a broad or unreasoned exception.
+  name. The target serializes whitelist writes with `flock` against the ignored
+  `.skylos-whitelist.lock` file, so concurrent invocations do not overwrite one
+  another. Never record a broad or unreasoned exception.
 
 The complete Skylos Makefile contract — the scan command, its exclusions, the
 strict gate configuration, the documented-whitelist set, and the entry-point
 rule set — is pinned by `tests/test_skylos_lint_contract.py` and
-`tests/test_skylos_whitelist_boundary.py`. Both parse the Makefile through
-the pinned `makeutil` executable (`makeutil parse Makefile`, emitting JSON)
-rather than matching Makefile text, so recording a new exception requires a
-conscious update to `tests/test_skylos_lint_contract.py`.
+`tests/test_skylos_whitelist_boundary.py`. Both parse the Makefile through the
+pinned `makeutil` executable (`makeutil parse Makefile`, emitting JSON) rather
+than matching Makefile text, so recording a new exception requires a conscious
+update to `tests/test_skylos_lint_contract.py`.
 
 ### Makeutil bootstrap
 
 `makeutil` is a prerequisite of `make test` (the `test` target depends on the
-`makeutil` target, which only verifies the executable is present) and of
-every full-suite CI job — `ci.yml`'s `build-test` job and
-`heavy-tests.yml`'s `heavy` job each install their own pinned copy before
-running tests. Install the same pinned revision and toolchain locally before
-running `make test`:
+`makeutil` target, which only verifies the executable is present) and of every
+full-suite CI job — `ci.yml`'s `build-test` job and `heavy-tests.yml`'s `heavy`
+job each install their own pinned copy before running tests. Install the same
+pinned revision and toolchain locally before running `make test`:
 
 ```bash
 rustup toolchain install nightly-2026-05-28 --profile minimal
@@ -385,10 +381,10 @@ The Rust extension must not read or mutate the process environment ambiently.
 `vars_os`, `set_var`, and `remove_var`, and `rust_extension/Cargo.toml` denies
 `clippy::disallowed_methods`. The `lint-env-policy` target, which `lint-rust`
 runs first, applies that lint with `--all-targets` over one lane per feature:
-`none` for `--no-default-features`, `all` for `--all-features`, and one lane per
-declared feature enabling that feature alone. `--all-features` on its own would
-never compile a `#[cfg(not(feature = ...))]` block, so the `none` lane is not
-optional.
+`none` for `--no-default-features`, `all` for `--all-features`, and one lane
+per declared feature enabling that feature alone. `--all-features` on its own
+would never compile a `#[cfg(not(feature = ...))]` block, so the `none` lane is
+not optional.
 
 The lanes are walked by `scripts/lint_rust_lanes.py`, which follows the estate
 scripting standards: a `uv` script block, Cyclopts reading `INPUT_`-prefixed

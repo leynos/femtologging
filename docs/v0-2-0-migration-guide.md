@@ -8,12 +8,12 @@ ______________________________________________________________________
 ## `BasicConfig` is now a slotted dataclass
 
 `BasicConfig` (exported from `femtologging`) is now declared with
-`@dataclasses.dataclass(slots=True)`. Slots remove the per-instance
-`__dict__`, so a `BasicConfig` instance can no longer hold attributes beyond
-its five declared fields: `level`, `filename`, `stream`, `force`, and
-`handlers`. The benefit is that a mistyped or aspirational attribute name now
-fails loudly with an `AttributeError` at the point of assignment, instead of
-silently creating a dead attribute that the rest of the code never reads.
+`@dataclasses.dataclass(slots=True)`. Slots remove the per-instance `__dict__`,
+so a `BasicConfig` instance can no longer hold attributes beyond its five
+declared fields: `level`, `filename`, `stream`, `force`, and `handlers`. The
+benefit is that a mistyped or aspirational attribute name now fails loudly with
+an `AttributeError` at the point of assignment, instead of silently creating a
+dead attribute that the rest of the code never reads.
 
 ### What breaks
 
@@ -48,6 +48,6 @@ ______________________________________________________________________
 
 ## Unchanged APIs
 
-Reading and assigning the five declared fields (`level`, `filename`,
-`stream`, `force`, `handlers`) is unchanged. `BasicConfig` construction,
-`basicConfig()`, and every other public API are unaffected by this change.
+Reading and assigning the five declared fields (`level`, `filename`, `stream`,
+`force`, `handlers`) is unchanged. `BasicConfig` construction, `basicConfig()`,
+and every other public API are unaffected by this change.

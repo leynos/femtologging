@@ -157,8 +157,8 @@ project:
   Clippy; inject the value, a reader closure, or an environment trait instead,
   and build a child process's environment explicitly. `Command::env` alone
   keeps the parent's environment, so where an inherited variable could change
-  the outcome, call `Command::env_clear` first and add back only what the
-  child needs, `PATH` included. See
+  the outcome, call `Command::env_clear` first and add back only what the child
+  needs, `PATH` included. See
   [docs/adr-006-environment-seam-taxonomy.md](docs/adr-006-environment-seam-taxonomy.md).
 
 ### Dependency Management
@@ -227,10 +227,10 @@ directory:
 
 `make lint` runs five Python stages in order: Ruff, `interrogate` for
 production docstring coverage, Pylint (through the PyPy-backed `pylint-pypy`
-shim), `df12-python-lints` with its companion `ambrleaks` snapshot scanner,
-and a strict Skylos production dead-code gate. See
-[Python linting](docs/developers-guide.md#python-linting) for the full
-pipeline and pin details, recorded in
+shim), `df12-python-lints` with its companion `ambrleaks` snapshot scanner, and
+a strict Skylos production dead-code gate. See
+[Python linting](docs/developers-guide.md#python-linting) for the full pipeline
+and pin details, recorded in
 [ADR-005](docs/adr-005-four-tier-python-lint-architecture.md).
 
 Suppressions must carry reasons; prefer `# ruff: ignore[CODE] reason` over an
@@ -246,8 +246,8 @@ record a named exception with
 non-whitespace.
 
 Contract tests pin the lint interface — including Skylos's scan command,
-exclusions, gate strictness, and every recorded exception — through the
-pinned `makeutil` Makefile parser. Any interface change requires updating
+exclusions, gate strictness, and every recorded exception — through the pinned
+`makeutil` Makefile parser. Any interface change requires updating
 `tests/test_skylos_lint_contract.py`.
 
 ## Markdown Guidance
