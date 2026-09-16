@@ -290,9 +290,8 @@ where applicable.
   restore Cargo discovery for the heavy target, keep Loom models explicitly
   configuration-gated, and document the `make typecheck` environment and
   heavy-test workflow. See
-  [developer workflow](./dev-workflow.md#commands),
-  [developers guide](./developers-guide.md#type-checking-and-heavy-tests), and
-  [rstest guide](./rust-testing-with-rstest-fixtures.md).
+  [developer workflow](./dev-workflow.md#commands), [developers guide](./developers-guide.md#type-checking-and-heavy-tests),
+  and [rstest guide](./rust-testing-with-rstest-fixtures.md).
 
 ### 4.2. Delivery and adoption
 

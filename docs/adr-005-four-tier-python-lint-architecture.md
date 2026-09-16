@@ -20,12 +20,12 @@ snapshot fixtures; and unreachable Python code accumulating in the package as
 the Rust extension's surface changes.
 
 Running full Pylint inside the project virtual environment would slow every
-lint run and couple an unrelated toolchain to the project's dependency
-closure. The project also has no automated check for dead Python code, so
-removed call sites can leave orphaned functions and classes behind
-indefinitely. A single decision was needed to define the complete Python lint
-pipeline, including how dead-code detection avoids false positives without
-becoming an easy escape hatch.
+lint run and couple an unrelated toolchain to the project's dependency closure.
+The project also has no automated check for dead Python code, so removed call
+sites can leave orphaned functions and classes behind indefinitely. A single
+decision was needed to define the complete Python lint pipeline, including how
+dead-code detection avoids false positives without becoming an easy escape
+hatch.
 
 ## Decision drivers
 
@@ -46,15 +46,15 @@ becoming an easy escape hatch.
 
 ### Option A: Ruff only
 
-Keep Ruff as the sole lint tier. This preserves speed and simplicity but
-leaves logging, pattern-matching, and subprocess checks uncovered, and adds no
+Keep Ruff as the sole lint tier. This preserves speed and simplicity but leaves
+logging, pattern-matching, and subprocess checks uncovered, and adds no
 dead-code or snapshot-secret detection.
 
 ### Option B: Ruff plus project-installed Pylint, no dead-code gate
 
-Add Pylint as a project development dependency and stop there. This closes
-some of the coverage gap but couples Pylint's runtime to the project
-environment and leaves dead code undetected.
+Add Pylint as a project development dependency and stop there. This closes some
+of the coverage gap but couples Pylint's runtime to the project environment and
+leaves dead code undetected.
 
 ### Option C: Four tiers — Ruff, PyPy-backed Pylint, df12/ambrleaks, Skylos
 
@@ -88,9 +88,9 @@ Adopt Option C. `make lint` runs `lint-python` followed by `lint-rust`, and
    version so a deliberate bump only touches the Makefile and CI.
 2. **Pylint** (`4.0.7`) — runs on managed PyPy through the pinned
    `leynos/pylint-pypy-shim` revision, isolating the second tier from the
-   project's own virtual environment. Configuration lives in
-   `pyproject.toml`'s `[tool.pylint]` tables: `py-version = "3.12"`,
-   `max-module-lines = 400`, and a curated `enable` list of selected messages.
+   project's own virtual environment. Configuration lives in `pyproject.toml`'s
+   `[tool.pylint]` tables: `py-version = "3.12"`, `max-module-lines = 400`, and
+   a curated `enable` list of selected messages.
 3. **`df12-python-lints`** (pinned to the `v0.3.0` commit) and its companion
    **`ambrleaks`** — run under CPython 3.14 so the parser stays ahead of the
    project's 3.12 syntax baseline. The enabled message set is
@@ -103,8 +103,9 @@ Adopt Option C. `make lint` runs `lint-python` followed by `lint-rust`, and
    `femtologging` only, excludes `femtologging/unittests` and the native
    `femtologging/_femtologging_rs.pyi` stub, and runs with
    `--category dead_code --gate --format concise --no-upload --no-provenance
-   --no-grep-verify`. `[tool.skylos.gate] strict = true` in `pyproject.toml`
-   enforces the strict gate mode.
+   --no-grep-verify`.
+   `[tool.skylos.gate] strict = true` in `pyproject.toml` enforces the strict
+   gate mode.
 
 Skylos false positives are resolved by investigation, not by reflexive
 suppression. Every finding is investigated; genuine dead code is removed.
@@ -113,10 +114,10 @@ test-util hooks, or protocol-shaped parameters — are modelled first as typed
 `[[tool.skylos.dead_code.entrypoints]]` rules with a caller-specific reason.
 Only a boundary that an entry-point rule cannot describe is recorded through
 `make skylos-allow SYMBOL=<symbol> REASON="<reason>"`, which requires
-non-whitespace `SYMBOL` and `REASON` values (exit code 2 otherwise). The
-target uses `SYMBOL` rather than `NAME` because Windows Subsystem for Linux
-(WSL) injects `NAME` with the host name, and it serializes whitelist writes
-with `flock` against the ignored `.skylos-whitelist.lock` file so concurrent
+non-whitespace `SYMBOL` and `REASON` values (exit code 2 otherwise). The target
+uses `SYMBOL` rather than `NAME` because Windows Subsystem for Linux (WSL)
+injects `NAME` with the host name, and it serializes whitelist writes with
+`flock` against the ignored `.skylos-whitelist.lock` file so concurrent
 recordings do not overwrite one another.
 
 The complete lint interface — the Skylos scan command, its exclusions, the
@@ -128,11 +129,10 @@ pinned `makeutil` executable (`makeutil parse Makefile`, JSON) rather than
 matching Makefile text. Recording a new false-positive exception therefore
 requires a conscious update to `test_skylos_lint_contract.py`; the interface
 cannot drift silently. `makeutil` (pinned revision
-`29fc5a1634ffbaa18a773eed9dff1b2838a45d9c`, built with the
-`nightly-2026-05-28` toolchain and Polonius) is a prerequisite of `make test`
-and is installed independently by every full-suite CI job (`ci.yml`
-`build-test` and `heavy-tests.yml` `heavy`) using the same pinned toolchain
-and revision.
+`29fc5a1634ffbaa18a773eed9dff1b2838a45d9c`, built with the `nightly-2026-05-28`
+toolchain and Polonius) is a prerequisite of `make test` and is installed
+independently by every full-suite CI job (`ci.yml` `build-test` and
+`heavy-tests.yml` `heavy`) using the same pinned toolchain and revision.
 
 ## Consequences
 
@@ -168,37 +168,35 @@ and revision.
 ## Known risks and limitations
 
 - The Skylos entry-point and whitelist mechanisms are only as complete as the
-  reasons recorded against them; an unreviewed or overly broad reason
-  defeats the purpose of the gate.
+  reasons recorded against them; an unreviewed or overly broad reason defeats
+  the purpose of the gate.
 - CPython 3.14 must remain resolvable by `uv` for the third and fourth tiers;
-  an unavailable interpreter blocks `make lint` entirely rather than
-  degrading gracefully.
+  an unavailable interpreter blocks `make lint` entirely rather than degrading
+  gracefully.
 - The pinned `makeutil` revision requires a specific nightly Rust toolchain
   and the Polonius borrow checker; a contributor without a working Rust
   toolchain cannot run `make test` locally until `makeutil` is installed.
 - Pylint's PyPy shim is intentionally focused; messages outside the curated
-  `enable` list remain out of scope unless the policy is updated
-  deliberately.
+  `enable` list remain out of scope unless the policy is updated deliberately.
 
 ## Addendum: docstring-coverage tier (2026-08-28)
 
 A docstring-coverage stage, run with `interrogate`, was added to the Python
 lint gate. It runs second, immediately after Ruff and before Pylint, so
 `lint-python` now runs five stages rather than four: Ruff, `interrogate`,
-PyPy-backed Pylint, `df12-python-lints` with `ambrleaks`, and the Skylos
-strict dead-code gate. This ADR retains its original "four-tier" title for
-link stability; readers should take the title as historical and this
-addendum as the current tier count.
+PyPy-backed Pylint, `df12-python-lints` with `ambrleaks`, and the Skylos strict
+dead-code gate. This ADR retains its original "four-tier" title for link
+stability; readers should take the title as historical and this addendum as the
+current tier count.
 
 `interrogate` is pinned by `INTERROGATE_VERSION` (currently `1.7.0`) in the
-Makefile, following the same pinned-`uv tool run` pattern as every other
-tier, so an unpinned version bump cannot silently change the coverage
-verdict. It runs with `--fail-under 100` against `INTERROGATE_TARGETS`
-(`femtologging`), enforcing 100% docstring coverage over the production
-package only.
+Makefile, following the same pinned-`uv tool run` pattern as every other tier,
+so an unpinned version bump cannot silently change the coverage verdict. It
+runs with `--fail-under 100` against `INTERROGATE_TARGETS` (`femtologging`),
+enforcing 100% docstring coverage over the production package only.
 
-Tests are deliberately excluded from this tier. Ruff's `D` rule family
-already governs docstrings in test code, and `tests/steps/*.py` ignores
+Tests are deliberately excluded from this tier. Ruff's `D` rule family already
+governs docstrings in test code, and `tests/steps/*.py` ignores
 `undocumented-public-function` (D103) because pytest-bdd step function names
 are self-documenting. Running `interrogate` over tests as well would also
 demand docstrings on nested helper closures for little practical benefit.

@@ -20,11 +20,11 @@ The property matters most for the test suite. A test that mutates the parent
 process environment mutates it for every other test in the same process, so a
 suite containing one such test has to serialize around it. `make test` already
 runs Cargo with `--test-threads=$(TEST_THREADS)`, defaulting to one thread, and
-the crate carries `serial_test` for the tests that coordinate the global logging
-manager and the Python interpreter. Adding environment mutation to that list
-would add a second, unrelated reason to serialize and would make restoring
-parallel execution harder later. Ambient reads have the mirror-image problem:
-a value the caller cannot supply is a value the test cannot vary.
+the crate carries `serial_test` for the tests that coordinate the global
+logging manager and the Python interpreter. Adding environment mutation to that
+list would add a second, unrelated reason to serialize and would make restoring
+parallel execution harder later. Ambient reads have the mirror-image problem: a
+value the caller cannot supply is a value the test cannot vary.
 
 `leynos/netsuke` solved this with a Clippy `disallowed-methods` policy plus a
 stated taxonomy of injection shapes, recorded in its ADR 008. Adopting the same
@@ -46,21 +46,21 @@ injection shape by the size of the boundary.
 `rust_extension/clippy.toml` disallows all six methods. Each entry carries the
 remedy, because Clippy prints the reason in the diagnostic:
 
-| Method | Reason printed |
-| --- | --- |
-| `std::env::var` | inject an environment reader |
-| `std::env::var_os` | inject an environment reader |
-| `std::env::vars` | inject an environment reader |
-| `std::env::vars_os` | inject an environment reader |
-| `std::env::set_var` | use a stub environment in tests |
+| Method                 | Reason printed                  |
+| ---------------------- | ------------------------------- |
+| `std::env::var`        | inject an environment reader    |
+| `std::env::var_os`     | inject an environment reader    |
+| `std::env::vars`       | inject an environment reader    |
+| `std::env::vars_os`    | inject an environment reader    |
+| `std::env::set_var`    | use a stub environment in tests |
 | `std::env::remove_var` | use a stub environment in tests |
 
 `rust_extension/Cargo.toml` denies `clippy::disallowed_methods` in its
 `[lints.clippy]` table, so the severity travels with the crate rather than
 living in one Clippy invocation.
 
-The `lint-env-policy` Make target then runs that lint over the whole crate,
-one Cargo invocation per feature selection:
+The `lint-env-policy` Make target then runs that lint over the whole crate, one
+Cargo invocation per feature selection:
 
 ```make
 ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tracing-compat all
@@ -69,16 +69,17 @@ ENV_POLICY_LINT_ARGS ?= -A clippy::all -D clippy::disallowed_methods
 ```
 
 `--all-targets` reaches integration tests and benches. The lane list is what
-reaches every feature arm. `none` maps to `--no-default-features`, `all` maps
-to `--all-features`, and every other entry maps to `--no-default-features
---features <name>`, so a named lane enables exactly one feature and nothing
-else. `--all-features` alone would never compile a `#[cfg(not(feature = ...))]`
-block, and the crate has such blocks; `none` and `all` between them compile
-both arms of every single-feature gate, and each named lane compiles that
-feature's code with the others absent. Intermediate combinations are not
-linted, which is a deliberate limit: the policy bans a call outright rather
-than under a condition, so a violation cannot be reachable only under a
-combination and not under a lane that enables the feature it sits behind.
+reaches every feature arm. `none` maps to `--no-default-features`, `all` maps to
+`--all-features`, and every other entry maps to
+`--no-default-features --features <name>`, so a named lane enables exactly one
+feature and nothing else. `--all-features` alone would never compile a
+`#[cfg(not(feature = ...))]` block, and the crate has such blocks; `none` and
+`all` between them compile both arms of every single-feature gate, and each
+named lane compiles that feature's code with the others absent. Intermediate
+combinations are not linted, which is a deliberate limit: the policy bans a
+call outright rather than under a condition, so a violation cannot be reachable
+only under a combination and not under a lane that enables the feature it sits
+behind.
 
 The lanes are walked by `scripts/lint_rust_lanes.py`, not by a shell loop in
 the Makefile. This is the second attempt at that walk and the reason for the
@@ -86,9 +87,9 @@ change is worth recording. The first attempt was a `for` loop in the recipe,
 and a shell `for` loop reports the status of its last command, so a rejection
 in any earlier lane was discarded and the target exited 0. Only the `all` lane
 could fail it, which is the wrong one: `none` is the only lane that compiles a
-`#[cfg(not(feature = ...))]` block and it runs first. The gate did not gate.
-A `|| exit 1` guard on each call fixes it, but that guard is one character
-short of absent, invisible in review, and its loss looks exactly like success.
+`#[cfg(not(feature = ...))]` block and it runs first. The gate did not gate. A
+`|| exit 1` guard on each call fixes it, but that guard is one character short
+of absent, invisible in review, and its loss looks exactly like success.
 
 Moving the walk into a script per the estate's scripting standards makes the
 failure path ordinary code with ordinary tests:
@@ -138,15 +139,15 @@ call beneath it, every other contract stayed green and the policy lane exited 0.
 and therefore warns, once the site is migrated, so the backlog removes itself
 instead of rotting.
 
-The Rust extension is loaded as a Python extension module and has no `main`,
-so it has no composition root of its own. It has one all the same, in the
-tests: the point where a child process's environment is built. Clearing that
-environment is what makes a subprocess test hermetic, and a cleared
-environment has no `PATH`, so the child could not be found at all. That single
-read of the parent's `PATH`, at the site where the child's environment is
-composed, is the one sanctioned exception, and it carries the item-scoped
-attribute like any other. `option_env!` is not a way around it: it resolves at
-compile time and would bake in the building machine's `PATH`.
+The Rust extension is loaded as a Python extension module and has no `main`, so
+it has no composition root of its own. It has one all the same, in the tests:
+the point where a child process's environment is built. Clearing that
+environment is what makes a subprocess test hermetic, and a cleared environment
+has no `PATH`, so the child could not be found at all. That single read of the
+parent's `PATH`, at the site where the child's environment is composed, is the
+one sanctioned exception, and it carries the item-scoped attribute like any
+other. `option_env!` is not a way around it: it resolves at compile time and
+would bake in the building machine's `PATH`.
 
 The exception is narrow on purpose. It covers the value a cleared environment
 cannot supply and nothing else; every other variable the child needs is set
@@ -159,16 +160,14 @@ A test never mutates the parent process environment, and never reads it
 ambiently either. Where a test needs a child process to see a variable, it
 builds the child's environment explicitly rather than setting the variable in
 the harness and letting the child inherit it. `tests/env_access_policy.rs`
-holds itself to this: its `clippy-driver` probe clears the environment and
-adds back only `CLIPPY_CONF_DIR` and `PATH`, so the diagnostics it counts
-cannot be perturbed by an inherited `RUSTFLAGS`, `CLIPPY_ARGS`, or a
-`CLIPPY_CONF_DIR` pointing at another configuration.
-`Command::env` alone leaves the parent's environment in place, so a test whose
-outcome could depend on an inherited variable calls `Command::env_clear` first
-and then adds back every variable the child legitimately needs, `PATH`
-included. Where a
-test needs the code under test to observe a value, it supplies that value
-through the seam.
+holds itself to this: its `clippy-driver` probe clears the environment and adds
+back only `CLIPPY_CONF_DIR` and `PATH`, so the diagnostics it counts cannot be
+perturbed by an inherited `RUSTFLAGS`, `CLIPPY_ARGS`, or a `CLIPPY_CONF_DIR`
+pointing at another configuration. `Command::env` alone leaves the parent's
+environment in place, so a test whose outcome could depend on an inherited
+variable calls `Command::env_clear` first and then adds back every variable the
+child legitimately needs, `PATH` included. Where a test needs the code under
+test to observe a value, it supplies that value through the seam.
 
 Serialization is not an accepted substitute. A `#[serial]` attribute or a
 reduced `TEST_THREADS` value stays only where a genuine structural reason
@@ -189,10 +188,10 @@ access is governed by the Python architecture and its own lint stack.
   policy target stops covering every target and feature, stops failing when a
   lane fails, or drops out of `make lint`. The failure path is held at two
   levels: the driver's own unit tests, and a test that runs the real
-  `make lint-env-policy` with a failing lane ahead of a passing one. It also compiles
-  `tests/fixtures/env_policy_probe.rs` through `clippy-driver` under this
-  crate's `clippy.toml` and checks that all six methods are rejected, that each
-  diagnostic carries the remedy this ADR promises, and that the
+  `make lint-env-policy` with a failing lane ahead of a passing one. It also
+  compiles `tests/fixtures/env_policy_probe.rs` through `clippy-driver` under
+  this crate's `clippy.toml` and checks that all six methods are rejected, that
+  each diagnostic carries the remedy this ADR promises, and that the
   composition-root `expect` suppresses exactly one call. Each of its assertions
   records the mutation that proved it.
 - Adding a feature to the crate manifest without adding a lane fails that test,

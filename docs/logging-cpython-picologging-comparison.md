@@ -174,8 +174,8 @@ CPython logging uses standard Python collections. The `Manager.loggerDict` is a
 dict mapping names to `Logger` or `_PlaceHolder` objects. Each
 `Logger.handlers` is a list, and `_handlerList` tracks all handlers for
 shutdown. Log levels and names are in Python dicts (`_levelToName`,
-`_nameToLevel`). LogRecords are Python objects with many attributes (as shown
-in [67] and docstring). CPython also caches effective log levels: each `Logger`
+`_nameToLevel`). LogRecords are Python objects with many attributes (as shown in
+[67] and docstring). CPython also caches effective log levels: each `Logger`
 has a `_cache` dict mapping levels to True/False to speed up `isEnabledFor`.
 The code even defines a `_clear_cache` method (with `_lock`) to reset caches on
 level changes.

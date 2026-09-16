@@ -5,11 +5,18 @@ alwaysApply: false
 ---
 ### Advanced Typing and Language Features (Python 3.12)
 
-> This section documents advanced Python 3.12 typing features and best practices to improve clarity, correctness, and tooling support. Use these features to write expressive, modern Python. A few entries describe Python 3.13 features that are not yet available on this project's `>=3.12` baseline; each such case says so explicitly and gives the `typing_extensions` equivalent.
+> This section documents advanced Python 3.12 typing features and best
+> practices to improve clarity, correctness, and tooling support. Use these
+> features to write expressive, modern Python. A few entries describe Python
+> 3.13 features that are not yet available on this project's `>=3.12` baseline;
+> each such case says so explicitly and gives the `typing_extensions`
+> equivalent.
 
 #### `enum.Enum`, `enum.IntEnum`, `enum.StrEnum`
 
-Use `Enum` for fixed sets of related constants. Use `enum.auto()` to avoid repeating values manually. Use `IntEnum` or `StrEnum` when interoperability with integers or strings is required (e.g. for database or JSON serialisation).
+Use `Enum` for fixed sets of related constants. Use `enum.auto()` to avoid
+repeating values manually. Use `IntEnum` or `StrEnum` when interoperability
+with integers or strings is required (e.g. for database or JSON serialisation).
 
 ```python
 import enum
@@ -27,11 +34,14 @@ class Role(enum.StrEnum):
     GUEST = enum.auto()
 ```
 
-Use `auto()` when exact values are unimportant and you want to avoid duplication. Avoid `auto()` in `IntEnum` where numeric meaning matters.
+Use `auto()` when exact values are unimportant and you want to avoid
+duplication. Avoid `auto()` in `IntEnum` where numeric meaning matters.
 
 #### `match` / `case` (Structural Pattern Matching)
 
-Use structural pattern matching for branching over structured data. This is especially useful for enums, discriminated unions, or pattern-rich data structures.
+Use structural pattern matching for branching over structured data. This is
+especially useful for enums, discriminated unions, or pattern-rich data
+structures.
 
 ```python
 def handle_status(status: Status) -> str:
@@ -44,7 +54,8 @@ def handle_status(status: Status) -> str:
 
 #### Generic Class Declarations (PEP 695)
 
-Use bracketed class-level type variables directly for generic class declarations.
+Use bracketed class-level type variables directly for generic class
+declarations.
 
 ```python
 class Box[T]:
@@ -56,7 +67,8 @@ This is cleaner and avoids the indirection of separate `TypeVar` declarations.
 
 #### `Self` Type (PEP 673)
 
-Use `Self` in fluent interfaces and builder-style APIs to indicate the method returns the same instance.
+Use `Self` in fluent interfaces and builder-style APIs to indicate the method
+returns the same instance.
 
 ```python
 import typing
@@ -74,7 +86,8 @@ This improves tool support and enforces correct chaining semantics.
 
 #### `@override` Decorator (PEP 698)
 
-Use `@override` to indicate that a method overrides one from a superclass. This enables static analysis tools to detect typos and signature mismatches.
+Use `@override` to indicate that a method overrides one from a superclass. This
+enables static analysis tools to detect typos and signature mismatches.
 
 ```python
 import typing
@@ -93,9 +106,12 @@ This decorator is a no-op at runtime but improves tooling correctness.
 
 #### `TypeIs` (PEP 742)
 
-Use `TypeIs[T]` to define custom runtime type guards that narrow types in type checkers.
+Use `TypeIs[T]` to define custom runtime type guards that narrow types in type
+checkers.
 
-`typing.TypeIs` was added in Python 3.13. On this project's Python 3.12 baseline, import it from the `typing_extensions` backport instead (add `typing_extensions` as a dependency if it is not already one):
+`typing.TypeIs` was added in Python 3.13. On this project's Python 3.12
+baseline, import it from the `typing_extensions` backport instead (add
+`typing_extensions` as a dependency if it is not already one):
 
 ```python
 import collections.abc as cabc
@@ -106,15 +122,28 @@ def is_str_sequence(val: cabc.Sequence[object]) -> TypeIs[cabc.Sequence[str]]:
     return all(isinstance(x, str) for x in val)
 ```
 
-`TypeIs[T]` requires the narrowed type to be consistent with the parameter's declared type. `list` is invariant, so `list[str]` is not a subtype of `list[object]` and a type checker rejects `TypeIs[list[str]]` on a `list[object]` parameter; `cabc.Sequence` is covariant, so narrowing it this way is valid. When narrowing to an invariant type such as `list[str]`, use `TypeGuard` instead, since it does not impose the consistency requirement.
+`TypeIs[T]` requires the narrowed type to be consistent with the parameter's
+declared type. `list` is invariant, so `list[str]` is not a subtype of
+`list[object]` and a type checker rejects `TypeIs[list[str]]` on a
+`list[object]` parameter; `cabc.Sequence` is covariant, so narrowing it this
+way is valid. When narrowing to an invariant type such as `list[str]`, use
+`TypeGuard` instead, since it does not impose the consistency requirement.
 
-Unlike `isinstance`, this informs the type checker that `val` is now `cabc.Sequence[str]`.
+Unlike `isinstance`, this informs the type checker that `val` is now
+`cabc.Sequence[str]`.
 
 #### Defaults for TypeVars (PEP 696)
 
-Allow generic classes/functions to fall back to default types when no specific type is provided.
+Allow generic classes/functions to fall back to default types when no specific
+type is provided.
 
-PEP 696 landed in Python 3.13, including the native `class Box[T = int]:` bracket syntax and the `default=` keyword on `typing.TypeVar`. Neither is available on this project's Python 3.12 baseline. The bracket syntax also declares its own type parameter, so `class Box[T]:` shadows a module-level `TypeVar` and silently ignores any `default=` set on it. On this baseline, carry the default on a `typing_extensions.TypeVar` and use it with `typing.Generic` instead:
+PEP 696 landed in Python 3.13, including the native `class Box[T = int]:`
+bracket syntax and the `default=` keyword on `typing.TypeVar`. Neither is
+available on this project's Python 3.12 baseline. The bracket syntax also
+declares its own type parameter, so `class Box[T]:` shadows a module-level
+`TypeVar` and silently ignores any `default=` set on it. On this baseline,
+carry the default on a `typing_extensions.TypeVar` and use it with
+`typing.Generic` instead:
 
 ```python
 import typing as typ
@@ -128,11 +157,14 @@ class Box(typ.Generic[T]):
         self.value = value
 ```
 
-An unparameterized `Box` is then treated as `Box[int]`, so callers get a sensible default without writing it out. This makes APIs more ergonomic while retaining type safety.
+An unparameterized `Box` is then treated as `Box[int]`, so callers get a
+sensible default without writing it out. This makes APIs more ergonomic while
+retaining type safety.
 
 #### Standard Library Generics (PEP 585)
 
-Use built-in generics from the standard library (`list`, `dict`, `tuple`, etc.) instead of `typing.List`, `typing.Dict`, etc.
+Use built-in generics from the standard library (`list`, `dict`, `tuple`, etc.)
+instead of `typing.List`, `typing.Dict`, etc.
 
 ```python
 names: list[str] = ["Alice", "Bob"]
@@ -152,7 +184,8 @@ This is more concise and readable, especially for nested types.
 
 #### Type Aliases using `type`
 
-Use the `type` keyword to create type aliases with better IDE and runtime support.
+Use the `type` keyword to create type aliases with better IDE and runtime
+support.
 
 ```python
 type StrDict = dict[str, str]
@@ -160,12 +193,21 @@ type StrDict = dict[str, str]
 
 This replaces `StrDict = TypeAlias = ...` and is preferred in modern Python.
 
-This project's `pyproject.toml` sets `requires-python = ">=3.12"` and declares no runtime dependencies, so the `type` keyword is available without a backport. If pre-3.12 compatibility is ever required, keep the older `typing.TypeAlias` syntax instead and suppress the resulting lint, giving a reason for the suppression (this project requires every suppression to carry one), preferring Ruff's native `# ruff: ignore[non-pep695-type-alias] reason` form over a bare `# noqa: UP040`. Place alias definitions after the import block and group shared aliases in a single module within the `femtologging` package to avoid duplication.
+This project's `pyproject.toml` sets `requires-python = ">=3.12"` and declares
+no runtime dependencies, so the `type` keyword is available without a backport.
+If pre-3.12 compatibility is ever required, keep the older `typing.TypeAlias`
+syntax instead and suppress the resulting lint, giving a reason for the
+suppression (this project requires every suppression to carry one), preferring
+Ruff's native `# ruff: ignore[non-pep695-type-alias] reason` form over a bare
+`# noqa: UP040`. Place alias definitions after the import block and group
+shared aliases in a single module within the `femtologging` package to avoid
+duplication.
 
 #### `from __future__ import annotations`
 
-Use this import in modules with type annotations to defer evaluation of annotation expressions to runtime.
-This prevents issues with forward references and circular imports.
+Use this import in modules with type annotations to defer evaluation of
+annotation expressions to runtime. This prevents issues with forward references
+and circular imports.
 
 ```python
 from __future__ import annotations
@@ -195,8 +237,9 @@ import datetime as dt
 import collections.abc as cabc
 ```
 
-This simplifies common types such as `dt.datetime`, `cabc.Iterable`, `cabc.Callable`, and helps disambiguate usage.
+This simplifies common types such as `dt.datetime`, `cabc.Iterable`,
+`cabc.Callable`, and helps disambiguate usage.
 
----
+______________________________________________________________________
 
 These conventions promote clarity, tool compatibility, and future-ready Python.

@@ -20,6 +20,14 @@ RUFF ?= uvx ruff==$(RUFF_VERSION)
 TY_VERSION ?= 0.0.75
 TY ?= $(UV_ENV) uv tool run --from 'ty==$(TY_VERSION)' ty
 MDLINT ?= markdownlint-cli2
+# `make fmt` and `make check-fmt` call mdtablefix directly. `--git` selects the
+# Markdown files Git tracks and `--include-untracked` adds the untracked files
+# Git does not ignore, so a new document is formatted before it is staged.
+# Both modes need mdtablefix 0.6.0 or later; CI pins the version at the
+# install-mdtablefix step.
+MDTABLEFIX ?= mdtablefix
+MDTABLEFIX_SELECT = --git --include-untracked
+MDTABLEFIX_RULES = --wrap --renumber --breaks --ellipsis --fences
 NIXIE ?= nixie
 # Single source of truth for the typos version, keeping the Makefile and any
 # CI that shells out to this target from drifting apart.
@@ -105,7 +113,6 @@ $(error $(1) is required but not installed))
 endef
 
 tools:
-	$(call ensure_tool,mdformat-all)
 	$(call ensure_tool,$(MDLINT))
 	$(call ensure_tool,$(CARGO))
 	$(call ensure_tool,rustfmt)
@@ -116,11 +123,13 @@ makeutil: ## Verify the Makefile parser used by contract tests
 fmt: tools ## Format sources
 	$(RUFF) format
 	$(CARGO) fmt --manifest-path $(RUST_MANIFEST)
-	mdformat-all
+	$(MDTABLEFIX) --in-place $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
+	@unset FORCE_COLOR; $(MDLINT) --fix "**/*.md"
 
 check-fmt: ## Verify formatting
 	$(RUFF) format --check
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
+	$(MDTABLEFIX) --check $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
 
 lint: lint-python lint-rust ## Run linters
 

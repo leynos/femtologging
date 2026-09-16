@@ -157,9 +157,9 @@ for item in items:
 ```
 
 This is the correct form whenever an invalid item must be skipped without
-halting the batch. Ruff's PERF203 flags `try`/`except` inside a loop because
-it carries overhead on the exceptional path, but that cost buys resilience:
-the loop keeps going after a failure.
+halting the batch. Ruff's PERF203 flags `try`/`except` inside a loop because it
+carries overhead on the exceptional path, but that cost buys resilience: the
+loop keeps going after a failure.
 
 ```python
 # Hoisted: deliberately abandon the remaining items on first failure
@@ -171,12 +171,11 @@ except ParseError:
 ```
 
 Hoisting is not an equivalent optimization of the per-item form; it is a
-different behaviour. The first `ParseError` aborts processing of every
-item that follows, so use this form only when abandoning the whole batch on
-failure is the desired semantics. Once the required behaviour is decided,
-treat any remaining performance difference between the two forms as a
-micro-optimization to confirm with profiling, not a reason to change
-semantics.
+different behaviour. The first `ParseError` aborts processing of every item
+that follows, so use this form only when abandoning the whole batch on failure
+is the desired semantics. Once the required behaviour is decided, treat any
+remaining performance difference between the two forms as a micro-optimization
+to confirm with profiling, not a reason to change semantics.
 
 ## 6) Testing: assert specific failures (B017)
 
@@ -261,9 +260,9 @@ def parse_all(raw_items: list[str]) -> list[Record]:
 ```
 
 This function's contract is to abort the whole batch on the first invalid
-record, so the hoisted form is correct here. Where invalid items must
-instead be skipped so the rest of the batch is still processed, use the
-per-item `try`/`except ParseError: continue` form from §5 instead.
+record, so the hoisted form is correct here. Where invalid items must instead
+be skipped so the rest of the batch is still processed, use the per-item `try`/
+`except ParseError: continue` form from §5 instead.
 
 ### Tests with specific exceptions (B017)
 
