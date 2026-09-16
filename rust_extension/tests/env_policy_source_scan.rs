@@ -343,6 +343,26 @@ include!("fixtures/escaped\x2Ers");
 // A computed target that happens to hold a `.rs` literal is still a target the
 // scan cannot resolve; the whole argument has to be one literal.
 #[case::include_of_a_computed_rust_path("include!(concat!(env!(\"OUT_DIR\"), \"/probe.rs\"));")]
+// A forwarded lint *name*: `syn` accepts the outer list and cannot read its
+// contents, so an earlier draft read it as suppressing nothing at all. Invoked
+// as `suppress!(clippy::disallowed_methods)` the arm expands to a real
+// suppression over a real call.
+#[case::forwarded_lint_name(concat!(
+    "macro_rules! suppress { ($lint:meta) => {\n",
+    "    #[allow($lint)]\n",
+    "    pub fn ambient() { let _ = std::env::var(\"X\"); }\n",
+    "}; }\nsuppress!(clippy::disallowed_methods);"
+))]
+// An item-scoped `expect` with no reason is a quieter `allow`. The reason is
+// the whole of what makes the sanctioned form sanctioned.
+#[case::item_scoped_expect_without_a_reason(
+    "#[expect(clippy::disallowed_methods)]\nfn f() { let _ = std::env::var(\"X\"); }"
+)]
+// And one whose reason is blank, which says exactly as much.
+#[case::item_scoped_expect_with_a_blank_reason(concat!(
+    "#[expect(clippy::disallowed_methods, reason = \"   \")]\n",
+    "fn f() { let _ = std::env::var(\"X\"); }"
+))]
 fn the_scan_follows_groups_and_cfg_attr(#[case] source: &str) -> Result<(), String> {
     if suppressed_lints(source)?.is_empty() {
         return Err(format!("the scan must report {source:?}"));
