@@ -53,6 +53,9 @@ so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
 - The `make markdownlint` target runs
   `typos --config typos.toml --force-exclude` across the tracked Markdown files
   after `markdownlint-cli2`.
+- The target enumerates tracked and new non-ignored Markdown files with
+  `git ls-files --exclude-standard`, so ignored build output (including
+  `target/`) and the local `.venv/` are excluded from both Markdown checks.
 
 ### Configuration
 
