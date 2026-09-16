@@ -14,6 +14,7 @@ use serial_test::serial;
 #[path = "test_utils/mod.rs"]
 mod test_utils;
 use std::sync::{Arc, Mutex, PoisonError};
+use test_utils::captured_log::captured_log;
 use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
 use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;
@@ -212,11 +213,45 @@ fn stream_handler_drop_timeout() {
     barrier.wait();
 }
 
+/// Scenario: one caller emits a record and ends without reading it, then
+/// another asks for the logger.
+///
+/// Invariant: the second caller sees an empty queue. `logtest::Logger` holds
+/// no state; the records live in a queue inside `logtest` that outlives the
+/// test that produced them, so a test asserting on an exact count would
+/// otherwise read an earlier test's output as its own. A test that panics
+/// part way through leaves exactly this residue.
+///
+/// Written as one test rather than two so it proves the drain without
+/// depending on the order the harness chooses.
+///
+/// `#[ignore]` for the same reason its two neighbours carry it. Installing
+/// the capture logger makes every record emitted anywhere in this process its
+/// own, and the ordinary tests in this file drop records and warn while they
+/// do it. Measured: running this file with `--include-ignored` gives the
+/// rate-limiting test three warnings where it requires two, because those
+/// tests are not serialized against it and emit while it counts. The three
+/// logger tests therefore share a lane in which nothing else runs.
+#[rstest]
+#[serial]
+#[ignore]
+fn captured_log_hands_out_no_records_an_earlier_caller_left() {
+    {
+        let _logger = captured_log();
+        log::warn!("left behind by a caller that never read it");
+    }
+    let mut logger = captured_log();
+    assert!(
+        logger.next().is_none(),
+        "captured_log must drain the records an earlier caller left behind"
+    );
+}
+
 #[rstest]
 #[serial]
 #[ignore]
 fn stream_handler_reports_dropped_records() {
-    let logger = logtest::start();
+    let mut logger = captured_log();
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let handler = FemtoStreamHandler::with_capacity_timeout(
         SharedBuf::new(Arc::clone(&buffer)),
@@ -230,7 +265,7 @@ fn stream_handler_reports_dropped_records() {
     assert!(handler.flush());
 
     let warnings: Vec<_> = logger
-        .into_iter()
+        .by_ref()
         .filter(|r| r.level() == log::Level::Warn)
         .collect();
     assert!(
@@ -248,10 +283,10 @@ fn stream_handler_rate_limits_warnings(
     #[with(Duration::from_millis(50))]
     (_buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
-    let logger = logtest::start();
+    let mut logger = captured_log();
     // First drop triggers a warning
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
     assert!(handler.flush());
 
     // Second drop within interval should be suppressed
@@ -266,7 +301,7 @@ fn stream_handler_rate_limits_warnings(
     assert!(handler.flush());
 
     let warnings: Vec<_> = logger
-        .into_iter()
+        .by_ref()
         .filter(|r| r.level() == log::Level::Warn)
         .collect();
     assert_eq!(warnings.len(), 2);
