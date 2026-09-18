@@ -500,18 +500,25 @@ through its parent's handle so the walk cannot leave the tree it was given.
 `include_str!` is not an option here as it is for the configuration contracts,
 because the scan has to see files that do not exist yet.
 
-Two shapes are refused structurally rather than by their meta, because neither
-is a complete attribute where it is written. A `macro_rules!` arm that forwards
-an attribute's *path* (`#[$attr]`) lets its caller supply `allow`, so it is
-refused at inner scope, and at outer scope where the arm writes an `env` access
-itself or forwards a fragment the caller fills with code. The
-`$(#[$meta:meta])*` idiom for carrying doc comments onto a generated setter is
-therefore untouched, as are `#[doc = $text]` and `#[derive($traits)]`, whose
-paths are written out. And an `include!` is refused unless its target is a
-literal `.rs` path *that the walk would reach*, since `rustc` parses an
-included file as Rust whatever its extension and resolves it against the file
-that writes it; `include_str!` and `include_bytes!` embed bytes and are not
-inclusions.
+Three shapes are refused structurally rather than by their meta, because none
+of them is a suppression the scan can read where it is written. A
+`macro_rules!` arm that forwards an attribute's *path* (`#[$attr]`) lets its
+caller supply `allow`, so it is refused at inner scope, and at outer scope
+where the arm writes an `env` access itself or forwards a fragment the caller
+fills with code. The `$(#[$meta:meta])*` idiom for carrying doc comments onto a
+generated setter is therefore untouched, as are `#[doc = $text]` and
+`#[derive($traits)]`, whose paths are written out. And an `include!` is refused
+unless its target is a literal `.rs` path *that the walk would reach*, since
+`rustc` parses an included file as Rust whatever its extension and resolves it
+against the file that writes it; `include_str!` and `include_bytes!` embed
+bytes and are not inclusions. And `#[path = "../../bypass.rs"] mod bypass;`
+names a module's source directly, compiling a file outside the crate directory
+the walk reads, so it is judged by the same rule as an `include!` target: one
+function, because an inclusion rule that drifted from a `#[path]` rule would
+close one route and leave its twin open, which is how `#[path]` came to be
+missing. A `path` reached through `cfg_attr` is judged too. The idiom this
+suite itself uses, `#[path = "source_scan/discovery.rs"]`, names a `.rs` file
+under a walkable directory and reports nothing.
 
 That target is read as one parsed string literal and judged by its value, so a
 raw string and an escaped dot name the same file a plain string does, and by
@@ -542,9 +549,14 @@ name is not an access. And a fragment specifier is looked for at any depth, so
 An argument list the scan cannot read reports every protected lint rather than
 none. `#[allow($lint)]` in a transcriber is a list `syn` accepts and whose
 contents it cannot parse, and invoked as
-`suppress!(clippy::disallowed_methods)` it expands to a real suppression.
-Failing closed costs a contributor who writes an unreadable argument an
-explanation; failing open costs the policy.
+`suppress!(clippy::disallowed_methods)` it expands to a real suppression. A
+`cfg_attr` whose arguments will not parse is treated the same way, and reaches
+the scan by the same route: an arm writing
+`#[cfg_attr($cond, allow(clippy::disallowed_methods))]` forwards the condition
+rather than the attribute's path, so the forwarded-path rule does not see it,
+and the expansion suppresses the lint for real. Failing closed costs a
+contributor who writes an unreadable argument an explanation; failing open
+costs the policy.
 
 The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
 cannot tell an attribute from attribute-shaped text in a string or a doc
