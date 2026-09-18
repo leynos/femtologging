@@ -7,15 +7,18 @@ use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+    HandlerError, StreamHandlerConfig,
+    rate_limited_warner::{Clock, RateLimitedWarner},
 };
 use rstest::*;
 use serial_test::serial;
 
 #[path = "test_utils/mod.rs"]
 mod test_utils;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use test_utils::captured_log::captured_log;
-use test_utils::fixtures::{handler_tuple, handler_tuple_custom};
+use test_utils::fixtures::handler_tuple;
 use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;
 use test_utils::std::SharedBuf;
@@ -302,34 +305,181 @@ fn stream_handler_reports_dropped_records() {
     );
 }
 
+/// The text every dropped-record warning carries.
+///
+/// The capture logger is process-wide, so counting warnings by level alone
+/// would count any other warning the binary emits as a dropped record. This
+/// names the one message under test.
+const DROPPED_RECORD_WARNING: &str = "log records dropped in the last interval";
+
+/// A clock the test moves by hand.
+///
+/// [`RateLimitedWarner`] asks its clock for milliseconds and compares the
+/// answer with the interval, so supplying the time is what makes the interval
+/// boundary a decision this test makes rather than one the scheduler makes.
+struct TestClock {
+    now_ms: AtomicU64,
+}
+
+impl Clock for TestClock {
+    fn now_millis(&self) -> u64 {
+        self.now_ms.load(Ordering::Relaxed)
+    }
+}
+
+impl TestClock {
+    fn new() -> Self {
+        Self {
+            now_ms: AtomicU64::new(0),
+        }
+    }
+
+    fn advance(&self, milliseconds: u64) {
+        self.now_ms.fetch_add(milliseconds, Ordering::Relaxed);
+    }
+}
+
+/// A writer that stops inside `write` until the test lets it go.
+///
+/// The worker dequeues a record and then writes it, so holding it inside
+/// `write` is what holds the queue full: the handler's channel has room for
+/// one command and the worker is not coming back for it. Without this the
+/// worker drains between calls and whether a record is dropped depends on
+/// which thread ran, which is the defect this fixture removes.
+#[derive(Clone)]
+struct GatedBuf {
+    /// Held by the test while the worker must stay inside `write`.
+    gate: Arc<Mutex<()>>,
+    /// Signals that the worker has dequeued a record and reached the gate.
+    entered: std::sync::mpsc::Sender<()>,
+}
+
+impl Write for GatedBuf {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Report arrival before blocking, so the test knows the queue is empty
+        // and the worker is parked rather than merely slow.
+        let _ = self.entered.send(());
+        let _held = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Scenario: records are dropped repeatedly, within one warning interval and
+/// across the boundary between two.
+///
+/// Invariant: the handler warns on the first drop, stays silent for every
+/// further drop inside the same interval, and warns again on the first drop
+/// after the interval elapses. Two warnings for four drops.
+///
+/// Every input is controlled rather than raced for:
+///
+/// - the drops are real and asserted. The worker is parked inside `write`
+///   with the queue full, so each of the four calls returns
+///   `HandlerError::QueueFull` and the test says so. The previous shape sent
+///   records into a running handler and hoped the worker had not drained
+///   them, which made the warning count depend on thread scheduling;
+/// - the interval boundary is crossed by moving a clock, not by sleeping.
+///   The previous shape slept 60 milliseconds against a 50-millisecond
+///   interval, so a loaded host could suspend the thread between the sleep
+///   and the next call and a tick either side of the boundary decided the
+///   count.
+///
+/// Warnings are matched by their text rather than by level. The capture logger
+/// is installed once for the whole process, so a warning from anywhere else in
+/// the binary would otherwise be counted as a dropped record.
+///
+/// Mutation proof (2026-09-18), each applied alone against
+/// `--no-default-features --test stream_handler_tests -- --ignored`, and
+/// reverted:
+///
+/// - removing the `clock.advance` before the fourth drop fails with `left: 1,
+///   right: 2`. Without it the fourth drop falls inside the first interval and
+///   is suppressed, so the test discriminates the boundary rather than merely
+///   counting drops;
+/// - making `warn_if_due` emit whatever the clock says fails with `left: 4,
+///   right: 2`, which is the suppression half;
+/// - releasing the gate before the drops, with a sleep long enough for the
+///   worker to drain, fails on the first `handle`: `"first drop" should have
+///   been dropped by a full queue, saw Ok(())`. That is exactly the
+///   scheduling dependence the old test carried silently, and it now fails
+///   loudly rather than changing the warning count.
+///
+/// Narrowness control, which passes: advancing the clock by seven intervals
+/// and three milliseconds rather than exactly one interval. The contract is
+/// about crossing the boundary, not about the size of the step, and one that
+/// pinned the step would refuse a correct test written differently.
 #[rstest]
 #[serial]
 #[ignore]
-fn stream_handler_rate_limits_warnings(
-    #[from(handler_tuple_custom)]
-    #[with(Duration::from_millis(50))]
-    (_buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
-) {
+fn stream_handler_rate_limits_warnings() {
+    const INTERVAL: Duration = Duration::from_millis(50);
+
     let mut logger = captured_log();
-    // First drop triggers a warning
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
-    assert!(handler.flush());
+    let clock = Arc::new(TestClock::new());
+    let gate = Arc::new(Mutex::new(()));
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
 
-    // Second drop within interval should be suppressed
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "third"));
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "fourth"));
-    assert!(handler.flush());
+    let held = gate.lock().unwrap_or_else(PoisonError::into_inner);
+    let handler = FemtoStreamHandler::with_test_config(
+        GatedBuf {
+            gate: Arc::clone(&gate),
+            entered: entered_tx,
+        },
+        DefaultFormatter,
+        StreamHandlerConfig::default()
+            .with_capacity(1)
+            .with_timeout(INTERVAL)
+            .with_warner(RateLimitedWarner::with_clock(
+                INTERVAL,
+                Arc::clone(&clock) as Arc<dyn Clock>,
+            )),
+    );
 
-    // Wait for interval to elapse then drop again
-    std::thread::sleep(Duration::from_millis(60));
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "fifth"));
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "sixth"));
-    assert!(handler.flush());
+    // The worker dequeues this one and parks inside `write`, leaving the
+    // channel empty.
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "parking"));
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the worker should reach the gate");
+
+    // This one fills the channel's single slot, and every record after it is
+    // dropped for as long as the gate is held.
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "queued"));
+
+    let drop_record = |message: &str| {
+        let outcome = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, message));
+        assert!(
+            matches!(outcome, Err(HandlerError::QueueFull)),
+            "{message:?} should have been dropped by a full queue, saw {outcome:?}"
+        );
+    };
+
+    // Clock at 0: the first drop ever seen always warns.
+    drop_record("first drop");
+    // Still at 0, inside the interval: suppressed.
+    drop_record("second drop");
+    drop_record("third drop");
+    // On the boundary: warns again.
+    clock.advance(INTERVAL.as_millis() as u64);
+    drop_record("fourth drop");
 
     let warnings: Vec<_> = logger
         .by_ref()
-        .filter(|r| r.level() == log::Level::Warn)
+        .filter(|record| {
+            record.level() == log::Level::Warn
+                && record.args().to_string().contains(DROPPED_RECORD_WARNING)
+        })
         .collect();
-    assert_eq!(warnings.len(), 2);
+    assert_eq!(
+        warnings.len(),
+        2,
+        "four drops either side of one interval boundary should warn twice, saw {warnings:?}"
+    );
+
+    // Let the worker finish so the handler's own shutdown does not time out.
+    drop(held);
 }
