@@ -477,6 +477,10 @@ features = ["test-util"]
 
 [tool.pytest.ini_options]
 timeout = 30
+# The helper scripts import each other as top-level modules, exactly as
+# `[tool.ty.environment] extra-paths` records. `--doctest-modules` imports
+# every module pytest walks, so without this their collection fails.
+pythonpath = ["scripts"]
 markers = [
     "concurrency: tests covering threaded behaviour",
     "log_compat: tests requiring the Rust log-compat feature",

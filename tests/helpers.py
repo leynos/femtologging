@@ -36,8 +36,14 @@ def poll_file_for_text(path: Path, expected: str, timeout: float = 1.0) -> str:
 
     Examples
     --------
-    >>> contents = poll_file_for_text(log_path, "ERROR", timeout=2.0)
-    >>> assert "ERROR: Something failed" in contents
+    >>> import pathlib
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as directory:
+    ...     log_path = pathlib.Path(directory) / "app.log"
+    ...     _ = log_path.write_text("ERROR: Something failed")
+    ...     contents = poll_file_for_text(log_path, "ERROR", timeout=2.0)
+    >>> "ERROR: Something failed" in contents
+    True
 
     """
     deadline = time.time() + timeout
