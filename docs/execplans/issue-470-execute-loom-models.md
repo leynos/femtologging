@@ -6,8 +6,9 @@ This ExecPlan is a living document. The sections `Constraints`,
 `Conformance basis` and `Verification plan` must be kept up to date as work
 proceeds.
 
-Status: DRAFT — awaiting approval. No production code changes until the plan is
-approved.
+Status: IN PROGRESS. EP-M1 is delivered. The knowingly red scheduled lane it
+leaves behind was approved by the user on 2026-09-16. No seam code, and so no
+production code change, until the approach in EP-M2 is separately approved.
 
 Related: [Issue #470](https://github.com/leynos/femtologging/issues/470).
 
@@ -226,12 +227,34 @@ models rather than compiling them. Do not change any production code.
 
 End state: the contract test passes, and a manual dispatch of `heavy-tests`
 fails at the Loom step with the documented abort, which is the honest current
-state. The workflow's other steps are unaffected, so the lane still reports on
-everything it reported on before.
+state. The execution step is the last step in the job, so the workflow's other
+steps all run and report before it: the lane still reports on everything it
+reported on before, and adds the Loom gap on the end.
 
-Acceptance: the manual run's link and its abort message are recorded here. The
-contract test is proved in both directions: restoring `--no-run` fails it, and
-dropping `--cfg loom` from the command fails it.
+Acceptance: the contract is `tests/test_loom_lane_contract.py`, eight tests
+over the parsed workflow document rather than its text. Seven mutations, each
+applied alone and reverted, each failing exactly the contract that names it:
+
+```plaintext
+W1-restore-no-run: test_the_execution_step_runs_the_models_rather_than_compiling_them
+W2-drop-the-loom-configuration: test_the_execution_step_selects_the_loom_configuration
+W3-ignored-instead-of-include-ignored: test_the_execution_step_selects_every_model
+W4-drop-the-heavy-target: test_each_loom_step_names_the_heavy_target[Run Loom models]
+W5-drop-the-timeout: test_the_execution_step_is_bounded
+W6-drop-the-filter: test_the_execution_step_selects_every_model
+W7-execute-before-the-heavy-suite: test_the_execution_step_runs_last
+N1-reordered-but-equivalent: <none>
+```
+
+The last row is the narrowness half, and it changed the contract. The first
+draft pinned the selection as one contiguous token sequence, which a command
+written with Cargo's arguments in another order would have failed while being
+correct. The contract now asks which side of the `--` separator each argument
+falls on, and `N1`, the same command reordered, passes. A contract that reports
+a false positive gets switched off.
+
+The manual run's link and its abort message are recorded here once the lane has
+run.
 
 Recovery: the milestone is a workflow and test change only, revertible in one
 commit.
@@ -485,6 +508,23 @@ worker model the seam must preserve and is read before EP-M2.
   for interior state, neither of which Loom instruments. Replacing the spawn
   alone would move the failure from an abort to a deadlock inside Loom's
   executor. The seam in EP-M2 is sized accordingly.
+- (2026-09-17, while gating EP-M1) The execution step was written in its
+  natural place, next to the compile step, and that would have degraded the
+  lane rather than describing it. A step that fails without `continue-on-error`
+  skips every step after it, so a knowingly failing Loom step sitting before
+  "Run formatters and tests" would have stopped the heavy suite, the Clippy
+  lanes and `pytest` running at all. The plan asserted the opposite in this
+  very section. The step moved to the end of the job and
+  `test_the_execution_step_runs_last` holds it there. The general shape: a
+  deliberately red step is only honest if it is the last thing in its job.
+
+- (2026-09-16, while delivering EP-M1) The contract's first draft was too
+  strict in a way no mutation would have caught. It pinned the model selection
+  as one contiguous token sequence, so a command written with Cargo's arguments
+  in another order would have failed it while being correct. Every mutation
+  still failed it, which is what makes the strictness easy to miss: a one-sided
+  proof passes. The narrowness control, the same command reordered, is what
+  found it.
 - (2026-09-16, from review) The logger has a worker too, and the first draft of
   this plan missed it. `FemtoLogger::with_parent` spawns a `std::thread` worker
   and carries records on `crossbeam_channel`, and that worker is what calls
@@ -499,6 +539,10 @@ worker model the seam must preserve and is read before EP-M2.
 
 ## Decision log
 
+- (2026-09-16) The user approved EP-M1 and the knowingly red scheduled lane it
+  leaves behind. The plan leaves DRAFT. EP-M2 onwards still wait, because the
+  seam is the first thing here that changes production code and its shape is
+  worth agreeing before it is written.
 - (2026-09-16, from review) `loom_file_handler_flush_concurrent` gets a
   Loom-instrumented writer rather than keeping its temporary file. The
   alternative, keeping the real file and recording the external-effect
@@ -530,7 +574,7 @@ worker model the seam must preserve and is read before EP-M2.
 
 ## Progress
 
-- [ ] EP-M1: make the absence visible
+- [x] EP-M1: make the absence visible (2026-09-16)
 - [ ] EP-M2: the concurrency seam
 - [ ] EP-M3: the stream handler onto the seam
 - [ ] EP-M4: the logger onto the seam
@@ -538,7 +582,9 @@ worker model the seam must preserve and is read before EP-M2.
 - [ ] EP-M6: the lane proves it ran
 - [ ] EP-M7: say what is now true
 
-Drafted 2026-09-16. Not started.
+Drafted 2026-09-16. EP-M1 delivered 2026-09-16. EP-M2 is held pending approval
+of the seam's shape, which is the one decision in this plan that changes
+production code.
 
 ## Outcomes & retrospective
 
