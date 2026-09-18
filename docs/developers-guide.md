@@ -134,17 +134,39 @@ cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
 The scheduled `heavy-tests` workflow runs ignored tests across its feature
 lanes. Loom model test functions are compiled and registered only when Cargo is
 invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
-To select the Loom configuration locally, use:
+
+The workflow has two Loom steps, and the split is deliberate. "Compile Loom
+heavy tests" passes `--no-run` and proves the models type-check. "Run Loom
+models" executes them:
 
 ```shell
-RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
-  --no-default-features --test heavy
+RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 cargo test \
+  --manifest-path rust_extension/Cargo.toml \
+  --no-default-features --test heavy loom_ -- --include-ignored
 ```
 
-The current handlers use `std::thread::spawn`, so executing the Loom models
-requires the spawn abstraction described in the heavy-test module
-documentation. Until that follow-up is implemented, the Loom configuration is
-still compiled to keep the models type-checked.
+`--include-ignored` rather than `--ignored`: the latter runs only tests marked
+`#[ignore]`, and five of the six models carry no such attribute, so it would
+select one model and report a passing run of one test where six are expected.
+
+**This step does not pass yet, and it is expected to fail.** The handlers spawn
+their workers with `std::thread::spawn` and carry records on
+`crossbeam_channel`, so a worker touches a Loom-instrumented buffer from a
+thread Loom did not create and Loom aborts the process. Executing the models
+needs the concurrency seam planned in
+`docs/execplans/issue-470-execute-loom-models.md`. The step is wired first, and
+left failing, so that the lane reports the gap rather than reporting a green
+run that executed nothing.
+
+The execution step is the **last** step in the job, and that placement matters
+while it is expected to fail. A step that fails without `continue-on-error`
+skips every step after it, so running the models earlier would stop the heavy
+suite, the Clippy lanes and `pytest` from running at all, and the lane would
+report the Loom gap by suppressing everything else it reports.
+
+`tests/test_loom_lane_contract.py` asserts that the execution step carries no
+`--no-run`, that the compile step does, and that no step follows the execution
+step.
 
 ## Configuration transaction
 
