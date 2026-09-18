@@ -15,7 +15,7 @@ use camino::Utf8PathBuf;
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use syn::{AttrStyle, Attribute, Macro, Meta, visit::Visit};
 
-use super::inclusion::foreign_inclusion;
+use super::inclusion::{foreign_inclusion, foreign_module_path};
 use super::matcher::{could_cover_a_policy_call, macro_arms};
 use super::meta::{render_attribute, render_path};
 
@@ -40,13 +40,20 @@ pub(super) struct AttributeCollector {
     pub(super) structural: Vec<String>,
     /// The file being visited, relative to the crate directory.
     ///
-    /// `rustc` resolves an `include!` against the file that writes it, so the
-    /// inclusion rule cannot judge a target without knowing where it sits.
+    /// `rustc` resolves an `include!` and a `#[path]` against the file that
+    /// writes it, so neither rule can judge a target without knowing where it
+    /// sits.
     pub(super) path: Utf8PathBuf,
 }
 
 impl<'ast> Visit<'ast> for AttributeCollector {
     fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        // `#[path]` names a second source the same way `include!` does, and it
+        // is an ordinary attribute rather than a macro, so it is judged here
+        // rather than in `visit_macro`.
+        if let Some(finding) = foreign_module_path(&attribute.meta, &self.path) {
+            self.structural.push(finding);
+        }
         self.attributes.push((
             render_attribute(attribute),
             attribute.meta.clone(),

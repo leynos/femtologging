@@ -110,9 +110,22 @@ pub(super) fn suppressed_by(meta: &Meta, inner: bool) -> Vec<String> {
 /// The condition is followed whatever it says. A suppression that applies
 /// under some configuration is still a suppression, and deciding which
 /// configurations are reachable is not this contract's job.
+///
+/// An argument list that will not parse reports every protected lint rather
+/// than none. This reads back oddly and is deliberate: the scan cannot say
+/// which lint an unreadable `cfg_attr` suppresses, and the honest answer to
+/// "which of these is switched off" is "any of them". The shape that gets here
+/// is a `macro_rules!` arm forwarding the condition,
+/// `#[cfg_attr($cond, allow(clippy::disallowed_methods))]`, which
+/// [`super::tokens::forwarded_path`] does not refuse because the attribute's
+/// own path is written out as `cfg_attr`. The expansion compiles and the
+/// suppression is real, so returning nothing here was a silent bypass.
 fn suppressed_by_cfg_attr(list: &MetaList, inner: bool) -> Vec<String> {
     let Ok(nested) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) else {
-        return Vec::new();
+        return PROTECTED_LINTS
+            .iter()
+            .map(|lint| (*lint).to_owned())
+            .collect();
     };
     nested
         .iter()

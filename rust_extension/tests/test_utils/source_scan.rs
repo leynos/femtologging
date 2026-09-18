@@ -1,13 +1,18 @@
 //! Source scan closing the attribute routes around the environment policy.
 //!
-//! `tests/env_policy_source_scan.rs` holds the assertions; this module holds
-//! the machinery they drive and the measurements behind each route it closes,
-//! split so that each file stays inside the 400-line module limit:
+//! `tests/env_policy_source_scan.rs` and its two sibling modules hold the
+//! assertions; this module holds the machinery they drive and the measurements
+//! behind each route it closes, split so that each file stays inside the
+//! 400-line module limit:
 //!
 //! - [`discovery`] decides which roots are governed and reads every Rust file
 //!   under them;
 //! - [`meta`] judges one parsed attribute;
-//! - [`tokens`] reaches the attributes a parsed `Meta` never describes.
+//! - [`tokens`] reaches the attributes a parsed `Meta` never describes;
+//! - [`inclusion`] judges a target compiled as Rust from a file the walk never
+//!   reads, whether named by `include!` or by `#[path]`;
+//! - [`matcher`] reads a `macro_rules!` arm's pattern for whether a forwarded
+//!   attribute could ever reach a policy call.
 //!
 //! The other contracts check the configuration, prove the lint fires, and
 //! hold the build wiring. None of them sees a source file that switches the
@@ -56,12 +61,15 @@
 //! `clippy::r#style` each silence the lint, so paths are normalized before
 //! they are compared.
 //!
-//! Two shapes are refused structurally rather than by their meta, because
-//! neither is a complete attribute where it is written. A `macro_rules!` arm
-//! may forward an attribute's path (`#[$attr]`) and let its caller supply
-//! `allow`; and `rustc` parses an `include!` target as Rust whatever its
-//! extension, so an `allow` inside a `.rs.txt` fixture reaches the compiler
-//! from a file the scan cannot read. Both are documented in
+//! Three shapes are refused structurally rather than by their meta, because
+//! none of them is a suppression the scan can read where it is written. A
+//! `macro_rules!` arm may forward an attribute's path (`#[$attr]`) and let its
+//! caller supply `allow`. `rustc` parses an `include!` target as Rust whatever
+//! its extension, so an `allow` inside a `.rs.txt` fixture reaches the
+//! compiler from a file the scan cannot read. And `#[path]` names a module's
+//! source directly, so `#[path = "../../bypass.rs"] mod bypass;` compiles a
+//! file outside the crate directory the walk reads. The first two are
+//! documented in
 //! `docs/adr-006-environment-seam-taxonomy.md`, with the narrowing that keeps
 //! the doc-forwarding idiom and `include_str!` out of the findings.
 
