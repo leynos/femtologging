@@ -55,25 +55,58 @@ impl FemtoHTTPHandler {
         <Self as FemtoHandlerTrait>::flush(self)
     }
 
-    /// Close the handler and wait for the worker to exit.
+    /// Close the handler, waiting for the worker only while it is answering.
+    ///
+    /// The shutdown request is bounded by `flush_timeout`, and so is the whole
+    /// of `close`: a worker that does not acknowledge within that budget is
+    /// abandoned rather than joined. Joining it would wait for however long it
+    /// had left to run, which for this handler is the backoff deadline, a
+    /// figure `flush_timeout` does not describe and the caller did not ask
+    /// for. `close` runs from `Drop`, so that wait would fall on whatever was
+    /// tearing the handler down.
+    ///
+    /// This is the contract [`FemtoStreamHandler::close`] already documents
+    /// and implements: acknowledge or be abandoned, with the timeout warned
+    /// about rather than swallowed. Two handlers with the same lifecycle
+    /// should not answer the same question differently.
+    ///
+    /// [`FemtoStreamHandler::close`]: crate::FemtoStreamHandler::close
     pub fn close(&mut self) {
-        self.request_shutdown();
-        self.join_worker();
+        match self.request_shutdown() {
+            ShutdownOutcome::Finished => self.join_worker(),
+            ShutdownOutcome::TimedOut => self.abandon_worker(),
+        }
     }
 
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
 
-    fn request_shutdown(&mut self) {
+    /// Ask the worker to stop, and report whether joining it is now bounded.
+    ///
+    /// The distinction the return value carries is the whole point: every
+    /// outcome except a timed-out acknowledgement means the worker has left,
+    /// or is leaving, its command loop, so the join that follows is short. An
+    /// earlier version discarded this with `let _ =`, which is what let an
+    /// unbounded join follow a bounded wait.
+    fn request_shutdown(&mut self) -> ShutdownOutcome {
         let Some(tx) = self.tx.take() else {
-            return;
+            // Already closed. There is no worker left to wait for.
+            return ShutdownOutcome::Finished;
         };
         let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
         if tx.send(HTTPCommand::Shutdown(ack_tx)).is_err() {
-            return;
+            // The worker has dropped its receiver, so it has already left the
+            // loop; joining it returns at once and may report a panic.
+            return ShutdownOutcome::Finished;
         }
-        let _ = ack_rx.recv_timeout(self.flush_timeout);
+        match ack_rx.recv_timeout(self.flush_timeout) {
+            Ok(()) => ShutdownOutcome::Finished,
+            // The worker dropped the acknowledgement channel without using it,
+            // which it can only do on its way out.
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
+        }
     }
 
     fn join_worker(&mut self) {
@@ -84,6 +117,32 @@ impl FemtoHTTPHandler {
             log::warn!("FemtoHTTPHandler: worker thread panicked");
         }
     }
+
+    /// Detach the worker after it failed to acknowledge shutdown.
+    ///
+    /// The handle is taken so nothing joins it later, in particular the `Drop`
+    /// that may follow this call. The thread itself ends on its own once its
+    /// in-flight request and backoff finish, because its command channel is
+    /// already disconnected.
+    fn abandon_worker(&mut self) {
+        log::warn!(
+            "FemtoHTTPHandler: worker did not acknowledge shutdown within {:?}; \
+             abandoning it rather than blocking the caller",
+            self.flush_timeout
+        );
+        self.handle.lock().take();
+    }
+}
+
+/// What asking the worker to stop established about joining it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownOutcome {
+    /// The worker acknowledged, or had already left its loop. The join is
+    /// bounded and worth doing, because it is also what surfaces a panic.
+    Finished,
+    /// No acknowledgement arrived within `flush_timeout`. The worker is busy
+    /// on something whose length `flush_timeout` does not describe.
+    TimedOut,
 }
 
 #[cfg(feature = "python")]
