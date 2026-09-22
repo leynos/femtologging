@@ -38,6 +38,11 @@ _FILTER: typ.Final = "loom_"
 # attribute, so it would select one model and report success.
 _HARNESS_ARGUMENT: typ.Final = "--include-ignored"
 
+# The environment variable that bounds how much of the state space Loom
+# explores. Without it a multi-threaded model does not fail, it fails to
+# finish.
+_PREEMPTION_BOUND: typ.Final = "LOOM_MAX_PREEMPTIONS"
+
 
 def _step_tokens(step_name: str) -> tuple[str, ...]:
     """Return the tokenized ``run`` command of a named step in the heavy job."""
@@ -47,6 +52,27 @@ def _step_tokens(step_name: str) -> tuple[str, ...]:
         msg = f"expected a string `run` command in the {step_name!r} step"
         raise TypeError(msg)
     return tuple(shlex.split(command))
+
+
+def _command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the tokens after any leading ``NAME=value`` assignments.
+
+    A shell command may be prefixed with environment assignments, and
+    ``shlex.split`` keeps each quoted assignment as one token, so
+    ``RUSTFLAGS="--cfg loom" cargo test`` tokenizes as
+    ``("RUSTFLAGS=--cfg loom", "cargo", "test")``. Skipping the prefix is what
+    lets the contract ask what program actually runs.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The command and its arguments, with any assignment prefix removed.
+        Empty when the command is nothing but assignments.
+    """
+    for index, token in enumerate(tokens):
+        if "=" not in token.split(" ", 1)[0]:
+            return tokens[index:]
+    return ()
 
 
 def _subsequence_at(tokens: tuple[str, ...], wanted: tuple[str, ...]) -> bool:
@@ -189,3 +215,64 @@ def test_each_loom_step_names_the_heavy_target(step_name: str) -> None:
     assert _subsequence_at(tokens, ("--test", "heavy")), (
         f"the {step_name!r} step must name the heavy target, saw {tokens!r}"
     )
+
+
+@pytest.mark.parametrize("step_name", [_COMPILE_STEP, _EXECUTE_STEP])
+def test_each_loom_step_actually_invokes_cargo_test(step_name: str) -> None:
+    """Scenario: either Loom step is asked what program it runs.
+
+    Invariant: the command is a real ``cargo test`` invocation, and not a
+    wrapper, an ``echo``, a ``true``, or anything else that would satisfy every
+    other assertion in this file while running no models at all.
+
+    This is the gap the pre-merge table found, and it is the shape the estate
+    keeps meeting: every other contract here reads an argument, and an argument
+    list means nothing if the program in front of it changed. A step rewritten
+    as ``echo cargo test --cfg loom ... -- --include-ignored`` would have passed
+    the whole of the rest of this file.
+
+    Environment assignments are skipped before the program is read, because the
+    Loom configuration is passed as one, and the two words are asserted
+    adjacent so a command merely *mentioning* ``test`` somewhere later does not
+    satisfy it.
+    """
+    words = _command_words(_step_tokens(step_name))
+    assert words[:2] == ("cargo", "test"), (
+        f"the {step_name!r} step must run `cargo test`, its command begins "
+        f"{words[:3]!r}"
+    )
+
+
+def test_the_execution_step_bounds_loom_s_exploration() -> None:
+    """Scenario: the lane is asked how much of the state space it explores.
+
+    Invariant: the execution step sets ``LOOM_MAX_PREEMPTIONS`` in its own
+    environment, to a positive whole number.
+
+    Loom explores every interleaving it is allowed to, and the preemption bound
+    is what makes that finite in practice. Without it a model with several
+    threads does not fail, it simply does not finish: the step burns its
+    wall-clock timeout and reports a timeout, which reads as an infrastructure
+    problem rather than as the model saying anything. The bound is therefore
+    part of what makes the step's result meaningful, not a performance tweak.
+
+    Asserted on the step's own ``env`` rather than on the job's, because a job
+    variable would be inherited by the compile step too, where it means
+    nothing, and because a reader looking at the step should see the bound the
+    step runs under.
+    """
+    step = sole_workflow_step(_WORKFLOW, _JOB, _EXECUTE_STEP)
+    environment = step.get("env")
+    assert isinstance(environment, dict), (
+        f"the {_EXECUTE_STEP!r} step must carry its own `env` mapping, "
+        f"saw {environment!r}"
+    )
+    bound = environment.get(_PREEMPTION_BOUND)
+    assert bound is not None, (
+        f"the {_EXECUTE_STEP!r} step must set {_PREEMPTION_BOUND}, "
+        f"its environment is {environment!r}"
+    )
+    assert str(bound).isdigit(), (
+        f"{_PREEMPTION_BOUND} must be a whole number, saw {bound!r}"
+    )
+    assert int(bound) > 0, f"{_PREEMPTION_BOUND} must be positive, saw {bound!r}"

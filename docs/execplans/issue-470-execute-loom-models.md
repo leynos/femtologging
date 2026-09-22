@@ -23,6 +23,12 @@ model must spawn threads with `loom::thread`, share values through
 with the standard library's primitives is invisible to Loom, and touching a
 Loom value from a thread Loom did not create aborts the whole process.
 
+**State of this section.** What follows describes the repository as this plan
+found it, before EP-M1. That milestone has since landed and the paragraphs
+below are kept as the baseline they measure progress from, not as a description
+of the lane today. What EP-M1 changed, and what it deliberately did not, is
+stated at the end of this section under "Where EP-M1 left it".
+
 This repository contains six Loom model functions and runs none of them. They
 live in `rust_extension/tests/heavy/`, in three modules gated behind
 `#[cfg(loom)]`:
@@ -53,6 +59,21 @@ from a thread Loom did not create, and Loom aborts the process with "cannot
 access Loom execution state from outside a Loom model", taking the whole heavy
 binary down. Removing `--no-run` today would replace a misleading green with a
 crash.
+
+### Where EP-M1 left it
+
+EP-M1 has landed, so the lane no longer compiles the models and stops. A second
+step, `Run Loom models`, invokes them with `--include-ignored` and is the last
+step in the job. Everything above about *why* they do not run is unchanged and
+is the point: the step **fails today, deliberately and with the user's
+approval**, at the abort described above. The compile step keeps `--no-run` and
+keeps its own name, so the lane still distinguishes a model that will not
+compile from a model that will not run.
+
+What the lane now reports is therefore the gap itself rather than silence about
+it. Every clause below that describes the models as merely compiled remains
+true of the compile step and of the state EP-M2 onwards work from; nothing here
+turns green until the seam lands.
 
 After this work, a maintainer can run one command and watch named models
 execute, and the daily schedule does the same and fails loudly if it executes
@@ -269,9 +290,9 @@ and the pull request says so.
 ### EP-M2: the concurrency seam
 
 Introduce one private module, `rust_extension/src/sync.rs`, exporting the
-thread, channel, and mutex operations the handlers use. Under `cfg(loom)` it
-re-exports Loom's primitives; otherwise it re-exports `std::thread`,
-`crossbeam_channel` and `parking_lot`. The shape is the one
+thread, channel, and locking operations the handlers and the logger use. Under
+`cfg(loom)` it re-exports Loom's primitives; otherwise it re-exports
+`std::thread`, `crossbeam_channel` and `parking_lot`. The shape is the one
 `rust_extension/tests/test_utils/shared_buffer.rs` already uses for buffers, so
 it is a pattern the repository has rather than a new idea.
 
@@ -281,6 +302,29 @@ timed receive, and the thread spawn and join. The timed receive is the one
 operation whose two implementations differ in meaning rather than in spelling:
 under Loom it waits without a bound, for the reason given above, and the
 module's documentation says so at the definition.
+
+**Both lock flavours, named here because EP-M4 needs the second one.** The seam
+exports a mutex and a read-write lock, not a mutex alone:
+
+| Operation       | `cfg(loom)`                                  | Otherwise                                     |
+| --------------- | -------------------------------------------- | --------------------------------------------- |
+| Exclusive lock  | `loom::sync::Mutex`, `lock()`                | `parking_lot::Mutex`, `lock()`                |
+| Read-write lock | `loom::sync::RwLock`, `read()` and `write()` | `parking_lot::RwLock`, `read()` and `write()` |
+
+The two families differ in their return type and not only in their name.
+`parking_lot` hands back a guard directly, where both `loom::sync::Mutex::lock`
+and `loom::sync::RwLock::read`/`write` return a `LockResult`, so the seam's
+`cfg(loom)` arm unwraps before returning the guard. A caller that could see the
+difference would be a caller the seam had failed to hide.
+
+`FemtoLogger` keeps its handler list behind a `parking_lot::RwLock` and takes
+it for reading on every dispatch and for writing on every attachment. That lock
+is the entire subject of `loom_concurrent_handler_addition`, so leaving it
+outside the seam would leave that model exploring nothing while appearing to
+pass, which is the failure this plan exists to refuse. Redesigning the lock
+away was considered and rejected in `Decision log`: the read path is the hot
+one and a lock-free handler list is a change to production behaviour that this
+plan has no mandate for.
 
 End state: the module exists, is used by nothing yet, and is covered by unit
 tests that exercise both configurations.
@@ -492,6 +536,15 @@ worker model the seam must preserve and is read before EP-M2.
 
 ## Surprises & discoveries
 
+- (2026-09-18, from review) The EP-M1 contract read every argument of the Loom
+  command and never asked what program ran it. A step rewritten as
+  `echo cargo test … -- --include-ignored` would have passed all seven of its
+  assertions and run no models, which is the defect this whole plan is about,
+  reproduced inside the thing guarding against it. It now asserts the two words
+  `cargo test` after any environment assignments, and that the step sets
+  `LOOM_MAX_PREEMPTIONS`: an unbounded exploration does not fail a model, it
+  fails to finish, and a timeout reads as infrastructure rather than as the
+  model saying anything.
 - (2026-09-16, before implementation) The command the issue proposes as a
   starting point selects the wrong tests. `cargo test ... -- --ignored` runs
   only tests marked `#[ignore]`, and of the six models only
@@ -539,6 +592,20 @@ worker model the seam must preserve and is read before EP-M2.
 
 ## Decision log
 
+- (2026-09-18, from review) The seam exports a read-write lock as well as a
+  mutex, and `FemtoLogger`'s handler list keeps its `parking_lot::RwLock`
+  rather than being redesigned away. EP-M2's first draft listed the thread, the
+  channel and the mutex, which left EP-M4 with no implementable seam for the
+  one thing `loom_concurrent_handler_addition` exists to explore. Two options
+  were weighed. Removing the lock, by making the handler list immutable and
+  swapping an `Arc` on attachment, would make the read path allocation-free and
+  Loom-transparent at once; it was rejected because it is a change to
+  production behaviour on the hot dispatch path, and this plan's mandate is to
+  make existing models run, not to redesign what they model. Verified against
+  loom 0.7.2 while writing the table: `RwLock::read`, `RwLock::write` and
+  `Mutex::lock` each return a `LockResult`, where `parking_lot` returns a guard
+  directly, so the seam's `cfg(loom)` arm unwraps and the difference stays
+  inside the module.
 - (2026-09-16) The user approved EP-M1 and the knowingly red scheduled lane it
   leaves behind. The plan leaves DRAFT. EP-M2 onwards still wait, because the
   seam is the first thing here that changes production code and its shape is
@@ -582,9 +649,11 @@ worker model the seam must preserve and is read before EP-M2.
 - [ ] EP-M6: the lane proves it ran
 - [ ] EP-M7: say what is now true
 
-Drafted 2026-09-16. EP-M1 delivered 2026-09-16. EP-M2 is held pending approval
-of the seam's shape, which is the one decision in this plan that changes
-production code.
+Drafted 2026-09-16. EP-M1 delivered 2026-09-16, its contract strengthened on
+2026-09-18 after review found it read every argument without asking what
+program ran them. EP-M2 is held pending approval of the seam's shape, which is
+the one decision in this plan that changes production code, and which now
+includes the read-write lock as well as the mutex.
 
 ## Outcomes & retrospective
 
