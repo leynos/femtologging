@@ -42,6 +42,41 @@ dependency or its version policy:
 - `pyyaml` is bounded to `>=6.0.3,<7` in both sources because the lint
   contract tests parse the CI workflow files.
 
+### Docstring examples
+
+`make test` runs pytest with `--doctest-modules`, so every `>>>` example in a
+module pytest walks is executed as part of the suite. Before it was wired the
+suite collected 621 items and no examples; with it, 655. The 34 new items are
+the examples, and five of them were failing: `poll_file_for_text`,
+`capture_records`, `latest_key_values`, `AdapterProbe.capture` and
+`_sole_emitted_record` each opened with a name nothing bound, so each raised on
+its first execution. An example nobody executes is a comment that looks like
+evidence.
+
+Two rules follow from that.
+
+Write an example so it runs on its own. Bind every name it uses, and show a
+value rather than an assertion, so a wrong answer is a failure and not a silent
+pass.
+
+Skip an example only with a written reason beside it. `capture_records` is the
+one skipped here: running it would need a live logger, an emission through the
+process-wide macros, and a bounded wait on the worker that delivers the record,
+and an example that waits on a race is the shape
+[issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
+skipped example is inert text, never compiled, so it cannot be trusted the way
+an executed one can.
+
+`--doctest-modules` imports every module it walks, not only `test_*.py`. Two
+settings keep that import working. `pythonpath = ["scripts"]` in
+`[tool.pytest.ini_options]` lets the helper scripts import each other as
+top-level modules, which is what `[tool.ty.environment] extra-paths` already
+records for type checking. `scripts/conftest.py` excludes
+`scripts/lint_rust_lanes.py`, whose dependencies live in its own `uv` script
+block and cannot be resolved from the project environment;
+`make lint-lanes-test` runs that script, and its examples, in the environment
+that can.
+
 ## Typos spelling checker
 
 Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)
@@ -424,6 +459,115 @@ item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`. Use
 contract. See
 [adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
 for the decision and its rationale.
+
+### The source scan
+
+Clippy cannot see an attribute that switches its own lint off, so
+`rust_extension/tests/env_policy_source_scan.rs` reads the crate's sources and
+rejects any suppression of the policy; its machinery lives in
+`rust_extension/tests/test_utils/source_scan.rs` and the modules beside it. The
+walk starts at the crate directory and reads every `.rs` file it can reach, so
+a build script, a bench, an example or a second binary is governed wherever it
+appears. `lint-env-policy` passes `--all-targets`, which compiles an `examples`
+target when one exists, and no list of directories written today governs one
+nobody has added yet.
+
+It skips `target` and every dot-prefixed directory, being build output and tool
+state rather than anywhere code Cargo compiles is written. `src`, `tests` and
+`benches` remain named, as a tripwire rather than a filter: each must be
+represented among the sources the walk returned, so a walk that silently read
+nothing reports a failure instead of a clean crate. A directory that cannot be
+read is a failure, not an empty result.
+
+Run it with
+`cargo test --manifest-path rust_extension/Cargo.toml
+--no-default-features --test env_policy_source_scan`,
+or as part of `make test`. It needs four development dependencies, all
+declared in `rust_extension/Cargo.toml`:
+
+*Table: Development dependencies the source scan needs.*
+
+| Crate         | Why it is needed                                             |
+| ------------- | ------------------------------------------------------------ |
+| `syn`         | Parses each source and walks its attributes with a visitor   |
+| `proc-macro2` | Walks `macro_rules!` token streams, which `syn` keeps opaque |
+| `cap-std`     | Reads sources through a capability-scoped directory handle   |
+| `camino`      | Carries the UTF-8 paths those handles return                 |
+
+Sources are read through a `cap_std` `fs_utf8::Dir` handle rather than
+`std::fs`, which the Dylint suite disallows, and each directory is opened
+through its parent's handle so the walk cannot leave the tree it was given.
+`include_str!` is not an option here as it is for the configuration contracts,
+because the scan has to see files that do not exist yet.
+
+Three shapes are refused structurally rather than by their meta, because none
+of them is a suppression the scan can read where it is written. A
+`macro_rules!` arm that forwards an attribute's *path* (`#[$attr]`) lets its
+caller supply `allow`, so it is refused at inner scope, and at outer scope
+where the arm writes an `env` access itself or forwards a fragment the caller
+fills with code. The `$(#[$meta:meta])*` idiom for carrying doc comments onto a
+generated setter is therefore untouched, as are `#[doc = $text]` and
+`#[derive($traits)]`, whose paths are written out. And an `include!` is refused
+unless its target is a literal `.rs` path *that the walk would reach*, since
+`rustc` parses an included file as Rust whatever its extension and resolves it
+against the file that writes it; `include_str!` and `include_bytes!` embed
+bytes and are not inclusions. And `#[path = "../../bypass.rs"] mod bypass;`
+names a module's source directly, compiling a file outside the crate directory
+the walk reads, so it is judged by the same rule as an `include!` target: one
+function, because an inclusion rule that drifted from a `#[path]` rule would
+close one route and leave its twin open, which is how `#[path]` came to be
+missing. A `path` reached through `cfg_attr` is judged too. The idiom this
+suite itself uses, `#[path = "source_scan/discovery.rs"]`, names a `.rs` file
+under a walkable directory and reports nothing.
+
+That target is read as one parsed string literal and judged by its value, so a
+raw string and an escaped dot name the same file a plain string does, and by
+its extension as the walk selects sources, against the one shared constant, so
+a bare `.rs` is a finding rather than an accepted target.
+
+A `.rs` extension alone is not enough. `include!(".generated/bypass.rs")` names
+a real Rust file under a directory the walk skips, so the target is resolved
+against the including source and every directory it passes through is judged by
+the same function the walk descends with. A target that climbs out of the crate
+is refused for the same reason. Only the directories are judged, because the
+walk selects a file by its extension alone and reads `.hidden.rs` like any
+other.
+
+The walk covers a `macro_rules!` transcriber, not the arguments of an ordinary
+invocation, which the macro it is handed to may discard. That holds inside a
+transcriber too: `stringify!(#[allow(clippy::all)])` writes an argument that
+becomes a string, not an attribute. The forwarded-path rule is what makes the
+narrowing safe: any attribute a macro emits has to be written in a transcriber
+first.
+
+Two readings keep the forwarded-path rule honest. An arm counts as writing an
+environment access when it uses `env` as a path or a macro, `env::var` or
+`env!`, not merely when some identifier is spelled `env`; a parameter of that
+name is not an access. And a fragment specifier is looked for at any depth, so
+`$($body:item)*` declares an `item` the way `$body:item` does.
+
+An argument list the scan cannot read reports every protected lint rather than
+none. `#[allow($lint)]` in a transcriber is a list `syn` accepts and whose
+contents it cannot parse, and invoked as
+`suppress!(clippy::disallowed_methods)` it expands to a real suppression. A
+`cfg_attr` whose arguments will not parse is treated the same way, and reaches
+the scan by the same route: an arm writing
+`#[cfg_attr($cond, allow(clippy::disallowed_methods))]` forwards the condition
+rather than the attribute's path, so the forwarded-path rule does not see it,
+and the expansion suppresses the lint for real. Failing closed costs a
+contributor who writes an unreadable argument an explanation; failing open
+costs the policy.
+
+The scan parses rather than searches. A text scan cannot follow `cfg_attr`,
+cannot tell an attribute from attribute-shaped text in a string or a doc
+comment, and breaks on a parenthesis inside a `reason`. It protects
+`clippy::disallowed_methods`, its group `clippy::style`, the wider
+`clippy::all`, and `warnings`, comparing lint names as whole paths with raw
+identifiers normalized. An item-scoped `#[expect(..., reason = "...")]` is the
+sanctioned form and passes, but only with a reason that is not blank, since the
+reason is the whole of what distinguishes it from a quieter `allow`; a
+crate-scoped `#![expect(...)]` does not, because one call anywhere in the crate
+fulfils it and the rest go unreported.
 
 ## Benchmarking Documentation
 

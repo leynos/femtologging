@@ -75,7 +75,10 @@ class AdapterProbe:
 
         Examples
         --------
-        >>> probe.capture(_LogRequest("app", "INFO", "hi")).strip()
+        >>> stream = io.StringIO()
+        >>> handler = logging.StreamHandler(stream)
+        >>> probe = AdapterProbe(stream, handler, StdlibHandlerAdapter(handler))
+        >>> probe.capture(_LogRequest("doctest.adapter", "INFO", "hi")).strip()
         'hi'
 
         """

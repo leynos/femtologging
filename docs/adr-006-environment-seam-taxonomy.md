@@ -232,3 +232,115 @@ access is governed by the Python architecture and its own lint stack.
 - Netsuke Clippy configuration:
   <https://github.com/leynos/netsuke/blob/main/clippy.toml>
 - Contract test: `rust_extension/tests/env_access_policy.rs`
+
+## Addendum: what the parsed scan refuses (2026-09-18)
+
+The decision above stands unchanged: `allow` is not an alternative anywhere,
+and a source scan enforces it. What changed is the scan. It parses every Rust
+source and walks every attribute rather than searching the text line by line,
+because a scan that reads lines can be walked past in at least six ways, each
+of which was measured. This addendum records the enforcement as it now stands.
+It narrows nothing the accepted decision permits; it closes routes around it.
+
+**The protected set is the group, not one lint.** No source may suppress
+`clippy::disallowed_methods`, the `clippy::style` group that contains it, the
+wider `clippy::all`, or `warnings`. Naming the lint is not required to silence
+it, which is why the scan parses rather than searches. Measured against Clippy
+0.1.98, each on a probe reporting one diagnostic without an attribute:
+`#![allow(clippy::style)]` and `#![allow(clippy::all)]` each reduce it to none,
+as does `#![cfg_attr(all(), allow(clippy::disallowed_methods))]`, which Clippy
+honours, `clippy::allow_attributes` does not report, and a scan looking for a
+line that begins with an attribute cannot see. `warnings` silences the lint
+only where it sits at its configured level, and the policy lane denies it on
+the command line, so `warnings` does not evade that lane. It is guarded anyway,
+against the manifest severity ever softening.
+
+**Scope decides whether an `expect` is the sanctioned form or a way round it.**
+An item-scoped `#[expect(..., reason = "...")]` is the sanctioned form the
+decision names, and it warns once the site grows a seam. A crate-scoped
+`#![expect(...)]` is not: one call anywhere in the crate fulfils it and every
+other goes unreported, and no unfulfilled expectation is raised either, so
+nothing is left to notice. Measured: with that attribute at a crate root, the
+probe reports neither the disallowed method nor an unfulfilled expectation. The
+scan therefore judges `expect` by scope, and a `cfg_attr` carries the outermost
+scope down however deeply it nests.
+
+**Raw identifiers are the same identifiers.** `#![r#allow(...)]` and
+`clippy::r#style` each silence the lint, so paths are normalized before they
+are compared.
+
+**The attribute need not sit where a reader can see it.** An `allow` emitted
+from a `macro_rules!` arm is expanded and honoured by Clippy while `syn` keeps
+the arm's body an opaque token stream, so the scan walks macro token streams as
+well as parsed attributes. Measured: a macro arm emitting
+`#[allow(clippy::disallowed_methods)]` around a `std::env::var` call reports
+zero diagnostics where the same file without it reports one.
+
+**Nor need the attribute be complete where it is written.** A `macro_rules!`
+arm may write `#[$attr]` and let its caller supply the path, and neither half
+is a suppression alone: the arm's attribute does not parse, and the invocation
+carries no `#` for a walk to notice. Invoked as
+`forward!(allow(clippy::disallowed_methods))`, the expansion silences every
+call the item contains. The scan refuses a forwarded path, but only where it
+could bear on the policy: at inner scope, which applies to everything around
+it, or where the arm either writes an `env` access itself or forwards a
+fragment the caller fills with code. That leaves the `$(#[$meta:meta])*` idiom
+for carrying doc comments onto a generated setter alone, which this crate's own
+builders use twice. Only the path counts, so `#[doc = $text]` and
+`#[derive($traits)]` report nothing however much of their argument is forwarded.
+
+Only a `macro_rules!` transcriber is walked, not the arguments of an ordinary
+invocation. An attribute handed to a macro that discards it never reaches the
+compiler, and a contract that reports a false positive gets switched off.
+Narrowing the walk is safe only because the forwarded-path rule above catches
+the definition any emitted attribute has to pass through.
+
+**Nor need the suppression be in the file at all.** `rustc` parses an
+`include!` target as Rust whatever its extension, so an `allow` inside a
+`.rs.txt` fixture silences the calls around the inclusion while an enclosing
+`expect` stays fulfilled and warns about nothing. The scan cannot read the
+target, which need not exist when the scan runs, so the inclusion itself is the
+finding unless it names a literal `.rs` path, which is scanned in its own right.
+`include_str!` and `include_bytes!` embed bytes rather than compiling source
+and are not inclusions at all.
+
+The inclusion target is judged by what the literal means, not by how it was
+typed. `r"support.rs"` and `"support\x2Ers"` name the same file as
+`"support.rs"`, so the whole argument is parsed as one string literal and its
+value read; parsing it as one literal is also what refuses a target assembled
+at compile time, which the scan cannot resolve however much of it looks like a
+path. The extension is then compared the way the walk selects sources, against
+the same constant, so `include!(".rs")` is a finding: a bare extension is a
+name the walk never collects, and the file it reaches would go unread.
+
+`#[path]` names a second source the same way.
+`#[path = "../../bypass.rs"] mod bypass;` compiles a file outside the crate
+directory, and the walk reads only below it, so a crate-level `allow` written
+there switches the policy off for everything the module covers while the scan
+never opens it. The two routes are judged by one rule, against the walk's own
+reachability test, because an `include!` rule that drifted from a `#[path]`
+rule would close one route and leave its twin open. The idiom this crate itself
+uses is unaffected: `#[path = "source_scan/discovery.rs"]` names a `.rs` file
+under a walkable directory, which the scan reads in its own right.
+
+**An argument list that will not parse reports every protected lint.** This
+reads back oddly and is deliberate. A `macro_rules!` arm may forward a
+`cfg_attr` condition, as in
+`#[cfg_attr($cond, allow(clippy::disallowed_methods))]`, whose attribute path
+is written out as `cfg_attr` and so is not a forwarded path. The expansion
+compiles and the suppression is real, while the arm's own attribute does not
+parse. The scan cannot say which lint is switched off there, and the honest
+answer to "which of these" is "any of them"; reporting none was a silent bypass.
+
+**The walk reads the whole crate.** `lint-env-policy` passes `--all-targets`,
+which compiles an `examples` target once one exists, so the scan starts at the
+crate directory and reads every `.rs` file it can reach rather than a fixed
+list of roots. `src`, `tests` and `benches` remain named as a tripwire: a walk
+that returned nothing, or stopped at the first directory, fails rather than
+reporting a clean crate. Build output and dot-prefixed tool state are the only
+directories it does not enter.
+
+The scan is `rust_extension/tests/test_utils/source_scan/`, and its contracts
+are `rust_extension/tests/env_policy_source_scan.rs`,
+`rust_extension/tests/test_utils/policy_routes.rs` and
+`rust_extension/tests/test_utils/policy_walk.rs`.
