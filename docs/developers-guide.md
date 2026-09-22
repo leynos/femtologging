@@ -214,23 +214,58 @@ assertions reusable without expanding the runtime API:
   also limited to Python-enabled unit tests.
 
 The reusable integration-test support is owned by
-`rust_extension/tests/test_utils/`. It consists of three focused components:
+`rust_extension/tests/test_utils/`. It consists of four focused components:
 
 - `handle_expect.rs` defines the `HandleExpect` trait, which turns a handler's
   fallible `handle` call into a descriptive test panic.
 - `fixtures.rs` provides `handler_tuple` for a fresh buffer and default
-  stream handler, `handler_tuple_custom` for capacity and timeout cases, and
-  `stream_handler_for` when several handlers must share one buffer.
+  stream handler, and `stream_handler_for` when several handlers must share one
+  buffer.
 - `shared_buffer.rs` provides standard-library and Loom-backed shared buffers;
   use the variant matching the test's execution model.
+- `captured_log.rs` provides `captured_log()`, the process-wide capture logger
+  described below.
 
 Each Cargo integration-test root declares only the support modules it needs.
-The stream-handler suite includes `test_utils/mod.rs` because it uses all three
-components; the file-handler and logger suites include their required files
-directly. The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs`
-directly, and its Loom modules are themselves gated by `cfg(loom)`. Prefer
-these fixtures and the trait over duplicating setup or
-`handle(...).expect(...)` calls in individual suites.
+The stream-handler suite includes `test_utils/mod.rs` because it uses all of
+them; the file-handler and logger suites include their required files directly.
+The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs` directly,
+and its Loom modules are themselves gated by `cfg(loom)`. Prefer these fixtures
+and the trait over duplicating setup or `handle(...).expect(...)` calls in
+individual suites.
+
+### Capturing log records in an integration test
+
+`log::set_logger` succeeds once per process and returns an error for every
+later call, which `logtest::start()` unwraps. Two tests in one binary that each
+called it therefore could not both run: whichever ran second panicked, and only
+which one lost varied with the order the harness chose. `captured_log()`
+installs the logger once behind a `OnceLock` and hands out a
+`MutexGuard<'static, logtest::Logger>`, so a second caller waits rather than
+panicking.
+
+Installing once is not enough on its own. `logtest::Logger` holds no state of
+its own; every captured record lives in a queue inside `logtest` that outlives
+the test that produced it, and a test that panics part way through leaves its
+records behind. `captured_log()` therefore drains the queue under the same lock
+that hands out the logger, so the drain and the use are one operation rather
+than two an ordering could separate. A lock poisoned by a panic elsewhere is
+recovered rather than propagated, because that test has already failed and a
+second panic here would hide the first.
+
+Two rules follow for callers, and both matter:
+
+- **Hold the guard for as long as the logger is needed.** Dropping it early
+  lets another test drain the records out from under the first.
+- **Match records by their text, not only by their level.** The capture is
+  process-wide while the mutex scopes only the callers that take it, so "the
+  queue holds one warning" is a claim about every record the binary emits. Name
+  the message under test instead.
+
+Tests that use it carry `#[serial]` and `#[ignore]`, and the scheduled
+`heavy-tests` lane runs them with `-- --ignored` so nothing else in the binary
+emits alongside them. Under `--include-ignored` the ordinary tests in the same
+file run too and do emit, which is why the assertions name their records.
 
 File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
 The `impl_unsupported_seek!` macro supplies the required `Seek` implementation
