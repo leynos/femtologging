@@ -4,11 +4,13 @@
 //! here rather than anywhere else because these two tests share a fixture
 //! nothing else uses: a server that accepts a request and never answers it.
 //!
-//! The pair is the two halves of one rule. One asserts that `close` returns
-//! inside its flush budget when the worker never acknowledges; the other that
-//! a worker which does acknowledge is joined rather than abandoned. The second
-//! exists because the first does not need it: abandoning unconditionally
-//! passed every other test in the crate.
+//! The first two are the two halves of one rule. One asserts that `close`
+//! returns inside its flush budget, and says it abandoned the worker, when the
+//! worker never acknowledges; the other that a worker which does acknowledge
+//! is joined rather than abandoned. The second exists because the first does
+//! not need it: abandoning unconditionally passed every other test in the
+//! crate. The third covers the step before the acknowledgement: queueing the
+//! shutdown command on a channel the stuck worker has left full.
 //!
 //! Included with `#[path]` from `tests.rs`, the way
 //! `response_classification_tests.rs` already is, so both files stay inside
@@ -16,8 +18,9 @@
 
 use std::io::{self, Read};
 use std::net::{SocketAddr, TcpListener};
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rstest::rstest;
 
@@ -37,8 +40,14 @@ use crate::http_handler::config::{HTTPHandlerConfig, HTTPMethod};
 /// The accepted streams are held rather than dropped: closing them would let
 /// `ureq` fail immediately and end the very block this fixture exists to
 /// create.
-fn spawn_silent_server(listener: TcpListener) -> io::Result<SocketAddr> {
+///
+/// The receiver it returns yields once per request read. A test waits on it
+/// rather than sleeping, so the worker is known to be inside its request, and
+/// deaf to its command channel, before the test goes on; a sleep would either
+/// slow the test or let a loaded host close the handler first.
+fn spawn_silent_server(listener: TcpListener) -> io::Result<(SocketAddr, mpsc::Receiver<()>)> {
     let addr = listener.local_addr()?;
+    let (read_tx, read_rx) = mpsc::channel();
     thread::spawn(move || {
         let mut held = Vec::new();
         for stream in listener.incoming() {
@@ -49,10 +58,14 @@ fn spawn_silent_server(listener: TcpListener) -> io::Result<SocketAddr> {
             let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
             let _ = stream.read(&mut sink);
             held.push(stream);
+            let _ = read_tx.send(());
         }
     });
-    Ok(addr)
+    Ok((addr, read_rx))
 }
+
+/// How long a test waits for the worker to reach the silent server.
+const REQUEST_ALLOWANCE: Duration = Duration::from_secs(10);
 
 /// How long the worker is kept busy, and so how long an unbounded join waits.
 const BUSY_WINDOW: Duration = Duration::from_secs(10);
@@ -63,13 +76,15 @@ const CLOSE_BUDGET: Duration = Duration::from_millis(200);
 /// join cannot pass it.
 const CLOSE_ALLOWANCE: Duration = Duration::from_secs(3);
 
-/// Build a handler pointed at a server that never replies.
-fn build_stuck_handler(addr: SocketAddr) -> FemtoHTTPHandler {
+/// Build a handler pointed at a server that never replies, with a command
+/// queue holding `capacity` entries.
+fn build_stuck_handler(addr: SocketAddr, capacity: usize) -> FemtoHTTPHandler {
     use crate::socket_handler::BackoffPolicy;
 
     let config = HTTPHandlerConfig {
         url: format!("http://{addr}/log"),
         method: HTTPMethod::POST,
+        capacity,
         connect_timeout: CLOSE_BUDGET,
         write_timeout: CLOSE_BUDGET,
         backoff: BackoffPolicy {
@@ -100,28 +115,43 @@ fn build_stuck_handler(addr: SocketAddr) -> FemtoHTTPHandler {
 /// depends on how busy the machine is asserts the machine.
 ///
 /// Proved by reverting: with the bound removed, this fails with an elapsed
-/// time around the ten-second window.
+/// time around the ten-second window. The abandonment warning is asserted
+/// too, since a quick return alone could be a join that happened to be fast.
 ///
-/// `#[serial]` because its sibling below reads a process-wide log capture and
-/// this test is the only thing in the binary that emits the message that
-/// sibling asserts the absence of.
+/// `#[serial]` because all three tests here read one process-wide log
+/// capture: two assert the abandonment message is present, and the healthy
+/// close asserts it is absent, and these are the only tests in the binary
+/// that emit it.
 #[rstest]
 #[serial_test::serial(http_close)]
 fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
     tcp_listener: io::Result<TcpListener>,
 ) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let addr = spawn_silent_server(tcp_listener).expect("spawn silent server");
-    let mut handler = build_stuck_handler(addr);
+    let (addr, requests) = spawn_silent_server(tcp_listener).expect("spawn silent server");
+    crate::handlers::file::test_support::install_test_logger();
+    let mut handler = build_stuck_handler(addr, 16);
     send_info_record(&handler, "stuck").expect("record should be queued");
 
-    // Let the worker take the record and enter its request before closing, so
-    // the shutdown command arrives at a worker that cannot read it. Without
-    // this the worker might acknowledge before it ever sends, and the test
-    // would pass without exercising the path it names.
-    thread::sleep(CLOSE_BUDGET);
+    // Wait until the worker is inside its request, so the shutdown command
+    // arrives at a worker that cannot read it. Without this the worker might
+    // acknowledge before it ever sends, and the test would pass without
+    // exercising the path it names.
+    requests
+        .recv_timeout(REQUEST_ALLOWANCE)
+        .expect("the worker should reach the silent server");
 
-    let started = std::time::Instant::now();
+    assert_close_abandons_within_budget(&mut handler);
+}
+
+/// Close `handler`, asserting it returned inside the allowance and said it
+/// abandoned the worker.
+///
+/// Both halves are asserted because each alone admits a wrong close: a fast
+/// return with no warning could be a join that happened to be quick, and the
+/// warning with a slow return is the unbounded wait this contract forbids.
+fn assert_close_abandons_within_budget(handler: &mut FemtoHTTPHandler) {
+    let started = Instant::now();
     handler.close();
     let elapsed = started.elapsed();
 
@@ -131,6 +161,49 @@ fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
          acknowledges: took {elapsed:?}, allowed {CLOSE_ALLOWANCE:?}, the \
          worker stays busy for {BUSY_WINDOW:?}"
     );
+    let logged = crate::handlers::file::test_support::take_logged_messages();
+    assert!(
+        logged
+            .iter()
+            .any(|entry| entry.message.contains(ABANDON_MARKER)),
+        "a close that did not wait for its worker must say it abandoned it; \
+         close logged {logged:?}"
+    );
+}
+
+/// Scenario: the worker is stuck mid-request and its command queue is full
+/// when the handler is closed.
+///
+/// Invariant: `close` still returns within its budget. The shutdown command
+/// has to be queued before any acknowledgement can be awaited, and on a full
+/// bounded channel a plain send blocks until the worker next reads, which a
+/// stuck worker does not do for the whole of its backoff deadline. The bound
+/// on the acknowledgement alone left that wait in front of it.
+///
+/// A queue of one entry makes the state reachable deterministically: the
+/// worker holds the first record in its request, and the second fills the
+/// queue.
+///
+/// Mutation proof: sending the shutdown command with a plain `send` fails
+/// this test at roughly the ten-second window, and no other.
+#[rstest]
+#[serial_test::serial(http_close)]
+fn close_returns_within_its_budget_when_the_queue_is_full(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, requests) = spawn_silent_server(tcp_listener).expect("spawn silent server");
+    crate::handlers::file::test_support::install_test_logger();
+    let mut handler = build_stuck_handler(addr, 1);
+    send_info_record(&handler, "held in the request").expect("first record should be queued");
+    requests
+        .recv_timeout(REQUEST_ALLOWANCE)
+        .expect("the worker should reach the silent server");
+    send_info_record(&handler, "fills the queue").expect("second record should be queued");
+    assert!(
+        send_info_record(&handler, "overflows").is_err(),
+        "the queue should be full, or the shutdown send is not under test"
+    );
+
+    assert_close_abandons_within_budget(&mut handler);
 }
 
 /// The message `abandon_worker` logs, and the marker both close tests turn on.

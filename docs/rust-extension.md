@@ -386,6 +386,34 @@ retains responsibility for importing arbitrary user-defined factories.
   `with_bearer_token` methods remain available so existing code keeps working,
   but the typed stub surface points users at the combined methods first.
 
+## HTTP handler shutdown contract
+
+`FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs` is
+bounded by `flush_timeout`, which the handler takes from `write_timeout`.
+`Drop` calls `close`, so the same bound applies to a handler that is simply
+dropped.
+
+`request_shutdown` returns a `ShutdownOutcome` rather than discarding the
+result, and one deadline, computed once from `flush_timeout`, covers both of
+its steps: queueing `HTTPCommand::Shutdown` on the bounded command channel with
+`send_deadline`, and waiting for the acknowledgement with `recv_deadline`. The
+send is inside the budget because a full channel blocks it until the worker
+next reads a command, which a worker stuck mid-request does not do.
+
+- `ShutdownOutcome::Finished` covers an acknowledgement, a disconnected
+  command channel, and a dropped acknowledgement channel. Each means the worker
+  has left its loop or is leaving it, so `close` joins it. The join is kept
+  because it is what reports a worker panic.
+- `ShutdownOutcome::TimedOut` covers a send or a receive that ran out of
+  budget. `abandon_worker` logs a warning naming the budget and takes the join
+  handle, so neither `close` nor a later `Drop` waits on it. The detached
+  worker drains what was already queued and exits on its own.
+
+This is the contract `FemtoStreamHandler::close` already follows: acknowledge
+or be abandoned, with the timeout warned about rather than swallowed.
+`rust_extension/src/http_handler/close_tests.rs` covers the two branches and
+the full-channel send.
+
 ## Runtime level updates
 
 `FemtoLogger` supports dynamic log level changes at runtime via `set_level()`
