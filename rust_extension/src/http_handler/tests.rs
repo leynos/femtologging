@@ -392,6 +392,8 @@ fn does_not_retry_on_400(tcp_listener: io::Result<TcpListener>) {
     .expect("retry test must complete");
 }
 
+#[path = "close_tests.rs"]
+mod close;
 // Response classification tests (unit tests for the worker module)
 #[path = "response_classification_tests.rs"]
 mod response_classification;

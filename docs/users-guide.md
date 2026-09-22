@@ -318,6 +318,14 @@ socket_handler = (
 - `with_headers(...)`, `with_capacity(...)`, timeout setters, and
   `.with_json_format()` mirror the socket/file builder style. Validation
   failures raise `ValueError` before the handler is built.
+- `handler.close()` waits for the worker for at most the handler's write
+  timeout. A worker that acknowledges the shutdown in that time is joined. One
+  that does not, typically because it is still retrying a request against an
+  endpoint that has stopped answering, is abandoned with a warning instead of
+  blocking the caller for the rest of its backoff. The abandoned worker keeps
+  sending the records already queued and then exits, so those records arrive
+  only if the process lives long enough. The same bound applies when the
+  handler is dropped without an explicit `close()`.
 
 ### Custom Python handlers
 

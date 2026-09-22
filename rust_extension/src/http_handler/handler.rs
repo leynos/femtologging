@@ -1,6 +1,9 @@
 //! Public handler type exported by the crate.
 
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -55,25 +58,72 @@ impl FemtoHTTPHandler {
         <Self as FemtoHandlerTrait>::flush(self)
     }
 
-    /// Close the handler and wait for the worker to exit.
+    /// Close the handler, waiting for the worker only while it is answering.
+    ///
+    /// The shutdown request is bounded by `flush_timeout`, and so is the whole
+    /// of `close`: a worker that does not acknowledge within that budget is
+    /// abandoned rather than joined. Joining it would wait for however long it
+    /// had left to run, which for this handler is the backoff deadline, a
+    /// figure `flush_timeout` does not describe and the caller did not ask
+    /// for. `close` runs from `Drop`, so that wait would fall on whatever was
+    /// tearing the handler down.
+    ///
+    /// This is the contract [`FemtoStreamHandler::close`] already documents
+    /// and implements: acknowledge or be abandoned, with the timeout warned
+    /// about rather than swallowed. Two handlers with the same lifecycle
+    /// should not answer the same question differently.
+    ///
+    /// [`FemtoStreamHandler::close`]: crate::FemtoStreamHandler::close
     pub fn close(&mut self) {
-        self.request_shutdown();
-        self.join_worker();
+        match self.request_shutdown() {
+            ShutdownOutcome::Finished => self.join_worker(),
+            ShutdownOutcome::TimedOut => self.abandon_worker(),
+        }
     }
 
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
 
-    fn request_shutdown(&mut self) {
+    /// Ask the worker to stop, and report whether joining it is now bounded.
+    ///
+    /// The distinction the return value carries is the whole point: every
+    /// outcome except a timeout means the worker has left, or is leaving, its
+    /// command loop, so the join that follows is short. An earlier version
+    /// discarded this with `let _ =`, which is what let an unbounded join
+    /// follow a bounded wait.
+    ///
+    /// One deadline covers both halves. The command channel is bounded, so
+    /// when it is full the send itself blocks until the worker next reads it,
+    /// which a worker stuck mid-request does not do; a send outside the budget
+    /// would put that whole wait back in front of the bounded receive.
+    fn request_shutdown(&mut self) -> ShutdownOutcome {
         let Some(tx) = self.tx.take() else {
-            return;
+            // Already closed. There is no worker left to wait for.
+            return ShutdownOutcome::Finished;
         };
+        let deadline = Instant::now() + self.flush_timeout;
         let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-        if tx.send(HTTPCommand::Shutdown(ack_tx)).is_err() {
-            return;
+        match tx.send_deadline(HTTPCommand::Shutdown(ack_tx), deadline) {
+            Ok(()) => {}
+            // The worker has dropped its receiver, so it has already left the
+            // loop; joining it returns at once and may report a panic.
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return ShutdownOutcome::Finished;
+            }
+            // The queue stayed full for the whole budget: the worker is not
+            // reading commands, so it could not have acknowledged either.
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return ShutdownOutcome::TimedOut;
+            }
         }
-        let _ = ack_rx.recv_timeout(self.flush_timeout);
+        match ack_rx.recv_deadline(deadline) {
+            Ok(()) => ShutdownOutcome::Finished,
+            // The worker dropped the acknowledgement channel without using it,
+            // which it can only do on its way out.
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
+        }
     }
 
     fn join_worker(&mut self) {
@@ -84,6 +134,33 @@ impl FemtoHTTPHandler {
             log::warn!("FemtoHTTPHandler: worker thread panicked");
         }
     }
+
+    /// Detach the worker after it failed to acknowledge shutdown.
+    ///
+    /// The handle is taken so nothing joins it later, in particular the `Drop`
+    /// that may follow this call. The thread itself ends on its own once its
+    /// in-flight request and backoff finish, because its command channel is
+    /// already disconnected.
+    fn abandon_worker(&mut self) {
+        log::warn!(
+            "FemtoHTTPHandler: worker did not acknowledge shutdown within {:?}; \
+             abandoning it rather than blocking the caller",
+            self.flush_timeout
+        );
+        self.handle.lock().take();
+    }
+}
+
+/// What asking the worker to stop established about joining it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownOutcome {
+    /// The worker acknowledged, or had already left its loop. The join is
+    /// bounded and worth doing, because it is also what surfaces a panic.
+    Finished,
+    /// The command could not be queued, or no acknowledgement arrived, within
+    /// `flush_timeout`. The worker is busy on something whose length
+    /// `flush_timeout` does not describe.
+    TimedOut,
 }
 
 #[cfg(feature = "python")]
@@ -122,7 +199,14 @@ impl FemtoHTTPHandler {
         self.flush()
     }
 
-    /// Close the handler and wait for the worker thread to finish.
+    /// Close the handler, waiting for the worker at most ``write_timeout``.
+    ///
+    /// A worker that acknowledges the shutdown within ``write_timeout`` is
+    /// joined. One that does not, typically because it is still retrying a
+    /// request against an unresponsive endpoint, is abandoned with a warning
+    /// rather than waited for. It keeps working through the records already
+    /// queued and then exits on its own, so those records are delivered only
+    /// if the process outlives it.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.close();
