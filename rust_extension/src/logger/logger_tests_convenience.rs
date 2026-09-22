@@ -20,11 +20,11 @@ fn call_py_log_method(
     message: &str,
 ) -> PyResult<Option<String>> {
     match method_name {
-        "py_debug" => logger.py_debug(py, message, None, None),
-        "py_info" => logger.py_info(py, message, None, None),
-        "py_warning" => logger.py_warning(py, message, None, None),
-        "py_error" => logger.py_error(py, message, None, None),
-        "py_critical" => logger.py_critical(py, message, None, None),
+        "py_debug" => logger.py_debug(py, message, None, None, None),
+        "py_info" => logger.py_info(py, message, None, None, None),
+        "py_warning" => logger.py_warning(py, message, None, None, None),
+        "py_error" => logger.py_error(py, message, None, None, None),
+        "py_critical" => logger.py_critical(py, message, None, None, None),
         _ => unreachable!("unknown convenience method: {method_name}"),
     }
 }
@@ -145,7 +145,7 @@ fn convenience_methods_merge_scoped_context() {
         let _guard = log_context::push_log_context([("request_id", "123")])
             .expect("context push should succeed");
         let result = logger
-            .py_info(py, "message", None, None)
+            .py_info(py, "message", None, None, None)
             .expect("py_info should not fail");
         assert!(result.is_some());
         assert!(logger.flush_handlers());

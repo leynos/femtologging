@@ -1,3 +1,8 @@
+"""Typed interface for the PyO3 ``femtologging._femtologging_rs`` module.
+
+The interface exposes ``FemtoLogger`` and its structured logging fields.
+"""
+
 import collections.abc as cabc
 import datetime as dt
 import types
@@ -23,6 +28,8 @@ ExcInfo = Union[
     tuple[None, None, None],
     None,
 ]
+StructuredValue = str | int | float | bool | None
+StructuredFields = Mapping[str, StructuredValue]
 
 class FemtoLogger:
     """A high-performance logger implemented in Rust."""
@@ -42,6 +49,7 @@ class FemtoLogger:
         *,
         exc_info: ExcInfo = None,
         stack_info: bool = False,
+        extra: StructuredFields | None = None,
     ) -> str | None:
         """Log a message at the given level.
 
@@ -58,6 +66,9 @@ class FemtoLogger:
             - A 3-tuple ``(type, value, traceback)``: Use directly.
         stack_info
             If ``True``, capture the current call stack.
+        extra
+            Optional structured fields. These override active scoped context
+            fields with the same key.
 
         Returns
         -------
@@ -93,6 +104,7 @@ class FemtoLogger:
         *,
         exc_info: ExcInfo = None,
         stack_info: bool = False,
+        extra: StructuredFields | None = None,
     ) -> str | None:
         """Log *message* at DEBUG level.  See ``log()`` for parameters."""
         ...
@@ -103,6 +115,7 @@ class FemtoLogger:
         *,
         exc_info: ExcInfo = None,
         stack_info: bool = False,
+        extra: StructuredFields | None = None,
     ) -> str | None:
         """Log *message* at INFO level.  See ``log()`` for parameters."""
         ...
@@ -113,6 +126,7 @@ class FemtoLogger:
         *,
         exc_info: ExcInfo = None,
         stack_info: bool = False,
+        extra: StructuredFields | None = None,
     ) -> str | None:
         """Log *message* at WARNING level.  See ``log()`` for parameters."""
         ...
@@ -123,6 +137,7 @@ class FemtoLogger:
         *,
         exc_info: ExcInfo = None,
         stack_info: bool = False,
+        extra: StructuredFields | None = None,
     ) -> str | None:
         """Log *message* at ERROR level.  See ``log()`` for parameters."""
         ...
@@ -133,6 +148,7 @@ class FemtoLogger:
         *,
         exc_info: ExcInfo = None,
         stack_info: bool = False,
+        extra: StructuredFields | None = None,
     ) -> str | None:
         """Log *message* at CRITICAL level.  See ``log()`` for parameters."""
         ...

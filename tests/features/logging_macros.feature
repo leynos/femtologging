@@ -59,3 +59,8 @@ Feature: Module-level logging convenience functions
     Given a record-collecting logger named "snap.logger" with level "INFO"
     When I call info with message "snap" and name "snap.logger" inside context "request_id"="123" and "user"="bob"
     Then the latest record metadata key_values match snapshot
+
+  Scenario: get_logger propagates scoped context to an ancestor handler
+    Given a root record collector
+    When I emit messages through get_logger "probe" inside context "correlation_id"="abc123"
+    Then the ancestor records preserve empty and scoped key-values

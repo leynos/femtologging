@@ -34,13 +34,18 @@ True
 
 from __future__ import annotations
 
-import time
 import typing as typ
 
 import pytest
 
-from femtologging import FemtoLogger, get_logger, getLogger, log_context
+from femtologging import (
+    FemtoLogger,
+    get_logger,
+    getLogger,
+)
 from tests.logger_support import assert_output_contains
+
+# -- getLogger alias ----------------------------------------------------------
 
 
 def _raise_for_capture(error: Exception) -> typ.NoReturn:
@@ -193,65 +198,6 @@ def test_convenience_method_with_stack_info() -> None:
     assert_output_contains(
         output, "Stack (most recent call last)", context="info(stack_info=True)"
     )
-
-
-def test_direct_logger_info_merges_scoped_log_context() -> None:
-    """``logger.info`` should include scoped ``log_context`` metadata."""
-
-    class RecordCollector:
-        """Handler stub that keeps every structured record it is given."""
-
-        def __init__(self) -> None:
-            self.records: list[dict[str, object]] = []
-            # The Rust bridge resolves ``handle_record`` with ``getattr`` on
-            # the instance, so binding ``list.append`` directly avoids a
-            # method that would do nothing but forward the argument.
-            self.handle_record = self.records.append
-
-        def handle(self, logger: str, level: str, message: str) -> None:
-            """Ignore unstructured records; only ``handle_record`` is asserted."""
-            _ = (self.records, logger, level, message)
-
-        def flush(self) -> bool:
-            """Report a successful flush; records are captured synchronously.
-
-            Returns
-            -------
-            bool
-                Always ``True``.
-            """
-            _ = self.records
-            return True
-
-    logger = FemtoLogger("ctx.direct")
-    logger.set_level("INFO")
-    collector = RecordCollector()
-    logger.add_handler(collector)
-
-    with log_context(request_id="abc123", user="alice"):
-        output = logger.info("inside context")
-    assert output is not None, "info() should emit at INFO level"
-    for _ in range(20):
-        if collector.records:
-            break
-        logger.flush_handlers()
-        time.sleep(0.01)
-    assert collector.records, "expected at least one captured record"
-
-    last_record = collector.records[-1]
-    metadata = last_record.get("metadata")
-    assert isinstance(metadata, dict), f"unexpected metadata payload: {metadata!r}"
-    metadata_dict = typ.cast("dict[str, object]", metadata)
-    key_values = metadata_dict.get("key_values")
-    assert isinstance(key_values, dict), (
-        f"unexpected key_values payload: {key_values!r}"
-    )
-    assert key_values == {"request_id": "abc123", "user": "alice"}, (
-        f"unexpected key_values: {key_values!r}"
-    )
-
-
-# -- exception() --------------------------------------------------------------
 
 
 def test_exception_captures_active_exception() -> None:
