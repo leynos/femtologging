@@ -62,11 +62,11 @@ impl RotationStrategy<BufWriter<File>> for ObservedStrategy {
                 thread::sleep(delay);
             }
             self.inner.rotate(writer)?;
-            // Recover from poisoning: the recorded thread IDs remain valid data.
-            self.rotations
+            let mut rotations = self
+                .rotations
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(thread::current().id());
+                .map_err(|_| io::Error::other("rotation observer lock poisoned"))?;
+            rotations.push(thread::current().id());
             Ok(true)
         } else {
             Ok(false)
