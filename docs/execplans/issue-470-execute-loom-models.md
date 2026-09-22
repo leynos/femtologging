@@ -252,8 +252,9 @@ state. The execution step is the last step in the job, so the workflow's other
 steps all run and report before it: the lane still reports on everything it
 reported on before, and adds the Loom gap on the end.
 
-Acceptance: the contract is `tests/test_loom_lane_contract.py`, eight tests
-over the parsed workflow document rather than its text. Seven mutations, each
+Acceptance: the contract is `tests/test_loom_lane_contract.py`, nine test
+functions collecting eleven cases, asserted over the parsed workflow document
+and the tokenized command rather than the file's text. Nine mutations, each
 applied alone and reverted, each failing exactly the contract that names it:
 
 ```plaintext
@@ -264,8 +265,20 @@ W4-drop-the-heavy-target: test_each_loom_step_names_the_heavy_target[Run Loom mo
 W5-drop-the-timeout: test_the_execution_step_is_bounded
 W6-drop-the-filter: test_the_execution_step_selects_every_model
 W7-execute-before-the-heavy-suite: test_the_execution_step_runs_last
+W8-echo-instead-of-cargo: test_each_loom_step_actually_invokes_cargo_test[Compile Loom heavy tests]
+W9-drop-the-step-env: test_the_execution_step_bounds_loom_s_exploration
 N1-reordered-but-equivalent: <none>
 ```
+
+`W8` and `W9` were added on 2026-09-18, from review, and they are the two that
+mattered most. Every assertion up to `W7` reads an *argument*, and an argument
+list means nothing if the program in front of it changed: a step rewritten as
+`echo cargo test ... -- --include-ignored` passed all seven. That is the defect
+this whole plan exists to remove, reproduced inside the thing guarding against
+it. `W9` covers the preemption bound, which is not a performance knob: an
+unbounded exploration does not fail a model, it fails to finish, and the step
+then reports a timeout, which reads as infrastructure rather than as the model
+saying anything.
 
 The last row is the narrowness half, and it changed the contract. The first
 draft pinned the selection as one contiguous token sequence, which a command
@@ -607,9 +620,11 @@ worker model the seam must preserve and is read before EP-M2.
   directly, so the seam's `cfg(loom)` arm unwraps and the difference stays
   inside the module.
 - (2026-09-16) The user approved EP-M1 and the knowingly red scheduled lane it
-  leaves behind. The plan leaves DRAFT. EP-M2 onwards still wait, because the
-  seam is the first thing here that changes production code and its shape is
-  worth agreeing before it is written.
+  leaves behind. Delivering it left the plan IN PROGRESS rather than DRAFT,
+  which is what the status line at the top of this document now reads. EP-M2
+  onwards still wait on a separate approval, because the seam is the first
+  thing here that changes production code and its shape is worth agreeing
+  before it is written.
 - (2026-09-16, from review) `loom_file_handler_flush_concurrent` gets a
   Loom-instrumented writer rather than keeping its temporary file. The
   alternative, keeping the real file and recording the external-effect
