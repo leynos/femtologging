@@ -41,6 +41,12 @@ percent-encoding = "2.3"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# The concurrency seam in `src/sync.rs` resolves to Loom's primitives under
+# `--cfg loom`, so the library itself needs Loom in that configuration. No
+# ordinary build compiles or links it.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7.2"
+
 [features]
 default = ["extension-module", "python", "log-compat", "tracing-compat"]
 extension-module = ["python", "pyo3/extension-module"]
