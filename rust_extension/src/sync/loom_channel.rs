@@ -22,7 +22,10 @@ use std::collections::VecDeque;
 use std::sync::PoisonError;
 use std::time::Duration;
 
-use loom::sync::{Arc, Condvar, Mutex, MutexGuard};
+use loom::{
+    sync::{Arc, Condvar, Mutex, MutexGuard},
+    thread::Thread,
+};
 
 use crossbeam_channel::{
     RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError,
@@ -34,6 +37,8 @@ struct State<T> {
     capacity: usize,
     senders: usize,
     receivers: usize,
+    /// Threads parked in `recv_either` until this channel changes.
+    selectors: Vec<Thread>,
 }
 
 /// State shared by every endpoint of one channel.
@@ -46,6 +51,15 @@ impl<T> Shared<T> {
     /// Lock the channel state, ignoring poisoning as `parking_lot` would.
     fn lock(&self) -> MutexGuard<'_, State<T>> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Wake every thread waiting on this channel, by condition variable or
+    /// in `recv_either`, after `state` has changed.
+    fn wake(&self, state: &mut State<T>) {
+        self.changed.notify_all();
+        for selector in state.selectors.drain(..) {
+            selector.unpark();
+        }
     }
 
     /// Release `guard` and wait for another endpoint to change the state.
@@ -83,6 +97,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             capacity: capacity.max(1),
             senders: 1,
             receivers: 1,
+            selectors: Vec::new(),
         }),
         changed: Condvar::new(),
     });
@@ -108,7 +123,7 @@ impl<T> Sender<T> {
             }
             if state.queue.len() < state.capacity {
                 state.queue.push_back(message);
-                self.shared.changed.notify_all();
+                self.shared.wake(&mut state);
                 return Ok(());
             }
             state = self.shared.wait(state);
@@ -129,7 +144,7 @@ impl<T> Sender<T> {
             return Err(TrySendError::Full(message));
         }
         state.queue.push_back(message);
-        self.shared.changed.notify_all();
+        self.shared.wake(&mut state);
         Ok(())
     }
 
@@ -159,7 +174,7 @@ impl<T> Receiver<T> {
         let mut state = self.shared.lock();
         loop {
             if let Some(message) = state.queue.pop_front() {
-                self.shared.changed.notify_all();
+                self.shared.wake(&mut state);
                 return Ok(message);
             }
             if state.senders == 0 {
@@ -178,13 +193,22 @@ impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         let mut state = self.shared.lock();
         if let Some(message) = state.queue.pop_front() {
-            self.shared.changed.notify_all();
+            self.shared.wake(&mut state);
             return Ok(message);
         }
         if state.senders == 0 {
             return Err(TryRecvError::Disconnected);
         }
         Err(TryRecvError::Empty)
+    }
+
+    /// Ask to be unparked the next time this channel changes.
+    ///
+    /// `recv_either` registers with both receivers, checks them again, and
+    /// only then parks, so a change between its check and its park still
+    /// wakes it.
+    pub fn wake_on_change(&self) {
+        self.shared.lock().selectors.push(loom::thread::current());
     }
 
     /// Dequeue the next message, waiting without a bound.
@@ -222,15 +246,17 @@ impl<T> Clone for Receiver<T> {
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        self.shared.lock().senders -= 1;
-        self.shared.changed.notify_all();
+        let mut state = self.shared.lock();
+        state.senders -= 1;
+        self.shared.wake(&mut state);
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        self.shared.lock().receivers -= 1;
-        self.shared.changed.notify_all();
+        let mut state = self.shared.lock();
+        state.receivers -= 1;
+        self.shared.wake(&mut state);
     }
 }
 
