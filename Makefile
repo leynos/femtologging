@@ -43,7 +43,7 @@ TEST_THREADS ?= 1
 PYLINT_PYTHON ?= pypy@3.12
 PYLINT_TARGETS ?= femtologging tests scripts
 PYLINT_VERSION ?= 4.0.7
-PYLINT = $(UV_ENV) uv tool run --python $(PYLINT_PYTHON) \
+PYLINT = $(UV_ENV) uv tool run --managed-python --python $(PYLINT_PYTHON) \
   --from 'pylint==$(PYLINT_VERSION)' pylint
 # df12-python-lints v0.3.0, pinned by commit so the tag cannot move silently.
 DF12_PYTHON_LINTS_REF ?= 4cf41736cce2f7ba2778882a5c629c044568a0e5

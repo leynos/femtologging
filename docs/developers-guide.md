@@ -381,7 +381,7 @@ uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 \
 
 
 # Tier 3: Pylint under managed PyPy
-uv tool run --python pypy@3.12 --from 'pylint==4.0.7' pylint \
+uv tool run --managed-python --python pypy@3.12 --from 'pylint==4.0.7' pylint \
   femtologging tests scripts
 
 

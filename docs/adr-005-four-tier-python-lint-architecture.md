@@ -210,10 +210,10 @@ docstring-coverage gate as part of their tiered lint pipelines.
 The Pylint tier no longer runs through `leynos/pylint-pypy-shim`. PyPy 8
 implements Python 3.12, uv provides it as a managed interpreter, and Pylint
 runs on it without the shim's object-build patch. The Makefile runs the pinned
-`pylint==$(PYLINT_VERSION)` directly with `uv tool run --python pypy@3.12`;
-naming the minor version stops a new PyPy release changing the parsed grammar
-with no commit here. The toolchain pins are now Ruff/`ty`, Pylint,
-`df12-python-lints`, and Skylos.
+`pylint==$(PYLINT_VERSION)` directly with
+`uv tool run --managed-python --python pypy@3.12`; naming the minor version
+stops a new PyPy release changing the parsed grammar with no commit here. The
+toolchain pins are now Ruff/`ty`, Pylint, `df12-python-lints`, and Skylos.
 
 `pyproject.toml` no longer disables `syntax-error`. That disable let every
 module the older PyPy 3.11 could not parse pass with no messages, so fifteen

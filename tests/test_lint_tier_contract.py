@@ -48,6 +48,7 @@ _PYLINT_TOKENS: typ.Final = (
     "uv",
     "tool",
     "run",
+    "--managed-python",
     "--python",
     "$(PYLINT_PYTHON)",
     "--from",
