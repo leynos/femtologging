@@ -3,17 +3,18 @@
 //! These helpers own queue draining, shutdown coordination, and construction of
 //! the background logging worker.
 
-use std::thread::{self, JoinHandle};
-
-use crossbeam_channel::{Receiver, TryRecvError, bounded, select};
 use log::warn;
-use parking_lot::RwLock;
+#[cfg(not(loom))]
+use pyo3::Python;
 
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::rate_limited_warner::RateLimitedWarner;
+use crate::sync::{
+    Either, JoinHandle, Mutex, Receiver, RwLock, TryRecvError, bounded, recv_either, spawn,
+};
 
 use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger, QueuedRecord};
 
@@ -28,7 +29,7 @@ impl FemtoLogger {
 
         let (tx, rx) = bounded::<QueuedRecord>(DEFAULT_CHANNEL_CAPACITY);
         let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
-        let handle = thread::spawn(move || {
+        let handle = spawn(move || {
             Self::worker_thread_loop(rx, shutdown_rx);
         });
 
@@ -44,7 +45,7 @@ impl FemtoLogger {
             drop_warner: RateLimitedWarner::default(),
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
-            handle: parking_lot::Mutex::new(Some(handle)),
+            handle: Mutex::new(Some(handle)),
         }
     }
 
@@ -91,7 +92,7 @@ impl FemtoLogger {
     /// This is the Phase 1 check in the two-phase shutdown pattern
     /// used by [`worker_thread_loop`]. It uses `try_recv` rather
     /// than a blocking receive so the worker can detect a shutdown
-    /// request that arrived while the previous `select!` iteration
+    /// request that arrived while the previous `recv_either` wait
     /// was busy processing a log record. Without this check, a
     /// continuously saturated record channel could delay shutdown
     /// recognition indefinitely.
@@ -117,14 +118,15 @@ impl FemtoLogger {
     ///
     /// - **Phase 1** ([`should_shutdown_now`]): A non-blocking
     ///   `try_recv` on the shutdown channel, executed at the top of
-    ///   every iteration *before* the blocking `select!`. This
+    ///   every iteration *before* the blocking `recv_either`. This
     ///   provides a deterministic opportunity to observe a shutdown
     ///   signal that arrived while the previous iteration was
     ///   servicing a log record.
     ///
-    /// - **Phase 2** (`select!`): A blocking wait on both the
+    /// - **Phase 2** (`recv_either`): A blocking wait on both the
     ///   shutdown and record channels. Although `crossbeam`'s
-    ///   `select!` uses random selection when multiple channels are
+    ///   `select!`, which `recv_either` uses outside Loom, picks at
+    ///   random when multiple channels are
     ///   ready, a continuously saturated record channel could still
     ///   cause the shutdown branch to lose repeated coin-flips,
     ///   delaying exit. Phase 1 eliminates this probabilistic delay
@@ -146,15 +148,13 @@ impl FemtoLogger {
                 Self::shutdown_and_drain(&rx);
                 break;
             }
-            select! {
-                recv(shutdown_rx) -> _ => {
+            match recv_either(&shutdown_rx, &rx) {
+                Either::First(_) => {
                     Self::shutdown_and_drain(&rx);
                     break;
-                },
-                recv(rx) -> rec => match rec {
-                    Ok(job) => Self::handle_log_record(job),
-                    Err(_) => break,
-                },
+                }
+                Either::Second(Ok(job)) => Self::handle_log_record(job),
+                Either::Second(Err(_)) => break,
             }
         }
     }
@@ -164,4 +164,23 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
     if handle.join().is_err() {
         warn!("FemtoLogger: worker thread panicked");
     }
+}
+
+/// Join the logger's worker with the GIL released.
+///
+/// The worker may be dispatching to a Python handler that needs the GIL, so
+/// holding it across the join could deadlock.
+#[cfg(not(loom))]
+pub(super) fn join_worker(handle: JoinHandle<()>) {
+    Python::attach(|py| py.detach(move || log_join_result(handle)));
+}
+
+/// Join the logger's worker directly inside a Loom model.
+///
+/// The interpreter is outside anything Loom schedules, and no Loom model
+/// attaches a Python handler, so there is no GIL to release. Attaching would
+/// also initialize the interpreter on a Loom coroutine's small stack.
+#[cfg(loom)]
+pub(super) fn join_worker(handle: JoinHandle<()>) {
+    log_join_result(handle);
 }

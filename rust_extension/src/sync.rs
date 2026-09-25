@@ -28,14 +28,6 @@
 //! The channel error types are `crossbeam_channel`'s in both configurations,
 //! so callers match on the same variants whichever arm is compiled.
 
-// The seam lands before any worker uses it; the milestones that move the
-// workers onto it remove this allowance with the last of them.
-#![allow(
-    dead_code,
-    unused_imports,
-    reason = "the workers move onto the seam in the milestones that follow"
-)]
-
 pub(crate) use crossbeam_channel::{RecvError, TryRecvError, TrySendError};
 
 #[cfg(not(loom))]
@@ -126,11 +118,11 @@ pub(crate) fn recv_either<A, B>(
 
 /// Block until either receiver has a message or is disconnected.
 ///
-/// Loom has no multi-channel wait, so this polls both receivers and yields to
-/// the Loom scheduler between rounds. A yielded thread is not rescheduled
-/// while another thread can run, so the poll costs no extra exploration unless
-/// every other thread is blocked, in which case the loop is a genuine hang
-/// that Loom reports as one.
+/// Loom has no multi-channel wait, so this registers with both channels,
+/// checks them, and parks until either changes. Registering before the check
+/// means a change that lands between the check and the park still unparks
+/// the thread, and a parked thread is one Loom does not schedule, so an idle
+/// worker adds nothing to the exploration.
 ///
 /// # Examples
 ///
@@ -146,13 +138,15 @@ pub(crate) fn recv_either<A, B>(
     second: &Receiver<B>,
 ) -> Either<Result<A, RecvError>, Result<B, RecvError>> {
     loop {
+        first.wake_on_change();
+        second.wake_on_change();
         if let Some(outcome) = ready(first.try_recv()) {
             return Either::First(outcome);
         }
         if let Some(outcome) = ready(second.try_recv()) {
             return Either::Second(outcome);
         }
-        loom::thread::yield_now();
+        loom::thread::park();
     }
 }
 

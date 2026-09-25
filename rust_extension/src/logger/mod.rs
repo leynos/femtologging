@@ -33,11 +33,10 @@ use crate::{
     level::FemtoLevel,
     log_record::{FemtoLogRecord, RecordMetadata},
 };
-use crossbeam_channel::Sender;
-// parking_lot avoids poisoning and matches crate-wide locking strategy
-use parking_lot::{Mutex, RwLock};
+// The seam resolves to parking_lot, which avoids poisoning and matches the
+// crate-wide locking strategy, outside `--cfg loom`.
+use crate::sync::{JoinHandle, Mutex, RwLock, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::thread::JoinHandle;
 
 pub use py_handler::{PyHandler, validate_handler};
 // Re-exported for the parameterised tests in `logger_tests_python.rs`;
@@ -379,20 +378,22 @@ impl Drop for FemtoLogger {
         // Drop the lock before joining the worker thread.
         let handle = { self.handle.lock().take() };
         if let Some(handle) = handle {
-            Python::attach(|py| py.detach(move || worker::log_join_result(handle)));
+            worker::join_worker(handle);
         }
     }
 }
 
-#[cfg(test)]
+// These tests drive the worker with real threads and `crossbeam_channel`, so
+// they build outside `--cfg loom` only; the heavy lane's models cover Loom.
+#[cfg(all(test, not(loom)))]
 #[path = "logger_tests.rs"]
 mod logger_tests;
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 #[path = "logger_tests_helpers.rs"]
 mod logger_tests_helpers;
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 #[path = "producer_tests.rs"]
 mod producer_tests;
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 #[path = "worker_tests.rs"]
 mod worker_tests;

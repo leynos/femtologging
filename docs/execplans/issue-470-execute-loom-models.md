@@ -356,10 +356,10 @@ is a small one in `rust_extension/src/sync/loom_channel.rs`: a `VecDeque`
 behind one Loom mutex and condition variable, with sender and receiver counts
 for disconnection, reusing `crossbeam_channel`'s error types so callers match
 on the same variants. `crossbeam_channel::select!` becomes `recv_either`, which
-polls both receivers and yields to Loom between rounds. Workers spawn through a
-`spawn` that gives each Loom thread a larger coroutine stack. Until EP-M5 moves
-the last worker onto it, the module carries a `dead_code` allowance that says
-so.
+under Loom first polled both receivers and, since EP-M4, parks until either
+changes; see `Decision log`. Workers spawn through a `spawn` that gives each
+Loom thread a larger coroutine stack. Until EP-M4 moved the logger onto it, the
+module carried a `dead_code` allowance that said so.
 
 Five `cfg(loom)` unit models in `rust_extension/src/sync_tests.rs` check the
 channel, run with
@@ -448,6 +448,32 @@ handler only, run through the model, with the failing model and assertion
 recorded, then reverted. `loom_single_logger_multi_handlers` must reject it.
 
 Recovery: as for EP-M3.
+
+Delivered on 2026-09-25. `FemtoLogger` spawns, queues and locks through the
+seam, its worker waits in `recv_either`, and under `cfg(loom)` its `Drop` joins
+the worker directly. The logger's unit tests drive the worker with ordinary
+threads and `crossbeam_channel` endpoints, so they now build outside
+`--cfg loom` only; the heavy lane's models cover that configuration. The four
+topology models attach `SinkHandler`, from `tests/heavy/loom_sink.rs`, in place
+of stream handlers, with their topologies and assertions unchanged.
+
+In a release build the four models pass in 476 s together on a quiet host, the
+slowest in about eight minutes. A debug build takes about eleven, over the
+ten-minute tolerance, so EP-M6 runs the models with `--release`, as Loom's own
+documentation recommends.
+
+Four mutations were each rejected:
+
+| Mutation                                                     | Rejected by                                              |
+| ------------------------------------------------------------ | -------------------------------------------------------- |
+| the worker delivers to the first attached handler only       | `loom_single_logger_multi_handlers`                      |
+| `add_handler` copies the list under the read lock, then writes | `loom_concurrent_handler_addition`                     |
+| shutdown exits without draining the queue                    | `loom_single_logger_multi_handlers`                      |
+| `recv_either` parks without registering with its channels    | `loom_single_logger_multi_handlers`, as a Loom deadlock  |
+
+The second and third can only be seen between two of the worker's or the
+attaching threads' steps, so their rejection shows the models explore
+interleavings.
 
 Remaining gaps: the file handler.
 
@@ -694,6 +720,15 @@ worker model the seam must preserve and is read before EP-M2.
   reasons in `Surprises & discoveries`: their assertions are kept, and what
   changes is the handler the topology models attach and the file model's writer
   count.
+- (2026-09-25) Under Loom, `recv_either` registers with both channels and
+  parks until either changes, rather than polling them with
+  `loom::thread::yield_now`. The approved shape polled; that version left the
+  two-logger topology models running past twelve minutes, because every idle
+  logger worker kept stepping through its poll. A parked thread is one Loom does
+  not schedule. Registering before the final check keeps a change between the
+  check and the park from being lost, and the mutation that drops the
+  registration is rejected as a deadlock. The change is confined to the seam's
+  `cfg(loom)` arm.
 - (2026-09-25) `recv_either` prefers its first receiver under Loom, where
   `crossbeam_channel::select!` chooses at random. Loom has no primitive for a
   random choice. The logger worker passes its shutdown channel first and
@@ -755,7 +790,7 @@ worker model the seam must preserve and is read before EP-M2.
 - [x] EP-M1: make the absence visible (2026-09-16)
 - [x] EP-M2: the concurrency seam (2026-09-25)
 - [x] EP-M3: the stream handler onto the seam (2026-09-25)
-- [ ] EP-M4: the logger onto the seam
+- [x] EP-M4: the logger onto the seam (2026-09-25)
 - [ ] EP-M5: the file handler onto the seam
 - [ ] EP-M6: the lane proves it ran
 - [ ] EP-M7: say what is now true

@@ -33,5 +33,7 @@ mod loom_file_flush;
 #[cfg(loom)]
 mod loom_push;
 #[cfg(loom)]
+mod loom_sink;
+#[cfg(loom)]
 mod loom_topologies;
 mod prop_stream_handler;
