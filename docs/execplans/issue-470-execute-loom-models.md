@@ -399,6 +399,27 @@ consistent with a model that explores nothing.
 Recovery: the seam is a type alias change; reverting the handler's use of it
 restores the previous state.
 
+Delivered on 2026-09-25. The handler now imports its thread, channel and lock
+from the seam, and nothing else in it changed. The model lost its `#[ignore]`
+and runs in about two seconds:
+
+```plaintext
+test loom_push::loom_stream_push_delivery ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 1.94s
+```
+
+The ordinary suite (`cargo test --no-default-features`) passes unchanged. Two
+mutations were each rejected by the model:
+
+| Mutation                                                | Failing assertion                                         |
+| ------------------------------------------------------- | --------------------------------------------------------- |
+| `close` neither waits for nor joins the worker          | the sorted-lines comparison: only `msg2` had been written |
+| the worker handles one command, then drops its receiver | `expect_handle`: the second record is refused as closed   |
+
+The first fails only on the interleavings where the model reads the buffer
+before the worker has written the first record, so it shows the model explores
+schedules rather than running one.
+
 Remaining gaps: the logger and the file handler.
 
 ### EP-M4: the logger onto the seam
@@ -733,7 +754,7 @@ worker model the seam must preserve and is read before EP-M2.
 
 - [x] EP-M1: make the absence visible (2026-09-16)
 - [x] EP-M2: the concurrency seam (2026-09-25)
-- [ ] EP-M3: the stream handler onto the seam
+- [x] EP-M3: the stream handler onto the seam (2026-09-25)
 - [ ] EP-M4: the logger onto the seam
 - [ ] EP-M5: the file handler onto the seam
 - [ ] EP-M6: the lane proves it ran
