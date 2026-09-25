@@ -15,7 +15,9 @@ and last, so the two modules do not duplicate one another.
 
 from __future__ import annotations
 
+import tomllib
 import typing as typ
+from pathlib import Path
 
 import pytest
 
@@ -49,10 +51,8 @@ _PYLINT_TOKENS: typ.Final = (
     "--python",
     "$(PYLINT_PYTHON)",
     "--from",
-    "$(PYLINT_PYPY_SHIM)",
-    "--with",
     "pylint==$(PYLINT_VERSION)",
-    "pylint-pypy",
+    "pylint",
 )
 _DF12_PYLINT_TOKENS: typ.Final = (
     "$(UV_ENV)",
@@ -106,12 +106,13 @@ _DF12_PYLINT_MESSAGE_TOKENS: typ.Final = (
 # The df12 checkers and Skylos parse source with their own runtime AST, so they
 # must lead the project's 3.12 syntax baseline rather than match it.
 _DF12_PYTHON_TOKENS: typ.Final = ("3.14",)
-_PYLINT_PYTHON_TOKENS: typ.Final = ("pypy",)
+# A bare `pypy` follows whatever uv resolves next, which changed the parsed
+# grammar underneath the gate with no commit in this repository.
+_PYLINT_PYTHON_TOKENS: typ.Final = ("pypy@3.12",)
 
 # Pins with no CI counterpart to sync against; assert they stay pinned at all.
 _PINNED_REVISIONS: typ.Final = (
     ("PYLINT_VERSION", "4.0.7"),
-    ("PYLINT_PYPY_SHIM_REF", "726d09f968b4d729ee4b29c71fc732e744854f3b"),
     ("DF12_PYTHON_LINTS_REF", "4cf41736cce2f7ba2778882a5c629c044568a0e5"),
     ("INTERROGATE_VERSION", "1.7.0"),
 )
@@ -180,4 +181,20 @@ def test_tier_revisions_are_pinned(variable_name: str, expected_revision: str) -
     assert variable_tokens(variable_name) == (expected_revision,), (
         f"Lint tier contract must pin {variable_name}; an unpinned tier would "
         f"change lint behaviour with no repository change"
+    )
+
+
+def test_pylint_reports_unparseable_modules() -> None:
+    """The Pylint tier must fail on a module its interpreter cannot parse.
+
+    Disabling `syntax-error` let every module the managed PyPy could not parse
+    pass with no messages at all, so those modules were never linted.
+    """
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    disabled = config["tool"]["pylint"]["messages control"]["disable"]
+
+    assert "syntax-error" not in disabled, (
+        "pyproject.toml must not disable syntax-error: a module PyPy cannot "
+        f"parse would then be skipped silently; disable={disabled!r}"
     )

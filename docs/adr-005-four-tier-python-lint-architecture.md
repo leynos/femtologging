@@ -86,8 +86,8 @@ Adopt Option C. `make lint` runs `lint-python` followed by `lint-rust`, and
    `0.0.74`) uses the same Makefile/CI pin-sync scheme; both pins are asserted
    equal by `tests/test_lint_version_contract.py`, which does not itself pin a
    version so a deliberate bump only touches the Makefile and CI.
-2. **Pylint** (`4.0.7`) — runs on managed PyPy through the pinned
-   `leynos/pylint-pypy-shim` revision, isolating the second tier from the
+2. **Pylint** (`4.0.7`) — runs on managed PyPy (see the 2026-09-25
+   addendum for the current invocation), isolating the second tier from the
    project's own virtual environment. Configuration lives in `pyproject.toml`'s
    `[tool.pylint]` tables: `py-version = "3.12"`, `max-module-lines = 400`, and
    a curated `enable` list of selected messages.
@@ -204,3 +204,18 @@ demand docstrings on nested helper closures for little practical benefit.
 This addition follows the same pattern as the `leynos/lading` and
 `leynos/cuprum` Python lint stacks, which both run a pinned, production-only
 docstring-coverage gate as part of their tiered lint pipelines.
+
+## Addendum: plain Pylint on PyPy 3.12 (2026-09-25)
+
+The Pylint tier no longer runs through `leynos/pylint-pypy-shim`. PyPy 8
+implements Python 3.12, uv provides it as a managed interpreter, and Pylint
+runs on it without the shim's object-build patch. The Makefile runs the pinned
+`pylint==$(PYLINT_VERSION)` directly with `uv tool run --python pypy@3.12`;
+naming the minor version stops a new PyPy release changing the parsed grammar
+with no commit here. The toolchain pins are now Ruff/`ty`, Pylint,
+`df12-python-lints`, and Skylos.
+
+`pyproject.toml` no longer disables `syntax-error`. That disable let every
+module the older PyPy 3.11 could not parse pass with no messages, so fifteen
+modules were never linted. A parse failure now fails the lint, and
+`tests/test_lint_tier_contract.py` holds both decisions.

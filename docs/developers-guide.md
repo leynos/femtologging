@@ -340,12 +340,14 @@ its addendum records the addition of the docstring-coverage tier below.
    ignores `undocumented-public-function` (D103) because pytest-bdd step
    function names document themselves. Without that exclusion, interrogate
    would also demand docstrings on nested helper closures for little value.
-3. **Pylint** (`4.0.7`) — runs through the pinned `leynos/pylint-pypy-shim`
-   revision under managed PyPy, isolated from the project virtual environment.
-   Configuration lives in `pyproject.toml`'s `[tool.pylint]` tables:
-   `py-version = "3.12"`, `max-module-lines = 400`, and a curated `enable` list
-   covering logging interpolation, pattern matching, generator control flow,
-   environment handling, and subprocess safety.
+3. **Pylint** (`4.0.7`) — runs as a uv tool on managed PyPy 3.12
+   (`PYLINT_PYTHON ?= pypy@3.12`), isolated from the project virtual
+   environment. `syntax-error` stays enabled, so a module PyPy cannot parse
+   fails the lint rather than being skipped. Configuration lives in
+   `pyproject.toml`'s `[tool.pylint]` tables: `py-version = "3.12"`,
+   `max-module-lines = 400`, and a curated `enable` list covering logging
+   interpolation, pattern matching, generator control flow, environment
+   handling, and subprocess safety.
 4. **`df12-python-lints`** and its companion **`ambrleaks`** — run under
    CPython 3.14 so the house-rule parser stays ahead of the project's 3.12
    syntax baseline. `df12-python-lints` is pinned to a specific commit of the
@@ -379,9 +381,8 @@ uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 \
 
 
 # Tier 3: Pylint under managed PyPy
-uv tool run --python pypy --from \
-  'git+https://github.com/leynos/pylint-pypy-shim.git@726d09f968b4d729ee4b29c71fc732e744854f3b' \
-  --with 'pylint==4.0.7' pylint-pypy femtologging tests scripts
+uv tool run --python pypy@3.12 --from 'pylint==4.0.7' pylint \
+  femtologging tests scripts
 
 
 # Tier 4: df12-python-lints
