@@ -19,6 +19,7 @@ mod log_record;
 mod logger;
 mod socket_handler;
 mod stream_handler;
+mod sync;
 
 // Feature-gated manager visibility
 #[cfg(feature = "test-util")]
