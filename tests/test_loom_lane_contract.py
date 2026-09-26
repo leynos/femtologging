@@ -13,12 +13,18 @@ cannot break them and cannot hide a change either.
 
 from __future__ import annotations
 
+import re
 import shlex
 import typing as typ
 
 import pytest
 
-from tests.make_contract_helpers import objects, sole_workflow_step, workflow_job
+from tests.make_contract_helpers import (
+    objects,
+    repo_root,
+    sole_workflow_step,
+    workflow_job,
+)
 
 _WORKFLOW: typ.Final = ".github/workflows/heavy-tests.yml"
 _JOB: typ.Final = "heavy"
@@ -38,6 +44,15 @@ _FILTER: typ.Final = "loom_"
 # attribute, so it would select one model and report success.
 _HARNESS_ARGUMENT: typ.Final = "--include-ignored"
 
+# The checker the execution step runs Cargo under, and the list of models it
+# requires a run to report as passed.
+_RUNNER: typ.Final = "scripts/run_loom_models.py"
+_MODEL_LIST: typ.Final = "rust_extension/tests/heavy/loom-models.txt"
+_MODEL_DIRECTORY: typ.Final = "rust_extension/tests/heavy"
+
+# A `#[test]` attribute followed by the function it marks.
+_TEST_FUNCTION: typ.Final = re.compile(r"#\[test\]\s*fn\s+(?P<name>\w+)")
+
 # The environment variable that bounds how much of the state space Loom
 # explores. Without it a multi-threaded model does not fail, it fails to
 # finish.
@@ -51,7 +66,9 @@ def _step_tokens(step_name: str) -> tuple[str, ...]:
     if not isinstance(command, str):
         msg = f"expected a string `run` command in the {step_name!r} step"
         raise TypeError(msg)
-    return tuple(shlex.split(command))
+    # A backslash-newline is a line continuation to the shell, which `shlex`
+    # would otherwise keep as a newline token.
+    return tuple(shlex.split(command.replace("\\\n", " ")))
 
 
 def _command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
@@ -73,6 +90,25 @@ def _command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
         if "=" not in token.split(" ", 1)[0]:
             return tokens[index:]
     return ()
+
+
+def _cargo_words(step_name: str) -> tuple[str, ...]:
+    """Return the Cargo command a Loom step runs, without the checker around it.
+
+    The execution step runs Cargo under ``scripts/run_loom_models.py``, after
+    the checker's own ``--``; the compile step runs Cargo directly. Anything
+    else is returned as it stands, so the assertions that it is ``cargo test``
+    fail on it.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The Cargo program and its arguments.
+    """
+    words = _command_words(_step_tokens(step_name))
+    if words[:3] == ("uv", "run", "--script") and "--" in words:
+        return words[words.index("--") + 1 :]
+    return words
 
 
 def _subsequence_at(tokens: tuple[str, ...], wanted: tuple[str, ...]) -> bool:
@@ -106,7 +142,7 @@ def test_the_execution_step_runs_the_models_rather_than_compiling_them() -> None
     made the previous lane compile the models and stop, which is the defect
     this contract exists to refuse.
     """
-    tokens = _step_tokens(_EXECUTE_STEP)
+    tokens = _cargo_words(_EXECUTE_STEP)
     assert "--no-run" not in tokens, (
         f"the {_EXECUTE_STEP!r} step must execute the models, saw {tokens!r}"
     )
@@ -126,7 +162,7 @@ def test_the_execution_step_selects_every_model() -> None:
     written differently, and a contract that reports a false positive gets
     switched off.
     """
-    tokens = _step_tokens(_EXECUTE_STEP)
+    tokens = _cargo_words(_EXECUTE_STEP)
     assert "--" in tokens, (
         f"the {_EXECUTE_STEP!r} step must separate Cargo's arguments from the "
         f"harness's with `--`, saw {tokens!r}"
@@ -164,14 +200,13 @@ def test_the_execution_step_is_bounded() -> None:
 
 
 def test_the_execution_step_runs_last() -> None:
-    """Scenario: the execution step fails, as it is expected to until the seam lands.
+    """Scenario: a model fails.
 
-    Invariant: no step follows it. A step that fails without
+    Invariant: no step follows the execution step. A step that fails without
     ``continue-on-error`` skips every later step, so placing the models before
     the heavy suite, the clippy lanes and pytest would stop all of those
-    running. The lane would then report the Loom gap by suppressing everything
-    else it exists to report, which is a worse lane than the silent one this
-    milestone replaces.
+    running, and a model failure would hide everything else the lane exists to
+    report.
 
     Asserted as the position of the step rather than as the name of whatever
     currently precedes it, so inserting a step anywhere earlier is free and
@@ -181,8 +216,8 @@ def test_the_execution_step_runs_last() -> None:
     steps = objects(job.get("steps"), subject=f"{_WORKFLOW} job {_JOB!r} steps")
     names = [step.get("name") for step in steps]
     assert names[-1] == _EXECUTE_STEP, (
-        f"the {_EXECUTE_STEP!r} step must be the last step in the {_JOB!r} job "
-        f"while it is knowingly failing, saw {names!r}"
+        f"the {_EXECUTE_STEP!r} step must be the last step in the {_JOB!r} job, "
+        f"saw {names!r}"
     )
 
 
@@ -211,7 +246,7 @@ def test_each_loom_step_names_the_heavy_target(step_name: str) -> None:
     live only there, and a command without the target would compile or run the
     whole suite under the Loom configuration.
     """
-    tokens = _step_tokens(step_name)
+    tokens = _cargo_words(step_name)
     assert _subsequence_at(tokens, ("--test", "heavy")), (
         f"the {step_name!r} step must name the heavy target, saw {tokens!r}"
     )
@@ -236,7 +271,7 @@ def test_each_loom_step_actually_invokes_cargo_test(step_name: str) -> None:
     adjacent so a command merely *mentioning* ``test`` somewhere later does not
     satisfy it.
     """
-    words = _command_words(_step_tokens(step_name))
+    words = _cargo_words(step_name)
     assert words[:2] == ("cargo", "test"), (
         f"the {step_name!r} step must run `cargo test`, its command begins "
         f"{words[:3]!r}"
@@ -276,3 +311,49 @@ def test_the_execution_step_bounds_loom_s_exploration() -> None:
         f"{_PREEMPTION_BOUND} must be a whole number, saw {bound!r}"
     )
     assert int(bound) > 0, f"{_PREEMPTION_BOUND} must be positive, saw {bound!r}"
+
+
+def test_the_execution_step_runs_under_the_model_checker() -> None:
+    """Scenario: the lane is asked how it knows the models ran.
+
+    Invariant: Cargo runs under ``scripts/run_loom_models.py``, given the
+    committed model list. ``cargo test`` passes with zero tests when the Loom
+    configuration is dropped, when the filter matches nothing, and when the
+    models are skipped; the checker fails each of those, because it requires
+    every listed model to be reported as passed and nothing else.
+    """
+    words = _command_words(_step_tokens(_EXECUTE_STEP))
+    assert words[:4] == ("uv", "run", "--script", _RUNNER), (
+        f"the {_EXECUTE_STEP!r} step must run Cargo under {_RUNNER}, its "
+        f"command begins {words[:4]!r}"
+    )
+    runner_arguments = words[4 : words.index("--")] if "--" in words else words[4:]
+    assert _subsequence_at(runner_arguments, ("--expected", _MODEL_LIST)), (
+        f"the checker must be given {_MODEL_LIST}, saw {runner_arguments!r}"
+    )
+
+
+def test_the_model_list_names_exactly_the_models() -> None:
+    """Scenario: a model is added, renamed or deleted.
+
+    Invariant: the list names every ``#[test]`` function in the Loom model
+    modules, as libtest reports it (``module::function``), and nothing else.
+    A model left off the list would run unchecked, and a stale entry would fail
+    every run.
+    """
+    root = repo_root()
+    defined = {
+        f"{path.stem}::{match['name']}"
+        for path in sorted((root / _MODEL_DIRECTORY).glob("loom_*.rs"))
+        for match in _TEST_FUNCTION.finditer(path.read_text(encoding="utf-8"))
+    }
+    listed = {
+        line.strip()
+        for line in (root / _MODEL_LIST).read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    assert defined, "the Loom model modules define no models"
+    assert listed == defined, (
+        f"listed but not defined: {sorted(listed - defined)}; "
+        f"defined but not listed: {sorted(defined - listed)}"
+    )
