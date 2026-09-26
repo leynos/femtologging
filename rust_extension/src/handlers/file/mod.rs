@@ -27,16 +27,15 @@ use std::{
     fs::File,
     io::{self, BufWriter, Seek, Write},
     path::Path,
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{Receiver, Sender};
 use pyo3::prelude::*;
 
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
+use crate::sync::{JoinHandle, Receiver, Sender, bounded};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -217,7 +216,7 @@ impl FemtoFileHandler {
 
     fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
         let deadline = Instant::now() + Duration::from_secs(1);
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+        let (ack_tx, ack_rx) = bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if tx
             .send_timeout(FileCommand::Flush(ack_tx), remaining)

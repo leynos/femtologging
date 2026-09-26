@@ -39,6 +39,8 @@ struct State<T> {
     receivers: usize,
     /// Threads parked in `recv_either` until this channel changes.
     selectors: Vec<Thread>,
+    /// Threads blocked on the condition variable in `send` or `recv`.
+    waiting: usize,
 }
 
 /// State shared by every endpoint of one channel.
@@ -55,18 +57,27 @@ impl<T> Shared<T> {
 
     /// Wake every thread waiting on this channel, by condition variable or
     /// in `recv_either`, after `state` has changed.
+    ///
+    /// A notification nobody waits for is skipped: each one is a step Loom
+    /// explores, and in the models most changes have no waiter.
     fn wake(&self, state: &mut State<T>) {
-        self.changed.notify_all();
+        if state.waiting > 0 {
+            self.changed.notify_all();
+        }
         for selector in state.selectors.drain(..) {
             selector.unpark();
         }
     }
 
     /// Release `guard` and wait for another endpoint to change the state.
-    fn wait<'a>(&self, guard: MutexGuard<'a, State<T>>) -> MutexGuard<'a, State<T>> {
-        self.changed
+    fn wait<'a>(&self, mut guard: MutexGuard<'a, State<T>>) -> MutexGuard<'a, State<T>> {
+        guard.waiting += 1;
+        let mut guard = self
+            .changed
             .wait(guard)
-            .unwrap_or_else(PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner);
+        guard.waiting -= 1;
+        guard
     }
 }
 
@@ -98,6 +109,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             senders: 1,
             receivers: 1,
             selectors: Vec::new(),
+            waiting: 0,
         }),
         changed: Condvar::new(),
     });

@@ -28,7 +28,7 @@
 //! The channel error types are `crossbeam_channel`'s in both configurations,
 //! so callers match on the same variants whichever arm is compiled.
 
-pub(crate) use crossbeam_channel::{RecvError, TryRecvError, TrySendError};
+pub(crate) use crossbeam_channel::{RecvError, SendTimeoutError, TryRecvError, TrySendError};
 
 #[cfg(not(loom))]
 pub(crate) use crossbeam_channel::{Receiver, Sender, bounded};
