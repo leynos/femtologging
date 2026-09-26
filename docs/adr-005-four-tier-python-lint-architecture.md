@@ -162,8 +162,10 @@ independently by every full-suite CI job (`ci.yml` `build-test` and
 - `make test` now depends on a working Rust toolchain able to build the
   pinned `makeutil` revision, in addition to the project's own build
   requirements.
-- Toolchain updates must consider four separate pins (Ruff/`ty`, the Pylint
-  shim, `df12-python-lints`, and Skylos) rather than one.
+- Toolchain updates must consider four separate pins (Ruff/`ty`, Pylint,
+  `df12-python-lints`, and Skylos) rather than one. The Pylint pin was the
+  `pylint-pypy-shim` revision until the 2026-09-25 addendum; it is now
+  `PYLINT_VERSION` with the interpreter pinned to `pypy@3.12`.
 
 ## Known risks and limitations
 
@@ -176,8 +178,9 @@ independently by every full-suite CI job (`ci.yml` `build-test` and
 - The pinned `makeutil` revision requires a specific nightly Rust toolchain
   and the Polonius borrow checker; a contributor without a working Rust
   toolchain cannot run `make test` locally until `makeutil` is installed.
-- Pylint's PyPy shim is intentionally focused; messages outside the curated
-  `enable` list remain out of scope unless the policy is updated deliberately.
+- The PyPy Pylint pass (run through the shim until the 2026-09-25 addendum) is
+  intentionally focused; messages outside the curated `enable` list remain out
+  of scope unless the policy is updated deliberately.
 
 ## Addendum: docstring-coverage tier (2026-08-28)
 
