@@ -6,12 +6,11 @@
 
 use std::any::Any;
 
-use crossbeam_channel::{SendTimeoutError, TrySendError};
-
 use super::{FemtoFileHandler, FileCommand, OverflowPolicy};
 use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
+    sync::{SendTimeoutError, Sender, TrySendError},
 };
 
 /// Log a failed enqueue and surface the corresponding handler error.
@@ -21,10 +20,7 @@ fn queue_failure(policy: &str, reason: &str, err: HandlerError) -> HandlerError 
 }
 
 /// Enqueue a record, blocking until the worker accepts it.
-fn send_blocking(
-    tx: &crossbeam_channel::Sender<FileCommand>,
-    command: FileCommand,
-) -> Result<(), HandlerError> {
+fn send_blocking(tx: &Sender<FileCommand>, command: FileCommand) -> Result<(), HandlerError> {
     tx.send(command).map_err(|_| {
         queue_failure(
             "Block",
@@ -39,7 +35,7 @@ fn send_blocking(
 /// Both channel APIs share one failure taxonomy — the queue is saturated or
 /// the channel is closed — so the mapping lives in a single place.
 fn send_bounded(
-    tx: &crossbeam_channel::Sender<FileCommand>,
+    tx: &Sender<FileCommand>,
     command: FileCommand,
     timeout: Option<std::time::Duration>,
 ) -> Result<(), HandlerError> {
