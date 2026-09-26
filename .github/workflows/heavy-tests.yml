@@ -57,9 +57,23 @@ jobs:
         run: |
           source .venv/bin/activate
           maturin develop --manifest-path rust_extension/Cargo.toml
+      # The Loom build lives in its own target directory and cache, apart from
+      # the ordinary build's: `--cfg loom` changes every crate's fingerprint,
+      # so sharing a directory would rebuild both on every run. The key names
+      # the toolchain, the lockfile, the feature selection and the flags.
+      - name: Read the Rust toolchain version
+        id: toolchain
+        run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+      - name: Cache the Loom build
+        uses: actions/cache@v4
+        with:
+          path: target/loom
+          key: loom-${{ runner.os }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('rust_extension/Cargo.lock') }}-no-default-features-cfg-loom-release
       - name: Compile Loom heavy tests
+        env:
+          CARGO_TARGET_DIR: target/loom
         run: |
-          RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
+          RUSTFLAGS="--cfg loom" cargo test --release --manifest-path rust_extension/Cargo.toml \
             --no-default-features --test heavy --no-run
       - name: Run formatters and tests
         run: |
@@ -82,18 +96,23 @@ jobs:
       # Executing the models is separate from compiling them, and the split is
       # the point: a green compile step says the models type-check and nothing
       # about the behaviour they describe. `--include-ignored` rather than
-      # `--ignored`, because the latter runs only ignored tests and five of the
-      # six models carry no such attribute.
+      # `--ignored`, because the latter runs only ignored tests.
       #
-      # This step is last, and that placement is load-bearing while it is
-      # knowingly failing. A step that fails without `continue-on-error` skips
-      # every step after it, so running the models earlier would stop the heavy
-      # suite, the clippy lanes and pytest from running at all: the lane would
-      # report the gap by hiding everything else it exists to report.
+      # `scripts/run_loom_models.py` fails the step unless every model named in
+      # `loom-models.txt` is reported as passed and nothing else is, so a run
+      # that compiled the models out, filtered them away or skipped them cannot
+      # report success. The build is `--release`, as Loom recommends: the
+      # topology models take about eight minutes optimized and eleven not.
+      #
+      # This step is last, so a model failure never stops the heavy suite, the
+      # Clippy lanes or pytest from reporting.
       - name: Run Loom models
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
+          CARGO_TARGET_DIR: target/loom
           LOOM_MAX_PREEMPTIONS: '3'
         run: |
-          RUSTFLAGS="--cfg loom" cargo test --manifest-path rust_extension/Cargo.toml \
+          RUSTFLAGS="--cfg loom" uv run --script scripts/run_loom_models.py \
+            --expected rust_extension/tests/heavy/loom-models.txt -- \
+            cargo test --release --manifest-path rust_extension/Cargo.toml \
             --no-default-features --test heavy loom_ -- --include-ignored

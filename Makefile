@@ -1,5 +1,5 @@
 .PHONY: help all clean build release lint lint-python lint-rust lint-rust-clippy \
-        lint-env-policy lint-lanes-test fmt \
+        lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
 
@@ -199,6 +199,22 @@ lint-lanes-test: ## Unit-test the Rust lint lane driver
 		python -m pytest scripts/tests/test_lint_rust_lanes.py \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 
+LOOM_RUNNER_SCRIPT ?= scripts/run_loom_models.py
+
+loom-runner-test: ## Unit-test the Loom model runner
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
+		--target-version py313 --check $(LOOM_RUNNER_SCRIPT) \
+		scripts/tests/test_run_loom_models.py
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
+		--target-version py313 $(LOOM_RUNNER_SCRIPT) \
+		scripts/tests/test_run_loom_models.py
+	@LOOM_RUNNER_TEST=1 PYTHONPATH=scripts $(UV_ENV) uv run --no-project \
+		--python 3.13 --with pytest==9.0.2 --with cmd-mox==0.2.0 \
+		--with cyclopts --with plumbum \
+		python -m pytest scripts/tests/test_run_loom_models.py \
+		$(LOOM_RUNNER_SCRIPT) --doctest-modules \
+		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
+
 lint-rust-clippy: ## Run standard Rust Clippy feature lanes across every target
 	@$(CARGO_BUILD_ENV) $(UV_ENV) \
 		INPUT_MANIFEST=$(RUST_MANIFEST) \
@@ -243,7 +259,7 @@ nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(NIXIE)
 
-test: build makeutil lint-rust-clippy ## Run tests
+test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
