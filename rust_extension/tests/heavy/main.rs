@@ -3,8 +3,10 @@
 //! Cargo only auto-discovers `tests/*.rs` and `tests/*/main.rs`, so this file
 //! must be named `main.rs` for the modules below to be compiled at all. The
 //! tests it aggregates are model-checking (`loom`) and property-based suites
-//! that are too slow for the ordinary gate, so each is marked `#[ignore]` and
-//! run by the nightly `heavy-tests` workflow via `cargo test -- --ignored`.
+//! that are too slow for the ordinary gate. The property suite is marked
+//! `#[ignore]` and run by the nightly `heavy-tests` workflow via
+//! `cargo test -- --ignored`; the loom models are gated by configuration
+//! instead, as described below.
 //!
 //! Shared buffer support is declared once here and shared by the property suite
 //! and, when enabled, the loom models. The `HandleExpect` helper is shared by
@@ -12,15 +14,13 @@
 //!
 //! # The loom modules
 //!
-//! The `loom_*` modules compile only under `--cfg loom`. `FemtoStreamHandler`
-//! and `FemtoFileHandler` spawn their worker with `std::thread::spawn`, and
-//! that worker then touches the loom-instrumented buffer from a thread loom did
-//! not create. Loom detects this and aborts the process ("cannot access Loom
-//! execution state from outside a Loom model"), which would take the whole
-//! heavy binary down with it. Making these models runnable requires the
-//! handlers to spawn through an injectable abstraction that resolves to
-//! `loom::thread` under `--cfg loom`; until then the models are compile-checked
-//! but not run by the heavy workflow.
+//! The `loom_*` modules compile only under `--cfg loom`. The handlers and the
+//! logger spawn, queue and lock through the crate's concurrency seam, which
+//! resolves to Loom's primitives in that configuration, so the models run the
+//! production workers inside the model. The heavy workflow runs them with
+//! `--include-ignored` under `scripts/run_loom_models.py`, which requires every
+//! model in `loom-models.txt` to pass; see "Loom models" in
+//! `docs/developers-guide.md`.
 
 #[path = "../test_utils/shared_buffer.rs"]
 mod shared_buffer;
