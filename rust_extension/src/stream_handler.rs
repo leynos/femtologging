@@ -12,17 +12,15 @@
 
 use std::{
     io::{self, Write},
-    thread::{self, JoinHandle},
     time::Duration,
 };
 
-use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use log::warn;
-use parking_lot::Mutex;
 use pyo3::prelude::*;
 use std::any::Any;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -273,7 +271,7 @@ impl FemtoStreamHandler {
     {
         let (tx, rx) = bounded(config.capacity);
         let (done_tx, done_rx) = bounded(1);
-        let handle = thread::spawn(move || run_stream_worker(rx, writer, formatter, done_tx));
+        let handle = spawn(move || run_stream_worker(rx, writer, formatter, done_tx));
 
         Self {
             tx: Some(tx),

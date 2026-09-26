@@ -6,9 +6,12 @@ This ExecPlan is a living document. The sections `Constraints`,
 `Conformance basis` and `Verification plan` must be kept up to date as work
 proceeds.
 
-Status: IN PROGRESS. EP-M1 is delivered. The knowingly red scheduled lane it
-leaves behind was approved by the user on 2026-09-16. No seam code, and so no
-production code change, until the approach in EP-M2 is separately approved.
+Status: IN PROGRESS
+
+EP-M1 is delivered, and the user approved the knowingly red scheduled lane it
+leaves behind on 2026-09-16. The user approved the seam, the model changes and
+the `Drop` split on 2026-09-25, recorded in `Decision log`, and EP-M2 onwards
+are under way.
 
 Related: [Issue #470](https://github.com/leynos/femtologging/issues/470).
 
@@ -80,12 +83,14 @@ execute, and the daily schedule does the same and fails loudly if it executes
 none:
 
 ```shell
-RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 cargo test \
-  --manifest-path rust_extension/Cargo.toml \
+RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 uv run --script \
+  scripts/run_loom_models.py --expected rust_extension/tests/heavy/loom-models.txt -- \
+  cargo test --release --manifest-path rust_extension/Cargo.toml \
   --no-default-features --test heavy loom_ -- --include-ignored
 ```
 
-The expected tail of that command is a named, non-zero result:
+The expected tail of that command is a named, non-zero result, followed by
+the checker's summary:
 
 ```plaintext
 test loom_file_handler_flush_concurrent ... ok
@@ -119,7 +124,8 @@ of `worker.rs`, and the logger keeps its handler and filter lists behind
 `parking_lot::RwLock`. That worker calls each handler, so it is inside the
 participating path of every topology model even though the models never name it.
 
-`rust_extension/src/sync.rs` does not exist yet and is created by EP-M2.
+`rust_extension/src/sync.rs` is the concurrency seam EP-M2 created, with its
+Loom-only channel and locks under `rust_extension/src/sync/`.
 
 `rust_extension/tests/heavy/` holds the models described above, plus
 `rust_extension/tests/test_utils/shared_buffer.rs`, which already provides two
@@ -347,6 +353,31 @@ Acceptance: `cargo test` passes in the ordinary configuration and under
 
 Recovery: an unused module, removable in one commit.
 
+Delivered on 2026-09-25. Loom offers no bounded channel, so the `cfg(loom)` arm
+is a small one in `rust_extension/src/sync/loom_channel.rs`: a `VecDeque`
+behind one Loom mutex and condition variable, with sender and receiver counts
+for disconnection, reusing `crossbeam_channel`'s error types so callers match
+on the same variants. `crossbeam_channel::select!` becomes `recv_either`, which
+under Loom first polled both receivers and, since EP-M4, parks until either
+changes; see `Decision log`. Workers spawn through a `spawn` that gives each
+Loom thread a larger coroutine stack. Until EP-M4 moved the logger onto it, the
+module carried a `dead_code` allowance that said so.
+
+Five `cfg(loom)` unit models in `rust_extension/src/sync_tests.rs` check the
+channel, run with
+`RUSTFLAGS="--cfg loom" cargo test --no-default-features --lib sync_tests`.
+Each of four mutations was rejected:
+
+| Mutation                                 | Rejected by                                                             |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| `recv` reports disconnection while empty | `loom_receiver_drains_before_disconnecting`, `loom_send_waits_for_room` |
+| `try_send` ignores capacity              | `loom_try_send_refuses_a_full_channel`                                  |
+| a dropped sender wakes no waiter         | `loom_receiver_drains_before_disconnecting`, `loom_send_waits_for_room` |
+| `send` ignores capacity                  | `loom_send_blocks_while_full`                                           |
+
+The last mutation passed every other model, because delivery order survives it.
+`loom_send_blocks_while_full` exists for that reason.
+
 Remaining gaps: the handlers still spawn directly.
 
 ### EP-M3: the stream handler onto the seam
@@ -369,6 +400,27 @@ consistent with a model that explores nothing.
 
 Recovery: the seam is a type alias change; reverting the handler's use of it
 restores the previous state.
+
+Delivered on 2026-09-25. The handler now imports its thread, channel and lock
+from the seam, and nothing else in it changed. The model lost its `#[ignore]`
+and runs in about two seconds:
+
+```plaintext
+test loom_push::loom_stream_push_delivery ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 1.94s
+```
+
+The ordinary suite (`cargo test --no-default-features`) passes unchanged. Two
+mutations were each rejected by the model:
+
+| Mutation                                                | Failing assertion                                         |
+| ------------------------------------------------------- | --------------------------------------------------------- |
+| `close` neither waits for nor joins the worker          | the sorted-lines comparison: only `msg2` had been written |
+| the worker handles one command, then drops its receiver | `expect_handle`: the second record is refused as closed   |
+
+The first fails only on the interleavings where the model reads the buffer
+before the worker has written the first record, so it shows the model explores
+schedules rather than running one.
 
 Remaining gaps: the logger and the file handler.
 
@@ -399,6 +451,32 @@ recorded, then reverted. `loom_single_logger_multi_handlers` must reject it.
 
 Recovery: as for EP-M3.
 
+Delivered on 2026-09-25. `FemtoLogger` spawns, queues and locks through the
+seam, its worker waits in `recv_either`, and under `cfg(loom)` its `Drop` joins
+the worker directly. The logger's unit tests drive the worker with ordinary
+threads and `crossbeam_channel` endpoints, so they now build outside
+`--cfg loom` only; the heavy lane's models cover that configuration. The four
+topology models attach `SinkHandler`, from `tests/heavy/loom_sink.rs`, in place
+of stream handlers, with their topologies and assertions unchanged.
+
+In a release build the four models pass in 476 s together on a quiet host, the
+slowest in about eight minutes. A debug build takes about eleven, over the
+ten-minute tolerance, so EP-M6 runs the models with `--release`, as Loom's own
+documentation recommends.
+
+Four mutations were each rejected:
+
+| Mutation                                                       | Rejected by                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------- |
+| the worker delivers to the first attached handler only         | `loom_single_logger_multi_handlers`                     |
+| `add_handler` copies the list under the read lock, then writes | `loom_concurrent_handler_addition`                      |
+| shutdown exits without draining the queue                      | `loom_single_logger_multi_handlers`                     |
+| `recv_either` parks without registering with its channels      | `loom_single_logger_multi_handlers`, as a Loom deadlock |
+
+The second and third can only be seen between two of the worker's or the
+attaching threads' steps, so their rejection shows the models explore
+interleavings.
+
 Remaining gaps: the file handler.
 
 ### EP-M5: the file handler onto the seam
@@ -426,6 +504,30 @@ path, the failing model recorded, then reverted.
 
 Recovery: as for EP-M3.
 
+Delivered on 2026-09-25. `FemtoFileHandler` and its worker spawn, queue and
+lock through the seam; `recv_batch`'s unit tests drive it with
+`crossbeam_channel` endpoints and so build outside `--cfg loom` only. The model
+writes into a Loom buffer through `FemtoFileHandler::with_writer_for_test`, so
+its record count is an effect the model observes. Each writer now also asserts
+that once its flush is acknowledged its own record is in the buffer, which is
+what a flush acknowledgement promises and what the count alone could not see.
+
+Two writers, not three, by the user's ruling recorded in `Decision log`. With
+three the model had no verdict after more than thirty minutes; with two it
+passes in 33 to 41 s in a release build. The seam's channel also stopped
+notifying its condition variable when nothing waits on it, which removes a Loom
+step from most channel operations.
+
+| Mutation                                               | Rejected by                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------------- |
+| the worker acknowledges every flush with an error      | `loom_file_handler_flush_concurrent`: the flush is not acknowledged |
+| the worker serves a batch's flushes before its records | `loom_file_handler_flush_concurrent`: the writer's record is absent |
+| a dropped sender wakes no waiter                       | three of the seam's unit models                                     |
+| a notification is skipped with one waiter              | `loom_receiver_drains_before_disconnecting`                         |
+
+The second is visible only when a record and a flush arrive in one batch,
+which only some interleavings produce.
+
 Remaining gaps: the lane does not yet prove it executed anything.
 
 ### EP-M6: the lane proves it ran
@@ -447,6 +549,39 @@ the string "loom" appears in the file.
 
 Recovery: workflow-only, revertible in one commit.
 
+Delivered on 2026-09-25. The execution step runs Cargo under
+`scripts/run_loom_models.py`, which fails unless every model named in
+`rust_extension/tests/heavy/loom-models.txt` is reported as passed and nothing
+else is, and prints the verdict, the counts, the bound and the flags. Both Loom
+steps build `--release` into `target/loom`, cached under a key naming the
+`rustc` version, the lockfile, the feature selection and the flags. The step
+timeout is 45 minutes. `make loom-runner-test` tests the checker, and
+`tests/test_loom_lane_contract.py` gains two contracts: the step runs under the
+checker with the list, and the list names exactly the models the heavy target
+defines.
+
+The checker, run against real Cargo, fails a `--no-run` run and a filter that
+matches nothing, each with every model named as missing. Lane mutations, each
+failing the contract named:
+
+| Mutation                                  | Rejected by                                                     |
+| ----------------------------------------- | --------------------------------------------------------------- |
+| restore `--no-run`                        | `test_the_execution_step_runs_the_models_rather_than_compiling_them` |
+| drop `RUSTFLAGS="--cfg loom"`             | `test_the_execution_step_selects_the_loom_configuration`        |
+| `--ignored` for `--include-ignored`       | `test_the_execution_step_selects_every_model`                   |
+| drop `--test heavy`                       | `test_each_loom_step_names_the_heavy_target[Run Loom models]`   |
+| drop the `loom_` filter                   | `test_the_execution_step_selects_every_model`                   |
+| `echo cargo test`                         | `test_each_loom_step_actually_invokes_cargo_test[Run Loom models]` |
+| call Cargo without the checker            | `test_the_execution_step_runs_under_the_model_checker`          |
+| drop `--expected` and the list            | `test_the_execution_step_runs_under_the_model_checker`          |
+| leave a model off the list                | `test_the_model_list_names_exactly_the_models`                  |
+| list a model that does not exist          | `test_the_model_list_names_exactly_the_models`                  |
+| Cargo's arguments reordered (correct)     | nothing: passes                                                 |
+
+Six mutations of the checker itself, including counting `FAILED` lines as
+passed, each fail `make loom-runner-test`; a separate rule for ignored tests
+was dropped because an ignored model is already a missing one.
+
 Remaining gaps: documentation.
 
 ### EP-M7: say what is now true
@@ -462,6 +597,12 @@ claims Loom proves the handlers correct.
 
 Acceptance: `make markdownlint`, `make nixie` and `make spelling` pass, and the
 guide's Loom section names the command in "Purpose" verbatim.
+
+Delivered on 2026-09-25. The guide's "Loom models" section names the command,
+states the bound, lists what stays outside the model, and says the build is
+`--release`; the heavy target's module documentation no longer says the models
+are compile-checked only. The roadmap has no Loom claim to correct: 4.1.5 says
+only that the models stay configuration-gated, which is still true.
 
 ## Verification plan
 
@@ -549,6 +690,30 @@ worker model the seam must preserve and is read before EP-M2.
 
 ## Surprises & discoveries
 
+- (2026-09-24, prototyping EP-M3 and EP-M4) Loom 0.7.2 models at most five
+  threads, the model's own included, and the limit is a compile-time constant.
+  Once every handler and logger worker is a Loom thread, three of the six
+  models cannot start as written: `loom_multiple_loggers_multiple_handlers`
+  needs seven, `loom_concurrent_handler_addition` eight, and
+  `loom_file_handler_flush_concurrent` seven. The constraint that the six
+  models are kept unchanged could not hold, and the resolution went to the
+  user; see `Decision log`.
+- (2026-09-24, prototyping EP-M4) With real stream handlers,
+  `loom_single_logger_multi_handlers` fits in five threads, but at
+  `LOOM_MAX_PREEMPTIONS=3` it ran for the full 40-minute cap of a local run
+  without a verdict, four times the ten-minute tolerance. The stream handler
+  model, at three threads, finishes in under three seconds.
+- (2026-09-24, prototyping EP-M4) `FemtoLogger`'s `Drop` joins its worker
+  inside `Python::attach`. Inside a Loom model that initializes the interpreter
+  on a Loom coroutine's fixed 32 KiB stack, which overflows it; the main model
+  thread's stack is not configurable in Loom 0.7.2. Worker threads the seam
+  spawns get a larger stack through Loom's thread builder.
+- (2026-09-24, prototyping EP-M2) Loom's own channel is unbounded and offers
+  no `try_send`, `send_timeout`, `recv_timeout` or multi-channel select, and
+  the workers use all of them. The seam's Loom arm therefore carries a small
+  bounded channel on a Loom mutex and condition variable, and a polled
+  `recv_either` in place of `crossbeam_channel::select!`.
+
 - (2026-09-18, from review) The EP-M1 contract read every argument of the Loom
   command and never asked what program ran it. A step rewritten as
   `echo cargo test … -- --include-ignored` would have passed all seven of its
@@ -605,6 +770,47 @@ worker model the seam must preserve and is read before EP-M2.
 
 ## Decision log
 
+- (2026-09-25) The user approved, together: the seam as a private
+  `rust_extension/src/sync.rs` re-exporting `std::thread`, `crossbeam_channel`
+  and `parking_lot` in ordinary builds and Loom's types under `cfg(loom)`, with
+  a bounded channel built on Loom's `Mutex` and `Condvar`; Loom as a
+  `[target.'cfg(loom)'.dependencies]` entry, so no ordinary build compiles it;
+  the four topology models moving onto a synchronous test handler that writes
+  into a Loom-instrumented buffer on the logger worker's thread, with the real
+  stream handler's queue covered by `loom_stream_push_delivery`; the file model
+  reduced to three writers; and, under `cfg(loom)` only, `FemtoLogger`'s `Drop`
+  joining its worker directly rather than through `Python::attach`. The HTTP
+  and socket handlers are out of scope, as no model reaches them. This
+  supersedes the constraint that the six models are kept unchanged, for the
+  reasons in `Surprises & discoveries`: their assertions are kept, and what
+  changes is the handler the topology models attach and the file model's writer
+  count.
+- (2026-09-25, user ruling) The file-handler model runs two writers at
+  `LOOM_MAX_PREEMPTIONS=3`. With three writers it gave no verdict after more
+  than thirty minutes, in two runs, one capped at forty; with two it passes in
+  33 s. Keeping three at a lower bound for this model alone was the rejected
+  alternative. Wider fan-in stays covered by the ordinary file-handler
+  integration tests.
+- (2026-09-25) Under Loom, `recv_either` registers with both channels and
+  parks until either changes, rather than polling them with
+  `loom::thread::yield_now`. The approved shape polled; that version left the
+  two-logger topology models running past twelve minutes, because every idle
+  logger worker kept stepping through its poll. A parked thread is one Loom
+  does not schedule. Registering before the final check keeps a change between
+  the check and the park from being lost, and the mutation that drops the
+  registration is rejected as a deadlock. Measured on a quiet host: the polled
+  version had the two-logger models still running at twelve minutes, and
+  the parked version passes all four topology models in 476 s in a release
+  build. The change is confined to the seam's `cfg(loom)` arm, so production
+  still waits in `crossbeam_channel::select!` and is unchanged. The lead
+  accepted this deviation from the approved polled shape on 2026-09-25.
+- (2026-09-25) `recv_either` prefers its first receiver under Loom, where
+  `crossbeam_channel::select!` chooses at random. Loom has no primitive for a
+  random choice. The logger worker passes its shutdown channel first and
+  already checks it before every wait, so the preference changes which of two
+  ready channels is served first, not which records are delivered: the shutdown
+  path drains the record queue before the worker exits.
+
 - (2026-09-18, from review) The seam exports a read-write lock as well as a
   mutex, and `FemtoLogger`'s handler list keeps its `parking_lot::RwLock`
   rather than being redesigned away. EP-M2's first draft listed the thread, the
@@ -657,19 +863,39 @@ worker model the seam must preserve and is read before EP-M2.
 ## Progress
 
 - [x] EP-M1: make the absence visible (2026-09-16)
-- [ ] EP-M2: the concurrency seam
-- [ ] EP-M3: the stream handler onto the seam
-- [ ] EP-M4: the logger onto the seam
-- [ ] EP-M5: the file handler onto the seam
-- [ ] EP-M6: the lane proves it ran
-- [ ] EP-M7: say what is now true
+- [x] EP-M2: the concurrency seam (2026-09-25)
+- [x] EP-M3: the stream handler onto the seam (2026-09-25)
+- [x] EP-M4: the logger onto the seam (2026-09-25)
+- [x] EP-M5: the file handler onto the seam (2026-09-25)
+- [x] EP-M6: the lane proves it ran (2026-09-25)
+- [x] EP-M7: say what is now true (2026-09-25)
 
 Drafted 2026-09-16. EP-M1 delivered 2026-09-16, its contract strengthened on
 2026-09-18 after review found it read every argument without asking what
-program ran them. EP-M2 is held pending approval of the seam's shape, which is
-the one decision in this plan that changes production code, and which now
-includes the read-write lock as well as the mutex.
+program ran them. The user approved the seam and the model changes on
+2026-09-25, and EP-M2 delivered the seam that day.
 
 ## Outcomes & retrospective
 
-To be completed when the work is done.
+All seven milestones are delivered in one pull request, one commit per
+milestone. The six models run the production workers inside Loom and pass: the
+four topology models in about eight minutes together, the other two in under a
+minute, in a release build. Each model was shown able to fail. Issue #470's
+acceptance still needs a manual dispatch of `heavy-tests` on the branch with
+every model named as passed, recorded in the pull request, and then a
+scheduled run on `main` before the issue closes.
+
+What the plan got wrong, and what it cost:
+
+- It assumed the six models could be kept as written. Loom's five-thread
+  limit and its state-space growth made that impossible for four of them, and
+  the user ruled on the change.
+- It priced the seam as re-exports. Loom's channel lacks every operation the
+  workers use, so the seam carries a bounded channel, and polling for a select
+  turned out too expensive to explore.
+- It did not foresee `Python::attach` in `Drop`. A Loom coroutine's stack is
+  small and fixed, so the join is split by configuration.
+
+Carry-forward: a model is cheap to write and expensive to explore. Measure a
+new model's runtime at the lane's bound before relying on it, and prefer
+blocking primitives Loom can deschedule over polling.

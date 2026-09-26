@@ -1,0 +1,9 @@
+# Every Loom model the heavy lane must report as passed, one per line, as
+# libtest names it. A model missing from a run, or a passing test not named
+# here, fails the lane; see scripts/run_loom_models.py.
+loom_file_flush::loom_file_handler_flush_concurrent
+loom_push::loom_stream_push_delivery
+loom_topologies::loom_concurrent_handler_addition
+loom_topologies::loom_multiple_loggers_multiple_handlers
+loom_topologies::loom_shared_handler_multi_loggers
+loom_topologies::loom_single_logger_multi_handlers

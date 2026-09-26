@@ -5,7 +5,6 @@
 
 use std::time::Duration;
 
-use crossbeam_channel::bounded;
 use log::warn;
 
 use crate::filters::FilterContext;
@@ -14,6 +13,7 @@ use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
+use crate::sync::bounded;
 
 use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 

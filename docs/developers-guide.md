@@ -170,38 +170,73 @@ The scheduled `heavy-tests` workflow runs ignored tests across its feature
 lanes. Loom model test functions are compiled and registered only when Cargo is
 invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
+### Loom models
+
+Six Loom models in `rust_extension/tests/heavy/` check the handler and logger
+workers: delivery through the stream handler's queue, routing through the
+logger to every attached handler exactly once, concurrent handler attachment,
+and concurrent writes and flushes through the file handler. They run the
+production workers. Every worker spawns, queues and locks through the private
+seam in `rust_extension/src/sync.rs`, which is `std::thread`,
+`crossbeam_channel` and `parking_lot` in an ordinary build and Loom's thread,
+locks and a small bounded channel under `--cfg loom`. Loom arrives only as a
+`cfg(loom)` target dependency.
+
 The workflow has two Loom steps, and the split is deliberate. "Compile Loom
-heavy tests" passes `--no-run` and proves the models type-check. "Run Loom
-models" executes them:
+heavy tests" passes `--no-run` and proves the models build. "Run Loom models"
+executes them under `scripts/run_loom_models.py`:
 
 ```shell
-RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 cargo test \
-  --manifest-path rust_extension/Cargo.toml \
+RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 uv run --script \
+  scripts/run_loom_models.py --expected rust_extension/tests/heavy/loom-models.txt -- \
+  cargo test --release --manifest-path rust_extension/Cargo.toml \
   --no-default-features --test heavy loom_ -- --include-ignored
 ```
 
-`--include-ignored` rather than `--ignored`: the latter runs only tests marked
-`#[ignore]`, and five of the six models carry no such attribute, so it would
-select one model and report a passing run of one test where six are expected.
+The checker fails the step unless every model named in `loom-models.txt` is
+reported as passed and nothing else is. `cargo test` alone passes with zero
+tests when `--cfg loom` is dropped, when the filter matches nothing, when
+`--ignored` replaces `--include-ignored`, and when `--no-run` is restored; the
+checker fails each. `make loom-runner-test` tests it.
 
-**This step does not pass yet, and it is expected to fail.** The handlers spawn
-their workers with `std::thread::spawn` and carry records on
-`crossbeam_channel`, so a worker touches a Loom-instrumented buffer from a
-thread Loom did not create and Loom aborts the process. Executing the models
-needs the concurrency seam planned in
-`docs/execplans/issue-470-execute-loom-models.md`. The step is wired first, and
-left failing, so that the lane reports the gap rather than reporting a green
-run that executed nothing.
+Both steps build into `target/loom` under their own cache key, which names the
+toolchain, the lockfile, the feature selection and the flags, apart from the
+ordinary build. The build is `--release`, as Loom recommends: the topology
+models take about eight minutes optimized and eleven not.
 
-The execution step is the **last** step in the job, and that placement matters
-while it is expected to fail. A step that fails without `continue-on-error`
-skips every step after it, so running the models earlier would stop the heavy
-suite, the Clippy lanes and `pytest` from running at all, and the lane would
-report the Loom gap by suppressing everything else it reports.
+What the models establish is bounded. Loom explores every interleaving within
+`LOOM_MAX_PREEMPTIONS` for the threads each model starts, which is a strong
+statement about a bounded space and not a proof for all executions. Within
+that, some operations are outside the model by design:
 
-`tests/test_loom_lane_contract.py` asserts that the execution step carries no
-`--no-run`, that the compile step does, and that no step follows the execution
-step.
+- Loom has no clock, so the timed waits, `recv_timeout` and `send_timeout`,
+  wait without a bound. A worker that can fail to answer hangs the model
+  instead of failing it, and the step's timeout turns that hang into a failure;
+- `recv_either`, the seam's replacement for `crossbeam_channel::select!`,
+  prefers its first receiver when both are ready, where `select!` picks at
+  random;
+- the handler list is shared through `std::sync::Arc`, whose reference counts
+  Loom does not schedule;
+- the topology models attach a synchronous test handler rather than stream
+  handlers, because Loom models at most five threads. The stream handler's own
+  queue is covered by `loom_stream_push_delivery`;
+- the file model writes into a Loom buffer, not a file. Real file output is
+  covered by the ordinary file-handler integration tests.
+
+Under `cfg(loom)`, `FemtoLogger`'s `Drop` joins its worker directly rather than
+through `Python::attach`, and the logger and file-worker unit tests, which
+drive the workers with real threads, build in ordinary configurations only.
+`docs/execplans/issue-470-execute-loom-models.md` records each decision and the
+mutations each model rejects.
+
+The execution step is the **last** step in the job, so a model failure never
+stops the heavy suite, the Clippy lanes and `pytest` from reporting.
+
+`tests/test_loom_lane_contract.py` asserts that the execution step runs
+`cargo test` under the checker with the model list, sets `--cfg loom` and a
+positive `LOOM_MAX_PREEMPTIONS`, selects every model, carries no `--no-run`, is
+bounded and runs last; that the compile step does carry `--no-run`; and that
+the model list names exactly the models the heavy target defines.
 
 ## Configuration transaction
 
