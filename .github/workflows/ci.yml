@@ -135,3 +135,7 @@ jobs:
           cargo-manifest: rust_extension/Cargo.toml
           with-default-features: false
           features: python,test-util
+          # Serial pytest, as before generate-coverage grew pytest-workers:
+          # the stack-info snapshot records pytest's own call stack, and
+          # an xdist worker replaces it with execnet frames.
+          pytest-workers: ''
