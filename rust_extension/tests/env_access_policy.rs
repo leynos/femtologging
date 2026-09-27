@@ -11,11 +11,13 @@
 //! counting cannot tell an item-scoped expectation from one written inside the
 //! body.
 //!
-//! The Makefile and workflow half of the policy lives in
+//! The Makefile half of the policy lives in
 //! `tests/test_env_access_policy_contract.py`, which uses the repository's
-//! pinned `makeutil` parser and PyYAML rather than a second parser written
-//! here. That file also holds the source scan for `allow` attributes that
-//! would switch the policy off wholesale.
+//! pinned `makeutil` parser, and the workflow half in
+//! `tests/test_env_access_policy_ci_contract.py`, which uses PyYAML, rather
+//! than a second parser written here. The source scan for `allow` attributes
+//! that would switch the policy off wholesale lives in
+//! `env_policy_source_scan.rs`.
 //!
 //! See `docs/adr-006-environment-seam-taxonomy.md` for the policy itself.
 

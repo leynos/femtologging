@@ -37,18 +37,14 @@ WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
 
-# Pylint runs on managed PyPy through the pylint-pypy shim, mirroring the lint
-# stack in https://github.com/leynos/lading ("lading" is that repository's
-# name, not a misspelling). The shim ref and pylint itself are both pinned: the
-# shim ref alone would let pylint float, changing lint behaviour without any
-# repository change.
-PYLINT_PYTHON ?= pypy
+# Pylint runs as a uv tool on managed PyPy 3.12. Both the interpreter's minor
+# version and pylint itself are pinned: a bare `pypy` or a floating pylint
+# would change lint behaviour without any repository change.
+PYLINT_PYTHON ?= pypy@3.12
 PYLINT_TARGETS ?= femtologging tests scripts
-PYLINT_PYPY_SHIM_REF ?= 726d09f968b4d729ee4b29c71fc732e744854f3b
-PYLINT_PYPY_SHIM = git+https://github.com/leynos/pylint-pypy-shim.git@$(PYLINT_PYPY_SHIM_REF)
 PYLINT_VERSION ?= 4.0.7
-PYLINT = $(UV_ENV) uv tool run --python $(PYLINT_PYTHON) \
-  --from '$(PYLINT_PYPY_SHIM)' --with 'pylint==$(PYLINT_VERSION)' pylint-pypy
+PYLINT = $(UV_ENV) uv tool run --managed-python --python $(PYLINT_PYTHON) \
+  --from 'pylint==$(PYLINT_VERSION)' pylint
 # df12-python-lints v0.3.0, pinned by commit so the tag cannot move silently.
 DF12_PYTHON_LINTS_REF ?= 4cf41736cce2f7ba2778882a5c629c044568a0e5
 DF12_PYTHON_LINTS = git+https://github.com/leynos/df12-python-lints.git@$(DF12_PYTHON_LINTS_REF)

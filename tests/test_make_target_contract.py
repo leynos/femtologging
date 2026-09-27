@@ -156,7 +156,7 @@ def test_spelling_recipe_generates_policy_and_runs_the_pinned_checker() -> None:
 
 def test_spelling_helper_recipe_checks_format_lint_and_coverage() -> None:
     """`spelling-helper-test` must validate its helpers before policy generation."""
-    assert _prerequisites("spelling-helper-test") == (), (
+    assert not _prerequisites("spelling-helper-test"), (
         "spelling helper validation must not depend on generated policy output"
     )
     assert _commands("spelling-helper-test") == _SPELLING_HELPER_COMMANDS, (
