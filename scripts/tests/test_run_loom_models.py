@@ -75,7 +75,9 @@ def test_every_listed_model_passing_succeeds(expected: pathlib.Path) -> None:
     Invariant: this is the one report that is accepted.
     """
     run = reporting(dict.fromkeys(MODELS, "ok"))
-    assert run_loom_models.check_models(CARGO_COMMAND, expected, run) == 0
+    assert run_loom_models.check_models(CARGO_COMMAND, expected, run) == 0, (
+        "a run reporting every listed model and nothing else must pass"
+    )
 
 
 @pytest.mark.parametrize(
@@ -101,7 +103,9 @@ def test_a_report_that_does_not_prove_every_model_fails(
     Invariant: the checker fails, whether or not Cargo itself exited zero.
     """
     run = reporting(results, returncode)
-    assert run_loom_models.check_models(CARGO_COMMAND, expected, run) == 1
+    assert run_loom_models.check_models(CARGO_COMMAND, expected, run) == 1, (
+        f"a run reporting {results!r} with exit {returncode} must fail"
+    )
 
 
 def test_only_ok_lines_count_as_passed() -> None:
@@ -113,7 +117,9 @@ def test_only_ok_lines_count_as_passed() -> None:
     """
     results = {MODELS[0]: "ok", MODELS[1]: "FAILED", "ignored_test": "ignored"}
     output = libtest_output(results)
-    assert run_loom_models.passed_tests(output) == {MODELS[0]}
+    assert run_loom_models.passed_tests(output) == {MODELS[0]}, (
+        "only lines reporting `ok` may count as passed"
+    )
 
 
 def test_an_empty_model_list_is_refused(tmp_path: pathlib.Path) -> None:
@@ -127,7 +133,9 @@ def test_an_empty_model_list_is_refused(tmp_path: pathlib.Path) -> None:
     found = run_loom_models.problems(
         0, frozenset(), run_loom_models.read_expected(path)
     )
-    assert found == ["the expected-model list is empty, so no run could prove anything"]
+    assert found == [
+        "the expected-model list is empty, so no run could prove anything"
+    ], f"an empty list must be the only problem reported, saw {found!r}"
 
 
 def test_no_command_is_a_usage_error(expected: pathlib.Path) -> None:
@@ -135,7 +143,9 @@ def test_no_command_is_a_usage_error(expected: pathlib.Path) -> None:
 
     Invariant: the checker refuses to run rather than judging an empty report.
     """
-    assert run_loom_models.check_models((), expected) == 2
+    assert run_loom_models.check_models((), expected) == 2, (
+        "a missing command must be a usage error"
+    )
 
 
 @manual_lifecycle
@@ -154,5 +164,7 @@ def test_the_real_runner_reads_what_cargo_printed(
     cmd_mox.replay()
     status = run_loom_models.check_models(CARGO_COMMAND, expected)
     cmd_mox.verify()
-    assert status == 0
-    assert [list(call.args) for call in spy.invocations] == [list(CARGO_COMMAND[1:])]
+    assert status == 0, "a passing report through the real runner must be accepted"
+    assert [list(call.args) for call in spy.invocations] == [list(CARGO_COMMAND[1:])], (
+        "the command must reach Cargo unchanged, exactly once"
+    )
