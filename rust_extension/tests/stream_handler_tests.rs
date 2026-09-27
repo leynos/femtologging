@@ -21,7 +21,6 @@ use test_utils::captured_log::captured_log;
 use test_utils::fixtures::handler_tuple;
 use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;
-use test_utils::std::SharedBuf;
 
 #[derive(Clone)]
 struct BlockingBuf {
@@ -277,23 +276,45 @@ fn captured_log_hands_out_no_records_an_earlier_caller_left() {
     );
 }
 
+/// Scenario: a record arrives while the handler's one-slot queue is full.
+///
+/// Invariant: the record is refused as `QueueFull` and the handler reports the
+/// drop. The worker is held inside `write` by [`GatedBuf`], so the second record
+/// occupies the queue and the third is certain to be refused. With two records
+/// and a free worker the test depended on the worker not draining in between,
+/// and on a busy runner it sometimes did.
 #[rstest]
 #[serial]
 #[ignore]
 fn stream_handler_reports_dropped_records() {
     let mut logger = captured_log();
-    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(Mutex::new(()));
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+
+    let held = gate.lock().unwrap_or_else(PoisonError::into_inner);
     let handler = FemtoStreamHandler::with_capacity_timeout(
-        SharedBuf::new(Arc::clone(&buffer)),
+        GatedBuf {
+            gate: Arc::clone(&gate),
+            entered: entered_tx,
+        },
         DefaultFormatter,
         1,
-        Duration::from_millis(50),
+        Duration::from_secs(5),
     );
 
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
-    let _ = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+    // The worker dequeues this one and parks inside `write`.
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the worker should reach the gate");
+    // This one fills the channel's single slot, so the next is refused.
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+    let refused = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "third"));
+
+    drop(held);
     assert!(handler.flush());
 
+    assert_eq!(refused, Err(HandlerError::QueueFull));
     let warnings: Vec<_> = logger
         .by_ref()
         .filter(|r| r.level() == log::Level::Warn)
@@ -301,7 +322,8 @@ fn stream_handler_reports_dropped_records() {
     assert!(
         warnings
             .iter()
-            .any(|r| r.args().to_string().contains("1 log records dropped"))
+            .any(|r| r.args().to_string().contains("1 log records dropped")),
+        "the refused record must be reported as dropped, saw {warnings:?}"
     );
 }
 
