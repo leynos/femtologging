@@ -15,7 +15,10 @@ use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 use crate::sync::bounded;
 
-use super::{FemtoLogger, FlushAckHandler, HandlerAttachment, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{
+    FemtoLogger, FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot,
+    LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord,
+};
 
 /// Classifies a handler snapshot for tracing metadata without retaining it.
 #[cfg(feature = "tracing-compat")]
@@ -204,10 +207,6 @@ impl FemtoLogger {
         if handlers.is_empty() {
             return;
         }
-        let handlers = handlers
-            .into_iter()
-            .map(|attachment| attachment.handler)
-            .collect::<Vec<_>>();
         #[cfg(feature = "tracing-compat")]
         let handler_kind = handler_kind(&handlers);
         #[cfg(feature = "python")]
@@ -311,10 +310,21 @@ impl FemtoLogger {
     fn filter_handlers(
         record: &mut FemtoLogRecord,
         handlers: Vec<HandlerAttachment>,
-    ) -> Vec<HandlerAttachment> {
+    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
+        let has_handler_filters = handlers
+            .iter()
+            .any(|attachment| !attachment.filters.is_empty());
         handlers
             .into_iter()
-            .filter(|attachment| Self::apply_filter_chain(record, &attachment.filters))
+            .filter_map(|attachment| {
+                Self::apply_filter_chain(record, &attachment.filters).then(|| {
+                    if has_handler_filters {
+                        HandlerRecordSnapshot::snapshot_handler(attachment.handler, record.clone())
+                    } else {
+                        attachment.handler
+                    }
+                })
+            })
             .collect()
     }
 

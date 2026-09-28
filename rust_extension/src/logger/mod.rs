@@ -40,7 +40,7 @@ pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
-pub(crate) use queue::{FlushAckHandler, HandlerAttachment};
+pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot};
 
 /// Maximum number of records held before producers report a dropped record.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
