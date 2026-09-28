@@ -133,7 +133,9 @@ fn worker_thread_loop_shutdown_exits_under_load() {
 fn clear_handlers_removes_all() {
     let logger = FemtoLogger::new("test".into());
     let h = Arc::new(CollectingHandler::new()) as Arc<dyn FemtoHandlerTrait>;
-    logger.add_handler(h);
+    logger
+        .add_handler(h)
+        .expect("native handler should register");
     assert_eq!(logger.handler_ptrs_for_test().len(), 1);
     logger.clear_handlers();
     assert!(logger.handler_ptrs_for_test().is_empty());
@@ -230,7 +232,9 @@ fn drop_counter_increments_on_queue_overflow() {
         waited: AtomicBool::new(false),
     }) as Arc<dyn FemtoHandlerTrait>;
     let logger = FemtoLogger::new("drop".to_string());
-    logger.add_handler(handler);
+    logger
+        .add_handler(handler)
+        .expect("native handler should register");
     logger.log(FemtoLevel::Info, "block");
 
     // Wait for worker to confirm it's processing (prevents race condition)

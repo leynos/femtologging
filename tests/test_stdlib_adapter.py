@@ -234,6 +234,7 @@ class TestContextVarPropagation:
         class RequestIdFilter(logging.Filter):
             @typ.override
             def filter(self, record: logging.LogRecord) -> bool:
+                """Attach the current request ID to the stdlib record."""
                 record.correlation_id = _REQUEST_ID.get() or "-"
                 return True
 
@@ -272,6 +273,7 @@ class TestContextVarPropagation:
         class ContextFilter(logging.Filter):
             @typ.override
             def filter(self, record: logging.LogRecord) -> bool:
+                """Record the message and request ID seen by this filter."""
                 with observed_lock:
                     observed.append((record.getMessage(), _REQUEST_ID.get()))
                 return True
@@ -283,6 +285,7 @@ class TestContextVarPropagation:
         expected = {f"message-{index}": f"request-{index}" for index in range(4)}
 
         def emit(message: str, request_id: str) -> None:
+            """Emit one message with its request ID set in this thread."""
             token = _REQUEST_ID.set(request_id)
             try:
                 logger.info(message)

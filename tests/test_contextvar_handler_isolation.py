@@ -131,4 +131,7 @@ def test_contextvar_snapshot_matches_each_producer(
     assert logger.flush_handlers(), "logger worker did not flush"
 
     expected = _expected_observations(request_ids, handler_order)
+    assert len(observed) == expected_count, (
+        f"expected {expected_count} callbacks, got {observed!r}"
+    )
     assert set(observed) == expected, f"context values crossed records: {observed!r}"

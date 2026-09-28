@@ -190,13 +190,19 @@ means that the queued handler snapshot contains no Python-backed handler; a
 capture failure is handled explicitly and is not represented by that absence.
 
 At the worker boundary, `FemtoHandlerTrait::handle_with_context` receives the
-captured context. Its default implementation delegates directly to `handle`,
-so native Rust handlers retain their existing behaviour. `PyHandler` copies
-the captured context immediately before each callback and invokes both its
-structured and legacy handler paths through `Context.run()`. This keeps the
-entire Python handler call, including stdlib filters, formatters, and emission,
-inside the producer's context while preventing one handler from mutating the
-context observed by the next.
+captured context. Native handlers retain default direct dispatch to `handle`.
+Python-backed handlers must report contextual dispatch with
+`provides_context_dispatch()` and implement `handle_with_context()`; they must
+return `true` from the capability method only when the implementation invokes
+Python inside the supplied context. `FemtoLogger::add_handler()` rejects a
+Python-backed handler that does not declare this capability. The default
+`handle_with_context()` fails closed for Python-backed handlers, preventing
+context from being silently discarded. `PyHandler` copies the captured context
+immediately before each callback and invokes both its structured and legacy
+handler paths through `Context.run()`. This keeps the entire Python handler
+call, including stdlib filters, formatters, and emission, inside the producer's
+context while preventing one handler from mutating the context observed by the
+next.
 
 This is a narrow exception to the original queue-boundary constraint against
 retaining Python objects: only the captured `contextvars.Context` is retained

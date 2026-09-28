@@ -6,12 +6,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rstest::rstest;
 
+#[cfg(feature = "python")]
+use super::context_snapshot::ContextSnapshotProvider;
 use super::logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_signal};
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
 use crate::log_record::RecordMetadata;
-
 struct TestFilter {
     accepted: bool,
     enrichment: BTreeMap<String, String>,
@@ -66,7 +67,9 @@ fn apply_filters_merges_enrichment_and_short_circuits(
         enrichment: enrichment_pair("ignored", "value"),
         calls: Arc::clone(&third_calls),
     }));
-    logger.add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
 
     let result = logger.log_with_metadata(FemtoLevel::Info, "hello", RecordMetadata::default());
     assert_eq!(first_calls.load(Ordering::SeqCst), 1);
@@ -125,7 +128,9 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
         enrichment: enrichment_pair("request_id", "second"),
         calls: Arc::clone(&second_calls),
     }));
-    logger.add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
 
     logger.log_with_metadata(
         FemtoLevel::Info,
@@ -153,7 +158,9 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
     let logger = FemtoLogger::new("producer".to_string());
-    logger.add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
 
     logger.dispatch_to_handlers(FemtoLogRecord::new("producer", FemtoLevel::Info, "queued"));
 
@@ -162,4 +169,117 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     assert_eq!(collected.len(), 1);
     assert_eq!(collected[0].logger(), "producer");
     assert_eq!(collected[0].message(), "queued");
+}
+
+#[cfg(feature = "python")]
+struct TestContextSnapshotProvider {
+    captures: Arc<AtomicUsize>,
+    fail: bool,
+}
+
+#[cfg(feature = "python")]
+impl ContextSnapshotProvider for TestContextSnapshotProvider {
+    fn capture(&self) -> PyResult<Py<PyAny>> {
+        self.captures.fetch_add(1, Ordering::Relaxed);
+        if self.fail {
+            Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "context provider failed",
+            ))
+        } else {
+            Python::attach(|py| Ok(py.None()))
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+struct ContextAwareTestHandler {
+    handled_records: Arc<AtomicUsize>,
+    records_with_context: Arc<AtomicUsize>,
+}
+
+#[cfg(feature = "python")]
+impl FemtoHandlerTrait for ContextAwareTestHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), crate::handler::HandlerError> {
+        self.handled_records.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn is_python_backed(&self) -> bool {
+        true
+    }
+
+    fn provides_context_dispatch(&self) -> bool {
+        true
+    }
+
+    fn handle_with_context(
+        &self,
+        _record: FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
+    ) -> Result<(), crate::handler::HandlerError> {
+        self.handled_records.fetch_add(1, Ordering::Relaxed);
+        if context.is_some() {
+            self.records_with_context.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// The injected provider's snapshot reaches the queued Python handler.
+#[cfg(feature = "python")]
+#[test]
+fn injected_context_snapshot_provider_supplies_queued_context() {
+    let captures = Arc::new(AtomicUsize::new(0));
+    let handled_records = Arc::new(AtomicUsize::new(0));
+    let records_with_context = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn ContextSnapshotProvider> = Arc::new(TestContextSnapshotProvider {
+        captures: Arc::clone(&captures),
+        fail: false,
+    });
+    let logger = FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
+    logger
+        .add_handler(Arc::new(ContextAwareTestHandler {
+            handled_records: Arc::clone(&handled_records),
+            records_with_context: Arc::clone(&records_with_context),
+        }))
+        .expect("context-aware test handler should register");
+
+    logger.log(FemtoLevel::Info, "message");
+    assert!(logger.flush_handlers(), "logger worker did not flush");
+
+    assert_eq!(captures.load(Ordering::Relaxed), 1);
+    assert_eq!(handled_records.load(Ordering::Relaxed), 1);
+    assert_eq!(records_with_context.load(Ordering::Relaxed), 1);
+}
+
+/// Context capture failures do not increment the queue-drop counter.
+#[cfg(feature = "python")]
+#[test]
+fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
+    let captures = Arc::new(AtomicUsize::new(0));
+    let handled_records = Arc::new(AtomicUsize::new(0));
+    let records_with_context = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn ContextSnapshotProvider> = Arc::new(TestContextSnapshotProvider {
+        captures: Arc::clone(&captures),
+        fail: true,
+    });
+    let logger = FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
+    logger
+        .add_handler(Arc::new(ContextAwareTestHandler {
+            handled_records: Arc::clone(&handled_records),
+            records_with_context,
+        }))
+        .expect("context-aware test handler should register");
+
+    logger.log(FemtoLevel::Info, "message");
+
+    assert_eq!(captures.load(Ordering::Relaxed), 1);
+    assert_eq!(logger.get_context_capture_failures(), 1);
+    assert_eq!(logger.get_dropped(), 0);
+    assert_eq!(handled_records.load(Ordering::Relaxed), 0);
+    assert!(logger.flush_handlers(), "logger worker did not flush");
 }

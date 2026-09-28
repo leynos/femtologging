@@ -20,6 +20,8 @@ use crate::sync::{
     Either, JoinHandle, Mutex, Receiver, RwLock, TryRecvError, bounded, recv_either, spawn,
 };
 
+#[cfg(feature = "python")]
+use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
 
 /// Record queued for processing by the worker thread.
@@ -33,6 +35,29 @@ pub struct QueuedRecord {
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
     pub fn with_parent(name: String, parent: Option<String>) -> Self {
+        Self::with_parent_inner(
+            name,
+            parent,
+            #[cfg(feature = "python")]
+            Arc::new(ContextVarsSnapshotProvider),
+        )
+    }
+
+    /// Create a logger with an injected context provider for internal tests.
+    #[cfg(all(feature = "python", test))]
+    pub(super) fn with_context_snapshot_provider(
+        name: String,
+        parent: Option<String>,
+        context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    ) -> Self {
+        Self::with_parent_inner(name, parent, context_snapshot_provider)
+    }
+
+    fn with_parent_inner(
+        name: String,
+        parent: Option<String>,
+        #[cfg(feature = "python")] context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    ) -> Self {
         let formatter = SharedFormatter::new(DefaultFormatter);
         let handlers: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoHandlerTrait>>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
@@ -55,6 +80,12 @@ impl FemtoLogger {
             filters,
             dropped_records: std::sync::atomic::AtomicU64::new(0),
             drop_warner: RateLimitedWarner::default(),
+            #[cfg(feature = "python")]
+            context_snapshot_provider,
+            #[cfg(feature = "python")]
+            context_capture_failures: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "python")]
+            context_capture_warner: RateLimitedWarner::default(),
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
             handle: Mutex::new(Some(handle)),

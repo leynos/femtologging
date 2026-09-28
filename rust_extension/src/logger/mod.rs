@@ -7,6 +7,8 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
+#[cfg(feature = "python")]
+mod context_snapshot;
 mod convenience_methods;
 mod producer;
 mod py_handler;
@@ -23,6 +25,8 @@ use std::sync::Arc;
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::rate_limited_warner::RateLimitedWarner;
+#[cfg(feature = "python")]
+use context_snapshot::ContextSnapshotProvider;
 
 use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
@@ -53,6 +57,12 @@ pub struct FemtoLogger {
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
+    #[cfg(feature = "python")]
+    context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    #[cfg(feature = "python")]
+    context_capture_failures: AtomicU64,
+    #[cfg(feature = "python")]
+    context_capture_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
@@ -109,7 +119,7 @@ impl FemtoLogger {
             let obj = handler.bind(py);
             validate_handler(obj)?;
             let py_handler = PyHandler::new(py, handler);
-            self.add_handler(Arc::new(py_handler) as Arc<dyn FemtoHandlerTrait>);
+            self.add_handler(Arc::new(py_handler) as Arc<dyn FemtoHandlerTrait>)?;
             Ok(())
         })
     }
@@ -145,12 +155,19 @@ impl FemtoLogger {
         self.clear_filters();
     }
 
-    /// Return the number of records dropped due to a full queue.
+    /// Return the number of records dropped due to a full or shutting-down queue.
     ///
     /// Useful for tests and monitoring dashboards.
     #[pyo3(text_signature = "(self)")]
     pub fn get_dropped(&self) -> u64 {
         self.dropped_records.load(Ordering::Relaxed)
+    }
+
+    /// Return how many records were dropped because producer context capture failed.
+    #[cfg(feature = "python")]
+    #[pyo3(text_signature = "(self)")]
+    pub fn get_context_capture_failures(&self) -> u64 {
+        self.context_capture_failures.load(Ordering::Relaxed)
     }
 
     /// Flush all handlers attached to this logger.
@@ -188,8 +205,21 @@ impl FemtoLogger {
 
 impl FemtoLogger {
     /// Attach a handler to this logger.
-    pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HandlerError::MissingContextDispatch`] when a Python-backed
+    /// handler does not declare contextual dispatch support.
+    pub fn add_handler(
+        &self,
+        handler: Arc<dyn FemtoHandlerTrait>,
+    ) -> Result<(), crate::handler::HandlerError> {
+        #[cfg(feature = "python")]
+        if handler.is_python_backed() && !handler.provides_context_dispatch() {
+            return Err(crate::handler::HandlerError::MissingContextDispatch);
+        }
         self.handlers.write().push(handler);
+        Ok(())
     }
 
     /// Attach a filter to this logger.

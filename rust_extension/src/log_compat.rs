@@ -275,7 +275,10 @@ mod tests {
         Python::attach(|py| {
             let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-            logger.borrow(py).add_handler(handler.clone());
+            logger
+                .borrow(py)
+                .add_handler(handler.clone())
+                .expect("native test handler should register");
 
             let record = log::Record::builder()
                 .args(format_args!("hello"))
@@ -318,7 +321,10 @@ mod tests {
         Python::attach(|py| {
             let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-            logger.borrow(py).add_handler(handler.clone());
+            logger
+                .borrow(py)
+                .add_handler(handler.clone())
+                .expect("native test handler should register");
 
             let record = log::Record::builder()
                 .args(format_args!("normalized"))
@@ -347,7 +353,10 @@ mod tests {
         Python::attach(|py| {
             let logger = manager::get_logger(py, &logger_name).expect("logger created");
             let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-            logger.borrow(py).add_handler(handler.clone());
+            logger
+                .borrow(py)
+                .add_handler(handler.clone())
+                .expect("native test handler should register");
             logger.borrow(py).set_level(FemtoLevel::Warn);
 
             let info_record = log::Record::builder()

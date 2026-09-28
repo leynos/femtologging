@@ -140,7 +140,9 @@ fn convenience_methods_merge_scoped_context() {
         let logger = FemtoLogger::new("test".to_string());
         logger.set_level(FemtoLevel::Info);
         let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        logger
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+            .expect("native collecting handler should register");
 
         let _guard = log_context::push_log_context([("request_id", "123")])
             .expect("context push should succeed");
