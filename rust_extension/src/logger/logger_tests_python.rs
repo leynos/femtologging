@@ -80,11 +80,16 @@ impl FemtoHandlerTrait for SnapshotPythonHandler {
         true
     }
 
+    fn provides_context_dispatch(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
+/// The queued handler snapshot determines whether producer context is captured.
 #[test]
 fn capture_python_context_uses_queued_handler_snapshot() {
     Python::attach(|py| {
@@ -97,11 +102,14 @@ fn capture_python_context_uses_queued_handler_snapshot() {
             .expect("ContextVar set should succeed");
         let logger = FemtoLogger::new("test".to_string());
         let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(SnapshotPythonHandler);
-        logger.add_handler(Arc::clone(&handler));
+        logger
+            .add_handler(Arc::clone(&handler))
+            .expect("context-aware test handler should register");
         let queued_handlers = logger.handlers_for_test();
 
         assert!(logger.remove_handler(&handler));
-        let captured = FemtoLogger::capture_python_context(&queued_handlers)
+        let captured = logger
+            .capture_python_context(&queued_handlers)
             .expect("context capture should succeed")
             .expect("queued Python handler should capture its producer context");
         let value = captured

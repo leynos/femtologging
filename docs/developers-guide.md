@@ -252,21 +252,38 @@ with the handlers that will actually receive the record.
 
 `FemtoHandlerTrait::is_python_backed()` identifies handlers that can invoke
 Python. When the queued snapshot contains one of these handlers, the producer
-captures `contextvars.copy_context()` and stores it in `QueuedRecord::context`.
-An absent context means that the snapshot contains no Python-backed handler; it
-must not also be used to represent a failed capture. Capture failures are
-therefore handled at the producer command boundary and must not be silently
-converted into that absence case.
+asks its injected `ContextSnapshotProvider` for the caller's context and stores
+the result in `QueuedRecord::context`. The default
+`ContextVarsSnapshotProvider` calls `contextvars.copy_context()`. Pairing this
+snapshot with the cloned handler list keeps capture aligned with the handlers
+that will receive the record. An absent context means that the snapshot
+contains no Python-backed handler; it does not represent a failed capture.
+
+Capture failures increment a separate, rate-limited context-capture failure
+counter and warning; they do not increment the queue-full drop counter. The
+failure is handled at the producer command boundary rather than being silently
+converted into an absent context.
 
 The logger worker passes the queued context by reference to
 `FemtoHandlerTrait::handle_with_context()` for every handler in the snapshot.
-The default trait implementation delegates to `handle()`, so native Rust
-handlers retain their existing behaviour. `PyHandler` copies the captured
-context for each callback and runs either `handle_record(record_dict)` or the
-legacy `handle(logger, level, message)` call through `Context.run()`. This
-keeps Python filters and formatters in the captured producer context without
-allowing one Python handler to modify another's view of it, while leaving
-non-Python handlers on their existing path.
+The default trait implementation delegates directly to `handle()` for native
+Rust handlers. Python-backed handlers must report contextual dispatch through
+`provides_context_dispatch()` and implement `handle_with_context()`; the
+capability method must return `true` only when the implementation invokes
+Python inside the supplied context. `FemtoLogger::add_handler()` returns
+`HandlerError::MissingContextDispatch` if a Python-backed handler does not
+declare this support. The default `handle_with_context()` also fails closed for
+Python-backed handlers. `PyHandler` copies the captured context for each
+callback and runs either `handle_record(record_dict)` or the legacy
+`handle(logger, level, message)` call through `Context.run()`. This keeps
+Python filters and formatters in the captured producer context without allowing
+one Python handler to modify another's view of it, while leaving non-Python
+handlers on their existing path.
+
+For `StdlibHandlerAdapter`, `handle_record()` calls the wrapped handler's
+`handle()` method inside `Context.run()`. The complete stdlib handler call,
+including filters, formatters, and `emit()`, therefore runs in the captured
+producer context.
 
 ## Configuration transaction
 

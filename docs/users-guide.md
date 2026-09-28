@@ -198,6 +198,9 @@ fields with safe defaults does not require a version bump.
   their handler list.
 - Use `logger.get_dropped()` to inspect how many records have been discarded
   because the logger queue was full or shutting down.
+- Use `logger.get_context_capture_failures()` to inspect failed producer-context
+  snapshots. This counter is separate from `get_dropped()` and does not include
+  records rejected because the queue was full or shutting down.
 
 ## Built-in handlers
 

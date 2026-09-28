@@ -7,8 +7,6 @@ use std::any::Any;
 use std::time::Duration;
 
 use log::warn;
-#[cfg(feature = "python")]
-use pyo3::types::PyAnyMethods;
 
 use crate::filters::FilterContext;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
@@ -189,16 +187,29 @@ impl FemtoLogger {
         });
     }
 
+    /// Capture context through the logger's provider and enqueue the snapshot.
+    ///
+    /// Context capture is attempted only when this exact handler snapshot
+    /// contains a Python-backed handler; capture failures use a separate
+    /// counter from queue-full drops.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
         };
         let handlers = self.handlers.read().clone();
         #[cfg(feature = "python")]
-        let context = match Self::capture_python_context(&handlers) {
+        let context = match self.capture_python_context(&handlers) {
             Ok(context) => context,
             Err(err) => {
-                pyo3::Python::attach(|py| err.print(py));
+                self.context_capture_failures
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.context_capture_warner.record_drop();
+                self.context_capture_warner.warn_if_due(|count| {
+                    warn!(
+                        "operation=producer_context_capture handler_kind=python outcome=failed failures={count}"
+                    );
+                    pyo3::Python::attach(|py| err.print(py));
+                });
                 return;
             }
         };
@@ -227,17 +238,13 @@ impl FemtoLogger {
     /// context paired with the exact handler snapshot that the worker receives.
     #[cfg(feature = "python")]
     pub(super) fn capture_python_context(
+        &self,
         handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
     ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
         if !handlers.iter().any(|handler| handler.is_python_backed()) {
             return Ok(None);
         }
-        pyo3::Python::attach(|py| {
-            py.import("contextvars")
-                .and_then(|module| module.call_method0("copy_context"))
-                .map(pyo3::Bound::unbind)
-                .map(Some)
-        })
+        self.context_snapshot_provider.capture().map(Some)
     }
 
     pub(super) fn flush_handlers_blocking(&self) -> bool {

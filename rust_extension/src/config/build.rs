@@ -101,7 +101,7 @@ impl ConfigBuilder {
                     plan.name
                 ))
             })?;
-            self.apply_logger_plan(py, logger, plan);
+            self.apply_logger_plan(py, logger, plan)?;
             runtime_loggers.insert(
                 plan.name.clone(),
                 manager::LoggerAttachmentState::new(
@@ -193,6 +193,15 @@ impl ConfigBuilder {
     ) -> Result<ConfiguredLoggerPlan, ConfigError> {
         let planned_handlers =
             Self::collect_items(cfg.handler_ids(), handlers, Self::duplicate_handler_ids)?;
+        #[cfg(feature = "python")]
+        if planned_handlers
+            .iter()
+            .any(|handler| handler.is_python_backed() && !handler.provides_context_dispatch())
+        {
+            return Err(ConfigError::LoggerInit(
+                "Python-backed handlers must provide contextual dispatch".to_owned(),
+            ));
+        }
         let planned_filters =
             Self::collect_items(cfg.filter_ids(), filters, Self::duplicate_filter_ids)?;
         Ok(ConfiguredLoggerPlan {
@@ -211,11 +220,13 @@ impl ConfigBuilder {
         py: Python<'_>,
         logger: &Py<FemtoLogger>,
         plan: &ConfiguredLoggerPlan,
-    ) {
+    ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
         logger_ref.clear_handlers();
         for handler in &plan.handlers {
-            logger_ref.add_handler(handler.clone());
+            logger_ref
+                .add_handler(handler.clone())
+                .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
         }
         logger_ref.clear_filters();
         for filter in &plan.filters {
@@ -227,5 +238,6 @@ impl ConfigBuilder {
         if let Some(propagate) = plan.propagate {
             logger_ref.set_propagate(propagate);
         }
+        Ok(())
     }
 }

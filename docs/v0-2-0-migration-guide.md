@@ -94,10 +94,10 @@ ______________________________________________________________________
 
 ## `StdlibHandlerAdapter` propagates `contextvars`
 
-When a record is sent through `StdlibHandlerAdapter`, femtologging captures
-the producer thread's `contextvars` context before queueing the record. The
-wrapped stdlib handler's filters and formatters then run inside that captured
-context on the handler's worker thread. Existing filters that read a
+When a record is sent through `StdlibHandlerAdapter`, femtologging captures the
+producer thread's `contextvars` context before queueing the record. The wrapped
+stdlib handler's filters and formatters then run inside that captured context
+on the handler's worker thread. Existing filters that read a
 `contextvars.ContextVar` therefore observe the value set by the thread that
 emitted the record.
 
@@ -110,7 +110,7 @@ ______________________________________________________________________
 
 ## Unchanged APIs
 
-Reading and assigning the five declared fields (`level`, `filename`,
-`stream`, `force`, `handlers`) is unchanged. Construction of `BasicConfig`,
-calls to `basicConfig()`, and all other public APIs are unaffected by the
+Reading and assigning the five declared fields (`level`, `filename`, `stream`,
+`force`, `handlers`) is unchanged. Construction of `BasicConfig`, calls to
+`basicConfig()`, and all other public APIs are unaffected by the
 slotted-dataclass and `contextvars` propagation changes.

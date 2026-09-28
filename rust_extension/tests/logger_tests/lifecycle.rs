@@ -33,7 +33,9 @@ fn drop_with_sender_clone_exits() {
 fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
     let handler = Arc::new(handler);
     let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
     logger.log(FemtoLevel::Info, "one");
     logger.log(FemtoLevel::Info, "two");
     logger.log(FemtoLevel::Info, "three");

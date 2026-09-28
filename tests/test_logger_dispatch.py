@@ -11,8 +11,6 @@ import contextvars
 import threading
 import typing as typ
 
-import pytest
-
 from femtologging import FemtoLogger
 from tests.logger_support import (
     CollectingHandler,
@@ -181,11 +179,11 @@ def _legacy_context_handler_pair(
     return MutatingHandler(), ObservingHandler()
 
 
-def _assert_contextvar_isolation(
+def _assert_contextvar_mutation_does_not_cross_handlers(
     handler_pair_factory: _ContextHandlerPairFactory,
     logger_name: str,
 ) -> None:
-    """Assert the second handler sees the emitting thread's ``request_id``."""
+    """Assert a mutating handler cannot change the next handler's context."""
     request_id = contextvars.ContextVar[str | None]("request_id", default=None)
     observed: list[str | None] = []
     observed_event = threading.Event()
@@ -208,20 +206,20 @@ def _assert_contextvar_isolation(
     assert observed == ["request-42"], f"handlers shared context: {observed!r}"
 
 
-@pytest.mark.parametrize(
-    ("handler_pair_factory", "logger_name"),
-    [
-        (_structured_context_handler_pair, "contextvars.structured"),
-        (_legacy_context_handler_pair, "contextvars.legacy"),
-    ],
-    ids=["structured", "legacy"],
-)
-def test_contextvar_mutation_does_not_cross_handlers(
-    handler_pair_factory: _ContextHandlerPairFactory,
-    logger_name: str,
-) -> None:
-    """Each handler path should receive independent context snapshots."""
-    _assert_contextvar_isolation(handler_pair_factory, logger_name)
+def test_contextvar_mutation_does_not_cross_structured_handlers() -> None:
+    """Structured handlers receive independent context snapshots."""
+    _assert_contextvar_mutation_does_not_cross_handlers(
+        _structured_context_handler_pair,
+        "contextvars.structured",
+    )
+
+
+def test_contextvar_mutation_does_not_cross_legacy_handlers() -> None:
+    """Legacy handlers receive independent context snapshots."""
+    _assert_contextvar_mutation_does_not_cross_handlers(
+        _legacy_context_handler_pair,
+        "contextvars.legacy",
+    )
 
 
 def test_handle_record_includes_stack_info() -> None:

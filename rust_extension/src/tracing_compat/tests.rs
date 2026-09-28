@@ -30,7 +30,7 @@ fn attach_collecting_handler(logger_name: &str) -> pyo3::PyResult<Arc<Collecting
         logger.borrow(py).clear_handlers();
         logger
             .borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)?;
         Ok(())
     })?;
     Ok(handler)

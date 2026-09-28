@@ -324,6 +324,10 @@ impl FemtoHandlerTrait for PyHandler {
         true
     }
 
+    fn provides_context_dispatch(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
