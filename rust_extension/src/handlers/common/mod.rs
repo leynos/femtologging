@@ -117,13 +117,18 @@ impl CommonBuilder {
         &mut self,
         formatters: &BTreeMap<String, SharedFormatter>,
     ) -> Result<(), HandlerBuildError> {
-        let Some(FormatterConfig::Id(FormatterId::Custom(id))) = &self.formatter else {
+        let Some(FormatterConfig::Id(id)) = &self.formatter else {
             return Ok(());
         };
-        let formatter = formatters.get(id).cloned().ok_or_else(|| {
-            HandlerBuildError::InvalidConfig(format!("unknown formatter id: {id}"))
-        })?;
-        self.formatter = Some(FormatterConfig::Instance(formatter));
+        if let Some(formatter) = formatters.get(id.as_str()).cloned() {
+            self.formatter = Some(FormatterConfig::Instance(formatter));
+            return Ok(());
+        }
+        if let FormatterId::Custom(id) = id {
+            return Err(HandlerBuildError::InvalidConfig(format!(
+                "unknown formatter id: {id}"
+            )));
+        }
         Ok(())
     }
 

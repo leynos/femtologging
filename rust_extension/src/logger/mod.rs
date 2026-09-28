@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use py_handler::{PyHandler, validate_handler};
 pub use queue::QueuedRecord;
-pub(crate) use queue::{FlushAckHandler, HandlerAttachment};
+pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot};
 // Re-exported for the parameterised tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
 #[cfg(feature = "python")]

@@ -16,7 +16,8 @@ use crate::manager;
 use crate::sync::bounded;
 
 use super::{
-    FemtoLogger, FlushAckHandler, HandlerAttachment, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord,
+    FemtoLogger, FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot,
+    LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord,
 };
 
 impl FemtoLogger {
@@ -179,10 +180,10 @@ impl FemtoLogger {
             return;
         };
         let handlers = self.handlers.read().clone();
-        let handlers = Self::filter_handlers(&mut record, handlers)
-            .into_iter()
-            .map(|attachment| attachment.handler)
-            .collect();
+        let handlers = Self::filter_handlers(&mut record, handlers);
+        if handlers.is_empty() {
+            return;
+        }
         if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
             return;
         }
@@ -198,10 +199,21 @@ impl FemtoLogger {
     fn filter_handlers(
         record: &mut FemtoLogRecord,
         handlers: Vec<HandlerAttachment>,
-    ) -> Vec<HandlerAttachment> {
+    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
+        let has_handler_filters = handlers
+            .iter()
+            .any(|attachment| !attachment.filters.is_empty());
         handlers
             .into_iter()
-            .filter(|attachment| Self::apply_filter_chain(record, &attachment.filters))
+            .filter_map(|attachment| {
+                Self::apply_filter_chain(record, &attachment.filters).then(|| {
+                    if has_handler_filters {
+                        HandlerRecordSnapshot::snapshot_handler(attachment.handler, record.clone())
+                    } else {
+                        attachment.handler
+                    }
+                })
+            })
             .collect()
     }
 

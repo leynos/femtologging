@@ -3,6 +3,7 @@
 use std::{any::Any, sync::Arc};
 
 use crossbeam_channel::Sender;
+use parking_lot::Mutex;
 
 use crate::{
     filters::FemtoFilter,
@@ -29,6 +30,40 @@ impl FemtoHandlerTrait for FlushAckHandler {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Deliver one handler's producer-filter snapshot through the existing queue
+/// payload without changing the public [`QueuedRecord`] shape.
+pub(crate) struct HandlerRecordSnapshot {
+    handler: Arc<dyn FemtoHandlerTrait>,
+    record: Mutex<Option<FemtoLogRecord>>,
+}
+
+impl HandlerRecordSnapshot {
+    pub(crate) fn snapshot_handler(
+        handler: Arc<dyn FemtoHandlerTrait>,
+        record: FemtoLogRecord,
+    ) -> Arc<dyn FemtoHandlerTrait> {
+        Arc::new(Self {
+            handler,
+            record: Mutex::new(Some(record)),
+        })
+    }
+}
+
+impl FemtoHandlerTrait for HandlerRecordSnapshot {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let record = self.record.lock().take().unwrap_or(record);
+        self.handler.handle(record)
+    }
+
+    fn flush(&self) -> bool {
+        self.handler.flush()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self.handler.as_any()
     }
 }
 
