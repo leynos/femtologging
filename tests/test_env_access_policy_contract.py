@@ -234,13 +234,19 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
     target kind, and warning denial. Both local linting and tests reach it.
     """
     lanes = variable_tokens("RUST_LINT_FEATURE_LANES")
-    assert lanes == (
+    expected_lanes = (
         "none",
+        "extension-module",
         "python",
         "log-compat",
         "tracing-compat",
+        "test-util",
+        "default",
         "all",
-    ), f"RUST_LINT_FEATURE_LANES must define the standard matrix, found {lanes}"
+    )
+    assert lanes == expected_lanes, (
+        f"RUST_LINT_FEATURE_LANES must define the standard matrix, found {lanes}"
+    )
     cargo_args = variable_tokens("RUST_LINT_CARGO_ARGS")
     assert "--all-targets" in cargo_args, (
         f"RUST_LINT_CARGO_ARGS must lint every target, found {cargo_args}"
