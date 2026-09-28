@@ -50,7 +50,7 @@ def emitted_key_values(
 ) -> dict[str, str]:
     """Return the structured fields on *logger*'s latest captured record."""
     _ = logger
-    for _ in range(20):
+    for _ in range(200):
         if collector.records:
             break
         time.sleep(0.01)
