@@ -386,12 +386,3 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
         "output identities should match accepted records"
     );
 }
-
-/// Shares the dual-handler fixture shape without repeating a complex test signature.
-type DualHandlerSetup = (
-    Arc<Mutex<Vec<u8>>>,
-    Arc<Mutex<Vec<u8>>>,
-    Arc<dyn FemtoHandlerTrait>,
-    Arc<dyn FemtoHandlerTrait>,
-    FemtoLogger,
-);
