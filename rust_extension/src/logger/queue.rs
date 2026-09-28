@@ -5,6 +5,7 @@ use std::{any::Any, sync::Arc};
 use crossbeam_channel::Sender;
 #[cfg(feature = "python")]
 use pyo3::{Py, PyAny};
+use parking_lot::Mutex;
 
 use crate::{
     filters::FemtoFilter,
@@ -31,6 +32,62 @@ impl FemtoHandlerTrait for FlushAckHandler {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Deliver one handler's producer-filter snapshot through the existing queue
+/// payload without changing the public [`QueuedRecord`] shape.
+pub(crate) struct HandlerRecordSnapshot {
+    handler: Arc<dyn FemtoHandlerTrait>,
+    record: Mutex<Option<FemtoLogRecord>>,
+}
+
+impl HandlerRecordSnapshot {
+    pub(crate) fn snapshot_handler(
+        handler: Arc<dyn FemtoHandlerTrait>,
+        record: FemtoLogRecord,
+    ) -> Arc<dyn FemtoHandlerTrait> {
+        Arc::new(Self {
+            handler,
+            record: Mutex::new(Some(record)),
+        })
+    }
+
+    fn take_record(&self, fallback: FemtoLogRecord) -> FemtoLogRecord {
+        self.record.lock().take().unwrap_or(fallback)
+    }
+}
+
+impl FemtoHandlerTrait for HandlerRecordSnapshot {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.handler.handle(self.take_record(record))
+    }
+
+    fn is_python_backed(&self) -> bool {
+        self.handler.is_python_backed()
+    }
+
+    #[cfg(feature = "python")]
+    fn provides_context_dispatch(&self) -> bool {
+        self.handler.provides_context_dispatch()
+    }
+
+    #[cfg(feature = "python")]
+    fn handle_with_context(
+        &self,
+        record: FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
+    ) -> Result<(), HandlerError> {
+        self.handler
+            .handle_with_context(self.take_record(record), context)
+    }
+
+    fn flush(&self) -> bool {
+        self.handler.flush()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self.handler.as_any()
     }
 }
 

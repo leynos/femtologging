@@ -66,6 +66,60 @@ def test_handler_filter_enriches_records_from_propagated_loggers(
     )
 
 
+def test_handler_filters_keep_their_own_record_snapshot(tmp_path: Path) -> None:
+    """Later handler enrichment must not leak into earlier handlers."""
+    reset_manager()
+    first_path = tmp_path / "first-handler.log"
+    second_path = tmp_path / "second-handler.log"
+
+    def add_first_field(record: object) -> bool:
+        vars(record)["first_field"] = "first"
+        return True
+
+    def add_second_field(record: object) -> bool:
+        vars(record)["second_field"] = "second"
+        return True
+
+    first_handler = (
+        FileHandlerBuilder(str(first_path))
+        .with_flush_after_records(1)
+        .with_filters(["first"])
+        .with_formatter(lambda record: repr(record["metadata"]["key_values"]))
+    )
+    second_handler = (
+        FileHandlerBuilder(str(second_path))
+        .with_flush_after_records(1)
+        .with_filters(["second"])
+        .with_formatter(lambda record: repr(record["metadata"]["key_values"]))
+    )
+    config = (
+        ConfigBuilder()
+        .with_version(1)
+        .with_filter("first", PythonCallbackFilterBuilder(add_first_field))
+        .with_filter("second", PythonCallbackFilterBuilder(add_second_field))
+        .with_handler("first", first_handler)
+        .with_handler("second", second_handler)
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["first", "second"])
+        )
+    )
+
+    try:
+        config.build_and_init()
+        get_logger("app.child").info("both handlers")
+        poll_file_for_text(first_path, "'first_field': 'first'", timeout=1.0)
+        poll_file_for_text(second_path, "'second_field': 'second'", timeout=1.0)
+    finally:
+        reset_manager()
+
+    assert first_path.read_text().strip() == "{'first_field': 'first'}", (
+        "the first handler should not receive fields added by the second filter"
+    )
+    assert second_path.read_text().strip() == (
+        "{'first_field': 'first', 'second_field': 'second'}"
+    ), "the second handler should receive both fields from its filter chain"
+
+
 def test_formatter_builder_renders_structured_callback_field(tmp_path: Path) -> None:
     """A formatter builder must render a handler filter's structured field."""
     reset_manager()
@@ -171,4 +225,35 @@ def test_dict_config_resolves_registered_formatter(tmp_path: Path) -> None:
 
     assert path.read_text().strip() == "authorised", (
         "dictConfig must resolve formatter identifiers"
+    )
+
+
+def test_registered_default_formatter_overrides_builtin(tmp_path: Path) -> None:
+    """The registered ``default`` formatter should resolve before fallback."""
+    reset_manager()
+    path = tmp_path / "registered-default-formatter.log"
+    handler = (
+        FileHandlerBuilder(str(path))
+        .with_flush_after_records(1)
+        .with_formatter("default")
+    )
+    config = (
+        ConfigBuilder()
+        .with_version(1)
+        .with_formatter("default", FormatterBuilder().with_format("CUSTOM:%(message)s"))
+        .with_handler("output", handler)
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["output"])
+        )
+    )
+
+    try:
+        config.build_and_init()
+        get_logger("app").info("registered default")
+        poll_file_for_text(path, "CUSTOM:registered default", timeout=1.0)
+    finally:
+        reset_manager()
+
+    assert path.read_text().strip() == "CUSTOM:registered default", (
+        "the registered default formatter should replace the built-in formatter"
     )
