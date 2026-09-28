@@ -72,7 +72,7 @@ fn log_at_level(
     metadata.key_values = log_context::current_python_context(py)?;
     Ok(logger
         .borrow(py)
-        .log_with_metadata(level, message, metadata))
+        .log_with_explicit_metadata(level, message, metadata))
 }
 
 /// Validate a Python task-local logging context before it becomes active.

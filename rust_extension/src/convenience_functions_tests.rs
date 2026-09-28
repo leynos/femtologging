@@ -121,6 +121,30 @@ fn source_location_falls_back_gracefully(unique_logger_name: String) {
         assert_eq!(meta.module_path, "", "fallback module_path should be empty");
     });
 }
+
+#[rstest]
+fn module_function_does_not_merge_rust_scoped_context(unique_logger_name: String) {
+    Python::attach(|py| {
+        let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
+            .expect("logger should be created");
+        let _guard = log_context::push_log_context([("request_id", "rust-request")])
+            .expect("context push should succeed");
+
+        let result = log_at_level(
+            py,
+            FemtoLevel::Info,
+            "module function",
+            Some(&unique_logger_name),
+        )
+        .expect("module logging should not fail");
+        assert!(result.is_some());
+        assert!(logger.borrow(py).flush_handlers());
+
+        let records = handler.collected();
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].metadata().key_values.contains_key("request_id"));
+    });
+}
 #[rstest]
 fn context_rejects_invalid_value_type() {
     Python::attach(|py| {

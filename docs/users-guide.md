@@ -763,10 +763,12 @@ future that may migrate between executor threads; use a task-local API supplied
 by that runtime instead.
 
 Python task-local fields and Rust scoped fields do not transfer implicitly.
-Python `FemtoLogger` methods and module-level functions capture the active
-Python fields. Rust macros plus the `log` and `tracing` bridges use only Rust
-scoped fields active on their emitting OS thread. If a Rust event needs request
-metadata, establish Rust context explicitly at the Rust emission boundary.
+Python `FemtoLogger` methods and module-level functions capture only the active
+Python fields. Rust macros and records received through the `log` and `tracing`
+bridges merge Rust scoped fields active on their emitting OS thread. Explicit
+key-values supplied by Rust macros or tracing events override same-named scoped
+fields. Establish Rust context at the Rust emission boundary when bridged
+events need shared request metadata.
 
 ### Callback enrichment validation
 

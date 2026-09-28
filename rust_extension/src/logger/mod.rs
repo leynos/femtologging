@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(feature = "python")]
 use crate::log_context;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
@@ -162,19 +163,12 @@ impl FemtoLogger {
         let explicit_key_values = log_context::current_python_context(py)?;
         #[cfg(not(feature = "python"))]
         let explicit_key_values = std::collections::BTreeMap::new();
-        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
-            Ok(key_values) => key_values,
-            Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return Ok(None);
-            }
-        };
         let mut record = FemtoLogRecord::with_metadata(
             &self.name,
             level,
             message,
             RecordMetadata {
-                key_values: merged_key_values,
+                key_values: explicit_key_values,
                 ..Default::default()
             },
         );
