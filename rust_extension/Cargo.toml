@@ -77,5 +77,5 @@ syn = { version = "2", features = ["full", "visit", "parsing", "printing"] }
 proc-macro2 = "1"
 # Reads those sources through a capability handle, which the Dylint suite
 # requires in place of `std::fs`.
-cap-std = { version = "3.4.4", features = ["fs_utf8"] }
+cap-std = { version = "4.0.3", features = ["fs_utf8"] }
 camino = "1.2.0"
