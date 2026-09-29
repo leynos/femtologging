@@ -149,8 +149,8 @@ impl FemtoFileHandler {
         self.flush()
     }
 
-    /// Builds the worker-owned file handler from an already opened file and
-    /// publishes its command channels only after construction succeeds.
+    /// Closes the handler, signals worker shutdown, and waits briefly for
+    /// completion before joining the worker when it reports that it has exited.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.close();
@@ -200,8 +200,8 @@ impl FemtoFileHandler {
         Ok(Self::from_file(file, formatter, config))
     }
 
-    /// Sends a flush command and reports whether the worker acknowledges it
-    /// before the fixed timeout expires.
+    /// Starts a worker that owns the buffered file, formatter, and validated
+    /// configuration, then returns the handler connected to that worker.
     fn from_file<F>(file: File, formatter: F, config: HandlerConfig) -> Self
     where
         F: FemtoFormatter + Send + 'static,
@@ -241,8 +241,8 @@ impl FemtoFileHandler {
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
-    /// Starts a worker with the supplied writer, formatter, rotation strategy,
-    /// and optional test synchronisation barrier.
+    /// Returns true only when the worker acknowledges the flush successfully
+    /// before the caller's deadline.
     fn wait_for_flush_completion(
         &self,
         ack_rx: &Receiver<io::Result<()>>,
