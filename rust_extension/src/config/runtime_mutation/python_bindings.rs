@@ -75,7 +75,8 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests replacement of handler IDs, recording a mode conflict if another mode was set.
+    /// Replaces handler IDs with the normalized list. A conflict is recorded
+    /// only if this differs from the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "replace_handlers")]
     fn py_replace_handlers<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -85,7 +86,8 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests appending handler IDs, recording a mode conflict if another mode was set.
+    /// Appends normalized handler IDs. A conflict is recorded only if this
+    /// differs from the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "append_handlers")]
     fn py_append_handlers<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -95,7 +97,8 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests removal of handler IDs, recording a mode conflict if another mode was set.
+    /// Removes normalized handler IDs. A conflict is recorded only if this
+    /// differs from the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "remove_handlers")]
     fn py_remove_handlers<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -105,14 +108,16 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests clearing all handler IDs, recording a mode conflict if another mode was set.
+    /// Clears handler IDs. A conflict is recorded only if this differs from
+    /// the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "clear_handlers")]
     fn py_clear_handlers<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
         slf.set_handlers(CollectionMutation::Clear);
         slf
     }
 
-    /// Requests replacement of filter IDs, recording a mode conflict if another mode was set.
+    /// Replaces filter IDs with the normalized list. A conflict is recorded
+    /// only if this differs from the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "replace_filters")]
     fn py_replace_filters<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -122,7 +127,8 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests appending filter IDs, recording a mode conflict if another mode was set.
+    /// Appends normalized filter IDs. A conflict is recorded only if this
+    /// differs from the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "append_filters")]
     fn py_append_filters<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -132,7 +138,8 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests removal of filter IDs, recording a mode conflict if another mode was set.
+    /// Removes normalized filter IDs. A conflict is recorded only if this
+    /// differs from the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "remove_filters")]
     fn py_remove_filters<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -142,7 +149,8 @@ impl LoggerMutationBuilder {
         slf
     }
 
-    /// Requests clearing all filter IDs, recording a mode conflict if another mode was set.
+    /// Clears filter IDs. A conflict is recorded only if this differs from
+    /// the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "clear_filters")]
     fn py_clear_filters<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
         slf.set_filters(CollectionMutation::Clear);

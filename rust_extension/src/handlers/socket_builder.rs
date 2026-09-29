@@ -138,7 +138,7 @@ impl BackoffOverrides {
             deadline_ms,
         }
     }
-    /// Validates every configured duration before mutating the destination policy.
+    /// Applies each configured duration in order; a later invalid value can leave earlier assignments in `policy`.
     pub(crate) fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
         apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
         apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");

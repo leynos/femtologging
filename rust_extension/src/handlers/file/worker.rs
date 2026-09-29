@@ -139,8 +139,8 @@ impl From<&HandlerConfig> for WorkerConfig {
     }
 }
 
-/// Runs the receive, record, flush, and terminal-shutdown sequence on one
-/// worker-owned writer.
+/// Errors returned when a batch cannot start because its channel is closed or
+/// its requested drain capacity is zero.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecvBatchError {
     /// The command channel closed before a first command arrived.
@@ -348,6 +348,8 @@ where
             b.wait();
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
+        // Keep receive, record, flush, and terminal-shutdown work on the same
+        // worker-owned writer so their I/O stays in channel order.
         loop {
             match recv_batch(&rx, batch.capacity()) {
                 Ok(commands) => state.process_batch(&formatter, commands),
