@@ -10,8 +10,9 @@ Status: IN PROGRESS
 
 EP-M1 is delivered, and the user approved the knowingly red scheduled lane it
 leaves behind on 2026-09-16. The user approved the seam, the model changes and
-the `Drop` split on 2026-09-25, recorded in `Decision log`, and EP-M2 onwards
-are under way.
+the `Drop` split on 2026-09-25, recorded in `Decision log`. EP-M2 to EP-M7 are
+delivered, and a manual dispatch of the heavy lane on the branch reported six
+of six models passed. Acceptance now waits on the scheduled run on `main`.
 
 Related: [Issue #470](https://github.com/leynos/femtologging/issues/470).
 
