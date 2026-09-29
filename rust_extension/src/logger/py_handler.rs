@@ -116,6 +116,11 @@ enum NativeHandlerKind {
 
 #[cfg(feature = "python")]
 impl NativeHandlerKind {
+    /// Identify a built-in Python handler whose native implementation accepts
+    /// the complete Rust record.
+    ///
+    /// Returns `None` for user-defined handlers, which use the Python handler
+    /// interface instead.
     fn from_object(obj: &Bound<'_, PyAny>) -> Option<Self> {
         if obj.is_instance_of::<FemtoStreamHandler>() {
             Some(Self::Stream)
@@ -134,6 +139,11 @@ impl NativeHandlerKind {
         }
     }
 
+    /// Dispatch the record through the matching built-in handler while
+    /// retaining its metadata, including structured key/value fields.
+    ///
+    /// Returns a handler error if extracting the wrapped native handler or
+    /// delivering the record fails.
     fn handle(
         self,
         py: Python<'_>,
@@ -277,6 +287,7 @@ mod tests {
     use crate::{FemtoHTTPHandler, FemtoSocketHandler, HTTPHandlerConfig, SocketHandlerConfig};
     use pyo3::{Py, Python};
 
+    /// Built-in socket and HTTP handlers are recognized for native dispatch.
     #[test]
     fn native_handler_kind_recognizes_network_handlers() {
         Python::attach(|py| {

@@ -672,9 +672,11 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
 - No `LoggerAdapter`.
 - `log()` and the convenience methods (`debug`, `info`, `warning`, `error`,
   `critical`, `exception`) return the formatted string instead of `None`.
-- Records lack `extra`, lazy formatting, and calling-module introspection.
-  `exc_info` and `stack_info` are supported as keyword-only arguments to
-  `log()` and the convenience methods.
+- Validated scalar `extra` fields are supported by `log()` and the convenience
+  methods (`debug`, `info`, `warning`, `error`, and `critical`). Lazy
+  formatting and calling-module introspection are not supported. `exc_info` and
+  `stack_info` are supported as keyword-only arguments to `log()` and the
+  convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
   and run on dedicated worker threads.  Existing stdlib `logging.Handler`
   subclasses can be reused via

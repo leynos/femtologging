@@ -1,24 +1,16 @@
 //! Structured logging context propagation utilities.
 //!
-//! This module provides a scoped, thread-local context stack used by
-//! logging macros and Python convenience functions. Context key-values are
-//! merged into `RecordMetadata.key_values` on the producer thread.
+//! This module provides a scoped, thread-local context stack and the Rust-side
+//! validation used to merge context into `RecordMetadata.key_values`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
-#[cfg(feature = "python")]
-use pyo3::exceptions::{PyTypeError, PyValueError};
-#[cfg(feature = "python")]
-use pyo3::prelude::*;
-#[cfg(feature = "python")]
-use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple};
-
-const MAX_CONTEXT_KEYS: usize = 64;
-const MAX_KEY_BYTES: usize = 64;
-const MAX_VALUE_BYTES: usize = 1024;
-const MAX_TOTAL_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_CONTEXT_KEYS: usize = 64;
+pub(crate) const MAX_KEY_BYTES: usize = 64;
+pub(crate) const MAX_VALUE_BYTES: usize = 1024;
+pub(crate) const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
 thread_local! {
     static CONTEXT_STACK: RefCell<Vec<BTreeMap<String, String>>> = const {
@@ -44,6 +36,93 @@ pub enum LogContextError {
     /// Total serialized context exceeded the aggregate byte limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
     TotalBytesExceeded { total: usize, max: usize },
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ContextValidationError {
+    #[error("context has {count} keys; maximum is {max}")]
+    TooManyKeys { count: usize, max: usize },
+    #[error("context key is {len} bytes; maximum is {max}")]
+    KeyTooLong { len: usize, max: usize },
+    #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
+    ValueTooLong { key: String, len: usize, max: usize },
+    #[error("context payload is {total} bytes; maximum is {max}")]
+    TotalBytesExceeded { total: usize, max: usize },
+}
+
+impl ContextValidationError {
+    fn into_log_context_error(self, key: &str) -> LogContextError {
+        match self {
+            Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
+            Self::KeyTooLong { len, max } => LogContextError::KeyTooLong {
+                key: key.to_owned(),
+                len,
+                max,
+            },
+            Self::ValueTooLong { key, len, max } => LogContextError::ValueTooLong { key, len, max },
+            Self::TotalBytesExceeded { total, max } => {
+                LogContextError::TotalBytesExceeded { total, max }
+            }
+        }
+    }
+}
+
+/// Track the retained map's key count and aggregate UTF-8 size while building it.
+#[derive(Default)]
+pub(crate) struct ContextBudget {
+    unique_keys: usize,
+    total_bytes: usize,
+}
+
+impl ContextBudget {
+    /// Validate a candidate entry before the caller retains converted strings.
+    pub(crate) fn validate_next(
+        &mut self,
+        key: &str,
+        value: &str,
+        previous_value: Option<&str>,
+    ) -> Result<(), ContextValidationError> {
+        let key_len = key.len();
+        if key_len > MAX_KEY_BYTES {
+            return Err(ContextValidationError::KeyTooLong {
+                len: key_len,
+                max: MAX_KEY_BYTES,
+            });
+        }
+
+        let is_new_key = previous_value.is_none();
+        if is_new_key && self.unique_keys == MAX_CONTEXT_KEYS {
+            return Err(ContextValidationError::TooManyKeys {
+                count: MAX_CONTEXT_KEYS + 1,
+                max: MAX_CONTEXT_KEYS,
+            });
+        }
+
+        let value_len = value.len();
+        if value_len > MAX_VALUE_BYTES {
+            return Err(ContextValidationError::ValueTooLong {
+                key: key.to_owned(),
+                len: value_len,
+                max: MAX_VALUE_BYTES,
+            });
+        }
+
+        let next_total_bytes = self.total_bytes - previous_value.map_or(0, str::len)
+            + value_len
+            + if is_new_key { key_len } else { 0 };
+        if next_total_bytes > MAX_TOTAL_BYTES {
+            return Err(ContextValidationError::TotalBytesExceeded {
+                total: next_total_bytes,
+                max: MAX_TOTAL_BYTES,
+            });
+        }
+
+        if is_new_key {
+            self.unique_keys += 1;
+        }
+        self.total_bytes = next_total_bytes;
+        Ok(())
+    }
 }
 
 /// RAII guard that pops one context frame on drop.
@@ -130,103 +209,6 @@ pub(crate) fn merge_context_values(
     Ok(active)
 }
 
-/// Convert a Python mapping into the validated scalar representation used for
-/// both scoped and inline structured fields.
-#[cfg(feature = "python")]
-pub(crate) fn extract_python_context_map(
-    context: &Bound<'_, PyAny>,
-) -> PyResult<BTreeMap<String, String>> {
-    let items = context.call_method0("items").map_err(|_| {
-        PyTypeError::new_err("context must be a mapping[str, str|int|float|bool|None]")
-    })?;
-    let mut result = BTreeMap::new();
-    let mut total_bytes = 0usize;
-    for item in items.try_iter().map_err(|_| {
-        PyTypeError::new_err("context must be a mapping[str, str|int|float|bool|None]")
-    })? {
-        let item = item?;
-        let pair = item
-            .cast::<PyTuple>()
-            .map_err(|_| PyTypeError::new_err("context items must contain key-value pairs"))?;
-        if pair.len() != 2 {
-            return Err(PyTypeError::new_err(
-                "context items must contain key-value pairs",
-            ));
-        }
-        let raw_key = pair.get_item(0)?;
-        let key = raw_key
-            .cast::<PyString>()
-            .map_err(|_| PyTypeError::new_err("context keys must be strings"))?
-            .to_str()
-            .map_err(|_| PyTypeError::new_err("context keys must be strings"))?;
-        if key.len() > MAX_KEY_BYTES {
-            return Err(PyValueError::new_err(format!(
-                "context key is {} bytes; maximum is {MAX_KEY_BYTES}",
-                key.len()
-            )));
-        }
-
-        let replaces_existing = result.contains_key(key);
-        if !replaces_existing && result.len() == MAX_CONTEXT_KEYS {
-            return Err(PyValueError::new_err(format!(
-                "context has {} keys; maximum is {MAX_CONTEXT_KEYS}",
-                MAX_CONTEXT_KEYS + 1
-            )));
-        }
-
-        with_python_context_value(&pair.get_item(1)?, |value| {
-            if value.len() > MAX_VALUE_BYTES {
-                return Err(PyValueError::new_err(format!(
-                    "context value for key '{key}' is {} bytes; maximum is {MAX_VALUE_BYTES}",
-                    value.len()
-                )));
-            }
-
-            let existing_value_len = result.get(key).map_or(0, String::len);
-            let next_total_bytes = total_bytes - existing_value_len
-                + value.len()
-                + if replaces_existing { 0 } else { key.len() };
-            if next_total_bytes > MAX_TOTAL_BYTES {
-                return Err(PyValueError::new_err(format!(
-                    "context payload is {next_total_bytes} bytes; maximum is {MAX_TOTAL_BYTES}"
-                )));
-            }
-
-            result.insert(key.to_owned(), value.to_owned());
-            total_bytes = next_total_bytes;
-            Ok(())
-        })?;
-    }
-    Ok(result)
-}
-
-/// Invoke `consumer` with a supported Python scalar's borrowed string form.
-#[cfg(feature = "python")]
-fn with_python_context_value<T>(
-    raw_value: &Bound<'_, PyAny>,
-    consumer: impl FnOnce(&str) -> PyResult<T>,
-) -> PyResult<T> {
-    if raw_value.is_none() {
-        return consumer("None");
-    }
-    if [
-        raw_value.is_instance_of::<PyBool>(),
-        raw_value.is_instance_of::<PyInt>(),
-        raw_value.is_instance_of::<PyFloat>(),
-    ]
-    .contains(&true)
-    {
-        let value = raw_value.str()?;
-        return consumer(value.to_str()?);
-    }
-    if let Ok(value) = raw_value.cast::<PyString>() {
-        return consumer(value.to_str()?);
-    }
-    Err(PyTypeError::new_err(
-        "context values must be str, int, float, bool, or None",
-    ))
-}
-
 fn pop_internal() -> Result<(), LogContextError> {
     CONTEXT_STACK.with(|stack| {
         if stack.borrow_mut().pop().is_some() {
@@ -254,33 +236,11 @@ fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogCon
             max: MAX_CONTEXT_KEYS,
         });
     }
-    let mut total_bytes = 0usize;
+    let mut budget = ContextBudget::default();
     for (key, value) in context {
-        let key_len = key.len();
-        if key_len > MAX_KEY_BYTES {
-            return Err(LogContextError::KeyTooLong {
-                key: key.clone(),
-                len: key_len,
-                max: MAX_KEY_BYTES,
-            });
-        }
-
-        let value_len = value.len();
-        if value_len > MAX_VALUE_BYTES {
-            return Err(LogContextError::ValueTooLong {
-                key: key.clone(),
-                len: value_len,
-                max: MAX_VALUE_BYTES,
-            });
-        }
-
-        total_bytes += key_len + value_len;
-        if total_bytes > MAX_TOTAL_BYTES {
-            return Err(LogContextError::TotalBytesExceeded {
-                total: total_bytes,
-                max: MAX_TOTAL_BYTES,
-            });
-        }
+        budget
+            .validate_next(key, value, None)
+            .map_err(|error| error.into_log_context_error(key))?;
     }
     Ok(())
 }
@@ -295,8 +255,6 @@ mod tests {
     //! Unit tests for scoped context propagation helpers.
 
     use super::*;
-    #[cfg(feature = "python")]
-    use pyo3::types::PyDict;
     use rstest::{fixture, rstest};
 
     #[fixture]
@@ -339,62 +297,5 @@ mod tests {
     fn pop_on_empty_stack_errors(_isolated_context: ()) {
         let err = pop_log_context().expect_err("empty pop should fail");
         assert_eq!(err, LogContextError::EmptyContextStack);
-    }
-
-    /// Assert that Python conversion rejects a structured-context limit.
-    #[cfg(feature = "python")]
-    fn assert_python_context_limit_error(context: &Bound<'_, PyAny>) {
-        let error = extract_python_context_map(context).expect_err("context should be rejected");
-        assert!(error.is_instance_of::<PyValueError>(context.py()));
-    }
-
-    #[test]
-    #[cfg(feature = "python")]
-    fn extract_python_context_map_rejects_all_limits() {
-        Python::attach(|py| {
-            let context = PyDict::new(py);
-            context
-                .set_item("k".repeat(MAX_KEY_BYTES + 1), "v")
-                .expect("context item should be set");
-            assert_python_context_limit_error(context.as_any());
-            context.clear();
-            for index in 0..=MAX_CONTEXT_KEYS {
-                context
-                    .set_item(format!("k{index}"), "v")
-                    .expect("context item should be set");
-            }
-            assert_python_context_limit_error(context.as_any());
-            context.clear();
-            context
-                .set_item("key", "v".repeat(MAX_VALUE_BYTES + 1))
-                .expect("context item should be set");
-            assert_python_context_limit_error(context.as_any());
-            context.clear();
-            for index in 0..16usize {
-                context
-                    .set_item(format!("k{index:02}"), "v".repeat(MAX_VALUE_BYTES))
-                    .expect("context item should be set");
-            }
-            assert_python_context_limit_error(context.as_any());
-        });
-    }
-    #[test]
-    #[cfg(feature = "python")]
-    fn extract_python_context_map_keeps_only_duplicate_keys_final_value() {
-        Python::attach(|py| {
-            let context = py
-                .eval(
-                    c"type('M', (), {'items': lambda _: [('shared', 'v' * 1024)] * 17 + [('shared', 'last')]})()",
-                    None,
-                    None,
-                )
-                .expect("duplicate-items instance should be created");
-            let converted =
-                extract_python_context_map(&context).expect("duplicate keys should be accepted");
-            assert_eq!(
-                converted,
-                BTreeMap::from([(String::from("shared"), String::from("last"))])
-            );
-        });
     }
 }

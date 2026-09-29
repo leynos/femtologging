@@ -12,6 +12,7 @@ use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::RecordMetadata;
 use crate::manager;
+use crate::python_context::extract_python_context_map;
 
 /// Default logger name used when the caller does not specify one.
 const DEFAULT_LOGGER_NAME: &str = "root";
@@ -77,7 +78,7 @@ fn log_at_level(
 /// Push a structured logging context frame for the current thread.
 #[pyfunction(name = "_push_log_context", signature = (context), text_signature = "(context)")]
 pub(crate) fn py_push_log_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
-    let context_map = log_context::extract_python_context_map(context)?;
+    let context_map = extract_python_context_map(context)?;
     log_context::push_log_context_map(context_map)
         .map_err(|err| PyValueError::new_err(err.to_string()))
 }

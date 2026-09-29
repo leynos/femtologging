@@ -19,6 +19,8 @@ use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 #[cfg(feature = "python")]
+use crate::python_context::extract_python_context_map;
+#[cfg(feature = "python")]
 use crate::traceback_capture;
 
 use super::FemtoLogger;
@@ -27,9 +29,29 @@ use super::python_helpers::capture_exception_payload;
 
 #[pymethods]
 impl FemtoLogger {
-    /// Format a message at the provided level and return it.
+    /// Emit a message at the provided level and return its formatted text.
     ///
-    /// Inline `extra` fields override scoped context fields with the same key.
+    /// The record includes active scoped context merged with optional inline
+    /// fields. Inline fields override scoped fields with the same key. Context
+    /// is validated before the logger's level gate, so invalid fields raise an
+    /// error even when the message would not otherwise be emitted.
+    ///
+    /// # Parameters
+    ///
+    /// - `level`: The level at which to emit the message.
+    /// - `message`: The already-formatted message text.
+    /// - `exc_info`: Optional exception information to attach to the record.
+    /// - `stack_info`: Whether to attach the current Python stack.
+    /// - `extra`: Optional mapping of string keys to `str`, `int`, `float`,
+    ///   `bool`, or `None` values. Context is limited to 64 unique keys, 64
+    ///   UTF-8 bytes per key, 1,024 UTF-8 bytes per value, and 16 KiB total
+    ///   retained key/value bytes. Unsupported mappings or values raise
+    ///   `TypeError`; values exceeding these limits raise `ValueError`.
+    ///
+    /// # Returns
+    ///
+    /// The formatted message when the level is enabled, or `None` when it is
+    /// disabled.
     #[pyo3(
         name = "log",
         signature = (level, message, /, *, exc_info=None, stack_info=false, extra=None),
@@ -60,7 +82,7 @@ impl FemtoLogger {
     ) -> PyResult<Option<String>> {
         #[cfg(feature = "python")]
         let explicit_key_values = extra
-            .map(log_context::extract_python_context_map)
+            .map(extract_python_context_map)
             .transpose()?
             .unwrap_or_default();
         #[cfg(not(feature = "python"))]
