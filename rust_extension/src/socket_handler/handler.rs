@@ -57,6 +57,10 @@ impl FemtoSocketHandler {
     }
 
     /// Close the handler and wait for the worker to exit.
+    ///
+    /// The acknowledgement wait uses `flush_timeout`, but this method may
+    /// block longer while sending the shutdown command, draining queued
+    /// records, or joining the worker thread.
     pub fn close(&mut self) {
         self.request_shutdown();
         self.join_worker();
@@ -67,7 +71,8 @@ impl FemtoSocketHandler {
         self.tx.as_ref().cloned()
     }
 
-    /// Takes the sender, requests worker shutdown, and waits only up to `flush_timeout`.
+    /// Takes the sender, queues shutdown, and bounds only the acknowledgement
+    /// wait by `flush_timeout`; sending can block while the queue is full.
     fn request_shutdown(&mut self) {
         let Some(tx) = self.tx.take() else {
             return;

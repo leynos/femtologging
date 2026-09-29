@@ -6,7 +6,8 @@ use crate::{config::ConfigError, manager::LoggerAttachmentState};
 
 use super::{CollectionMutation, SharedFilters, SharedHandlers};
 
-/// Detects incompatible modes requested for the same attachment collection.
+/// Detects non-identical mutations requested for the same attachment collection.
+/// Repeating the same normalized mutation is accepted.
 pub(crate) fn collection_conflict(
     kind: &str,
     current: &CollectionMutation,
