@@ -7,7 +7,19 @@ on:
 jobs:
   build-test:
     name: build-test (${{ matrix.lane-name }})
-    runs-on: ubuntu-latest
+    # Ubicloud, to avoid the hosted queue. A pull request from a fork cannot
+    # obtain an Ubicloud runner, so it falls back to the hosted pool. There is
+    # no main-branch writer: this workflow runs on pull requests only, so each
+    # pull request warms its own Ubicloud cache scope. standard-4, not
+    # standard-2: on two vCPUs the first run spent 23 min in lint, 9 min in
+    # typecheck and over 17 min in the Rust tests, and was cancelled at the
+    # 55-minute ceiling (run 36596547457).
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-4' }}
+    # An Ubicloud runner is a self-hosted just-in-time runner with no
+    # six-hour hosted cap, so the job states its own ceiling: twice the warm
+    # standard-4 runs of up to 19 min (run 36617135055, attempts 2 and 3), rounded up
+    # to 40.
+    timeout-minutes: 40
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
@@ -127,9 +139,30 @@ jobs:
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
       - name: Test Rust (log-compat feature)
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
+      - name: Cache uv
+        # The caller owns this cache (generate-coverage is given
+        # `cache-provider: external` below), because the action's own uv cache
+        # is keyed on the operating system and the pyproject hash alone and
+        # restores `environments-v2`, whose entries are bound to the
+        # interpreter that built them. A warm restore of that state made the
+        # action's `uv venv` exit 2 on Ubicloud (runs 36609525985 and
+        # 36611613127; cold run 36604456094 passed). This key carries the
+        # runner environment and the lane's Python version, and the
+        # interpreter-bound directory is left out of the cached path.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/uv
+            !~/.cache/uv/environments-v2
+          key: uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-
       - name: Test and measure coverage
         uses: leynos/shared-actions/.github/actions/generate-coverage@14c325b60788814cd50298eb8060228daee3b842
         with:
+          # The Cache uv step above owns the uv cache; the Rust caches are the
+          # Swatinem and cargo steps earlier in this job.
+          cache-provider: external
           output-path: coverage.xml
           format: cobertura
           cargo-manifest: rust_extension/Cargo.toml

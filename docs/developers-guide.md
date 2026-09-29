@@ -670,6 +670,52 @@ and tracked in [roadmap.md](./roadmap.md). Keep those links intact when
 editing developer workflow notes so contributors can move from toolchain setup
 to the benchmarking phase design without losing context.
 
+## Runner placement
+
+`ci.yml`'s `build-test` runs on `ubicloud-standard-4`. `runs-on` selects it
+with the runner-selection expression:
+
+```yaml
+runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-4' }}
+```
+
+It is `standard-4` rather than the estate's `standard-2` on a measured
+shortfall: the first run on two vCPUs spent 23 minutes in lint, 9 in typecheck
+and over 17 in the Rust tests, and was cancelled at its 55-minute ceiling (run
+36596547457), against a hosted median of 23.5 minutes.
+
+A pull request from a fork cannot obtain an Ubicloud runner, so it falls back to
+`ubuntu-latest`; a push and a dispatch have no pull request, so the fork value
+is null and they select Ubicloud. `ci.yml` runs on pull requests only, so there
+is no main-branch cache writer: Ubicloud's cache proxy is scoped by ref, and
+each pull request warms its own scope.
+
+An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
+cap for hosted jobs does not bound it and a hung job would hold a billable
+runner. Every job whose `runs-on` can select Ubicloud therefore states its own
+`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 40
+minutes: warm `standard-4` runs took up to 19 minutes (run 36617135055,
+attempts 2 and 3), against 21.4 on the first, cold-cache run.
+
+The uv cache is the caller's. `generate-coverage` is given
+`cache-provider: external`, because its own uv cache is keyed on the operating
+system and the `pyproject.toml` hash alone and restores `environments-v2`,
+whose entries are bound to the interpreter that built them: a warm restore of
+that state made the action's `uv venv` exit 2 on Ubicloud
+(leynos/shared-actions#547). The `Cache uv` step in `ci.yml` keys on the runner
+environment and the lane's Python version and leaves `environments-v2` out of
+the cached path, and `tests/test_uv_cache_contract.py` holds all three to the
+file.
+
+`tests/test_runner_placement_contract.py` holds this to the files. It evaluates
+the expression for a push or dispatch, a same-repository pull request and a
+fork, rejects a literal label, inverted arms, another label and another
+condition, refuses a workflow it cannot read by name, inventories and refuses a
+runner named through the matrix (`runs-on: ${{ matrix.runner }}` over an
+Ubicloud value), and asserts an exact inventory of the jobs that can land on
+Ubicloud with their runner class and ceiling. A change that adds, removes or
+re-times such a job fails it until the inventory is updated in the same commit.
+
 ## Validation
 
 Before committing, run the gates requested by the change. For code changes, the
