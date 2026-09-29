@@ -309,8 +309,7 @@ impl Drop for FemtoLogger {
         }
     }
 }
-
-// These real-thread tests run outside `--cfg loom`; the heavy lane covers Loom.
+// These real-thread tests use crossbeam outside Loom; the heavy lane uses models.
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests.rs"]
 mod logger_tests;
@@ -326,3 +325,4 @@ mod producer_tracing_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "worker_tests.rs"]
 mod worker_tests;
+// weave: run 'weave explain rust_extension/src/logger/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
