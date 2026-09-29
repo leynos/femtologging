@@ -291,8 +291,7 @@ impl Drop for FemtoLogger {
         }
     }
 }
-// These tests drive the worker with real threads and `crossbeam_channel`, so
-// they build outside `--cfg loom` only; the heavy lane's models cover Loom.
+// These real-thread tests use crossbeam outside Loom; the heavy lane uses models.
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests.rs"]
 mod logger_tests;
