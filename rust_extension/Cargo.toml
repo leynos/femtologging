@@ -38,7 +38,7 @@ encoding_rs = "0.8"
 ini = { package = "rust-ini", version = "0.21.3" }
 ureq = { version = "2.9", features = ["native-tls"] }
 percent-encoding = "2.3"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # The concurrency seam in `src/sync.rs` resolves to Loom's primitives under
