@@ -9,13 +9,12 @@
 use std::{
     io::{self, Seek, Write},
     sync::{Arc, Barrier},
-    thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 use log::{error, warn};
 
 use super::config::HandlerConfig;
+use crate::sync::{JoinHandle, Receiver, RecvError, Sender, bounded, spawn};
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
 pub(crate) const DEFAULT_BATCH_CAPACITY: usize = 64;
@@ -315,7 +314,7 @@ where
     } = config;
     let (tx, rx) = bounded(capacity);
     let (done_tx, done_rx) = bounded(1);
-    let handle = thread::spawn(move || {
+    let handle = spawn(move || {
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -342,6 +341,9 @@ where
 #[path = "flush_tracker_tests.rs"]
 mod flush_tracker_tests;
 
-#[cfg(test)]
+// These tests drive `recv_batch` with `crossbeam_channel` endpoints, which the
+// worker's own endpoints are only outside `--cfg loom`; the heavy lane's file
+// model covers the Loom configuration.
+#[cfg(all(test, not(loom)))]
 #[path = "worker_batch_tests.rs"]
 mod worker_batch_tests;

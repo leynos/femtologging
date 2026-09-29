@@ -17,6 +17,13 @@ pub struct CollectingHandler {
 
 impl CollectingHandler {
     /// Create a new empty handler.
+    #[cfg_attr(
+        loom,
+        expect(
+            dead_code,
+            reason = "its callers, the logger unit tests, build only outside `--cfg loom`"
+        )
+    )]
     pub fn new() -> Self {
         Self::default()
     }

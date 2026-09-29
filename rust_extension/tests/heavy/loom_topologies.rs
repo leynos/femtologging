@@ -3,21 +3,25 @@
 //! These tests leverage `loom` to explore possible thread interleavings
 //! and ensure log records are routed correctly without duplication.
 //!
+//! The handlers are [`SinkHandler`]s, which write on the logger worker's
+//! thread, rather than stream handlers, each of which would bring a worker
+//! thread of its own. Loom models at most five threads, and the routing these
+//! models check is the logger's: which handlers its worker calls, and how
+//! often. `loom_stream_push_delivery` covers the stream handler's own queue.
+//!
 //! Handlers and loggers are held in `std::sync::Arc` because
-//! `FemtoLogger::add_handler` takes a `std::sync::Arc<dyn FemtoHandlerTrait>`;
-//! only the shared output buffers use loom's primitives, since those are the
-//! locations whose interleavings the model actually explores.
+//! `FemtoLogger::add_handler` takes a `std::sync::Arc<dyn FemtoHandlerTrait>`.
+//! The logger's worker, queue and handler-list lock are Loom's under
+//! `--cfg loom`, through the crate's concurrency seam.
 
 use std::sync::Arc;
 
 use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
 use loom::thread;
 
-use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogger, FemtoStreamHandler,
-};
+use _femtologging_rs::{FemtoHandlerTrait, FemtoLevel, FemtoLogger};
 
-use crate::shared_buffer::loom::SharedBuf as LoomBuf;
+use crate::loom_sink::SinkHandler;
 use crate::shared_buffer::loom::read_output;
 
 /// A loom-instrumented byte buffer shared with a stream handler.
@@ -28,12 +32,9 @@ fn fresh_buffer() -> LoomBuffer {
     LoomArc::new(LoomMutex::new(Vec::new()))
 }
 
-/// Return a default-formatting stream handler writing into `buffer`.
-fn handler_for(buffer: &LoomBuffer) -> Arc<FemtoStreamHandler> {
-    Arc::new(FemtoStreamHandler::new(
-        LoomBuf::new(LoomArc::clone(buffer)),
-        DefaultFormatter,
-    ))
+/// Return a default-formatting handler writing into `buffer`.
+fn handler_for(buffer: &LoomBuffer) -> Arc<SinkHandler> {
+    Arc::new(SinkHandler::new(LoomArc::clone(buffer)))
 }
 
 /// Return the buffer contents split into sorted lines.
