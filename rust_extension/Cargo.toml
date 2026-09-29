@@ -62,7 +62,7 @@ logtest = "2.0"
 proptest = "1.0.0"
 loom = "0.7.2"
 itertools = "0.15"
-serial_test = "3"
+serial_test = "4"
 _femtologging_rs = { path = ".", package = "femtologging_rs", default-features = false, features = ["test-util"] }
 static_assertions = "1"
 filetime = "0.2"
