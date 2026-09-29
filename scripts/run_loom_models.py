@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run python
 # /// script
 # requires-python = ">=3.13"
 # dependencies = ["cyclopts>=4", "plumbum"]
