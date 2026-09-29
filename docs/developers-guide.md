@@ -696,6 +696,16 @@ runner. Every job whose `runs-on` can select Ubicloud therefore states its own
 `timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 45
 minutes: a warm `standard-4` run took 21.4 minutes (run 36604456094).
 
+The uv cache is the caller's. `generate-coverage` is given
+`cache-provider: external`, because its own uv cache is keyed on the operating
+system and the `pyproject.toml` hash alone and restores `environments-v2`,
+whose entries are bound to the interpreter that built them: a warm restore of
+that state made the action's `uv venv` exit 2 on Ubicloud
+(leynos/shared-actions#547). The `Cache uv` step in `ci.yml` keys on the runner
+environment and the lane's Python version and leaves `environments-v2` out of
+the cached path, and `tests/test_uv_cache_contract.py` holds all three to the
+file.
+
 `tests/test_runner_placement_contract.py` holds this to the files. It evaluates
 the expression for a push or dispatch, a same-repository pull request and a
 fork, rejects a literal label, inverted arms, another label and another

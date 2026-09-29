@@ -138,9 +138,30 @@ jobs:
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
       - name: Test Rust (log-compat feature)
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat -- --test-threads=1
+      - name: Cache uv
+        # The caller owns this cache (generate-coverage is given
+        # `cache-provider: external` below), because the action's own uv cache
+        # is keyed on the operating system and the pyproject hash alone and
+        # restores `environments-v2`, whose entries are bound to the
+        # interpreter that built them. A warm restore of that state made the
+        # action's `uv venv` exit 2 on Ubicloud (runs 36609525985 and
+        # 36611613127; cold run 36604456094 passed). This key carries the
+        # runner environment and the lane's Python version, and the
+        # interpreter-bound directory is left out of the cached path.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/uv
+            !~/.cache/uv/environments-v2
+          key: uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-
       - name: Test and measure coverage
         uses: leynos/shared-actions/.github/actions/generate-coverage@14c325b60788814cd50298eb8060228daee3b842
         with:
+          # The Cache uv step above owns the uv cache; the Rust caches are the
+          # Swatinem and cargo steps earlier in this job.
+          cache-provider: external
           output-path: coverage.xml
           format: cobertura
           cargo-manifest: rust_extension/Cargo.toml
