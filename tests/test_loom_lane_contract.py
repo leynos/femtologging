@@ -313,6 +313,34 @@ def test_the_execution_step_bounds_loom_s_exploration() -> None:
     assert int(bound) > 0, f"{_PREEMPTION_BOUND} must be positive, saw {bound!r}"
 
 
+def test_the_execution_step_pins_the_python_pyo3_links() -> None:
+    """Scenario: the checker's interpreter is first on ``PATH`` when Cargo runs.
+
+    Invariant: the execution step sets ``PYO3_PYTHON`` to the interpreter
+    ``setup-python`` installed, not to a literal or to nothing.
+
+    ``uv run --script`` puts the interpreter the checker requires ahead of the
+    runner's Python, and PyO3 links whichever it finds. Run 36461305520 built
+    against 3.14, and the heavy binary died with exit 127 on a missing
+    ``libpython3.14`` before any model ran. Pinning the variable to the
+    ``pythonLocation`` that ``setup-python`` exports keeps the linked library
+    the one on the loader path.
+    """
+    step = sole_workflow_step(_WORKFLOW, _JOB, _EXECUTE_STEP)
+    environment = step.get("env")
+    assert isinstance(environment, dict), (
+        f"the {_EXECUTE_STEP!r} step must carry its own `env` mapping, "
+        f"saw {environment!r}"
+    )
+    interpreter = environment.get("PYO3_PYTHON")
+    assert isinstance(interpreter, str), (
+        f"the {_EXECUTE_STEP!r} step must set PYO3_PYTHON, saw {interpreter!r}"
+    )
+    assert "env.pythonLocation" in interpreter, (
+        f"PYO3_PYTHON must derive from the setup-python location, saw {interpreter!r}"
+    )
+
+
 def test_the_execution_step_runs_under_the_model_checker() -> None:
     """Scenario: the lane is asked how it knows the models ran.
 

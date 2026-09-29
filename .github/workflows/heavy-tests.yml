@@ -104,6 +104,13 @@ jobs:
       # report success. The build is `--release`, as Loom recommends: the
       # topology models take about eight minutes optimized and eleven not.
       #
+      # `uv run --script` puts the interpreter the checker requires (3.13 or
+      # newer) first on `PATH`, and PyO3 links whichever Python it finds there.
+      # The heavy binary then loads `libpython3.14` from a runner that has only
+      # 3.12 on the loader path and exits 127 before any model runs.
+      # `PYO3_PYTHON` names the interpreter `setup-python` installed, so the
+      # build links the library the loader can find.
+      #
       # This step is last, so a model failure never stops the heavy suite, the
       # Clippy lanes or pytest from reporting.
       - name: Run Loom models
@@ -111,6 +118,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: target/loom
           LOOM_MAX_PREEMPTIONS: '3'
+          PYO3_PYTHON: ${{ env.pythonLocation }}/bin/python
         run: |
           RUSTFLAGS="--cfg loom" uv run --script scripts/run_loom_models.py \
             --expected rust_extension/tests/heavy/loom-models.txt -- \
