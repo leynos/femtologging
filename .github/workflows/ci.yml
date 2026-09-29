@@ -7,7 +7,15 @@ on:
 jobs:
   build-test:
     name: build-test (${{ matrix.lane-name }})
-    runs-on: ubuntu-latest
+    # Ubicloud, to avoid the hosted queue. A pull request from a fork cannot
+    # obtain an Ubicloud runner, so it falls back to the hosted pool. There is
+    # no main-branch writer: this workflow runs on pull requests only, so each
+    # pull request warms its own Ubicloud cache scope.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
+    # An Ubicloud runner is a self-hosted just-in-time runner with no
+    # six-hour hosted cap, so the job states its own ceiling: twice the hosted
+    # p90 of 27.5 min. Provisional until a warm Ubicloud run sizes it.
+    timeout-minutes: 55
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false

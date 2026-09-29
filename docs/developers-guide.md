@@ -670,6 +670,36 @@ and tracked in [roadmap.md](./roadmap.md). Keep those links intact when
 editing developer workflow notes so contributors can move from toolchain setup
 to the benchmarking phase design without losing context.
 
+## Runner placement
+
+`ci.yml`'s `build-test` runs on `ubicloud-standard-2`. `runs-on` selects it
+with the runner-selection expression:
+
+```yaml
+runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
+```
+
+A pull request from a fork cannot obtain an Ubicloud runner, so it falls back to
+`ubuntu-latest`; a push and a dispatch have no pull request, so the fork value
+is null and they select Ubicloud. `ci.yml` runs on pull requests only, so there
+is no main-branch cache writer: Ubicloud's cache proxy is scoped by ref, and
+each pull request warms its own scope.
+
+An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
+cap for hosted jobs does not bound it and a hung job would hold a billable
+runner. Every job whose `runs-on` can select Ubicloud therefore states its own
+`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at a
+provisional 55 minutes, twice its hosted p90, until a warm run exists to size
+it from.
+
+`tests/test_runner_placement_contract.py` holds this to the files. It evaluates
+the expression for a push or dispatch, a same-repository pull request and a
+fork, rejects a literal label, inverted arms, another label and another
+condition, refuses a workflow it cannot read by name, and asserts an exact
+inventory of the jobs that can land on Ubicloud with their runner class and
+ceiling. A change that adds, removes or re-times such a job fails it until the
+inventory is updated in the same commit.
+
 ## Validation
 
 Before committing, run the gates requested by the change. For code changes, the
