@@ -699,10 +699,11 @@ minutes: a warm `standard-4` run took 21.4 minutes (run 36604456094).
 `tests/test_runner_placement_contract.py` holds this to the files. It evaluates
 the expression for a push or dispatch, a same-repository pull request and a
 fork, rejects a literal label, inverted arms, another label and another
-condition, refuses a workflow it cannot read by name, and asserts an exact
-inventory of the jobs that can land on Ubicloud with their runner class and
-ceiling. A change that adds, removes or re-times such a job fails it until the
-inventory is updated in the same commit.
+condition, refuses a workflow it cannot read by name, inventories and refuses a
+runner named through the matrix (`runs-on: ${{ matrix.runner }}` over an
+Ubicloud value), and asserts an exact inventory of the jobs that can land on
+Ubicloud with their runner class and ceiling. A change that adds, removes or
+re-times such a job fails it until the inventory is updated in the same commit.
 
 ## Validation
 
