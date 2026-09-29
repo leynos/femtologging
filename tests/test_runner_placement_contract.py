@@ -35,7 +35,7 @@ FORK_CONDITION: typ.Final = "github.event.pull_request.head.repo.fork"
 #: Every job that can land on Ubicloud: workflow, job, runner class and the
 #: ceiling it states in minutes. The inventory is exact, so a new Ubicloud lane
 #: without a ceiling, or a class or ceiling changed, fails until reviewed.
-PLACEMENTS: typ.Final = (("ci.yml", "build-test", "ubicloud-standard-4", 45),)
+PLACEMENTS: typ.Final = (("ci.yml", "build-test", "ubicloud-standard-4", 40),)
 
 #: The runner-selection shape: a condition, a quoted hosted arm and a quoted
 #: other arm.
