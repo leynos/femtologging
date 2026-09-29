@@ -693,9 +693,8 @@ each pull request warms its own scope.
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
 runner. Every job whose `runs-on` can select Ubicloud therefore states its own
-`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at a
-provisional 55 minutes, twice its hosted p90, until a warm run exists to size
-it from.
+`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 45
+minutes: a warm `standard-4` run took 21.4 minutes (run 36604456094).
 
 `tests/test_runner_placement_contract.py` holds this to the files. It evaluates
 the expression for a push or dispatch, a same-repository pull request and a
