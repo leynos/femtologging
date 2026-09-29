@@ -57,7 +57,7 @@ tracing-compat = ["python", "tracing", "tracing-subscriber"]
 
 [dev-dependencies]
 criterion = "0.8"
-rstest = "0.26"
+rstest = "0.27"
 logtest = "2.0"
 proptest = "1.0.0"
 loom = "0.7.2"
