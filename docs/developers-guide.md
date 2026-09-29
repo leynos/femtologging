@@ -672,12 +672,17 @@ to the benchmarking phase design without losing context.
 
 ## Runner placement
 
-`ci.yml`'s `build-test` runs on `ubicloud-standard-2`. `runs-on` selects it
+`ci.yml`'s `build-test` runs on `ubicloud-standard-4`. `runs-on` selects it
 with the runner-selection expression:
 
 ```yaml
-runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
+runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-4' }}
 ```
+
+It is `standard-4` rather than the estate's `standard-2` on a measured
+shortfall: the first run on two vCPUs spent 23 minutes in lint, 9 in typecheck
+and over 17 in the Rust tests, and was cancelled at its 55-minute ceiling (run
+36596547457), against a hosted median of 23.5 minutes.
 
 A pull request from a fork cannot obtain an Ubicloud runner, so it falls back to
 `ubuntu-latest`; a push and a dispatch have no pull request, so the fork value
