@@ -92,10 +92,6 @@ impl StreamHandlerBuilder {
         self.common.filter_ids()
     }
 
-    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()
-    }
-
     fn is_flush_after_ms_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
             "flush_after_ms",
@@ -137,7 +133,7 @@ impl StreamHandlerBuilder {
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.is_capacity_valid()?;
+        self.common.validate()?;
         self.is_flush_after_ms_valid()?;
         Ok(())
     }

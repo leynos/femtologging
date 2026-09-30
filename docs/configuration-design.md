@@ -15,13 +15,14 @@ The Rust configuration will expose a `ConfigBuilder` struct, allowing for a
 programmatic and type-safe setup of the logging system.
 
 ```rust
-// In femtologging::config::ConfigBuilder
+// Public concrete enum accepted by `ConfigBuilder::with_handler`.
 pub enum HandlerBuilder {
     Stream(StreamHandlerBuilder),
     File(FileHandlerBuilder),
     Rotating(RotatingFileHandlerBuilder),
     TimedRotating(TimedRotatingFileHandlerBuilder),
     Socket(SocketHandlerBuilder),
+    Http(HTTPHandlerBuilder),
 }
 
 pub enum FormatterId {
@@ -390,6 +391,7 @@ class ConfigBuilder:
             "TimedRotatingFileHandlerBuilder",
             "StreamHandlerBuilder",
             "SocketHandlerBuilder",
+            "HTTPHandlerBuilder",
         ],
     ) -> "ConfigBuilder": ...
     def with_logger(
@@ -485,24 +487,28 @@ class SocketHandlerBuilder(HandlerBuilder):
     def with_backoff(self, config: BackoffConfig) -> "SocketHandlerBuilder": ...
 
 
-# ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
+class HTTPHandlerBuilder(HandlerBuilder):
+    def __init__(self) -> None: ...
+    def with_endpoint(self, url: str, method: str = "POST") -> "HTTPHandlerBuilder": ...
+    def with_filters(self, filter_ids: List[str]) -> "HTTPHandlerBuilder": ...
 ```
 
 ### 1.3. Implemented handler builders
 
-The initial implementation provides `FileHandlerBuilder`,
-`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`,
-`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over the
-existing handler types. `FileHandlerBuilder` supports capacity and flush
-interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count`
-rotation thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`,
-`interval`, `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the
-size-based builder: `max_bytes` and `backup_count` must be supplied together.
-When both thresholds are omitted, the handler stores `(0, 0)`, which disables
-rotation entirely. A mismatched pair, where one value is zero and the other is
-non-zero, raises a `ValueError` through the validation path in
-`rust_extension/src/handlers/rotating/python.rs`, so invalid rollover settings
-fail fast. Invalid integer bounds are rejected by the typed
+The implementation provides `FileHandlerBuilder`, `RotatingFileHandlerBuilder`,
+`TimedRotatingFileHandlerBuilder`, `StreamHandlerBuilder`,
+`SocketHandlerBuilder`, and `HTTPHandlerBuilder` over the existing handler
+types. `HTTPHandlerBuilder` is available from the Rust API; `ConfigBuilder`
+stores it in its public `Http` variant. `FileHandlerBuilder` supports capacity
+and flush interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and
+`backup_count` rotation thresholds, and `TimedRotatingFileHandlerBuilder`
+layers on `when`, `interval`, `backup_count`, `utc`, and `at_time`. Rotation is
+opt-in for the size-based builder: `max_bytes` and `backup_count` must be
+supplied together. When both thresholds are omitted, the handler stores
+`(0, 0)`, which disables rotation entirely. A mismatched pair, where one value
+is zero and the other is non-zero, raises a `ValueError` through the validation
+path in `rust_extension/src/handlers/rotating/python.rs`, so invalid rollover
+settings fail fast. Invalid integer bounds are rejected by the typed
 conversion-and-validation path before the builder is created, rather than
 relying on a blanket PyO3 `OverflowError` for all bad inputs. The timed
 rotation builder validates its inputs eagerly: unsupported `when` values, zero
@@ -593,7 +599,8 @@ classDiagram
             RotatingFileHandlerBuilder|
             TimedRotatingFileHandlerBuilder|
             StreamHandlerBuilder|
-            SocketHandlerBuilder)
+            SocketHandlerBuilder|
+            HTTPHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -647,6 +654,10 @@ classDiagram
             fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
         )
     }
+    class HTTPHandlerBuilder {
+        +with_endpoint(url: str, method: str)
+        +with_filters(filter_ids: list[str])
+    }
     class FilterBuilder {
         +build()
     }
@@ -670,6 +681,7 @@ classDiagram
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> SocketHandlerBuilder
+    ConfigBuilder --> HTTPHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
     FileHandlerBuilder *-- FileLikeBuilderState
@@ -680,6 +692,7 @@ classDiagram
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     LoggerConfigBuilder --> SocketHandlerBuilder
+    LoggerConfigBuilder --> HTTPHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
     StreamHandlerBuilder --> FormatterBuilder
     SocketHandlerBuilder --> FormatterBuilder

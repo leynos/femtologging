@@ -1,6 +1,6 @@
 //! Type definitions and builder structs for femtologging configuration.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
 use thiserror::Error;
 
@@ -17,129 +17,12 @@ pub(crate) fn normalize_vec(ids: Vec<String>) -> Vec<String> {
 
 use crate::{
     filters::{FilterBuildError, FilterBuilder},
-    handler::FemtoHandlerTrait,
-    handlers::{
-        FileHandlerBuilder, HTTPHandlerBuilder, HandlerBuildError, HandlerBuilderTrait,
-        RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
-        TimedRotatingFileHandlerBuilder,
-    },
+    handlers::HandlerBuildError,
     level::FemtoLevel,
 };
 
 use super::FormatterBuilder;
-#[cfg(feature = "python")]
-use crate::formatter::SharedFormatter;
-
-/// Concrete handler builder variants.
-#[derive(Clone, Debug)]
-pub enum HandlerBuilder {
-    /// Build a [`FemtoStreamHandler`].
-    Stream(StreamHandlerBuilder),
-    /// Build a [`FemtoFileHandler`].
-    File(FileHandlerBuilder),
-    /// Build a [`FemtoRotatingFileHandler`].
-    Rotating(RotatingFileHandlerBuilder),
-    /// Build a [`FemtoTimedRotatingFileHandler`].
-    TimedRotating(TimedRotatingFileHandlerBuilder),
-    /// Build a [`FemtoSocketHandler`].
-    Socket(SocketHandlerBuilder),
-    /// Build a [`FemtoHTTPHandler`].
-    Http(HTTPHandlerBuilder),
-}
-
-impl HandlerBuilder {
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "unused without python feature")
-    )]
-    pub(crate) fn build(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
-        match self {
-            Self::Stream(b) => <StreamHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-            Self::File(b) => <FileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-            Self::Rotating(b) => {
-                <RotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                    .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
-            }
-            Self::TimedRotating(b) => {
-                <TimedRotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                    .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
-            }
-            Self::Socket(b) => <SocketHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-            Self::Http(b) => <HTTPHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-        }
-    }
-
-    /// Build this handler after resolving its configured formatter identifier.
-    #[cfg(feature = "python")]
-    pub(crate) fn build_with_formatters(
-        &self,
-        formatters: &BTreeMap<String, SharedFormatter>,
-    ) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
-        let mut builder = self.clone();
-        match &mut builder {
-            Self::Stream(builder) => builder.resolve_formatter(formatters)?,
-            Self::File(builder) => builder.resolve_formatter(formatters)?,
-            Self::Rotating(builder) => builder.resolve_formatter(formatters)?,
-            Self::TimedRotating(builder) => builder.resolve_formatter(formatters)?,
-            Self::Socket(_) => {}
-            Self::Http(_) => {}
-        }
-        builder.build()
-    }
-
-    /// Return filter identifiers configured on this handler.
-    #[cfg(feature = "python")]
-    pub(crate) fn filter_ids(&self) -> &[String] {
-        match self {
-            Self::Stream(builder) => builder.filter_ids(),
-            Self::File(builder) => builder.filter_ids(),
-            Self::Rotating(builder) => builder.filter_ids(),
-            Self::TimedRotating(builder) => builder.filter_ids(),
-            Self::Socket(builder) => builder.filter_ids(),
-            Self::Http(builder) => builder.filter_ids(),
-        }
-    }
-}
-
-impl From<StreamHandlerBuilder> for HandlerBuilder {
-    fn from(value: StreamHandlerBuilder) -> Self {
-        Self::Stream(value)
-    }
-}
-
-impl From<FileHandlerBuilder> for HandlerBuilder {
-    fn from(value: FileHandlerBuilder) -> Self {
-        Self::File(value)
-    }
-}
-
-impl From<RotatingFileHandlerBuilder> for HandlerBuilder {
-    fn from(value: RotatingFileHandlerBuilder) -> Self {
-        Self::Rotating(value)
-    }
-}
-
-impl From<TimedRotatingFileHandlerBuilder> for HandlerBuilder {
-    fn from(value: TimedRotatingFileHandlerBuilder) -> Self {
-        Self::TimedRotating(value)
-    }
-}
-
-impl From<SocketHandlerBuilder> for HandlerBuilder {
-    fn from(value: SocketHandlerBuilder) -> Self {
-        Self::Socket(value)
-    }
-}
-
-impl From<HTTPHandlerBuilder> for HandlerBuilder {
-    fn from(value: HTTPHandlerBuilder) -> Self {
-        Self::Http(value)
-    }
-}
+pub use super::handler_builder::HandlerBuilder;
 
 /// Errors that may occur while building a configuration.
 #[derive(Debug, Error)]

@@ -9,10 +9,15 @@ definitions. Handler and general schema validation live in
 from __future__ import annotations
 
 import dataclasses
+import typing as typ
 
 import pytest
 
 from femtologging import dictConfig, get_logger, reset_manager
+from tests.helpers import poll_file_for_text
+
+if typ.TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.parametrize(
@@ -176,6 +181,46 @@ def test_dict_config_filters_allow_and_block(case: _FilteringCase) -> None:
     assert blocked is None, (
         f"logger {case.blocked_logger!r} should suppress "
         f"{blocked_level} {blocked_message!r}, got {blocked!r}"
+    )
+
+
+def test_dict_config_handler_filter_applies_to_child_logger_records(
+    tmp_path: Path,
+) -> None:
+    """A dictConfig handler filter accepts and rejects propagated child records."""
+    reset_manager()
+    path = tmp_path / "dict-handler-filter.log"
+    config = {
+        "version": 1,
+        "filters": {"info_only": {"level": "INFO"}},
+        "formatters": {"message": {"format": "%(message)s"}},
+        "handlers": {
+            "output": {
+                "class": "femtologging.FileHandler",
+                "args": [str(path)],
+                "filters": ["info_only"],
+                "formatter": "message",
+            }
+        },
+        "root": {"level": "DEBUG", "handlers": ["output"]},
+    }
+
+    try:
+        dictConfig(config)
+        child = get_logger("app.child")
+        child.info("accepted child record")
+        child.error("rejected child record")
+        assert get_logger("root").flush_handlers(), "root handler delivery should flush"
+        poll_file_for_text(path, "accepted child record", timeout=1.0)
+    finally:
+        reset_manager()
+
+    output = path.read_text()
+    assert "accepted child record" in output, (
+        "the handler filter should allow a matching child record through propagation"
+    )
+    assert "rejected child record" not in output, (
+        "the handler filter should reject a child record before it reaches the file"
     )
 
 
