@@ -18,6 +18,18 @@ use crate::sync::{Sender, bounded};
 
 use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
+#[cfg(feature = "tracing-compat")]
+fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static str {
+    let has_python = handlers.iter().any(|handler| handler.is_python_backed());
+    let has_native = handlers.iter().any(|handler| !handler.is_python_backed());
+    match (has_python, has_native) {
+        (true, true) => "python_and_native",
+        (true, false) => "python",
+        (false, true) => "native",
+        (false, false) => "none",
+    }
+}
+
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
     ack: Sender<()>,
@@ -197,10 +209,37 @@ impl FemtoLogger {
             return;
         };
         let handlers = self.handlers.read().clone();
+        #[cfg(feature = "tracing-compat")]
+        let handler_kind = handler_kind(&handlers);
+        #[cfg(feature = "python")]
+        #[cfg(feature = "tracing-compat")]
+        let capture_started = std::time::Instant::now();
         #[cfg(feature = "python")]
         let context = match self.capture_python_context(&handlers) {
-            Ok(context) => context,
+            Ok(context) => {
+                #[cfg(feature = "tracing-compat")]
+                tracing::trace!(
+                    target: "femtologging::internal",
+                    operation = "producer_context_capture",
+                    handler_kind,
+                    capture_outcome = if context.is_some() {
+                        "captured"
+                    } else {
+                        "not_required"
+                    },
+                    elapsed_us = capture_started.elapsed().as_micros(),
+                );
+                context
+            }
             Err(err) => {
+                #[cfg(feature = "tracing-compat")]
+                tracing::trace!(
+                    target: "femtologging::internal",
+                    operation = "producer_context_capture",
+                    handler_kind,
+                    capture_outcome = "failed",
+                    elapsed_us = capture_started.elapsed().as_micros(),
+                );
                 self.context_capture_failures
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.context_capture_warner.record_drop();
@@ -213,15 +252,24 @@ impl FemtoLogger {
                 return;
             }
         };
-        if tx
-            .try_send(QueuedRecord {
-                record,
-                handlers,
-                #[cfg(feature = "python")]
-                context,
-            })
-            .is_ok()
-        {
+        #[cfg(feature = "tracing-compat")]
+        let dispatch_started = std::time::Instant::now();
+        let dispatch_result = tx.try_send(QueuedRecord {
+            record,
+            handlers,
+            #[cfg(feature = "python")]
+            context,
+        });
+        let was_queued = dispatch_result.is_ok();
+        #[cfg(feature = "tracing-compat")]
+        tracing::trace!(
+            target: "femtologging::internal",
+            operation = "producer_queue_dispatch",
+            handler_kind,
+            dispatch_outcome = if was_queued { "queued" } else { "rejected" },
+            elapsed_us = dispatch_started.elapsed().as_micros(),
+        );
+        if was_queued {
             return;
         }
         self.dropped_records

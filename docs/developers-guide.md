@@ -285,6 +285,13 @@ For `StdlibHandlerAdapter`, `handle_record()` calls the wrapped handler's
 including filters, formatters, and `emit()`, therefore runs in the captured
 producer context.
 
+With the `tracing-compat` feature enabled, trace events mark producer context
+capture, queue dispatch, and worker handler dispatch. They use bounded stable
+fields for the operation, handler kind, outcome, and elapsed microseconds; log
+payloads and context values are never included. These events target
+`femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
+from recursively logging its own instrumentation.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` applies a complete configuration through one
