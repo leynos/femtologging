@@ -229,57 +229,74 @@ impl FemtoHandlerTrait for ContextAwareTestHandler {
     }
 }
 
+#[cfg(feature = "python")]
+struct ContextCaptureFixture {
+    logger: FemtoLogger,
+    captures: Arc<AtomicUsize>,
+    handled_records: Arc<AtomicUsize>,
+    records_with_context: Arc<AtomicUsize>,
+}
+
+#[cfg(feature = "python")]
+impl ContextCaptureFixture {
+    fn new(fail: bool) -> Result<Self, crate::handler::HandlerError> {
+        let captures = Arc::new(AtomicUsize::new(0));
+        let handled_records = Arc::new(AtomicUsize::new(0));
+        let records_with_context = Arc::new(AtomicUsize::new(0));
+        let provider: Arc<dyn ContextSnapshotProvider> = Arc::new(TestContextSnapshotProvider {
+            captures: Arc::clone(&captures),
+            fail,
+        });
+        let logger =
+            FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
+        logger.add_handler(Arc::new(ContextAwareTestHandler {
+            handled_records: Arc::clone(&handled_records),
+            records_with_context: Arc::clone(&records_with_context),
+        }))?;
+
+        Ok(Self {
+            logger,
+            captures,
+            handled_records,
+            records_with_context,
+        })
+    }
+}
+
 /// The injected provider's snapshot reaches the queued Python handler.
 #[cfg(feature = "python")]
 #[test]
 fn injected_context_snapshot_provider_supplies_queued_context() {
-    let captures = Arc::new(AtomicUsize::new(0));
-    let handled_records = Arc::new(AtomicUsize::new(0));
-    let records_with_context = Arc::new(AtomicUsize::new(0));
-    let provider: Arc<dyn ContextSnapshotProvider> = Arc::new(TestContextSnapshotProvider {
-        captures: Arc::clone(&captures),
-        fail: false,
-    });
-    let logger = FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
-    logger
-        .add_handler(Arc::new(ContextAwareTestHandler {
-            handled_records: Arc::clone(&handled_records),
-            records_with_context: Arc::clone(&records_with_context),
-        }))
-        .expect("context-aware test handler should register");
+    let fixture =
+        ContextCaptureFixture::new(false).expect("context-aware test handler should register");
 
-    logger.log(FemtoLevel::Info, "message");
-    assert!(logger.flush_handlers(), "logger worker did not flush");
+    fixture.logger.log(FemtoLevel::Info, "message");
+    assert!(
+        fixture.logger.flush_handlers(),
+        "logger worker did not flush"
+    );
 
-    assert_eq!(captures.load(Ordering::Relaxed), 1);
-    assert_eq!(handled_records.load(Ordering::Relaxed), 1);
-    assert_eq!(records_with_context.load(Ordering::Relaxed), 1);
+    assert_eq!(fixture.captures.load(Ordering::Relaxed), 1);
+    assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 1);
+    assert_eq!(fixture.records_with_context.load(Ordering::Relaxed), 1);
 }
 
 /// Context capture failures do not increment the queue-drop counter.
 #[cfg(feature = "python")]
 #[test]
 fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
-    let captures = Arc::new(AtomicUsize::new(0));
-    let handled_records = Arc::new(AtomicUsize::new(0));
-    let records_with_context = Arc::new(AtomicUsize::new(0));
-    let provider: Arc<dyn ContextSnapshotProvider> = Arc::new(TestContextSnapshotProvider {
-        captures: Arc::clone(&captures),
-        fail: true,
-    });
-    let logger = FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
-    logger
-        .add_handler(Arc::new(ContextAwareTestHandler {
-            handled_records: Arc::clone(&handled_records),
-            records_with_context,
-        }))
-        .expect("context-aware test handler should register");
+    let fixture =
+        ContextCaptureFixture::new(true).expect("context-aware test handler should register");
 
-    logger.log(FemtoLevel::Info, "message");
+    fixture.logger.log(FemtoLevel::Info, "message");
 
-    assert_eq!(captures.load(Ordering::Relaxed), 1);
-    assert_eq!(logger.get_context_capture_failures(), 1);
-    assert_eq!(logger.get_dropped(), 0);
-    assert_eq!(handled_records.load(Ordering::Relaxed), 0);
-    assert!(logger.flush_handlers(), "logger worker did not flush");
+    assert_eq!(fixture.captures.load(Ordering::Relaxed), 1);
+    assert_eq!(fixture.logger.get_context_capture_failures(), 1);
+    assert_eq!(fixture.logger.get_dropped(), 0);
+    assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 0);
+    assert!(
+        fixture.logger.flush_handlers(),
+        "logger worker did not flush"
+    );
+    assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 0);
 }
