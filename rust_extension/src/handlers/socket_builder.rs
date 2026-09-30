@@ -15,7 +15,7 @@ use crate::socket_handler::{
 };
 
 use super::builder_macros::ensure_positive;
-use super::{HandlerBuildError, HandlerBuilderTrait};
+use super::{HandlerBuildError, HandlerBuilderTrait, common::ensure_filter_ids_resolved};
 
 /// Selects the endpoint type that the worker opens after builder validation.
 #[derive(Clone, Debug)]
@@ -255,6 +255,7 @@ impl SocketHandlerBuilder {
 
     /// Validates endpoint, capacity, timeout, frame, and TLS constraints together.
     fn validate(&self) -> Result<(), HandlerBuildError> {
+        ensure_filter_ids_resolved(&self.filters)?;
         self.validate_transport()?;
         self.validate_capacity()?;
         self.validate_timeouts()?;

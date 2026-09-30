@@ -93,11 +93,6 @@ impl StreamHandlerBuilder {
         self.common.filter_ids()
     }
 
-    /// Validates the bounded queue capacity inherited from the common builder.
-    fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()
-    }
-
     /// Rejects a zero flush threshold before constructing the worker.
     fn is_flush_after_ms_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
@@ -145,7 +140,7 @@ impl StreamHandlerBuilder {
 
     /// Runs all builder validation before worker state is published.
     fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.is_capacity_valid()?;
+        self.common.validate()?;
         self.is_flush_after_ms_valid()?;
         Ok(())
     }

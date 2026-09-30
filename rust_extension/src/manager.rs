@@ -58,6 +58,8 @@ type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 pub(crate) struct RuntimeStateSnapshot {
     /// Registered handlers available to staged logger attachment plans.
     pub(crate) handler_registry: SharedHandlers,
+    /// Filter IDs associated with each registered handler.
+    pub(crate) handler_filter_ids: BTreeMap<String, Vec<String>>,
     /// Registered filters available to staged logger attachment plans.
     pub(crate) filter_registry: SharedFilters,
     /// Per-logger attachment ID snapshots used to reconstruct configuration.
@@ -218,12 +220,14 @@ pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
+    handler_filter_ids: BTreeMap<String, Vec<String>>,
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
 ) {
     let mut mgr = MANAGER.write();
     mgr.runtime = RuntimeStateSnapshot {
         handler_registry,
+        handler_filter_ids,
         filter_registry,
         logger_states,
     };
