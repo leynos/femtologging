@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
-use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
+use crate::filters::FemtoFilter;
 
 use super::{FemtoLogger, HandlerAttachment};
 
 impl FemtoLogger {
-    pub(crate) fn replace_handlers(&self, handlers: Vec<Arc<dyn FemtoHandlerTrait>>) {
-        *self.handlers.write() = handlers.into_iter().map(HandlerAttachment::new).collect();
+    pub(crate) fn replace_handlers(&self, handlers: Vec<HandlerAttachment>) {
+        *self.handlers.write() = handlers;
     }
 
     pub(crate) fn replace_filters(&self, filters: Vec<Arc<dyn FemtoFilter>>) {

@@ -30,6 +30,7 @@ struct ConfiguredLoggerPlan {
 
 struct BuiltConfigComponents {
     built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+    handler_filter_ids: BTreeMap<String, Vec<String>>,
     built_filters: BTreeMap<String, Arc<dyn FemtoFilter>>,
     resolved_handler_filters: BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
 }
@@ -44,6 +45,7 @@ impl ConfigBuilder {
         }
         let BuiltConfigComponents {
             built_handlers,
+            handler_filter_ids,
             built_filters,
             resolved_handler_filters,
         } = self.build_runtime_components()?;
@@ -87,6 +89,7 @@ impl ConfigBuilder {
                 self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
             manager::replace_runtime_state(
                 built_handlers.clone(),
+                handler_filter_ids.clone(),
                 built_filters.clone(),
                 runtime_loggers,
             );
@@ -277,9 +280,15 @@ impl ConfigBuilder {
                 .map(|filters| (id.clone(), filters))
             })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let handler_filter_ids = self
+            .handler_builders()
+            .iter()
+            .map(|(id, builder)| (id.clone(), builder.filter_ids().to_vec()))
+            .collect();
 
         Ok(BuiltConfigComponents {
             built_handlers,
+            handler_filter_ids,
             built_filters,
             resolved_handler_filters: handler_filters,
         })

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import threading
 import typing as typ
 
 from femtologging import (
@@ -63,6 +65,65 @@ def test_handler_filter_enriches_records_from_propagated_loggers(
     )
     assert path.read_text().count("'correlation_id': 'REQ-99'") == 2, (
         "the handler formatter must render structured fields for both records"
+    )
+
+
+def test_handler_filter_runs_on_emitter_thread_with_context_and_rejects(
+    tmp_path: Path,
+) -> None:
+    """Producer filters retain caller context and suppress rejected records."""
+    reset_manager()
+    path = tmp_path / "producer-filter-context.log"
+    request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+        "request_id", default=None
+    )
+    emitter_thread = threading.get_ident()
+    observations: list[tuple[int, str | None, str]] = []
+
+    def enrich_and_filter(record: object) -> bool:
+        attributes = vars(record)
+        context_id = request_id.get()
+        message = typ.cast("str", attributes["msg"])
+        observations.append((threading.get_ident(), context_id, message))
+        if context_id is None:
+            return False
+        attributes["correlation_id"] = context_id
+        return message != "suppressed"
+
+    handler = (
+        FileHandlerBuilder(str(path))
+        .with_flush_after_records(1)
+        .with_filters(["context"])
+        .with_formatter(
+            FormatterBuilder().with_format("%(correlation_id)s %(message)s")
+        )
+    )
+    config = (
+        ConfigBuilder()
+        .with_version(1)
+        .with_filter("context", PythonCallbackFilterBuilder(enrich_and_filter))
+        .with_handler("output", handler)
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["output"])
+        )
+    )
+
+    token = request_id.set("REQ-99")
+    try:
+        config.build_and_init()
+        child = get_logger("app.child")
+        child.info("accepted")
+        child.info("suppressed")
+        assert get_logger("root").flush_handlers(), "root handler delivery should flush"
+    finally:
+        request_id.reset(token)
+
+    assert observations == [
+        (emitter_thread, "REQ-99", "accepted"),
+        (emitter_thread, "REQ-99", "suppressed"),
+    ], "handler filters must run on the emitter thread with its ContextVar state"
+    assert path.read_text().splitlines() == ["REQ-99 accepted"], (
+        "accepted records keep contextual enrichment and rejected records stay absent"
     )
 
 

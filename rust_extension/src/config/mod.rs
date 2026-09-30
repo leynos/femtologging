@@ -3,6 +3,7 @@
 #[cfg(feature = "python")]
 mod build;
 mod formatter_builder;
+mod handler_builder;
 #[cfg(feature = "python")]
 mod py;
 #[cfg(feature = "python")]
@@ -22,7 +23,7 @@ pub(crate) use types::normalize_vec;
     not(feature = "python"),
     expect(unused_imports, reason = "public re-exports for external consumers")
 )]
-pub use types::{ConfigBuilder, ConfigError, LoggerConfigBuilder};
+pub use types::{ConfigBuilder, ConfigError, HandlerBuilder, LoggerConfigBuilder};
 
 #[cfg(all(test, feature = "python"))]
 mod build_tests;

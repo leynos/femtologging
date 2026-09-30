@@ -18,7 +18,7 @@ use crate::http_handler::{
 use super::builder_macros::dict_set;
 use super::builder_macros::ensure_positive;
 use super::socket_builder::BackoffOverrides;
-use super::{HandlerBuildError, HandlerBuilderTrait};
+use super::{HandlerBuildError, HandlerBuilderTrait, common::ensure_filter_ids_resolved};
 
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
@@ -31,6 +31,26 @@ macro_rules! option_setter {
 }
 
 /// Builder for constructing [`FemtoHTTPHandler`] instances.
+///
+/// Pass the builder to `ConfigBuilder::with_handler` to register it by ID.
+/// Filter IDs configured with [`with_filters`](Self::with_filters) are
+/// resolved by `ConfigBuilder` and run before asynchronous handler delivery.
+///
+/// # Examples
+///
+/// ```rust
+/// use _femtologging_rs::{ConfigBuilder, HTTPHandlerBuilder, LoggerConfigBuilder};
+///
+/// let config = ConfigBuilder::new()
+///     .with_handler(
+///         "remote",
+///         HTTPHandlerBuilder::new()
+///             .with_url("https://example.invalid/logs")
+///             .with_filters(["context"]),
+///     )
+///     .with_root_logger(LoggerConfigBuilder::new().with_handlers(["remote"]));
+/// assert_eq!(config.handler_builders().len(), 1);
+/// ```
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct HTTPHandlerBuilder {
@@ -158,6 +178,7 @@ impl HTTPHandlerBuilder {
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
+        ensure_filter_ids_resolved(&self.filters)?;
         self.validate_url()?;
         self.validate_capacity()?;
         self.validate_timeouts()?;

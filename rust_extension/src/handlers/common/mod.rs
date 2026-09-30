@@ -178,6 +178,24 @@ impl CommonBuilder {
             Ok(())
         }
     }
+
+    pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
+        self.is_capacity_valid()?;
+        ensure_filter_ids_resolved(&self.filters)
+    }
+}
+
+/// Reject filter identifiers when a builder is built outside a configuration
+/// flow that can resolve them into runtime filters.
+pub(crate) fn ensure_filter_ids_resolved(filter_ids: &[String]) -> Result<(), HandlerBuildError> {
+    if filter_ids.is_empty() {
+        Ok(())
+    } else {
+        Err(HandlerBuildError::InvalidConfig(
+            "handler filter IDs must be resolved through ConfigBuilder or RuntimeConfigBuilder"
+                .into(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -302,7 +320,7 @@ impl FileLikeBuilderState {
     /// The `flush_after_records` field uses `NonZeroU64`, so zero values are
     /// rejected at the type level and no explicit check is needed here.
     pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()?;
+        self.common.validate()?;
         if let OverflowPolicy::Timeout(duration) = self.overflow_policy
             && duration.is_zero()
         {

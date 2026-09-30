@@ -9,6 +9,7 @@ import pytest
 
 from femtologging import (
     FileHandlerBuilder,
+    HandlerConfigError,
     HTTPHandlerBuilder,
     OverflowPolicy,
     RotatingFileHandlerBuilder,
@@ -353,3 +354,14 @@ def test_handler_builders_accept_filters(
     assert builder.as_dict()["filters"] == ["context", "audit"], (
         "handler builders must preserve a deduplicated filter chain"
     )
+
+
+def test_standalone_handler_build_rejects_unresolved_filter_ids() -> None:
+    """Standalone handler construction cannot silently discard filter IDs."""
+    builder = StreamHandlerBuilder.stderr().with_filters(["context"])
+
+    with pytest.raises(
+        HandlerConfigError,
+        match="handler filter IDs must be resolved",
+    ):
+        builder.build()

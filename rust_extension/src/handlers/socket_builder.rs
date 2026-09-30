@@ -15,7 +15,7 @@ use crate::socket_handler::{
 };
 
 use super::builder_macros::ensure_positive;
-use super::{HandlerBuildError, HandlerBuilderTrait};
+use super::{HandlerBuildError, HandlerBuilderTrait, common::ensure_filter_ids_resolved};
 
 #[derive(Clone, Debug)]
 enum TransportConfig {
@@ -243,6 +243,7 @@ impl SocketHandlerBuilder {
     }
 
     fn validate(&self) -> Result<(), HandlerBuildError> {
+        ensure_filter_ids_resolved(&self.filters)?;
         self.validate_transport()?;
         self.validate_capacity()?;
         self.validate_timeouts()?;

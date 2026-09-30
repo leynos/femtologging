@@ -241,6 +241,11 @@ impl RuntimeConfigBuilder {
         let built = BuiltRegistries {
             handlers: build_handlers(&self.handlers)?,
             filters: build_filters(&self.filters)?,
+            handler_filter_ids: self
+                .handlers
+                .iter()
+                .map(|(id, builder)| (id.clone(), builder.filter_ids().to_vec()))
+                .collect(),
         };
 
         Python::attach(|py| {
@@ -282,6 +287,16 @@ impl RuntimeConfigBuilder {
                         .filter_ids()
                         .iter()
                         .any(|id| overridden_filter_ids.contains(id))
+                    || state.handler_ids().iter().any(|handler_id| {
+                        before
+                            .handler_filter_ids
+                            .get(handler_id)
+                            .is_some_and(|filter_ids| {
+                                filter_ids
+                                    .iter()
+                                    .any(|id| overridden_filter_ids.contains(id))
+                            })
+                    })
             })
             .map(|(name, _)| name.clone())
             .collect::<BTreeSet<_>>();

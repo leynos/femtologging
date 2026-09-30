@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::log_record::FemtoLogRecord;
 
-use super::FemtoFormatter;
+use super::{FemtoFormatter, format_exception_payload, format_stack_payload};
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -33,7 +33,7 @@ impl PercentFormatter {
                 .map_or_else(String::new, |value| value.to_string()),
             'f' => value
                 .and_then(|value| value.parse::<f64>().ok())
-                .map_or_else(String::new, |value| value.to_string()),
+                .map_or_else(String::new, |value| format!("{value:.6}")),
             _ => String::new(),
         }
     }
@@ -96,6 +96,14 @@ impl FemtoFormatter for PercentFormatter {
         }
 
         output.push_str(remaining);
+        if let Some(stack) = record.stack_payload() {
+            output.push('\n');
+            output.push_str(&format_stack_payload(stack));
+        }
+        if let Some(exception) = record.exception_payload() {
+            output.push('\n');
+            output.push_str(&format_exception_payload(exception));
+        }
         output
     }
 }
@@ -109,7 +117,14 @@ mod tests {
         time::{Duration, UNIX_EPOCH},
     };
 
-    use crate::{level::FemtoLevel, log_record::FemtoLogRecord};
+    use proptest::prelude::*;
+
+    use crate::{
+        exception_schema::{ExceptionPayload, StackFrame, StackTracePayload},
+        formatter::{format_exception_payload, format_stack_payload},
+        level::FemtoLevel,
+        log_record::FemtoLogRecord,
+    };
 
     use super::{FemtoFormatter, PercentFormatter};
 
@@ -127,5 +142,82 @@ mod tests {
         .format(&record);
 
         assert_eq!(output, "probe INFO 2 inside abc123  1970");
+    }
+
+    #[test]
+    fn formats_float_with_six_fractional_digits_by_default() {
+        let mut record = FemtoLogRecord::new("probe", FemtoLevel::Info, "inside");
+        record.metadata_mut().key_values = BTreeMap::from([("ratio".to_owned(), "1.5".to_owned())]);
+
+        let output = PercentFormatter::new("%(ratio)f", None).format(&record);
+
+        assert_eq!(output, "1.500000");
+    }
+
+    #[test]
+    fn appends_stack_and_exception_payloads_after_formatted_text() {
+        let exception = ExceptionPayload::new("ValueError", "invalid value");
+        let stack = StackTracePayload::new(vec![StackFrame::new("app.py", 12, "run")]);
+        let record = FemtoLogRecord::new("probe", FemtoLevel::Error, "failed")
+            .with_stack(stack.clone())
+            .with_exception(exception.clone());
+
+        let output = PercentFormatter::new("%(message)s", None).format(&record);
+        let expected = format!(
+            "failed\n{}\n{}",
+            format_stack_payload(&stack),
+            format_exception_payload(&exception),
+        );
+
+        assert_eq!(output, expected);
+    }
+
+    proptest! {
+        #[test]
+        fn formats_generated_tokens_against_reference_output(
+            tokens in prop::collection::vec(prop_oneof![
+                "[a-zA-Z0-9 _-]{0,8}".prop_map(|literal| (literal.clone(), literal)),
+                Just(("%(message)s".to_owned(), "hello".to_owned())),
+                Just(("%(levelno)d".to_owned(), "2".to_owned())),
+                Just(("%(ratio)f".to_owned(), "1.500000".to_owned())),
+                Just(("%(missing)s".to_owned(), String::new())),
+                Just(("%%".to_owned(), "%".to_owned())),
+            ], 0..16),
+            malformed in prop_oneof![
+                Just("%".to_owned()),
+                Just("%(field".to_owned()),
+                Just("%(message)q".to_owned()),
+            ]
+        ) {
+            let mut record = FemtoLogRecord::new("probe", FemtoLevel::Info, "hello");
+            record.metadata_mut().key_values = BTreeMap::from([
+                ("ratio".to_owned(), "1.5".to_owned()),
+            ]);
+            let format = tokens
+                .iter()
+                .map(|(format, _)| format.as_str())
+                .collect::<Vec<_>>()
+                .join("|")
+                + "|"
+                + &malformed;
+            let expected = tokens
+                .iter()
+                .map(|(_, output)| output.as_str())
+                .collect::<Vec<_>>()
+                .join("|")
+                + "|"
+                + &malformed;
+
+            prop_assert_eq!(PercentFormatter::new(format, None).format(&record), expected);
+        }
+
+        #[test]
+        fn arbitrary_percent_sequences_do_not_panic(
+            format in prop::collection::vec(any::<char>(), 0..128)
+                .prop_map(|characters| characters.into_iter().collect::<String>())
+        ) {
+            let record = FemtoLogRecord::new("probe", FemtoLevel::Info, "hello");
+            let _ = PercentFormatter::new(format, None).format(&record);
+        }
     }
 }

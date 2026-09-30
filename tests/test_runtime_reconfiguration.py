@@ -9,18 +9,22 @@ import pytest
 
 from femtologging import (
     ConfigBuilder,
+    FileHandlerBuilder,
     LevelFilterBuilder,
     LoggerConfigBuilder,
     LoggerMutationBuilder,
     NameFilterBuilder,
+    PythonCallbackFilterBuilder,
     RuntimeConfigBuilder,
     StreamHandlerBuilder,
     get_logger,
     reset_manager,
 )
+from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
     from syrupy.assertion import SnapshotAssertion
 
@@ -135,6 +139,59 @@ def test_runtime_apply_unknown_filter_preserves_previous_state(
         "RuntimeConfigBuilder().with_logger('core', "
         "LoggerMutationBuilder().replace_filters(['missing'])).apply() must "
         "preserve the prior lvl filter"
+    )
+
+
+def test_runtime_mutation_preserves_handler_filter_enrichment_and_rejection(
+    tmp_path: Path,
+) -> None:
+    """Replacing logger state must retain attached handler filters."""
+    path = tmp_path / "runtime-handler-filter.log"
+    seen_messages: list[str] = []
+
+    def enrich_and_reject(record: object) -> bool:
+        attributes = vars(record)
+        message = typ.cast("str", attributes["msg"])
+        seen_messages.append(message)
+        attributes["runtime_context"] = "attached"
+        return message != "rejected"
+
+    handler = (
+        FileHandlerBuilder(str(path))
+        .with_flush_after_records(1)
+        .with_filters(["context"])
+        .with_formatter(
+            lambda record: f"{record['metadata']['key_values']!r} {record['message']}"
+        )
+    )
+    (
+        ConfigBuilder()
+        .with_version(1)
+        .with_filter("context", PythonCallbackFilterBuilder(enrich_and_reject))
+        .with_handler("output", handler)
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_logger("service", LoggerConfigBuilder().with_handlers(["output"]))
+        .build_and_init()
+    )
+
+    RuntimeConfigBuilder().with_logger(
+        "service", LoggerMutationBuilder().with_level("DEBUG")
+    ).apply()
+    logger = get_logger("service")
+    logger.info("accepted")
+    logger.info("rejected")
+    assert get_logger("root").flush_handlers(), "root handler delivery should flush"
+    poll_file_for_text(path, "accepted", timeout=1.0)
+
+    output = path.read_text()
+    assert seen_messages == ["accepted", "rejected"], (
+        "runtime replacement must keep the handler filter attached for all records"
+    )
+    assert "{'runtime_context': 'attached'} accepted" in output, (
+        "the retained handler filter should continue to enrich accepted records"
+    )
+    assert "rejected" not in output, (
+        "the retained handler filter should continue to reject matching records"
     )
 
 
