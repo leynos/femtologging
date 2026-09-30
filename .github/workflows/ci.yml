@@ -158,7 +158,7 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-
       - name: Test and measure coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@14c325b60788814cd50298eb8060228daee3b842
+        uses: leynos/shared-actions/.github/actions/generate-coverage@6cec89bac47a21cf756d68d638a9a510998e57f8
         with:
           # The Cache uv step above owns the uv cache; the Rust caches are the
           # Swatinem and cargo steps earlier in this job.
