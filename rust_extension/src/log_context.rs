@@ -1,7 +1,14 @@
 //! Structured logging context propagation utilities.
 //!
-//! This module provides a scoped, thread-local context stack and the Rust-side
-//! validation used to merge context into `RecordMetadata.key_values`.
+//! This module provides a scoped, OS-thread-local context stack for Rust
+//! emission paths. A [`LogContextGuard`] owns one frame on its creating thread
+//! and removes only that frame when dropped. Rust macros and the `log` and
+//! `tracing` bridges capture this context when they create a record; explicit
+//! record metadata takes precedence over same-named scoped fields.
+//!
+//! Python logging uses a separate task-local `ContextVar`, captured when a
+//! Python logging API creates its record. Python task context and Rust
+//! thread-local context do not transfer implicitly across the boundary.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

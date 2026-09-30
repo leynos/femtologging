@@ -44,6 +44,23 @@ async def _run_interleaved_context_logs(logger: FemtoLogger) -> None:
     await asyncio.gather(log_with_context(), log_without_context())
 
 
+async def _run_child_context_snapshot_log(logger: FemtoLogger) -> None:
+    """Log from a child task after its parent's context has changed."""
+    allow_child_log = asyncio.Event()
+
+    async def log_from_child() -> None:
+        await allow_child_log.wait()
+        logger.info("child")
+
+    with log_context(request_id="request-a"):
+        child = asyncio.create_task(log_from_child())
+        with log_context(request_id="request-b"):
+            logger.info("parent")
+        allow_child_log.set()
+
+    await child
+
+
 def _wait_for_records(logger: FemtoLogger, records: list[dict[str, object]]) -> None:
     """Flush a logger until its asynchronous handler has received both records."""
     for _ in range(20):
@@ -74,4 +91,27 @@ def test_log_context_is_task_local_across_await() -> None:
     )
     assert metadata_by_message["unscoped"]["key_values"] == {}, (
         "unscoped task record must not inherit request context"
+    )
+
+
+def test_log_context_child_task_keeps_creation_snapshot() -> None:
+    """A child task keeps the context snapshot captured at task creation."""
+    logger = FemtoLogger("ctx.child")
+    collector = _RecordCollector()
+    logger.add_handler(collector)
+
+    asyncio.run(_run_child_context_snapshot_log(logger))
+    _wait_for_records(logger, collector.records)
+
+    metadata_by_message = {
+        typ.cast("str", record["message"]): typ.cast(
+            "dict[str, object]", record["metadata"]
+        )
+        for record in collector.records
+    }
+    assert metadata_by_message["parent"]["key_values"] == {"request_id": "request-b"}, (
+        "parent task must use its most recent nested context"
+    )
+    assert metadata_by_message["child"]["key_values"] == {"request_id": "request-a"}, (
+        "child task must retain its creation-time context snapshot"
     )

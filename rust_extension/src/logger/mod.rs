@@ -57,6 +57,7 @@ pub struct FemtoLogger {
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
+    context_dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
@@ -68,6 +69,7 @@ pub struct FemtoLogger {
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
+
 
 #[allow(
     clippy::too_many_arguments,
@@ -204,6 +206,7 @@ impl FemtoLogger {
     }
 }
 
+
 impl FemtoLogger {
     /// Attach a handler to this logger.
     ///
@@ -278,6 +281,7 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
+
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {

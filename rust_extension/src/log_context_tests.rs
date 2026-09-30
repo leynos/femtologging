@@ -1,8 +1,39 @@
 //! Unit tests for scoped context propagation helpers.
 
 use super::*;
+use proptest::prelude::*;
 use rstest::{fixture, rstest};
 use static_assertions::assert_not_impl_any;
+
+#[derive(Debug, Clone)]
+enum ContextAction {
+    Push(BTreeMap<String, String>),
+    Drop(usize),
+}
+
+fn context_fields() -> impl Strategy<Value = BTreeMap<String, String>> {
+    prop::collection::btree_map(
+        prop::sample::select(vec![
+            String::from("request_id"),
+            String::from("tenant_id"),
+            String::from("user_id"),
+        ]),
+        prop::sample::select(vec![
+            String::from("outer"),
+            String::from("inner"),
+            String::from("a"),
+            String::from("b"),
+        ]),
+        1..=3,
+    )
+}
+
+fn context_actions() -> impl Strategy<Value = ContextAction> {
+    prop_oneof![
+        context_fields().prop_map(ContextAction::Push),
+        (0usize..8).prop_map(ContextAction::Drop),
+    ]
+}
 
 #[fixture]
 fn isolated_context() {
@@ -45,6 +76,42 @@ fn guards_remove_only_their_own_frames_when_dropped_out_of_order(_isolated_conte
             .expect("empty context should merge")
             .is_empty()
     );
+}
+
+proptest! {
+    #[test]
+    fn generated_push_and_drop_sequences_match_the_model(
+        actions in prop::collection::vec(context_actions(), 0..32),
+    ) {
+        clear_log_context_for_test();
+        let mut guards: Vec<Option<LogContextGuard>> = Vec::new();
+        let mut model: Vec<Option<BTreeMap<String, String>>> = Vec::new();
+
+        for action in actions {
+            match action {
+                ContextAction::Push(fields) => {
+                    let guard = push_log_context(fields.clone())
+                        .expect("generated context should satisfy validation limits");
+                    guards.push(Some(guard));
+                    model.push(Some(fields));
+                }
+                ContextAction::Drop(index) => {
+                    if let Some(guard) = guards.get_mut(index).and_then(Option::take) {
+                        drop(guard);
+                        model[index] = None;
+                    }
+                }
+            }
+
+            let mut expected = BTreeMap::new();
+            for fields in model.iter().flatten() {
+                expected.extend(fields.clone());
+            }
+            let actual = merge_context_values(&BTreeMap::new())
+                .expect("generated active context should satisfy validation limits");
+            prop_assert_eq!(actual, expected);
+        }
+    }
 }
 
 #[rstest]

@@ -1,4 +1,12 @@
-"""Scoped structured logging context helpers."""
+"""Scoped structured logging context helpers.
+
+Python fields live in a :class:`contextvars.ContextVar`, so each task observes
+its own active context even when tasks share an event-loop thread. A Python
+logging API captures these fields when it creates a record. Rust scoped fields
+are OS-thread-local and are captured by Rust emission paths, including the
+``log`` and ``tracing`` bridges; neither context is transferred implicitly
+across the Python/Rust boundary.
+"""
 
 from __future__ import annotations
 

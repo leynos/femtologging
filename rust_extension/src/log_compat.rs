@@ -4,7 +4,10 @@
 //! `log::Log` that forwards Rust-side log records into femtologging's
 //! asynchronous handler pipeline. The bridge is enabled explicitly from
 //! Python via `setup_rust_logging()`, which installs the adapter as the
-//! global Rust logger.
+//! global Rust logger. Each bridged record captures the Rust scoped context
+//! active on the emitting OS thread; explicit record metadata takes precedence
+//! for duplicate keys. Python task-local context is not transferred to this
+//! Rust bridge.
 
 use std::borrow::Cow;
 use std::sync::OnceLock;

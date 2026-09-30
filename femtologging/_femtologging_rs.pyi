@@ -95,6 +95,9 @@ class FemtoLogger:
 
         """
         ...
+    def get_context_dropped(self) -> int:
+        """Return records dropped because Rust context validation failed."""
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 

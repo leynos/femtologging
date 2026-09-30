@@ -201,6 +201,9 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
   records rejected because the queue was full or shutting down.
+- Use `logger.get_context_dropped()` to inspect records discarded when Rust
+  scoped context or explicit Rust key-values fail validation. This counter is
+  separate from queue-capacity drops.
 
 ## Built-in handlers
 
@@ -707,8 +710,9 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
 
 - Always flush or close handlers before shutting down the process; otherwise
   buffered records may be lost.
-- Monitor `logger.get_dropped()` and the warnings emitted by each handler to
-  detect back pressure early. Increase handler capacities or switch to
+- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`, and the
+  warnings emitted by each handler to detect back pressure or Rust context
+  validation failures. Increase handler capacities or switch to
   blocking/timeout policies when drops are unacceptable.
 - File-based handlers count `flush_interval` in _records_. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
