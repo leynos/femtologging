@@ -491,16 +491,13 @@ update to `tests/test_skylos_lint_contract.py`.
 `makeutil` is a prerequisite of `make test` (the `test` target depends on the
 `makeutil` target, which only verifies the executable is present) and of every
 full-suite CI job — `ci.yml`'s `build-test` job and `heavy-tests.yml`'s `heavy`
-job each install their own pinned copy before running tests. Install the same
-pinned revision and toolchain locally before running `make test`:
-
-```bash
-rustup toolchain install nightly-2026-05-28 --profile minimal
-RUSTFLAGS="-Zpolonius=next" cargo +nightly-2026-05-28 install \
-  --git https://github.com/leynos/makeutil \
-  --rev 29fc5a1634ffbaa18a773eed9dff1b2838a45d9c \
-  --locked --force makeutil
-```
+job each install it with the shared `install-makeutil` action, which downloads
+a prebuilt release and checks it against a pinned digest and the release's own
+`.sha256` file, then smoke-test it in a `Verify makeutil` step. Before running
+`make test` locally, download `makeutil-x86_64-unknown-linux-musl` (or the
+`aarch64` build) from the `v0.1.1` release at
+<https://github.com/leynos/makeutil/releases>, verify it against the matching
+`.sha256` file, and put it on `PATH` as `makeutil`.
 
 ## Environment Access in the Rust Extension
 

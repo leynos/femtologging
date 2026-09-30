@@ -128,11 +128,12 @@ current entry-point rule set — is pinned by
 pinned `makeutil` executable (`makeutil parse Makefile`, JSON) rather than
 matching Makefile text. Recording a new false-positive exception therefore
 requires a conscious update to `test_skylos_lint_contract.py`; the interface
-cannot drift silently. `makeutil` (pinned revision
-`29fc5a1634ffbaa18a773eed9dff1b2838a45d9c`, built with the `nightly-2026-05-28`
-toolchain and Polonius) is a prerequisite of `make test` and is installed
-independently by every full-suite CI job (`ci.yml` `build-test` and
-`heavy-tests.yml` `heavy`) using the same pinned toolchain and revision.
+cannot drift silently. `makeutil` is a prerequisite of `make test` and is
+installed independently by every full-suite CI job (`ci.yml` `build-test` and
+`heavy-tests.yml` `heavy`) through the shared prebuilt `install-makeutil`
+action, which pins a release by digest. (It was first built from source at a
+pinned revision with a nightly toolchain and Polonius; the prebuilt release
+replaced that.)
 
 ## Consequences
 
@@ -159,9 +160,8 @@ independently by every full-suite CI job (`ci.yml` `build-test` and
   prior two-tier state.
 - Local machines need `uv` to resolve PyPy for the Pylint tier and CPython
   3.14 for the `df12`/`ambrleaks`/Skylos tiers.
-- `make test` now depends on a working Rust toolchain able to build the
-  pinned `makeutil` revision, in addition to the project's own build
-  requirements.
+- `make test` now depends on a `makeutil` binary on `PATH`, in addition to the
+  project's own build requirements.
 - Toolchain updates must consider four separate pins (Ruff/`ty`, Pylint,
   `df12-python-lints`, and Skylos) rather than one. The Pylint pin was the
   `pylint-pypy-shim` revision until the 2026-09-25 addendum; it is now
@@ -175,9 +175,8 @@ independently by every full-suite CI job (`ci.yml` `build-test` and
 - CPython 3.14 must remain resolvable by `uv` for the third and fourth tiers;
   an unavailable interpreter blocks `make lint` entirely rather than degrading
   gracefully.
-- The pinned `makeutil` revision requires a specific nightly Rust toolchain
-  and the Polonius borrow checker; a contributor without a working Rust
-  toolchain cannot run `make test` locally until `makeutil` is installed.
+- A contributor cannot run `make test` locally until a `makeutil` release
+  binary is on `PATH`.
 - The PyPy Pylint pass (run through the shim until the 2026-09-25 addendum) is
   intentionally focused; messages outside the curated `enable` list remain out
   of scope unless the policy is updated deliberately.
