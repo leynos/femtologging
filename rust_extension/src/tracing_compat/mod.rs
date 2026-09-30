@@ -3,7 +3,10 @@
 //! This module provides [`FemtoTracingLayer`], a
 //! `tracing_subscriber::Layer` implementation that converts tracing events
 //! into [`crate::FemtoLogRecord`] values and routes them through the existing
-//! femtologging logger and handler pipeline.
+//! femtologging logger and handler pipeline. Each event captures Rust scoped
+//! context active on the emitting OS thread when the record is created, with
+//! explicit event and span metadata taking precedence for duplicate keys.
+//! Python task-local context is not transferred to this Rust bridge.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;

@@ -1786,11 +1786,26 @@ their consumer logic (which is a robust and simple model), future versions of
 ecosystem. This is particularly relevant for applications already built around
 an async runtime like Tokio or `async-std`.
 
-The currently implemented scoped context propagation is thread-local and based
-on OS-thread execution. Context capture and merge occur on the producer thread
-before queueing, which ensures records are Rust-owned and safe to dispatch
-across dedicated worker threads. Async task propagation across executors
-requires additional task-local bridging or explicit context passing.
+Python `log_context(**fields)` stores a copied mapping in a `ContextVar`.
+Python logging methods and module-level functions copy the active task-local
+fields into record metadata when they create a record, before queueing it. A
+new asyncio task inherits a snapshot of the Python context at task creation;
+subsequent changes remain local to each task. Nested Python scopes override
+same-named fields from outer scopes.
+
+Rust scoped context remains an OS-thread-local stack. `LogContextGuard` is
+`!Send` and `!Sync`, records its owner thread and unique frame identity, and
+removes only its own frame when dropped on that thread. Keep it in a
+thread-affine synchronous scope, rather than across an `await` that may resume
+on another thread. Rust macros and the Rust `log` and `tracing` bridges merge
+the active Rust context when creating a record. Explicit Rust key-values and
+tracing event or span fields take precedence over same-named scoped fields.
+
+Python and Rust contexts do not transfer implicitly. Python entrypoints use
+Python task-local fields only; Rust macros and bridges use Rust thread-local
+fields only. Code crossing that boundary must pass the required metadata
+explicitly. Once merged, record metadata is owned by the record and remains
+unchanged when queued to consumer threads.
 
 - **Async MPSC Channels:** Utilize MPSC channel implementations that are
   designed for async contexts, such as `tokio::sync::mpsc`, `flume`'s async

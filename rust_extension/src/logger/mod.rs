@@ -91,6 +91,7 @@ pub struct FemtoLogger {
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
+    context_dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,

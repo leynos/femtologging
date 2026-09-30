@@ -213,8 +213,9 @@ fn active_span_fields_are_merged_into_event_metadata() {
 fn active_rust_context_is_merged_into_bridge_metadata() {
     let logger_name = "tracing.bridge.context";
     let records = run_bridged_event_test(logger_name, || {
-        let _guard = log_context::push_log_context([("request_id", "req-42")])
-            .expect("context push should succeed");
+        let _guard =
+            log_context::push_log_context([("request_id", "req-42"), ("tenant_id", "tenant-7")])
+                .expect("context push should succeed");
         tracing::info!(
             target: "tracing.bridge.context",
             request_id = "event-42",
@@ -224,7 +225,9 @@ fn active_rust_context_is_merged_into_bridge_metadata() {
     .expect("bridged event test must succeed");
 
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].metadata().key_values["request_id"], "event-42");
+    let key_values = &records[0].metadata().key_values;
+    assert_eq!(key_values["tenant_id"], "tenant-7");
+    assert_eq!(key_values["request_id"], "event-42");
 }
 
 #[rstest]

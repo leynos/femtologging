@@ -185,6 +185,8 @@ fn invalid_merged_context_drops_record(unique_logger_name: String) {
             handler.collected().is_empty(),
             "no records should be emitted when context merge fails"
         );
+        assert_eq!(logger.borrow(py).get_context_dropped(), 1);
+        assert_eq!(logger.borrow(py).get_dropped(), 0);
 
         log_context::clear_log_context_for_test();
     });

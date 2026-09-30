@@ -78,6 +78,8 @@ impl FemtoLogger {
         match log_context::merge_context_values(&metadata.key_values) {
             Ok(merged_key_values) => metadata.key_values = merged_key_values,
             Err(err) => {
+                self.context_dropped_records
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
                 return None;
             }
