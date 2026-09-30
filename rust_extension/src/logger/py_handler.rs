@@ -264,15 +264,13 @@ impl PyHandler {
         py: Python<'_>,
         record_dict: Py<PyAny>,
     ) -> Result<(), HandlerError> {
-        let handle_record = self
-            .obj
-            .bind(py)
-            .getattr("handle_record")
-            .map_err(|err| map_py_err(py, err, "get handle_record"))?;
-        handle_record
-            .call1((record_dict,))
-            .map(|_| ())
-            .map_err(|err| map_py_err(py, err, "handle_record"))
+        self.call_direct_method(
+            py,
+            "handle_record",
+            (record_dict,),
+            "get handle_record",
+            "handle_record",
+        )
     }
 
     /// Call the legacy 3-argument `handle` method.
@@ -314,15 +312,32 @@ impl PyHandler {
         py: Python<'_>,
         record: &FemtoLogRecord,
     ) -> Result<(), HandlerError> {
-        let handle = self
+        self.call_direct_method(
+            py,
+            "handle",
+            (record.logger(), record.level_str(), record.message()),
+            "get handle",
+            "handle",
+        )
+    }
+
+    fn call_direct_method<'py>(
+        &self,
+        py: Python<'py>,
+        method: &str,
+        args: impl pyo3::call::PyCallArgs<'py>,
+        lookup_operation: &'static str,
+        call_operation: &'static str,
+    ) -> Result<(), HandlerError> {
+        let handler_method = self
             .obj
             .bind(py)
-            .getattr("handle")
-            .map_err(|err| map_py_err(py, err, "get handle"))?;
-        handle
-            .call1((record.logger(), record.level_str(), record.message()))
+            .getattr(method)
+            .map_err(|err| map_py_err(py, err, lookup_operation))?;
+        handler_method
+            .call1(args)
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, "handle"))
+            .map_err(|err| map_py_err(py, err, call_operation))
     }
 
     fn call_methodcaller_in_context<'py>(

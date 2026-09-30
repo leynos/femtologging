@@ -212,43 +212,14 @@ impl FemtoLogger {
         #[cfg(feature = "tracing-compat")]
         let handler_kind = handler_kind(&handlers);
         #[cfg(feature = "python")]
-        #[cfg(feature = "tracing-compat")]
-        let capture_started = std::time::Instant::now();
-        #[cfg(feature = "python")]
-        let context = match self.capture_python_context(&handlers) {
-            Ok(context) => {
-                #[cfg(feature = "tracing-compat")]
-                tracing::trace!(
-                    target: "femtologging::internal",
-                    operation = "producer_context_capture",
-                    handler_kind,
-                    capture_outcome = if context.is_some() {
-                        "captured"
-                    } else {
-                        "not_required"
-                    },
-                    elapsed_us = capture_started.elapsed().as_micros(),
-                );
-                context
-            }
+        let context = match self.capture_context_for_dispatch(
+            &handlers,
+            #[cfg(feature = "tracing-compat")]
+            handler_kind,
+        ) {
+            Ok(context) => context,
             Err(err) => {
-                #[cfg(feature = "tracing-compat")]
-                tracing::trace!(
-                    target: "femtologging::internal",
-                    operation = "producer_context_capture",
-                    handler_kind,
-                    capture_outcome = "failed",
-                    elapsed_us = capture_started.elapsed().as_micros(),
-                );
-                self.context_capture_failures
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.context_capture_warner.record_drop();
-                self.context_capture_warner.warn_if_due(|count| {
-                    warn!(
-                        "operation=producer_context_capture handler_kind=python outcome=failed failures={count}"
-                    );
-                    pyo3::Python::attach(|py| err.print(py));
-                });
+                self.record_context_capture_failure(err);
                 return;
             }
         };
@@ -277,6 +248,48 @@ impl FemtoLogger {
         self.drop_warner.record_drop();
         self.drop_warner.warn_if_due(|count| {
             warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+        });
+    }
+
+    /// Capture context for the handler snapshot and trace the bounded outcome.
+    #[cfg(feature = "python")]
+    fn capture_context_for_dispatch(
+        &self,
+        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+        #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
+    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+        #[cfg(feature = "tracing-compat")]
+        let capture_started = std::time::Instant::now();
+        let context = self.capture_python_context(handlers);
+        #[cfg(feature = "tracing-compat")]
+        {
+            let capture_outcome = match &context {
+                Ok(Some(_)) => "captured",
+                Ok(None) => "not_required",
+                Err(_) => "failed",
+            };
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_context_capture",
+                handler_kind,
+                capture_outcome,
+                elapsed_us = capture_started.elapsed().as_micros(),
+            );
+        }
+        context
+    }
+
+    /// Record a failed context snapshot without counting it as a queue drop.
+    #[cfg(feature = "python")]
+    fn record_context_capture_failure(&self, err: pyo3::PyErr) {
+        self.context_capture_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.context_capture_warner.record_drop();
+        self.context_capture_warner.warn_if_due(|count| {
+            warn!(
+                "operation=producer_context_capture handler_kind=python outcome=failed failures={count}"
+            );
+            pyo3::Python::attach(|py| err.print(py));
         });
     }
 
