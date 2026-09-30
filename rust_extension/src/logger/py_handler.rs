@@ -239,23 +239,38 @@ impl PyHandler {
     ) -> Result<(), HandlerError> {
         let record_dict =
             record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
+        match context {
+            Some(context) => self.call_handle_record_in_context(py, context, record_dict),
+            None => self.call_handle_record_direct(py, record_dict),
+        }
+    }
+
+    fn call_handle_record_in_context(
+        &self,
+        py: Python<'_>,
+        context: &Py<PyAny>,
+        record_dict: Py<PyAny>,
+    ) -> Result<(), HandlerError> {
+        let method_caller = py
+            .import("operator")
+            .and_then(|operator| operator.getattr("methodcaller"))
+            .and_then(|factory| factory.call1(("handle_record", record_dict)))
+            .map_err(|err| map_py_err(py, err, "create handle_record caller"))?;
+        self.call_methodcaller_in_context(py, context, method_caller, "handle_record")
+    }
+
+    fn call_handle_record_direct(
+        &self,
+        py: Python<'_>,
+        record_dict: Py<PyAny>,
+    ) -> Result<(), HandlerError> {
         let handle_record = self
             .obj
             .bind(py)
             .getattr("handle_record")
             .map_err(|err| map_py_err(py, err, "get handle_record"))?;
-        let result = match context {
-            Some(context) => {
-                let invocation_context = context
-                    .bind(py)
-                    .call_method0("copy")
-                    .map_err(|err| map_py_err(py, err, "copy context"))?;
-                invocation_context.call_method1("run", (handle_record, record_dict))
-            }
-            None => handle_record.call1((record_dict,)),
-        };
-
-        result
+        handle_record
+            .call1((record_dict,))
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, "handle_record"))
     }
@@ -267,33 +282,64 @@ impl PyHandler {
         record: &FemtoLogRecord,
         context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
+        match context {
+            Some(context) => self.call_legacy_handle_in_context(py, context, record),
+            None => self.call_legacy_handle_direct(py, record),
+        }
+    }
+
+    fn call_legacy_handle_in_context(
+        &self,
+        py: Python<'_>,
+        context: &Py<PyAny>,
+        record: &FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
+        let method_caller = py
+            .import("operator")
+            .and_then(|operator| operator.getattr("methodcaller"))
+            .and_then(|factory| {
+                factory.call1((
+                    "handle",
+                    record.logger(),
+                    record.level_str(),
+                    record.message(),
+                ))
+            })
+            .map_err(|err| map_py_err(py, err, "create handle caller"))?;
+        self.call_methodcaller_in_context(py, context, method_caller, "handle")
+    }
+
+    fn call_legacy_handle_direct(
+        &self,
+        py: Python<'_>,
+        record: &FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
         let handle = self
             .obj
             .bind(py)
             .getattr("handle")
             .map_err(|err| map_py_err(py, err, "get handle"))?;
-        let result = match context {
-            Some(context) => {
-                let invocation_context = context
-                    .bind(py)
-                    .call_method0("copy")
-                    .map_err(|err| map_py_err(py, err, "copy context"))?;
-                invocation_context.call_method1(
-                    "run",
-                    (
-                        handle,
-                        record.logger(),
-                        record.level_str(),
-                        record.message(),
-                    ),
-                )
-            }
-            None => handle.call1((record.logger(), record.level_str(), record.message())),
-        };
-
-        result
+        handle
+            .call1((record.logger(), record.level_str(), record.message()))
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, "handle"))
+    }
+
+    fn call_methodcaller_in_context<'py>(
+        &self,
+        py: Python<'py>,
+        context: &Py<PyAny>,
+        method_caller: Bound<'py, PyAny>,
+        method: &str,
+    ) -> Result<(), HandlerError> {
+        let invocation_context = context
+            .bind(py)
+            .call_method0("copy")
+            .map_err(|err| map_py_err(py, err, "copy context"))?;
+        invocation_context
+            .call_method1("run", (method_caller, self.obj.bind(py)))
+            .map(|_| ())
+            .map_err(|err| map_py_err(py, err, method))
     }
 }
 

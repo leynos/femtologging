@@ -95,10 +95,26 @@ impl FemtoLogger {
     /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
     pub(crate) fn handle_log_record(job: QueuedRecord) {
         for h in &job.handlers {
+            #[cfg(feature = "tracing-compat")]
+            let dispatch_started = std::time::Instant::now();
+            #[cfg(feature = "tracing-compat")]
+            let handler_kind = if h.is_python_backed() {
+                "python"
+            } else {
+                "native"
+            };
             #[cfg(feature = "python")]
             let result = h.handle_with_context(job.record.clone(), job.context.as_ref());
             #[cfg(not(feature = "python"))]
             let result = h.handle(job.record.clone());
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "worker_handler_dispatch",
+                handler_kind,
+                dispatch_outcome = if result.is_ok() { "success" } else { "failed" },
+                elapsed_us = dispatch_started.elapsed().as_micros(),
+            );
             if let Err(err) = result {
                 warn!("FemtoLogger: handler reported an error: {err}");
             }
