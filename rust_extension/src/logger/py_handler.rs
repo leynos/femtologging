@@ -182,6 +182,13 @@ impl NativeHandlerKind {
 }
 
 #[cfg(feature = "python")]
+struct DirectMethodSpec {
+    name: &'static str,
+    lookup_operation: &'static str,
+    call_operation: &'static str,
+}
+
+#[cfg(feature = "python")]
 impl PyHandler {
     /// Create a new `PyHandler` from a Python object.
     ///
@@ -266,10 +273,12 @@ impl PyHandler {
     ) -> Result<(), HandlerError> {
         self.call_direct_method(
             py,
-            "handle_record",
+            DirectMethodSpec {
+                name: "handle_record",
+                lookup_operation: "get handle_record",
+                call_operation: "handle_record",
+            },
             (record_dict,),
-            "get handle_record",
-            "handle_record",
         )
     }
 
@@ -314,30 +323,30 @@ impl PyHandler {
     ) -> Result<(), HandlerError> {
         self.call_direct_method(
             py,
-            "handle",
+            DirectMethodSpec {
+                name: "handle",
+                lookup_operation: "get handle",
+                call_operation: "handle",
+            },
             (record.logger(), record.level_str(), record.message()),
-            "get handle",
-            "handle",
         )
     }
 
     fn call_direct_method<'py>(
         &self,
         py: Python<'py>,
-        method: &str,
+        method: DirectMethodSpec,
         args: impl pyo3::call::PyCallArgs<'py>,
-        lookup_operation: &'static str,
-        call_operation: &'static str,
     ) -> Result<(), HandlerError> {
         let handler_method = self
             .obj
             .bind(py)
-            .getattr(method)
-            .map_err(|err| map_py_err(py, err, lookup_operation))?;
+            .getattr(method.name)
+            .map_err(|err| map_py_err(py, err, method.lookup_operation))?;
         handler_method
             .call1(args)
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, call_operation))
+            .map_err(|err| map_py_err(py, err, method.call_operation))
     }
 
     fn call_methodcaller_in_context<'py>(
