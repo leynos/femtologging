@@ -112,6 +112,7 @@ pub(crate) enum ContextValidationError {
 }
 
 impl ContextValidationError {
+    /// Attach the relevant key and map this internal failure to its public error variant.
     fn into_log_context_error(self, key: &str) -> LogContextError {
         match self {
             Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
@@ -128,10 +129,12 @@ impl ContextValidationError {
     }
 }
 
-/// Track the retained map's key count and aggregate UTF-8 size while building it.
+/// Tracks retained key count and aggregate UTF-8 size as entries are validated.
 #[derive(Default)]
 pub(crate) struct ContextBudget {
+    /// Number of distinct keys already included in the candidate map.
     unique_keys: usize,
+    /// UTF-8 bytes for retained keys and their current values.
     total_bytes: usize,
 }
 
@@ -390,4 +393,3 @@ pub(crate) fn clear_log_context_for_test() {
 #[cfg(test)]
 #[path = "log_context_tests.rs"]
 mod tests;
-// weave: run 'weave explain rust_extension/src/log_context.rs' for per-hunk detail, 'weave check' to verify your resolution
