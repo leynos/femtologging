@@ -106,11 +106,17 @@ pub struct PyHandler {
 #[derive(Clone, Copy)]
 #[cfg(feature = "python")]
 enum NativeHandlerKind {
+    /// Retains native record dispatch for a stream handler wrapped for Python.
     Stream,
+    /// Retains native record dispatch for a file handler wrapped for Python.
     File,
+    /// Retains native record dispatch for a rotating file handler wrapped for Python.
     RotatingFile,
+    /// Retains native record dispatch for a timed-rotating file handler wrapped for Python.
     TimedRotatingFile,
+    /// Retains native record dispatch for a socket handler wrapped for Python.
     Socket,
+    /// Retains native record dispatch for an HTTP handler wrapped for Python.
     Http,
 }
 

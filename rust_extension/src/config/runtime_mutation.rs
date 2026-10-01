@@ -40,7 +40,8 @@ pub struct LoggerMutationBuilder {
     handlers: CollectionMutation,
     /// The one permitted filter collection operation, or unchanged by default.
     filters: CollectionMutation,
-    /// First collection-mode conflict encountered while building this request.
+    /// First conflict when a prior collection mutation differs, including same-mode
+    /// payload differences; identical normalized mutations are accepted.
     invalid: Option<String>,
 }
 
@@ -174,7 +175,7 @@ impl LoggerMutationBuilder {
         self.do_clear(Self::set_filters)
     }
 
-    /// Records a conflicting handler mode while retaining the newest requested mode.
+    /// Records differing prior handler mutations, including same-mode payloads; identical normalized mutations are accepted, and the newest is retained.
     fn set_handlers(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
             self.invalid = collection_conflict("handlers", &self.handlers, &mutation);
@@ -182,7 +183,7 @@ impl LoggerMutationBuilder {
         self.handlers = mutation;
     }
 
-    /// Records a conflicting filter mode while retaining the newest requested mode.
+    /// Records differing prior filter mutations, including same-mode payloads; identical normalized mutations are accepted, and the newest is retained.
     fn set_filters(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
             self.invalid = collection_conflict("filters", &self.filters, &mutation);
@@ -201,9 +202,8 @@ impl LoggerMutationBuilder {
 
 /// Builder for transactional runtime reconfiguration.
 ///
-/// `RuntimeConfigBuilder` applies handler and filter mutations against the
-/// live manager state without requiring a full `ConfigBuilder.build_and_init()`
-/// rebuild.
+/// Applies handler and filter mutations against live manager state without
+/// requiring a full `ConfigBuilder.build_and_init()` rebuild.
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeConfigBuilder {

@@ -42,19 +42,47 @@ pub enum LogContextError {
     TotalBytesExceeded { total: usize, max: usize },
 }
 
+/// Internal validation failures before the offending key is attached to the public error.
 #[derive(Debug, Error)]
 pub(crate) enum ContextValidationError {
+    /// The merged map would exceed its key-count limit.
     #[error("context has {count} keys; maximum is {max}")]
-    TooManyKeys { count: usize, max: usize },
+    TooManyKeys {
+        /// Number of keys in the candidate map.
+        count: usize,
+        /// Maximum permitted number of keys.
+        max: usize,
+    },
+    /// A key exceeds the per-key UTF-8 byte limit.
     #[error("context key is {len} bytes; maximum is {max}")]
-    KeyTooLong { len: usize, max: usize },
+    KeyTooLong {
+        /// UTF-8 byte length of the offending key.
+        len: usize,
+        /// Maximum permitted UTF-8 byte length.
+        max: usize,
+    },
+    /// A value exceeds the per-value UTF-8 byte limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
-    ValueTooLong { key: String, len: usize, max: usize },
+    ValueTooLong {
+        /// Key associated with the oversized value.
+        key: String,
+        /// UTF-8 byte length of the value.
+        len: usize,
+        /// Maximum permitted UTF-8 byte length.
+        max: usize,
+    },
+    /// The merged map exceeds its aggregate UTF-8 byte limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
-    TotalBytesExceeded { total: usize, max: usize },
+    TotalBytesExceeded {
+        /// Aggregate key and value byte length of the candidate map.
+        total: usize,
+        /// Maximum permitted aggregate byte length.
+        max: usize,
+    },
 }
 
 impl ContextValidationError {
+    /// Attach the relevant key and map this internal failure to its public error variant.
     fn into_log_context_error(self, key: &str) -> LogContextError {
         match self {
             Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
@@ -71,10 +99,12 @@ impl ContextValidationError {
     }
 }
 
-/// Track the retained map's key count and aggregate UTF-8 size while building it.
+/// Tracks retained key count and aggregate UTF-8 size as entries are validated.
 #[derive(Default)]
 pub(crate) struct ContextBudget {
+    /// Number of distinct keys already included in the candidate map.
     unique_keys: usize,
+    /// UTF-8 bytes for retained keys and their current values.
     total_bytes: usize,
 }
 
