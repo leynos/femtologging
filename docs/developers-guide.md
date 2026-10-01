@@ -329,12 +329,13 @@ file run too and do emit, which is why the assertions name their records.
 
 ## Structured logging contracts
 
-Python structured fields use one conversion and validation path in
-`rust_extension/src/log_context.rs`. `extract_python_context_map` converts the
-mapping accepted by both `_push_log_context` and `FemtoLogger.py_log` into the
-Rust-owned scalar representation. Keep Python type checks, string conversion,
-and the key, value, and aggregate-size bounds in that shared function so scoped
-and inline fields cannot drift apart.
+Python structured fields use one conversion and validation path. The
+`rust_extension/src/python_context.rs` adapter performs PyO3 mapping and scalar
+conversion for mappings accepted by both `_push_log_context` and
+`FemtoLogger.py_log`. It uses the framework-neutral `ContextBudget` in
+`rust_extension/src/log_context.rs` for key, value, and aggregate-size
+validation. That module also owns `merge_context_values` and contains no PyO3
+logic, keeping Python conversion separate from context budgeting and merging.
 
 `merge_context_values` is the producer-side merge boundary. It combines the
 active thread-local context with explicit fields, with explicit fields taking
