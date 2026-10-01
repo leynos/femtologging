@@ -662,6 +662,30 @@ reason is the whole of what distinguishes it from a quieter `allow`; a
 crate-scoped `#![expect(...)]` does not, because one call anywhere in the crate
 fulfils it and the rest go unreported.
 
+## Structured logging context
+
+Python `log_context(**fields)` stores a copied mapping in a `ContextVar`.
+Python's context propagation gives each newly created asyncio task a snapshot
+of the context active at task creation. Subsequent changes in the parent or
+child remain local to that task. Python logger methods and module-level
+functions copy the current fields into record metadata when they create the
+record, before queueing it; later context changes do not affect that record.
+Nested `log_context` scopes override same-named fields from outer scopes.
+
+Rust scoped context uses an OS-thread-local stack. `LogContextGuard` is `!Send`
+and `!Sync`, records its owner thread and a unique frame identity, and removes
+only its own frame when dropped on that thread. Keep the guard within a
+thread-affine synchronous scope; an async Rust task that can migrate between
+threads must not retain this guard across an `await`.
+
+The Python and Rust context stores are separate. Python entrypoints capture
+Python task-local fields only. Rust macros and records received through the
+`log` and `tracing` bridges merge Rust scoped fields at record creation.
+Explicit key-values supplied by Rust macros and explicit event or span fields
+captured by the tracing bridge override same-named scoped fields. Neither side
+implicitly imports the other's context, so code crossing the boundary must pass
+required metadata explicitly.
+
 ## Benchmarking Documentation
 
 Benchmarking work is governed by

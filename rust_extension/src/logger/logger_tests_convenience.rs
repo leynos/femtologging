@@ -134,7 +134,7 @@ fn exception_with_explicit_python_none_suppresses_capture() {
 }
 
 #[rstest]
-fn convenience_methods_merge_scoped_context() {
+fn convenience_methods_do_not_merge_rust_scoped_context() {
     Python::attach(|py| {
         log_context::clear_log_context_for_test();
         let logger = FemtoLogger::new("test".to_string());
@@ -153,9 +153,6 @@ fn convenience_methods_merge_scoped_context() {
         let records = handler.collected();
         assert_eq!(records.len(), 1);
         let key_values = &records[0].metadata().key_values;
-        assert_eq!(
-            key_values.get("request_id").map(String::as_str),
-            Some("123")
-        );
+        assert!(!key_values.contains_key("request_id"));
     });
 }

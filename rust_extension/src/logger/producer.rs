@@ -48,10 +48,9 @@ impl FemtoLogger {
 
     /// Log a message with explicit source location metadata.
     ///
-    /// Used by the [`femtolog_info!`] family of macros and the Python
-    /// convenience functions to attach caller-captured source information
-    /// (filename, line number, module path) to the record before filtering
-    /// and dispatch.
+    /// Used by the [`femtolog_info!`] family of macros and Rust compatibility
+    /// bridges to attach source information (filename, line number, module
+    /// path) before filtering and dispatch.
     ///
     /// # Examples
     ///
@@ -79,6 +78,8 @@ impl FemtoLogger {
         match log_context::merge_context_values(&metadata.key_values) {
             Ok(merged_key_values) => metadata.key_values = merged_key_values,
             Err(err) => {
+                self.context_dropped_records
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
                 return None;
             }
@@ -87,25 +88,28 @@ impl FemtoLogger {
         self.log_record(record)
     }
 
+    /// Log a record with metadata that has already been scoped by the caller.
+    ///
+    /// Python entrypoints use this path after capturing their task-local
+    /// `ContextVar` fields. Rust thread-local context is deliberately not
+    /// merged here; Rust callers should use [`Self::log_with_metadata`].
+    #[cfg(feature = "python")]
+    pub(crate) fn log_with_explicit_metadata(
+        &self,
+        level: FemtoLevel,
+        message: &str,
+        metadata: RecordMetadata,
+    ) -> Option<String> {
+        if !self.is_enabled_for(level) {
+            return None;
+        }
+        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
+        self.log_record(record)
+    }
+
     /// Return whether `level` is enabled for this logger.
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
         u8::from(level) >= self.level.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Dispatch an already-constructed record through this logger.
-    ///
-    /// The record is filtered against the logger's level and filters before
-    /// being enqueued for handler processing.
-    #[cfg(any(feature = "log-compat", feature = "tracing-compat"))]
-    pub(crate) fn dispatch_record(&self, record: FemtoLogRecord) {
-        let mut record = record;
-        if !self.is_enabled_for(record.level()) {
-            return;
-        }
-        if !self.apply_filters(&mut record) {
-            return;
-        }
-        self.dispatch_to_handlers(record);
     }
 
     /// Return the logger's current minimum level.

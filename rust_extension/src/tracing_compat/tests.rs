@@ -10,6 +10,7 @@ use tracing_subscriber::prelude::*;
 use super::{FALLBACK_EVENT_MESSAGE, FemtoTracingLayer};
 use crate::FemtoLevel;
 use crate::handler::FemtoHandlerTrait;
+use crate::log_context;
 use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
@@ -205,6 +206,28 @@ fn active_span_fields_are_merged_into_event_metadata() {
     assert_eq!(key_values["span.1.name"], "step");
     assert_eq!(key_values["span.1.attempt"], "2");
     assert_eq!(key_values["success"], "true");
+}
+
+#[rstest]
+#[serial]
+fn active_rust_context_is_merged_into_bridge_metadata() {
+    let logger_name = "tracing.bridge.context";
+    let records = run_bridged_event_test(logger_name, || {
+        let _guard =
+            log_context::push_log_context([("request_id", "req-42"), ("tenant_id", "tenant-7")])
+                .expect("context push should succeed");
+        tracing::info!(
+            target: "tracing.bridge.context",
+            request_id = "event-42",
+            "inside context"
+        );
+    })
+    .expect("bridged event test must succeed");
+
+    assert_eq!(records.len(), 1);
+    let key_values = &records[0].metadata().key_values;
+    assert_eq!(key_values["tenant_id"], "tenant-7");
+    assert_eq!(key_values["request_id"], "event-42");
 }
 
 #[rstest]

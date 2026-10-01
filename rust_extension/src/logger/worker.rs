@@ -42,6 +42,7 @@ impl FemtoLogger {
             handlers,
             filters,
             dropped_records: std::sync::atomic::AtomicU64::new(0),
+            context_dropped_records: std::sync::atomic::AtomicU64::new(0),
             drop_warner: RateLimitedWarner::default(),
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),

@@ -4,7 +4,10 @@
 //! `log::Log` that forwards Rust-side log records into femtologging's
 //! asynchronous handler pipeline. The bridge is enabled explicitly from
 //! Python via `setup_rust_logging()`, which installs the adapter as the
-//! global Rust logger.
+//! global Rust logger. Each bridged record captures the Rust scoped context
+//! active on the emitting OS thread; explicit record metadata takes precedence
+//! for duplicate keys. Python task-local context is not transferred to this
+//! Rust bridge.
 
 use std::borrow::Cow;
 use std::sync::OnceLock;
@@ -13,7 +16,7 @@ use log::{Metadata, Record};
 use pyo3::prelude::*;
 
 use crate::level::FemtoLevel;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
+use crate::log_record::RecordMetadata;
 use crate::manager;
 
 /// Adapter implementing the Rust `log::Log` trait.
@@ -110,7 +113,7 @@ impl log::Log for FemtoLogAdapter {
         }
 
         Python::attach(|py| {
-            let Some((logger_name, logger)) = resolve_logger(py, record.target()) else {
+            let Some((_, logger)) = resolve_logger(py, record.target()) else {
                 return;
             };
 
@@ -126,14 +129,10 @@ impl log::Log for FemtoLogAdapter {
                 ..Default::default()
             };
 
-            let femto_record = FemtoLogRecord::with_metadata(
-                logger_name.as_str(),
-                level,
-                &record.args().to_string(),
-                metadata,
-            );
-
-            logger.borrow(py).dispatch_record(femto_record);
+            let _ =
+                logger
+                    .borrow(py)
+                    .log_with_metadata(level, &record.args().to_string(), metadata);
         });
     }
 
@@ -224,6 +223,10 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
     log::set_max_level(log::LevelFilter::Trace);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "log_compat_context_tests.rs"]
+mod context_tests;
 
 #[cfg(test)]
 mod tests {

@@ -18,11 +18,11 @@ mod worker;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(feature = "python")]
 use crate::log_context;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
@@ -91,6 +91,7 @@ pub struct FemtoLogger {
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
+    context_dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
@@ -159,20 +160,16 @@ impl FemtoLogger {
         if !self.is_enabled_for(level) {
             return Ok(None);
         }
-        let explicit_key_values = BTreeMap::new();
-        let merged_key_values = match log_context::merge_context_values(&explicit_key_values) {
-            Ok(key_values) => key_values,
-            Err(err) => {
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return Ok(None);
-            }
-        };
+        #[cfg(feature = "python")]
+        let explicit_key_values = log_context::current_python_context(py)?;
+        #[cfg(not(feature = "python"))]
+        let explicit_key_values = std::collections::BTreeMap::new();
         let mut record = FemtoLogRecord::with_metadata(
             &self.name,
             level,
             message,
             RecordMetadata {
-                key_values: merged_key_values,
+                key_values: explicit_key_values,
                 ..Default::default()
             },
         );
