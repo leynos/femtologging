@@ -19,16 +19,17 @@ mod worker;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
-use std::any::Any;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
+#[cfg(test)]
+use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
 
-use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
+use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::{JoinHandle, Mutex, RwLock, Sender};
@@ -302,6 +303,9 @@ mod logger_tests_helpers;
 #[cfg(all(test, not(loom)))]
 #[path = "producer_tests.rs"]
 mod producer_tests;
+#[cfg(all(test, not(loom), feature = "tracing-compat"))]
+#[path = "producer_tracing_tests.rs"]
+mod producer_tracing_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "worker_tests.rs"]
 mod worker_tests;
