@@ -218,10 +218,17 @@ def assert_verification_follows_install(
     ...     [{"name": "Install makeutil"}, {"name": "Verify makeutil"}],
     ...     contract="ci.yml",
     ... )
+    >>> assert_verification_follows_install(  # doctest: +IGNORE_EXCEPTION_DETAIL
+    ...     [{"name": "Install makeutil"}], contract="ci.yml"
+    ... )
+    Traceback (most recent call last):
+    ...
+    AssertionError: ci.yml must verify makeutil right after installing it
     """
     names = [step.get("name") for step in steps]
-    position = names.index("Install makeutil")
+    _require("Install makeutil" in names, f"{contract} must have an install step")
+    following = names[names.index("Install makeutil") + 1 :][:1]
     _require(
-        names[position + 1] == "Verify makeutil",
+        following == ["Verify makeutil"],
         f"{contract} must verify makeutil right after installing it",
     )
