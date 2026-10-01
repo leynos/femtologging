@@ -113,6 +113,38 @@ def test_logger_info_rejects_invalid_mapping_shapes(
         )
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({"k" * 65: "value"}, id="overlong-key"),
+        pytest.param({"key": "v" * 1025}, id="overlong-value"),
+        pytest.param(
+            {f"key-{index:02d}": "v" for index in range(65)},
+            id="too-many-keys",
+        ),
+        pytest.param(
+            {f"k{index:02d}": "v" * 1024 for index in range(16)},
+            id="aggregate-size",
+        ),
+    ],
+)
+def test_logger_info_rejects_oversized_extra_before_level_filtering(
+    extra: dict[str, StructuredScalar],
+) -> None:
+    """Over-limit fields fail before a disabled logger can retain a record."""
+    logger = FemtoLogger("ctx.oversized-extra")
+    logger.set_level("ERROR")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    try:
+        with pytest.raises(ValueError, match="context"):
+            logger.info("oversized fields", extra=extra)
+        assert not collector.records, "invalid fields must not enqueue a record"
+    finally:
+        logger.clear_handlers()
+
+
 def test_log_context_rejects_an_unsupported_scalar() -> None:
     """Scoped fields reject values outside the documented scalar types."""
     with (
