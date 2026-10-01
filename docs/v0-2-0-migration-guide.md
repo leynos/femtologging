@@ -95,11 +95,12 @@ ______________________________________________________________________
 ## `StdlibHandlerAdapter` propagates `contextvars`
 
 When a record is sent through `StdlibHandlerAdapter`, femtologging captures the
-producer thread's `contextvars` context before queueing the record. The wrapped
-stdlib handler's filters and formatters then run inside that captured context
-on the handler's worker thread. Existing filters that read a
-`contextvars.ContextVar` therefore observe the value set by the thread that
-emitted the record.
+producer thread's `contextvars` context before queueing the record. On the
+dedicated worker thread, `Context.run` calls the wrapped stdlib handler's
+complete `handle()` method inside that context, including its filters,
+formatters, and `emit()` method. Dispatch remains asynchronous. Existing
+filters and formatters that read a `contextvars.ContextVar` therefore observe
+the value set by the thread that emitted the record.
 
 No code changes are required for this behaviour. Only `contextvars` are
 propagated; other thread-local state, including `threading.local`, still
