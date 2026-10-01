@@ -75,9 +75,9 @@ fn with_python_context_value<T>(
         return consumer("None");
     }
     if [
-        raw_value.is_instance_of::<PyBool>(),
-        raw_value.is_instance_of::<PyInt>(),
-        raw_value.is_instance_of::<PyFloat>(),
+        raw_value.is_exact_instance_of::<PyBool>(),
+        raw_value.is_exact_instance_of::<PyInt>(),
+        raw_value.is_exact_instance_of::<PyFloat>(),
     ]
     .contains(&true)
     {
@@ -98,7 +98,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use pyo3::exceptions::PyValueError;
+    use pyo3::exceptions::{PyTypeError, PyValueError};
     use pyo3::prelude::*;
     use pyo3::types::PyDict;
 
@@ -163,6 +163,24 @@ mod tests {
                 converted,
                 BTreeMap::from([(String::from("shared"), String::from("last"))])
             );
+        });
+    }
+
+    /// Reject subclasses of the supported numeric scalar types.
+    #[test]
+    fn extraction_rejects_numeric_subclasses() {
+        Python::attach(|py| {
+            for expression in [
+                c"{'value': type('IntSubclass', (int,), {})(1)}",
+                c"{'value': type('FloatSubclass', (float,), {})(1.0)}",
+            ] {
+                let context = py
+                    .eval(expression, None, None)
+                    .expect("numeric subclass mapping should be created");
+                let error = extract_python_context_map(&context)
+                    .expect_err("numeric subclasses should be rejected");
+                assert!(error.is_instance_of::<PyTypeError>(py));
+            }
         });
     }
 }
