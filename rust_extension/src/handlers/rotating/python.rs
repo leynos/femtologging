@@ -3,6 +3,8 @@
 //! This module exposes Python APIs for constructing rotating file handlers with
 //! configurable capacity, flush interval, overflow policy, and rotation thresholds.
 
+use std::any::Any;
+
 use pyo3::prelude::*;
 
 use super::{FemtoRotatingFileHandler as CoreRotatingFileHandler, RotationConfig, fresh_failure};
@@ -31,6 +33,20 @@ impl PyRotatingFileHandler {
     /// Wrap a core rotating file handler for Python exposure.
     pub(crate) fn from_core(inner: CoreRotatingFileHandler) -> Self {
         Self { inner }
+    }
+}
+
+impl FemtoHandlerTrait for PyRotatingFileHandler {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), crate::handler::HandlerError> {
+        self.inner.handle(record)
+    }
+
+    fn flush(&self) -> bool {
+        self.inner.flush()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

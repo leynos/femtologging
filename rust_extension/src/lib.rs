@@ -46,6 +46,8 @@ mod macros;
 #[cfg(feature = "python")]
 mod python;
 #[cfg(feature = "python")]
+mod python_context;
+#[cfg(feature = "python")]
 mod python_module;
 #[cfg(feature = "python")]
 pub(crate) mod traceback_capture;

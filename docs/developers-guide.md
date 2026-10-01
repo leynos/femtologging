@@ -88,6 +88,9 @@ so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
 - The `make markdownlint` target runs
   `typos --config typos.toml --force-exclude` across the tracked Markdown files
   after `markdownlint-cli2`.
+- The target enumerates tracked and new non-ignored Markdown files with
+  `git ls-files --exclude-standard`, so ignored build output (including
+  `target/`) and the local `.venv/` are excluded from both Markdown checks.
 
 ### Configuration
 
@@ -323,6 +326,32 @@ Tests that use it carry `#[serial]` and `#[ignore]`, and the scheduled
 `heavy-tests` lane runs them with `-- --ignored` so nothing else in the binary
 emits alongside them. Under `--include-ignored` the ordinary tests in the same
 file run too and do emit, which is why the assertions name their records.
+
+## Structured logging contracts
+
+Python structured fields use one conversion and validation path. The
+`rust_extension/src/python_context.rs` adapter performs PyO3 mapping and scalar
+conversion for mappings accepted by both `_push_log_context` and
+`FemtoLogger.py_log`. It uses the framework-neutral `ContextBudget` in
+`rust_extension/src/log_context.rs` for key, value, and aggregate-size
+validation. That module also owns `merge_context_values` and contains no PyO3
+logic, keeping Python conversion separate from context budgeting and merging.
+
+`merge_context_values` is the producer-side merge boundary. It combines the
+active thread-local context with explicit fields, with explicit fields taking
+precedence on collisions. `FemtoLogger.py_log` performs this merge before level
+gating and record construction. Conversion failures are reported to Python as
+type errors, while merge and size-validation failures are reported as
+`ValueError`; invalid context must not be silently dropped.
+
+`PyHandler` inspects handler capabilities when a Python handler is registered.
+For built-in stream, file, rotating-file, timed-rotating-file, socket, and HTTP
+handlers, native dispatch passes the original `FemtoLogRecord` to the
+`FemtoHandlerTrait` implementation, preserving `RecordMetadata.key_values`
+through the handler queue. Other Python handlers use the structured
+`handle_record` dictionary interface when available, or the legacy three-
+argument `handle` interface as a fallback. This boundary is described in more
+detail in [the Rust extension design notes](rust-extension.md).
 
 File-handler unit tests use `rust_extension/src/handlers/file/test_support.rs`.
 The `impl_unsupported_seek!` macro supplies the required `Seek` implementation

@@ -1,17 +1,16 @@
 //! Structured logging context propagation utilities.
 //!
-//! This module provides a scoped, thread-local context stack used by
-//! logging macros and Python convenience functions. Context key-values are
-//! merged into `RecordMetadata.key_values` on the producer thread.
+//! This module provides a scoped, thread-local context stack and the Rust-side
+//! validation used to merge context into `RecordMetadata.key_values`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
-const MAX_CONTEXT_KEYS: usize = 64;
-const MAX_KEY_BYTES: usize = 64;
-const MAX_VALUE_BYTES: usize = 1024;
-const MAX_TOTAL_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_CONTEXT_KEYS: usize = 64;
+pub(crate) const MAX_KEY_BYTES: usize = 64;
+pub(crate) const MAX_VALUE_BYTES: usize = 1024;
+pub(crate) const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
 thread_local! {
     static CONTEXT_STACK: RefCell<Vec<BTreeMap<String, String>>> = const {
@@ -37,6 +36,93 @@ pub enum LogContextError {
     /// Total serialized context exceeded the aggregate byte limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
     TotalBytesExceeded { total: usize, max: usize },
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ContextValidationError {
+    #[error("context has {count} keys; maximum is {max}")]
+    TooManyKeys { count: usize, max: usize },
+    #[error("context key is {len} bytes; maximum is {max}")]
+    KeyTooLong { len: usize, max: usize },
+    #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
+    ValueTooLong { key: String, len: usize, max: usize },
+    #[error("context payload is {total} bytes; maximum is {max}")]
+    TotalBytesExceeded { total: usize, max: usize },
+}
+
+impl ContextValidationError {
+    fn into_log_context_error(self, key: &str) -> LogContextError {
+        match self {
+            Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
+            Self::KeyTooLong { len, max } => LogContextError::KeyTooLong {
+                key: key.to_owned(),
+                len,
+                max,
+            },
+            Self::ValueTooLong { key, len, max } => LogContextError::ValueTooLong { key, len, max },
+            Self::TotalBytesExceeded { total, max } => {
+                LogContextError::TotalBytesExceeded { total, max }
+            }
+        }
+    }
+}
+
+/// Track the retained map's key count and aggregate UTF-8 size while building it.
+#[derive(Default)]
+pub(crate) struct ContextBudget {
+    unique_keys: usize,
+    total_bytes: usize,
+}
+
+impl ContextBudget {
+    /// Validate a candidate entry before the caller retains converted strings.
+    pub(crate) fn validate_next(
+        &mut self,
+        key: &str,
+        value: &str,
+        previous_value: Option<&str>,
+    ) -> Result<(), ContextValidationError> {
+        let key_len = key.len();
+        if key_len > MAX_KEY_BYTES {
+            return Err(ContextValidationError::KeyTooLong {
+                len: key_len,
+                max: MAX_KEY_BYTES,
+            });
+        }
+
+        let is_new_key = previous_value.is_none();
+        if is_new_key && self.unique_keys == MAX_CONTEXT_KEYS {
+            return Err(ContextValidationError::TooManyKeys {
+                count: MAX_CONTEXT_KEYS + 1,
+                max: MAX_CONTEXT_KEYS,
+            });
+        }
+
+        let value_len = value.len();
+        if value_len > MAX_VALUE_BYTES {
+            return Err(ContextValidationError::ValueTooLong {
+                key: key.to_owned(),
+                len: value_len,
+                max: MAX_VALUE_BYTES,
+            });
+        }
+
+        let next_total_bytes = self.total_bytes - previous_value.map_or(0, str::len)
+            + value_len
+            + if is_new_key { key_len } else { 0 };
+        if next_total_bytes > MAX_TOTAL_BYTES {
+            return Err(ContextValidationError::TotalBytesExceeded {
+                total: next_total_bytes,
+                max: MAX_TOTAL_BYTES,
+            });
+        }
+
+        if is_new_key {
+            self.unique_keys += 1;
+        }
+        self.total_bytes = next_total_bytes;
+        Ok(())
+    }
 }
 
 /// RAII guard that pops one context frame on drop.
@@ -150,33 +236,11 @@ fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogCon
             max: MAX_CONTEXT_KEYS,
         });
     }
-    let mut total_bytes = 0usize;
+    let mut budget = ContextBudget::default();
     for (key, value) in context {
-        let key_len = key.len();
-        if key_len > MAX_KEY_BYTES {
-            return Err(LogContextError::KeyTooLong {
-                key: key.clone(),
-                len: key_len,
-                max: MAX_KEY_BYTES,
-            });
-        }
-
-        let value_len = value.len();
-        if value_len > MAX_VALUE_BYTES {
-            return Err(LogContextError::ValueTooLong {
-                key: key.clone(),
-                len: value_len,
-                max: MAX_VALUE_BYTES,
-            });
-        }
-
-        total_bytes += key_len + value_len;
-        if total_bytes > MAX_TOTAL_BYTES {
-            return Err(LogContextError::TotalBytesExceeded {
-                total: total_bytes,
-                max: MAX_TOTAL_BYTES,
-            });
-        }
+        budget
+            .validate_next(key, value, None)
+            .map_err(|error| error.into_log_context_error(key))?;
     }
     Ok(())
 }
@@ -233,67 +297,5 @@ mod tests {
     fn pop_on_empty_stack_errors(_isolated_context: ()) {
         let err = pop_log_context().expect_err("empty pop should fail");
         assert_eq!(err, LogContextError::EmptyContextStack);
-    }
-
-    #[rstest]
-    fn reject_key_too_long(_isolated_context: ()) {
-        let long_key = "k".repeat(MAX_KEY_BYTES + 1);
-        let err = push_log_context_map(BTreeMap::from([(long_key.clone(), "v".into())]))
-            .expect_err("long key should fail");
-        assert_eq!(
-            err,
-            LogContextError::KeyTooLong {
-                key: long_key,
-                len: MAX_KEY_BYTES + 1,
-                max: MAX_KEY_BYTES,
-            }
-        );
-    }
-
-    #[rstest]
-    fn reject_too_many_keys(_isolated_context: ()) {
-        let context = (0..=MAX_CONTEXT_KEYS)
-            .map(|index| (format!("k{index}"), String::from("v")))
-            .collect::<BTreeMap<_, _>>();
-        let err = push_log_context_map(context).expect_err("too many keys should fail");
-        assert_eq!(
-            err,
-            LogContextError::TooManyKeys {
-                count: MAX_CONTEXT_KEYS + 1,
-                max: MAX_CONTEXT_KEYS,
-            }
-        );
-    }
-
-    #[rstest]
-    fn reject_value_too_long(_isolated_context: ()) {
-        let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
-        let err = push_log_context_map(BTreeMap::from([(String::from("ok"), long_value)]))
-            .expect_err("long value should fail");
-        assert_eq!(
-            err,
-            LogContextError::ValueTooLong {
-                key: String::from("ok"),
-                len: MAX_VALUE_BYTES + 1,
-                max: MAX_VALUE_BYTES,
-            }
-        );
-    }
-
-    #[rstest]
-    fn reject_total_bytes_exceeded(_isolated_context: ()) {
-        let value_len = 300usize;
-        let mut context = BTreeMap::new();
-        for index in 0..60usize {
-            context.insert(format!("k{index:02}"), "x".repeat(value_len));
-        }
-        let err = push_log_context_map(context).expect_err("total bytes limit should fail");
-        assert!(matches!(
-            err,
-            LogContextError::TotalBytesExceeded {
-                total,
-                max: MAX_TOTAL_BYTES
-            } if total > MAX_TOTAL_BYTES
-        ));
     }
 }

@@ -13,15 +13,16 @@ if typ.TYPE_CHECKING:
 
 @contextmanager
 def log_context(**fields: object) -> cabc.Iterator[None]:
-    """Temporarily attach structured key-values to log records on this thread.
+    """Temporarily attach structured key-values to ``FemtoLogger`` records.
 
     Parameters
     ----------
     **fields : object
-        Arbitrary key-value pairs to attach as structured metadata to all log
-        records emitted on the current thread while this context is active.
-        Keys must be valid Python identifiers. Values must be `str`, `int`,
-        `float`, `bool`, or `None`. Duplicate keys override outer context values.
+        Arbitrary key-value pairs to attach as structured metadata to records
+        emitted through ``FemtoLogger`` methods, including loggers returned by
+        ``get_logger()``, on the calling thread. Keys must be strings no
+        longer than 64 UTF-8 bytes. Values must be `str`, `int`, `float`,
+        `bool`, or `None`. Duplicate keys override outer context values.
 
     Yields
     ------
@@ -31,13 +32,19 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
 
     Notes
     -----
-    Context values are merged on the producer thread before queueing. Inline
-    structured fields emitted by Rust macros override outer context keys.
+    Context values are merged on the producer thread before queueing. The
+    ``extra`` mapping accepted by ``FemtoLogger.log()``, ``debug()``,
+    ``info()``, ``warning()``, ``error()``, and ``critical()`` overrides
+    scoped context keys with the same name. Rust
+    ``tracing``-bridge events use span fields instead of this scoped context.
+    The Rust ``_push_log_context`` primitive raises ``ValueError`` when a
+    key is invalid or the context exceeds a limit, and ``TypeError`` when a
+    value has an unsupported type.
 
-    The Rust ``_push_log_context`` primitive raises ``ValueError`` when a key
-    is invalid (empty, too long, or not a valid identifier) and ``TypeError``
-    when a value has an unsupported type (not ``str``/``int``/``float``/
-    ``bool``/``None``).
+    The context stack is thread-local, not task-local. Holding this context
+    across an ``await`` in a single-threaded event loop can share fields with
+    other in-flight tasks. Async callers should pass per-call fields through
+    ``extra`` instead.
 
     """
     _push_log_context(fields)

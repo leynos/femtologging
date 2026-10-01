@@ -195,8 +195,8 @@ impl FemtoHTTPHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush())
     }
 
     /// Close the handler, waiting for the worker at most ``write_timeout``.

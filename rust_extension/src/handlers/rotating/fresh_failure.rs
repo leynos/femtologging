@@ -74,16 +74,23 @@ impl FreshFailureState {
                 return None;
             }
         }
-        let previous = self
-            .remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                if current == 0 {
-                    None
-                } else {
-                    Some(current - 1)
-                }
-            })
-            .ok()?;
+        // Keep the decrement compatible with Rust 1.85: `try_update`, the
+        // replacement for `fetch_update`, stabilized later.
+        let mut previous = self.remaining.load(Ordering::SeqCst);
+        loop {
+            if previous == 0 {
+                return None;
+            }
+            match self.remaining.compare_exchange_weak(
+                previous,
+                previous - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(current) => previous = current,
+            }
+        }
 
         // Recover from poisoning: see `set_forced`.
         let mut guard = self
