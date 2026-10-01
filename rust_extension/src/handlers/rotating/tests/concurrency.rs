@@ -62,10 +62,12 @@ impl RotationStrategy<BufWriter<File>> for ObservedStrategy {
                 thread::sleep(delay);
             }
             self.inner.rotate(writer)?;
-            let mut rotations = self
-                .rotations
-                .lock()
-                .map_err(|_| io::Error::other("rotation observer lock poisoned"))?;
+            // Rotation has already succeeded; observer bookkeeping must not
+            // turn that success into an error when its test-only lock is poisoned.
+            let mut rotations = match self.rotations.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             rotations.push(thread::current().id());
             Ok(true)
         } else {

@@ -21,7 +21,7 @@ use thiserror::Error;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
-use pyo3::types::{PyDict, PyInt};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt};
 #[cfg(feature = "python")]
 use pyo3::{
     PyAny,
@@ -296,13 +296,13 @@ fn extract_python_context_value(raw_value: &Bound<'_, PyAny>) -> PyResult<String
     if raw_value.is_none() {
         return python_context_value_string(raw_value);
     }
-    if raw_value.extract::<bool>().is_ok() {
+    if raw_value.is_exact_instance_of::<PyBool>() {
         return python_context_value_string(raw_value);
     }
-    if raw_value.is_instance_of::<PyInt>() {
+    if raw_value.is_exact_instance_of::<PyInt>() {
         return python_context_value_string(raw_value);
     }
-    if raw_value.extract::<f64>().is_ok() {
+    if raw_value.is_exact_instance_of::<PyFloat>() {
         return python_context_value_string(raw_value);
     }
     raw_value
