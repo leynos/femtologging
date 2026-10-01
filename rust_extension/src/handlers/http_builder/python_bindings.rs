@@ -197,6 +197,16 @@ impl HTTPHandlerBuilder {
         slf
     }
 
+    #[pyo3(name = "with_filters")]
+    fn py_with_filters<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        filter_ids: Vec<String>,
+    ) -> PyRefMut<'py, Self> {
+        let updated = slf.clone().with_filters(filter_ids);
+        *slf = updated;
+        slf
+    }
+
     #[pyo3(name = "as_dict")]
     fn py_as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);

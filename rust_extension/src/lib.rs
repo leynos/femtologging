@@ -71,7 +71,7 @@ mod traceback_frames_graceful_degradation_tests;
 mod traceback_frames_tests;
 
 // Re-exports: configuration builders
-pub use config::{ConfigBuilder, FormatterBuilder, LoggerConfigBuilder};
+pub use config::{ConfigBuilder, FormatterBuilder, HandlerBuilder, LoggerConfigBuilder};
 #[cfg(feature = "python")]
 pub use config::{LoggerMutationBuilder, RuntimeConfigBuilder};
 

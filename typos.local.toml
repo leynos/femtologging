@@ -13,7 +13,7 @@ accepted = ["OT", "astroid", "mis", "yse"]
 [patterns]
 # Inline code spans quote identifiers and deliberate spelling examples;
 # they are code, not prose, so the en-GB-oxendict rules do not apply.
-ignore = ["rust-analyzer", "`[^`\\n]+`"]
+ignore = ["`[^`\\n]+`", "rust-analyzer"]
 
 [files]
 exclude = ["rust_extension/target"]

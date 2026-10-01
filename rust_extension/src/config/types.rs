@@ -1,6 +1,6 @@
 //! Type definitions and builder structs for femtologging configuration.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
 use thiserror::Error;
 
@@ -17,83 +17,12 @@ pub(crate) fn normalize_vec(ids: Vec<String>) -> Vec<String> {
 
 use crate::{
     filters::{FilterBuildError, FilterBuilder},
-    handler::FemtoHandlerTrait,
-    handlers::{
-        FileHandlerBuilder, HandlerBuildError, HandlerBuilderTrait, RotatingFileHandlerBuilder,
-        SocketHandlerBuilder, StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
-    },
+    handlers::HandlerBuildError,
     level::FemtoLevel,
 };
 
-/// Concrete handler builder variants.
-#[derive(Clone, Debug)]
-pub enum HandlerBuilder {
-    /// Build a [`FemtoStreamHandler`].
-    Stream(StreamHandlerBuilder),
-    /// Build a [`FemtoFileHandler`].
-    File(FileHandlerBuilder),
-    /// Build a [`FemtoRotatingFileHandler`].
-    Rotating(RotatingFileHandlerBuilder),
-    /// Build a [`FemtoTimedRotatingFileHandler`].
-    TimedRotating(TimedRotatingFileHandlerBuilder),
-    /// Build a [`FemtoSocketHandler`].
-    Socket(SocketHandlerBuilder),
-}
-
-impl HandlerBuilder {
-    #[cfg_attr(
-        not(feature = "python"),
-        expect(dead_code, reason = "unused without python feature")
-    )]
-    pub(crate) fn build(&self) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
-        match self {
-            Self::Stream(b) => <StreamHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-            Self::File(b) => <FileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-            Self::Rotating(b) => {
-                <RotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                    .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
-            }
-            Self::TimedRotating(b) => {
-                <TimedRotatingFileHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                    .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>)
-            }
-            Self::Socket(b) => <SocketHandlerBuilder as HandlerBuilderTrait>::build_inner(b)
-                .map(|h| Arc::new(h) as Arc<dyn FemtoHandlerTrait>),
-        }
-    }
-}
-
-impl From<StreamHandlerBuilder> for HandlerBuilder {
-    fn from(value: StreamHandlerBuilder) -> Self {
-        Self::Stream(value)
-    }
-}
-
-impl From<FileHandlerBuilder> for HandlerBuilder {
-    fn from(value: FileHandlerBuilder) -> Self {
-        Self::File(value)
-    }
-}
-
-impl From<RotatingFileHandlerBuilder> for HandlerBuilder {
-    fn from(value: RotatingFileHandlerBuilder) -> Self {
-        Self::Rotating(value)
-    }
-}
-
-impl From<TimedRotatingFileHandlerBuilder> for HandlerBuilder {
-    fn from(value: TimedRotatingFileHandlerBuilder) -> Self {
-        Self::TimedRotating(value)
-    }
-}
-
-impl From<SocketHandlerBuilder> for HandlerBuilder {
-    fn from(value: SocketHandlerBuilder) -> Self {
-        Self::Socket(value)
-    }
-}
+use super::FormatterBuilder;
+pub use super::handler_builder::HandlerBuilder;
 
 /// Errors that may occur while building a configuration.
 #[derive(Debug, Error)]
@@ -141,43 +70,6 @@ pub enum ConfigError {
     /// The runtime mutation request contains conflicting collection updates.
     #[error("invalid runtime mutation: {0}")]
     InvalidMutation(String),
-}
-
-/// Builder for formatter definitions.
-#[cfg_attr(feature = "python", pyclass(from_py_object))]
-#[derive(Clone, Debug, Default)]
-pub struct FormatterBuilder {
-    format: Option<String>,
-    datefmt: Option<String>,
-}
-
-impl FormatterBuilder {
-    /// Create a new `FormatterBuilder`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the format string.
-    pub fn with_format(mut self, format: impl Into<String>) -> Self {
-        self.format = Some(format.into());
-        self
-    }
-
-    /// Set the date format string.
-    pub fn with_datefmt(mut self, datefmt: impl Into<String>) -> Self {
-        self.datefmt = Some(datefmt.into());
-        self
-    }
-
-    /// Return the configured format string.
-    pub fn format_string(&self) -> Option<&str> {
-        self.format.as_deref()
-    }
-
-    /// Return the configured date format string.
-    pub fn datefmt_string(&self) -> Option<&str> {
-        self.datefmt.as_deref()
-    }
 }
 
 /// Builder for logger configuration.
@@ -354,6 +246,12 @@ impl ConfigBuilder {
     /// Retrieve configured handler builders.
     pub fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
         &self.handlers
+    }
+
+    /// Retrieve configured formatter builders.
+    #[cfg(feature = "python")]
+    pub(crate) fn formatter_builders(&self) -> &BTreeMap<String, FormatterBuilder> {
+        &self.formatters
     }
 
     /// Retrieve configured filter builders.

@@ -13,6 +13,7 @@ impl AsPyDict for HandlerBuilder {
             Self::Rotating(b) => b.as_pydict(py),
             Self::TimedRotating(b) => b.as_pydict(py),
             Self::Socket(b) => b.as_pydict(py),
+            Self::Http(b) => b.as_pydict(py),
         }
     }
 }

@@ -48,6 +48,7 @@ type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 #[derive(Clone, Default)]
 pub(crate) struct RuntimeStateSnapshot {
     pub(crate) handler_registry: SharedHandlers,
+    pub(crate) handler_filter_ids: BTreeMap<String, Vec<String>>,
     pub(crate) filter_registry: SharedFilters,
     pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
 }
@@ -191,12 +192,14 @@ pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
+    handler_filter_ids: BTreeMap<String, Vec<String>>,
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
 ) {
     let mut mgr = MANAGER.write();
     mgr.runtime = RuntimeStateSnapshot {
         handler_registry,
+        handler_filter_ids,
         filter_registry,
         logger_states,
     };

@@ -27,3 +27,13 @@ Feature: Filters
     When I add logger "core" with filter "missing"
     And I set root logger with level "INFO"
     Then building the configuration fails with key error containing "missing"
+
+  Scenario: handler filter runs for every logger routed to the root handler
+    Given a ConfigBuilder
+    And a callback filter "context" that records logger names
+    When I add stream handler "console" with filter "context"
+    And I set root logger with level "INFO" and handler "console"
+    Then the configuration is built and initialized
+    And logger "episodic.api.authorization" emits "INFO"
+    And logger "episodic.worker" emits "INFO"
+    And the callback filter observed "episodic.api.authorization" and "episodic.worker"

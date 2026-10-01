@@ -135,10 +135,18 @@ The chosen direction includes:
 
 ### Non-goals
 
-- Handler-level stdlib filter parity in this decision.
 - Full stdlib `LogRecord` object parity across every field and internal
   implementation detail.
 - Cross-thread propagation of arbitrary Python objects embedded in records.
+
+## Accepted follow-on: handler filters
+
+Handler filters are evaluated on the producer thread immediately before a
+record is queued to that handler. This applies to both direct dispatch and
+ancestor propagation, so one filter on a shared root handler can enrich records
+from every logger that routes to it. Handler worker threads remain Python-free:
+the producer persists accepted callback enrichment into Rust-owned metadata
+before enqueueing the record.
 
 ## Migration plan
 

@@ -9,7 +9,6 @@ use pyo3::Python;
 
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
-use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{
@@ -22,7 +21,7 @@ impl FemtoLogger {
     /// Create a logger with an explicit parent name.
     pub fn with_parent(name: String, parent: Option<String>) -> Self {
         let formatter = SharedFormatter::new(DefaultFormatter);
-        let handlers: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoHandlerTrait>>>> =
+        let handlers: std::sync::Arc<RwLock<Vec<super::HandlerAttachment>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
         let filters: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoFilter>>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));

@@ -53,6 +53,31 @@ impl RotatingFileHandlerBuilder {
         self
     }
 
+    /// Attach filters by identifier.
+    pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.common.set_filter_ids(filter_ids);
+        self
+    }
+
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &std::collections::BTreeMap<String, crate::formatter::SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        self.common.resolve_formatter(formatters)
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        self.common.filter_ids()
+    }
+
     /// Attach a Python formatter object from PyO3 bindings.
     #[cfg(feature = "python")]
     pub(super) fn with_formatter_from_py(

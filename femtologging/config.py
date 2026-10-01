@@ -1,9 +1,9 @@
 """Configuration via logging-style dictionaries.
 
 This module implements :func:`dictConfig`, a restricted variant of
-``logging.config.dictConfig``. Handler ``level``, handler ``filters``,
-and incremental configuration are unsupported. Top-level ``filters``
-and logger-level ``filters`` lists are supported; each filter must
+``logging.config.dictConfig``. Handler ``level`` and incremental
+configuration are unsupported. Top-level, handler, and logger-level
+``filters`` lists are supported; each filter must
 contain exactly one of ``level`` or ``name``.
 
 Example:
@@ -165,14 +165,11 @@ def _validate_unsupported_features(data: cabc.Mapping[str, object]) -> None:
     if "level" in data:
         msg = "handler level is not supported"
         raise ValueError(msg)
-    if "filters" in data:
-        msg = "handler filters are not supported"
-        raise ValueError(msg)
 
 
 def _validate_handler_config(
     hid: str, data: cabc.Mapping[str, object]
-) -> tuple[str, list[object], dict[str, object], object | None]:
+) -> tuple[str, list[object], dict[str, object], object | None, list[str] | None]:
     """Validate handler ``data`` and return construction parameters."""
     _validate_handler_keys(hid, data)
     cls_name = _validate_handler_class(hid, data.get("class"))
@@ -180,7 +177,10 @@ def _validate_handler_config(
     ctx = f"handler {hid!r}"
     args = _coerce_args(data.get("args"), ctx)
     kwargs = _coerce_kwargs(data.get("kwargs"), ctx)
-    return cls_name, args, kwargs, data.get("formatter")
+    filters = None
+    if "filters" in data:
+        filters = _validate_string_list(data["filters"], "filters", owner="handler")
+    return cls_name, args, kwargs, data.get("formatter"), filters
 
 
 def _create_handler_instance(
@@ -208,24 +208,28 @@ def _create_handler_instance(
 
 def _build_handler_from_dict(hid: str, data: cabc.Mapping[str, object]) -> object:
     """Create a handler builder from ``dictConfig`` handler data."""
-    cls_name, args, kwargs, fmt = _validate_handler_config(hid, data)
+    cls_name, args, kwargs, fmt, filters = _validate_handler_config(hid, data)
     builder = typ.cast("typ.Any", _create_handler_instance(hid, cls_name, args, kwargs))
     if fmt is not None:
         if not isinstance(fmt, str):
             msg = "formatter must be a string"
             raise TypeError(msg)
         builder = builder.with_formatter(fmt)
+    if filters is not None:
+        builder = builder.with_filters(filters)
     return builder
 
 
-def _validate_string_list(value: object, label: str) -> list[str]:
+def _validate_string_list(
+    value: object, label: str, *, owner: str = "logger"
+) -> list[str]:
     """Validate that ``value`` is a list or tuple of strings."""
     if not isinstance(value, (list, tuple)):
-        msg = f"logger {label} must be a list or tuple of strings"
+        msg = f"{owner} {label} must be a list or tuple of strings"
         raise TypeError(msg)
     seq = typ.cast("cabc.Sequence[object]", value)
     if not all(isinstance(item, str) for item in seq):
-        msg = f"logger {label} must be a list or tuple of strings"
+        msg = f"{owner} {label} must be a list or tuple of strings"
         raise TypeError(msg)
     return list(typ.cast("cabc.Sequence[str]", seq))
 
@@ -328,7 +332,7 @@ def dictConfig(config: cabc.Mapping[str, object]) -> None:
     ----------
     config : cabc.Mapping[str, object]
         A dictionary compatible with :mod:`logging.config`. Unsupported
-        features (handler ``level``, handler ``filters``) raise ``ValueError``.
+        features (handler ``level``) raise ``ValueError``.
 
     Examples
     --------

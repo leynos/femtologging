@@ -9,8 +9,11 @@ import pytest
 
 from femtologging import (
     FileHandlerBuilder,
+    HandlerConfigError,
+    HTTPHandlerBuilder,
     OverflowPolicy,
     RotatingFileHandlerBuilder,
+    SocketHandlerBuilder,
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
 )
@@ -319,3 +322,46 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
     assert "expected a string identifier or callable" in error_message, (
         "formatter error must mention expected formatter types"
     )
+
+
+class _FilterableHandlerBuilder(typ.Protocol):
+    """Describe the shared filter builder interface under test."""
+
+    def with_filters(self, filters: list[str]) -> typ.Self: ...
+
+    def as_dict(self) -> dict[str, object]: ...
+
+
+@pytest.mark.parametrize(
+    "builder_factory",
+    [
+        lambda path: StreamHandlerBuilder.stderr(),
+        lambda path: FileHandlerBuilder(str(path / "filters.log")),
+        lambda path: RotatingFileHandlerBuilder(str(path / "filters-rotating.log")),
+        lambda path: TimedRotatingFileHandlerBuilder(str(path / "filters-timed.log")),
+        lambda path: SocketHandlerBuilder(),
+        lambda path: HTTPHandlerBuilder(),
+    ],
+    ids=["stream", "file", "rotating", "timed-rotating", "socket", "http"],
+)
+def test_handler_builders_accept_filters(
+    tmp_path: Path,
+    builder_factory: cabc.Callable[[Path], _FilterableHandlerBuilder],
+) -> None:
+    """Handler builders preserve a deduplicated configured filter chain."""
+    builder = builder_factory(tmp_path).with_filters(["context", "context", "audit"])
+
+    assert builder.as_dict()["filters"] == ["context", "audit"], (
+        "handler builders must preserve a deduplicated filter chain"
+    )
+
+
+def test_standalone_handler_build_rejects_unresolved_filter_ids() -> None:
+    """Standalone handler construction cannot silently discard filter IDs."""
+    builder = StreamHandlerBuilder.stderr().with_filters(["context"])
+
+    with pytest.raises(
+        HandlerConfigError,
+        match="handler filter IDs must be resolved",
+    ):
+        builder.build()

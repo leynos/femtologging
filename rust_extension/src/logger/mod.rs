@@ -11,18 +11,18 @@ mod convenience_methods;
 mod producer;
 mod py_handler;
 mod python_helpers;
+mod queue;
 #[cfg(feature = "python")]
 mod runtime_mutation;
 mod worker;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
-use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
@@ -39,6 +39,8 @@ use crate::sync::{JoinHandle, Mutex, RwLock, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use py_handler::{PyHandler, validate_handler};
+pub use queue::QueuedRecord;
+pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot};
 // Re-exported for the parameterised tests in `logger_tests_python.rs`;
 // production code reaches it through `capture_exception_payload`.
 #[cfg(feature = "python")]
@@ -48,34 +50,6 @@ pub(crate) use python_helpers::should_capture_exc_info;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
-
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-}
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -88,7 +62,7 @@ pub struct FemtoLogger {
     formatter: SharedFormatter,
     level: AtomicU8,
     propagate: AtomicBool,
-    handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    handlers: Arc<RwLock<Vec<HandlerAttachment>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
@@ -240,8 +214,10 @@ impl FemtoLogger {
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::attach(|py| {
             let mut handlers = self.handlers.write();
-            let matches_handler = |h: &Arc<dyn FemtoHandlerTrait>| {
-                h.as_any()
+            let matches_handler = |attachment: &HandlerAttachment| {
+                attachment
+                    .handler
+                    .as_any()
                     .downcast_ref::<PyHandler>()
                     .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
             };
@@ -302,7 +278,7 @@ impl FemtoLogger {
         self.handlers
             .read()
             .iter()
-            .map(|h| Arc::as_ptr(h) as *const () as usize)
+            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
             .collect()
     }
 }
@@ -310,7 +286,19 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
-        self.handlers.write().push(handler);
+        self.handlers.write().push(HandlerAttachment::new(handler));
+    }
+
+    /// Attach a handler with filters evaluated on the producer thread.
+    #[cfg(feature = "python")]
+    pub(crate) fn add_handler_with_filters(
+        &self,
+        handler: Arc<dyn FemtoHandlerTrait>,
+        filters: Vec<Arc<dyn FemtoFilter>>,
+    ) {
+        self.handlers
+            .write()
+            .push(HandlerAttachment::with_filters(handler, filters));
     }
 
     /// Attach a filter to this logger.
@@ -321,7 +309,10 @@ impl FemtoLogger {
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
-        if let Some(pos) = handlers.iter().position(|h| Arc::ptr_eq(h, handler)) {
+        if let Some(pos) = handlers
+            .iter()
+            .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
+        {
             handlers.remove(pos);
             true
         } else {
@@ -354,7 +345,11 @@ impl FemtoLogger {
 
     #[cfg(test)]
     pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
-        self.handlers.read().clone()
+        self.handlers
+            .read()
+            .iter()
+            .map(|attachment| attachment.handler.clone())
+            .collect()
     }
 
     /// Clone the internal sender for use in tests.

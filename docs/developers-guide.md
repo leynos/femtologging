@@ -253,6 +253,15 @@ therefore returns without changing the live logger state. `dictConfig` and
 `fileConfig` use this same builder path, so their validation and transaction
 boundary are consistent with direct builder use.
 
+At runtime, each handler is paired with its resolved filter chain in a
+`HandlerAttachment`. The logger evaluates that chain on the producer thread
+before enqueueing the record, including when a descendant record propagates to
+an ancestor handler. For each accepted handler, a `HandlerRecordSnapshot`
+preserves the record state after that handler's enrichment, preventing one
+handler's filter from leaking fields into another handler's output. Worker
+threads perform queued handler delivery; filter callbacks remain on the
+producer thread.
+
 ## Shared Rust test helpers and fixtures
 
 Crate unit-test support is owned by `rust_extension/src/test_utils/` and is

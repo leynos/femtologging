@@ -15,13 +15,14 @@ The Rust configuration will expose a `ConfigBuilder` struct, allowing for a
 programmatic and type-safe setup of the logging system.
 
 ```rust
-// In femtologging::config::ConfigBuilder
+// Public concrete enum accepted by `ConfigBuilder::with_handler`.
 pub enum HandlerBuilder {
     Stream(StreamHandlerBuilder),
     File(FileHandlerBuilder),
     Rotating(RotatingFileHandlerBuilder),
     TimedRotating(TimedRotatingFileHandlerBuilder),
     Socket(SocketHandlerBuilder),
+    Http(HTTPHandlerBuilder),
 }
 
 pub enum FormatterId {
@@ -314,10 +315,14 @@ new Rust builder variant requires updating this extraction logic.
 
 Filters run only after the logger has accepted the record based on its level.
 Records failing the logger's level check are dropped before any filter runs, so
-filters merely further narrow which records proceed to handlers. Reconfiguring
-a logger replaces its filter set: `apply_logger_config` clears any existing
-filters only after all filter IDs validate, replacing them with the newly
-specified set.
+filters merely further narrow which records proceed to handlers. A logger
+filter runs only on the logger receiving the logging call: it does not cascade
+to descendants or records propagated from descendants, matching CPython. Attach
+a filter to a handler with `with_filters(...)` for application-wide enrichment.
+Handler filters run on the producer thread for every record routed to that
+handler, including propagated records. Reconfiguring a logger replaces its
+filter set: `apply_logger_config` clears any existing filters only after all
+filter IDs validate, replacing them with the newly specified set.
 
 ADR 003 defines the accepted direction for Python standard library parity:
 logger and root filters will also support Python callback filters
@@ -386,6 +391,7 @@ class ConfigBuilder:
             "TimedRotatingFileHandlerBuilder",
             "StreamHandlerBuilder",
             "SocketHandlerBuilder",
+            "HTTPHandlerBuilder",
         ],
     ) -> "ConfigBuilder": ...
     def with_logger(
@@ -481,24 +487,28 @@ class SocketHandlerBuilder(HandlerBuilder):
     def with_backoff(self, config: BackoffConfig) -> "SocketHandlerBuilder": ...
 
 
-# ... Other handler builders (RotatingFileHandlerBuilder, SocketHandlerBuilder etc.)
+class HTTPHandlerBuilder(HandlerBuilder):
+    def __init__(self) -> None: ...
+    def with_endpoint(self, url: str, method: str = "POST") -> "HTTPHandlerBuilder": ...
+    def with_filters(self, filter_ids: List[str]) -> "HTTPHandlerBuilder": ...
 ```
 
 ### 1.3. Implemented handler builders
 
-The initial implementation provides `FileHandlerBuilder`,
-`RotatingFileHandlerBuilder`, `TimedRotatingFileHandlerBuilder`,
-`StreamHandlerBuilder`, and `SocketHandlerBuilder` as thin wrappers over the
-existing handler types. `FileHandlerBuilder` supports capacity and flush
-interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and `backup_count`
-rotation thresholds, and `TimedRotatingFileHandlerBuilder` layers on `when`,
-`interval`, `backup_count`, `utc`, and `at_time`. Rotation is opt-in for the
-size-based builder: `max_bytes` and `backup_count` must be supplied together.
-When both thresholds are omitted, the handler stores `(0, 0)`, which disables
-rotation entirely. A mismatched pair, where one value is zero and the other is
-non-zero, raises a `ValueError` through the validation path in
-`rust_extension/src/handlers/rotating/python.rs`, so invalid rollover settings
-fail fast. Invalid integer bounds are rejected by the typed
+The implementation provides `FileHandlerBuilder`, `RotatingFileHandlerBuilder`,
+`TimedRotatingFileHandlerBuilder`, `StreamHandlerBuilder`,
+`SocketHandlerBuilder`, and `HTTPHandlerBuilder` over the existing handler
+types. `HTTPHandlerBuilder` is available from the Rust API; `ConfigBuilder`
+stores it in its public `Http` variant. `FileHandlerBuilder` supports capacity
+and flush interval, `RotatingFileHandlerBuilder` layers on `max_bytes` and
+`backup_count` rotation thresholds, and `TimedRotatingFileHandlerBuilder`
+layers on `when`, `interval`, `backup_count`, `utc`, and `at_time`. Rotation is
+opt-in for the size-based builder: `max_bytes` and `backup_count` must be
+supplied together. When both thresholds are omitted, the handler stores
+`(0, 0)`, which disables rotation entirely. A mismatched pair, where one value
+is zero and the other is non-zero, raises a `ValueError` through the validation
+path in `rust_extension/src/handlers/rotating/python.rs`, so invalid rollover
+settings fail fast. Invalid integer bounds are rejected by the typed
 conversion-and-validation path before the builder is created, rather than
 relying on a blanket PyO3 `OverflowError` for all bad inputs. The timed
 rotation builder validates its inputs eagerly: unsupported `when` values, zero
@@ -527,11 +537,9 @@ reset-after, deadline) tune the reconnection strategy. The `as_dict()` helper
 surfaced through PyO3 keeps snapshot tests deterministic and documents the
 resolved configuration.
 
-Formatter support for `RotatingFileHandlerBuilder` is intentionally narrow.
-Only the default formatter can be selected today; providing a custom identifier
-causes `build()` to return `HandlerConfigError`. Once the rotation pipeline can
-serialize custom formatters, support for custom formatters will be added to the
-builder.
+`RotatingFileHandlerBuilder` accepts formatter callables, a direct
+`FormatterBuilder`, or a named formatter registered through `ConfigBuilder`.
+Named formatter IDs resolve while `build_and_init()` constructs the handler.
 
 #### Overflow policy options
 
@@ -591,7 +599,8 @@ classDiagram
             RotatingFileHandlerBuilder|
             TimedRotatingFileHandlerBuilder|
             StreamHandlerBuilder|
-            SocketHandlerBuilder)
+            SocketHandlerBuilder|
+            HTTPHandlerBuilder)
         +with_logger(name: str, builder: LoggerConfigBuilder)
         +with_root_logger(builder: LoggerConfigBuilder)
         +build_and_init()
@@ -645,6 +654,10 @@ classDiagram
             fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
         )
     }
+    class HTTPHandlerBuilder {
+        +with_endpoint(url: str, method: str)
+        +with_filters(filter_ids: list[str])
+    }
     class FilterBuilder {
         +build()
     }
@@ -668,6 +681,7 @@ classDiagram
     ConfigBuilder --> FileHandlerBuilder
     ConfigBuilder --> StreamHandlerBuilder
     ConfigBuilder --> SocketHandlerBuilder
+    ConfigBuilder --> HTTPHandlerBuilder
     ConfigBuilder --> FilterBuilder
     ConfigBuilder --> LoggerConfigBuilder
     FileHandlerBuilder *-- FileLikeBuilderState
@@ -678,6 +692,7 @@ classDiagram
     LoggerConfigBuilder --> FileHandlerBuilder
     LoggerConfigBuilder --> StreamHandlerBuilder
     LoggerConfigBuilder --> SocketHandlerBuilder
+    LoggerConfigBuilder --> HTTPHandlerBuilder
     FileHandlerBuilder --> FormatterBuilder
     StreamHandlerBuilder --> FormatterBuilder
     SocketHandlerBuilder --> FormatterBuilder
@@ -844,8 +859,9 @@ components in a fixed order to honour dependencies:
      accepted targets.
    - Unsupported handler classes in any handler class mapping raise a
      `ValueError`.
-   - Handler `level` and `filters` settings are currently unsupported and
-     produce `ValueError`.
+   - Handler `level` settings are unsupported and produce `ValueError`.
+     Handler `filters` values are string lists resolved against the top-level
+     filter registry.
 6. **Loggers** are processed next. Each definition yields a
    `LoggerConfigBuilder` with optional `level`, `handlers`, `filters`, and
    `propagate` settings. Logger and root `filters` values are lists of filter
@@ -1197,8 +1213,9 @@ sequenceDiagram
 **Figure 6.1:** Log record propagation through a three-level logger hierarchy.
 When a child logger emits a record with `propagate=true`, the record first
 passes through any local handlers, then propagates to the parent logger. Each
-ancestor applies its own filters and handlers before forwarding the record
-further up the chain until the root logger is reached.
+ancestor applies its own handler filters and handlers before forwarding the
+record further up the chain until the root logger is reached. Logger filters do
+not run during propagation, matching CPython.
 
 ## 7. Testing and Benchmarking Coverage
 
