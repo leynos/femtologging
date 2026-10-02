@@ -15,10 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '0'
-      # Pinned Makefile parser used by the lint contract tests. The nightly
-      # toolchain and Polonius flag are required to build Makeutil.
-      MAKEUTIL_REVISION: '29fc5a1634ffbaa18a773eed9dff1b2838a45d9c'
-      MAKEUTIL_TOOLCHAIN: 'nightly-2026-05-28'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -32,15 +28,22 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
-      - name: Install Makefile parser
+      - name: Install makeutil
+        id: makeutil
+        # A digest-verified prebuilt release rather than a from-source build.
+        uses: leynos/shared-actions/.github/actions/install-makeutil@d57cb19b82281236088108f2ffb7e13bc00fc2f8
+
+      - name: Verify makeutil
+        # Prove the installed binary runs, matches the release the action
+        # reports, and reads this repository's Makefile completely.
+        shell: bash
+        env:
+          INSTALLED_VERSION: ${{ steps.makeutil.outputs.version }}
         run: |
-          rustup toolchain install "${MAKEUTIL_TOOLCHAIN}" --profile minimal
-          RUSTFLAGS="-Zpolonius=next" cargo +"${MAKEUTIL_TOOLCHAIN}" install \
-            --git https://github.com/leynos/makeutil \
-            --rev "${MAKEUTIL_REVISION}" \
-            --locked \
-            --force \
-            makeutil
+          set -euo pipefail
+          test "$(makeutil --version)" = "makeutil ${INSTALLED_VERSION}"
+          makeutil parse Makefile | python3 -c \
+            'import json, sys; assert json.load(sys.stdin)["parse"]["status"] == "complete"'
       - name: Set up virtualenv
         run: |
           python -m venv .venv

@@ -222,3 +222,24 @@ toolchain pins are now Ruff/`ty`, Pylint, `df12-python-lints`, and Skylos.
 module the older PyPy 3.11 could not parse pass with no messages, so fifteen
 modules were never linted. A parse failure now fails the lint, and
 `tests/test_lint_tier_contract.py` holds both decisions.
+
+## Addendum: prebuilt makeutil (2026-09-30)
+
+The decision text above records `makeutil` as built from source at a pinned
+revision with a nightly Rust toolchain and Polonius, and the Consequences and
+Known risks record that as a local requirement. That no longer holds. The
+pinned commit was on no `makeutil` branch, so it could be garbage-collected,
+and the build cost a nightly compile on every cold run.
+
+Every full-suite CI job (`ci.yml` `build-test` and `heavy-tests.yml` `heavy`)
+now installs a prebuilt release through the shared `install-makeutil` action,
+pinned by commit and taking its default version. The action checks a pinned
+digest and the release's own `.sha256` file and owns its cache. A
+`Verify makeutil` step follows it: the binary's version must equal the version
+the action reports, and `makeutil parse Makefile` must be a complete parse. The
+assertions live in `tests/makeutil_contract.py`.
+
+`make test` therefore needs only a `makeutil` binary on `PATH`: a contributor
+downloads the release binary for their architecture, verifies it against the
+matching `.sha256` file and installs it as `makeutil`. No Rust toolchain is
+required.
