@@ -326,8 +326,8 @@ mod tests {
 
                 let logger_a = get_logger(py, "bridge.flush.a")?;
                 let logger_b = get_logger(py, "bridge.flush.b")?;
-                logger_a.borrow(py).add_handler(handler.clone());
-                logger_b.borrow(py).add_handler(handler.clone());
+                logger_a.borrow(py).add_handler(handler.clone())?;
+                logger_b.borrow(py).add_handler(handler.clone())?;
 
                 flush_all_handlers(py);
 
@@ -364,7 +364,7 @@ mod tests {
                 };
 
                 for logger in &loggers {
-                    logger.borrow(py).add_handler(handler.clone());
+                    logger.borrow(py).add_handler(handler.clone())?;
                 }
 
                 flush_all_handlers(py);

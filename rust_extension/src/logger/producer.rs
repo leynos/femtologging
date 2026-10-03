@@ -3,19 +3,54 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
+use std::any::Any;
 use std::time::Duration;
 
 use log::warn;
 
 use crate::filters::FilterContext;
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
-use crate::sync::bounded;
+use crate::sync::{Sender, bounded};
 
-use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+
+#[cfg(feature = "tracing-compat")]
+fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static str {
+    let has_python = handlers.iter().any(|handler| handler.is_python_backed());
+    let has_native = handlers.iter().any(|handler| !handler.is_python_backed());
+    match (has_python, has_native) {
+        (true, true) => "python_and_native",
+        (true, false) => "python",
+        (false, true) => "native",
+        (false, false) => "none",
+    }
+}
+
+/// Handler used internally to acknowledge logger flush operations.
+struct FlushAckHandler {
+    ack: Sender<()>,
+}
+
+impl FlushAckHandler {
+    fn new(ack: Sender<()>) -> Self {
+        Self { ack }
+    }
+}
+
+impl FemtoHandlerTrait for FlushAckHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let _ = self.ack.send(());
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -164,12 +199,48 @@ impl FemtoLogger {
         });
     }
 
+    /// Capture context through the logger's provider and enqueue the snapshot.
+    ///
+    /// Context capture is attempted only when this exact handler snapshot
+    /// contains a Python-backed handler; capture failures use a separate
+    /// counter from queue-full drops.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
         };
         let handlers = self.handlers.read().clone();
-        if tx.try_send(QueuedRecord { record, handlers }).is_ok() {
+        #[cfg(feature = "tracing-compat")]
+        let handler_kind = handler_kind(&handlers);
+        #[cfg(feature = "python")]
+        let context = match self.capture_context_for_dispatch(
+            &handlers,
+            #[cfg(feature = "tracing-compat")]
+            handler_kind,
+        ) {
+            Ok(context) => context,
+            Err(err) => {
+                self.record_context_capture_failure(err);
+                return;
+            }
+        };
+        #[cfg(feature = "tracing-compat")]
+        let dispatch_started = std::time::Instant::now();
+        let dispatch_result = tx.try_send(QueuedRecord {
+            record,
+            handlers,
+            #[cfg(feature = "python")]
+            context,
+        });
+        let was_queued = dispatch_result.is_ok();
+        #[cfg(feature = "tracing-compat")]
+        tracing::trace!(
+            target: "femtologging::internal",
+            operation = "producer_queue_dispatch",
+            handler_kind,
+            dispatch_outcome = if was_queued { "queued" } else { "rejected" },
+            elapsed_us = dispatch_started.elapsed().as_micros(),
+        );
+        if was_queued {
             return;
         }
         self.dropped_records
@@ -178,6 +249,63 @@ impl FemtoLogger {
         self.drop_warner.warn_if_due(|count| {
             warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
         });
+    }
+
+    /// Capture context for the handler snapshot and trace the bounded outcome.
+    #[cfg(feature = "python")]
+    fn capture_context_for_dispatch(
+        &self,
+        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+        #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
+    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+        #[cfg(feature = "tracing-compat")]
+        let capture_started = std::time::Instant::now();
+        let context = self.capture_python_context(handlers);
+        #[cfg(feature = "tracing-compat")]
+        {
+            let capture_outcome = match &context {
+                Ok(Some(_)) => "captured",
+                Ok(None) => "not_required",
+                Err(_) => "failed",
+            };
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_context_capture",
+                handler_kind,
+                capture_outcome,
+                elapsed_us = capture_started.elapsed().as_micros(),
+            );
+        }
+        context
+    }
+
+    /// Record a failed context snapshot without counting it as a queue drop.
+    #[cfg(feature = "python")]
+    fn record_context_capture_failure(&self, err: pyo3::PyErr) {
+        self.context_capture_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.context_capture_warner.record_drop();
+        self.context_capture_warner.warn_if_due(|count| {
+            warn!(
+                "operation=producer_context_capture handler_kind=python outcome=failed failures={count}"
+            );
+            pyo3::Python::attach(|py| err.print(py));
+        });
+    }
+
+    /// Capture the emitting thread's context when the queued handlers need it.
+    ///
+    /// Inspecting `handlers` rather than logger-wide mutable state keeps the
+    /// context paired with the exact handler snapshot that the worker receives.
+    #[cfg(feature = "python")]
+    pub(super) fn capture_python_context(
+        &self,
+        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+        if !handlers.iter().any(|handler| handler.is_python_backed()) {
+            return Ok(None);
+        }
+        self.context_snapshot_provider.capture().map(Some)
     }
 
     pub(super) fn flush_handlers_blocking(&self) -> bool {
@@ -196,6 +324,8 @@ impl FemtoLogger {
             .send(QueuedRecord {
                 record,
                 handlers: vec![ack_handler],
+                #[cfg(feature = "python")]
+                context: None,
             })
             .is_err()
         {

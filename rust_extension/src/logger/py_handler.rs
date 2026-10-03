@@ -4,20 +4,21 @@
 //! to allow them to be used by the Rust logging infrastructure.
 
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::PyAnyMethods;
 use pyo3::{Py, PyAny};
 use std::any::Any;
 
 #[cfg(feature = "python")]
 use crate::formatter::python::record_to_dict;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-#[cfg(feature = "python")]
-use crate::handlers::{
-    rotating::PyRotatingFileHandler, timed_rotating::PyTimedRotatingFileHandler,
-};
 use crate::log_record::FemtoLogRecord;
-#[cfg(feature = "python")]
-use crate::{FemtoFileHandler, FemtoHTTPHandler, FemtoSocketHandler, FemtoStreamHandler};
 use log::warn;
+
+#[cfg(feature = "python")]
+mod native_handler;
+#[cfg(feature = "python")]
+use self::native_handler::NativeHandlerKind;
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
 fn map_py_err(py: Python<'_>, err: PyErr, method: &str) -> HandlerError {
@@ -102,81 +103,11 @@ pub struct PyHandler {
     native_handler: Option<NativeHandlerKind>,
 }
 
-/// Built-in handlers that can retain the original Rust record across Python registration.
-#[derive(Clone, Copy)]
 #[cfg(feature = "python")]
-enum NativeHandlerKind {
-    Stream,
-    File,
-    RotatingFile,
-    TimedRotatingFile,
-    Socket,
-    Http,
-}
-
-#[cfg(feature = "python")]
-impl NativeHandlerKind {
-    /// Identify a built-in Python handler whose native implementation accepts
-    /// the complete Rust record.
-    ///
-    /// Returns `None` for user-defined handlers, which use the Python handler
-    /// interface instead.
-    fn from_object(obj: &Bound<'_, PyAny>) -> Option<Self> {
-        if obj.is_instance_of::<FemtoStreamHandler>() {
-            Some(Self::Stream)
-        } else if obj.is_instance_of::<FemtoFileHandler>() {
-            Some(Self::File)
-        } else if obj.is_instance_of::<PyRotatingFileHandler>() {
-            Some(Self::RotatingFile)
-        } else if obj.is_instance_of::<PyTimedRotatingFileHandler>() {
-            Some(Self::TimedRotatingFile)
-        } else if obj.is_instance_of::<FemtoSocketHandler>() {
-            Some(Self::Socket)
-        } else if obj.is_instance_of::<FemtoHTTPHandler>() {
-            Some(Self::Http)
-        } else {
-            None
-        }
-    }
-
-    /// Dispatch the record through the matching built-in handler while
-    /// retaining its metadata, including structured key/value fields.
-    ///
-    /// Returns a handler error if extracting the wrapped native handler or
-    /// delivering the record fails.
-    fn handle(
-        self,
-        py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-        record: FemtoLogRecord,
-    ) -> Result<(), HandlerError> {
-        match self {
-            Self::Stream => obj
-                .extract::<PyRef<'_, FemtoStreamHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoStreamHandler"))
-                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
-            Self::File => obj
-                .extract::<PyRef<'_, FemtoFileHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoFileHandler"))
-                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
-            Self::RotatingFile => obj
-                .extract::<PyRef<'_, PyRotatingFileHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoRotatingFileHandler"))
-                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
-            Self::TimedRotatingFile => obj
-                .extract::<PyRef<'_, PyTimedRotatingFileHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoTimedRotatingFileHandler"))
-                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
-            Self::Socket => obj
-                .extract::<PyRef<'_, FemtoSocketHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoSocketHandler"))
-                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
-            Self::Http => obj
-                .extract::<PyRef<'_, FemtoHTTPHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
-                .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
-        }
-    }
+struct DirectMethodSpec {
+    name: &'static str,
+    lookup_operation: &'static str,
+    call_operation: &'static str,
 }
 
 #[cfg(feature = "python")]
@@ -233,14 +164,44 @@ impl PyHandler {
         &self,
         py: Python<'_>,
         record: &FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
         let record_dict =
             record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
+        match context {
+            Some(context) => self.call_handle_record_in_context(py, context, record_dict),
+            None => self.call_handle_record_direct(py, record_dict),
+        }
+    }
 
-        self.obj
-            .call_method1(py, "handle_record", (record_dict,))
-            .map(|_| ())
-            .map_err(|err| map_py_err(py, err, "handle_record"))
+    fn call_handle_record_in_context(
+        &self,
+        py: Python<'_>,
+        context: &Py<PyAny>,
+        record_dict: Py<PyAny>,
+    ) -> Result<(), HandlerError> {
+        let method_caller = py
+            .import("operator")
+            .and_then(|operator| operator.getattr("methodcaller"))
+            .and_then(|factory| factory.call1(("handle_record", record_dict)))
+            .map_err(|err| map_py_err(py, err, "create handle_record caller"))?;
+        self.call_methodcaller_in_context(py, context, method_caller, "handle_record")
+    }
+
+    fn call_handle_record_direct(
+        &self,
+        py: Python<'_>,
+        record_dict: Py<PyAny>,
+    ) -> Result<(), HandlerError> {
+        self.call_direct_method(
+            py,
+            DirectMethodSpec {
+                name: "handle_record",
+                lookup_operation: "get handle_record",
+                call_operation: "handle_record",
+            },
+            (record_dict,),
+        )
     }
 
     /// Call the legacy 3-argument `handle` method.
@@ -248,30 +209,115 @@ impl PyHandler {
         &self,
         py: Python<'_>,
         record: &FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
-        self.obj
-            .call_method1(
-                py,
-                "handle",
-                (record.logger(), record.level_str(), record.message()),
-            )
+        match context {
+            Some(context) => self.call_legacy_handle_in_context(py, context, record),
+            None => self.call_legacy_handle_direct(py, record),
+        }
+    }
+
+    fn call_legacy_handle_in_context(
+        &self,
+        py: Python<'_>,
+        context: &Py<PyAny>,
+        record: &FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
+        let method_caller = py
+            .import("operator")
+            .and_then(|operator| operator.getattr("methodcaller"))
+            .and_then(|factory| {
+                factory.call1((
+                    "handle",
+                    record.logger(),
+                    record.level_str(),
+                    record.message(),
+                ))
+            })
+            .map_err(|err| map_py_err(py, err, "create handle caller"))?;
+        self.call_methodcaller_in_context(py, context, method_caller, "handle")
+    }
+
+    fn call_legacy_handle_direct(
+        &self,
+        py: Python<'_>,
+        record: &FemtoLogRecord,
+    ) -> Result<(), HandlerError> {
+        self.call_direct_method(
+            py,
+            DirectMethodSpec {
+                name: "handle",
+                lookup_operation: "get handle",
+                call_operation: "handle",
+            },
+            (record.logger(), record.level_str(), record.message()),
+        )
+    }
+
+    fn call_direct_method<'py>(
+        &self,
+        py: Python<'py>,
+        method: DirectMethodSpec,
+        args: impl pyo3::call::PyCallArgs<'py>,
+    ) -> Result<(), HandlerError> {
+        let handler_method = self
+            .obj
+            .bind(py)
+            .getattr(method.name)
+            .map_err(|err| map_py_err(py, err, method.lookup_operation))?;
+        handler_method
+            .call1(args)
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, "handle"))
+            .map_err(|err| map_py_err(py, err, method.call_operation))
+    }
+
+    fn call_methodcaller_in_context<'py>(
+        &self,
+        py: Python<'py>,
+        context: &Py<PyAny>,
+        method_caller: Bound<'py, PyAny>,
+        method: &str,
+    ) -> Result<(), HandlerError> {
+        let invocation_context = context
+            .bind(py)
+            .call_method0("copy")
+            .map_err(|err| map_py_err(py, err, "copy context"))?;
+        invocation_context
+            .call_method1("run", (method_caller, self.obj.bind(py)))
+            .map(|_| ())
+            .map_err(|err| map_py_err(py, err, method))
     }
 }
 
 #[cfg(feature = "python")]
 impl FemtoHandlerTrait for PyHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.handle_with_context(record, None)
+    }
+
+    /// Python handlers run inside the producer's captured context when given.
+    fn handle_with_context(
+        &self,
+        record: FemtoLogRecord,
+        context: Option<&Py<PyAny>>,
+    ) -> Result<(), HandlerError> {
         Python::attach(|py| {
             if let Some(native_handler) = self.native_handler {
                 return native_handler.handle(py, self.obj.bind(py), record);
             }
             if self.has_handle_record {
-                return self.call_handle_record(py, &record);
+                return self.call_handle_record(py, &record, context);
             }
-            self.call_legacy_handle(py, &record)
+            self.call_legacy_handle(py, &record, context)
         })
+    }
+
+    fn is_python_backed(&self) -> bool {
+        true
+    }
+
+    fn provides_context_dispatch(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -340,6 +386,10 @@ impl FemtoHandlerTrait for PyHandler {
                 .map(|_| ())
                 .map_err(|err| map_py_err(py, err, "handle"))
         })
+    }
+
+    fn is_python_backed(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {

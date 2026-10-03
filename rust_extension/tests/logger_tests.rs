@@ -3,14 +3,14 @@
 
 use std::collections::BTreeSet;
 
-use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
-};
-use _femtologging_rs::{FemtoLogger, QueuedRecord}; // needed for clone_sender test
+use _femtologging_rs::FemtoLogger;
+use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoStreamHandler};
 use rstest::{fixture, rstest};
 
 #[path = "test_utils/fixtures.rs"]
 mod fixtures;
+#[path = "logger_tests/lifecycle.rs"]
+mod logger_lifecycle_tests;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
 use fixtures::{handler_tuple, stream_handler_for};
@@ -116,8 +116,12 @@ fn level_parsing_and_filtering() {
 fn logger_routes_to_multiple_handlers(
     #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, logger): DualHandlerSetup,
 ) {
-    logger.add_handler(handler1.clone());
-    logger.add_handler(handler2.clone());
+    logger
+        .add_handler(handler1.clone())
+        .expect("first test handler should register");
+    logger
+        .add_handler(handler2.clone())
+        .expect("second test handler should register");
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler1);
@@ -131,8 +135,10 @@ fn shared_handler_across_loggers(#[from(handler_tuple)] (buffer, handler): Handl
     let handler = Arc::new(handler);
     let l1 = FemtoLogger::new("a".to_string());
     let l2 = FemtoLogger::new("b".to_string());
-    l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("shared test handler should register");
+    l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("shared test handler should register");
     l1.log(FemtoLevel::Info, "one");
     l2.log(FemtoLevel::Info, "two");
     drop(l1);
@@ -149,8 +155,12 @@ fn adding_same_handler_multiple_times_duplicates_output(
 ) {
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = FemtoLogger::new("dup".to_string());
-    logger.add_handler(handler.clone());
-    logger.add_handler(handler.clone());
+    logger
+        .add_handler(handler.clone())
+        .expect("test handler should register");
+    logger
+        .add_handler(handler.clone())
+        .expect("duplicate test handler should register");
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler);
@@ -161,9 +171,13 @@ fn adding_same_handler_multiple_times_duplicates_output(
 fn handler_added_after_logging_only_sees_future_records(
     #[from(dual_handler_setup)] (buf1, buf2, h1, h2, logger): DualHandlerSetup,
 ) {
-    logger.add_handler(h1.clone());
+    logger
+        .add_handler(h1.clone())
+        .expect("first test handler should register");
     logger.log(FemtoLevel::Info, "before");
-    logger.add_handler(h2.clone());
+    logger
+        .add_handler(h2.clone())
+        .expect("second test handler should register");
     logger.log(FemtoLevel::Info, "after");
     drop(logger);
     drop(h1);
@@ -178,7 +192,9 @@ fn handler_added_after_logging_only_sees_future_records(
 fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(Arc::clone(&handler));
+    logger
+        .add_handler(Arc::clone(&handler))
+        .expect("test handler should register");
     logger.log(FemtoLevel::Info, "one");
     handler.flush();
     std::thread::sleep(std::time::Duration::from_millis(10));
@@ -191,44 +207,6 @@ fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple
     drop(handler);
     let output = read_output(&buffer);
     assert!(!output.contains("two"));
-}
-
-#[test]
-fn drop_with_sender_clone_exits() {
-    let logger = FemtoLogger::new("clone".to_string());
-    let tx = logger.clone_sender_for_test().expect("sender should exist");
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let thread_barrier = std::sync::Arc::clone(&barrier);
-    let t = std::thread::spawn(move || {
-        thread_barrier.wait();
-        let res = tx.send(QueuedRecord {
-            record: FemtoLogRecord::new("clone", FemtoLevel::Info, "late"),
-            handlers: Vec::new(),
-        });
-        assert!(
-            res.is_err(),
-            "Expected send to fail after logger is dropped"
-        );
-    });
-    drop(logger);
-    barrier.wait();
-    t.join().expect("Worker thread panicked");
-}
-
-#[rstest]
-fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    let handler = Arc::new(handler);
-    let logger = FemtoLogger::new("core".to_string());
-    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    logger.log(FemtoLevel::Info, "one");
-    logger.log(FemtoLevel::Info, "two");
-    logger.log(FemtoLevel::Info, "three");
-    drop(logger);
-    drop(handler);
-    assert_eq!(
-        read_output(&buffer),
-        "core [INFO] one\ncore [INFO] two\ncore [INFO] three\n"
-    );
 }
 
 #[test]
@@ -250,7 +228,9 @@ fn add_handler_is_thread_safe() {
             let barrier = Arc::clone(&start);
             std::thread::spawn(move || {
                 barrier.wait();
-                log_clone.add_handler(h);
+                log_clone
+                    .add_handler(h)
+                    .expect("concurrent test handler should register");
             })
         })
         .collect();
@@ -320,7 +300,9 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
 
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = Arc::new(FemtoLogger::new("race".to_string()));
-    logger.add_handler(Arc::clone(&handler));
+    logger
+        .add_handler(Arc::clone(&handler))
+        .expect("test handler should register");
     let barrier = Arc::new(Barrier::new(2));
 
     let (lg, b) = (Arc::clone(&logger), Arc::clone(&barrier));

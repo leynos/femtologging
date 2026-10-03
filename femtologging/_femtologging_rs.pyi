@@ -85,6 +85,16 @@ class FemtoLogger:
     def clear_handlers(self) -> None: ...
     def clear_filters(self) -> None: ...
     def get_dropped(self) -> int: ...
+    def get_context_capture_failures(self) -> int:
+        """Return the number of context-capture failures recorded by the logger.
+
+        Returns
+        -------
+        int
+            The number of context-capture failures recorded by the logger.
+
+        """
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
