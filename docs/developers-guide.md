@@ -131,6 +131,13 @@ compatibility tests validate the same maturin and PyO3 releases:
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
 
+The Rust extension denies `clippy::missing_docs_in_private_items`, so private
+items and Rust test support must have meaningful documentation alongside the
+public API. This includes integration tests, benchmarks, unit-test modules, and
+feature-gated compatibility code. `make lint` runs Clippy with `-D warnings` and
+`--all-targets` across every supported Rust feature lane, so each lane applies
+the same documentation and warning policy.
+
 When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization
@@ -281,18 +288,18 @@ The reusable integration-test support is owned by
 - `fixtures.rs` provides `handler_tuple` for a fresh buffer and default
   stream handler, and `stream_handler_for` when several handlers must share one
   buffer.
-- `shared_buffer.rs` provides standard-library and Loom-backed shared buffers;
-  use the variant matching the test's execution model.
+- `shared_buffer.rs` provides the standard-library shared buffer, while
+  `shared_buffer_loom.rs` provides its Loom-backed counterpart.
 - `captured_log.rs` provides `captured_log()`, the process-wide capture logger
   described below.
 
 Each Cargo integration-test root declares only the support modules it needs.
 The stream-handler suite includes `test_utils/mod.rs` because it uses all of
 them; the file-handler and logger suites include their required files directly.
-The `heavy` root includes `shared_buffer.rs` and `handle_expect.rs` directly,
-and its Loom modules are themselves gated by `cfg(loom)`. Prefer these fixtures
-and the trait over duplicating setup or `handle(...).expect(...)` calls in
-individual suites.
+The `heavy` root includes `shared_buffer.rs`, `shared_buffer_loom.rs`, and
+`handle_expect.rs` directly; the Loom module is gated by `cfg(loom)`. Prefer
+these fixtures and the trait over duplicating setup or
+`handle(...).expect(...)` calls in individual suites.
 
 ### Capturing log records in an integration test
 

@@ -39,6 +39,7 @@ pub(crate) fn dict_into_py(dict: Bound<'_, PyDict>, py: Python<'_>) -> PyResult<
     dict.into_py_any(py)
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 pub(crate) fn set_opt<'py, T>(
     _py: Python<'py>,
     dict: &Bound<'py, PyDict>,
@@ -54,6 +55,7 @@ where
     Ok(())
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 pub(crate) fn set_opt_to_string<T: ToString>(
     _py: Python<'_>,
     dict: &Bound<'_, PyDict>,
@@ -66,6 +68,7 @@ pub(crate) fn set_opt_to_string<T: ToString>(
     Ok(())
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 pub(crate) fn set_vec<'py, T>(
     py: Python<'py>,
     dict: &Bound<'py, PyDict>,
@@ -85,6 +88,7 @@ where
     Ok(())
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 pub(crate) fn set_map<V: AsPyDict>(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
@@ -101,6 +105,7 @@ pub(crate) fn set_map<V: AsPyDict>(
     Ok(())
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 pub(crate) fn set_optmap<V: AsPyDict>(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
@@ -113,6 +118,7 @@ pub(crate) fn set_optmap<V: AsPyDict>(
     Ok(())
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 pub(crate) fn set_val<'py, T>(
     _py: Python<'py>,
     dict: &Bound<'py, PyDict>,
@@ -125,6 +131,7 @@ where
     dict.set_item(key, *val)
 }
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 macro_rules! impl_as_pydict {
     ($ty:ty { $( $setter:ident $field:ident => $key:expr ),* $(,)? }) => {
         impl AsPyDict for $ty {
@@ -138,6 +145,7 @@ macro_rules! impl_as_pydict {
 }
 pub(crate) use impl_as_pydict;
 
+/// Provides shared PyO3 setter machinery that validates Python values before changing builder state.
 macro_rules! py_setters {
     (
         $builder:ident {

@@ -106,11 +106,17 @@ pub struct PyHandler {
 #[derive(Clone, Copy)]
 #[cfg(feature = "python")]
 enum NativeHandlerKind {
+    /// Retains native record dispatch for a stream handler wrapped for Python.
     Stream,
+    /// Retains native record dispatch for a file handler wrapped for Python.
     File,
+    /// Retains native record dispatch for a rotating file handler wrapped for Python.
     RotatingFile,
+    /// Retains native record dispatch for a timed-rotating file handler wrapped for Python.
     TimedRotatingFile,
+    /// Retains native record dispatch for a socket handler wrapped for Python.
     Socket,
+    /// Retains native record dispatch for an HTTP handler wrapped for Python.
     Http,
 }
 
@@ -317,11 +323,13 @@ mod tests {
 /// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]
 pub struct PyHandler {
+    /// Python handler object retained by the feature-disabled wrapper.
     pub obj: Py<PyAny>,
 }
 
 #[cfg(not(feature = "python"))]
 impl PyHandler {
+    /// Wrap the Python object without feature-specific capability inspection.
     pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
         Self { obj }
     }

@@ -23,10 +23,13 @@ mod visitor;
 #[cfg(test)]
 mod tests;
 
+/// Message used when a tracing event has no `message` field.
 const FALLBACK_EVENT_MESSAGE: &str = "tracing event";
 
+/// Span fields captured at creation or update until an event consumes them.
 #[derive(Debug, Default)]
 struct StoredSpanFields {
+    /// Latest string representations keyed by tracing field name.
     fields: BTreeMap<String, String>,
 }
 
@@ -41,6 +44,7 @@ pub fn layer() -> FemtoTracingLayer {
 }
 
 impl FemtoTracingLayer {
+    /// Convert tracing's five levels to the corresponding femtologging level.
     fn map_level(level: &Level) -> FemtoLevel {
         match *level {
             Level::TRACE => FemtoLevel::Trace,
@@ -51,6 +55,7 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Convert Rust's `module::target` spelling to femtologging's dotted name.
     fn normalize_target(target: &str) -> Cow<'_, str> {
         if target.contains("::") {
             Cow::Owned(target.replace("::", "."))
@@ -59,11 +64,13 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Identify the bridge's own targets so it does not recursively log itself.
     fn should_ignore_target(target: &str) -> bool {
         let normalized = Self::normalize_target(target);
         normalized == "femtologging" || normalized.starts_with("femtologging.")
     }
 
+    /// Resolve a normalized target, falling back to the root logger if absent.
     fn resolve_logger<'a, 'py>(
         py: Python<'py>,
         target: &'a str,
@@ -77,6 +84,7 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Build record source metadata, then add the event's active span fields.
     fn build_record_metadata<S>(
         event: &Event<'_>,
         ctx: Context<'_, S>,
@@ -100,6 +108,7 @@ impl FemtoTracingLayer {
         metadata
     }
 
+    /// Add root-to-leaf span names and stored fields with `span.<depth>` prefixes.
     fn merge_span_context<S>(
         key_values: &mut BTreeMap<String, String>,
         ctx: Context<'_, S>,
@@ -123,6 +132,7 @@ impl FemtoTracingLayer {
         }
     }
 
+    /// Build a stable fallback message from captured fields when no message exists.
     fn fallback_message(key_values: &BTreeMap<String, String>) -> String {
         if key_values.is_empty() {
             return FALLBACK_EVENT_MESSAGE.to_string();

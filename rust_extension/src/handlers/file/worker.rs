@@ -17,6 +17,7 @@ use super::config::HandlerConfig;
 use crate::sync::{JoinHandle, Receiver, RecvError, Sender, bounded, spawn};
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
+/// Bounds the non-blocking drain after the worker receives its first command.
 pub(crate) const DEFAULT_BATCH_CAPACITY: usize = 64;
 
 /// Commands sent to the worker thread.
@@ -67,9 +68,11 @@ impl<W: Write + Seek> RotationStrategy<W> for NoRotation {
 /// receive plus non-blocking drain cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatchConfig {
+    /// Limits the number of commands handled in one receive-and-drain cycle.
     capacity: usize,
 }
 
+/// Reports why a worker batch could not be assembled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchConfigError {
     /// The requested batch capacity was zero.
@@ -136,12 +139,18 @@ impl From<&HandlerConfig> for WorkerConfig {
     }
 }
 
+/// Errors returned when a batch cannot start because its channel is closed or
+/// its requested drain capacity is zero.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecvBatchError {
+    /// The command channel closed before a first command arrived.
     Disconnected,
+    /// A caller supplied an invalid zero drain capacity.
     ZeroCapacity,
 }
 
+/// Receives one command and drains at most batch_capacity - 1 additional
+/// commands without blocking.
 fn recv_batch(
     rx: &Receiver<FileCommand>,
     batch_capacity: usize,
@@ -165,11 +174,14 @@ fn recv_batch(
 
 /// Tracks how many writes occurred and triggers periodic flushes.
 pub(crate) struct FlushTracker {
+    /// Counts writes since the last successful explicit or periodic flush.
     writes: usize,
+    /// Flushes after this many writes; zero disables periodic flushing.
     flush_interval: usize,
 }
 
 impl FlushTracker {
+    /// Starts a write counter with the configured periodic-flush interval.
     pub(crate) fn new(flush_interval: usize) -> Self {
         Self {
             writes: 0,
@@ -177,6 +189,8 @@ impl FlushTracker {
         }
     }
 
+    /// Records one write and propagates any flush error produced at the new
+    /// interval boundary.
     pub(crate) fn record_write<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.writes += 1;
         self.flush_if_due(writer).map_err(|e| {
@@ -189,6 +203,7 @@ impl FlushTracker {
         Ok(())
     }
 
+    /// Restarts periodic-flush counting after a successful flush.
     pub(crate) fn reset(&mut self) {
         self.writes = 0;
     }
@@ -203,6 +218,7 @@ impl FlushTracker {
             && self.writes.is_multiple_of(self.flush_interval)
     }
 
+    /// Flushes the writer only when the configured write count is due.
     fn flush_if_due<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.should_flush() {
             writer.flush()?;
@@ -211,9 +227,14 @@ impl FlushTracker {
     }
 }
 
+/// Groups the writer, rotation state, and flush counter that are owned by one
+/// worker thread.
 struct WorkerState<W, R> {
+    /// Buffered writer mutated only by the worker thread.
     writer: W,
+    /// Rotation policy invoked immediately before each formatted record write.
     rotation: R,
+    /// Tracks writes and periodic flush boundaries for this writer.
     tracker: FlushTracker,
 }
 
@@ -222,6 +243,7 @@ where
     W: Write + Seek,
     R: RotationStrategy<W>,
 {
+    /// Creates worker-owned state and starts a fresh flush-counting epoch.
     fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
         Self {
             writer,
@@ -230,6 +252,8 @@ where
         }
     }
 
+    /// Formats and writes a record on the worker thread; rotation failures are
+    /// logged and do not prevent the record write from being attempted.
     fn handle_record<F>(&mut self, formatter: &F, record: FemtoLogRecord)
     where
         F: FemtoFormatter,
@@ -245,6 +269,8 @@ where
         }
     }
 
+    /// Flushes buffered output, resets the write counter on success, and sends
+    /// the result to the waiting caller.
     fn handle_flush(&mut self, ack_tx: Sender<io::Result<()>>) {
         let flush_result = self.writer.flush();
         if let Err(err) = &flush_result {
@@ -257,12 +283,15 @@ where
         }
     }
 
+    /// Performs the terminal flush used when the command channel closes.
     fn final_flush(&mut self) {
         if let Err(err) = self.writer.flush() {
             warn!("FemtoFileHandler final flush error: {err}");
         }
     }
 
+    /// Processes commands in receive order so records and flush acknowledgements
+    /// observe one worker-owned I/O sequence.
     fn process_batch<F>(&mut self, formatter: &F, commands: Vec<FileCommand>)
     where
         F: FemtoFormatter,
@@ -319,6 +348,8 @@ where
             b.wait();
         }
         let mut state = WorkerState::new(writer, rotation, flush_interval);
+        // Keep receive, record, flush, and terminal-shutdown work on the same
+        // worker-owned writer so their I/O stays in channel order.
         loop {
             match recv_batch(&rx, batch.capacity()) {
                 Ok(commands) => state.process_batch(&formatter, commands),
