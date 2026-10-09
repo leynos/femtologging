@@ -56,7 +56,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.experimental }}
       - name: Install rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+        uses: leynos/shared-actions/.github/actions/setup-rust@0606ca899ce2995a0c4bc78e660e80832e6e8855
       - name: Cache ~/.cargo and target/
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
@@ -76,7 +76,7 @@ jobs:
       - name: Install makeutil
         id: makeutil
         # A digest-verified prebuilt release rather than a from-source build.
-        uses: leynos/shared-actions/.github/actions/install-makeutil@ebe2f3105334283441f4c915eb979a0f4b9f2c04
+        uses: leynos/shared-actions/.github/actions/install-makeutil@0606ca899ce2995a0c4bc78e660e80832e6e8855
 
       - name: Verify makeutil
         # Prove the installed binary runs, matches the release the action
@@ -114,7 +114,7 @@ jobs:
         with:
           globs: '**/*.md'
       - name: Install Whitaker
-        uses: leynos/shared-actions/.github/actions/install-whitaker@6dea5677a84fec60ca51b07202570e3af12ffdb4
+        uses: leynos/shared-actions/.github/actions/install-whitaker@0606ca899ce2995a0c4bc78e660e80832e6e8855
       - name: Lint
         run: make lint
       - name: Spelling
@@ -144,7 +144,7 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-
       - name: Test and measure coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@14c325b60788814cd50298eb8060228daee3b842
+        uses: leynos/shared-actions/.github/actions/generate-coverage@0606ca899ce2995a0c4bc78e660e80832e6e8855
         with:
           # The Cache uv step above owns the uv cache; the Rust caches are the
           # Swatinem and cargo steps earlier in this job.
