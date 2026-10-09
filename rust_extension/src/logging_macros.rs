@@ -161,7 +161,12 @@ mod tests {
         let logger = FemtoLogger::new("macro.test".into());
         logger.set_level(crate::FemtoLevel::Debug);
         let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        assert!(
+            logger
+                .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+                .is_ok(),
+            "native collecting handler should register"
+        );
         (logger, handler)
     }
 
@@ -242,7 +247,9 @@ mod tests {
         // Use default INFO level so DEBUG is filtered out.
         let logger = FemtoLogger::new("macro.test".into());
         let handler = Arc::new(CollectingHandler::default());
-        logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        logger
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+            .expect("native collecting handler should register");
 
         let result = femtolog_debug!(logger, "should be filtered");
         assert!(result.is_none());
