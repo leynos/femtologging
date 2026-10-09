@@ -29,13 +29,17 @@ use crate::{
     stream_handler::FemtoStreamHandler,
 };
 
+/// Identifies the standard stream that receives the worker's output.
 #[derive(Clone, Copy, Debug)]
 enum StreamTarget {
+    /// Process standard output.
     Stdout,
+    /// Process standard error, matching Python's default stream handler.
     Stderr,
 }
 
 impl StreamTarget {
+    /// Returns the Python-facing name for this target.
     #[cfg(feature = "python")]
     fn as_str(&self) -> &'static str {
         match self {
@@ -49,7 +53,9 @@ impl StreamTarget {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct StreamHandlerBuilder {
+    /// Destination stream selected by the builder's constructor.
     target: StreamTarget,
+    /// Shared capacity, formatter, and flush-threshold options.
     common: CommonBuilder,
 }
 
@@ -79,10 +85,12 @@ impl StreamHandlerBuilder {
         self
     }
 
+    /// Validates the bounded queue capacity inherited from the common builder.
     fn is_capacity_valid(&self) -> Result<(), HandlerBuildError> {
         self.common.is_capacity_valid()
     }
 
+    /// Rejects a zero flush threshold before constructing the worker.
     fn is_flush_after_ms_valid(&self) -> Result<(), HandlerBuildError> {
         CommonBuilder::ensure_non_zero(
             "flush_after_ms",
@@ -90,10 +98,12 @@ impl StreamHandlerBuilder {
         )
     }
 
+    /// Resolves the configured capacity, defaulting to the stream queue size.
     fn resolved_capacity(&self) -> usize {
         self.common.capacity.map(|c| c.get()).unwrap_or(1024)
     }
 
+    /// Resolves the non-zero flush threshold used by the worker.
     fn resolved_flush_after(&self) -> Duration {
         Duration::from_millis(
             self.common
@@ -103,6 +113,7 @@ impl StreamHandlerBuilder {
         )
     }
 
+    /// Selects stdout or stderr while retaining the caller's formatter.
     fn build_with_formatter<F>(&self, formatter: F) -> FemtoStreamHandler
     where
         F: FemtoFormatter + Send + 'static,
@@ -113,6 +124,7 @@ impl StreamHandlerBuilder {
         }
     }
 
+    /// Moves the writer and formatter into a worker with the resolved queue settings.
     fn build_with_writer<W, F>(&self, writer: W, formatter: F) -> FemtoStreamHandler
     where
         W: Write + Send + 'static,
@@ -123,6 +135,7 @@ impl StreamHandlerBuilder {
         FemtoStreamHandler::with_capacity_timeout(writer, formatter, capacity, flush_after)
     }
 
+    /// Runs all builder validation before worker state is published.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
         self.is_flush_after_ms_valid()?;
@@ -169,18 +182,21 @@ builder_methods! {
                 Self::stderr()
             }
 
+            /// Constructs a Python builder targeting stdout.
             #[staticmethod]
             #[pyo3(name = "stdout")]
             fn py_stdout() -> Self {
                 Self::stdout()
             }
 
+            /// Constructs a Python builder targeting stderr.
             #[staticmethod]
             #[pyo3(name = "stderr")]
             fn py_stderr() -> Self {
                 Self::stderr()
             }
 
+            /// Applies a Python formatter to the builder, returning conversion errors.
             #[pyo3(name = "with_formatter")]
             #[pyo3(signature = (formatter))]
             #[pyo3(text_signature = "(self, formatter)")]

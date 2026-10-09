@@ -7,9 +7,13 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+/// Maximum number of keys permitted in one merged context.
 pub(crate) const MAX_CONTEXT_KEYS: usize = 64;
+/// Maximum UTF-8 byte length of a context key.
 pub(crate) const MAX_KEY_BYTES: usize = 64;
+/// Maximum UTF-8 byte length of a context value.
 pub(crate) const MAX_VALUE_BYTES: usize = 1024;
+/// Maximum combined key/value byte length of a merged context.
 pub(crate) const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
 thread_local! {
@@ -38,19 +42,47 @@ pub enum LogContextError {
     TotalBytesExceeded { total: usize, max: usize },
 }
 
+/// Internal validation failures before the offending key is attached to the public error.
 #[derive(Debug, Error)]
 pub(crate) enum ContextValidationError {
+    /// The merged map would exceed its key-count limit.
     #[error("context has {count} keys; maximum is {max}")]
-    TooManyKeys { count: usize, max: usize },
+    TooManyKeys {
+        /// Number of keys in the candidate map.
+        count: usize,
+        /// Maximum permitted number of keys.
+        max: usize,
+    },
+    /// A key exceeds the per-key UTF-8 byte limit.
     #[error("context key is {len} bytes; maximum is {max}")]
-    KeyTooLong { len: usize, max: usize },
+    KeyTooLong {
+        /// UTF-8 byte length of the offending key.
+        len: usize,
+        /// Maximum permitted UTF-8 byte length.
+        max: usize,
+    },
+    /// A value exceeds the per-value UTF-8 byte limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
-    ValueTooLong { key: String, len: usize, max: usize },
+    ValueTooLong {
+        /// Key associated with the oversized value.
+        key: String,
+        /// UTF-8 byte length of the value.
+        len: usize,
+        /// Maximum permitted UTF-8 byte length.
+        max: usize,
+    },
+    /// The merged map exceeds its aggregate UTF-8 byte limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
-    TotalBytesExceeded { total: usize, max: usize },
+    TotalBytesExceeded {
+        /// Aggregate key and value byte length of the candidate map.
+        total: usize,
+        /// Maximum permitted aggregate byte length.
+        max: usize,
+    },
 }
 
 impl ContextValidationError {
+    /// Attach the relevant key and map this internal failure to its public error variant.
     fn into_log_context_error(self, key: &str) -> LogContextError {
         match self {
             Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
@@ -67,10 +99,12 @@ impl ContextValidationError {
     }
 }
 
-/// Track the retained map's key count and aggregate UTF-8 size while building it.
+/// Tracks retained key count and aggregate UTF-8 size as entries are validated.
 #[derive(Default)]
 pub(crate) struct ContextBudget {
+    /// Number of distinct keys already included in the candidate map.
     unique_keys: usize,
+    /// UTF-8 bytes for retained keys and their current values.
     total_bytes: usize,
 }
 
@@ -128,6 +162,7 @@ impl ContextBudget {
 /// RAII guard that pops one context frame on drop.
 #[must_use = "hold the guard for as long as the scoped log context should remain active"]
 pub struct LogContextGuard {
+    /// Zero-sized private state; dropping the guard pops the matching frame.
     _private: (),
 }
 
@@ -209,6 +244,7 @@ pub(crate) fn merge_context_values(
     Ok(active)
 }
 
+/// Pop one frame and report an error when the thread-local stack is empty.
 fn pop_internal() -> Result<(), LogContextError> {
     CONTEXT_STACK.with(|stack| {
         if stack.borrow_mut().pop().is_some() {
@@ -219,6 +255,7 @@ fn pop_internal() -> Result<(), LogContextError> {
     })
 }
 
+/// Merge thread-local frames in insertion order, with inner frames overriding outer keys.
 fn active_context() -> BTreeMap<String, String> {
     CONTEXT_STACK.with(|stack| {
         let mut merged = BTreeMap::new();
@@ -229,6 +266,7 @@ fn active_context() -> BTreeMap<String, String> {
     })
 }
 
+/// Enforce key-count, per-field, and aggregate byte limits before context use.
 fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogContextError> {
     if context.len() > MAX_CONTEXT_KEYS {
         return Err(LogContextError::TooManyKeys {

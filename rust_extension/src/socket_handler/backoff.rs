@@ -8,10 +8,15 @@ use super::config::BackoffPolicy;
 
 /// Tracks reconnection attempts and produces jittered delays.
 pub struct BackoffState {
+    /// Retry policy supplying base, cap, reset, and deadline limits.
     policy: BackoffPolicy,
+    /// Current exponential delay, reset after a successful or idle connection.
     current: Duration,
+    /// Start of the current failure window, used to enforce the retry deadline.
     failure_since: Option<Instant>,
+    /// Worker-owned random source used to jitter each retry delay.
     rng: StdRng,
+    /// Most recent successful write; sustained idleness restores initial state.
     last_success: Option<Instant>,
 }
 

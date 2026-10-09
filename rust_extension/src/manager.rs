@@ -14,15 +14,19 @@ use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
 
+/// Point-in-time handler and filter identifiers attached to one logger.
 #[cfg(feature = "python")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LoggerAttachmentState {
+    /// Names of registered handlers, in the logger's attachment order.
     handler_ids: Vec<String>,
+    /// Names of registered filters, in the logger's attachment order.
     filter_ids: Vec<String>,
 }
 
 #[cfg(feature = "python")]
 impl LoggerAttachmentState {
+    /// Store attachment identifiers for a logger snapshot.
     pub(crate) fn new(handler_ids: Vec<String>, filter_ids: Vec<String>) -> Self {
         Self {
             handler_ids,
@@ -30,42 +34,56 @@ impl LoggerAttachmentState {
         }
     }
 
+    /// Borrow the handler identifiers without copying the snapshot.
     pub(crate) fn handler_ids(&self) -> &[String] {
         &self.handler_ids
     }
 
+    /// Borrow the filter identifiers without copying the snapshot.
     pub(crate) fn filter_ids(&self) -> &[String] {
         &self.filter_ids
     }
 }
 
+/// Shared handler registry retained by runtime configuration snapshots.
 #[cfg(feature = "python")]
 type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
+/// Shared filter registry retained by runtime configuration snapshots.
 #[cfg(feature = "python")]
 type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
 
+/// Owned point-in-time view used to stage and commit Python configuration.
 #[cfg(feature = "python")]
 #[derive(Clone, Default)]
 pub(crate) struct RuntimeStateSnapshot {
+    /// Registered handlers available to staged logger attachment plans.
     pub(crate) handler_registry: SharedHandlers,
+    /// Registered filters available to staged logger attachment plans.
     pub(crate) filter_registry: SharedFilters,
+    /// Per-logger attachment ID snapshots used to reconstruct configuration.
     pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
 }
 
+/// Global manager state protected by the registry lock.
 #[derive(Default)]
 struct Manager {
+    /// Python logger objects keyed by their validated dotted names.
     loggers: HashMap<String, Py<FemtoLogger>>,
+    /// Runtime handler/filter registries and attachment snapshots.
     #[cfg(feature = "python")]
     runtime: RuntimeStateSnapshot,
 }
 
+/// Process-wide logger registry; callers hold its lock during registry access.
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Clear runtime attachment snapshots while preserving logger objects.
 #[cfg(feature = "python")]
 fn clear_runtime_state(mgr: &mut Manager) {
     mgr.runtime = RuntimeStateSnapshot::default();
 }
 
+/// No-op runtime reset when Python configuration support is unavailable.
 #[cfg(not(feature = "python"))]
 fn clear_runtime_state(_mgr: &mut Manager) {}
 
@@ -80,6 +98,7 @@ fn is_invalid_logger_name(name: &str) -> bool {
         || name.split('.').any(|s| s.is_empty())
 }
 
+/// Ensure the implicit root logger exists before resolving named loggers.
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
         let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
@@ -88,6 +107,7 @@ fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     Ok(())
 }
 
+/// Derive the dotted parent name, falling back to `root` for top-level names.
 fn calculate_parent_name(name: &str) -> Option<String> {
     name.rsplit_once('.')
         .map(|(p, _)| p.to_string())
@@ -183,11 +203,18 @@ pub(crate) fn commit_staged_loggers(
         .collect()
 }
 
+/// Clone the runtime registries while holding the manager read lock.
+///
+/// The returned snapshot deliberately owns Python references so configuration
+/// replacement can release the global lock before it mutates handlers or
+/// filters. Callers must treat it as a point-in-time view: concurrent Python
+/// threads may register or detach runtime state after this lock is released.
 #[cfg(feature = "python")]
 pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
 }
 
+/// Replace runtime registries and attachment snapshots under the manager write lock.
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
@@ -229,6 +256,10 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
     }
 }
 
+/// Clears cached loggers and their runtime attachments while holding the manager write lock.
+///
+/// The exported reset point is primarily test support; it ensures queued handler state cannot
+/// survive into the next Python logging configuration.
 #[pyfunction]
 pub fn reset_manager() {
     let mut mgr = MANAGER.write();
@@ -237,145 +268,5 @@ pub fn reset_manager() {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Tests for the logger manager registry.
-
-    #[cfg(feature = "python")]
-    mod lookup {
-        //! Tests for read-only logger lookup.
-
-        use pyo3::Python;
-        use serial_test::serial;
-
-        use super::super::{MANAGER, get_logger, lookup_existing_logger, reset_manager};
-
-        #[test]
-        #[serial]
-        fn lookup_existing_logger_does_not_create_missing_loggers() {
-            Python::attach(|py| {
-                reset_manager();
-
-                assert!(
-                    lookup_existing_logger(py, "missing").is_err(),
-                    "a missing logger should return an explicit lookup error",
-                );
-                assert!(
-                    MANAGER.read().loggers.is_empty(),
-                    "a failed lookup must not create root or the requested logger",
-                );
-
-                assert!(
-                    get_logger(py, "existing").is_ok(),
-                    "logger setup should succeed before the lookup",
-                );
-                assert!(
-                    lookup_existing_logger(py, "existing").is_ok(),
-                    "an existing logger should be returned by the read-only lookup",
-                );
-            });
-        }
-    }
-
-    #[cfg(feature = "log-compat")]
-    mod log_compat {
-        //! Tests for the log-compat bridge integration.
-
-        use std::any::Any;
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        use pyo3::Python;
-        use serial_test::serial;
-
-        use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
-        use crate::handler::{FemtoHandlerTrait, HandlerError};
-        use crate::log_record::FemtoLogRecord;
-
-        #[derive(Clone)]
-        struct FlushCountingHandler {
-            flushes: Arc<AtomicUsize>,
-        }
-
-        impl FemtoHandlerTrait for FlushCountingHandler {
-            fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-                Ok(())
-            }
-
-            fn flush(&self) -> bool {
-                self.flushes.fetch_add(1, Ordering::SeqCst);
-                true
-            }
-
-            fn as_any(&self) -> &dyn Any {
-                self
-            }
-        }
-
-        // `#[serial]` wraps the test bodies below, so the expect lint cannot
-        // recognise them as tests; errors are propagated instead.
-        #[test]
-        #[serial]
-        fn flush_all_handlers_flushes_loggers_with_handlers() -> pyo3::PyResult<()> {
-            Python::attach(|py| -> pyo3::PyResult<()> {
-                reset_manager();
-
-                let flushes = Arc::new(AtomicUsize::new(0));
-                let handler = Arc::new(FlushCountingHandler {
-                    flushes: flushes.clone(),
-                }) as Arc<dyn FemtoHandlerTrait>;
-
-                let logger_a = get_logger(py, "bridge.flush.a")?;
-                let logger_b = get_logger(py, "bridge.flush.b")?;
-                logger_a.borrow(py).add_handler(handler.clone());
-                logger_b.borrow(py).add_handler(handler.clone());
-
-                flush_all_handlers(py);
-
-                assert_eq!(
-                    flushes.load(Ordering::SeqCst),
-                    2,
-                    "flush should be invoked once per logger with handlers",
-                );
-                Ok(())
-            })
-        }
-
-        #[test]
-        #[serial]
-        fn flush_all_handlers_invokes_flush_once_per_registered_logger() -> pyo3::PyResult<()> {
-            Python::attach(|py| -> pyo3::PyResult<()> {
-                reset_manager();
-
-                // Populate the manager with multiple loggers (including parents).
-                let _ = get_logger(py, "bridge.flush.a")?;
-                let _ = get_logger(py, "bridge.flush.b")?;
-
-                let flushes = Arc::new(AtomicUsize::new(0));
-                let handler = Arc::new(FlushCountingHandler {
-                    flushes: flushes.clone(),
-                }) as Arc<dyn FemtoHandlerTrait>;
-
-                let loggers = {
-                    let mgr = MANAGER.read();
-                    mgr.loggers
-                        .values()
-                        .map(|logger| logger.clone_ref(py))
-                        .collect::<Vec<_>>()
-                };
-
-                for logger in &loggers {
-                    logger.borrow(py).add_handler(handler.clone());
-                }
-
-                flush_all_handlers(py);
-
-                assert_eq!(
-                    flushes.load(Ordering::SeqCst),
-                    loggers.len(),
-                    "flush should be invoked once per registered logger",
-                );
-                Ok(())
-            })
-        }
-    }
-}
+#[path = "manager_tests.rs"]
+mod tests;

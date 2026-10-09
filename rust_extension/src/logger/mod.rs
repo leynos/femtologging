@@ -34,15 +34,19 @@ pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 
+/// Maximum number of records held before producers report a dropped record.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
+/// Maximum time a flush waits for the worker's acknowledgement, in milliseconds.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
+    /// One-shot channel notified when the worker reaches the flush marker.
     ack: Sender<()>,
 }
 
 impl FlushAckHandler {
+    /// Build the marker handler that acknowledges delivery of its queued record.
     fn new(ack: Sender<()>) -> Self {
         Self { ack }
     }
@@ -73,15 +77,25 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
+    /// Shared formatter used by producer threads before records enter the queue.
     formatter: SharedFormatter,
+    /// Atomically readable level threshold updated by logger configuration calls.
     level: AtomicU8,
+    /// Whether records are copied to the dotted-name parent after local dispatch.
     propagate: AtomicBool,
+    /// Lock-protected live handlers; each queued record owns the snapshot it captured.
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    /// Lock-protected filters consulted by producers before queueing a record.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    /// Number of records rejected because the worker queue could not accept them.
     dropped_records: AtomicU64,
+    /// Rate-limits warnings emitted for queue drops across concurrent producers.
     drop_warner: RateLimitedWarner,
+    /// Producer endpoint for records; taking it during drop prevents new sends.
     tx: Option<Sender<QueuedRecord>>,
+    /// Worker shutdown signal sent before the worker join during logger drop.
     shutdown_tx: Option<Sender<()>>,
+    /// Mutex-protected worker handle so dropping the logger can join without a lock held.
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -171,7 +185,6 @@ impl FemtoLogger {
     pub fn py_clear_filters(&self) {
         self.clear_filters();
     }
-
     /// Return the number of records dropped due to a full queue.
     ///
     /// Useful for tests and monitoring dashboards.
@@ -179,7 +192,6 @@ impl FemtoLogger {
     pub fn get_dropped(&self) -> u64 {
         self.dropped_records.load(Ordering::Relaxed)
     }
-
     /// Flush all handlers attached to this logger.
     ///
     /// First waits up to 2 seconds for the internal worker thread to drain
@@ -203,7 +215,7 @@ impl FemtoLogger {
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
-
+    /// Capture handler addresses for tests that verify attachment replacement.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -212,18 +224,15 @@ impl FemtoLogger {
             .collect()
     }
 }
-
 impl FemtoLogger {
     /// Attach a handler to this logger.
     pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
         self.handlers.write().push(handler);
     }
-
     /// Attach a filter to this logger.
     pub fn add_filter(&self, filter: Arc<dyn FemtoFilter>) {
         self.filters.write().push(filter);
     }
-
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
@@ -234,7 +243,6 @@ impl FemtoLogger {
             false
         }
     }
-
     /// Remove all handlers from this logger.
     ///
     /// Note: This affects only records enqueued after the call. Any records
@@ -243,7 +251,6 @@ impl FemtoLogger {
     pub fn clear_handlers(&self) {
         self.handlers.write().clear();
     }
-
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
         let mut filters = self.filters.write();
         if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
@@ -253,16 +260,13 @@ impl FemtoLogger {
             false
         }
     }
-
     pub fn clear_filters(&self) {
         self.filters.write().clear();
     }
-
     #[cfg(test)]
     pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
         self.handlers.read().clone()
     }
-
     /// Clone the internal sender for use in tests.
     ///
     /// # Warning
@@ -274,7 +278,6 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
-
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
@@ -288,9 +291,7 @@ impl Drop for FemtoLogger {
         }
     }
 }
-
-// These tests drive the worker with real threads and `crossbeam_channel`, so
-// they build outside `--cfg loom` only; the heavy lane's models cover Loom.
+// These real-thread tests use crossbeam outside Loom; the heavy lane uses models.
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests.rs"]
 mod logger_tests;

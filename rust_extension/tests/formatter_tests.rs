@@ -1,3 +1,5 @@
+//! Integration tests for the formatter's rendering of Python-facing log records.
+
 use _femtologging_rs::{DefaultFormatter, FemtoFormatter, FemtoLevel, FemtoLogRecord};
 use rstest::rstest;
 

@@ -53,6 +53,7 @@ pub struct FemtoHandler;
 
 #[pymethods]
 impl FemtoHandler {
+    /// Creates the empty Python-facing marker handler; its default methods intentionally accept records and flush requests without side effects.
     #[new]
     fn py_new() -> Self {
         Self

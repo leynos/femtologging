@@ -160,6 +160,8 @@ impl FemtoLogger {
     }
 }
 
+/// Join the worker and warn if it panicked; the panic is not propagated across
+/// the Python boundary because logger shutdown is best-effort.
 pub(super) fn log_join_result(handle: JoinHandle<()>) {
     if handle.join().is_err() {
         warn!("FemtoLogger: worker thread panicked");

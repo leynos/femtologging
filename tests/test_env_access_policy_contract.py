@@ -234,13 +234,19 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
     target kind, and warning denial. Both local linting and tests reach it.
     """
     lanes = variable_tokens("RUST_LINT_FEATURE_LANES")
-    assert lanes == (
+    expected_lanes = (
         "none",
+        "extension-module",
         "python",
         "log-compat",
         "tracing-compat",
+        "test-util",
+        "default",
         "all",
-    ), f"RUST_LINT_FEATURE_LANES must define the standard matrix, found {lanes}"
+    )
+    assert lanes == expected_lanes, (
+        f"RUST_LINT_FEATURE_LANES must define the standard matrix, found {lanes}"
+    )
     cargo_args = variable_tokens("RUST_LINT_CARGO_ARGS")
     assert "--all-targets" in cargo_args, (
         f"RUST_LINT_CARGO_ARGS must lint every target, found {cargo_args}"
@@ -272,9 +278,10 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
 def run_policy_lane(lanes: str) -> int:
     """Run `make lint-env-policy` over the given lanes.
 
-    The lint flags are narrowed so the run exercises the recipe's exit-status
-    handling rather than the policy itself. A lane naming a feature the crate
-    does not declare fails immediately, before any build.
+    The lint and Cargo flags are narrowed so the run exercises the recipe's
+    exit-status handling rather than the policy itself. Production policy
+    coverage remains separately asserted as `--all-targets`. A lane naming a
+    feature the crate does not declare fails immediately, before any build.
 
     Returns
     -------
@@ -290,6 +297,7 @@ def run_policy_lane(lanes: str) -> int:
             make,
             "lint-env-policy",
             f"ENV_POLICY_FEATURE_LANES={lanes}",
+            "ENV_POLICY_CARGO_ARGS=--lib",
             "ENV_POLICY_LINT_ARGS=-A clippy::all",
         ],
         cwd=repo_root(),
