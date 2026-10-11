@@ -116,11 +116,15 @@ the corpus still passes.
 The Rust extension build toolchain is pinned so local builds, CI, and the
 compatibility tests validate the same maturin and PyO3 releases:
 
-- `rust-toolchain.toml` selects the stable Rust toolchain and requires
-  `rustfmt`, `clippy`, and `rust-analyzer`. Install them with:
+- `rust-toolchain.toml` selects Rust `1.99.0` exactly and requires `rustfmt`,
+  `clippy`, and `rust-analyzer`. A floating `stable` channel is not used,
+  because rustup would resolve it at install time and the toolchain would
+  change without a commit. Dependabot's `rust-toolchain` update entry in
+  `.github/dependabot.yml` proposes each new release as a pull request, which
+  passes the usual gates before the pin moves. Install the toolchain with:
 
   ```shell
-  rustup toolchain install stable --component rustfmt --component clippy \
+  rustup toolchain install 1.99.0 --component rustfmt --component clippy \
     --component rust-analyzer
   ```
 
@@ -130,6 +134,9 @@ compatibility tests validate the same maturin and PyO3 releases:
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
+- The `rust_extension` crate sets `publish = false`: it ships as a wheel built
+  by maturin, never through `cargo publish`, so `cargo publish` refuses it and
+  the crate declares no minimum supported Rust version.
 
 When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
