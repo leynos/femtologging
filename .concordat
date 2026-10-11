@@ -1,0 +1,4 @@
+language:
+  rust:
+    surfaces:
+      - path: rust_extension/Cargo.toml
