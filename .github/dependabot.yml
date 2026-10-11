@@ -42,8 +42,8 @@ updates:
       default-days: 7
       semver-major-days: 14
 
-  # Enable version updates for Python (pip / requirements*.txt)
-  - package-ecosystem: "pip"
+  # Enable version updates for Python (uv-managed pyproject.toml and uv.lock)
+  - package-ecosystem: "uv"
     directory: "/"
     groups:
       minor-and-patch:
@@ -52,6 +52,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # pytest-bdd is pinned to 8.1.0 beside pytest 9.1.1 (docs/developers-guide.md),
+    # and a pytest-bdd release has to be checked against the pytest it supports
+    # before the pair moves (see leynos/cuprum#384), so it is bumped by hand.
+    ignore:
+      - dependency-name: "pytest-bdd"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
