@@ -43,29 +43,22 @@ impl ConfigBuilder {
         if self.root_logger().is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
-        let BuiltConfigComponents {
-            built_handlers,
-            handler_filter_ids,
-            built_filters,
-            resolved_handler_filters,
-        } = self.build_runtime_components()?;
+        let components = self.build_runtime_components()?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
+            let BuiltConfigComponents {
+                built_handlers,
+                handler_filter_ids,
+                built_filters,
+                resolved_handler_filters: _,
+            } = &components;
             let targets = self
                 .root_logger()
                 .map(|c| ("root", c))
                 .into_iter()
                 .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
             let plans = targets
-                .map(|(name, cfg)| {
-                    self.prepare_logger_plan(
-                        name,
-                        cfg,
-                        &built_handlers,
-                        &resolved_handler_filters,
-                        &built_filters,
-                    )
-                })
+                .map(|(name, cfg)| self.prepare_logger_plan(name, cfg, &components))
                 .collect::<Result<Vec<_>, _>>()?;
             let staged_loggers =
                 manager::stage_loggers(py, plans.iter().map(|plan| plan.name.as_str()))
@@ -88,9 +81,9 @@ impl ConfigBuilder {
             let runtime_loggers =
                 self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
             manager::replace_runtime_state(
-                built_handlers.clone(),
-                handler_filter_ids.clone(),
-                built_filters.clone(),
+                (*built_handlers).clone(),
+                (*handler_filter_ids).clone(),
+                (*built_filters).clone(),
                 runtime_loggers,
             );
             Ok(())
@@ -199,12 +192,13 @@ impl ConfigBuilder {
         &self,
         name: &str,
         cfg: &LoggerConfigBuilder,
-        handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
-        handler_filters: &BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
-        filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
+        components: &BuiltConfigComponents,
     ) -> Result<ConfiguredLoggerPlan, ConfigError> {
-        let resolved_handlers =
-            Self::collect_items(cfg.handler_ids(), handlers, Self::duplicate_handler_ids)?;
+        let resolved_handlers = Self::collect_items(
+            cfg.handler_ids(),
+            &components.built_handlers,
+            Self::duplicate_handler_ids,
+        )?;
         #[cfg(feature = "python")]
         if resolved_handlers
             .iter()
@@ -219,14 +213,18 @@ impl ConfigBuilder {
             .iter()
             .zip(resolved_handlers)
             .map(|(id, handler)| {
-                let filters = handler_filters
+                let filters = components
+                    .resolved_handler_filters
                     .get(id)
                     .ok_or_else(|| ConfigError::UnknownIds(vec![id.clone()]))?;
                 Ok(HandlerAttachment::with_filters(handler, filters.clone()))
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
-        let planned_filters =
-            Self::collect_items(cfg.filter_ids(), filters, Self::duplicate_filter_ids)?;
+        let planned_filters = Self::collect_items(
+            cfg.filter_ids(),
+            &components.built_filters,
+            Self::duplicate_filter_ids,
+        )?;
         Ok(ConfiguredLoggerPlan {
             name: name.to_string(),
             handler_ids: cfg.handler_ids().to_vec(),
