@@ -8,6 +8,19 @@ use super::{FemtoFormatter, format_exception_payload, format_stack_payload};
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
+/// Parse `"(message)s"` into its field, conversion, and remaining suffix.
+fn parse_directive(input: &str) -> Option<(&str, char, &str)> {
+    let field = input.strip_prefix('(')?;
+    let (name, conversion_and_suffix) = field.split_once(')')?;
+    let conversion = conversion_and_suffix.chars().next()?;
+    if !matches!(conversion, 's' | 'd' | 'f') {
+        return None;
+    }
+
+    let suffix = &conversion_and_suffix[conversion.len_utf8()..];
+    Some((name, conversion, suffix))
+}
+
 /// A percent-style formatter compatible with the common logging field syntax.
 #[derive(Clone, Debug)]
 pub struct PercentFormatter {
@@ -72,27 +85,13 @@ impl FemtoFormatter for PercentFormatter {
                 continue;
             }
 
-            let Some(field) = remaining.strip_prefix('(') else {
+            let Some((name, kind, suffix)) = parse_directive(remaining) else {
                 output.push('%');
                 continue;
             };
-            let Some(close_index) = field.find(')') else {
-                output.push('%');
-                continue;
-            };
-            let name = &field[..close_index];
-            let kind_start = close_index + 1;
-            let Some(kind) = field[kind_start..].chars().next() else {
-                output.push('%');
-                continue;
-            };
-            if !matches!(kind, 's' | 'd' | 'f') {
-                output.push('%');
-                continue;
-            }
 
             output.push_str(&self.format_directive(record, name, kind));
-            remaining = &field[kind_start + kind.len_utf8()..];
+            remaining = suffix;
         }
 
         output.push_str(remaining);
@@ -152,6 +151,33 @@ mod tests {
         let output = PercentFormatter::new("%(ratio)f", None).format(&record);
 
         assert_eq!(output, "1.500000");
+    }
+
+    #[test]
+    fn preserves_directive_without_conversion_character() {
+        let record = FemtoLogRecord::new("probe", FemtoLevel::Info, "hello");
+
+        let output = PercentFormatter::new("%(message)", None).format(&record);
+
+        assert_eq!(output, "%(message)");
+    }
+
+    #[test]
+    fn continues_after_malformed_directive() {
+        let record = FemtoLogRecord::new("probe", FemtoLevel::Info, "hello");
+
+        let output = PercentFormatter::new("%x %(message)s", None).format(&record);
+
+        assert_eq!(output, "%x hello");
+    }
+
+    #[test]
+    fn continues_after_non_ascii_unsupported_conversion() {
+        let record = FemtoLogRecord::new("probe", FemtoLevel::Info, "hello");
+
+        let output = PercentFormatter::new("%(message)é %(message)s", None).format(&record);
+
+        assert_eq!(output, "%(message)é hello");
     }
 
     #[test]

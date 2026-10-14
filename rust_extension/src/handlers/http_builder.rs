@@ -270,13 +270,18 @@ impl HTTPHandlerBuilder {
 
     /// Exposes explicitly configured Python builder values as a dictionary.
     #[cfg(feature = "python")]
-    fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn extend_endpoint_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if let Some(ref url) = self.url {
             d.set_item("url", url)?;
         }
         if let Some(ref method) = self.method {
             d.set_item("method", method.as_str())?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_auth_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         match &self.auth {
             Some(AuthConfig::Basic { username, .. }) => {
                 d.set_item("auth_type", "basic")?;
@@ -287,6 +292,11 @@ impl HTTPHandlerBuilder {
             }
             Some(AuthConfig::None) | None => {}
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_headers_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if !self.headers.is_empty() {
             let headers_dict = PyDict::new(d.py());
             for (k, v) in &self.headers {
@@ -294,6 +304,11 @@ impl HTTPHandlerBuilder {
             }
             d.set_item("headers", headers_dict)?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_transport_options_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "capacity", self.capacity);
         dict_set!(d, "connect_timeout_ms", self.connect_timeout_ms);
         dict_set!(d, "write_timeout_ms", self.write_timeout_ms);
@@ -307,14 +322,34 @@ impl HTTPHandlerBuilder {
         if let Some(ref fields) = self.record_fields {
             d.set_item("record_fields", fields.clone())?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_backoff_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "backoff_base_ms", self.backoff.base_ms());
         dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms());
         dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms());
         dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms());
+        Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_filter_ids_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if !self.filters.is_empty() {
             d.set_item("filters", self.filters.clone())?;
         }
         Ok(())
+    }
+
+    #[cfg(feature = "python")]
+    fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.extend_endpoint_dict(d)?;
+        self.extend_auth_dict(d)?;
+        self.extend_headers_dict(d)?;
+        self.extend_transport_options_dict(d)?;
+        self.extend_backoff_dict(d)?;
+        self.extend_filter_ids_dict(d)
     }
 }
 

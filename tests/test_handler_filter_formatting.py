@@ -6,6 +6,8 @@ import contextvars
 import threading
 import typing as typ
 
+import pytest
+
 from femtologging import (
     ConfigBuilder,
     FileHandlerBuilder,
@@ -181,10 +183,21 @@ def test_handler_filters_keep_their_own_record_snapshot(tmp_path: Path) -> None:
     ), "the second handler should receive both fields from its filter chain"
 
 
-def test_formatter_builder_renders_structured_callback_field(tmp_path: Path) -> None:
-    """A formatter builder must render a handler filter's structured field."""
+@pytest.mark.parametrize(
+    "formatter_source",
+    [
+        pytest.param("direct", id="direct-builder"),
+        pytest.param("registered", id="registered-formatter"),
+    ],
+)
+def test_formatter_renders_structured_callback_field(
+    tmp_path: Path,
+    formatter_source: typ.Literal["direct", "registered"],
+) -> None:
+    """Direct and registered formatters render handler-filter fields."""
     reset_manager()
-    path = tmp_path / "formatter-builder.log"
+    path = tmp_path / f"formatter-{formatter_source}.log"
+    formatter = FormatterBuilder().with_format("%(correlation_id)s %(message)s")
 
     def add_correlation_id(record: object) -> bool:
         vars(record)["correlation_id"] = "REQ-99"
@@ -194,13 +207,17 @@ def test_formatter_builder_renders_structured_callback_field(tmp_path: Path) -> 
         FileHandlerBuilder(str(path))
         .with_flush_after_records(1)
         .with_filters(["context"])
-        .with_formatter(
-            FormatterBuilder().with_format("%(correlation_id)s %(message)s")
-        )
     )
+    if formatter_source == "direct":
+        handler = handler.with_formatter(formatter)
+    else:
+        handler = handler.with_formatter("context")
+
+    config = ConfigBuilder().with_version(1)
+    if formatter_source == "registered":
+        config = config.with_formatter("context", formatter)
     config = (
-        ConfigBuilder()
-        .with_version(1)
+        config
         .with_filter("context", PythonCallbackFilterBuilder(add_correlation_id))
         .with_handler("output", handler)
         .with_root_logger(
@@ -216,47 +233,7 @@ def test_formatter_builder_renders_structured_callback_field(tmp_path: Path) -> 
         reset_manager()
 
     assert path.read_text().strip() == "REQ-99 authorised", (
-        "formatter builders must render structured callback fields"
-    )
-
-
-def test_registered_formatter_renders_structured_callback_field(tmp_path: Path) -> None:
-    """A formatter identifier must resolve through the configuration registry."""
-    reset_manager()
-    path = tmp_path / "formatter-registry.log"
-
-    def add_correlation_id(record: object) -> bool:
-        vars(record)["correlation_id"] = "REQ-99"
-        return True
-
-    handler = (
-        FileHandlerBuilder(str(path))
-        .with_flush_after_records(1)
-        .with_filters(["context"])
-        .with_formatter("context")
-    )
-    config = (
-        ConfigBuilder()
-        .with_version(1)
-        .with_formatter(
-            "context", FormatterBuilder().with_format("%(correlation_id)s %(message)s")
-        )
-        .with_filter("context", PythonCallbackFilterBuilder(add_correlation_id))
-        .with_handler("output", handler)
-        .with_root_logger(
-            LoggerConfigBuilder().with_level("INFO").with_handlers(["output"])
-        )
-    )
-
-    try:
-        config.build_and_init()
-        get_logger("episodic.api.authorization").info("authorised")
-        poll_file_for_text(path, "REQ-99 authorised", timeout=1.0)
-    finally:
-        reset_manager()
-
-    assert path.read_text().strip() == "REQ-99 authorised", (
-        "registered formatters must render structured callback fields"
+        f"{formatter_source} formatter must render structured callback fields"
     )
 
 
