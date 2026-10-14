@@ -387,20 +387,20 @@ file run too and do emit, which is why the assertions name their records.
 
 ## Structured logging contracts
 
-Python structured fields use one conversion and validation path. The
-`rust_extension/src/python_context.rs` adapter performs PyO3 mapping and scalar
-conversion for mappings accepted by both `_push_log_context` and
-`FemtoLogger.py_log`. It uses the framework-neutral `ContextBudget` in
-`rust_extension/src/log_context.rs` for key, value, and aggregate-size
-validation. That module also owns `merge_context_values` and contains no PyO3
-logic, keeping Python conversion separate from context budgeting and merging.
+Python logging captures the active task-local `ContextVar` fields and any
+explicit `extra` fields when `FemtoLogger.py_log` creates a record. The
+`rust_extension/src/python_context.rs` adapter converts Python mappings and
+scalar values, then `ContextBudget` in `rust_extension/src/log_context.rs`
+validates keys, values, and aggregate size. The resulting fields are stored in
+record metadata; this path does not read or merge Rust thread-local context.
+Conversion failures are reported to Python as type errors, and invalid context
+values as `ValueError`.
 
-`merge_context_values` is the producer-side merge boundary. It combines the
-active thread-local context with explicit fields, with explicit fields taking
-precedence on collisions. `FemtoLogger.py_log` performs this merge before level
-gating and record construction. Conversion failures are reported to Python as
-type errors, while merge and size-validation failures are reported as
-`ValueError`; invalid context must not be silently dropped.
+Rust logging uses `merge_context_values` at the producer boundary. It combines
+active Rust thread-local context with explicit record fields, with explicit
+fields taking precedence on collisions. Rust macros and records received
+through the `log` and `tracing` bridges use this merge; invalid context causes
+the record to be dropped rather than silently accepted.
 
 `PyHandler` inspects handler capabilities when a Python handler is registered.
 For built-in stream, file, rotating-file, timed-rotating-file, socket, and HTTP
