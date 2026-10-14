@@ -28,7 +28,7 @@ dev = [
     "pyyaml>=6.0.3,<7",
     "pytest==9.1.1",
     "pytest-timeout",
-    "pytest-bdd==8.1.0",
+    "pytest-bdd==9.0.0",
     "syrupy",
     # Keep in sync with the build-system requirement and CI workflows.
     "maturin[patchelf]==1.13.3",
