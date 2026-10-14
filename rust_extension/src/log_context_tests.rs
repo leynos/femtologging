@@ -157,6 +157,11 @@ fn explicit_values_override_context(_isolated_context: ()) {
     pop_log_context().expect("context should pop");
 }
 
+fn assert_rejected_context(context: BTreeMap<String, String>, expected: LogContextError) {
+    let err = push_log_context_map(context).expect_err("invalid context should fail");
+    assert_eq!(err, expected);
+}
+
 #[rstest]
 fn pop_on_empty_stack_errors(_isolated_context: ()) {
     let err = pop_log_context().expect_err("empty pop should fail");
@@ -164,17 +169,24 @@ fn pop_on_empty_stack_errors(_isolated_context: ()) {
 }
 
 #[rstest]
-fn reject_key_too_long(_isolated_context: ()) {
+fn reject_oversized_context_values(_isolated_context: ()) {
     let long_key = "k".repeat(MAX_KEY_BYTES + 1);
-    let err = push_log_context_map(BTreeMap::from([(long_key.clone(), "v".into())]))
-        .expect_err("long key should fail");
-    assert_eq!(
-        err,
+    assert_rejected_context(
+        BTreeMap::from([(long_key.clone(), "v".into())]),
         LogContextError::KeyTooLong {
             key: long_key,
             len: MAX_KEY_BYTES + 1,
             max: MAX_KEY_BYTES,
-        }
+        },
+    );
+    let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
+    assert_rejected_context(
+        BTreeMap::from([(String::from("ok"), long_value)]),
+        LogContextError::ValueTooLong {
+            key: String::from("ok"),
+            len: MAX_VALUE_BYTES + 1,
+            max: MAX_VALUE_BYTES,
+        },
     );
 }
 
@@ -189,21 +201,6 @@ fn reject_too_many_keys(_isolated_context: ()) {
         LogContextError::TooManyKeys {
             count: MAX_CONTEXT_KEYS + 1,
             max: MAX_CONTEXT_KEYS,
-        }
-    );
-}
-
-#[rstest]
-fn reject_value_too_long(_isolated_context: ()) {
-    let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
-    let err = push_log_context_map(BTreeMap::from([(String::from("ok"), long_value)]))
-        .expect_err("long value should fail");
-    assert_eq!(
-        err,
-        LogContextError::ValueTooLong {
-            key: String::from("ok"),
-            len: MAX_VALUE_BYTES + 1,
-            max: MAX_VALUE_BYTES,
         }
     );
 }
