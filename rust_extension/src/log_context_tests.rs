@@ -126,12 +126,21 @@ fn foreign_thread_drop_leaves_owner_context_unchanged(_isolated_context: ()) {
     let owner_thread = guard.owner_thread;
 
     thread::spawn(move || {
+        let unrelated_guard =
+            push_log_context([("foreign_request_id", "foreign")]).expect("foreign context");
         let foreign_guard = LogContextGuard {
             frame_id,
             owner_thread,
             _not_send_or_sync: PhantomData,
         };
         drop(foreign_guard);
+
+        let active = merge_context_values(&BTreeMap::new()).expect("foreign context should merge");
+        assert_eq!(
+            active.get("foreign_request_id").map(String::as_str),
+            Some("foreign")
+        );
+        drop(unrelated_guard);
     })
     .join()
     .expect("foreign thread should finish");

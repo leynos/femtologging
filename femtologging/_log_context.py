@@ -31,7 +31,7 @@ def _normalise_context_fields(fields: dict[str, object]) -> dict[str, str]:
     """Convert supported context values to their record metadata representation."""
     normalised: dict[str, str] = {}
     for key, value in fields.items():
-        if value is None or isinstance(value, str | int | float | bool):
+        if value is None or type(value) in (str, int, float, bool):
             normalised[key] = str(value)
         else:
             msg = "context values must be str, int, float, bool, or None"

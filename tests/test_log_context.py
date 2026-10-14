@@ -6,6 +6,8 @@ import asyncio
 import time
 import typing as typ
 
+import pytest
+
 from femtologging import FemtoLogger, log_context
 
 
@@ -115,3 +117,18 @@ def test_log_context_child_task_keeps_creation_snapshot() -> None:
     assert metadata_by_message["child"]["key_values"] == {"request_id": "request-a"}, (
         "child task must retain its creation-time context snapshot"
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        type("IntSubclass", (int,), {})(1),
+        type("FloatSubclass", (float,), {})(1.0),
+    ],
+    ids=["int-subclass", "float-subclass"],
+)
+def test_log_context_rejects_numeric_subclasses(value: object) -> None:
+    """Public context validation accepts only the documented scalar types."""
+    with pytest.raises(TypeError, match="context values must be"):
+        with log_context(value=value):
+            pass

@@ -16,8 +16,10 @@ from femtologging import (
     FemtoLogger,
     StreamHandlerBuilder,
     basicConfig,
+    debug,
     get_logger,
     log_context,
+    info,
 )
 
 if typ.TYPE_CHECKING:
@@ -90,6 +92,24 @@ def test_direct_logger_info_merges_scoped_log_context() -> None:
         "request_id": "abc123",
         "user": "alice",
     }, "scoped context fields were not attached to logger.info()"
+
+
+@pytest.mark.parametrize("emit", [debug, info], ids=["debug", "info"])
+def test_module_logging_captures_task_local_context(
+    emit: typ.Callable[..., str | None],
+) -> None:
+    """Module-level logging functions include the active task-local fields."""
+    logger_name = f"ctx.module.{emit.__name__}"
+    logger = get_logger(logger_name)
+    logger.set_level("DEBUG")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    with log_context(request_id="module-task"):
+        output = emit("module record", name=logger_name)
+
+    assert output is not None, "module-level logging should emit at DEBUG or INFO"
+    assert emitted_key_values(logger, collector) == {"request_id": "module-task"}
 
 
 def test_get_logger_info_preserves_context_at_root_handler() -> None:
