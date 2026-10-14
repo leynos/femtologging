@@ -19,6 +19,10 @@ use log::warn;
 mod native_handler;
 #[cfg(feature = "python")]
 use self::native_handler::NativeHandlerKind;
+#[cfg(feature = "python")]
+mod method_call;
+#[cfg(feature = "python")]
+use self::method_call::{ContextMethodCall, DirectMethodSpec};
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
 fn map_py_err(py: Python<'_>, err: PyErr, method: &str) -> HandlerError {
@@ -104,13 +108,6 @@ pub struct PyHandler {
 }
 
 #[cfg(feature = "python")]
-struct DirectMethodSpec {
-    name: &'static str,
-    lookup_operation: &'static str,
-    call_operation: &'static str,
-}
-
-#[cfg(feature = "python")]
 impl PyHandler {
     /// Create a new `PyHandler` from a Python object.
     ///
@@ -170,7 +167,15 @@ impl PyHandler {
             record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
         match context {
             Some(context) => self.call_handle_record_in_context(py, context, record_dict),
-            None => self.call_handle_record_direct(py, record_dict),
+            None => self.call_direct_method(
+                py,
+                DirectMethodSpec {
+                    name: "handle_record",
+                    lookup_operation: "get handle_record",
+                    call_operation: "handle_record",
+                },
+                (record_dict,),
+            ),
         }
     }
 
@@ -185,22 +190,10 @@ impl PyHandler {
             .and_then(|operator| operator.getattr("methodcaller"))
             .and_then(|factory| factory.call1(("handle_record", record_dict)))
             .map_err(|err| map_py_err(py, err, "create handle_record caller"))?;
-        self.call_methodcaller_in_context(py, context, method_caller, "handle_record")
-    }
-
-    fn call_handle_record_direct(
-        &self,
-        py: Python<'_>,
-        record_dict: Py<PyAny>,
-    ) -> Result<(), HandlerError> {
-        self.call_direct_method(
+        self.call_methodcaller_in_context(
             py,
-            DirectMethodSpec {
-                name: "handle_record",
-                lookup_operation: "get handle_record",
-                call_operation: "handle_record",
-            },
-            (record_dict,),
+            context,
+            ContextMethodCall::new(method_caller, "handle_record"),
         )
     }
 
@@ -213,7 +206,15 @@ impl PyHandler {
     ) -> Result<(), HandlerError> {
         match context {
             Some(context) => self.call_legacy_handle_in_context(py, context, record),
-            None => self.call_legacy_handle_direct(py, record),
+            None => self.call_direct_method(
+                py,
+                DirectMethodSpec {
+                    name: "handle",
+                    lookup_operation: "get handle",
+                    call_operation: "handle",
+                },
+                (record.logger(), record.level_str(), record.message()),
+            ),
         }
     }
 
@@ -235,22 +236,10 @@ impl PyHandler {
                 ))
             })
             .map_err(|err| map_py_err(py, err, "create handle caller"))?;
-        self.call_methodcaller_in_context(py, context, method_caller, "handle")
-    }
-
-    fn call_legacy_handle_direct(
-        &self,
-        py: Python<'_>,
-        record: &FemtoLogRecord,
-    ) -> Result<(), HandlerError> {
-        self.call_direct_method(
+        self.call_methodcaller_in_context(
             py,
-            DirectMethodSpec {
-                name: "handle",
-                lookup_operation: "get handle",
-                call_operation: "handle",
-            },
-            (record.logger(), record.level_str(), record.message()),
+            context,
+            ContextMethodCall::new(method_caller, "handle"),
         )
     }
 
@@ -275,17 +264,16 @@ impl PyHandler {
         &self,
         py: Python<'py>,
         context: &Py<PyAny>,
-        method_caller: Bound<'py, PyAny>,
-        method: &str,
+        call: ContextMethodCall<'py>,
     ) -> Result<(), HandlerError> {
         let invocation_context = context
             .bind(py)
             .call_method0("copy")
             .map_err(|err| map_py_err(py, err, "copy context"))?;
         invocation_context
-            .call_method1("run", (method_caller, self.obj.bind(py)))
+            .call_method1("run", (call.method_caller, self.obj.bind(py)))
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, method))
+            .map_err(|err| map_py_err(py, err, call.operation))
     }
 }
 

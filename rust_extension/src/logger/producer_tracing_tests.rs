@@ -16,12 +16,14 @@ use tracing_subscriber::prelude::*;
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 use super::{FemtoLogger, QueuedRecord};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 
 #[path = "producer_tracing_test_helpers.rs"]
 mod helpers;
-use helpers::{CapturedEvent, assert_events, collect_fields};
+use helpers::{
+    CapturedEvent, EXPECTED_EVENTS, PythonHandlerOutcome, assert_events, collect_fields,
+    emit_capture_failure, emit_python_handler_dispatch, emit_rejected_native_dispatch,
+};
 
 #[derive(Clone)]
 struct InternalEventCollector {
@@ -226,70 +228,13 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("test should install the global tracing collector");
 
-    let successful_logger = python_logger(
-        Arc::new(ContextVarsSnapshotProvider),
-        collector.clone(),
-        false,
-    )
-    .expect("context-aware Python test handler should register");
-    with_sensitive_context(|| {
-        assert!(
-            successful_logger
-                .log(FemtoLevel::Info, "message-secret-not-traced")
-                .is_some()
-        );
-    })
-    .expect("test ContextVar should be reset in its originating context");
-    collector
-        .wait_for_event_count(3)
-        .expect("successful dispatch tracing events should arrive");
-    drop(successful_logger);
-
-    let failing_snapshot_logger = python_logger(
-        Arc::new(TestSnapshotProvider { fail: true }),
-        collector.clone(),
-        false,
-    )
-    .expect("context-aware Python test handler should register");
-    assert!(
-        failing_snapshot_logger
-            .log(FemtoLevel::Info, "message-secret-not-traced")
-            .is_some()
-    );
-    drop(failing_snapshot_logger);
-
-    let mut rejected_logger = FemtoLogger::new("trace-reject".to_owned());
-    rejected_logger
-        .add_handler(Arc::new(NativeTestHandler { fail: false }))
-        .expect("native test handler should register");
-    let (rejected_sender, rejected_receiver) = crate::sync::bounded::<QueuedRecord>(1);
-    drop(rejected_receiver);
-    rejected_logger.tx = Some(rejected_sender);
-    assert!(
-        rejected_logger
-            .log(FemtoLevel::Info, "message-secret-not-traced")
-            .is_some()
-    );
-    drop(rejected_logger);
-
-    let failing_handler_logger = python_logger(
-        Arc::new(ContextVarsSnapshotProvider),
-        collector.clone(),
-        true,
-    )
-    .expect("context-aware Python test handler should register");
-    with_sensitive_context(|| {
-        assert!(
-            failing_handler_logger
-                .log(FemtoLevel::Info, "message-secret-not-traced")
-                .is_some()
-        );
-    })
-    .expect("test ContextVar should be reset in its originating context");
-    collector
-        .wait_for_event_count(9)
-        .expect("all context dispatch tracing events should arrive");
-    drop(failing_handler_logger);
+    emit_python_handler_dispatch(&collector, PythonHandlerOutcome::Success)
+        .expect("successful Python dispatch should emit its bounded events");
+    emit_capture_failure(&collector).expect("capture failure should emit its bounded event");
+    emit_rejected_native_dispatch()
+        .expect("rejected native dispatch should emit its bounded events");
+    emit_python_handler_dispatch(&collector, PythonHandlerOutcome::Failure)
+        .expect("failing Python handler should emit its bounded events");
     collector.stop_recording();
 
     let events = collector
@@ -306,58 +251,5 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
             })),
         "event values must not contain context or record payloads: {events:?}"
     );
-    assert_events(
-        &events,
-        &[
-            (
-                "producer_context_capture",
-                "python",
-                "capture_outcome",
-                "captured",
-                2,
-            ),
-            (
-                "producer_queue_dispatch",
-                "python",
-                "dispatch_outcome",
-                "queued",
-                2,
-            ),
-            (
-                "producer_context_capture",
-                "python",
-                "capture_outcome",
-                "failed",
-                1,
-            ),
-            (
-                "producer_context_capture",
-                "native",
-                "capture_outcome",
-                "not_required",
-                1,
-            ),
-            (
-                "producer_queue_dispatch",
-                "native",
-                "dispatch_outcome",
-                "rejected",
-                1,
-            ),
-            (
-                "worker_handler_dispatch",
-                "python",
-                "dispatch_outcome",
-                "success",
-                1,
-            ),
-            (
-                "worker_handler_dispatch",
-                "python",
-                "dispatch_outcome",
-                "failed",
-                1,
-            ),
-        ],
-    );
+    assert_events(&events, &EXPECTED_EVENTS);
 }

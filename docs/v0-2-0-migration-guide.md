@@ -112,6 +112,8 @@ ______________________________________________________________________
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,
-`force`, `handlers`) is unchanged. Construction of `BasicConfig`, calls to
-`basicConfig()`, and all other public APIs are unaffected by the
-slotted-dataclass and `contextvars` propagation changes.
+`force`, `handlers`) is unchanged. Constructing `BasicConfig` and calling
+`basicConfig()` remain unchanged by the slotted-dataclass and `contextvars`
+propagation changes. Python-backed handlers registered directly with
+`FemtoLogger` must provide contextual-dispatch support; otherwise,
+`add_handler()` returns `HandlerError::MissingContextDispatch`.
