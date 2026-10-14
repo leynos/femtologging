@@ -182,18 +182,24 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// Queues a marker behind every record the logger has already accepted
+    /// and waits for the worker to reach it, then calls ``flush()`` on every
+    /// attached handler (each handler applies its own timeout).
+    ///
+    /// One 2 second deadline covers the whole barrier: enqueueing the marker
+    /// and waiting for the worker to acknowledge it. The wait releases the
+    /// Python GIL, so a worker blocked on a Python handler can run and
+    /// acknowledge rather than deadlocking against the flushing thread.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker drains in time and every handler flush
-    ///     succeeds.
-    ///     ``False`` when the worker queue cannot be drained (channel
-    ///     closed or timeout exceeded) or any handler flush returns
-    ///     ``False``.
+    ///     ``True`` when the worker acknowledged the marker in time and
+    ///     every handler flush succeeded.
+    ///     ``False`` when the marker could not be enqueued before the
+    ///     deadline (the queue stayed full), when the worker did not
+    ///     acknowledge it in time (a handler is stalled), when the worker
+    ///     has already exited, or when any handler flush returns ``False``.
     ///
     /// Examples
     /// --------
@@ -300,6 +306,10 @@ mod logger_tests_helpers;
 #[cfg(all(test, not(loom)))]
 #[path = "producer_tests.rs"]
 mod producer_tests;
+// The flush barrier's tests time the call, and the Loom channel has no clock.
+#[cfg(all(test, not(loom)))]
+#[path = "logger_tests_flush.rs"]
+mod logger_tests_flush;
 #[cfg(all(test, not(loom)))]
 #[path = "worker_tests.rs"]
 mod worker_tests;

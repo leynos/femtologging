@@ -3,9 +3,11 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::warn;
+#[cfg(not(loom))]
+use pyo3::Python;
 
 use crate::filters::FilterContext;
 use crate::handler::FemtoHandlerTrait;
@@ -180,34 +182,78 @@ impl FemtoLogger {
         });
     }
 
+    /// Flush every handler attached to this logger.
+    ///
+    /// The flush is a barrier: a marker record is queued behind everything
+    /// already queued, so the marker being acknowledged means the records
+    /// ahead of it have been dispatched. One absolute deadline covers the
+    /// whole barrier — enqueueing the marker and waiting for the
+    /// acknowledgement — because either half stalls on the same full queue.
+    /// Charging each half its own timeout let a full queue spend the
+    /// advertised budget twice, and a blocking enqueue could overshoot it
+    /// without bound.
+    ///
+    /// Returns `false` when the marker could not be enqueued before the
+    /// deadline (the queue stayed full, or the logger is shutting down), when
+    /// the worker did not acknowledge it before the deadline (a handler is
+    /// stalled), when the worker has already exited, or when any attached
+    /// handler's `flush()` reports failure.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
-        self.wait_for_worker_idle() && self.flush_configured_handlers()
+        self.wait_for_worker_idle_ungil() && self.flush_configured_handlers()
     }
 
+    /// Wait for the worker to acknowledge a flush marker.
+    ///
+    /// Returns `true` immediately when this logger has no worker thread:
+    /// with no queue there is nothing to drain.
+    ///
+    /// Call [`FemtoLogger::wait_for_worker_idle_ungil`] rather than this
+    /// method directly: the waits here block, and the worker may need the GIL
+    /// to make progress. See that method for why.
     fn wait_for_worker_idle(&self) -> bool {
         let Some(tx) = &self.tx else {
             return true;
         };
+        let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
         let (ack_tx, ack_rx) = bounded(1);
         let ack_handler: std::sync::Arc<dyn FemtoHandlerTrait> =
             std::sync::Arc::new(FlushAckHandler::new(ack_tx));
         let record = FemtoLogRecord::new("__femtologging__", FemtoLevel::Info, "__flush__");
-        if tx
-            .send(QueuedRecord {
-                record,
-                handlers: vec![ack_handler],
-            })
-            .is_err()
-        {
+        let marker = QueuedRecord {
+            record,
+            handlers: vec![ack_handler],
+        };
+        // Both failures reach the caller as the same verdict — the worker
+        // never confirmed the barrier. `Timeout` is a saturated queue or a
+        // stalled worker; `Disconnected` is a worker that has already exited.
+        if tx.send_timeout(marker, remaining(deadline)).is_err() {
             return false;
         }
-        ack_rx
-            .recv_timeout(Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS))
-            .is_ok()
+        ack_rx.recv_timeout(remaining(deadline)).is_ok()
     }
 
     fn flush_configured_handlers(&self) -> bool {
         self.handlers.read().iter().all(|handler| handler.flush())
+    }
+
+    /// Wait for the worker to acknowledge a flush marker, without the GIL.
+    ///
+    /// See [`FemtoLogger::wait_for_worker_idle`] for why the wait must not
+    /// hold the GIL. `Python::attach` is a no-op when this thread already
+    /// holds the interpreter, so the release happens exactly where the
+    /// blocking wait does and the caller's callbacks are unaffected.
+    #[cfg(not(loom))]
+    pub(super) fn wait_for_worker_idle_ungil(&self) -> bool {
+        Python::attach(|py| py.detach(|| self.wait_for_worker_idle()))
+    }
+
+    /// Wait for the worker directly inside a Loom model.
+    ///
+    /// No Loom model attaches a Python handler, so there is no GIL to release;
+    /// see [`super::worker::join_worker`] for the same distinction.
+    #[cfg(loom)]
+    pub(super) fn wait_for_worker_idle_ungil(&self) -> bool {
+        self.wait_for_worker_idle()
     }
 
     /// Dispatch a record to the logger's handlers via the background queue.
@@ -223,4 +269,22 @@ impl FemtoLogger {
             self.handle_parent_propagation(pr);
         }
     }
+}
+
+/// Time left before `deadline`, or zero when it has already passed.
+///
+/// A single deadline covers the whole flush barrier, so each wait in it is
+/// given what remains rather than the full budget; a deadline in the past
+/// yields zero, which the timed channel operations treat as a non-blocking
+/// attempt rather than a panic.
+///
+/// # Examples
+///
+/// ```ignore
+/// let deadline = Instant::now() + Duration::from_millis(50);
+/// assert!(remaining(deadline) <= Duration::from_millis(50));
+/// assert_eq!(remaining(Instant::now()), Duration::ZERO);
+/// ```
+fn remaining(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
 }
