@@ -221,16 +221,34 @@ impl Shard {
     /// four when the queue is full and the worker is slow.
     pub(crate) fn wait_for_drain(&self) -> bool {
         let deadline = Instant::now() + BARRIER_TIMEOUT;
+        self.wait_for_drain_until(deadline)
+    }
+
+    /// Wait for the shard barrier using a deadline created by the caller.
+    ///
+    /// `flush_handlers` supplies its own deadline so marker insertion and
+    /// acknowledgement share a budget with the handler flushes that follow.
+    pub(crate) fn wait_for_drain_until(&self, deadline: Instant) -> bool {
         let (ack, acked) = bounded::<()>(1);
         if self
             .queue
-            .send_timeout(Job::Barrier { ack }, BARRIER_TIMEOUT)
+            .send_timeout(
+                Job::Barrier { ack },
+                deadline.saturating_duration_since(Instant::now()),
+            )
             .is_err()
         {
             return false;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         recv_timeout(&acked, remaining).is_ok()
+    }
+
+    /// Return the queued job count so tests can prove a marker occupies the
+    /// bounded queue before exercising a second flush.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn queued_jobs_for_test(&self) -> usize {
+        self.queue.len()
     }
 
     /// Finish the queued work and join the worker, which only a Loom run has.

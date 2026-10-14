@@ -8,6 +8,10 @@
 #[cfg(feature = "python")]
 use log::warn;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+#[cfg(not(loom))]
+use pyo3::Python;
 
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
@@ -20,7 +24,7 @@ mod handler_filters;
 
 #[cfg(all(test, not(loom)))]
 use super::HandlerAttachment;
-use super::{FemtoLogger, QueuedRecord};
+use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -284,7 +288,8 @@ impl FemtoLogger {
 
     /// Drain this logger's queued records, then flush its configured handlers.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
-        self.wait_for_dispatch_to_drain() && self.flush_configured_handlers()
+        let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
+        self.wait_for_dispatch_to_drain(deadline) && self.flush_configured_handlers()
     }
 
     /// Exercise the production handler-filter chain without starting a worker.
@@ -319,7 +324,7 @@ impl FemtoLogger {
     /// the duration, and the wait is taken directly when there is no
     /// interpreter to detach from, which is also when no Python handler can be
     /// mid-call.
-    fn wait_for_dispatch_to_drain(&self) -> bool {
+    fn wait_for_dispatch_to_drain(&self, deadline: Instant) -> bool {
         #[cfg(not(loom))]
         let (shard, budget) = match self.dispatch_state() {
             Ok(dispatch) => dispatch,
@@ -330,13 +335,15 @@ impl FemtoLogger {
             return true;
         }
         #[cfg(not(loom))]
-        if let Some(drained) = pyo3::Python::try_attach(|py| py.detach(|| shard.wait_for_drain())) {
+        if let Some(drained) =
+            Python::try_attach(|py| py.detach(|| shard.wait_for_drain_until(deadline)))
+        {
             return drained;
         }
         #[cfg(not(loom))]
-        return shard.wait_for_drain();
+        return shard.wait_for_drain_until(deadline);
         #[cfg(loom)]
-        self.shard.wait_for_drain()
+        self.shard.wait_for_drain_until(deadline)
     }
 
     /// Flush every configured handler and report whether all succeeded.

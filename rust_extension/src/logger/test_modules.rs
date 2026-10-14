@@ -23,3 +23,7 @@ mod producer_tests;
 #[cfg(all(not(loom), feature = "tracing-compat"))]
 #[path = "producer_tracing_tests.rs"]
 mod producer_tracing_tests;
+// Flush tests time queue barriers; Loom channels intentionally have no clock.
+#[cfg(not(loom))]
+#[path = "logger_tests_flush.rs"]
+mod logger_tests_flush;
