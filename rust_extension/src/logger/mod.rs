@@ -60,6 +60,9 @@ pub(crate) use runtime_mutation::DetachedOwners;
 /// Threshold applied to loggers when the manager creates them.
 pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
 
+/// Maximum time a flush spends inserting and waiting for its shard barrier.
+const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
+
 /// Basic logger used for early experimentation.
 #[pyclass]
 pub struct FemtoLogger {

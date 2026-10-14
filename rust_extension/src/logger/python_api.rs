@@ -157,25 +157,29 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// First waits up to 2 seconds for the logger's dispatch shard to drain
-    /// the records already queued for it, then calls ``flush()`` on every
-    /// attached handler (each handler applies its own timeout).
+    /// Queues a marker after accepted records on the logger's dispatch shard
+    /// and waits for its acknowledgement, then calls ``flush()`` on attached
+    /// handlers.
+    ///
+    /// One 2 second deadline covers inserting the marker and waiting for its
+    /// acknowledgement. The wait releases the Python GIL so Python handlers
+    /// on the worker can make progress.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the dispatcher drains the queue in time and every
-    ///     handler flush succeeds. ``False`` when the queued work cannot be
-    ///     drained (the shard is gone or the wait times out) or any handler
-    ///     flush returns ``False``.
+    ///     ``True`` when the shard acknowledges the marker in time and every
+    ///     handler flush succeeds. ``False`` when the marker cannot be
+    ///     enqueued or acknowledged before the deadline, the shard has exited,
+    ///     or any handler flush returns ``False``.
     ///
     /// Examples
     /// --------
     /// >>> logger.flush_handlers()
     /// True
     #[pyo3(name = "flush_handlers", text_signature = "(self)")]
-    fn py_flush_handlers(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush_handlers())
+    fn py_flush_handlers(&self) -> bool {
+        self.flush_handlers()
     }
 
     /// Capture handler addresses for tests that verify attachment replacement.
