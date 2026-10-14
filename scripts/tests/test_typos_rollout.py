@@ -168,6 +168,30 @@ def test_render_and_write_are_deterministic_valid_toml(
     assert list(output.parent.glob(".typos.toml.*")) == []
 
 
+def test_repository_policy_replaces_broad_colour_option_rule(
+    rollout_modules: tuple[types.ModuleType, types.ModuleType, types.ModuleType],
+    tmp_path: Path,
+) -> None:
+    """The local allowlist must replace the shared broad colour rule."""
+    _, _, generator = rollout_modules
+    broad = generator.BROAD_COLOR_OPTION_PATTERN
+    allowlist = (
+        r"(?:^|[^A-Za-z0-9_-])(?:--color-primary|--tw-color-red-500)"
+        r"(?:$|[^A-Za-z0-9_-])"
+    )
+    base = _dictionary_text().replace("ignore = []", f"ignore = [{json.dumps(broad)}]")
+    local = _dictionary_text().replace(
+        "ignore = []", f"ignore = [{json.dumps(allowlist)}]"
+    )
+    (tmp_path / ".typos-oxendict-base.toml").write_text(base, encoding="utf-8")
+    (tmp_path / "typos.local.toml").write_text(local, encoding="utf-8")
+
+    dictionary = generator.dictionary_from_cache(tmp_path)
+
+    assert broad not in dictionary.ignore_patterns
+    assert allowlist in dictionary.ignore_patterns
+
+
 def test_offline_refresh_requires_and_reuses_valid_cache(
     rollout_modules: tuple[types.ModuleType, types.ModuleType, types.ModuleType],
     tmp_path: Path,

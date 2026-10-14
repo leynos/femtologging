@@ -299,7 +299,9 @@ fn active_context() -> BTreeMap<String, String> {
     })
 }
 
-fn validate_context_map(context: &BTreeMap<String, String>) -> Result<(), LogContextError> {
+pub(crate) fn validate_context_map(
+    context: &BTreeMap<String, String>,
+) -> Result<(), LogContextError> {
     if context.len() > MAX_CONTEXT_KEYS {
         return Err(LogContextError::TooManyKeys {
             count: context.len(),

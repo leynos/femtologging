@@ -207,9 +207,9 @@ def test_logger_extra_rejects_protocol_convertible_values(
     )
 
 
-def test_log_context_leaks_between_asyncio_tasks_on_one_thread() -> None:
-    """Scoped context follows the thread, rather than asyncio task, until #433."""
-    logger = FemtoLogger("ctx.asyncio-thread-local")
+def test_log_context_isolated_between_asyncio_tasks_on_one_thread() -> None:
+    """Scoped context follows each asyncio task on a shared event-loop thread."""
+    logger = FemtoLogger("ctx.asyncio-task-local")
     logger.set_level("INFO")
     collector = RecordCollector()
     logger.add_handler(collector)
@@ -248,9 +248,9 @@ def test_log_context_leaks_between_asyncio_tasks_on_one_thread() -> None:
             for record in collector.records
         ]
         assert observed_key_values == [
-            {"correlation_id": "second"},
             {"correlation_id": "first"},
-        ], "thread-local context did not expose the controlled task interference"
+            {"correlation_id": "second"},
+        ], "task-local context did not preserve each task's request fields"
     finally:
         logger.remove_handler(collector)
 

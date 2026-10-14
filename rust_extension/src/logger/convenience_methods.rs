@@ -31,10 +31,10 @@ use super::python_helpers::capture_exception_payload;
 impl FemtoLogger {
     /// Emit a message at the provided level and return its formatted text.
     ///
-    /// The record includes active scoped context merged with optional inline
-    /// fields. Inline fields override scoped fields with the same key. Context
-    /// is validated before the logger's level gate, so invalid fields raise an
-    /// error even when the message would not otherwise be emitted.
+    /// The record includes active Python task context merged with optional
+    /// inline fields. Inline fields override task context with the same key.
+    /// Context is validated before the logger's level gate, so invalid fields
+    /// raise an error even when the message would not otherwise be emitted.
     ///
     /// # Parameters
     ///
@@ -88,7 +88,7 @@ impl FemtoLogger {
         if let Some(extra) = extra {
             explicit_key_values.extend(extract_python_context_map(extra)?);
         }
-        let merged_key_values = log_context::merge_context_values(&explicit_key_values)
+        log_context::validate_context_map(&explicit_key_values)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
         if !self.is_enabled_for(level) {
             return Ok(None);
@@ -98,7 +98,7 @@ impl FemtoLogger {
             level,
             message,
             RecordMetadata {
-                key_values: merged_key_values,
+                key_values: explicit_key_values,
                 ..Default::default()
             },
         );
