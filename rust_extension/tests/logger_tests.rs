@@ -373,4 +373,3 @@ fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): Handler
         "output identities should match accepted records"
     );
 }
-
