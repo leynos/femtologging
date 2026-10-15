@@ -18,6 +18,7 @@ use crate::sync::{Sender, bounded};
 
 use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
+/// Classifies a handler snapshot for tracing metadata without retaining it.
 #[cfg(feature = "tracing-compat")]
 fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static str {
     let has_python = handlers.iter().any(|handler| handler.is_python_backed());
