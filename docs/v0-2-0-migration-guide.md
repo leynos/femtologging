@@ -76,7 +76,7 @@ ______________________________________________________________________
 
 `log_context()` fields now reach records emitted through `FemtoLogger` methods,
 including methods on loggers returned by `get_logger()`, while the context is
-active on the calling thread:
+active in the current Python task:
 
 ```python
 logger = femtologging.get_logger("service")
@@ -84,11 +84,36 @@ with femtologging.log_context(request_id=42):
     logger.info("request accepted")
 ```
 
-The context remains thread-local. In a single-threaded asyncio event loop,
-holding it across an `await` can share fields between concurrently in-flight
-tasks. Use the per-call `extra` argument for asyncio fields that belong to one
-operation. Task-local scoped context backed by `contextvars` remains future
-work.
+The context follows the current Python task across `await` points. Use the
+per-call `extra` argument when metadata belongs to one operation but should not
+be inherited by child tasks.
+
+## Scoped logging context follows Python tasks
+
+Python `log_context(**fields)` used to store fields in an OS-thread-local
+stack. In asynchronous code, tasks sharing an event-loop thread could observe
+each other's active fields while one task was suspended. The context manager
+now uses `contextvars.ContextVar`, so its fields follow the current Python
+context. A newly created child task inherits a snapshot of the parent's context
+at task creation; later changes in either task do not change the other's
+context. Nested `log_context` scopes override same-named fields from outer
+scopes.
+
+Python logging methods and module-level logging functions copy the active
+Python context when they create a record, before it is queued. Changing or
+leaving the context after that call does not alter the record. For Rust
+records, explicit key-values supplied by a macro or tracing event take
+precedence over same-named Rust scoped fields.
+
+Rust scoped context remains OS-thread-local. Its guard is `!Send` and `!Sync`,
+and removes its own frame when dropped on the thread that created it. Keep a
+Rust guard within a thread-affine synchronous scope; do not hold it across an
+`await` that may resume on another thread. Rust macros and the Rust `log` and
+`tracing` bridges merge Rust scoped fields when they create a record, with the
+tracing bridge also retaining event and span fields. Explicit event fields take
+precedence over same-named scoped fields. Python task-local fields and Rust
+thread-local fields do not transfer implicitly in either direction. Pass
+metadata explicitly when a request crosses that boundary.
 
 ______________________________________________________________________
 

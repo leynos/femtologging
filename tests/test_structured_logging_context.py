@@ -16,7 +16,9 @@ from femtologging import (
     FemtoLogger,
     StreamHandlerBuilder,
     basicConfig,
+    debug,
     get_logger,
+    info,
     log_context,
 )
 
@@ -90,6 +92,30 @@ def test_direct_logger_info_merges_scoped_log_context() -> None:
         "request_id": "abc123",
         "user": "alice",
     }, "scoped context fields were not attached to logger.info()"
+
+
+@pytest.mark.parametrize(
+    ("emit", "emit_name"),
+    [(debug, "debug"), (info, "info")],
+    ids=["debug", "info"],
+)
+def test_module_logging_captures_task_local_context(
+    emit: cabc.Callable[..., str | None], emit_name: str
+) -> None:
+    """Module-level logging functions include the active task-local fields."""
+    logger_name = f"ctx.module.{emit_name}"
+    logger = get_logger(logger_name)
+    logger.set_level("DEBUG")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    with log_context(request_id="module-task"):
+        output = emit("module record", name=logger_name)
+
+    assert output is not None, "module-level logging should emit at DEBUG or INFO"
+    assert emitted_key_values(logger, collector) == {"request_id": "module-task"}, (
+        "module-level logging must capture task-local context"
+    )
 
 
 def test_get_logger_info_preserves_context_at_root_handler() -> None:
@@ -207,9 +233,9 @@ def test_logger_extra_rejects_protocol_convertible_values(
     )
 
 
-def test_log_context_leaks_between_asyncio_tasks_on_one_thread() -> None:
-    """Scoped context follows the thread, rather than asyncio task, until #433."""
-    logger = FemtoLogger("ctx.asyncio-thread-local")
+def test_log_context_isolated_between_asyncio_tasks_on_one_thread() -> None:
+    """Scoped context follows each asyncio task on a shared event-loop thread."""
+    logger = FemtoLogger("ctx.asyncio-task-local")
     logger.set_level("INFO")
     collector = RecordCollector()
     logger.add_handler(collector)
@@ -248,9 +274,9 @@ def test_log_context_leaks_between_asyncio_tasks_on_one_thread() -> None:
             for record in collector.records
         ]
         assert observed_key_values == [
-            {"correlation_id": "second"},
             {"correlation_id": "first"},
-        ], "thread-local context did not expose the controlled task interference"
+            {"correlation_id": "second"},
+        ], "task-local context did not preserve each task's request fields"
     finally:
         logger.remove_handler(collector)
 

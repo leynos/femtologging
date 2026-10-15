@@ -957,11 +957,16 @@ Implemented baseline (roadmap item 3.4.2):
 - Merged key-values are persisted into `RecordMetadata.key_values` before the
   record is queued to consumer threads.
 
-**Figure: Asynchronous dispatch preserving scoped context in Python-registered
-handlers.**
+Python logging follows a separate path: `FemtoLogger.py_log` captures and
+validates the active task-local `ContextVar` fields and explicit `extra`
+fields, then stores them in record metadata. It does not merge Rust
+thread-local context. Rust macros and the `log` and `tracing` bridges merge
+Rust scoped context when creating their records.
 
-For screen readers: this sequence diagram shows that `FemtoLogger` merges
-explicit key-values with active scoped context, records the merged values in
+**Figure: Asynchronous dispatch with task-local context.**
+
+For screen readers: this sequence diagram shows that `FemtoLogger` captures and
+validates Python task-local context and explicit `extra` fields, records them in
 `FemtoLogRecord` metadata, enqueues the record, and returns to the Python
 caller. A worker then dispatches that same record through `PyHandler` to the
 built-in handler, where processing completes asynchronously.
@@ -970,7 +975,7 @@ built-in handler, where processing completes asynchronously.
 sequenceDiagram
     participant Caller as PythonCaller
     participant Logger as FemtoLogger
-    participant Context as log_context
+    participant Context as PythonTaskContext
     participant Record as FemtoLogRecord
     participant Queue as RecordQueue
     participant Worker as ConsumerWorker
@@ -978,9 +983,10 @@ sequenceDiagram
     participant Native as BuiltInHandler
 
     Caller->>Logger: FemtoLogger.log(...)
-    Logger->>Context: merge_context_values(explicit_key_values)
-    Context-->>Logger: merged_key_values
-    Logger->>Record: with_metadata(merged_key_values)
+    Logger->>Context: read active ContextVar fields
+    Context-->>Logger: task-local fields
+    Logger->>Logger: convert and validate fields and extra
+    Logger->>Record: with_metadata(python_fields)
     Logger->>Queue: enqueue(record)
     Logger-->>Caller: return
     Worker->>Queue: dequeue(record)
@@ -992,20 +998,22 @@ sequenceDiagram
 
 **Figure: Invalid logging context errors.**
 
-For screen readers: this sequence diagram shows an invalid logging context
-causing `merge_context_values` to return an error, which `FemtoLogger` exposes
-to the Python caller as `PyValueError`.
+For screen readers: this sequence diagram shows Python context conversion or
+validation failing before record construction. `FemtoLogger` reports conversion
+errors as `TypeError` and invalid context values as `PyValueError` to the
+Python caller.
 
 ```mermaid
 sequenceDiagram
     participant Caller as PythonCaller
     participant Logger as FemtoLogger
-    participant Context as log_context
+    participant Context as PythonTaskContext
 
     Caller->>Logger: emit log record
-    Logger->>Context: merge_context_values(explicit_key_values)
-    Context-->>Logger: Err
-    Logger-->>Caller: PyValueError
+    Logger->>Context: read active ContextVar fields
+    Context-->>Logger: task-local fields
+    Logger->>Logger: convert and validate fields and extra
+    Logger-->>Caller: TypeError or PyValueError
 ```
 
 Inspired by `tracing::span!`,
@@ -1837,11 +1845,26 @@ their consumer logic (which is a robust and simple model), future versions of
 ecosystem. This is particularly relevant for applications already built around
 an async runtime like Tokio or `async-std`.
 
-The currently implemented scoped context propagation is thread-local and based
-on OS-thread execution. Context capture and merge occur on the producer thread
-before queueing, which ensures records are Rust-owned and safe to dispatch
-across dedicated worker threads. Async task propagation across executors
-requires additional task-local bridging or explicit context passing.
+Python `log_context(**fields)` stores a copied mapping in a `ContextVar`.
+Python logging methods and module-level functions copy the active task-local
+fields into record metadata when they create a record, before queueing it. A
+new asyncio task inherits a snapshot of the Python context at task creation;
+subsequent changes remain local to each task. Nested Python scopes override
+same-named fields from outer scopes.
+
+Rust scoped context remains an OS-thread-local stack. `LogContextGuard` is
+`!Send` and `!Sync`, records its owner thread and unique frame identity, and
+removes only its own frame when dropped on that thread. Keep it in a
+thread-affine synchronous scope, rather than across an `await` that may resume
+on another thread. Rust macros and the Rust `log` and `tracing` bridges merge
+the active Rust context when creating a record. Explicit Rust key-values and
+tracing event or span fields take precedence over same-named scoped fields.
+
+Python and Rust contexts do not transfer implicitly. Python entrypoints use
+Python task-local fields only; Rust macros and bridges use Rust thread-local
+fields only. Code crossing that boundary must pass the required metadata
+explicitly. Once merged, record metadata is owned by the record and remains
+unchanged when queued to consumer threads.
 
 - **Async MPSC Channels:** Utilize MPSC channel implementations that are
   designed for async contexts, such as `tokio::sync::mpsc`, `flume`'s async

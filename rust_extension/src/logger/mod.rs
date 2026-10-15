@@ -57,6 +57,7 @@ pub struct FemtoLogger {
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
+    context_dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,

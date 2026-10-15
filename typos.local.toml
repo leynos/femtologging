@@ -13,7 +13,13 @@ accepted = ["OT", "astroid", "mis", "yse"]
 [patterns]
 # Inline code spans quote identifiers and deliberate spelling examples;
 # they are code, not prose, so the en-GB-oxendict rules do not apply.
-ignore = ["rust-analyzer", "`[^`\\n]+`"]
+# Keep the reviewed allowlist for the CSS option names used by this project;
+# the shared dictionary's broad colour-option rule is removed by the generator.
+ignore = [
+    "(?:^|[^A-Za-z0-9_-])(?:--color-primary|--tw-color-red-500)(?:$|[^A-Za-z0-9_-])",
+    "rust-analyzer",
+    "`[^`\\n]+`",
+]
 
 [files]
 exclude = ["rust_extension/target"]

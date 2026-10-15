@@ -14,6 +14,7 @@ repository-specific policy that must not weaken the estate-wide base.
 import tomllib
 import urllib.error
 import urllib.parse
+from dataclasses import replace
 from pathlib import Path
 
 import typos_rollout as rollout
@@ -23,6 +24,9 @@ DEFAULT_BASE_URL = (
     "refs/heads/main/data/typos-oxendict-base.toml"
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+BROAD_COLOR_OPTION_PATTERN = (
+    "--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\\b|_)"
+)
 
 
 def dictionary_from_cache(repository: Path = REPOSITORY_ROOT) -> rollout.Dictionary:
@@ -34,7 +38,14 @@ def dictionary_from_cache(repository: Path = REPOSITORY_ROOT) -> rollout.Diction
             dictionary,
             rollout.load_dictionary(local_overlay),
         )
-    return dictionary
+    return replace(
+        dictionary,
+        ignore_patterns=tuple(
+            pattern
+            for pattern in dictionary.ignore_patterns
+            if pattern != BROAD_COLOR_OPTION_PATTERN
+        ),
+    )
 
 
 def render_config(repository: Path = REPOSITORY_ROOT) -> str:

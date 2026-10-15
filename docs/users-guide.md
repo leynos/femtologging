@@ -201,6 +201,9 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
   records rejected because the queue was full or shutting down.
+- Use `logger.get_context_dropped()` to inspect records discarded when Rust
+  scoped context or explicit Rust key-values fail validation. This counter is
+  separate from queue-capacity drops.
 
 ## Built-in handlers
 
@@ -707,9 +710,12 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
 
 - Always flush or close handlers before shutting down the process; otherwise
   buffered records may be lost.
-- Monitor `logger.get_dropped()` and the warnings emitted by each handler to
-  detect back pressure early. Increase handler capacities or switch to
-  blocking/timeout policies when drops are unacceptable.
+- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`, and the
+  warnings emitted by each handler to detect back pressure or Rust context
+  validation failures. When `get_context_dropped()` increases, correct or
+  reduce Rust context fields and explicit metadata that contributes to
+  validation. For queue-full/back-pressure drops, increase handler capacities
+  or switch to blocking/timeout policies when drops are unacceptable.
 - File-based handlers count `flush_interval` in _records_. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
@@ -743,9 +749,8 @@ current, tested surface area of femtologging.
 
 ## Scoped structured context
 
-Use `log_context(...)` to add structured key-values to records emitted through
-`FemtoLogger` methods, including a logger returned by `get_logger()`, on the
-calling thread while the context is active:
+Use `log_context(...)` to add structured key-values to every record emitted in
+the current Python task while the context is active:
 
 ```python
 import femtologging
@@ -757,9 +762,13 @@ with femtologging.log_context(request_id=42, user="alice"):
 
 Behavioural guarantees:
 
-- Context values are merged on the producer thread before queueing.
-- Inline `extra` fields override scoped context keys with the same name.
-- Rust `tracing`-bridge events use span fields rather than this scoped context.
+- Python context uses `contextvars.ContextVar` semantics. It is safe to hold
+  `log_context(...)` across an `await`: another task on the same event-loop
+  thread cannot observe its fields. A child task inherits the snapshot that was
+  active when it was created, and later changes stay task-local.
+- Python context values are captured when a Python logging API creates its
+  record and are merged before queueing.
+- Inline structured fields emitted by Rust macros override outer context keys.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
 - Callback-filter enrichment uses the same scalar contract: keys must be
   non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
@@ -770,17 +779,21 @@ Behavioural guarantees:
   1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
   enrichment per record.
 
-Pass per-call fields with `extra` when fields are not shared across a scope:
+### Rust context and bridge boundaries
 
-```python
-logger.info("request accepted", extra={"request_id": 42, "user": "alice"})
-```
+Rust `push_log_context` remains OS-thread-local. Its `LogContextGuard` is
+neither `Send` nor `Sync`, records the thread that created it, and removes only
+its own frame when dropped. Do not hold a Rust guard across an `.await` in a
+future that may migrate between executor threads; use a task-local API supplied
+by that runtime instead.
 
-The `extra` mapping uses the same scalar types and size bounds as scoped
-context. Because `log_context` uses thread-local storage, holding it across an
-`await` in a single-threaded event loop can share fields with concurrently
-in-flight tasks. Use `extra` for per-call asyncio fields; task-local scoped
-context backed by `contextvars` remains future work.
+Python task-local fields and Rust scoped fields do not transfer implicitly.
+Python `FemtoLogger` methods and module-level functions capture only the active
+Python fields. Rust macros and records received through the `log` and `tracing`
+bridges merge Rust scoped fields active on their emitting OS thread. Explicit
+key-values supplied by Rust macros or tracing events override same-named scoped
+fields. Establish Rust context at the Rust emission boundary when bridged
+events need shared request metadata.
 
 ### Callback enrichment validation
 

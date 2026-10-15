@@ -387,20 +387,20 @@ file run too and do emit, which is why the assertions name their records.
 
 ## Structured logging contracts
 
-Python structured fields use one conversion and validation path. The
-`rust_extension/src/python_context.rs` adapter performs PyO3 mapping and scalar
-conversion for mappings accepted by both `_push_log_context` and
-`FemtoLogger.py_log`. It uses the framework-neutral `ContextBudget` in
-`rust_extension/src/log_context.rs` for key, value, and aggregate-size
-validation. That module also owns `merge_context_values` and contains no PyO3
-logic, keeping Python conversion separate from context budgeting and merging.
+Python logging captures the active task-local `ContextVar` fields and any
+explicit `extra` fields when `FemtoLogger.py_log` creates a record. The
+`rust_extension/src/python_context.rs` adapter converts Python mappings and
+scalar values, then `ContextBudget` in `rust_extension/src/log_context.rs`
+validates keys, values, and aggregate size. The resulting fields are stored in
+record metadata; this path does not read or merge Rust thread-local context.
+Conversion failures are reported to Python as type errors, and invalid context
+values as `ValueError`.
 
-`merge_context_values` is the producer-side merge boundary. It combines the
-active thread-local context with explicit fields, with explicit fields taking
-precedence on collisions. `FemtoLogger.py_log` performs this merge before level
-gating and record construction. Conversion failures are reported to Python as
-type errors, while merge and size-validation failures are reported as
-`ValueError`; invalid context must not be silently dropped.
+Rust logging uses `merge_context_values` at the producer boundary. It combines
+active Rust thread-local context with explicit record fields, with explicit
+fields taking precedence on collisions. Rust macros and records received
+through the `log` and `tracing` bridges use this merge; invalid context causes
+the record to be dropped rather than silently accepted.
 
 `PyHandler` inspects handler capabilities when a Python handler is registered.
 For built-in stream, file, rotating-file, timed-rotating-file, socket, and HTTP
@@ -748,6 +748,30 @@ sanctioned form and passes, but only with a reason that is not blank, since the
 reason is the whole of what distinguishes it from a quieter `allow`; a
 crate-scoped `#![expect(...)]` does not, because one call anywhere in the crate
 fulfils it and the rest go unreported.
+
+## Structured logging context
+
+Python `log_context(**fields)` stores a copied mapping in a `ContextVar`.
+Python's context propagation gives each newly created asyncio task a snapshot
+of the context active at task creation. Subsequent changes in the parent or
+child remain local to that task. Python logger methods and module-level
+functions copy the current fields into record metadata when they create the
+record, before queueing it; later context changes do not affect that record.
+Nested `log_context` scopes override same-named fields from outer scopes.
+
+Rust scoped context uses an OS-thread-local stack. `LogContextGuard` is `!Send`
+and `!Sync`, records its owner thread and a unique frame identity, and removes
+only its own frame when dropped on that thread. Keep the guard within a
+thread-affine synchronous scope; an async Rust task that can migrate between
+threads must not retain this guard across an `await`.
+
+The Python and Rust context stores are separate. Python entrypoints capture
+Python task-local fields only. Rust macros and records received through the
+`log` and `tracing` bridges merge Rust scoped fields at record creation.
+Explicit key-values supplied by Rust macros and explicit event or span fields
+captured by the tracing bridge override same-named scoped fields. Neither side
+implicitly imports the other's context, so code crossing the boundary must pass
+required metadata explicitly.
 
 ## Benchmarking Documentation
 

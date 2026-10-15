@@ -79,6 +79,7 @@ impl FemtoLogger {
             handlers,
             filters,
             dropped_records: std::sync::atomic::AtomicU64::new(0),
+            context_dropped_records: std::sync::atomic::AtomicU64::new(0),
             drop_warner: RateLimitedWarner::default(),
             #[cfg(feature = "python")]
             context_snapshot_provider,
