@@ -24,8 +24,6 @@ use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-#[cfg(test)]
-use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
@@ -73,6 +71,7 @@ pub struct FemtoLogger {
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
+
 
 #[allow(
     clippy::too_many_arguments,
@@ -213,6 +212,7 @@ impl FemtoLogger {
 
 
 
+
 impl FemtoLogger {
     /// Attach a handler to this logger.
     ///
@@ -239,8 +239,7 @@ impl FemtoLogger {
 
     fn add_handler_attachment(&self, attachment: HandlerAttachment) -> Result<(), HandlerError> {
         #[cfg(feature = "python")]
-        if attachment.handler.is_python_backed()
-            && !attachment.handler.provides_context_dispatch()
+        if attachment.handler.is_python_backed() && !attachment.handler.provides_context_dispatch()
         {
             return Err(HandlerError::MissingContextDispatch);
         }
@@ -310,6 +309,7 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
+
 
 
 

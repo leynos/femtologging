@@ -3,9 +3,9 @@
 use std::{any::Any, sync::Arc};
 
 use crossbeam_channel::Sender;
+use parking_lot::Mutex;
 #[cfg(feature = "python")]
 use pyo3::{Py, PyAny};
-use parking_lot::Mutex;
 
 use crate::{
     filters::FemtoFilter,
