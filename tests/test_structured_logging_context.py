@@ -18,8 +18,8 @@ from femtologging import (
     basicConfig,
     debug,
     get_logger,
-    log_context,
     info,
+    log_context,
 )
 
 if typ.TYPE_CHECKING:
@@ -94,12 +94,16 @@ def test_direct_logger_info_merges_scoped_log_context() -> None:
     }, "scoped context fields were not attached to logger.info()"
 
 
-@pytest.mark.parametrize("emit", [debug, info], ids=["debug", "info"])
+@pytest.mark.parametrize(
+    ("emit", "emit_name"),
+    [(debug, "debug"), (info, "info")],
+    ids=["debug", "info"],
+)
 def test_module_logging_captures_task_local_context(
-    emit: typ.Callable[..., str | None],
+    emit: cabc.Callable[..., str | None], emit_name: str
 ) -> None:
     """Module-level logging functions include the active task-local fields."""
-    logger_name = f"ctx.module.{emit.__name__}"
+    logger_name = f"ctx.module.{emit_name}"
     logger = get_logger(logger_name)
     logger.set_level("DEBUG")
     collector = RecordCollector()
@@ -109,7 +113,9 @@ def test_module_logging_captures_task_local_context(
         output = emit("module record", name=logger_name)
 
     assert output is not None, "module-level logging should emit at DEBUG or INFO"
-    assert emitted_key_values(logger, collector) == {"request_id": "module-task"}
+    assert emitted_key_values(logger, collector) == {"request_id": "module-task"}, (
+        "module-level logging must capture task-local context"
+    )
 
 
 def test_get_logger_info_preserves_context_at_root_handler() -> None:

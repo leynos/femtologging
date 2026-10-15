@@ -129,6 +129,8 @@ def test_log_context_child_task_keeps_creation_snapshot() -> None:
 )
 def test_log_context_rejects_numeric_subclasses(value: object) -> None:
     """Public context validation accepts only the documented scalar types."""
-    with pytest.raises(TypeError, match="context values must be"):
-        with log_context(value=value):
-            pass
+    with (
+        pytest.raises(TypeError, match="context values must be"),
+        log_context(value=value),
+    ):
+        pass
