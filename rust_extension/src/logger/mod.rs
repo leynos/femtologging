@@ -68,10 +68,13 @@ pub struct FemtoLogger {
     context_dropped_records: AtomicU64,
     /// Rate-limits warnings emitted for queue drops across concurrent producers.
     drop_warner: RateLimitedWarner,
+    /// Producer-owned provider used to snapshot Python context for queued handlers.
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    /// Counts records rejected when capturing producer Python context fails.
     #[cfg(feature = "python")]
     context_capture_failures: AtomicU64,
+    /// Rate-limits warnings for context-capture failures independently of queue drops.
     #[cfg(feature = "python")]
     context_capture_warner: RateLimitedWarner,
     /// Producer endpoint for records; taking it during drop prevents new sends.
@@ -81,6 +84,7 @@ pub struct FemtoLogger {
     /// Mutex-protected worker handle so dropping the logger can join without a lock held.
     handle: Mutex<Option<JoinHandle<()>>>,
 }
+
 
 
 #[allow(
@@ -220,6 +224,7 @@ impl FemtoLogger {
 }
 
 
+
 impl FemtoLogger {
     /// Attach a handler to this logger.
     ///
@@ -294,7 +299,6 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
-
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
