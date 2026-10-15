@@ -41,6 +41,7 @@ thread_local! {
     };
 }
 
+/// Process-wide source of non-zero IDs used to remove context frames safely.
 static NEXT_CONTEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
 /// One scoped context frame and its stable identifier for out-of-order cleanup.
