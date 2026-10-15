@@ -53,6 +53,10 @@ impl FemtoLogger {
         Self::with_parent_inner(name, parent, context_snapshot_provider)
     }
 
+    /// Construct logger state, allocate its bounded queues, and spawn the worker.
+    ///
+    /// The optional provider is retained by the logger so producer-side context
+    /// capture uses the same ownership boundary as the worker that consumes it.
     fn with_parent_inner(
         name: String,
         parent: Option<String>,
@@ -234,6 +238,7 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
 
 
 
+
 /// Join the logger's worker with the GIL released.
 ///
 /// The worker may be dispatching to a Python handler that needs the GIL, so
@@ -242,6 +247,7 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
 pub(super) fn join_worker(handle: JoinHandle<()>) {
     Python::attach(|py| py.detach(move || log_join_result(handle)));
 }
+
 
 
 

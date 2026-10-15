@@ -355,7 +355,6 @@ pub struct PyHandler {
     pub obj: Py<PyAny>,
 }
 
-
 #[cfg(not(feature = "python"))]
 impl PyHandler {
     /// Wrap the Python object without feature-specific capability inspection.
@@ -363,7 +362,6 @@ impl PyHandler {
         Self { obj }
     }
 }
-
 
 #[cfg(not(feature = "python"))]
 impl FemtoHandlerTrait for PyHandler {

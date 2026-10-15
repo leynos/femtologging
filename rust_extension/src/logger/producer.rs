@@ -32,10 +32,12 @@ fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static 
 
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
+    /// One-shot channel notified when the worker reaches the flush marker.
     ack: Sender<()>,
 }
 
 impl FlushAckHandler {
+    /// Build the marker handler that acknowledges delivery of its queued record.
     fn new(ack: Sender<()>) -> Self {
         Self { ack }
     }
