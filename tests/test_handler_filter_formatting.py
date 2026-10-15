@@ -237,6 +237,36 @@ def test_formatter_renders_structured_callback_field(
     )
 
 
+def test_formatter_builder_defaults_to_message_format(tmp_path: Path) -> None:
+    """A formatter builder without a format renders only the message."""
+    reset_manager()
+    path = tmp_path / "default-formatter-builder.log"
+    handler = (
+        FileHandlerBuilder(str(path))
+        .with_flush_after_records(1)
+        .with_formatter(FormatterBuilder())
+    )
+    config = (
+        ConfigBuilder()
+        .with_version(1)
+        .with_handler("output", handler)
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["output"])
+        )
+    )
+
+    try:
+        config.build_and_init()
+        get_logger("app").info("default formatter output")
+        poll_file_for_text(path, "default formatter output", timeout=1.0)
+    finally:
+        reset_manager()
+
+    assert path.read_text().strip() == "default formatter output", (
+        "a FormatterBuilder without an explicit format should render the message"
+    )
+
+
 def test_dict_config_resolves_registered_formatter(tmp_path: Path) -> None:
     """DictConfig must attach formatter definitions to named handlers."""
     reset_manager()

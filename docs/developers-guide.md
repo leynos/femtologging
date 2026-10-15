@@ -321,7 +321,10 @@ an ancestor handler. For each accepted handler, a `HandlerRecordSnapshot`
 preserves the record state after that handler's enrichment, preventing one
 handler's filter from leaking fields into another handler's output. Worker
 threads perform queued handler delivery; filter callbacks remain on the
-producer thread.
+producer thread for femtologging-configured handler filter chains. This does
+not make Python-backed handler workers Python-free: under the captured context,
+their own callbacks can invoke Python, including a wrapped stdlib handler's
+filters, formatter, and emission.
 
 Handler filter IDs are resolved during configuration using the same filter
 registry as logger filters. `ConfigBuilder` resolves builder filter IDs before
