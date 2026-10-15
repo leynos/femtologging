@@ -34,7 +34,10 @@ fn adapter_merges_active_rust_context(_log_max_level: (), unique_logger_name: St
     Python::attach(|py| {
         let logger = manager::get_logger(py, &unique_logger_name).expect("logger created");
         let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-        logger.borrow(py).add_handler(handler.clone());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone())
+            .expect("native collecting handler should register");
 
         let _guard = log_context::push_log_context([("request_id", "req-42")])
             .expect("context push should succeed");

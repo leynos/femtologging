@@ -70,7 +70,6 @@ pub struct FemtoLogger {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
-
 #[allow(
     clippy::too_many_arguments,
     reason = "PyO3 generates Python-exposed wrappers and signature shims with many parameters"
@@ -206,7 +205,6 @@ impl FemtoLogger {
     }
 }
 
-
 impl FemtoLogger {
     /// Attach a handler to this logger.
     ///
@@ -281,7 +279,6 @@ impl FemtoLogger {
         self.tx.as_ref().cloned()
     }
 }
-
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
