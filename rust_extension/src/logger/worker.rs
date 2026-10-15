@@ -236,9 +236,6 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
     }
 }
 
-
-
-
 /// Join the logger's worker with the GIL released.
 ///
 /// The worker may be dispatching to a Python handler that needs the GIL, so
@@ -247,9 +244,6 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
 pub(super) fn join_worker(handle: JoinHandle<()>) {
     Python::attach(|py| py.detach(move || log_join_result(handle)));
 }
-
-
-
 
 /// Join the logger's worker directly inside a Loom model.
 ///
