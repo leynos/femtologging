@@ -6,10 +6,10 @@ use _femtologging_rs::{
 };
 
 fn main() {
-    let _formatter = FormatterBuilder::new()
+    let formatter = FormatterBuilder::new()
         .with_format("%(message)s")
         .with_datefmt("%Y");
-    let file = FileHandlerBuilder::new("compile.log").with_formatter("%(message)s");
+    let file = FileHandlerBuilder::new("compile.log").with_formatter("message");
     let http: HandlerBuilder = HTTPHandlerBuilder::new()
         .with_url("https://example.invalid/logs")
         .with_filters(["context"])
@@ -18,6 +18,7 @@ fn main() {
     let stream = StreamHandlerBuilder::stderr().with_filters(["audit"]);
 
     let _config = ConfigBuilder::new()
+        .with_formatter("message", formatter)
         .with_handler("file", file)
         .with_handler("remote", http)
         .with_handler("stderr", stream)

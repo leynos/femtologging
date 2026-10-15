@@ -22,12 +22,16 @@ and misses a suppression that names the lint's group rather than the lint.
 from __future__ import annotations
 
 import itertools
+import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs the real target
 import tomllib
 import typing as typ
 
 import pytest
+
+if typ.TYPE_CHECKING:
+    from pathlib import Path
 
 from tests.make_contract_helpers import (
     objects,
@@ -269,12 +273,12 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
         )
 
 
-def run_policy_lane(lanes: str) -> int:
+def run_policy_lane(lanes: str, *, cargo_bin_dir: Path | None = None) -> int:
     """Run `make lint-env-policy` over the given lanes.
 
     The lint flags are narrowed so the run exercises the recipe's exit-status
-    handling rather than the policy itself. A lane naming a feature the crate
-    does not declare fails immediately, before any build.
+    handling rather than the policy itself. A PATH-resolved Cargo shim avoids
+    coupling this contract to compiler availability and build duration.
 
     Returns
     -------
@@ -283,6 +287,9 @@ def run_policy_lane(lanes: str) -> int:
     """
     make = shutil.which("make")
     assert make is not None, "make must be on PATH to run the policy target"
+    env = os.environ.copy()
+    if cargo_bin_dir is not None:
+        env["PATH"] = os.pathsep.join((str(cargo_bin_dir), env["PATH"]))
     # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is
     # fixed here and the executable is resolved above
     return subprocess.run(
@@ -295,24 +302,35 @@ def run_policy_lane(lanes: str) -> int:
         cwd=repo_root(),
         capture_output=True,
         check=False,
+        env=env,
     ).returncode
 
 
-# This integration contract deliberately runs Cargo, which may wait on the
-# shared package cache while another repository validates its own Rust changes.
-@pytest.mark.timeout(620)
-def test_a_failing_lane_fails_the_policy_target() -> None:
+@pytest.mark.timeout(180)
+def test_a_failing_lane_fails_the_policy_target(tmp_path: Path) -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 
     Invariant: `make lint-env-policy` fails. This drives the real recipe rather
     than describing it, because the shell loop it replaced reported only its
     last command's status, and a contract that reads the recipe cannot tell the
-    difference. `badfeature` is not a declared feature, so Cargo rejects that
-    lane before building anything.
+    difference. A temporary Cargo shim rejects `badfeature` and accepts the
+    no-feature lane without requiring a compiler build.
     """
-    assert run_policy_lane("badfeature none") != 0, (
+    cargo_bin_dir = tmp_path / "bin"
+    cargo_bin_dir.mkdir()
+    cargo_shim = cargo_bin_dir / "cargo"
+    cargo_shim.write_text(
+        "#!/bin/sh\n"
+        'case " $* " in\n'
+        '  *" --features badfeature "*) exit 1 ;;\n'
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    cargo_shim.chmod(0o755)
+
+    assert run_policy_lane("badfeature none", cargo_bin_dir=cargo_bin_dir) != 0, (
         "a failing lane must fail lint-env-policy, even when a later lane passes"
     )
-    assert run_policy_lane("none") == 0, (
+    assert run_policy_lane("none", cargo_bin_dir=cargo_bin_dir) == 0, (
         "lint-env-policy must succeed when every lane passes"
     )

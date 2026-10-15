@@ -325,6 +325,14 @@ impl FemtoLogger {
             .collect()
     }
 
+    #[cfg(test)]
+    pub(super) fn filter_handlers_for_test(
+        record: &mut FemtoLogRecord,
+        handlers: Vec<HandlerAttachment>,
+    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
+        Self::filter_handlers(record, handlers)
+    }
+
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }

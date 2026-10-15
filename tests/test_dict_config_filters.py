@@ -44,6 +44,21 @@ if typ.TYPE_CHECKING:
             {
                 "version": 1,
                 "filters": {"lvl": {"level": "INFO"}},
+                "handlers": {
+                    "output": {
+                        "class": "femtologging.StreamHandler",
+                        "filters": ["nonexistent"],
+                    }
+                },
+                "root": {"level": "DEBUG", "handlers": ["output"]},
+            },
+            r"nonexistent",
+            KeyError,
+        ),
+        (
+            {
+                "version": 1,
+                "filters": {"lvl": {"level": "INFO"}},
                 "loggers": {"app": {"filters": "lvl"}},
                 "root": {"level": "DEBUG"},
             },
@@ -73,6 +88,7 @@ if typ.TYPE_CHECKING:
     ids=[
         "logger-missing-filter-id",
         "root-missing-filter-id",
+        "handler-missing-filter-id",
         "logger-filters-not-a-list",
         "logger-filters-non-string-items",
         "root-filters-non-string-items",

@@ -323,6 +323,21 @@ handler's filter from leaking fields into another handler's output. Worker
 threads perform queued handler delivery; filter callbacks remain on the
 producer thread.
 
+Handler filter IDs are resolved during configuration using the same filter
+registry as logger filters. `ConfigBuilder` resolves builder filter IDs before
+attaching handlers, and `dictConfig` translates each handler's `filters` list
+through that configuration path. Unknown and duplicate IDs fail validation
+before the live logger state is changed. Standalone handler builds reject
+unresolved filter IDs because they do not have a configuration registry.
+
+Formatter resolution has two paths. Passing a `FormatterBuilder` directly to a
+handler builder compiles that formatter for the handler. Passing a formatter ID
+instead defers resolution to `ConfigBuilder`, which resolves the registered
+builder during configuration; `dictConfig` formatter definitions use the same
+registered-ID path. A configured percent formatter reads standard record fields
+and structured values from `metadata.key_values`. Formatter objects and filters
+are therefore both resolved before the configuration transaction commits.
+
 ## Shared Rust test helpers and fixtures
 
 Crate unit-test support is owned by `rust_extension/src/test_utils/` and is
