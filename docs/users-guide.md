@@ -198,6 +198,9 @@ fields with safe defaults does not require a version bump.
   their handler list.
 - Use `logger.get_dropped()` to inspect how many records have been discarded
   because the logger queue was full or shutting down.
+- Use `logger.get_context_capture_failures()` to inspect failed producer-context
+  snapshots. This counter is separate from `get_dropped()` and does not include
+  records rejected because the queue was full or shutting down.
 
 ## Built-in handlers
 
@@ -470,6 +473,13 @@ exist.  Custom key-value pairs from `metadata.key_values` are propagated into
 the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 `%(request_id)s`) and filters.
 
+The adapter runs on femtologging's dedicated worker thread. Before a record is
+queued, femtologging captures the producer's `contextvars` context and runs the
+wrapped handler's entire `handle()` call inside it, including its filters,
+formatters, and `emit()`. A `contextvars.ContextVar` therefore observes the
+value set by the log caller, even though the handler dispatch itself is
+asynchronous on the worker thread.
+
 **Limitations:**
 
 - `exc_info` is provided as pre-formatted text (`exc_text`), not as
@@ -478,6 +488,8 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 - `pathname` and `funcName` are set to defaults because femtologging does not
   capture these values.  `relativeCreated` is recomputed from
   `metadata.timestamp` when present, so elapsed-time values can be accurate.
+- Only `contextvars` are propagated. Other thread-local state, including
+  `threading.local`, remains the dedicated worker thread's state.
 
 ## Configuration options
 

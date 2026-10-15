@@ -7,6 +7,8 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
+#[cfg(feature = "python")]
+mod context_snapshot;
 mod convenience_methods;
 mod producer;
 mod py_handler;
@@ -17,14 +19,17 @@ mod worker;
 
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
-use std::any::Any;
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
+#[cfg(test)]
+use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
+#[cfg(feature = "python")]
+use context_snapshot::ContextSnapshotProvider;
 
-use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
+use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::{JoinHandle, Mutex, RwLock, Sender};
@@ -33,37 +38,10 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
+pub use worker::QueuedRecord;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
-
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-}
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -80,6 +58,12 @@ pub struct FemtoLogger {
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     dropped_records: AtomicU64,
     drop_warner: RateLimitedWarner,
+    #[cfg(feature = "python")]
+    context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    #[cfg(feature = "python")]
+    context_capture_failures: AtomicU64,
+    #[cfg(feature = "python")]
+    context_capture_warner: RateLimitedWarner,
     tx: Option<Sender<QueuedRecord>>,
     shutdown_tx: Option<Sender<()>>,
     handle: Mutex<Option<JoinHandle<()>>>,
@@ -136,7 +120,7 @@ impl FemtoLogger {
             let obj = handler.bind(py);
             validate_handler(obj)?;
             let py_handler = PyHandler::new(py, handler);
-            self.add_handler(Arc::new(py_handler) as Arc<dyn FemtoHandlerTrait>);
+            self.add_handler(Arc::new(py_handler) as Arc<dyn FemtoHandlerTrait>)?;
             Ok(())
         })
     }
@@ -172,12 +156,19 @@ impl FemtoLogger {
         self.clear_filters();
     }
 
-    /// Return the number of records dropped due to a full queue.
+    /// Return the number of records dropped due to a full or shutting-down queue.
     ///
     /// Useful for tests and monitoring dashboards.
     #[pyo3(text_signature = "(self)")]
     pub fn get_dropped(&self) -> u64 {
         self.dropped_records.load(Ordering::Relaxed)
+    }
+
+    /// Return how many records were dropped because producer context capture failed.
+    #[cfg(feature = "python")]
+    #[pyo3(text_signature = "(self)")]
+    pub fn get_context_capture_failures(&self) -> u64 {
+        self.context_capture_failures.load(Ordering::Relaxed)
     }
 
     /// Flush all handlers attached to this logger.
@@ -215,8 +206,21 @@ impl FemtoLogger {
 
 impl FemtoLogger {
     /// Attach a handler to this logger.
-    pub fn add_handler(&self, handler: Arc<dyn FemtoHandlerTrait>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HandlerError::MissingContextDispatch`] when a Python-backed
+    /// handler does not declare contextual dispatch support.
+    pub fn add_handler(
+        &self,
+        handler: Arc<dyn FemtoHandlerTrait>,
+    ) -> Result<(), crate::handler::HandlerError> {
+        #[cfg(feature = "python")]
+        if handler.is_python_backed() && !handler.provides_context_dispatch() {
+            return Err(crate::handler::HandlerError::MissingContextDispatch);
+        }
         self.handlers.write().push(handler);
+        Ok(())
     }
 
     /// Attach a filter to this logger.
@@ -289,8 +293,7 @@ impl Drop for FemtoLogger {
     }
 }
 
-// These tests drive the worker with real threads and `crossbeam_channel`, so
-// they build outside `--cfg loom` only; the heavy lane's models cover Loom.
+// These real-thread tests run outside `--cfg loom`; the heavy lane covers Loom.
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests.rs"]
 mod logger_tests;
@@ -300,6 +303,9 @@ mod logger_tests_helpers;
 #[cfg(all(test, not(loom)))]
 #[path = "producer_tests.rs"]
 mod producer_tests;
+#[cfg(all(test, not(loom), feature = "tracing-compat"))]
+#[path = "producer_tracing_tests.rs"]
+mod producer_tracing_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "worker_tests.rs"]
 mod worker_tests;

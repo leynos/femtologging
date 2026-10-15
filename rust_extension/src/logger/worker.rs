@@ -6,21 +6,58 @@
 use log::warn;
 #[cfg(not(loom))]
 use pyo3::Python;
+#[cfg(feature = "python")]
+use pyo3::{Py, PyAny};
+use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
+use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{
     Either, JoinHandle, Mutex, Receiver, RwLock, TryRecvError, bounded, recv_either, spawn,
 };
 
-use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger, QueuedRecord};
+#[cfg(feature = "python")]
+use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
+use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
+
+/// Record queued for processing by the worker thread.
+pub struct QueuedRecord {
+    pub record: FemtoLogRecord,
+    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    #[cfg(feature = "python")]
+    pub context: Option<Py<PyAny>>,
+}
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
     pub fn with_parent(name: String, parent: Option<String>) -> Self {
+        Self::with_parent_inner(
+            name,
+            parent,
+            #[cfg(feature = "python")]
+            Arc::new(ContextVarsSnapshotProvider),
+        )
+    }
+
+    /// Create a logger with an injected context provider for internal tests.
+    #[cfg(all(feature = "python", test))]
+    pub(super) fn with_context_snapshot_provider(
+        name: String,
+        parent: Option<String>,
+        context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    ) -> Self {
+        Self::with_parent_inner(name, parent, context_snapshot_provider)
+    }
+
+    fn with_parent_inner(
+        name: String,
+        parent: Option<String>,
+        #[cfg(feature = "python")] context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    ) -> Self {
         let formatter = SharedFormatter::new(DefaultFormatter);
         let handlers: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoHandlerTrait>>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
@@ -43,6 +80,12 @@ impl FemtoLogger {
             filters,
             dropped_records: std::sync::atomic::AtomicU64::new(0),
             drop_warner: RateLimitedWarner::default(),
+            #[cfg(feature = "python")]
+            context_snapshot_provider,
+            #[cfg(feature = "python")]
+            context_capture_failures: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "python")]
+            context_capture_warner: RateLimitedWarner::default(),
             tx: Some(tx),
             shutdown_tx: Some(shutdown_tx),
             handle: Mutex::new(Some(handle)),
@@ -52,7 +95,27 @@ impl FemtoLogger {
     /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
     pub(crate) fn handle_log_record(job: QueuedRecord) {
         for h in &job.handlers {
-            if let Err(err) = h.handle(job.record.clone()) {
+            #[cfg(feature = "tracing-compat")]
+            let dispatch_started = std::time::Instant::now();
+            #[cfg(feature = "tracing-compat")]
+            let handler_kind = if h.is_python_backed() {
+                "python"
+            } else {
+                "native"
+            };
+            #[cfg(feature = "python")]
+            let result = h.handle_with_context(job.record.clone(), job.context.as_ref());
+            #[cfg(not(feature = "python"))]
+            let result = h.handle(job.record.clone());
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "worker_handler_dispatch",
+                handler_kind,
+                dispatch_outcome = if result.is_ok() { "success" } else { "failed" },
+                elapsed_us = dispatch_started.elapsed().as_micros(),
+            );
+            if let Err(err) = result {
                 warn!("FemtoLogger: handler reported an error: {err}");
             }
         }

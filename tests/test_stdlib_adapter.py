@@ -8,15 +8,23 @@ checks live in ``tests/test_stdlib_adapter_records.py``.
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import io
 import logging
+import threading
+import time
 import typing as typ
 
 import pytest
 
 from femtologging import FemtoLogger, StdlibHandlerAdapter
 from femtologging.adapter import TRACE_LEVEL_NUM
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+_REQUEST_ID = contextvars.ContextVar[str | None]("request_id", default=None)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -28,6 +36,30 @@ class _LevelCase:
     message: str
     logger_level: str | None = None
     handler_level: int | None = None
+
+
+def _poll_until(predicate: cabc.Callable[[], bool], timeout: float) -> bool:
+    """Poll *predicate* with a monotonic deadline and make one final check."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def _wait_for(predicate: cabc.Callable[[], bool], timeout: float = 1.0) -> bool:
+    """Return whether *predicate* succeeds before the deadline."""
+    return bool(_poll_until(predicate, timeout))
+
+
+def _assert_eventually(
+    predicate: cabc.Callable[[], bool],
+    message: str,
+    timeout: float = 1.0,
+) -> None:
+    """Assert that *predicate* succeeds before the monotonic deadline."""
+    assert _wait_for(predicate, timeout), message
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -189,6 +221,93 @@ class TestHandleRecordDispatch:
         )
         assert output == f"{case.expected_level} {case.message}\n", (
             f"level {case.level!r} did not map to {case.expected_level!r}: {output!r}"
+        )
+
+
+class TestContextVarPropagation:
+    """Verify stdlib handlers retain producer ``contextvars`` values."""
+
+    @staticmethod
+    def test_filter_observes_producer_contextvar(probe: AdapterProbe) -> None:
+        """A worker-dispatched filter should observe the caller's context."""
+
+        class RequestIdFilter(logging.Filter):
+            @typ.override
+            def filter(self, record: logging.LogRecord) -> bool:
+                """Attach the current request ID to the stdlib record."""
+                record.correlation_id = _REQUEST_ID.get() or "-"
+                return True
+
+        probe.handler.addFilter(RequestIdFilter())
+        probe.handler.setFormatter(
+            logging.Formatter("cid=%(correlation_id)s %(message)s")
+        )
+        logger = FemtoLogger("contextvars.single")
+        logger.add_handler(probe.adapter)
+
+        token = _REQUEST_ID.set("REQ-42")
+        try:
+            logger.info("via adapter")
+        finally:
+            _REQUEST_ID.reset(token)
+
+        _assert_eventually(
+            lambda: "cid=REQ-42 via adapter" in probe.stream.getvalue(),
+            f"filter did not observe producer context: {probe.stream.getvalue()!r}",
+        )
+        assert logger.flush_handlers(), "logger worker did not flush"
+
+    @staticmethod
+    def test_each_thread_keeps_its_contextvar_value() -> None:
+        """Queued records should retain their respective producer contexts."""
+        observed: list[tuple[str, str | None]] = []
+        observed_lock = threading.Lock()
+
+        class ObservingHandler(logging.Handler):
+            """Invoke attached filters without retaining emitted records."""
+
+            @typ.override
+            def emit(self, record: logging.LogRecord) -> None:
+                """Discard a record after its filters have observed the context."""
+
+        class ContextFilter(logging.Filter):
+            @typ.override
+            def filter(self, record: logging.LogRecord) -> bool:
+                """Record the message and request ID seen by this filter."""
+                with observed_lock:
+                    observed.append((record.getMessage(), _REQUEST_ID.get()))
+                return True
+
+        handler = ObservingHandler()
+        handler.addFilter(ContextFilter())
+        logger = FemtoLogger("contextvars.multi")
+        logger.add_handler(StdlibHandlerAdapter(handler))
+        expected = {f"message-{index}": f"request-{index}" for index in range(4)}
+
+        def emit(message: str, request_id: str) -> None:
+            """Emit one message with its request ID set in this thread."""
+            token = _REQUEST_ID.set(request_id)
+            try:
+                logger.info(message)
+            finally:
+                _REQUEST_ID.reset(token)
+
+        threads = [
+            threading.Thread(target=emit, args=(message, request_id))
+            for message, request_id in expected.items()
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        _assert_eventually(
+            lambda: len(observed) == len(expected),
+            f"expected {len(expected)} filter invocations, got {observed!r}",
+        )
+        assert logger.flush_handlers(), "logger worker did not flush"
+        assert dict(observed) == expected, (
+            f"context values crossed threads: {observed!r}"
         )
 
 

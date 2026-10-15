@@ -32,7 +32,7 @@ fn logger_with_collecting_handler(
     let handler = Arc::new(CollectingHandler::default());
     logger
         .borrow(py)
-        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)?;
     Ok((logger, handler))
 }
 
