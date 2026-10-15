@@ -712,8 +712,10 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
   buffered records may be lost.
 - Monitor `logger.get_dropped()`, `logger.get_context_dropped()`, and the
   warnings emitted by each handler to detect back pressure or Rust context
-  validation failures. Increase handler capacities or switch to
-  blocking/timeout policies when drops are unacceptable.
+  validation failures. When `get_context_dropped()` increases, correct or
+  reduce Rust context fields and explicit metadata that contributes to
+  validation. For queue-full/back-pressure drops, increase handler capacities
+  or switch to blocking/timeout policies when drops are unacceptable.
 - File-based handlers count `flush_interval` in _records_. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
