@@ -65,6 +65,7 @@ pub struct FemtoLogger {
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     /// Number of records rejected because the worker queue could not accept them.
     dropped_records: AtomicU64,
+    /// Number of records dropped because Python context capture failed.
     context_dropped_records: AtomicU64,
     /// Rate-limits warnings emitted for queue drops across concurrent producers.
     drop_warner: RateLimitedWarner,
