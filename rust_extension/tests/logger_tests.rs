@@ -200,8 +200,7 @@ fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple
         .add_handler(Arc::clone(&handler))
         .expect("test handler should register");
     logger.log(FemtoLevel::Info, "one");
-    handler.flush();
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    assert!(logger.flush_handlers());
     let output = read_output(&buffer);
     assert!(output.contains("one"));
     assert!(logger.remove_handler(&handler));
