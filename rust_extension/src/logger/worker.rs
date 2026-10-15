@@ -6,13 +6,12 @@
 use log::warn;
 #[cfg(not(loom))]
 use pyo3::Python;
+#[cfg(feature = "python")]
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
-use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{
     Either, JoinHandle, Mutex, Receiver, RwLock, TryRecvError, bounded, recv_either, spawn,
@@ -20,8 +19,8 @@ use crate::sync::{
 
 #[cfg(feature = "python")]
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
-use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
 use super::queue::QueuedRecord;
+use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
@@ -88,7 +87,7 @@ impl FemtoLogger {
         }
     }
 
-    /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
+    /// Process a single [`crate::log_record::FemtoLogRecord`] by dispatching it to all handlers.
     pub(crate) fn handle_log_record(job: QueuedRecord) {
         for h in &job.handlers {
             #[cfg(feature = "tracing-compat")]
@@ -229,6 +228,7 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
 
 
 
+
 /// Join the logger's worker with the GIL released.
 ///
 /// The worker may be dispatching to a Python handler that needs the GIL, so
@@ -237,6 +237,7 @@ pub(super) fn log_join_result(handle: JoinHandle<()>) {
 pub(super) fn join_worker(handle: JoinHandle<()>) {
     Python::attach(|py| py.detach(move || log_join_result(handle)));
 }
+
 
 /// Join the logger's worker directly inside a Loom model.
 ///
