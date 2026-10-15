@@ -154,6 +154,23 @@ mod tests {
     }
 
     #[test]
+    fn renders_missing_and_invalid_numeric_fields_as_empty() {
+        let mut record = FemtoLogRecord::new("probe", FemtoLevel::Info, "inside");
+        record.metadata_mut().key_values = BTreeMap::from([
+            ("not_an_integer".to_owned(), "oops".to_owned()),
+            ("not_a_float".to_owned(), "oops".to_owned()),
+        ]);
+
+        let output = PercentFormatter::new(
+            "%(not_an_integer)d|%(not_a_float)f|%(missing)d|%(missing)f",
+            None,
+        )
+        .format(&record);
+
+        assert_eq!(output, "|||");
+    }
+
+    #[test]
     fn preserves_directive_without_conversion_character() {
         let record = FemtoLogRecord::new("probe", FemtoLevel::Info, "hello");
 

@@ -516,8 +516,9 @@ asynchronous on the worker thread.
   the `handlers` argument.
 - Passing `force=True` clears existing handlers on the root logger before
   installing the new one.
-- Formatting parameters (`format`, `datefmt`, and friends) are intentionally
-  unsupported until formatter customization lands.
+- `basicConfig` does not accept formatting parameters such as `format` or
+  `datefmt`. To customize output, configure a handler with a callable or
+  `FormatterBuilder` as described below.
 
 ### ConfigBuilder (imperative API)
 
@@ -749,10 +750,8 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
   Journald/OpenTelemetry path is limited to message text and basic metadata
   (logger name and level), not rich key-value fields or trace correlation.
 
-Keep an eye on the roadmap in `docs/` for upcoming additions (formatter
-resolution, richer dictConfig support, timed rotation) and update your
-configuration once those features land. For now, the patterns above reflect the
-current, tested surface area of femtologging.
+The patterns above reflect the current, tested surface area of femtologging.
+Check the roadmap in `docs/` for features that remain planned.
 
 ## Scoped structured context
 

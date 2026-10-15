@@ -336,6 +336,15 @@ impl FemtoLogger {
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }
 
+    /// Exercise the production handler-filter chain without starting a worker.
+    #[cfg(test)]
+    pub(super) fn filter_handlers_for_test(
+        record: &mut FemtoLogRecord,
+        handlers: Vec<HandlerAttachment>,
+    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
+        Self::filter_handlers(record, handlers)
+    }
+
     /// Wait for the worker to process a marker after all earlier queued records.
     fn wait_for_worker_idle(&self) -> bool {
         let Some(tx) = &self.tx else {

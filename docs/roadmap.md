@@ -229,7 +229,7 @@ where applicable.
     evaluation for direct and propagated records. Completion criteria: one
     shared handler filter can enrich records from differently named loggers
     without introducing Python work on handler threads. See
-    [ADR 003 handler follow-on](./adr-003-python-stdlib-filter-parity.md#accepted-follow-on-handler-filters)
+    [ADR 003 handler follow-on](./adr-003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters)
     and [configuration design §1.1.1](./configuration-design.md#111-filters).
 
 ### 3.3. Rust ecosystem integration
