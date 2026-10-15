@@ -266,10 +266,10 @@ snapshot with the cloned handler list keeps capture aligned with the handlers
 that will receive the record. An absent context means that the snapshot
 contains no Python-backed handler; it does not represent a failed capture.
 
-Capture failures increment a separate, rate-limited context-capture failure
-counter and warning; they do not increment the queue-full drop counter. The
-failure is handled at the producer command boundary rather than being silently
-converted into an absent context.
+Each capture failure increments a separate context-capture failure counter;
+warning emission is rate-limited. These failures do not increment the
+queue-full drop counter. The failure is handled at the producer command
+boundary rather than being silently converted into an absent context.
 
 The logger worker passes the queued context by reference to
 `FemtoHandlerTrait::handle_with_context()` for every handler in the snapshot.

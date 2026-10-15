@@ -116,4 +116,6 @@ Reading and assigning the five declared fields (`level`, `filename`, `stream`,
 `basicConfig()` remain unchanged by the slotted-dataclass and `contextvars`
 propagation changes. Python-backed handlers registered directly with
 `FemtoLogger` must provide contextual-dispatch support; otherwise,
-`add_handler()` returns `HandlerError::MissingContextDispatch`.
+`add_handler()` raises a Python `RuntimeError` with the message
+`Python-backed handlers must provide contextual dispatch`, from the Rust
+`HandlerError::MissingContextDispatch` variant.
