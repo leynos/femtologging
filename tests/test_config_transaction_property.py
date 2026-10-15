@@ -39,10 +39,7 @@ def _logger_state(name: str) -> LoggerState:
     return tuple(logger.handler_ptrs_for_test()), _attachment_state(name)
 
 
-# This stateful property resets global workers between examples; it verifies
-# atomicity rather than a per-example performance budget. Keep a generous
-# deadline to bound a stuck example without making timing part of the property.
-@settings(max_examples=25, deadline=dt.timedelta(seconds=5))
+@settings(max_examples=25, deadline=dt.timedelta(seconds=1))
 @given(
     logger_order=st.lists(
         st.sampled_from(_LOGGER_NAMES),
