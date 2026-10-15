@@ -64,9 +64,17 @@ impl PercentFormatter {
 
     fn asctime(&self, record: &FemtoLogRecord) -> String {
         let timestamp: DateTime<Utc> = record.metadata().timestamp.into();
-        timestamp
-            .format(self.datefmt.as_deref().unwrap_or(DEFAULT_DATE_FORMAT))
-            .to_string()
+        let datefmt = self.datefmt.as_deref().unwrap_or(DEFAULT_DATE_FORMAT);
+        let mut formatted = String::new();
+        std::fmt::write(
+            &mut formatted,
+            format_args!("{}", timestamp.format(datefmt)),
+        )
+        .map_or_else(
+            // A caller-supplied format error must not terminate a handler worker.
+            |_| timestamp.format(DEFAULT_DATE_FORMAT).to_string(),
+            |_| formatted,
+        )
     }
 }
 
@@ -141,6 +149,16 @@ mod tests {
         .format(&record);
 
         assert_eq!(output, "probe INFO 2 inside abc123  1970");
+    }
+
+    #[test]
+    fn falls_back_to_default_date_format_for_invalid_datefmt() {
+        let mut record = FemtoLogRecord::new("probe", FemtoLevel::Info, "inside");
+        record.metadata_mut().timestamp = UNIX_EPOCH + Duration::from_secs(0);
+
+        let output = PercentFormatter::new("%(asctime)s", Some("%Q".to_owned())).format(&record);
+
+        assert_eq!(output, "1970-01-01 00:00:00");
     }
 
     #[test]
