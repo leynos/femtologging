@@ -135,18 +135,23 @@ The chosen direction includes:
 
 ### Non-goals
 
+- Full stdlib `Handler.addFilter` parity, including running handler filters in
+  the handler worker, is not part of this decision. The accepted handler-filter
+  support below is femtologging's configured producer-side filter chain.
 - Full stdlib `LogRecord` object parity across every field and internal
   implementation detail.
 - Cross-thread propagation of arbitrary Python objects embedded in records.
 
 ## Accepted addendum (2026-10-14): handler filters
 
-Recorded 2026-10-14: handler filters are evaluated on the producer thread
-immediately before a record is queued to that handler. This applies to both
-direct dispatch and ancestor propagation, so one filter on a shared root
-handler can enrich records from every logger that routes to it. Handler worker
-threads remain Python-free: the producer persists accepted callback enrichment
-into Rust-owned metadata before enqueueing the record.
+Recorded 2026-10-14: femtologging-configured handler filter chains are
+evaluated on the producer thread immediately before enqueueing, for both direct
+dispatch and ancestor propagation. Each accepted handler receives its own
+record snapshot, preserving its enrichment without leaking it into another
+handler's output. These configured filter callbacks remain producer-side;
+Python-backed handlers may still invoke Python in their workers under the
+captured context, including for their own stdlib filters, formatters, and
+emission.
 
 ## Migration plan
 
