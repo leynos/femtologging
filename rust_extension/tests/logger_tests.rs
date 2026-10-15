@@ -30,7 +30,6 @@ type DualHandlerSetup = (
     FemtoLogger,
 );
 
-
 /// Every level a logger may be set to, ordered from most to least verbose.
 const ALL_LEVELS: [FemtoLevel; 6] = [
     FemtoLevel::Trace,
