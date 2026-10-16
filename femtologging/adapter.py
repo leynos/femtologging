@@ -239,9 +239,15 @@ class StdlibHandlerAdapter:
 
     The adapter implements the ``handle_record`` interface expected by
     femtologging's handler pipeline.  When femtologging dispatches a
-    record, the adapter constructs a ``logging.LogRecord`` and calls
-    the wrapped handler's ``handle()`` method so that attached filters
-    and I/O locking are applied.
+    record, the adapter constructs a ``logging.LogRecord``, discards it
+    when its level falls below the wrapped handler's configured level,
+    and otherwise calls the wrapped handler's ``handle()`` method so
+    that attached filters and I/O locking are applied.
+
+    Two thresholds therefore apply.  The femtologging logger's own level
+    decides whether a record is dispatched at all.  The wrapped stdlib
+    handler's level, set with ``logging.Handler.setLevel()``, then
+    decides whether that handler emits it.
 
     Femtologging dispatches asynchronously on a dedicated worker thread. It
     captures the producer's ``contextvars`` context before queueing and runs the
@@ -312,10 +318,20 @@ class StdlibHandlerAdapter:
     def handle_record(self, record: FemtoRecord) -> None:
         """Translate a femtologging record dict and dispatch via the stdlib handler.
 
-        The constructed ``LogRecord`` is passed through
-        ``self._handler.handle()`` rather than ``emit()`` directly, so
-        any attached ``logging.Filter`` instances and the handler's
-        I/O lock are all applied.
+        Two independent thresholds decide whether the record is emitted.
+        Femtologging's own logger threshold is applied before dispatch and
+        is not this method's concern.  The wrapped handler's ``level`` is
+        applied here, mirroring ``logging.Logger.callHandlers()``: a
+        record whose mapped stdlib level is below that level is discarded
+        without entering the handler.  Because the level is read on every
+        call, a ``setLevel()`` on the wrapped handler affects the next
+        record.
+
+        Accepted records are passed through ``self._handler.handle()``
+        rather than ``emit()`` directly, so any attached
+        ``logging.Filter`` instances and the handler's I/O lock are
+        applied exactly once.  ``logging.NOTSET`` needs no special case:
+        it is numeric zero, so every mapped level clears the comparison.
 
         Parameters
         ----------
@@ -325,6 +341,8 @@ class StdlibHandlerAdapter:
 
         """
         log_record = _make_log_record(record)
+        if log_record.levelno < self._handler.level:
+            return
         self._handler.handle(log_record)
 
     # -- delegation -------------------------------------------------------

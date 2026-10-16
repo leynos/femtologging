@@ -223,6 +223,59 @@ class TestLogRecordAttributes:
         )
 
 
+class TestDynamicHandlerLevel:
+    """Verify the wrapped handler's level is read at dispatch time."""
+
+    @staticmethod
+    def test_set_level_after_construction_applies() -> None:
+        """``setLevel()`` between records should change the next verdict.
+
+        The adapter is constructed while the handler is at ``NOTSET``, so a
+        level cached at construction time would appear correct until the
+        handler is tightened and then relaxed again. Each transition below
+        exercises one direction of that mistake.
+        """
+        capturing = CapturingHandler()
+        adapter = StdlibHandlerAdapter(capturing)
+
+        adapter.handle_record({"level": "INFO", "message": "before"})
+        assert [record.getMessage() for record in capturing.records] == ["before"], (
+            "a NOTSET handler should accept INFO: "
+            f"{[r.getMessage() for r in capturing.records]!r}"
+        )
+
+        capturing.setLevel(logging.ERROR)
+        adapter.handle_record({"level": "INFO", "message": "tightened-out"})
+        assert [record.getMessage() for record in capturing.records] == ["before"], (
+            "raising the handler level to ERROR should discard the INFO record: "
+            f"{[r.getMessage() for r in capturing.records]!r}"
+        )
+
+        adapter.handle_record({"level": "ERROR", "message": "tightened-in"})
+        assert [record.getMessage() for record in capturing.records] == [
+            "before",
+            "tightened-in",
+        ], (
+            "an ERROR record should pass the raised handler level: "
+            f"{[r.getMessage() for r in capturing.records]!r}"
+        )
+
+        capturing.setLevel(logging.NOTSET)
+        adapter.handle_record({"level": "TRACE", "message": "relaxed"})
+
+        assert [record.getMessage() for record in capturing.records] == [
+            "before",
+            "tightened-in",
+            "relaxed",
+        ], (
+            "returning the handler level to NOTSET should re-admit TRACE: "
+            f"{[r.getMessage() for r in capturing.records]!r}"
+        )
+        assert capturing.records[-1].levelno == 5, (
+            f"TRACE should map to stdlib level 5: {capturing.records[-1].levelno!r}"
+        )
+
+
 class TestLevelFallback:
     """Verify the adapter falls back to WARNING for unknown levels."""
 

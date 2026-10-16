@@ -83,6 +83,95 @@ class _HandlerSetup:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _HandlerLevelCase:
+    """One record level routed through a wrapped handler at a fixed level."""
+
+    level: str
+    message: str
+    expected_levelname: str | None
+
+
+class _CountingHandler(logging.Handler):
+    """Handler that counts ``handle()`` calls and captures emitted records.
+
+    ``Handler.handle()`` is overridden rather than ``emit()`` so the test can
+    observe how many times the adapter entered the handler's filter-and-lock
+    path, which is the observable the level gate is allowed to change.
+    """
+
+    def __init__(self) -> None:
+        """Initialise with zero handle calls and no captured records."""
+        super().__init__()
+        self.handle_calls = 0
+        self.records: list[logging.LogRecord] = []
+
+    @typ.override
+    def handle(self, record: logging.LogRecord) -> bool:
+        self.handle_calls += 1
+        return super().handle(record)
+
+    @typ.override
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+class _CountingFilter(logging.Filter):
+    """Filter that counts how often the handler consults it."""
+
+    def __init__(self) -> None:
+        """Initialise with a zero filter-call count."""
+        super().__init__()
+        self.calls = 0
+
+    @typ.override
+    def filter(self, record: logging.LogRecord) -> bool:
+        self.calls += 1
+        return True
+
+
+class _RejectingFilter(logging.Filter):
+    """Filter that rejects every record and counts the consultations."""
+
+    def __init__(self) -> None:
+        """Initialise with a zero filter-call count."""
+        super().__init__()
+        self.calls = 0
+
+    @typ.override
+    def filter(self, record: logging.LogRecord) -> bool:
+        self.calls += 1
+        return False
+
+
+def _dispatch(adapter: StdlibHandlerAdapter, level: str, message: str) -> None:
+    """Send one record straight to *adapter* without a worker thread.
+
+    Calling ``handle_record()`` directly keeps the counting assertions
+    deterministic; going through a ``FemtoLogger`` would defer dispatch to a
+    worker thread and make the counts racy.
+
+    Parameters
+    ----------
+    adapter
+        The adapter under test.
+    level
+        Femtologging level name for the record.
+    message
+        Message text for the record.
+
+    Examples
+    --------
+    >>> handler = _CountingHandler()
+    >>> handler.setLevel(logging.ERROR)
+    >>> _dispatch(StdlibHandlerAdapter(handler), "ERROR", "boom")
+    >>> [record.getMessage() for record in handler.records]
+    ['boom']
+
+    """
+    adapter.handle_record({"logger": "app", "level": level, "message": message})
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class AdapterProbe:
     """A StringIO sink, its stdlib handler, and the adapter wrapping it."""
 
@@ -309,6 +398,136 @@ class TestContextVarPropagation:
         assert dict(observed) == expected, (
             f"context values crossed threads: {observed!r}"
         )
+
+
+class TestHandlerLevelThreshold:
+    """Verify the wrapped handler's level gates dispatch."""
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        "case",
+        [
+            _HandlerLevelCase("TRACE", "lowest", None),
+            _HandlerLevelCase("DEBUG", "detail", None),
+            _HandlerLevelCase("INFO", "note", None),
+            _HandlerLevelCase("WARNING", "near miss", None),
+            _HandlerLevelCase("ERROR", "failure", "ERROR"),
+            _HandlerLevelCase("CRITICAL", "fatal", "CRITICAL"),
+        ],
+        ids=["trace", "debug", "info", "warning", "error", "critical"],
+    )
+    def test_error_handler_rejects_below_threshold(
+        probe: AdapterProbe,
+        case: _HandlerLevelCase,
+    ) -> None:
+        """An ERROR handler should emit only ERROR and CRITICAL records.
+
+        The femtologging logger is left at ``"TRACE"``, the most permissive
+        threshold available, so any record that fails to appear can only have
+        been rejected by the wrapped handler's own level.
+        """
+        output = probe.capture(
+            _LogRequest("app", case.level, case.message, logger_level="TRACE"),
+            _HandlerSetup(
+                formatter=logging.Formatter("%(levelname)s %(message)s"),
+                handler_level=logging.ERROR,
+            ),
+        )
+        expected = (
+            ""
+            if case.expected_levelname is None
+            else f"{case.expected_levelname} {case.message}\n"
+        )
+        assert output == expected, (
+            f"handler at ERROR gave {output!r} for level {case.level!r}, "
+            f"expected {expected!r}"
+        )
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        "level",
+        ["TRACE", "DEBUG", "INFO"],
+        ids=["trace", "debug", "info"],
+    )
+    def test_notset_handler_accepts_every_level(probe: AdapterProbe, level: str) -> None:
+        """A NOTSET handler should accept records at every mapped level.
+
+        ``logging.NOTSET`` is numeric zero, which is falsy. A truthiness test
+        in place of the documented comparison would treat it as an
+        impossibly high threshold and silently drop everything, so TRACE -- the
+        lowest mapped numeric level -- is the case that exposes that mistake.
+        """
+        output = probe.capture(
+            _LogRequest("app", level, "accepted", logger_level="TRACE"),
+            _HandlerSetup(
+                formatter=logging.Formatter("%(message)s"),
+                handler_level=logging.NOTSET,
+            ),
+        )
+        assert output == "accepted\n", (
+            f"NOTSET handler dropped a {level} record: {output!r}"
+        )
+
+
+class TestHandleRecordFilterAndLockContract:
+    """Verify the level gate leaves the filter-and-lock path intact."""
+
+    @staticmethod
+    def test_handle_and_filter_counts_by_level() -> None:
+        """Rejected records skip the handler; accepted ones run it once."""
+        handler = _CountingHandler()
+        handler.setLevel(logging.ERROR)
+        counting_filter = _CountingFilter()
+        handler.addFilter(counting_filter)
+        adapter = StdlibHandlerAdapter(handler)
+
+        _dispatch(adapter, "DEBUG", "suppressed")
+        assert handler.handle_calls == 0, (
+            f"rejected record still entered handle(): {handler.handle_calls} calls"
+        )
+        assert counting_filter.calls == 0, (
+            f"rejected record still reached the filter: {counting_filter.calls} calls"
+        )
+        assert handler.records == [], (
+            f"rejected record was emitted: {[r.getMessage() for r in handler.records]!r}"
+        )
+
+        _dispatch(adapter, "ERROR", "accepted")
+        assert handler.handle_calls == 1, (
+            f"accepted record should enter handle() once: {handler.handle_calls}"
+        )
+        assert counting_filter.calls == 1, (
+            f"accepted record should consult the filter once: {counting_filter.calls}"
+        )
+        assert [record.getMessage() for record in handler.records] == ["accepted"], (
+            f"unexpected emitted records: "
+            f"{[r.getMessage() for r in handler.records]!r}"
+        )
+
+    @staticmethod
+    def test_filter_rejection_still_runs_handle() -> None:
+        """A record above the level is still subject to the handler's filters."""
+        handler = _CountingHandler()
+        handler.setLevel(logging.ERROR)
+        rejecting_filter = _RejectingFilter()
+        handler.addFilter(rejecting_filter)
+        adapter = StdlibHandlerAdapter(handler)
+
+        _dispatch(adapter, "CRITICAL", "filtered out")
+
+        assert handler.handle_calls == 1, (
+            f"an accepted record should still enter handle(): {handler.handle_calls}"
+        )
+        assert rejecting_filter.calls == 1, (
+            f"an accepted record should consult the filter once: "
+            f"{rejecting_filter.calls}"
+        )
+        assert handler.records == [], (
+            f"a filter-rejected record must not be emitted: "
+            f"{[r.getMessage() for r in handler.records]!r}"
+        )
+
+
 
 
 class TestExceptionForwarding:
