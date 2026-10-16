@@ -98,16 +98,30 @@ or double-reported.
 - [x] (2026-10-16) Red evidence captured against the unmodified helper: 7 of
       13 failing, including loss of 79 of 120 recorded drops under two threads.
       See `Artefacts and notes`.
+- [x] (2026-10-16) Compilation verified: `cargo fmt -- --check` clean on the
+      whole crate in the `python,test-util` lane, and the modified module
+      compiles in every feature lane the gates cover.
 - [ ] Heavy proptest run with `-- --ignored`.
 - [ ] Full commit gates green via `scrutineer`.
 - [ ] CodeRabbit review clean.
 - [ ] Pushed and draft PR opened.
 
 Blocked on: the shared compile-admission pool. `build-limits-status` reports
-capacity 4 with the pool saturated and far more waiters than slots, and the
-managed sccache server is unreachable, so this build compiles uncached behind
-every other agent's work. Nothing has been compiled or executed yet; the tasks
-above are written, not verified.
+capacity 4 with the pool saturated by other agents' builds and the socket
+alternating between `[Errno 11] Resource temporarily unavailable` and
+`timed out`; at one sampling 79 `build-limits-rustc` waiters were live. The
+managed sccache server is also unreachable, so work compiles uncached behind
+every other agent's jobs. Two gate attempts failed for this reason alone, not
+on code: `make lint` with `build-limits: the supervisor refused: unhealthy` (13
+refusals; no `error[E...]` or clippy diagnostic anywhere in the log) and
+`make typecheck` with `build-limits: the supervisor refused: launch-failed` on
+`idna_adapter`. Both are recorded as infrastructure errors and neither is a
+verdict on the branch. The Python lint stages and five of six clippy lanes did
+pass before admission was refused on the sixth.
+
+Gate status so far: `fmt`, `check-fmt`, `markdownlint` and `nixie` all pass on
+HEAD `8b196a8`. `lint` and `typecheck` are blocked by admission; `test` is
+outstanding.
 
 ## Surprises & discoveries
 
@@ -162,6 +176,26 @@ above are written, not verified.
   generator is running one case per draw rather than passing vacuously. At the
   configured 32 cases the run is 0.09s and produces no visible count, so the
   default run alone would not have shown whether the cases ran.
+- Observation: editing an already-formatted Markdown file by hand can silently
+  break `make check-fmt`, because `mdtablefix` re-wraps paragraphs to its own
+  fill width and a hand-written paragraph that is *valid* Markdown is not
+  necessarily formatter-stable. Evidence: `make fmt` passed when the plan was
+  first committed, then four later prose edits left the file `+19 -18` against
+  the formatter. Impact: `make fmt` must be re-run after *any* Markdown edit,
+  not only after new documents. The reflow is verifiable as cosmetic by
+  comparing word streams: extracting the words of the `-` and `+` lines
+  separately and sorting both gives byte-identical files, proving only line
+  breaks moved.
+- Observation: the stream handler's dropped-record warning was written out
+  literally at five call sites (three `handle()` refusal paths, `flush()`, and
+  `close()`), while an integration test in `tests/` parsed the count back out
+  of that exact text. Impact: the duplication made the test's parse silently
+  fragile — diverging at one site would leave the test asserting a count it no
+  longer reads. The five sites now call one `warn_dropped(count)` helper, which
+  is shaped to be passed directly as the reporting closure of `warn_if_due` and
+  `flush`. The helper's doc comment names the test and states that the wording
+  and the test's `DROPPED_RECORD_WARNING` copy must change together, because an
+  integration test cannot import from the crate under test.
 
 ## Decision log
 

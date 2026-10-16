@@ -144,6 +144,10 @@ fn stream_handler_reports_dropped_records() {
 /// The capture logger is process-wide, so counting warnings by level alone
 /// would count any other warning the binary emits as a dropped record. This
 /// names the one message under test.
+///
+/// This duplicates the wording of `warn_dropped` in
+/// `src/stream_handler.rs`, which an integration test cannot import. The two
+/// must change together.
 const DROPPED_RECORD_WARNING: &str = "log records dropped in the last interval";
 
 /// The count a dropped-record warning reports.

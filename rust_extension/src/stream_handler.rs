@@ -30,6 +30,23 @@ use crate::{
 /// Default queue capacity used when a stream builder does not provide one.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Report that `count` records were dropped by this handler.
+///
+/// Shaped to be passed directly as the reporting closure of
+/// [`RateLimitedWarner::warn_if_due`] and [`RateLimitedWarner::flush`], so all
+/// five call sites report through this one message: the three refusal paths in
+/// [`FemtoHandlerTrait::handle`], [`FemtoHandlerTrait::flush`], and
+/// [`FemtoStreamHandler::close`].
+///
+/// The rendered text ends with `log records dropped in the last interval`, which
+/// `tests/stream_handler_logging_tests.rs` strips to read the count back. That
+/// test cannot import this function, so it holds its own copy of the suffix:
+/// changing the wording here means changing it there too, or the count the test
+/// asserts will silently stop being parsed.
+fn warn_dropped(count: u64) {
+    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+}
+
 /// Configuration for constructing a [`FemtoStreamHandler`].
 pub struct HandlerConfig {
     pub capacity: usize,
@@ -149,6 +166,7 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
+
 #[allow(
     clippy::too_many_arguments,
     reason = "PyO3 generates Python-facing wrappers with explicit method signatures"
@@ -218,6 +236,7 @@ impl FemtoStreamHandler {
         self.close();
     }
 }
+
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
@@ -307,9 +326,7 @@ impl FemtoStreamHandler {
     /// the handler is closed nothing warns on its behalf, so a batch left
     /// pending by an active interval would go with it unreported.
     pub fn close(&mut self) {
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
+        self.warner.flush(warn_dropped);
         self.tx.take();
         let handle = { self.handle.lock().take() };
         if let Some(handle) = handle {
@@ -328,29 +345,24 @@ impl FemtoStreamHandler {
     }
 }
 
+
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = &self.tx else {
             self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-            });
+            self.warner.warn_if_due(warn_dropped);
             return Err(HandlerError::Closed);
         };
         match tx.try_send(StreamCommand::Record(record)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::QueueFull)
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::Closed)
             }
         }
@@ -360,9 +372,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         // Reported before the closed check, so a handler that has already been
         // closed still says what it dropped. Records refused after close are
         // recorded by the handler, and nothing else will report them.
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
+        self.warner.flush(warn_dropped);
         match &self.tx {
             Some(tx) => {
                 let (ack_tx, ack_rx) = bounded(1);
