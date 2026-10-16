@@ -207,6 +207,9 @@ fn python_callback_filter_exceptions_drop_records() {
         );
         let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
 
-        assert!(!filter.should_log(&mut record));
+        let decision = filter.decision(&mut record, &mut crate::filters::FilterContext::default());
+
+        assert!(!decision.accepted);
+        assert!(decision.callback_failed);
     });
 }

@@ -1,6 +1,7 @@
 //! Producer and worker tracing tests for bounded context-dispatch events.
 
 use std::any::Any;
+use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, ThreadId};
@@ -8,21 +9,24 @@ use std::time::Duration;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyAnyMethods;
+use pyo3::types::{PyAnyMethods, PyModule};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
-use super::{FemtoLogger, QueuedRecord};
+use super::{FemtoLogger, HandlerAttachment, QueuedRecord};
+use crate::filters::python_callback::PythonCallbackFilter;
+use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
 
 #[path = "producer_tracing_test_helpers.rs"]
 mod helpers;
 use helpers::{
-    CapturedEvent, EXPECTED_EVENTS, PythonHandlerOutcome, assert_events, collect_fields,
-    emit_capture_failure, emit_python_handler_dispatch, emit_rejected_native_dispatch,
+    CapturedEvent, EXPECTED_EVENTS, PythonHandlerOutcome, assert_events, assert_filter_events,
+    collect_fields, emit_capture_failure, emit_python_handler_dispatch,
+    emit_rejected_native_dispatch,
 };
 
 #[derive(Clone)]
@@ -184,6 +188,20 @@ struct NativeTestHandler {
     fail: bool,
 }
 
+struct FixedDecisionFilter {
+    accepted: bool,
+}
+
+impl FemtoFilter for FixedDecisionFilter {
+    fn decision(
+        &self,
+        _record: &mut FemtoLogRecord,
+        _context: &mut FilterContext,
+    ) -> FilterDecision {
+        FilterDecision::accept(self.accepted)
+    }
+}
+
 impl FemtoHandlerTrait for NativeTestHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
         if self.fail {
@@ -220,6 +238,52 @@ fn with_sensitive_context(log: impl FnOnce()) -> PyResult<()> {
     })
 }
 
+fn emit_handler_filter_chain(filter: Arc<dyn FemtoFilter>, expected_acceptance: bool) {
+    let attachment =
+        HandlerAttachment::with_filters(Arc::new(NativeTestHandler { fail: false }), vec![filter]);
+    let mut record = FemtoLogRecord::new(
+        "trace-filter",
+        crate::level::FemtoLevel::Info,
+        "payload-is-not-traced",
+    );
+    let accepted = FemtoLogger::filter_handlers_for_test(&mut record, vec![attachment]);
+    assert_eq!(accepted.len(), usize::from(expected_acceptance));
+}
+
+fn raising_callback_filter() -> Arc<dyn FemtoFilter> {
+    Python::attach(|py| {
+        let module = PyModule::from_code(
+            py,
+            CString::new(concat!(
+                "def fail(record):\n",
+                "    raise RuntimeError('payload-is-not-traced')\n",
+            ))
+            .expect("valid callback source")
+            .as_c_str(),
+            CString::new("test_filter_trace.py")
+                .expect("valid filename")
+                .as_c_str(),
+            CString::new("test_filter_trace")
+                .expect("valid module name")
+                .as_c_str(),
+        )
+        .expect("callback module should load");
+        Arc::new(PythonCallbackFilter::new(
+            module
+                .getattr("fail")
+                .expect("raising callback should exist")
+                .unbind(),
+            "test_filter_trace.fail".to_owned(),
+        )) as Arc<dyn FemtoFilter>
+    })
+}
+
+fn emit_handler_filter_outcomes() {
+    emit_handler_filter_chain(Arc::new(FixedDecisionFilter { accepted: true }), true);
+    emit_handler_filter_chain(Arc::new(FixedDecisionFilter { accepted: false }), false);
+    emit_handler_filter_chain(raising_callback_filter(), false);
+}
+
 /// Internal tracing events cover each dispatch outcome without exposing data.
 #[test]
 fn context_dispatch_tracing_reports_bounded_outcomes() {
@@ -233,6 +297,7 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     emit_capture_failure(&collector).expect("capture failure should emit its bounded event");
     emit_rejected_native_dispatch()
         .expect("rejected native dispatch should emit its bounded events");
+    emit_handler_filter_outcomes();
     emit_python_handler_dispatch(&collector, PythonHandlerOutcome::Failure)
         .expect("failing Python handler should emit its bounded events");
     collector.stop_recording();
@@ -240,7 +305,7 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     let events = collector
         .captured()
         .expect("tracing events should be captured without mutex poisoning");
-    assert_eq!(events.len(), 9, "captured events: {events:?}");
+    assert_eq!(events.len(), 12, "captured events: {events:?}");
     assert!(
         events
             .iter()
@@ -252,4 +317,5 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
         "event values must not contain context or record payloads: {events:?}"
     );
     assert_events(&events, &EXPECTED_EVENTS);
+    assert_filter_events(&events);
 }

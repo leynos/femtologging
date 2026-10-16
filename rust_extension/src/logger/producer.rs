@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use log::warn;
 
-use crate::filters::FilterContext;
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
@@ -15,22 +14,12 @@ use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 use crate::sync::bounded;
 
-use super::{
-    FemtoLogger, FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot,
-    LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord,
-};
+mod handler_filters;
 
-#[cfg(feature = "tracing-compat")]
-fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static str {
-    let has_python = handlers.iter().any(|handler| handler.is_python_backed());
-    let has_native = handlers.iter().any(|handler| !handler.is_python_backed());
-    match (has_python, has_native) {
-        (true, true) => "python_and_native",
-        (true, false) => "python",
-        (false, true) => "native",
-        (false, false) => "none",
-    }
-}
+
+#[cfg(test)]
+use super::HandlerAttachment;
+use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -157,23 +146,8 @@ impl FemtoLogger {
     /// If no filters are configured, the record passes.
     fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
         let filters = self.filters.read().clone();
-        Self::apply_filter_chain(record, &filters)
-    }
-
-    /// Apply one filter chain to a record on the producer thread.
-    fn apply_filter_chain(
-        record: &mut FemtoLogRecord,
-        filters: &[std::sync::Arc<dyn crate::filters::FemtoFilter>],
-    ) -> bool {
-        let mut context = FilterContext::default();
-        for filter in filters {
-            let decision = filter.decision(record, &mut context);
-            if !decision.accepted {
-                return false;
-            }
-            record.metadata_mut().key_values.extend(decision.enrichment);
-        }
-        true
+        handler_filters::apply_filter_chain(record, &filters)
+            == handler_filters::FilterChainOutcome::Accepted
     }
 
     fn should_propagate_to_parent(&self) -> bool {
@@ -200,12 +174,12 @@ impl FemtoLogger {
         let Some(tx) = &self.tx else {
             return;
         };
-        let handlers = Self::filter_handlers(&mut record, self.handlers.read().clone());
+        let handlers = handler_filters::filter_handlers(&mut record, self.handlers.read().clone());
         if handlers.is_empty() {
             return;
         }
         #[cfg(feature = "tracing-compat")]
-        let handler_kind = handler_kind(&handlers);
+        let handler_kind = handler_filters::handler_kind(&handlers);
         #[cfg(feature = "python")]
         let context = match self.capture_context_for_dispatch(
             &handlers,
@@ -303,34 +277,12 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
-    /// Retain handlers whose producer-thread filter chains accept the record.
-    fn filter_handlers(
-        record: &mut FemtoLogRecord,
-        handlers: Vec<HandlerAttachment>,
-    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
-        let has_handler_filters = handlers
-            .iter()
-            .any(|attachment| !attachment.filters.is_empty());
-        handlers
-            .into_iter()
-            .filter_map(|attachment| {
-                Self::apply_filter_chain(record, &attachment.filters).then(|| {
-                    if has_handler_filters {
-                        HandlerRecordSnapshot::snapshot_handler(attachment.handler, record.clone())
-                    } else {
-                        attachment.handler
-                    }
-                })
-            })
-            .collect()
-    }
-
     #[cfg(test)]
     pub(super) fn filter_handlers_for_test(
         record: &mut FemtoLogRecord,
         handlers: Vec<HandlerAttachment>,
     ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
-        Self::filter_handlers(record, handlers)
+        handler_filters::filter_handlers(record, handlers)
     }
 
     pub(super) fn flush_handlers_blocking(&self) -> bool {

@@ -63,6 +63,7 @@ impl PythonCallbackFilter {
                 apply_enrichment_to_record_view(&record_view, &enrichment, &typed_enrichment)?;
                 Ok(FilterDecision {
                     accepted: true,
+                    callback_failed: false,
                     enrichment,
                 })
             })();
@@ -109,7 +110,7 @@ impl FemtoFilter for PythonCallbackFilter {
                     "Python filter callback '{}' raised an exception; record dropped: {}",
                     self.description, err
                 );
-                FilterDecision::accept(false)
+                FilterDecision::callback_failure()
             }
         }
     }

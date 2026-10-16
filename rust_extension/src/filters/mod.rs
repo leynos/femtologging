@@ -16,6 +16,8 @@ use pyo3::prelude::*;
 pub struct FilterDecision {
     /// Whether the record should continue through the pipeline.
     pub(crate) accepted: bool,
+    /// Whether a Python callback failed while deciding whether to accept it.
+    pub(crate) callback_failed: bool,
     /// Additional metadata fields accepted by the filter.
     pub(crate) enrichment: BTreeMap<String, String>,
 }
@@ -26,6 +28,18 @@ impl FilterDecision {
     pub(crate) fn accept(accepted: bool) -> Self {
         Self {
             accepted,
+            callback_failed: false,
+            enrichment: BTreeMap::new(),
+        }
+    }
+
+    /// Build a rejection decision that records a failed Python callback.
+    #[must_use]
+    #[cfg(feature = "python")]
+    pub(crate) fn callback_failure() -> Self {
+        Self {
+            accepted: false,
+            callback_failed: true,
             enrichment: BTreeMap::new(),
         }
     }

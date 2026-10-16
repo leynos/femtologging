@@ -32,6 +32,7 @@ impl FemtoFilter for TestFilter {
         self.calls.fetch_add(1, Ordering::SeqCst);
         FilterDecision {
             accepted: self.accepted,
+            callback_failed: false,
             enrichment: self.enrichment.clone(),
         }
     }
