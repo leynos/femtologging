@@ -262,6 +262,7 @@ impl Worker {
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
+        flush_drops(&self.warner);
         // Ignore send error: if the receiver has dropped, there's nothing to do.
         let _ = ack.send(());
     }
@@ -297,6 +298,8 @@ impl Worker {
                 }
             }
         }
+        // The worker's last act: nothing else will report what it recorded.
+        flush_drops(&self.warner);
     }
 }
 
@@ -321,6 +324,18 @@ pub(crate) fn classify_status(status: u16) -> ResponseClass {
 fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.record_drop();
     warner.warn_if_due(log);
+}
+
+/// Report drops the worker found, ignoring the rate limit.
+///
+/// Drops the worker discovers — serialization failures, retry exhaustion,
+/// permanent errors — are recorded here rather than by the handler, so only the
+/// worker can report them. A suppressed interval would otherwise keep the count
+/// until the next due warning, which on a worker that is exiting never comes.
+fn flush_drops(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+    });
 }
 
 /// Base64-encode a byte slice for Basic auth.

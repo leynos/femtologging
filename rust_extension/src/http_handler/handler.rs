@@ -232,12 +232,15 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
     }
 
     fn flush(&self) -> bool {
-        let Some(tx) = self.sender() else {
-            return false;
-        };
+        // Reported before the closed check: records refused after close are
+        // recorded by the handler, so a flush that returned early would leave
+        // their count pending on a handler that is never going to warn again.
         self.warner.flush(|count| {
             log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
         });
+        let Some(tx) = self.sender() else {
+            return false;
+        };
         flush_queue(&tx, self.flush_timeout)
     }
 

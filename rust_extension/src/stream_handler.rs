@@ -302,7 +302,14 @@ impl FemtoStreamHandler {
     }
 
     /// Close the handler and wait for the worker thread to exit.
+    ///
+    /// Any drops still pending are reported before the worker is released. Once
+    /// the handler is closed nothing warns on its behalf, so a batch left
+    /// pending by an active interval would go with it unreported.
     pub fn close(&mut self) {
+        self.warner.flush(|count| {
+            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+        });
         self.tx.take();
         let handle = { self.handle.lock().take() };
         if let Some(handle) = handle {
@@ -350,11 +357,14 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
+        // Reported before the closed check, so a handler that has already been
+        // closed still says what it dropped. Records refused after close are
+        // recorded by the handler, and nothing else will report them.
+        self.warner.flush(|count| {
+            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+        });
         match &self.tx {
             Some(tx) => {
-                self.warner.flush(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
                 let (ack_tx, ack_rx) = bounded(1);
                 if tx
                     .send_timeout(StreamCommand::Flush(ack_tx), self.flush_timeout)

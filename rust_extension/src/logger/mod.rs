@@ -335,6 +335,10 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
+        // Report losses before the logger goes quiet for good: after this point
+        // nothing is left to warn on the logger's behalf, so a suppressed
+        // interval would take its final count with it.
+        self.flush_drop_warners();
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
         }

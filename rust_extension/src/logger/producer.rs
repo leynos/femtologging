@@ -301,6 +301,7 @@ impl FemtoLogger {
     /// The acknowledgement orders flushing after all records already queued;
     /// handler flushing then covers output buffered inside each live handler.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
+        self.flush_drop_warners();
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }
 
@@ -311,6 +312,25 @@ impl FemtoLogger {
         handlers: Vec<HandlerAttachment>,
     ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
         handler_filters::filter_handlers(record, handlers)
+    }
+
+    /// Report any drops this logger has recorded but not yet warned about.
+    ///
+    /// The warners are rate limited, so a flush that is suppressed by an active
+    /// interval would otherwise leave the counts pending until the next due
+    /// moment — possibly never, on a logger being shut down. Reporting here
+    /// makes an explicit flush mean "say now what has been lost", which is what
+    /// a caller inspecting a quiet system needs.
+    pub(super) fn flush_drop_warners(&self) {
+        self.drop_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+        });
+        #[cfg(feature = "python")]
+        self.context_capture_warner.flush(|count| {
+            warn!(
+                "operation=producer_context_capture handler_kind=python outcome=failed failures={count}"
+            );
+        });
     }
 
     /// Wait for the worker to process a marker after all earlier queued records.
