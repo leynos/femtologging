@@ -1,9 +1,17 @@
 //! Public handler type exported by the crate.
 
-use std::{thread, time::Duration};
+use std::{
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+// The interpreter is reachable in every lane that is not modelling it, so the
+// drop guard attaches under the same condition `FemtoLogger`'s join does.
+#[cfg(not(loom))]
+use pyo3::Python;
 
 use parking_lot::Mutex;
 
@@ -11,6 +19,7 @@ use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
+    shutdown_signal::ShutdownSignal,
 };
 
 use super::{
@@ -22,13 +31,14 @@ use super::{
 #[cfg_attr(feature = "python", pyclass)]
 /// Handler forwarding records to a socket using MessagePack framing.
 pub struct FemtoSocketHandler {
-    /// Sender for records and lifecycle commands; taking it prevents further delivery.
     tx: Option<crossbeam_channel::Sender<SocketCommand>>,
-    /// Join handle consumed by close after the worker acknowledges shutdown.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
-    /// Tracks records dropped by a full or disconnected queue for rate-limited warnings.
     warner: RateLimitedWarner,
-    /// Upper bound used while awaiting flush and shutdown acknowledgements.
+    /// The shutdown signal shared with the worker.
+    ///
+    /// `Some` for as long as the handler is open. `None` once `close` has
+    /// given up on the worker, or after a close that had nothing to do.
+    signal: Option<Arc<ShutdownSignal>>,
     flush_timeout: Duration,
 }
 
@@ -42,11 +52,13 @@ impl FemtoSocketHandler {
     pub fn with_config(config: SocketHandlerConfig) -> Self {
         let flush_timeout = config.write_timeout;
         let warner = RateLimitedWarner::new(config.warn_interval);
-        let (tx, handle) = spawn_worker(config);
+        let signal = Arc::new(ShutdownSignal::new());
+        let (tx, handle) = spawn_worker(config, Arc::clone(&signal));
         Self {
             tx: Some(tx),
             handle: Mutex::new(Some(handle)),
             warner,
+            signal: Some(signal),
             flush_timeout,
         }
     }
@@ -56,36 +68,104 @@ impl FemtoSocketHandler {
         <Self as FemtoHandlerTrait>::flush(self)
     }
 
-    /// Close the handler and wait for the worker to exit.
+    /// Close the handler, waiting for the worker only while it is answering.
     ///
-    /// The acknowledgement wait uses `flush_timeout`, but this method may
-    /// block longer while sending the shutdown command, draining queued
-    /// records, or joining the worker thread.
+    /// One deadline covers the whole operation: the shutdown signal, the
+    /// command that carries the acknowledgement request, the acknowledgement
+    /// itself, and the join. A worker that does not acknowledge within that
+    /// budget is abandoned rather than joined, because the alternative is to
+    /// wait out whatever it is doing - a connect, a write, or a backoff sleep
+    /// whose length the configuration describes separately and the caller did
+    /// not ask for. `close` runs from `Drop`, so that wait would fall on
+    /// whatever was tearing the handler down.
+    ///
+    /// The signal is what makes the budget apply to the work and not only to
+    /// the waiting. Until it is raised the worker is free to retry a failed
+    /// connection for as long as its backoff allows; once it is, no new attempt
+    /// begins after the deadline, each queued record gets one attempt, and
+    /// whatever is still queued at the deadline is discarded with a warning
+    /// rather than written.
     pub fn close(&mut self) {
-        self.request_shutdown();
-        self.join_worker();
+        match self.request_shutdown() {
+            ShutdownOutcome::Finished => self.join_worker(),
+            ShutdownOutcome::TimedOut => self.abandon_worker(),
+        }
     }
 
-    /// Clones the live queue sender, or returns `None` after shutdown takes it.
     fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
         self.tx.as_ref().cloned()
     }
 
-    /// Takes the sender, queues shutdown, and bounds only the acknowledgement
-    /// wait by `flush_timeout`; sending can block while the queue is full.
-    fn request_shutdown(&mut self) {
+    /// Ask the worker to stop, and report whether joining it is now bounded.
+    ///
+    /// Every outcome except a timeout means the worker has left, or is leaving,
+    /// its command loop, so the join that follows is short.
+    ///
+    /// One deadline covers both halves. The command channel is bounded, and a
+    /// plain `send` on a full one blocks until the worker next reads it - which
+    /// a worker stuck mid-write does not do. Bounding the acknowledgement alone
+    /// left that wait in front of it, and bounding neither left the caller
+    /// waiting on a worker that might never answer at all.
+    ///
+    /// The signal is raised before the send, so it is the signal that wakes a
+    /// worker sleeping in a backoff delay rather than the command that queues
+    /// behind a full channel.
+    fn request_shutdown(&mut self) -> ShutdownOutcome {
         let Some(tx) = self.tx.take() else {
-            return;
+            // Already closed. There is no worker left to wait for.
+            return ShutdownOutcome::Finished;
         };
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-        if tx.send(SocketCommand::Shutdown(ack_tx)).is_err() {
-            return;
+        let deadline = Instant::now() + self.flush_timeout;
+        if let Some(signal) = self.signal.as_ref() {
+            signal.begin_shutdown(deadline);
         }
-        let _ = ack_rx.recv_timeout(self.flush_timeout);
+        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+        match tx.send_deadline(SocketCommand::Shutdown(ack_tx), deadline) {
+            Ok(()) => {}
+            // The worker has dropped its receiver, so it has already left the
+            // loop; joining it returns at once and may report a panic.
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return ShutdownOutcome::Finished;
+            }
+            // The queue stayed full for the whole budget: the worker is not
+            // reading commands, so it could not have acknowledged either.
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return ShutdownOutcome::TimedOut;
+            }
+        }
+        match ack_rx.recv_deadline(deadline) {
+            Ok(()) => ShutdownOutcome::Finished,
+            // The worker dropped the acknowledgement channel without using it,
+            // which it can only do on its way out.
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
+        }
     }
 
-    /// Takes and joins the worker handle, warning if the worker panicked.
+    /// Ask to be told when the worker next begins a backoff delay.
+    ///
+    /// Exposed for tests, and only compiled for them. A test that asserts a
+    /// close is observed *during* a retry delay has to know the worker reached
+    /// that delay first; the alternative is a sleep long enough to guess it,
+    /// which measures the host rather than the handler.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let backoffs = handler.wait_notification();
+    /// handler.handle(record).expect("queue the record");
+    /// backoffs.recv_timeout(one_second).expect("the worker should be backing off");
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn wait_notification(&self) -> std::sync::mpsc::Receiver<()> {
+        self.signal
+            .as_ref()
+            .expect("an open handler has a signal")
+            .notify_on_wait()
+    }
+
     fn join_worker(&mut self) {
+        self.signal.take();
         let Some(handle) = self.handle.lock().take() else {
             return;
         };
@@ -93,12 +173,46 @@ impl FemtoSocketHandler {
             log::warn!("FemtoSocketHandler: worker thread panicked");
         }
     }
+
+    /// Detach the worker after it failed to acknowledge shutdown.
+    ///
+    /// The handle is taken so nothing joins it later, in particular the `Drop`
+    /// that may follow this call. The thread itself ends on its own once its
+    /// in-flight write finishes, because the signal now says nothing further
+    /// may be started and its command channel is already disconnected.
+    ///
+    /// The signal is aborted rather than simply dropped: the worker is the only
+    /// holder of the other reference, and a signal left in the draining phase
+    /// would keep telling it there was budget left until the drain deadline it
+    /// was already past.
+    fn abandon_worker(&mut self) {
+        if let Some(signal) = self.signal.take() {
+            signal.abort();
+        }
+        log::warn!(
+            "FemtoSocketHandler: worker did not acknowledge shutdown within {:?}; \
+             abandoning it rather than blocking the caller",
+            self.flush_timeout
+        );
+        self.handle.lock().take();
+    }
+}
+
+/// What asking the worker to stop established about joining it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownOutcome {
+    /// The worker acknowledged, or had already left its loop. The join is
+    /// bounded and worth doing, because it is also what surfaces a panic.
+    Finished,
+    /// The command could not be queued, or no acknowledgement arrived, within
+    /// `flush_timeout`. The worker is busy on something whose length
+    /// `flush_timeout` does not describe.
+    TimedOut,
 }
 
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoSocketHandler {
-    /// Parses the Python level, queues one record, and maps handler failures to `PyRuntimeError`.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -128,14 +242,22 @@ impl FemtoSocketHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush())
     }
 
-    /// Close the handler and wait for the worker thread to finish.
+    /// Close the handler, waiting for the worker at most ``write_timeout``.
+    ///
+    /// A worker that acknowledges the shutdown within ``write_timeout`` is
+    /// joined. One that does not, typically because it is stuck writing to an
+    /// unresponsive collector, is abandoned with a warning rather than waited
+    /// for, and the records still queued are discarded rather than written.
+    ///
+    /// The wait runs with the GIL released, so a close that spends its budget
+    /// waiting does not hold the interpreter while it does.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.close());
     }
 }
 
@@ -166,6 +288,29 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
     }
 }
 
+/// Drop the handler, closing it with the GIL released.
+///
+/// A handler whose worker has already gone has nothing to close, and attaching
+/// would initialise an interpreter to do nothing with it; the check keeps that
+/// case out of the GIL's way entirely. The close itself is the same one
+/// [`FemtoSocketHandler::close`] performs, so a handler dropped without an
+/// explicit close is bounded by the same budget, and the join it may perform
+/// happens with the interpreter available to a worker that wants it.
+///
+/// Under `--cfg loom` there is no interpreter to attach to: no model builds one
+/// of these handlers, and attaching would initialise Python on a Loom
+/// coroutine's small stack.
+#[cfg(not(loom))]
+impl Drop for FemtoSocketHandler {
+    fn drop(&mut self) {
+        if self.handle.lock().is_none() {
+            return;
+        }
+        Python::attach(|py| py.detach(|| self.close()));
+    }
+}
+
+#[cfg(loom)]
 impl Drop for FemtoSocketHandler {
     fn drop(&mut self) {
         self.close();
