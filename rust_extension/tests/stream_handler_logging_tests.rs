@@ -21,6 +21,7 @@ use serial_test::serial;
 
 #[path = "test_utils/captured_log.rs"]
 mod captured_log;
+
 #[path = "test_utils/handle_expect.rs"]
 mod handle_expect;
 
@@ -138,12 +139,30 @@ fn stream_handler_reports_dropped_records() {
     );
 }
 
-/// The text every dropped-record warning carries.
+/// The text every dropped-record warning carries, and ends with.
 ///
 /// The capture logger is process-wide, so counting warnings by level alone
 /// would count any other warning the binary emits as a dropped record. This
 /// names the one message under test.
 const DROPPED_RECORD_WARNING: &str = "log records dropped in the last interval";
+
+/// The count a dropped-record warning reports.
+///
+/// The message reads `FemtoStreamHandler: {count} log records dropped in the
+/// last interval`, so the count is the last token before the shared suffix, not
+/// the first token of the message: the handler's own name leads it. Reading
+/// [`DROPPED_RECORD_WARNING`] back off the end keeps this parse tied to the same
+/// text the filter selects on.
+fn reported_count(message: &str) -> u64 {
+    message
+        .strip_suffix(DROPPED_RECORD_WARNING)
+        .expect("a selected warning ends with the shared suffix")
+        .split_whitespace()
+        .last()
+        .expect("the warning names a count")
+        .parse::<u64>()
+        .expect("the count is a number")
+}
 
 /// A clock the test moves by hand.
 ///
@@ -207,7 +226,10 @@ impl Write for GatedBuf {
 ///
 /// Invariant: the handler warns on the first drop, stays silent for every
 /// further drop inside the same interval, and warns again on the first drop
-/// after the interval elapses. Two warnings for four drops.
+/// after the interval elapses. Two warnings for four drops, and — because a
+/// suppressed attempt carries its count forward rather than discarding it —
+/// the second warning reports the three drops the first interval accumulated,
+/// so the reported counts total the four records actually lost.
 ///
 /// Every input is controlled rather than raced for:
 ///
@@ -307,11 +329,18 @@ fn stream_handler_rate_limits_warnings() {
             record.level() == log::Level::Warn
                 && record.args().to_string().contains(DROPPED_RECORD_WARNING)
         })
+        .map(|record| reported_count(&record.args().to_string()))
         .collect();
     assert_eq!(
-        warnings.len(),
-        2,
-        "four drops either side of one interval boundary should warn twice, saw {warnings:?}"
+        warnings,
+        vec![1, 3],
+        "the second warning should carry the drops suppressed inside the first \
+         interval, saw {warnings:?}"
+    );
+    assert_eq!(
+        warnings.iter().sum::<u64>(),
+        4,
+        "the reported counts must account for all four dropped records"
     );
 
     // Let the worker finish so the handler's own shutdown does not time out.

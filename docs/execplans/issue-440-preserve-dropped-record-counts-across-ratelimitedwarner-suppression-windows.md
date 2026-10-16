@@ -92,9 +92,12 @@ or double-reported.
       (`tests/heavy/prop_rate_limited_warner.rs`), stream-handler integration
       test updated, design document updated. Written but not yet run.
 - [x] (2026-10-16) Task 3: flush owned warners on stream, logger, HTTP and
-      socket flush and shutdown paths. Written but not yet compiled.
-- [ ] Focused unit suite green for the modified helper.
-- [ ] Red evidence captured against the unmodified helper.
+      socket flush and shutdown paths.
+- [x] (2026-10-16) Focused unit suite green for the modified helper: 13 passed,
+      0 failed (`--no-default-features --features test-util`).
+- [x] (2026-10-16) Red evidence captured against the unmodified helper: 7 of
+      13 failing, including loss of 79 of 120 recorded drops under two threads.
+      See `Artefacts and notes`.
 - [ ] Heavy proptest run with `-- --ignored`.
 - [ ] Full commit gates green via `scrutineer`.
 - [ ] CodeRabbit review clean.
@@ -142,6 +145,23 @@ above are written, not verified.
   `Cargo.toml` lists `_femtologging_rs` as a dev-dependency of itself with
   `features = ["test-util"]`, so the accessor is present there through that
   dependency edge rather than through `cfg(test)`.
+- Observation: the stream handler's dropped-record warning does **not** lead
+  with its count; the message is
+  `FemtoStreamHandler: {count} log records dropped in the last interval`, so the
+  count is the last token before the shared suffix. Evidence: the first version
+  of the updated integration test parsed the first whitespace token and failed
+  with `ParseIntError { kind: InvalidDigit }` on `FemtoStreamHandler:`. Impact:
+  the count is now read by stripping the shared suffix and taking the last
+  remaining token, which also keeps the parse tied to the same constant the
+  filter selects on. The HTTP and socket warnings do lead with the handler name
+  too, so any future test parsing their counts needs the same treatment.
+- Observation: property-test case count is not visible in the ordinary output,
+  and `PROPTEST_VERBOSE=1` did not surface it either. Impact: non-vacuity was
+  established instead by scaling, which is stronger evidence than a self-report:
+  `PROPTEST_CASES=2000` took 3.20s against 0.09s for the configured 32, so the
+  generator is running one case per draw rather than passing vacuously. At the
+  configured 32 cases the run is 0.09s and produces no visible count, so the
+  default run alone would not have shown whether the cases ran.
 
 ## Decision log
 
@@ -486,8 +506,65 @@ $ git merge-base --is-ancestor 0856f6c8 HEAD && echo "defect present"
 defect present
 ```
 
-Red evidence for the carry-forward regression is recorded here once the test
-has been run against the unmodified helper.
+### Red evidence (2026-10-16)
+
+The new tests were run against the unmodified helper before the fix was
+accepted. The original body of `warn_if_due()` from `main` and the original
+`flush()`, which delegated to it, were restored temporarily and the focused
+suite was run:
+
+```shell
+cargo test --manifest-path rust_extension/Cargo.toml \
+  --no-default-features --features test-util rate_limited_warner::tests
+```
+
+Result: `test result: FAILED. 6 passed; 7 failed`. The seven failures are the
+new tests, plus `rate_limits_subsequent_warnings`, which previously asserted the
+lossy counts and was rewritten as part of the fix:
+
+```plaintext
+rate_limits_subsequent_warnings   left: [1, 1]  right: [1, 2]
+suppressed_attempts_carry_drops_forward
+    "and preserve all three"        left: 0     right: 3
+flush_reports_inside_the_suppression_window
+                                    left: [1]   right: [1, 2]
+empty_call_does_not_start_the_window::case_1
+                                    left: []    right: [1]
+empty_call_does_not_start_the_window::case_2
+                                    left: []    right: [1]
+concurrent_callers_conserve_every_drop::case_1_two_threads
+    "every recorded drop should be reported exactly once"
+                                    left: 41    right: 120
+concurrent_callers_conserve_every_drop::case_2_four_threads
+    "every recorded drop should be reported exactly once"
+                                    left: 27    right: 160
+```
+
+Two results are worth naming. `suppressed_attempts_carry_drops_forward` shows
+`pending_drops()` reading 0 where three drops should be pending: the old
+`else` branch had already erased them. The two conservation cases are harsher
+than a unit test would suggest — the unmodified helper reported 41 of 120
+recorded drops on two threads and 27 of 160 on four. The bug is not a
+rounding error on a boundary; under contention it discards most of the loss,
+which is precisely the case an operator reads these warnings for.
+
+Also notable: `empty_call_does_not_start_the_window` fails against the original
+implementation for a reason the issue did not describe. The original
+unconditionally stored the timestamp on the first call, even with nothing to
+report, so a poller with no drops held the next real warning back a full
+interval.
+
+The same temporary revert was **not** applied to the heavy property test: it
+asserts the same conservation the two-thread case above already falsifies, and
+rebuilding the heavy target against a reverted helper costs a full uncached
+compile for no additional information. The unit-level conservation case is the
+witness, and the property test widens the interleaving space rather than
+establishing the property for the first time. That is a deliberate, recorded
+gap: the property test's own red evidence is the shared assertion, not a
+separate run.
+
+The fix was restored from a byte-for-byte backup (`/tmp/rlw-fixed-backup-issue-440.rs`)
+and `cargo fmt -- --check` passes on the restored file.
 
 ## Interfaces and dependencies
 
