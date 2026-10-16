@@ -185,6 +185,43 @@ handlers and the builder audit confirmed no builder work is needed; widening
 the change would make the diff harder to review and the regression evidence
 harder to scope. Tracking these as a separate issue is the right size.
 
+## Open blocker: the installed extension is stale
+
+The negative control reintroduced the defect and rebuilt the extension. The
+control succeeded, the source was restored, and the working tree was confirmed
+clean at the GIL-release commit — but the **rebuild of the fixed source was
+refused**:
+
+```text
+build-limits: the supervisor refused: unhealthy
+error: could not compile `femtologging_rs` (lib)
+```
+
+`build-limits-status` reports `UNHEALTHY`, with `visible compiler roots=0` and:
+
+> drain check failed; tokens retained: retained detached work: live sccache
+> service may retain detached requests; operator accounting required
+
+The stated recovery action is to coordinate active builds, stop the shared
+sccache service, and leave it stopped until admission confirms an empty drain.
+The sccache service is shared by every agent on this machine, so stopping it is
+an operator decision rather than something this task should do unilaterally.
+
+**Consequence.** The venv currently holds the negative-control build, so
+`.venv/bin/python -m pytest tests/test_file_handler_gil_release.py` fails (1/9
+failing, as expected for pre-fix bindings). This is a stale-artifact problem,
+not a defect in the change: the source, the working tree, and all four commits
+are the fixed version.
+
+**To resume**, once admission is healthy again:
+
+```sh
+make build                     # rebuilds and reinstalls the fixed extension
+.venv/bin/python -m pytest tests/test_file_handler_gil_release.py -q   # expect 9 passed
+```
+
+Then run the remaining Rust gates, push, and open the draft PR.
+
 ## Outcomes & Retrospective
 
 The implementation is complete and the core claim is now backed by execution
