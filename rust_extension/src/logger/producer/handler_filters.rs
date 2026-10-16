@@ -84,7 +84,9 @@ fn filter_handler_attachment(
     snapshot_required: bool,
 ) -> Option<Arc<dyn FemtoHandlerTrait>> {
     #[cfg(feature = "tracing-compat")]
-    let filter_started = (!attachment.filters.is_empty()).then(std::time::Instant::now);
+    let filter_started = (!attachment.filters.is_empty()
+        && tracing::enabled!(target: "femtologging::internal", tracing::Level::TRACE))
+    .then(std::time::Instant::now);
     #[cfg(feature = "tracing-compat")]
     let handler_kind = if attachment.handler.is_python_backed() {
         "python"

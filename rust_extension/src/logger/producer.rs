@@ -175,7 +175,18 @@ impl FemtoLogger {
         let Some(tx) = &self.tx else {
             return;
         };
-        let handlers = handler_filters::filter_handlers(&mut record, self.handlers.read().clone());
+        let attachments = self.handlers.read().clone();
+        if attachments.is_empty() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_handler_dispatch",
+                handler_kind = "none",
+                dispatch_outcome = "no_local_handlers",
+            );
+            return;
+        }
+        let handlers = handler_filters::filter_handlers(&mut record, attachments);
         if handlers.is_empty() {
             return;
         }

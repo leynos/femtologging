@@ -22,6 +22,7 @@ use super::python_callback_validation::{
     extract_supported_value, is_reserved_enrichment_key, validate_enrichment_key,
     validate_enrichment_total, validate_enrichment_value,
 };
+use super::python_callback_warning::CallbackFailureWarner;
 use super::{FemtoFilter, FilterBuildError, FilterBuilderTrait, FilterContext, FilterDecision};
 
 /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
@@ -36,6 +37,7 @@ pub struct PythonCallbackFilter {
     callback: Arc<Mutex<Py<PyAny>>>,
     /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
     description: String,
+    failure_warner: CallbackFailureWarner,
 }
 
 impl PythonCallbackFilter {
@@ -44,6 +46,7 @@ impl PythonCallbackFilter {
         Self {
             callback: Arc::new(Mutex::new(callback)),
             description,
+            failure_warner: CallbackFailureWarner::default(),
         }
     }
 
@@ -112,11 +115,10 @@ impl FemtoFilter for PythonCallbackFilter {
     fn decision(&self, record: &mut FemtoLogRecord, context: &mut FilterContext) -> FilterDecision {
         match self.decision_with_context(record, context) {
             Ok(decision) => decision,
-            Err(err) => {
-                warn!(
-                    "Python filter callback '{}' raised an exception; record dropped: {}",
-                    self.description, err
-                );
+            Err(_) => {
+                self.failure_warner.report(|failure_count| {
+                    warn!("Python filter callback failed; records dropped: {failure_count}");
+                });
                 FilterDecision::callback_failure()
             }
         }

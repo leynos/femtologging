@@ -75,6 +75,8 @@ pub mod python_callback;
 mod python_callback_tests;
 #[cfg(feature = "python")]
 mod python_callback_validation;
+#[cfg(feature = "python")]
+mod python_callback_warning;
 
 pub use level_filter::LevelFilterBuilder;
 pub use name_filter::NameFilterBuilder;

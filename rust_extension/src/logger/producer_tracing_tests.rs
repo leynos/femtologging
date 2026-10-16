@@ -1,6 +1,7 @@
 //! Producer and worker tracing tests for bounded context-dispatch events.
 
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -10,6 +11,7 @@ use std::time::Duration;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyModule};
+use serial_test::serial;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
@@ -26,7 +28,7 @@ mod helpers;
 use helpers::{
     CapturedEvent, EXPECTED_EVENTS, PythonHandlerOutcome, assert_events, assert_filter_events,
     collect_fields, emit_capture_failure, emit_python_handler_dispatch,
-    emit_rejected_native_dispatch,
+    emit_real_handler_filter_dispatches, emit_rejected_native_dispatch,
 };
 
 /// Collects bounded internal tracing events from explicitly permitted threads.
@@ -297,8 +299,33 @@ fn emit_handler_filter_outcomes() {
     emit_handler_filter_chain(raising_callback_filter(), false);
 }
 
+fn assert_no_local_handler_events(events: &[CapturedEvent]) {
+    let no_local_handler_events = events
+        .iter()
+        .filter(|event| {
+            event.fields.get("operation").map(String::as_str) == Some("producer_handler_dispatch")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(no_local_handler_events.len(), 2);
+    for event in no_local_handler_events {
+        assert_eq!(event.fields["handler_kind"], "none");
+        assert_eq!(event.fields["dispatch_outcome"], "no_local_handlers");
+        assert_eq!(
+            event
+                .fields
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["dispatch_outcome", "handler_kind", "operation",]),
+            "no-handler trace fields must stay bounded: {:?}",
+            event.fields,
+        );
+    }
+}
+
 /// Internal tracing events cover each dispatch outcome without exposing data.
 #[test]
+#[serial]
 fn context_dispatch_tracing_reports_bounded_outcomes() {
     let collector = InternalEventCollector::new();
     let subscriber = tracing_subscriber::registry().with(collector.clone());
@@ -311,6 +338,8 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     emit_rejected_native_dispatch()
         .expect("rejected native dispatch should emit its bounded events");
     emit_handler_filter_outcomes();
+    emit_real_handler_filter_dispatches()
+        .expect("real filter dispatch and propagation should emit bounded events");
     emit_python_handler_dispatch(&collector, PythonHandlerOutcome::Failure)
         .expect("failing Python handler should emit its bounded events");
     collector.stop_recording();
@@ -318,7 +347,7 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     let events = collector
         .captured()
         .expect("tracing events should be captured without mutex poisoning");
-    assert_eq!(events.len(), 12, "captured events: {events:?}");
+    assert_eq!(events.len(), 22, "captured events: {events:?}");
     assert!(
         events
             .iter()
@@ -331,4 +360,5 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     );
     assert_events(&events, &EXPECTED_EVENTS);
     assert_filter_events(&events);
+    assert_no_local_handler_events(&events);
 }
