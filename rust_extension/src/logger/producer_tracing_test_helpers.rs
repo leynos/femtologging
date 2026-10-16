@@ -85,6 +85,10 @@ pub(super) const EXPECTED_EVENTS: [ExpectedEvent; 7] = [
     },
 ];
 
+/// Expected per-chain counts for the accepted, rejected, and failed outcomes.
+pub(super) const EXPECTED_FILTER_OUTCOMES: [(&str, usize); 3] =
+    [("accepted", 1), ("rejected", 1), ("callback_failed", 1)];
+
 /// Tracing visitor that stores each recorded field's rendered value.
 #[derive(Default)]
 struct EventFieldCollector {
@@ -252,6 +256,51 @@ pub(super) fn assert_events(events: &[CapturedEvent], expected: &[ExpectedEvent]
         );
         for event in matching {
             assert_event(event, expected);
+        }
+    }
+}
+
+pub(super) fn assert_filter_events(events: &[CapturedEvent]) {
+    let filter_events = events
+        .iter()
+        .filter(|event| {
+            event.fields.get("operation").map(String::as_str)
+                == Some("producer_handler_filter_chain")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        filter_events.len(),
+        EXPECTED_FILTER_OUTCOMES.len(),
+        "filter events: {filter_events:?}"
+    );
+
+    for (outcome, expected_count) in EXPECTED_FILTER_OUTCOMES {
+        let matching = filter_events
+            .iter()
+            .filter(|event| event.fields.get("filter_outcome").map(String::as_str) == Some(outcome))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            expected_count,
+            "expected {expected_count} filter outcome {outcome}; got {matching:?}"
+        );
+        for event in matching {
+            assert_eq!(
+                event
+                    .fields
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>(),
+                BTreeSet::from(["elapsed_us", "filter_outcome", "handler_kind", "operation",]),
+                "filter trace fields must stay bounded: {:?}",
+                event.fields
+            );
+            assert_eq!(event.fields["handler_kind"], "native");
+            assert!(
+                event.fields["elapsed_us"].parse::<u128>().is_ok(),
+                "elapsed_us should be numeric: {:?}",
+                event.fields
+            );
         }
     }
 }
