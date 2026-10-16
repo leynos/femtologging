@@ -74,7 +74,8 @@ impl FemtoTracingLayer {
         normalized == "femtologging" || normalized.starts_with("femtologging.")
     }
 
-    /// Resolve a normalized target, falling back to the root logger if absent.
+    /// Resolve a normalized target, creating a missing valid logger through
+    /// `manager::get_logger` and falling back to the root logger on error.
     fn resolve_logger<'a, 'py>(
         py: Python<'py>,
         target: &'a str,

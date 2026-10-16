@@ -51,8 +51,10 @@ mod log_compat {
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use crate::log_record::FemtoLogRecord;
 
+    /// Test handler whose clones share a counter across flush calls.
     #[derive(Clone)]
     struct FlushCountingHandler {
+        /// Shared count of calls to [`FemtoHandlerTrait::flush`].
         flushes: Arc<AtomicUsize>,
     }
 
