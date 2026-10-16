@@ -7,18 +7,28 @@ use std::sync::Arc;
 use super::{FemtoLogger, HandlerAttachment};
 
 impl FemtoLogger {
-    /// Replace handler attachments while retaining each configured filter chain.
+    /// Replace handler attachments, returning the displaced values.
+    ///
+    /// Callers holding the manager lock must retain and drop the old values
+    /// after unlocking: handler teardown can flush output or join a worker.
     /// Records already queued keep their handler snapshots; later records use
     /// the replacement attachments.
-    pub(crate) fn replace_handlers(&self, handlers: Vec<HandlerAttachment>) {
-        *self.handlers.write() = handlers;
+    pub(crate) fn replace_handlers(
+        &self,
+        handlers: Vec<HandlerAttachment>,
+    ) -> Vec<HandlerAttachment> {
+        std::mem::replace(&mut *self.handlers.write(), handlers)
     }
 
-    /// Replace the complete filter collection while holding its write lock.
+    /// Replace the filter collection, returning the displaced values.
+    ///
     /// Records already past producer filtering are unaffected; later records
     /// use the replacement filters.
-    pub(crate) fn replace_filters(&self, filters: Vec<Arc<dyn FemtoFilter>>) {
-        *self.filters.write() = filters;
+    pub(crate) fn replace_filters(
+        &self,
+        filters: Vec<Arc<dyn FemtoFilter>>,
+    ) -> Vec<Arc<dyn FemtoFilter>> {
+        std::mem::replace(&mut *self.filters.write(), filters)
     }
 }
 

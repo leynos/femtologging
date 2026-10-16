@@ -943,19 +943,74 @@ surfaces mature further.
 
 ### 3.1. Bootstrap transaction boundary
 
-`ConfigBuilder::build_and_init()` uses a staged transaction for the initial
-configuration. It builds the handler and filter registries, prepares all logger
-plans, and calls `stage_loggers` to construct or retrieve the logger objects
-without changing the manager registry. `commit_staged_loggers` is the
-registry-commit boundary. After that commit, the builder optionally runs
-`disable_existing_loggers`, applies each prepared plan, and calls
-`replace_runtime_state` only after every plan has succeeded.
+`ConfigBuilder::build_and_init()` is split into a fallible preparation step and
+an infallible commit. Preparation validates the whole configuration and
+assembles a `PreparedConfiguration`; the commit applies it in one transition.
+The split is what makes the operation atomic from the caller's perspective.
 
-Construction, identifier validation, and plan preparation occur before the
-commit boundary. If one of those steps fails, the existing logger attachments
-and manager runtime metadata remain unchanged. The final runtime-state
-replacement records the handler and filter registries together with the
-per-logger attachment metadata produced by the applied plans.
+Preparation runs in this order:
+
+1. The schema version and root logger are checked.
+2. Every configured logger name is validated, before any handler is
+   constructed. A malformed name therefore fails before a file destination is
+   opened as a side effect of handler construction.
+3. The handler and filter registries are built.
+4. Each logger plan is resolved: handler and filter identifiers are looked up,
+   unknown and duplicate identifiers are rejected, and Python-backed handlers
+   that cannot dispatch contextually are rejected.
+5. `stage_loggers` pairs every plan with an existing logger or a new
+   unregistered logger object, reading the registry without modifying it.
+
+None of these steps mutate live logger state, so a rejected configuration
+leaves every pre-existing logger untouched.
+
+`manager::commit_configuration` then performs the entire transition under one
+manager write lock, and returns no `Result` because every fallible check has
+already run. It inserts staged loggers, applies each resolved plan with
+whole-vector replacement, sets the supplied scalars, and publishes the runtime
+registries and attachment metadata. Handler and filter vectors displaced by the
+commit are returned to the caller rather than dropped in place: a handler's
+`Drop` may flush output or join a worker thread, so teardown happens after the
+lock is released.
+
+Atomicity is a caller-perspective guarantee, not a global configuration lock.
+Producers never acquire a common lock; they observe per-logger state through
+whole-vector swaps of `Arc` values. A record already snapshotted onto a logger
+queue before a commit is not retracted and will still reach the handlers
+captured in that snapshot.
+
+#### Disabled loggers
+
+`disable_existing_loggers` uses an explicit per-logger `disabled` flag rather
+than relying on emptied handler lists. A disabled logger rejects records in its
+own producer path, so it emits nothing locally and nothing reaches its
+ancestors: an omitted logger can no longer resume emission merely because an
+ancestor handler exists. Only the emitting logger checks the flag, so an
+*enabled* logger still dispatches to its ancestors exactly as before.
+
+Commit targets are computed from the live registry under the lock, so a logger
+registered by another caller between preparation and commit is disabled rather
+than silently missed. The root logger and the keep set — every explicitly
+configured logger together with its ancestors — are exempt. Targets are flagged
+disabled before their handlers and filters are cleared, and only loggers named
+explicitly in the configuration are re-enabled.
+
+This differs from the standard library in three ways:
+
+- Ancestors of configured loggers are kept, so a configured `a.b` does not
+  suppress records an existing `a` would have emitted.
+- An omitted logger has its handlers and filters cleared as well as being
+  disabled, matching the stdlib's destructive behaviour.
+- Descendants of an omitted logger are not exempt; they are disabled on their
+  own merits if they are also omitted.
+
+#### Transaction limits
+
+Two side effects sit outside the atomic guarantee. Records already queued or
+snapshotted onto a logger before the commit are not retracted. And handler
+construction, which happens during preparation, can open a file or socket
+before a later preparation failure rejects the configuration; only live logger
+state is rolled back, not such construction side effects.
 
 - **Dynamic Log Level Updates:** As outlined in the [Rust multithreaded
   logging framework for Python

@@ -11,6 +11,13 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::logger::FemtoLogger;
+
+#[cfg(feature = "python")]
+mod configuration;
+#[cfg(feature = "python")]
+pub(crate) use configuration::{
+    DisplacedAttachments, PreparedConfiguration, PreparedLogger, commit_configuration,
+};
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
 
@@ -151,6 +158,27 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("logger {name:?} not found")))
 }
 
+/// Validate a set of logger names without touching the registry.
+///
+/// Configuration preparation calls this so a malformed name is rejected before
+/// any live logger state changes. The error is the same [`ValueError`] text
+/// [`get_logger`] raises for a single name.
+///
+/// [`ValueError`]: pyo3::exceptions::PyValueError
+#[cfg(feature = "python")]
+pub(crate) fn validate_logger_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> PyResult<()> {
+    for name in names {
+        if is_invalid_logger_name(name) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "logger name cannot be empty, start or end with '.', or contain consecutive dots",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Build logger objects without adding them to the global registry.
 ///
 /// Configuration validation uses this to ensure every requested logger can be
@@ -181,26 +209,6 @@ pub(crate) fn stage_loggers<'a>(
         .collect()
 }
 
-/// Add fully staged loggers to the registry and return the committed objects.
-#[cfg(feature = "python")]
-pub(crate) fn commit_staged_loggers(
-    py: Python<'_>,
-    staged: BTreeMap<String, Py<FemtoLogger>>,
-) -> BTreeMap<String, Py<FemtoLogger>> {
-    let mut mgr = MANAGER.write();
-    staged
-        .into_iter()
-        .map(|(name, logger)| {
-            let committed = mgr
-                .loggers
-                .entry(name.clone())
-                .or_insert(logger)
-                .clone_ref(py);
-            (name, committed)
-        })
-        .collect()
-}
-
 /// Clone the runtime registries while holding the manager read lock.
 ///
 /// The returned snapshot deliberately owns Python references so configuration
@@ -220,29 +228,28 @@ pub(crate) fn replace_runtime_state(
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
 ) {
-    let mut mgr = MANAGER.write();
-    mgr.runtime = RuntimeStateSnapshot {
-        handler_registry,
-        handler_filter_ids,
-        filter_registry,
-        logger_states,
+    let previous = {
+        let mut mgr = MANAGER.write();
+        std::mem::replace(
+            &mut mgr.runtime,
+            RuntimeStateSnapshot {
+                handler_registry,
+                handler_filter_ids,
+                filter_registry,
+                logger_states,
+            },
+        )
     };
+    // Handler destruction may flush output or join a worker thread.
+    drop(previous);
 }
 
-/// Disable existing loggers not mentioned in the provided keep list.
-///
-/// Iterates through all loggers and clears handlers and filters for any
-/// whose name is absent from `keep_names`.
-#[cfg(feature = "python")]
-pub fn disable_existing_loggers(py: Python<'_>, keep_names: &std::collections::HashSet<String>) {
-    let mgr = MANAGER.read();
-    for (name, logger) in &mgr.loggers {
-        if name != "root" && !keep_names.contains(name) {
-            let logger_ref = logger.borrow(py);
-            logger_ref.clear_handlers();
-            logger_ref.clear_filters();
-        }
-    }
+/// Return all registered logger names for transaction tests.
+#[cfg(all(test, feature = "python"))]
+pub(crate) fn registered_logger_names_for_test() -> Vec<String> {
+    let mut names = MANAGER.read().loggers.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+    names
 }
 
 /// Flush handlers attached to every registered logger.

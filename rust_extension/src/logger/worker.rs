@@ -70,6 +70,7 @@ impl FemtoLogger {
             formatter,
             level: std::sync::atomic::AtomicU8::new(u8::from(FemtoLevel::Info)),
             propagate: std::sync::atomic::AtomicBool::new(true),
+            disabled: std::sync::atomic::AtomicBool::new(false),
             handlers,
             filters,
             dropped_records: std::sync::atomic::AtomicU64::new(0),

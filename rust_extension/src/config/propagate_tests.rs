@@ -105,6 +105,60 @@ fn record_propagates_to_root(
 
 #[rstest]
 #[serial]
+fn disabled_logger_cannot_reach_root_handler(
+    _gil_and_clean_manager: (),
+    new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
+) {
+    Python::attach(|py| {
+        let (root_handler, file) = new_root_file_handler.expect("create temp log file");
+        // `omitted` is never named by the second configuration, and it keeps
+        // the default `propagate = true`. Records must stop at the disabled
+        // flag rather than reaching root through propagation.
+        let initial = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(LoggerConfigBuilder::new().with_level(FemtoLevel::Info))
+            .with_logger(
+                "omitted",
+                LoggerConfigBuilder::new().with_level(FemtoLevel::Info),
+            );
+        initial.build_and_init().expect("initial build should succeed");
+
+        let omitted = manager::get_logger(py, "omitted").expect("omitted logger exists");
+        assert!(
+            omitted.borrow(py).propagate(),
+            "omitted logger must start with default propagation enabled",
+        );
+
+        let rebuild = ConfigBuilder::new()
+            .with_handler("h", FileHandlerBuilder::new(file.path()))
+            .with_root_logger(LoggerConfigBuilder::new().with_level(FemtoLevel::Info))
+            .with_disable_existing_loggers(true);
+        rebuild.build_and_init().expect("rebuild should succeed");
+        assert!(
+            omitted.borrow(py).is_disabled(),
+            "omitted logger should be disabled by the rebuild",
+        );
+
+        assert_eq!(
+            omitted.borrow(py).log(FemtoLevel::Info, "must not reach root"),
+            None,
+            "a disabled logger must return no formatted message",
+        );
+
+        let root = manager::get_logger(py, "root").expect("root logger exists");
+        omitted.borrow(py).flush_handlers();
+        root.borrow(py).flush_handlers();
+        assert!(
+            read_log_file(&file)
+                .expect("test log file must be readable")
+                .is_empty(),
+            "an omitted logger must not reach the configured root handler",
+        );
+    });
+}
+
+#[rstest]
+#[serial]
 fn propagate_toggle_runtime(
     _gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
