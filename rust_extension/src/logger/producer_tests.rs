@@ -3,15 +3,19 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
+use crossbeam_channel::{Receiver, Sender, bounded};
 use rstest::rstest;
 
 #[cfg(feature = "python")]
 use super::context_snapshot::ContextSnapshotProvider;
-use super::logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_signal};
+use super::logger_tests_helpers::{
+    CountingHandler, SignallingCollectingHandler, wait_for_record_signal,
+};
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::RecordMetadata;
 struct TestFilter {
     accepted: bool,
@@ -28,6 +32,7 @@ impl FemtoFilter for TestFilter {
         self.calls.fetch_add(1, Ordering::SeqCst);
         FilterDecision {
             accepted: self.accepted,
+            callback_failed: false,
             enrichment: self.enrichment.clone(),
         }
     }
@@ -249,10 +254,17 @@ impl ContextCaptureFixture {
         });
         let logger =
             FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
-        logger.add_handler(Arc::new(ContextAwareTestHandler {
-            handled_records: Arc::clone(&handled_records),
-            records_with_context: Arc::clone(&records_with_context),
-        }))?;
+        logger.add_handler_with_filters(
+            Arc::new(ContextAwareTestHandler {
+                handled_records: Arc::clone(&handled_records),
+                records_with_context: Arc::clone(&records_with_context),
+            }),
+            vec![Arc::new(TestFilter {
+                accepted: true,
+                enrichment: BTreeMap::new(),
+                calls: Arc::new(AtomicUsize::new(0)),
+            })],
+        )?;
 
         Ok(Self {
             logger,
@@ -300,3 +312,73 @@ fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
     );
     assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 0);
 }
+
+struct BlockingHandler {
+    started: Sender<()>,
+    release: Receiver<()>,
+}
+
+impl FemtoHandlerTrait for BlockingHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.started.send(()).map_err(|_| HandlerError::Closed)?;
+        self.release.recv().map_err(|_| HandlerError::Closed)?;
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[rstest]
+fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
+    let logger = FemtoLogger::new("producer".to_string());
+    let tx = logger
+        .tx
+        .as_ref()
+        .expect("logger should have a queue")
+        .clone();
+    let (started_tx, started_rx) = bounded(1);
+    let (release_tx, release_rx) = bounded(1);
+    logger
+        .handlers
+        .write()
+        .push(HandlerAttachment::new(Arc::new(BlockingHandler {
+            started: started_tx,
+            release: release_rx,
+        })));
+
+    logger.dispatch_to_handlers(FemtoLogRecord::new(
+        "producer",
+        FemtoLevel::Info,
+        "block-worker",
+    ));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker should be blocked inside the first handler");
+
+    logger.handlers.write().clear();
+    logger.handlers.write().push(HandlerAttachment {
+        handler: Arc::new(CountingHandler::default()),
+        filters: vec![Arc::new(TestFilter {
+            accepted: false,
+            enrichment: BTreeMap::new(),
+            calls: Arc::new(AtomicUsize::new(0)),
+        })],
+    });
+    logger.dispatch_to_handlers(FemtoLogRecord::new(
+        "producer",
+        FemtoLevel::Info,
+        "filtered-out",
+    ));
+
+    let queued_jobs = tx.len();
+    release_tx
+        .send(())
+        .expect("blocked handler should receive its release signal");
+
+    assert_eq!(queued_jobs, 0, "rejected records must not occupy the queue");
+}
+
+#[path = "producer_snapshot_property_tests.rs"]
+mod snapshot_property_tests;

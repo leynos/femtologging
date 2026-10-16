@@ -1,14 +1,13 @@
 //! Logger helpers for runtime mutation workflows and logger monitoring.
 
+use crate::filters::FemtoFilter;
 use pyo3::prelude::*;
 use std::sync::Arc;
 
-use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
-
-use super::FemtoLogger;
+use super::{FemtoLogger, HandlerAttachment};
 
 impl FemtoLogger {
-    pub(crate) fn replace_handlers(&self, handlers: Vec<Arc<dyn FemtoHandlerTrait>>) {
+    pub(crate) fn replace_handlers(&self, handlers: Vec<HandlerAttachment>) {
         *self.handlers.write() = handlers;
     }
 

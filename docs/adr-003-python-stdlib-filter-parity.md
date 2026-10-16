@@ -140,6 +140,21 @@ The chosen direction includes:
   implementation detail.
 - Cross-thread propagation of arbitrary Python objects embedded in records.
 
+## Accepted addendum (2026-10-14): handler filters
+
+Recorded 2026-10-14: femtologging-configured handler filter chains are
+evaluated on the producer thread immediately before enqueueing, for both direct
+dispatch and ancestor propagation. Chains run in configured attachment order
+against an evolving record. Each accepted handler receives a snapshot after its
+own chain, so later handlers see enrichment from earlier chains while later
+enrichment cannot mutate snapshots already captured for earlier handlers. These
+configured filter callbacks remain producer-side; Python-backed handlers may
+still invoke Python in their workers under the captured context, including for
+their own stdlib filters, formatters, and emission. Configured handler filters
+are femtologging's supported application-wide enrichment attachment point,
+distinct from full stdlib `Handler.addFilter` worker semantics. For migration
+guidance, see the [0.2.0 migration guide](v0-2-0-migration-guide.md).
+
 ## Migration plan
 
 ### Phase 1: producer-path callback filter support

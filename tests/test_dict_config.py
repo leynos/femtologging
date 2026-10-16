@@ -167,14 +167,18 @@ def test_dict_config_timed_rotating_handler(
         ),
         ({"args": 1}, "handler 'h' args must be a sequence", TypeError),
         ({"kwargs": []}, "handler 'h' kwargs must be a mapping", TypeError),
-        ({"filters": []}, "handler filters are not supported", ValueError),
+        (
+            {"filters": "context"},
+            "handler filters must be a list or tuple of strings",
+            TypeError,
+        ),
     ],
     ids=[
         "args-bytes",
         "kwargs-bytes",
         "args-type",
         "kwargs-type",
-        "filters-unsupported",
+        "filters-must-be-a-string-list",
     ],
 )
 def test_dict_config_handler_validation_errors(

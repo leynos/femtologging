@@ -293,11 +293,13 @@ including filters, formatters, and `emit()`, therefore runs in the captured
 producer context.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
-capture, queue dispatch, and worker handler dispatch. They use bounded stable
-fields for the operation, handler kind, outcome, and elapsed microseconds; log
-payloads and context values are never included. These events target
-`femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
-from recursively logging its own instrumentation.
+capture, handler-filter-chain evaluation, queue dispatch, and worker handler
+dispatch. Filter-chain events report `accepted`, `rejected`, or
+`callback_failed`; the events use bounded operation, handler-kind, and outcome
+fields, with elapsed microseconds. Record payloads and context values are never
+included. These events target `femtologging::internal`, which
+`FemtoTracingLayer` ignores to prevent tracing from recursively logging its own
+instrumentation.
 
 ## Configuration transaction
 
@@ -313,6 +315,34 @@ all happen before the registry commit. A failure in those validation steps
 therefore returns without changing the live logger state. `dictConfig` and
 `fileConfig` use this same builder path, so their validation and transaction
 boundary are consistent with direct builder use.
+
+At runtime, each handler is paired with its resolved filter chain in a
+`HandlerAttachment`. The logger evaluates that chain on the producer thread
+before enqueueing the record, including when a descendant record propagates to
+an ancestor handler. Chains run in configured attachment order against an
+evolving record. Each accepted handler gets a `HandlerRecordSnapshot` after its
+own chain: later handlers see enrichment from earlier chains, while enrichment
+from later chains cannot mutate snapshots already captured for earlier
+handlers. Worker threads perform queued handler delivery; filter callbacks
+remain on the producer thread for femtologging-configured handler filter
+chains. This does not make Python-backed handler workers Python-free: under the
+captured context, their own callbacks can invoke Python, including a wrapped
+stdlib handler's filters, formatter, and emission.
+
+Handler filter IDs are resolved during configuration using the same filter
+registry as logger filters. `ConfigBuilder` resolves builder filter IDs before
+attaching handlers, and `dictConfig` translates each handler's `filters` list
+through that configuration path. Unknown and duplicate IDs fail validation
+before the live logger state is changed. Standalone handler builds reject
+unresolved filter IDs because they do not have a configuration registry.
+
+Formatter resolution has two paths. Passing a `FormatterBuilder` directly to a
+handler builder compiles that formatter for the handler. Passing a formatter ID
+instead defers resolution to `ConfigBuilder`, which resolves the registered
+builder during configuration; `dictConfig` formatter definitions use the same
+registered-ID path. A configured percent formatter reads standard record fields
+and structured values from `metadata.key_values`. Formatter objects and filters
+are therefore both resolved before the configuration transaction commits.
 
 ## Shared Rust test helpers and fixtures
 

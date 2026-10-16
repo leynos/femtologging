@@ -7,14 +7,11 @@ use log::warn;
 #[cfg(not(loom))]
 use pyo3::Python;
 #[cfg(feature = "python")]
-use pyo3::{Py, PyAny};
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
-use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{
     Either, JoinHandle, Mutex, Receiver, RwLock, TryRecvError, bounded, recv_either, spawn,
@@ -22,15 +19,8 @@ use crate::sync::{
 
 #[cfg(feature = "python")]
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
+use super::queue::QueuedRecord;
 use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
-
-/// Record queued for processing by the worker thread.
-pub struct QueuedRecord {
-    pub record: FemtoLogRecord,
-    pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-    #[cfg(feature = "python")]
-    pub context: Option<Py<PyAny>>,
-}
 
 impl FemtoLogger {
     /// Create a logger with an explicit parent name.
@@ -59,7 +49,7 @@ impl FemtoLogger {
         #[cfg(feature = "python")] context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
     ) -> Self {
         let formatter = SharedFormatter::new(DefaultFormatter);
-        let handlers: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoHandlerTrait>>>> =
+        let handlers: std::sync::Arc<RwLock<Vec<super::HandlerAttachment>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
         let filters: std::sync::Arc<RwLock<Vec<std::sync::Arc<dyn FemtoFilter>>>> =
             std::sync::Arc::new(RwLock::new(Vec::new()));
@@ -93,7 +83,7 @@ impl FemtoLogger {
         }
     }
 
-    /// Process a single `FemtoLogRecord` by dispatching it to all handlers.
+    /// Process a single [`crate::log_record::FemtoLogRecord`] by dispatching it to all handlers.
     pub(crate) fn handle_log_record(job: QueuedRecord) {
         for h in &job.handlers {
             #[cfg(feature = "tracing-compat")]
