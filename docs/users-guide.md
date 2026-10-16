@@ -492,13 +492,13 @@ logger = FemtoLogger("myapp")
 logger.set_level("TRACE")
 logger.add_handler(StdlibHandlerAdapter(email_handler))
 
-logger.log("INFO", "Request completed")    # discarded by the handler
-logger.log("ERROR", "Payment failed")      # reaches the email handler
+logger.log("INFO", "Request completed")  # discarded: below handler level
+logger.log("ERROR", "Payment failed")  # reaches the email handler
 ```
 
-In this example the `"TRACE"` femtologging logger accepts every record, but
-only `ERROR` and `CRITICAL` reach the handler.  `logging.NOTSET` is the
-default and accepts every level.
+In this example the `"TRACE"` femtologging logger accepts every record, but only
+`ERROR` and `CRITICAL` reach the handler.  `logging.NOTSET` is the default and
+accepts every level.
 
 The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
 level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50). A
@@ -509,9 +509,10 @@ Accepted records are passed through the wrapped handler's `handle()` once,
 which applies its filters and its I/O lock.  Records discarded by the level
 comparison never reach the handler at all, so its filters do not run for them.
 
-The handler-level restrictions described under [dictConfig](#dictconfig-restricted-compatibility-layer)
-and [fileConfig](#fileconfig-ini-compatibility) apply only to those
-configuration schemas; they do not constrain a `logging.Handler` wrapped in a
+The handler-level restrictions described under
+[dictConfig](#dictconfig-restricted-compatibility-layer) and
+[fileConfig](#fileconfig-ini-compatibility) apply only to those configuration
+schemas; they do not constrain a `logging.Handler` wrapped in a
 `StdlibHandlerAdapter`, which honours its own `level` as described above.
 
 Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
