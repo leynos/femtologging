@@ -58,6 +58,23 @@ enum StreamCommand {
     Flush(Sender<io::Result<()>>),
 }
 
+/// Report that `count` records were dropped by this handler.
+///
+/// Shaped to be passed directly as the reporting closure of
+/// [`RateLimitedWarner::warn_if_due`] and [`RateLimitedWarner::flush`], so all
+/// five call sites report through this one message: the three refusal paths in
+/// [`FemtoHandlerTrait::handle`], [`FemtoHandlerTrait::flush`], and
+/// [`FemtoStreamHandler::close`].
+///
+/// The rendered text ends with `log records dropped in the last interval`, which
+/// `tests/stream_handler_logging_tests.rs` strips to read the count back. That
+/// test cannot import this function, so it holds its own copy of the suffix:
+/// changing the wording here means changing it there too, or the count the test
+/// asserts will silently stop being parsed.
+fn warn_dropped(count: u64) {
+    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+}
+
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
 /// the caller never waits for the write. `flush` bounds its whole wait by `flush_timeout`.
 #[pyclass]
@@ -172,6 +189,7 @@ impl FemtoStreamHandler {
     }
 }
 
+
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
     pub fn stdout() -> Self {
@@ -266,9 +284,7 @@ impl FemtoStreamHandler {
     /// its behalf, so a batch left pending by an active interval would go with
     /// it unreported.
     pub fn close(&self) {
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
+        self.warner.flush(warn_dropped);
         self.take_shutdown().wait();
     }
 
@@ -283,15 +299,14 @@ impl FemtoStreamHandler {
     }
 }
 
+
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         // Clone under the lock and release it before sending: a blocking send
         // must not hold the lock that close needs to take the sender.
         let Some(tx) = self.tx.lock().clone() else {
             self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-            });
+            self.warner.warn_if_due(warn_dropped);
             return Err(HandlerError::Closed);
         };
         match tx.try_send(StreamCommand::Record(record)) {
@@ -301,17 +316,13 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                 // no caller payload.
                 trace!("FemtoStreamHandler: queue full; record dropped");
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::QueueFull)
             }
             Err(TrySendError::Disconnected(_)) => {
                 trace!("FemtoStreamHandler: queue disconnected; record dropped");
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::Closed)
             }
         }
@@ -321,9 +332,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         // Reported before the closed check, so a handler that has already been
         // closed still says what it dropped. Records refused after close are
         // recorded by the handler, and nothing else will report them.
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
+        self.warner.flush(warn_dropped);
         // Bind first: a guard held in the match scrutinee lives through the send.
         let Some(tx) = self.tx.lock().clone() else {
             trace!("FemtoStreamHandler: flush on a closed handler");
