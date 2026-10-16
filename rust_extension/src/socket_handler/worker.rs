@@ -209,6 +209,7 @@ impl Worker {
 
     /// Flush and acknowledge; even a disconnected worker replies to the request.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
+        flush_drops(&self.warner);
         let success = self.flush_connection();
         let _ = ack.send(());
         if !success {
@@ -341,6 +342,18 @@ fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::R
 fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.record_drop();
     warner.warn_if_due(log);
+}
+
+/// Report drops the worker found, ignoring the rate limit.
+///
+/// Serialization failures, connection failures and write errors are recorded
+/// by the worker rather than by the handler, so only the worker can report
+/// them. A suppressed interval would otherwise hold the count until the next
+/// due warning, which on a worker that is exiting never comes.
+fn flush_drops(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        warn!("FemtoSocketHandler dropped {count} records in the last interval");
+    });
 }
 
 /// Enqueue one record; a full queue returns `HandlerError::QueueFull` and counts a drop.

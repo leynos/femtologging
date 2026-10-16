@@ -261,8 +261,14 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker to finish its queued work.
     ///
-    /// Concurrent callers all wait for the same completion.
+    /// Concurrent callers all wait for the same completion. Any drops still
+    /// pending are reported first: once the handler is closed nothing warns on
+    /// its behalf, so a batch left pending by an active interval would go with
+    /// it unreported.
     pub fn close(&self) {
+        self.warner.flush(|count| {
+            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+        });
         self.take_shutdown().wait();
     }
 
@@ -312,14 +318,17 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
+        // Reported before the closed check, so a handler that has already been
+        // closed still says what it dropped. Records refused after close are
+        // recorded by the handler, and nothing else will report them.
+        self.warner.flush(|count| {
+            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+        });
         // Bind first: a guard held in the match scrutinee lives through the send.
         let Some(tx) = self.tx.lock().clone() else {
             trace!("FemtoStreamHandler: flush on a closed handler");
             return false;
         };
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
         let (ack_tx, ack_rx) = bounded(1);
         // One deadline covers both waits. The channel send can block when the
         // queue is full and the acknowledgement can take a further interval,

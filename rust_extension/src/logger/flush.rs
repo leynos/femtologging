@@ -14,6 +14,8 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use log::warn;
+
 use crate::handler::FemtoHandlerTrait;
 use crate::monotonic_clock::MonotonicClock;
 
@@ -71,12 +73,30 @@ impl FemtoLogger {
     /// its span when it is created, before the drain, so an external
     /// subscriber sees the wait as part of the operation.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
+        self.flush_drop_warners();
         let observer = production_flush_observer();
         let outcome =
             measure_flush_attempt(&crate::monotonic_clock::SystemClock, &observer, || {
                 self.flush_handlers_inner()
             });
         outcome.is_success()
+    }
+
+    /// Report any drops this logger has recorded but not yet warned about.
+    ///
+    /// The warners are rate limited, so a flush that is suppressed by an active
+    /// interval would otherwise leave the counts pending until the next due
+    /// moment — possibly never, on a logger being shut down. Reporting here
+    /// makes an explicit flush mean "say now what has been lost", which is what
+    /// a caller inspecting a quiet system needs.
+    pub(super) fn flush_drop_warners(&self) {
+        self.drop_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records; reported by flush");
+        });
+        #[cfg(feature = "python")]
+        self.context_capture_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records after context capture failed");
+        });
     }
 
     /// Classify one flush attempt by its terminal outcome.
