@@ -176,8 +176,11 @@ pub(crate) fn force_fresh_failure_once_for_test(
 /// be reinstated after the forced failure completes.
 #[cfg(test)]
 pub(crate) struct ForcedFreshFailureGuard {
+    /// Number of forced failures present before this guard was installed.
     previous_count: usize,
+    /// Previous injected failure message, restored when the guard is dropped.
     previous_reason: Option<String>,
+    /// Previous thread owner associated with the injected failure state.
     previous_owner: Option<ThreadId>,
 }
 

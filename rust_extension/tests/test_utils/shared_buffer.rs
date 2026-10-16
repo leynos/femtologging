@@ -8,7 +8,9 @@ pub mod std {
 
     use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 
+    /// Standard-library shared ownership used by the non-Loom buffer helper.
     pub type Arc<T> = std::sync::Arc<T>;
+    /// Standard-library lock used to serialize access to captured bytes.
     pub type Mutex<T> = std::sync::Mutex<T>;
 
     /// Thread-safe wrapper around a byte buffer used by stream handlers.
@@ -18,6 +20,7 @@ pub mod std {
     /// without locking.
     #[derive(Clone)]
     pub struct SharedBuf {
+        /// Shared byte storage; writes go through the lock-aware `Write` impl.
         buffer: Arc<Mutex<Vec<u8>>>,
     }
 

@@ -203,9 +203,13 @@ fn drop_counter_increments_on_queue_overflow() {
         atomic::{AtomicBool, Ordering},
     };
 
+    /// Handler held in its first call to make queue overflow deterministic.
     struct BlockingHandler {
+        /// Signals that the worker entered the blocked call.
         started: Arc<Barrier>,
+        /// Keeps that call blocked until the test releases it.
         release: Arc<Barrier>,
+        /// Ensures only the first record waits on the barriers.
         waited: AtomicBool,
     }
 

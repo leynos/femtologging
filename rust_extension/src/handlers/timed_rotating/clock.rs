@@ -93,10 +93,13 @@ pub(crate) fn clear_injected_times_for_test() {
     injected::clear();
 }
 
+/// Clock fixture that consumes supplied UTC instants before reusing its fallback.
 #[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct SequenceClock {
+    /// Scheduled instants returned in insertion order by [`RotationClock::now`].
     remaining: std::collections::VecDeque<DateTime<Utc>>,
+    /// Stable time returned after the scheduled sequence is exhausted.
     fallback: DateTime<Utc>,
 }
 

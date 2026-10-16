@@ -111,7 +111,9 @@ mod tests {
     use rstest::*;
     use std::sync::atomic::AtomicU64;
 
+    /// Atomic clock fixture that lets warning intervals advance deterministically.
     struct FakeClock {
+        /// Current fake time in milliseconds.
         now: AtomicU64,
     }
 
