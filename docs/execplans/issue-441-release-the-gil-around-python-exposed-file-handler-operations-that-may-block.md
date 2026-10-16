@@ -185,42 +185,28 @@ handlers and the builder audit confirmed no builder work is needed; widening
 the change would make the diff harder to review and the regression evidence
 harder to scope. Tracking these as a separate issue is the right size.
 
-## Open blocker: the installed extension is stale
+## Resolved blocker: compile admission (kept for the record)
 
-The negative control reintroduced the defect and rebuilt the extension. The
-control succeeded, the source was restored, and the working tree was confirmed
-clean at the GIL-release commit — but the **rebuild of the fixed source was
-refused**:
+The negative-control rebuild succeeded and the control gave the expected
+result, but the first attempt to rebuild the fixed source was refused:
 
 ```text
 build-limits: the supervisor refused: unhealthy
 error: could not compile `femtologging_rs` (lib)
 ```
 
-`build-limits-status` reports `UNHEALTHY`, with `visible compiler roots=0` and:
+`build-limits-status` reported `UNHEALTHY` with `visible compiler roots=0` and
+asked for operator accounting of retained detached sccache work, including
+stopping a service shared with every other agent on the machine. That is an
+operator decision, so it was reported and left alone rather than worked around.
+The supervisor recovered on its own; the rebuild then succeeded and reinstalled
+the fixed extension, and the suite passes 9/9 again.
 
-> drain check failed; tokens retained: retained detached work: live sccache
-> service may retain detached requests; operator accounting required
-
-The stated recovery action is to coordinate active builds, stop the shared
-sccache service, and leave it stopped until admission confirms an empty drain.
-The sccache service is shared by every agent on this machine, so stopping it is
-an operator decision rather than something this task should do unilaterally.
-
-**Consequence.** The venv currently holds the negative-control build, so
-`.venv/bin/python -m pytest tests/test_file_handler_gil_release.py` fails (1/9
-failing, as expected for pre-fix bindings). This is a stale-artifact problem,
-not a defect in the change: the source, the working tree, and all four commits
-are the fixed version.
-
-**To resume**, once admission is healthy again:
-
-```sh
-make build                     # rebuilds and reinstalls the fixed extension
-.venv/bin/python -m pytest tests/test_file_handler_gil_release.py -q   # expect 9 passed
-```
-
-Then run the remaining Rust gates, push, and open the draft PR.
+The lesson is worth keeping because it is easy to misread: `the supervisor
+refused: unhealthy` and `the managed sccache server is unreachable; compiling
+without the cache` are different conditions. The second is benign and the build
+still runs; the first is an admission refusal that stops the build before any
+of our code is compiled, and it must not be retried in a loop or bypassed.
 
 ## Outcomes & Retrospective
 
