@@ -94,19 +94,19 @@ in `handlers/file/mod.rs` was changed back to calling
 and both rotating bindings were left fixed. The extension was rebuilt
 (`make build`, exit 0) and the suite re-run:
 
-| Test | Result | Child's own diagnosis |
-| --- | --- | --- |
-| `test_blocking_handle_releases_the_gil[file]` | FAIL | child never finished within the 20s budget |
-| `test_timed_handle_releases_the_gil[file]` | FAIL | `recorded only 2 progress record(s) during the 2.006s wait in handle (expected at least 5)` |
-| `test_close_while_handle_is_blocked_raises_runtime_error` | FAIL | child never finished within the 20s budget |
-| `...[rotating]`, `...[timed-rotating]` | pass | those bindings were left fixed |
-| `flush`, `close` | pass | those bindings were left fixed |
+| Test                                                      | Result | Child's own diagnosis                                                                       |
+| --------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| `test_blocking_handle_releases_the_gil[file]`             | FAIL   | child never finished within the 20s budget                                                  |
+| `test_timed_handle_releases_the_gil[file]`                | FAIL   | `recorded only 2 progress record(s) during the 2.006s wait in handle (expected at least 5)` |
+| `test_close_while_handle_is_blocked_raises_runtime_error` | FAIL   | child never finished within the 20s budget                                                  |
+| `...[rotating]`, `...[timed-rotating]`                    | pass   | those bindings were left fixed                                                              |
+| `flush`, `close`                                          | pass   | those bindings were left fixed                                                              |
 
 The three failures are exactly the three tests that exercise `handle()` on the
-file handler. The 2-record result against a 5-record bar, during a 2.006 s
-wait where a released wait yields hundreds, is the discriminating signal the
-verdict was designed around. The suite is therefore regression evidence rather
-than a description of current behaviour.
+file handler. The 2-record result against a 5-record bar, during a 2.006 s wait
+where a released wait yields hundreds, is the discriminating signal the verdict
+was designed around. The suite is therefore regression evidence rather than a
+description of current behaviour.
 
 The fixed source was restored afterwards and the working tree confirmed
 identical to the committed revision before rebuilding.
@@ -202,11 +202,12 @@ operator decision, so it was reported and left alone rather than worked around.
 The supervisor recovered on its own; the rebuild then succeeded and reinstalled
 the fixed extension, and the suite passes 9/9 again.
 
-The lesson is worth keeping because it is easy to misread: `the supervisor
-refused: unhealthy` and `the managed sccache server is unreachable; compiling
-without the cache` are different conditions. The second is benign and the build
-still runs; the first is an admission refusal that stops the build before any
-of our code is compiled, and it must not be retried in a loop or bypassed.
+The lesson is worth keeping because it is easy to misread:
+`the supervisor refused: unhealthy` and
+`the managed sccache server is unreachable; compiling without the cache` are
+different conditions. The second is benign and the build still runs; the first
+is an admission refusal that stops the build before any of our code is
+compiled, and it must not be retried in a loop or bypassed.
 
 ## Outcomes & Retrospective
 
@@ -225,8 +226,8 @@ Two lessons worth carrying forward:
 - The GIL verdict has to key on *records inside the call's own window*. An
   ordering assertion ("did another thread run before the call returned?")
   passes for a GIL-holding binding whenever the wait ends on its own deadline,
-  so it would have certified the two bounded scenarios as fixed while
-  `"block"` remained broken.
+  so it would have certified the two bounded scenarios as fixed while `"block"`
+  remained broken.
 - Only a call that blocks below the interpreter models this defect. A
   bytecode-level busy-wait looks equivalent but is not: the eval breaker
   releases the GIL periodically, so the watchdog keeps running and the defect
