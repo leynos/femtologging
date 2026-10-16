@@ -123,7 +123,7 @@ fn build_stuck_handler(addr: SocketAddr, capacity: usize) -> FemtoHTTPHandler {
 /// close asserts it is absent, and these are the only tests in the binary
 /// that emit it.
 #[rstest]
-#[serial_test::serial(http_close)]
+#[serial_test::serial]
 fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
     tcp_listener: io::Result<TcpListener>,
 ) {
@@ -187,7 +187,7 @@ fn assert_close_abandons_within_budget(handler: &mut FemtoHTTPHandler) {
 /// Mutation proof: sending the shutdown command with a plain `send` fails
 /// this test at roughly the ten-second window, and no other.
 #[rstest]
-#[serial_test::serial(http_close)]
+#[serial_test::serial]
 fn close_returns_within_its_budget_when_the_queue_is_full(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let (addr, requests) = spawn_silent_server(tcp_listener).expect("spawn silent server");
@@ -230,7 +230,7 @@ const ABANDON_MARKER: &str = "abandoning it rather than blocking the caller";
 /// Mutation proof: replacing the match in `close` with an unconditional
 /// `abandon_worker` fails this test on the warning it then emits.
 #[rstest]
-#[serial_test::serial(http_close)]
+#[serial_test::serial]
 fn a_close_whose_worker_answers_does_not_report_abandoning_it(
     tcp_listener: io::Result<TcpListener>,
 ) {
