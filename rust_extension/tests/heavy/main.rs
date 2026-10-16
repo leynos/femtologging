@@ -40,4 +40,5 @@ mod loom_push;
 mod loom_sink;
 #[cfg(loom)]
 mod loom_topologies;
+mod prop_rate_limited_warner;
 mod prop_stream_handler;
