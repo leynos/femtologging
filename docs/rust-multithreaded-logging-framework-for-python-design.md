@@ -188,6 +188,12 @@ The logging process will follow these steps:
    The logger tracks how many records are dropped when the queue is full. The
    running count is available via `FemtoLogger.get_dropped()` for tests and
    dashboards, and a rate-limited warning surfaces the total periodically.
+   Suppression inside the interval only defers the report: the pending count is
+   carried forward and included in the next warning, so the counts an operator
+   reads account for every lost record rather than only those recorded since
+   the most recent suppressed attempt. An explicit flush reports the pending
+   count immediately, whatever the interval says, so shutdown and flush paths
+   cannot lose the last batch.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.
