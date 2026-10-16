@@ -200,6 +200,7 @@ mod tests {
         formatter::FemtoFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord,
     };
 
+    /// Formatter fixture that marks file output with a stable prefix.
     #[derive(Clone, Copy, Debug)]
     struct PrefixFormatter;
 

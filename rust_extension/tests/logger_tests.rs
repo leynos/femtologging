@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 /// A shared in-memory buffer paired with the handler writing into it.
 type HandlerTuple = (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler);
 
+/// Shared buffers, handlers and logger used by two-handler logger scenarios.
 type DualHandlerSetup = (
     Arc<Mutex<Vec<u8>>>,
     Arc<Mutex<Vec<u8>>>,

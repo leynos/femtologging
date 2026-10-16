@@ -143,7 +143,11 @@ items and Rust test support must have meaningful documentation alongside the
 public API. This includes integration tests, benchmarks, unit-test modules, and
 feature-gated compatibility code. `make lint` runs Clippy with `-D warnings` and
 `--all-targets` across every supported Rust feature lane, so each lane applies
-the same documentation and warning policy.
+the same documentation and warning policy. Because Clippy skips private-item
+documentation checks for code compiled in test mode, `lint-rust-test-docs` also
+parses test-support source and requires Rustdoc on helper types and their named
+fields. It is part of `lint-rust`; compiler UI fixtures remain intentionally
+minimal and are excluded from that source-level scan.
 
 When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3

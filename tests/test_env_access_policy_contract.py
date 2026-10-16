@@ -217,7 +217,12 @@ def test_make_lint_reaches_the_policy_lane() -> None:
         sole_recipe_rule("lint-rust", require_recipes=False).get("prerequisites"),
         subject="lint-rust",
     )
-    for required in ("lint-env-policy", "lint-lanes-test", STANDARD_CLIPPY_TARGET):
+    for required in (
+        "lint-env-policy",
+        "lint-lanes-test",
+        STANDARD_CLIPPY_TARGET,
+        "lint-rust-test-docs",
+    ):
         assert required in prerequisites, (
             f"lint-rust must run {required}, found {prerequisites}"
         )

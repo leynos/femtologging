@@ -213,6 +213,7 @@ mod tests {
 
     use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
+    /// Formatter fixture that marks rotating-file output with a suffix.
     #[derive(Clone, Copy, Debug)]
     struct SuffixFormatter;
 

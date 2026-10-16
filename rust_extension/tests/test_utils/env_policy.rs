@@ -19,7 +19,9 @@ use std::error::Error;
 #[path = "env_policy/config.rs"]
 pub(crate) mod config;
 
+/// Result type for environment-policy tests that return no value.
 pub(crate) type TestResult = Result<(), Box<dyn Error>>;
+/// Result type for fallible environment-policy helper values.
 pub(crate) type Fallible<T> = Result<T, Box<dyn Error>>;
 
 /// The Clippy lint that carries the ban.

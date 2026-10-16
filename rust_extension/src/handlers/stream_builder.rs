@@ -269,6 +269,7 @@ mod tests {
         formatter::FemtoFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord,
     };
 
+    /// Formatter fixture used to distinguish custom stream formatting.
     #[derive(Clone, Copy, Debug)]
     struct UpperFormatter;
 
@@ -278,8 +279,10 @@ mod tests {
         }
     }
 
+    /// In-memory writer used to inspect bytes emitted by the stream worker.
     #[derive(Clone, Debug, Default)]
     struct TestWriter {
+        /// Bytes written by the handler's worker thread.
         buffer: Arc<Mutex<Vec<u8>>>,
     }
 

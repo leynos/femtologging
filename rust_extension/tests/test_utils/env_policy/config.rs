@@ -89,7 +89,9 @@ pub(crate) fn configured_severity(lints: &Value) -> Option<&str> {
 /// the note it printed underneath.
 #[derive(Debug)]
 pub(crate) struct Violation {
+    /// Method named by the Clippy diagnostic.
     pub(crate) method: String,
+    /// Remediation notes emitted with that diagnostic.
     pub(crate) notes: Vec<String>,
 }
 
