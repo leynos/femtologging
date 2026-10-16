@@ -198,6 +198,45 @@ The logging process will follow these steps:
 8. **Output:** The formatted string is written to the target destination (e.g.,
    file, socket, console) by the consumer thread.
 
+#### Flush Barrier States
+
+`FemtoLogger.flush_handlers()` is a barrier over the same queue. It queues a
+marker record behind every record the logger has already accepted, waits for
+the worker to reach it, and only then flushes each handler. Because the marker
+travels through the bounded queue, the call can fail before the worker ever
+sees it, and the states below distinguish that from a worker that saw the
+marker but did not answer.
+
+For screen readers: the following state diagram shows a `flush_handlers()` call
+moving from enqueueing its marker, to awaiting the worker's acknowledgement, to
+flushing the attached handlers. It succeeds only when every handler flush
+succeeds; it fails when the queue stays full until the deadline, when the
+worker has already exited, when the acknowledgement deadline expires, or when
+any handler flush returns `false`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> EnqueueMarker
+    EnqueueMarker --> AwaitAcknowledgement: marker enqueued
+    EnqueueMarker --> Failed: queue full until deadline or worker exited
+    AwaitAcknowledgement --> FlushHandlers: marker acknowledged
+    AwaitAcknowledgement --> Failed: acknowledgement deadline expires
+    FlushHandlers --> Succeeded: every handler flush succeeds
+    FlushHandlers --> Failed: handler flush returns false
+    Succeeded --> [*]
+    Failed --> [*]
+```
+
+_Figure 1: States of a `flush_handlers()` barrier, from enqueueing the marker
+through acknowledging it to flushing each handler, with the transitions on
+which it fails._
+
+A single absolute deadline covers the whole barrier, so the states above cannot
+each spend the advertised budget: everything from `EnqueueMarker` to the exit
+from `AwaitAcknowledgement` shares one timeout. Both wait states release the
+Python GIL while they block, so a worker that needs the GIL to reach the marker
+can still run.
+
 ### 3.3 `FemtoLogRecord` Structure
 
 A `FemtoLogRecord` will contain at least the following fields:
@@ -539,7 +578,7 @@ classDiagram
     StackTracePayload --> StackFrame : frames
 ```
 
-_Figure 1: `FemtoLogRecord` structure with optional exception and stack
+_Figure 2: `FemtoLogRecord` structure with optional exception and stack
 payloads aligned to Python 3.12-3.14 traceback data._
 
 ### 3.4 Handler Implementation Strategy
