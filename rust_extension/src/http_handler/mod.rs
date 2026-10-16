@@ -27,7 +27,9 @@
 mod config;
 mod filtered;
 mod handler;
+mod queue;
 mod record;
+mod response;
 mod serialize;
 mod url_encoding;
 mod worker;
