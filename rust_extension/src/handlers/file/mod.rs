@@ -113,20 +113,25 @@ impl FemtoFileHandler {
 
     /// Parses a Python record, enqueues it according to the configured
     /// overflow policy, and maps delivery failures to a Python runtime error.
+    ///
+    /// The wait for queue capacity runs with the interpreter lock released, so
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
+    /// the "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        // Parsing raises `ValueError`, so it must happen while the lock is
+        // still held; only the enqueue below can wait on the worker.
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        <Self as FemtoHandlerTrait>::handle(
-            self,
-            FemtoLogRecord::new(logger, parsed_level, message),
-        )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        let record = FemtoLogRecord::new(logger, parsed_level, message);
+        py.detach(|| <Self as FemtoHandlerTrait>::handle(self, record))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to the underlying file without closing the
     /// handler.
     ///
-    /// Uses a fixed 1-second timeout.
+    /// Uses a fixed 1-second timeout, and waits with the interpreter lock
+    /// released.
     ///
     /// Returns
     /// -------
@@ -145,17 +150,23 @@ impl FemtoFileHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush())
     }
 
     /// Closes the handler, signals worker shutdown, and waits briefly for
     /// completion before joining the worker when it reports that it has exited.
+    ///
+    /// The wait runs with the interpreter lock released. Closing does not
+    /// cancel a `handle` call that is already waiting for queue capacity; that
+    /// call returns only when the worker makes room or the channel closes. See
+    /// the user guide for the shutdown contract.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.close());
     }
 }
+
 
 impl FemtoFileHandler {
     /// Create a handler writing to `path` with default settings.
@@ -328,9 +339,11 @@ impl FemtoFileHandler {
     }
 }
 
+
 #[cfg(test)]
 mod flush_ack_tests;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod tests;
+// weave: run 'weave explain rust_extension/src/handlers/file/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
