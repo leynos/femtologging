@@ -1,13 +1,21 @@
 //! Transport primitives for the socket handler.
+//!
+//! Every connection attempt here takes the handler's [`ShutdownSignal`] as well
+//! as a timeout, and consults it between the steps of a connection rather than
+//! only before them. One attempt is several blocking calls - one per resolved
+//! address, then the TLS handshake - and a budget that only bounded the first
+//! would be spent by it while the rest ran on the configuration's timeouts.
 
 use std::{
     io::{self, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use native_tls::{TlsConnector, TlsStream};
+
+use crate::shutdown_signal::ShutdownSignal;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -33,7 +41,6 @@ pub struct TcpTransport {
 }
 
 impl TcpTransport {
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     fn socket_addrs(&self) -> io::Result<Vec<SocketAddr>> {
         (self.host.as_str(), self.port)
             .to_socket_addrs()
@@ -58,7 +65,6 @@ pub struct TlsOptions {
 }
 
 impl TlsOptions {
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     fn connector(&self) -> io::Result<TlsConnector> {
         let mut builder = TlsConnector::builder();
         if self.insecure_skip_verify {
@@ -71,11 +77,8 @@ impl TlsOptions {
 
 /// Active socket connection state.
 pub enum ActiveConnection {
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     PlainTcp(TcpStream),
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     Tls(Box<TlsStream<TcpStream>>),
-    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     #[cfg(unix)]
     Unix(UnixStream),
 }
@@ -112,60 +115,85 @@ impl ActiveConnection {
     }
 }
 
-/// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
-fn connect_tcp(config: &TcpTransport, timeout: Duration) -> io::Result<TcpStream> {
+/// What one step of a connection attempt may spend.
+///
+/// `None` once the attempt's own deadline has passed, or the handler's
+/// shutdown budget is spent - whichever comes first. Both are ceilings on the
+/// same call, so neither can outlast the other.
+fn step_budget(signal: &ShutdownSignal, deadline: Instant) -> Option<Duration> {
+    let left = deadline.checked_duration_since(Instant::now())?;
+    signal.clamp(left).filter(|budget| !budget.is_zero())
+}
+
+/// Connect to the first address that answers, within one shared budget.
+///
+/// The budget is a deadline over the whole sequence, not a per-address
+/// timeout. An earlier version handed each address the full `connect_timeout`,
+/// so a host resolving to several unresponsive addresses could spend that
+/// timeout once per address with nothing bounding the total.
+fn connect_tcp(
+    config: &TcpTransport,
+    deadline: Instant,
+    signal: &ShutdownSignal,
+) -> io::Result<TcpStream> {
     let addrs = config.socket_addrs()?;
+    let mut last_error = None;
     for addr in addrs {
-        match TcpStream::connect_timeout(&addr, timeout) {
+        let Some(left) = step_budget(signal, deadline) else {
+            break;
+        };
+        match TcpStream::connect_timeout(&addr, left) {
             Ok(stream) => {
                 stream.set_nonblocking(false)?;
                 return Ok(stream);
             }
             Err(err) => {
-                if err.kind() != io::ErrorKind::TimedOut {
-                    continue;
-                }
+                // Remembered rather than dropped: which address was tried, and
+                // how it failed, is the only thing that explains a connection
+                // error to someone reading the log.
+                last_error = Some(err);
             }
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::TimedOut,
-        format!("unable to connect to {}:{}", config.host, config.port),
-    ))
+    Err(last_error.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("unable to connect to {}:{}", config.host, config.port),
+        )
+    }))
 }
 
 /// Establish a socket connection using the provided transport definition.
+///
+/// `connect_timeout` bounds the whole attempt; `signal` bounds each step of it
+/// by what remains of the handler's shutdown budget, and stops the attempt
+/// outright once that budget is spent.
 pub fn connect_transport(
     transport: &SocketTransport,
     connect_timeout: Duration,
+    signal: &ShutdownSignal,
 ) -> io::Result<ActiveConnection> {
+    let deadline = Instant::now() + connect_timeout;
     match transport {
-        SocketTransport::Tcp(config) => {
-            let stream = connect_tcp(config, connect_timeout)?;
-            if let Some(tls) = &config.tls {
-                let connector = tls.connector()?;
-                stream.set_read_timeout(Some(connect_timeout))?;
-                stream.set_write_timeout(Some(connect_timeout))?;
-                let stream = connector
-                    .connect(&tls.domain, stream)
-                    .map_err(io::Error::other)?;
-                let tcp_ref = stream.get_ref();
-                tcp_ref.set_read_timeout(None)?;
-                tcp_ref.set_write_timeout(None)?;
-                Ok(ActiveConnection::Tls(Box::new(stream)))
-            } else {
+        SocketTransport::Tcp(config) => match &config.tls {
+            Some(tls) => connect_tls(config, tls, deadline, signal),
+            None => {
+                let stream = connect_tcp(config, deadline, signal)?;
                 Ok(ActiveConnection::PlainTcp(stream))
             }
-        }
+        },
         SocketTransport::Unix(config) => {
             #[cfg(unix)]
             {
+                if signal.is_aborted() {
+                    return Err(budget_spent());
+                }
                 let stream = UnixStream::connect(&config.path)?;
                 Ok(ActiveConnection::Unix(stream))
             }
             #[cfg(not(unix))]
             {
-                let _ = (config, connect_timeout);
+                let _ = (config, deadline, signal);
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "unix domain sockets are not supported on this platform",
@@ -173,4 +201,44 @@ pub fn connect_transport(
             }
         }
     }
+}
+
+/// Connect, then shake hands within what is left of the same budget.
+///
+/// The handshake inherited the budget by way of the socket timeouts, which is
+/// why they are set here and cleared again on success. Left in place they would
+/// become the connection's timeouts, and every later write would fail on a
+/// deadline that belonged to the connect.
+fn connect_tls(
+    config: &TcpTransport,
+    tls: &TlsOptions,
+    deadline: Instant,
+    signal: &ShutdownSignal,
+) -> io::Result<ActiveConnection> {
+    let stream = connect_tcp(config, deadline, signal)?;
+    let Some(left) = step_budget(signal, deadline) else {
+        return Err(budget_spent());
+    };
+    let connector = tls.connector()?;
+    stream.set_read_timeout(Some(left))?;
+    stream.set_write_timeout(Some(left))?;
+    let stream = connector
+        .connect(&tls.domain, stream)
+        .map_err(io::Error::other)?;
+    let tcp_ref = stream.get_ref();
+    tcp_ref.set_read_timeout(None)?;
+    tcp_ref.set_write_timeout(None)?;
+    Ok(ActiveConnection::Tls(Box::new(stream)))
+}
+
+/// The error a spent budget produces.
+///
+/// `TimedOut` rather than a bespoke kind: to the worker this is one more
+/// connection that did not happen in the time allowed, which is what its
+/// backoff and warning paths already handle.
+fn budget_spent() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        "shutdown budget spent before the connection was established",
+    )
 }
