@@ -12,6 +12,7 @@ use super::python_callback_validation::{
     extract_supported_value, validate_enrichment_key, validate_enrichment_total,
     validate_enrichment_value,
 };
+use super::python_callback_warning::CallbackFailureWarner;
 use crate::filters::{FemtoFilter, FilterBuilderTrait};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
@@ -61,6 +62,29 @@ fn total_payload_size_is_bounded() {
         over_limit.insert(format!("field_{index}"), "v".repeat(1024));
     }
     assert!(validate_enrichment_total(&over_limit).is_err());
+}
+
+#[test]
+fn callback_failure_warning_suppresses_recursive_reports() {
+    let warning = CallbackFailureWarner::default();
+    let recursive_warning = warning.clone();
+    let warning_count = std::sync::atomic::AtomicUsize::new(0);
+
+    warning.report(|_| {
+        warning_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        recursive_warning.report(|_| {
+            warning_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    });
+    warning.report(|_| {
+        warning_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    assert_eq!(
+        warning_count.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "callback failures must be rate-limited and warning-triggered failures must not recurse",
+    );
 }
 
 #[test]

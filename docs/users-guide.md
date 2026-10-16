@@ -689,6 +689,9 @@ def enrich_request(record: logging.LogRecord) -> bool:
 callback_filter = PythonCallbackFilterBuilder(enrich_request)
 ```
 
+For upgrade steps covering handler filters and formatter builders, see the
+[v0.2.0 migration guide](v0-2-0-migration-guide.md).
+
 ## Deviations from stdlib logging
 
 - No `LoggerAdapter`.
@@ -774,7 +777,9 @@ Behavioural guarantees:
   active when it was created, and later changes stay task-local.
 - Python context values are captured when a Python logging API creates its
   record and are merged before queueing.
-- Inline structured fields emitted by Rust macros override outer context keys.
+- For Rust macro emissions, explicit inline fields override same-named Rust
+  scoped fields. Python task-local fields and Rust thread-local fields are
+  separate; see the bridge-boundary notes below.
 - Context values must be `str`, `int`, `float`, `bool`, or `None`.
 - Callback-filter enrichment uses the same scalar contract: keys must be
   non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
