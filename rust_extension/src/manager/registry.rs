@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 mod config;
 
 #[cfg(feature = "python")]
-pub(crate) use config::{commit_staged_loggers, stage_loggers};
+pub(crate) use config::stage_loggers;
 
 #[cfg(feature = "python")]
 use super::runtime_state::{
@@ -317,29 +317,21 @@ pub(crate) fn replace_runtime_state(
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
 ) {
-    let mut mgr = MANAGER.write();
-    mgr.runtime = RuntimeStateSnapshot {
-        handler_registry,
-        handler_filter_ids,
-        filter_registry,
-        logger_states,
+    let previous = {
+        let mut mgr = MANAGER.write();
+        std::mem::replace(
+            &mut mgr.runtime,
+            RuntimeStateSnapshot {
+                handler_registry,
+                handler_filter_ids,
+                filter_registry,
+                logger_states,
+            },
+        )
     };
-}
-
-/// Disable existing loggers not mentioned in the provided keep list.
-///
-/// Iterates through all loggers and clears handlers and filters for any
-/// whose name is absent from `keep_names`.
-#[cfg(feature = "python")]
-pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
-    let mgr = MANAGER.read();
-    for (name, logger) in &mgr.loggers {
-        if name != ROOT_LOGGER_NAME && !keep_names.contains(name) {
-            let logger_ref = logger.borrow(py);
-            logger_ref.clear_handlers();
-            logger_ref.clear_filters();
-        }
-    }
+    // Handler destruction may flush output or join a worker thread, so it must
+    // not run while the manager write lock is held.
+    drop(previous);
 }
 
 /// Flush every registered logger for the Rust `log` bridge; ignore failures.

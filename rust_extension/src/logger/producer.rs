@@ -16,6 +16,7 @@ use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
 mod admission;
+
 mod handler_filters;
 
 #[cfg(all(test, not(loom)))]
@@ -27,8 +28,14 @@ impl FemtoLogger {
     ///
     /// Checks level threshold and filters, formats the record, and dispatches
     /// to handlers. Returns `Some(formatted_message)` if the record was logged,
-    /// or `None` if it was filtered out.
+    /// or `None` if it was filtered out or the logger is disabled.
+    ///
+    /// The disabled check lives here as well as in the public entry points
+    /// because this is the funnel every producer path reaches.
     pub(super) fn log_record(&self, mut record: FemtoLogRecord) -> Option<String> {
+        if self.is_disabled() {
+            return None;
+        }
         let threshold = self.level.load(std::sync::atomic::Ordering::Relaxed);
         if u8::from(record.level()) < threshold {
             return None;
@@ -113,8 +120,12 @@ impl FemtoLogger {
     }
 
     /// Return whether `level` is enabled for this logger.
+    ///
+    /// A disabled logger reports every level as disabled, so callers that
+    /// guard work with this check skip it entirely.
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
-        u8::from(level) >= self.level.load(std::sync::atomic::Ordering::Relaxed)
+        !self.is_disabled()
+            && u8::from(level) >= self.level.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Return the logger's current minimum level.

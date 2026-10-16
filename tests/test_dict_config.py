@@ -294,3 +294,71 @@ def test_dict_config_invalid_configs(
     reset_manager()
     with pytest.raises(expected_exc, match=msg):
         dictConfig(config)
+
+
+def test_dict_config_omitted_logger_cannot_reach_root(tmp_path: Path) -> None:
+    """A logger omitted by ``disable_existing_loggers`` must not reach root.
+
+    The omitted logger keeps the default ``propagate = True``, so only the
+    disabled flag can stop its records reaching the new root handler.
+    """
+    reset_manager()
+    path = tmp_path / "root.log"
+    initial = {
+        "version": 1,
+        "handlers": {
+            "h": {"class": "logging.FileHandler", "filename": str(path)},
+        },
+        "root": {"level": "INFO", "handlers": ["h"]},
+        "loggers": {"omitted": {"level": "INFO"}},
+    }
+    dictConfig(initial)
+    omitted = get_logger("omitted")
+    assert omitted.propagate, "the omitted logger should start with propagation on"
+
+    replacement = {
+        "version": 1,
+        "disable_existing_loggers": True,
+        "handlers": {
+            "h": {"class": "logging.FileHandler", "filename": str(path)},
+        },
+        "root": {"level": "INFO", "handlers": ["h"]},
+        "loggers": {},
+    }
+    dictConfig(replacement)
+
+    assert omitted.disabled, "dictConfig should disable the omitted logger"
+    assert omitted.log("ERROR", "must not escape") is None, (
+        "a disabled logger must reject the record instead of dispatching it"
+    )
+    omitted.flush_handlers()
+    get_logger("root").flush_handlers()
+    contents = path.read_text() if path.exists() else ""
+    assert "must not escape" not in contents, (
+        "an omitted logger must not reach the dictConfig root handler"
+    )
+
+
+def test_dict_config_renaming_logger_reenables_it(tmp_path: Path) -> None:
+    """A later dictConfig that names the logger must clear the disabled flag."""
+    reset_manager()
+    path = tmp_path / "root.log"
+    base = {
+        "version": 1,
+        "handlers": {"h": {"class": "logging.FileHandler", "filename": str(path)}},
+        "root": {"level": "INFO", "handlers": ["h"]},
+    }
+    dictConfig({**base, "loggers": {"core": {"level": "INFO"}}})
+    dictConfig(
+        {
+            **base,
+            "disable_existing_loggers": True,
+            "loggers": {},
+        }
+    )
+    assert get_logger("core").disabled, "core should be disabled while omitted"
+
+    dictConfig({**base, "loggers": {"core": {"level": "DEBUG"}}})
+    core = get_logger("core")
+    assert not core.disabled, "naming the logger again should re-enable it"
+    assert core.isEnabledFor("DEBUG"), "the re-enabled logger should honour its level"

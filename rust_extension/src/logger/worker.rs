@@ -42,6 +42,7 @@ use super::pid_reservation::PidReservation;
 /// drop is what ends it.
 #[cfg(not(loom))]
 type ShardHandle = &'static Shard;
+
 /// A Loom model owns its shard so its worker ends with that model iteration.
 #[cfg(loom)]
 type ShardHandle = std::sync::Arc<Shard>;
@@ -285,6 +286,7 @@ impl FemtoLogger {
             formatter: SharedFormatter::new(DefaultFormatter),
             level: std::sync::atomic::AtomicU8::new(u8::from(FemtoLevel::Info)),
             propagate: std::sync::atomic::AtomicBool::new(true),
+            disabled: std::sync::atomic::AtomicBool::new(false),
             handlers: std::sync::Arc::new(RwLock::new(Vec::<HandlerAttachment>::new())),
             filters: std::sync::Arc::new(RwLock::new(Vec::new())),
             dropped_records: std::sync::atomic::AtomicU64::new(0),
@@ -304,4 +306,8 @@ impl FemtoLogger {
             budget,
         }
     }
+
 }
+
+
+// weave: run 'weave explain rust_extension/src/logger/worker.rs' for per-hunk detail, 'weave check' to verify your resolution

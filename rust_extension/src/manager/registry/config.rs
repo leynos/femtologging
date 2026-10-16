@@ -9,7 +9,7 @@
 //!
 //! [`get_logger`]: super::get_logger
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use pyo3::prelude::*;
 
@@ -53,50 +53,4 @@ pub(crate) fn stage_loggers<'a>(
             Ok((name, logger))
         })
         .collect()
-}
-
-/// Add fully staged loggers to the registry and return the committed objects.
-///
-/// The capacity check is repeated here under the write lock, so a refused
-/// commit inserts nothing: the registry cannot be left holding part of a
-/// configuration that was not accepted.
-pub(crate) fn commit_staged_loggers(
-    py: Python<'_>,
-    staged: BTreeMap<String, Py<FemtoLogger>>,
-) -> PyResult<BTreeMap<String, Py<FemtoLogger>>> {
-    let mut mgr = MANAGER.write();
-    // Re-check under the write lock: another caller may have filled the last
-    // slot since `stage_loggers` ran. Nothing has been inserted yet, so a
-    // refusal here leaves the registry exactly as it was. The count covers
-    // each staged chain, so committing `"a.b"` accounts for `"a"` as well.
-    let additions = new_logger_names(&mgr, staged.keys().map(String::as_str));
-    if !registry_has_room_for(named_logger_count(&mgr), additions.len()) {
-        return Err(registry_full_error());
-    }
-    // An ancestor a configuration reaches through but does not itself
-    // configure still has to exist: propagation resolves a parent through the
-    // registry, and a missing one would silently stop a child's records
-    // reaching root. Only those are built here — a name the configuration does
-    // configure is committed from its staged object below, which carries the
-    // handlers and filters the plan already applied to it.
-    let configured: HashSet<&str> = staged.keys().map(String::as_str).collect();
-    for name in additions
-        .into_iter()
-        .filter(|name| !configured.contains(name.as_str()))
-    {
-        let parent_name = calculate_parent_name(&name);
-        let logger = Py::new(py, FemtoLogger::with_parent(name.clone(), parent_name)?)?;
-        mgr.loggers.insert(name, logger);
-    }
-    Ok(staged
-        .into_iter()
-        .map(|(name, logger)| {
-            let committed = mgr
-                .loggers
-                .entry(name.clone())
-                .or_insert(logger)
-                .clone_ref(py);
-            (name, committed)
-        })
-        .collect())
 }

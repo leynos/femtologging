@@ -175,8 +175,10 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
             &commit.filter_registry,
             "filter",
         )?;
-        logger_ref.replace_handlers(next_handlers);
-        logger_ref.replace_filters(next_filters);
+        // Displaced attachments are dropped here; runtime mutation holds no
+        // manager lock at this point, so handler teardown cannot deadlock.
+        drop(logger_ref.replace_handlers(next_handlers));
+        drop(logger_ref.replace_filters(next_filters));
         if let Some(mutation) = commit.scalar_mutations.get(name) {
             apply_scalar_mutation(&logger_ref, mutation);
         }
