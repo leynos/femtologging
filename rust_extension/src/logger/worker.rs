@@ -287,6 +287,7 @@ impl FemtoLogger {
                 DEFAULT_LOGGER_LEVEL,
             ))),
             propagate: std::sync::atomic::AtomicBool::new(true),
+            disabled: std::sync::atomic::AtomicBool::new(false),
             handlers: std::sync::Arc::new(RwLock::new(Vec::<HandlerAttachment>::new())),
             filters: std::sync::Arc::new(RwLock::new(Vec::new())),
             dropped_records: std::sync::atomic::AtomicU64::new(0),
