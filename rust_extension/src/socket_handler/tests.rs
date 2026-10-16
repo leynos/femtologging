@@ -16,6 +16,7 @@ use crate::{
     handlers::{HandlerBuildError, HandlerBuilderTrait, socket_builder::SocketHandlerBuilder},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
+    shutdown_signal::ShutdownSignal,
     socket_handler::FemtoSocketHandler,
 };
 
@@ -166,6 +167,14 @@ fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener
     assert_eq!(decoded.message, "close");
 }
 
+#[path = "close_tests.rs"]
+mod close;
+
+// Contracts for what the worker does with the shutdown signal, as opposed to
+// what the handler does with the acknowledgement.
+#[path = "drain_tests.rs"]
+mod drain;
+
 #[rstest]
 fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
@@ -192,8 +201,12 @@ fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
                 insecure_skip_verify: true,
             }),
         });
+        // No shutdown is under way, so the configured timeout is the only
+        // bound on the handshake: this test is about the timeout, not the
+        // signal, which is why the signal is left running.
+        let signal = ShutdownSignal::new();
         let start = Instant::now();
-        let result = connect_transport(&transport, Duration::from_millis(250));
+        let result = connect_transport(&transport, Duration::from_millis(250), &signal);
         let elapsed = start.elapsed();
         let ok = result.is_ok();
         drop(result);
