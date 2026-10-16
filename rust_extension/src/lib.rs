@@ -17,6 +17,7 @@ mod level;
 mod log_context;
 mod log_record;
 mod logger;
+mod shutdown_signal;
 mod socket_handler;
 mod stream_handler;
 mod sync;
