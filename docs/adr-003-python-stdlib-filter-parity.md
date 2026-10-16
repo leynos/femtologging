@@ -135,10 +135,7 @@ The chosen direction includes:
 
 ### Non-goals
 
-- Handler-level stdlib filter parity in this decision. More specifically, full
-  stdlib `Handler.addFilter` parity, including worker-side filter execution, is
-  not part of this decision; accepted femtologging handler filters are
-  configured producer-side chains described in the dated addendum below.
+- Handler-level stdlib filter parity in this decision.
 - Full stdlib `LogRecord` object parity across every field and internal
   implementation detail.
 - Cross-thread propagation of arbitrary Python objects embedded in records.
@@ -153,7 +150,10 @@ own chain, so later handlers see enrichment from earlier chains while later
 enrichment cannot mutate snapshots already captured for earlier handlers. These
 configured filter callbacks remain producer-side; Python-backed handlers may
 still invoke Python in their workers under the captured context, including for
-their own stdlib filters, formatters, and emission.
+their own stdlib filters, formatters, and emission. Configured handler filters
+are femtologging's supported application-wide enrichment attachment point,
+distinct from full stdlib `Handler.addFilter` worker semantics. For migration
+guidance, see the [0.2.0 migration guide](v0-2-0-migration-guide.md).
 
 ## Migration plan
 
