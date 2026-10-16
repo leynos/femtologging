@@ -98,30 +98,59 @@ or double-reported.
 - [x] (2026-10-16) Red evidence captured against the unmodified helper: 7 of
       13 failing, including loss of 79 of 120 recorded drops under two threads.
       See `Artefacts and notes`.
-- [x] (2026-10-16) Compilation verified: `cargo fmt -- --check` clean on the
-      whole crate in the `python,test-util` lane, and the modified module
-      compiles in every feature lane the gates cover.
+- [ ] Compilation of the final tree: BLOCKED. See the environment incident
+      below. Nothing on this branch has been compiled since the extraction
+      commit, and `cargo fmt -- --check` is not evidence of compilation: it
+      parses the crate but resolves no names.
 - [ ] Heavy proptest run with `-- --ignored`.
 - [ ] Full commit gates green via `scrutineer`.
 - [ ] CodeRabbit review clean.
 - [ ] Pushed and draft PR opened.
 
-Blocked on: the shared compile-admission pool. `build-limits-status` reports
-capacity 4 with the pool saturated by other agents' builds and the socket
-alternating between `[Errno 11] Resource temporarily unavailable` and
-`timed out`; at one sampling 79 `build-limits-rustc` waiters were live. The
-managed sccache server is also unreachable, so work compiles uncached behind
-every other agent's jobs. Two gate attempts failed for this reason alone, not
-on code: `make lint` with `build-limits: the supervisor refused: unhealthy` (13
-refusals; no `error[E...]` or clippy diagnostic anywhere in the log) and
-`make typecheck` with `build-limits: the supervisor refused: launch-failed` on
-`idna_adapter`. Both are recorded as infrastructure errors and neither is a
-verdict on the branch. The Python lint stages and five of six clippy lanes did
-pass before admission was refused on the sixth.
+Blocked on: a machine-wide build-limits outage, not merely a busy pool. The
+supervisor process is alive and logging, but every attempt to create a compile
+scope for a compiler fails, 45 times in a 20-minute window, with:
 
-Gate status so far: `fmt`, `check-fmt`, `markdownlint` and `nixie` all pass on
-HEAD `8b196a8`. `lint` and `typecheck` are blocked by admission; `test` is
-outstanding.
+```plaintext
+cannot create buildlimits-<pid>-g<n>.scope: Call failed: Connection timed out
+```
+
+Compiles therefore sit at the head of the queue indefinitely and then expire:
+
+```plaintext
+[build-limits] rustc: waiting for a compile slot (0 ahead, 45s)
+[build-limits] rustc: waiting for a compile slot (0 ahead, 90s)
+[build-limits] rustc: waiting for a compile slot (0 ahead, 270s)
+build-limits: compile admission did not acknowledge the request before its deadline
+```
+
+Note the `0 ahead`: the request is not behind other agents' work, it is never
+admitted at all. The cause is one level below the supervisor — the systemd
+**user** manager is unresponsive. `systemctl --user is-system-running`,
+`show -p Version` and `list-units` all hang and are killed by a 12-second
+timeout (rc 124), while the system-level manager still reports `running`, and
+`/run/user/1000/bus` still exists with `dbus-broker` alive. Scope creation goes
+through that user manager, so it times out even though the socket is present.
+The supervisor has also been restarting (two instances observed, one 15 seconds
+old).
+
+Earlier attempts failed for the same underlying reason, only with different
+superficial messages: `make lint` reported
+`build-limits: the supervisor refused: unhealthy` (13 refusals, no
+`error[E...]` or clippy diagnostic anywhere in the log) and `make typecheck`
+reported `build-limits: the supervisor refused: launch-failed` on
+`idna_adapter`. The managed sccache server is additionally unreachable, so
+compiles would run uncached. None of these is a verdict on the branch, and none
+may be bypassed: `RUSTC_WRAPPER` and `RUSTDOC` must not be unset or overridden.
+
+Gate status: `fmt`, `check-fmt`, `markdownlint` and `nixie` all pass on HEAD
+`348fab2`. `lint` (5 of 6 clippy lanes green before refusal), `typecheck` and
+`test` are blocked by the outage. Two real code findings were raised by
+`scrutineer` during these runs and both are fixed: the `mdtablefix` paragraph
+drift (`8b196a8`) and the duplicated warning literal (`348fab2`).
+
+Blocked on, separately: the environment incident above must clear before the
+remaining gates can pass. Everything gate-able without a compiler is green.
 
 ## Surprises & discoveries
 
