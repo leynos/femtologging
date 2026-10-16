@@ -44,4 +44,5 @@ mod loom_shutdown_completion;
 mod loom_sink;
 #[cfg(loom)]
 mod loom_topologies;
+mod prop_rate_limited_warner;
 mod prop_stream_handler;
