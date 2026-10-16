@@ -23,9 +23,16 @@ use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::{PyAny, exceptions::PyModuleNotFoundError};
 
+/// Maximum number of keys permitted in one merged context.
 pub(crate) const MAX_CONTEXT_KEYS: usize = 64;
+
+/// Maximum UTF-8 byte length of a context key.
 pub(crate) const MAX_KEY_BYTES: usize = 64;
+
+/// Maximum UTF-8 byte length of a context value.
 pub(crate) const MAX_VALUE_BYTES: usize = 1024;
+
+/// Maximum combined key/value byte length of a merged context.
 pub(crate) const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
 thread_local! {
@@ -34,11 +41,15 @@ thread_local! {
     };
 }
 
+/// Process-wide source of non-zero IDs used to remove context frames safely.
 static NEXT_CONTEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
+/// One scoped context frame and its stable identifier for out-of-order cleanup.
 #[derive(Debug)]
 struct ContextFrame {
+    /// Monotonic identifier used by a guard to remove exactly this frame.
     id: u64,
+    /// Key-value fields contributed by this frame to merged records.
     fields: BTreeMap<String, String>,
 }
 
@@ -62,19 +73,47 @@ pub enum LogContextError {
     TotalBytesExceeded { total: usize, max: usize },
 }
 
+/// Internal validation failures before the offending key is attached to a public error.
 #[derive(Debug, Error)]
 pub(crate) enum ContextValidationError {
+    /// The merged map would exceed its key-count limit.
     #[error("context has {count} keys; maximum is {max}")]
-    TooManyKeys { count: usize, max: usize },
+    TooManyKeys {
+        /// Number of keys in the candidate map.
+        count: usize,
+        /// Maximum permitted number of keys.
+        max: usize,
+    },
+    /// A key exceeds the per-key UTF-8 byte limit.
     #[error("context key is {len} bytes; maximum is {max}")]
-    KeyTooLong { len: usize, max: usize },
+    KeyTooLong {
+        /// UTF-8 byte length of the offending key.
+        len: usize,
+        /// Maximum permitted UTF-8 byte length.
+        max: usize,
+    },
+    /// A value exceeds the per-value UTF-8 byte limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
-    ValueTooLong { key: String, len: usize, max: usize },
+    ValueTooLong {
+        /// Key associated with the oversized value.
+        key: String,
+        /// UTF-8 byte length of the value.
+        len: usize,
+        /// Maximum permitted UTF-8 byte length.
+        max: usize,
+    },
+    /// The merged map exceeds its aggregate UTF-8 byte limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
-    TotalBytesExceeded { total: usize, max: usize },
+    TotalBytesExceeded {
+        /// Aggregate key and value byte length of the candidate map.
+        total: usize,
+        /// Maximum permitted aggregate byte length.
+        max: usize,
+    },
 }
 
 impl ContextValidationError {
+    /// Attach the relevant key and map this internal failure to its public error variant.
     fn into_log_context_error(self, key: &str) -> LogContextError {
         match self {
             Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
@@ -91,10 +130,12 @@ impl ContextValidationError {
     }
 }
 
-/// Track the retained map's key count and aggregate UTF-8 size while building it.
+/// Tracks retained key count and aggregate UTF-8 size as entries are validated.
 #[derive(Default)]
 pub(crate) struct ContextBudget {
+    /// Number of distinct keys already included in the candidate map.
     unique_keys: usize,
+    /// UTF-8 bytes for retained keys and their current values.
     total_bytes: usize,
 }
 
@@ -156,8 +197,11 @@ impl ContextBudget {
 /// a guard on any other thread leaves both stacks unchanged.
 #[must_use = "hold the guard for as long as the scoped log context should remain active"]
 pub struct LogContextGuard {
+    /// Monotonic identifier for the frame removed when this guard is dropped.
     frame_id: u64,
+    /// Thread that owns the frame and may perform its cleanup.
     owner_thread: ThreadId,
+    /// Marker preventing the guard from crossing an OS-thread boundary.
     _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
@@ -244,6 +288,7 @@ pub(crate) fn merge_context_values(
     Ok(active)
 }
 
+/// Validate and append one frame, returning the identifier used for scoped cleanup.
 fn push_context_frame(context: BTreeMap<String, String>) -> Result<u64, LogContextError> {
     validate_context_map(&context)?;
     let mut merged = active_context();
@@ -259,6 +304,7 @@ fn push_context_frame(context: BTreeMap<String, String>) -> Result<u64, LogConte
     Ok(frame_id)
 }
 
+/// Pop the newest frame and report an error when the thread-local stack is empty.
 fn pop_internal() -> Result<(), LogContextError> {
     CONTEXT_STACK.with(|stack| {
         if stack.borrow_mut().pop().is_some() {
@@ -269,6 +315,7 @@ fn pop_internal() -> Result<(), LogContextError> {
     })
 }
 
+/// Remove one identified frame without disturbing newer or older frames.
 fn remove_context_frame(frame_id: u64) -> bool {
     CONTEXT_STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
@@ -280,6 +327,7 @@ fn remove_context_frame(frame_id: u64) -> bool {
     })
 }
 
+/// Allocate a non-zero identifier for a newly pushed context frame.
 fn next_context_frame_id() -> u64 {
     loop {
         let frame_id = NEXT_CONTEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed);
@@ -289,6 +337,7 @@ fn next_context_frame_id() -> u64 {
     }
 }
 
+/// Merge frames in insertion order so inner fields override outer values.
 fn active_context() -> BTreeMap<String, String> {
     CONTEXT_STACK.with(|stack| {
         let mut merged = BTreeMap::new();
@@ -299,6 +348,7 @@ fn active_context() -> BTreeMap<String, String> {
     })
 }
 
+/// Enforce key-count, per-field, and aggregate byte limits before context use.
 pub(crate) fn validate_context_map(
     context: &BTreeMap<String, String>,
 ) -> Result<(), LogContextError> {
@@ -317,6 +367,7 @@ pub(crate) fn validate_context_map(
     Ok(())
 }
 
+/// Read the Python task-local context, treating an unavailable optional module as empty.
 #[cfg(feature = "python")]
 pub(crate) fn current_python_context(py: Python<'_>) -> PyResult<BTreeMap<String, String>> {
     let module = match py.import("femtologging._log_context") {
@@ -328,11 +379,13 @@ pub(crate) fn current_python_context(py: Python<'_>) -> PyResult<BTreeMap<String
     crate::python_context::extract_python_context_map(&context)
 }
 
+/// Validate that a Python context object contains only supported string fields and sizes.
 #[cfg(feature = "python")]
 pub(crate) fn validate_python_context(context: &Bound<'_, PyAny>) -> PyResult<()> {
     crate::python_context::extract_python_context_map(context).map(|_| ())
 }
 
+/// Clear thread-local context between tests without affecting other threads.
 #[cfg(test)]
 pub(crate) fn clear_log_context_for_test() {
     CONTEXT_STACK.with(|stack| stack.borrow_mut().clear());

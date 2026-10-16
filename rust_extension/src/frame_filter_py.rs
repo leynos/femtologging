@@ -19,9 +19,13 @@ use crate::frame_filter::{
 /// This struct groups related filter parameters to reduce function argument counts
 /// and improve code clarity.
 struct FilterOptions<'a> {
+    /// Optional filename substrings whose matching frames are removed.
     exclude_filenames: Option<&'a [String]>,
+    /// Optional function-name substrings whose matching frames are removed.
     exclude_functions: Option<&'a [String]>,
+    /// Optional maximum number of most-recent frames retained after exclusions.
     max_depth: Option<usize>,
+    /// Whether known femtologging and stdlib logging frames are removed.
     exclude_logging: bool,
 }
 

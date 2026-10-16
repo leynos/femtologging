@@ -18,6 +18,7 @@ use crate::sync::{Sender, bounded};
 
 use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
+/// Classifies a handler snapshot for tracing metadata without retaining it.
 #[cfg(feature = "tracing-compat")]
 fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static str {
     let has_python = handlers.iter().any(|handler| handler.is_python_backed());
@@ -32,10 +33,12 @@ fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static 
 
 /// Handler used internally to acknowledge logger flush operations.
 struct FlushAckHandler {
+    /// One-shot channel notified when the worker reaches the flush marker.
     ack: Sender<()>,
 }
 
 impl FlushAckHandler {
+    /// Build the marker handler that acknowledges delivery of its queued record.
     fn new(ack: Sender<()>) -> Self {
         Self { ack }
     }
@@ -188,10 +191,12 @@ impl FemtoLogger {
         true
     }
 
+    /// Return whether this logger currently propagates to an existing parent.
     fn should_propagate_to_parent(&self) -> bool {
         self.propagate.load(std::sync::atomic::Ordering::SeqCst) && self.parent.is_some()
     }
 
+    /// Re-enter Python to find the parent and enqueue a cloned record there.
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {
         let Some(parent_name) = &self.parent else {
             return;
@@ -312,10 +317,15 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
+    /// Acknowledge the worker reaching a queue marker, then flush current handlers.
+    ///
+    /// The acknowledgement orders flushing after all records already queued;
+    /// handler flushing then covers output buffered inside each live handler.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }
 
+    /// Wait for the worker to process a marker after all earlier queued records.
     fn wait_for_worker_idle(&self) -> bool {
         let Some(tx) = &self.tx else {
             return true;
@@ -340,6 +350,7 @@ impl FemtoLogger {
             .is_ok()
     }
 
+    /// Flush handlers visible under the read lock after queue delivery is idle.
     fn flush_configured_handlers(&self) -> bool {
         self.handlers.read().iter().all(|handler| handler.flush())
     }

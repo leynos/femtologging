@@ -7,6 +7,7 @@ use thiserror::Error;
 #[cfg(feature = "python")]
 use pyo3::prelude::pyclass;
 
+/// Removes duplicate IDs while preserving the order in which each ID first appears.
 pub(crate) fn normalize_vec(ids: Vec<String>) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
@@ -41,6 +42,7 @@ pub enum HandlerBuilder {
 }
 
 impl HandlerBuilder {
+    /// Builds and validates configuration before it can mutate the shared logging runtime, preventing partially applied state.
     #[cfg_attr(
         not(feature = "python"),
         expect(dead_code, reason = "unused without python feature")
@@ -147,7 +149,9 @@ pub enum ConfigError {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct FormatterBuilder {
+    /// Optional format string passed to the formatter when the configuration is built.
     format: Option<String>,
+    /// Optional date-format string used when rendering record timestamps.
     datefmt: Option<String>,
 }
 
@@ -184,9 +188,13 @@ impl FormatterBuilder {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerConfigBuilder {
+    /// Optional level override for this logger.
     level: Option<FemtoLevel>,
+    /// Optional propagation setting for this logger.
     propagate: Option<bool>,
+    /// Deduplicated filter IDs attached to this logger, in first-seen order.
     filters: Vec<String>,
+    /// Deduplicated handler IDs attached to this logger, in first-seen order.
     handlers: Vec<String>,
 }
 
@@ -209,7 +217,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier, replacing any existing filters.
-    /// IDs are deduplicated and order may be normalized; see `normalize_vec`.
+    /// IDs are deduplicated while preserving first-seen order; see `normalize_vec`.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -220,7 +228,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set handlers by identifier, replacing any existing handlers.
-    /// IDs are deduplicated and order may be normalized; see `normalize_vec`.
+    /// IDs are deduplicated while preserving first-seen order; see `normalize_vec`.
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -255,17 +263,24 @@ impl LoggerConfigBuilder {
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
+    /// Schema version expected by the configuration builder.
     version: u8,
+    /// Whether loggers absent from this configuration should be disabled.
     disable_existing_loggers: bool,
+    /// Optional level used when a logger has no explicit level.
     default_level: Option<FemtoLevel>,
+    /// Formatter definitions keyed by configuration ID.
     formatters: BTreeMap<String, FormatterBuilder>,
+    /// Filter definitions keyed by configuration ID.
     filters: BTreeMap<String, FilterBuilder>,
     /// Registered handler builders keyed by identifier.
     ///
     /// `HandlerBuilder` is a concrete enum rather than a trait object to make
     /// cloning and serialization straightforward.
     handlers: BTreeMap<String, HandlerBuilder>,
+    /// Logger definitions keyed by logger name.
     loggers: BTreeMap<String, LoggerConfigBuilder>,
+    /// Optional configuration for the root logger.
     root_logger: Option<LoggerConfigBuilder>,
 }
 

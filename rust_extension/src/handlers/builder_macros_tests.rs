@@ -5,10 +5,13 @@ use std::num::NonZeroUsize;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+/// Minimal builder used to exercise generated setter and reset methods.
 #[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 struct DummyBuilder {
+    /// Value assigned by the generated `with_value` setter.
     value: usize,
+    /// Optional label retained by the generated conversion setter.
     label: Option<String>,
 }
 
@@ -141,10 +144,13 @@ fn python_text_signatures_match_arguments() {
     });
 }
 
+/// Builder fixture that records whether capacity configuration was attempted.
 #[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 struct CapacityDummy {
+    /// Positive capacity accepted by the generated setter, or `None` for zero.
     capacity: Option<usize>,
+    /// Distinguishes an untouched default from an attempted zero capacity.
     capacity_attempted: bool,
 }
 

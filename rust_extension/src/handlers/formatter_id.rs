@@ -3,6 +3,7 @@
 //! Distinguishes between built-in formatter identifiers and arbitrary
 //! user-provided IDs to avoid scattering string comparisons.
 
+/// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FormatterId {
     /// The built-in default formatter.

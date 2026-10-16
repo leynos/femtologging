@@ -20,17 +20,29 @@ use crate::log_record::FemtoLogRecord;
 /// The `thread_id` field stores the raw `ThreadId` and is formatted only during
 /// serialization, avoiding per-record String allocations.
 pub(super) struct HttpSerializableRecord<'a> {
+    /// Logger name sent as the `name` wire field.
     pub(super) name: &'a str,
+    /// Static level name sent as `levelname` without allocating during conversion.
     pub(super) levelname: &'static str,
+    /// Log message borrowed from the source record for serialisation.
     pub(super) msg: &'a str,
+    /// UNIX timestamp in seconds, clamped to zero when the source predates the epoch.
     pub(super) created: f64,
+    /// Source filename sent as `filename`.
     pub(super) filename: &'a str,
+    /// Source line sent as `lineno`.
     pub(super) lineno: u32,
+    /// Source module path sent as `module`.
     pub(super) module: &'a str,
+    /// Raw thread identifier formatted only when the payload is serialised.
     pub(super) thread_id: ThreadId,
+    /// Optional thread name, omitted from the payload when the source has none.
     pub(super) thread_name: Option<&'a str>,
+    /// Borrowed structured fields appended to the payload as additional entries.
     pub(super) key_values: &'a BTreeMap<String, String>,
+    /// Optional exception data included only when captured by the source record.
     pub(super) exc_info: Option<&'a ExceptionPayload>,
+    /// Optional stack data included only when captured by the source record.
     pub(super) stack_info: Option<&'a StackTracePayload>,
 }
 

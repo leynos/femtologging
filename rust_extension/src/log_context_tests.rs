@@ -5,6 +5,7 @@ use proptest::prelude::*;
 use rstest::{fixture, rstest};
 use static_assertions::assert_not_impl_any;
 
+/// Operation applied by the context-stack property model.
 #[derive(Debug, Clone)]
 enum ContextAction {
     Push(BTreeMap<String, String>),

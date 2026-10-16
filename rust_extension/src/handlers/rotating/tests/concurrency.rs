@@ -19,10 +19,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
+/// Rotation strategy wrapper that records worker-thread rotation activity.
 struct ObservedStrategy {
+    /// Strategy that performs the actual file rotation.
     inner: FileRotationStrategy,
+    /// Thread IDs that completed rotations.
     rotations: Arc<Mutex<Vec<thread::ThreadId>>>,
+    /// Optional delay used to hold the worker inside a rotation.
     rotation_delay: Option<Duration>,
+    /// Optional signal set when a delayed rotation begins.
     rotation_started: Option<Arc<AtomicBool>>,
 }
 

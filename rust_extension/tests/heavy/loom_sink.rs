@@ -22,6 +22,7 @@ use _femtologging_rs::{
 
 /// A handler that appends each formatted record to a shared Loom buffer.
 pub struct SinkHandler {
+    /// Loom-protected output shared with the topology assertions.
     buffer: Arc<Mutex<Vec<u8>>>,
 }
 

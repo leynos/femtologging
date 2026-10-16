@@ -17,9 +17,12 @@ use test_utils::fixtures::handler_tuple;
 use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;
 
+/// Writer fixture that blocks the worker until the test releases its barrier.
 #[derive(Clone)]
 struct BlockingBuf {
+    /// Captures bytes written by the worker.
     buf: Arc<Mutex<Vec<u8>>>,
+    /// Coordinates the test with the worker's write or flush call.
     barrier: Arc<Barrier>,
 }
 
@@ -44,8 +47,10 @@ impl Write for BlockingBuf {
     }
 }
 
+/// Writer fixture that accepts bytes but deliberately fails when flushed.
 #[derive(Default)]
 struct FlushFailingBuf {
+    /// Bytes accepted before the handler requests a flush.
     buf: Vec<u8>,
 }
 

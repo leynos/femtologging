@@ -15,9 +15,12 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn femto_file_handler_worker_thread_failure() {
+    /// Writer blocked at flush so dropping the handler exercises worker failure.
     #[derive(Clone)]
     struct BlockingWriter {
+        /// Captures bytes written by the file worker.
         buf: Arc<Mutex<Vec<u8>>>,
+        /// Synchronizes the test with the worker's flush operation.
         barrier: Arc<Barrier>,
     }
 
@@ -65,8 +68,11 @@ fn femto_file_handler_worker_thread_failure() {
 
 #[test]
 fn femto_file_handler_flush_and_close_idempotency() {
+    /// Counts explicit and shutdown-triggered flushes and writer destruction.
     struct TestWriter {
+        /// Shared count of calls to `flush`.
         flushed: Arc<AtomicU32>,
+        /// Shared count of writer drops, used to check close idempotency.
         closed: Arc<AtomicU32>,
     }
 

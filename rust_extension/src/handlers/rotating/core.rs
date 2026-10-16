@@ -79,8 +79,11 @@ impl Default for RotationConfig {
 /// owns rotation thresholds and delegates queueing, flushing, and shutdown to
 /// [`FemtoFileHandler`].
 pub struct FemtoRotatingFileHandler {
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     inner: FemtoFileHandler,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     max_bytes: u64,
+    /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     backup_count: usize,
 }
 

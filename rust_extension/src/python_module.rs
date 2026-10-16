@@ -180,14 +180,21 @@ mod tests {
     };
     use rstest::{fixture, rstest};
 
+    /// Function pointer used to register one Python extension module's types.
     type RegisterFn = for<'py> fn(&Bound<'py, PyModule>) -> PyResult<()>;
 
+    /// Expected type names and validation messages for one registration case.
     #[derive(Clone, Copy)]
     struct ModuleRegistrationCase {
+        /// Python module name passed to the registration function.
         module_name: &'static str,
+        /// Registration function exercised by this case.
         register_fn: RegisterFn,
+        /// Type names that must be visible after registration.
         type_names: &'static [&'static str],
+        /// Optional expected rotation-validation error text.
         expected_rotation_validation_msg: Option<&'static str>,
+        /// Optional expected timed-rotation validation error text.
         expected_timed_rotation_validation_msg: Option<&'static str>,
     }
 

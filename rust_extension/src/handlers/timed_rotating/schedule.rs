@@ -8,16 +8,23 @@ use chrono::{
     TimeZone, Utc, Weekday,
 };
 
+/// Midnight is the default local-time trigger for daily-style schedules.
 const MIDNIGHT: NaiveTime = NaiveTime::MIN;
 
 /// Supported timed rotation cadences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimedRotationWhen {
+    /// Rotates every interval seconds.
     Seconds,
+    /// Rotates every interval minutes.
     Minutes,
+    /// Rotates every interval hours.
     Hours,
+    /// Rotates every interval days, optionally at a configured local time.
     Days,
+    /// Rotates at midnight after the configured number of days.
     Midnight,
+    /// Rotates on the selected weekday, with intervals measured in weeks.
     Weekday(Weekday),
 }
 
@@ -80,9 +87,13 @@ impl TimedRotationWhen {
 /// Validated timed rotation configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimedRotationSchedule {
+    /// Selected cadence; validation constrains interval and at_time combinations.
     when: TimedRotationWhen,
+    /// Positive cadence multiplier used by rollover calculations.
     interval: u32,
+    /// Selects UTC arithmetic instead of local-time conversion.
     use_utc: bool,
+    /// Optional local-time trigger for daily, midnight, and weekday schedules.
     at_time: Option<NaiveTime>,
 }
 
@@ -218,6 +229,8 @@ impl TimedRotationSchedule {
         }
     }
 
+    /// Calculates the next daily-style trigger, accounting for the configured
+    /// interval and optional local time.
     fn next_rollover_at_trigger(
         &self,
         now: DateTime<Utc>,
@@ -235,14 +248,18 @@ impl TimedRotationSchedule {
         self.to_utc(date.and_time(trigger))
     }
 
+    /// Calculates the next daily trigger at the configured time.
     fn next_daily_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
         self.next_rollover_at_trigger(now, 0)
     }
 
+    /// Calculates the next midnight trigger using the interval as a day count.
     fn next_midnight_rollover(&self, now: DateTime<Utc>) -> DateTime<Utc> {
         self.next_rollover_at_trigger(now, self.interval.saturating_sub(1))
     }
 
+    /// Calculates the next selected-weekday trigger, skipping a same-day past
+    /// trigger and applying the week interval.
     fn next_weekday_rollover(&self, now: DateTime<Utc>, weekday: Weekday) -> DateTime<Utc> {
         let naive = self.local_naive(now);
         let trigger = self.at_time.unwrap_or(MIDNIGHT);
@@ -259,6 +276,7 @@ impl TimedRotationSchedule {
         self.to_utc((date + Duration::days(days_ahead)).and_time(trigger))
     }
 
+    /// Converts UTC input to either UTC-naive or local-naive schedule time.
     fn local_naive(&self, value: DateTime<Utc>) -> NaiveDateTime {
         if self.use_utc {
             value.naive_utc()
@@ -267,6 +285,8 @@ impl TimedRotationSchedule {
         }
     }
 
+    /// Converts a schedule-local timestamp to UTC, choosing the earliest side
+    /// of ambiguous DST times and advancing through a DST gap.
     fn to_utc(&self, value: NaiveDateTime) -> DateTime<Utc> {
         if self.use_utc {
             return Utc.from_utc_datetime(&value);

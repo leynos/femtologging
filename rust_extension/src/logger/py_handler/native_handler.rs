@@ -16,11 +16,17 @@ use super::map_py_err;
 /// Built-in handlers that can retain the original Rust record across Python registration.
 #[derive(Clone, Copy)]
 pub(super) enum NativeHandlerKind {
+    /// Retains native record dispatch for a stream handler wrapped for Python.
     Stream,
+    /// Retains native record dispatch for a file handler wrapped for Python.
     File,
+    /// Retains native record dispatch for a rotating file handler wrapped for Python.
     RotatingFile,
+    /// Retains native record dispatch for a timed-rotating file handler wrapped for Python.
     TimedRotatingFile,
+    /// Retains native record dispatch for a socket handler wrapped for Python.
     Socket,
+    /// Retains native record dispatch for an HTTP handler wrapped for Python.
     Http,
 }
 

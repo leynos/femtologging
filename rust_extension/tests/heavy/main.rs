@@ -25,6 +25,10 @@
 #[path = "../test_utils/shared_buffer.rs"]
 mod shared_buffer;
 
+#[cfg(loom)]
+#[path = "../test_utils/shared_buffer_loom.rs"]
+mod shared_buffer_loom;
+
 #[path = "../test_utils/handle_expect.rs"]
 mod handle_expect;
 

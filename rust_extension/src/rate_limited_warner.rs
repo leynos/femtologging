@@ -16,6 +16,7 @@ pub trait Clock: Send + Sync {
 
 /// [`Clock`] implementation backed by [`Instant`].
 struct RealClock {
+    /// Instant captured at construction; elapsed time is reported relative to it.
     start: Instant,
 }
 
@@ -43,9 +44,13 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 /// interval has elapsed. [`flush`] emits a warning immediately if any records
 /// have been dropped since the last emission.
 pub struct RateLimitedWarner {
+    /// Millisecond timestamp of the last warning, updated atomically by emitters.
     last_warn: AtomicU64,
+    /// Number of dropped records waiting for the next warning emission.
     dropped: AtomicU64,
+    /// Minimum interval between warning callbacks, stored in milliseconds.
     interval_ms: u64,
+    /// Shared clock seam used by production code and deterministic tests.
     clock: Arc<dyn Clock>,
 }
 
@@ -106,7 +111,9 @@ mod tests {
     use rstest::*;
     use std::sync::atomic::AtomicU64;
 
+    /// Atomic clock fixture that lets warning intervals advance deterministically.
     struct FakeClock {
+        /// Current fake time in milliseconds.
         now: AtomicU64,
     }
 

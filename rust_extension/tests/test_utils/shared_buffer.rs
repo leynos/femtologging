@@ -8,7 +8,9 @@ pub mod std {
 
     use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 
+    /// Standard-library shared ownership used by the non-Loom buffer helper.
     pub type Arc<T> = std::sync::Arc<T>;
+    /// Standard-library lock used to serialize access to captured bytes.
     pub type Mutex<T> = std::sync::Mutex<T>;
 
     /// Thread-safe wrapper around a byte buffer used by stream handlers.
@@ -18,6 +20,7 @@ pub mod std {
     /// without locking.
     #[derive(Clone)]
     pub struct SharedBuf {
+        /// Shared byte storage; writes go through the lock-aware `Write` impl.
         buffer: Arc<Mutex<Vec<u8>>>,
     }
 
@@ -26,15 +29,6 @@ pub mod std {
         pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
             Self { buffer }
         }
-
-        /// Return a snapshot of the buffer contents.
-        #[allow(dead_code)]
-        pub fn contents(&self) -> Vec<u8> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .clone()
-        }
     }
 
     impl Default for SharedBuf {
@@ -70,76 +64,6 @@ pub mod std {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
-            .expect("Buffer contains invalid UTF-8")
-    }
-}
-
-#[allow(dead_code)]
-pub mod loom {
-    //! Shared buffer backed by loom synchronization primitives for model checking.
-
-    use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
-
-    pub type Arc<T> = loom::sync::Arc<T>;
-    pub type Mutex<T> = loom::sync::Mutex<T>;
-
-    /// Wrapper around a loom-backed byte buffer.
-    #[derive(Clone)]
-    pub struct SharedBuf {
-        buffer: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl SharedBuf {
-        pub fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-            Self { buffer }
-        }
-
-        #[allow(dead_code)]
-        pub fn contents(&self) -> Vec<u8> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .clone()
-        }
-    }
-
-    impl Default for SharedBuf {
-        fn default() -> Self {
-            Self {
-                buffer: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-    }
-
-    impl Write for SharedBuf {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.buffer
-                .lock()
-                .expect("SharedBuf mutex poisoned")
-                .flush()
-        }
-    }
-
-    impl Seek for SharedBuf {
-        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
-            Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "seek unsupported for SharedBuf",
-            ))
-        }
-    }
-
-    #[allow(dead_code)]
     pub fn read_output(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
         String::from_utf8(buffer.lock().expect("Buffer mutex poisoned").clone())
             .expect("Buffer contains invalid UTF-8")

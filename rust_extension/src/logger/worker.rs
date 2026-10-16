@@ -53,6 +53,10 @@ impl FemtoLogger {
         Self::with_parent_inner(name, parent, context_snapshot_provider)
     }
 
+    /// Construct logger state, allocate its bounded queues, and spawn the worker.
+    ///
+    /// The optional provider is retained by the logger so producer-side context
+    /// capture uses the same ownership boundary as the worker that consumes it.
     fn with_parent_inner(
         name: String,
         parent: Option<String>,
@@ -224,6 +228,8 @@ impl FemtoLogger {
     }
 }
 
+/// Join the worker and warn if it panicked; the panic is not propagated across
+/// the Python boundary because logger shutdown is best-effort.
 pub(super) fn log_join_result(handle: JoinHandle<()>) {
     if handle.join().is_err() {
         warn!("FemtoLogger: worker thread panicked");
