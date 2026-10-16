@@ -147,14 +147,14 @@ above are written, not verified.
   dependency edge rather than through `cfg(test)`.
 - Observation: the stream handler's dropped-record warning does **not** lead
   with its count; the message is
-  `FemtoStreamHandler: {count} log records dropped in the last interval`, so the
-  count is the last token before the shared suffix. Evidence: the first version
-  of the updated integration test parsed the first whitespace token and failed
-  with `ParseIntError { kind: InvalidDigit }` on `FemtoStreamHandler:`. Impact:
-  the count is now read by stripping the shared suffix and taking the last
-  remaining token, which also keeps the parse tied to the same constant the
-  filter selects on. The HTTP and socket warnings do lead with the handler name
-  too, so any future test parsing their counts needs the same treatment.
+  `FemtoStreamHandler: {count} log records dropped in the last interval`, so
+  the count is the last token before the shared suffix. Evidence: the first
+  version of the updated integration test parsed the first whitespace token and
+  failed with `ParseIntError { kind: InvalidDigit }` on `FemtoStreamHandler:`.
+  Impact: the count is now read by stripping the shared suffix and taking the
+  last remaining token, which also keeps the parse tied to the same constant
+  the filter selects on. The HTTP and socket warnings do lead with the handler
+  name too, so any future test parsing their counts needs the same treatment.
 - Observation: property-test case count is not visible in the ordinary output,
   and `PROPTEST_VERBOSE=1` did not surface it either. Impact: non-vacuity was
   established instead by scaling, which is stronger evidence than a self-report:
@@ -519,8 +519,8 @@ cargo test --manifest-path rust_extension/Cargo.toml \
 ```
 
 Result: `test result: FAILED. 6 passed; 7 failed`. The seven failures are the
-new tests, plus `rate_limits_subsequent_warnings`, which previously asserted the
-lossy counts and was rewritten as part of the fix:
+new tests, plus `rate_limits_subsequent_warnings`, which previously asserted
+the lossy counts and was rewritten as part of the fix:
 
 ```plaintext
 rate_limits_subsequent_warnings   left: [1, 1]  right: [1, 2]
@@ -541,12 +541,12 @@ concurrent_callers_conserve_every_drop::case_2_four_threads
 ```
 
 Two results are worth naming. `suppressed_attempts_carry_drops_forward` shows
-`pending_drops()` reading 0 where three drops should be pending: the old
-`else` branch had already erased them. The two conservation cases are harsher
-than a unit test would suggest — the unmodified helper reported 41 of 120
-recorded drops on two threads and 27 of 160 on four. The bug is not a
-rounding error on a boundary; under contention it discards most of the loss,
-which is precisely the case an operator reads these warnings for.
+`pending_drops()` reading 0 where three drops should be pending: the old `else`
+branch had already erased them. The two conservation cases are harsher than a
+unit test would suggest — the unmodified helper reported 41 of 120 recorded
+drops on two threads and 27 of 160 on four. The bug is not a rounding error on
+a boundary; under contention it discards most of the loss, which is precisely
+the case an operator reads these warnings for.
 
 Also notable: `empty_call_does_not_start_the_window` fails against the original
 implementation for a reason the issue did not describe. The original
@@ -563,8 +563,9 @@ establishing the property for the first time. That is a deliberate, recorded
 gap: the property test's own red evidence is the shared assertion, not a
 separate run.
 
-The fix was restored from a byte-for-byte backup (`/tmp/rlw-fixed-backup-issue-440.rs`)
-and `cargo fmt -- --check` passes on the restored file.
+The fix was restored from a byte-for-byte backup
+(`/tmp/rlw-fixed-backup-issue-440.rs`) and `cargo fmt -- --check` passes on the
+restored file.
 
 ## Interfaces and dependencies
 
