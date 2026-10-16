@@ -15,6 +15,8 @@ Test Organisation
   automatic manager reset.
 - Shared helpers (helpers.py): Common test utilities such as
   `poll_file_for_text` for async file content verification.
+- Adapter support (stdlib_adapter_support.py): The record, handler, and
+  counting vocabulary shared by the three `test_stdlib_adapter*.py` suites.
 
 Running Tests
 -------------

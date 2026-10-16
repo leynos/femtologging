@@ -72,26 +72,25 @@ action; they are not quality criteria.
 Known uncertainties identified upfront, with mitigations.
 
 - Risk: existing tests may assert the current (permissive) behaviour, so the
-  change could break an unrelated suite.
-  Severity: medium. Likelihood: low-medium. Mitigation: run the two adapter test
-  modules plus the full `make test` suite; treat any newly failing test as
-  evidence to investigate rather than to weaken.
+  change could break an unrelated suite. Severity: medium. Likelihood:
+  low-medium. Mitigation: run the two adapter test modules plus the full
+  `make test` suite; treat any newly failing test as evidence to investigate
+  rather than to weaken.
 - Risk: end-to-end adapter tests run through a worker thread and may be timing
-  sensitive, producing flaky pass/fail.
-  Severity: medium. Likelihood: medium. Mitigation: keep one test module
-  entirely synchronous (direct `handle_record()` calls) and mark the
-  thread-mediated module with an explicit timeout.
+  sensitive, producing flaky pass/fail. Severity: medium. Likelihood: medium.
+  Mitigation: keep one test module entirely synchronous (direct
+  `handle_record()` calls) and mark the thread-mediated module with an explicit
+  timeout.
 - Risk: rejecting a record before `handle()` means the handler's filter objects
   never run, which a reader might mistake for losing filter semantics.
   Severity: low. Likelihood: medium. Mitigation: match stdlib ordering exactly
   (`Logger.callHandlers()` gates on level before `Handler.handle()` runs
-  filters) and state that ordering in the docstring, then prove the filter count
-  contract with a dedicated counting-filter test.
+  filters) and state that ordering in the docstring, then prove the filter
+  count contract with a dedicated counting-filter test.
 - Risk: `docs/users-guide.md` and `docs/v0-1-0-migration-guide.md` drift out of
-  sync with each other.
-  Severity: low. Likelihood: medium. Mitigation: make the migration guide
-  defer to the user guide section rather than restating it, and run
-  `make markdownlint` (which enforces the `typos` spelling checker) plus
+  sync with each other. Severity: low. Likelihood: medium. Mitigation: make the
+  migration guide defer to the user guide section rather than restating it, and
+  run `make markdownlint` (which enforces the `typos` spelling checker) plus
   `make nixie`.
 
 ## Progress
@@ -106,12 +105,27 @@ Known uncertainties identified upfront, with mitigations.
   The build succeeded after roughly two minutes of compilation; the managed
   sccache server was unreachable so the build ran uncached, which is expected
   and not a failure.
-- [ ] Reproduce the defect with a focused test run (Red). The defect itself is
-  already reproduced directly; see `Artefacts and notes`.
-- [ ] Implement the level gate in `handle_record()` (Green).
-- [ ] Add the regression tests: level matrix, dynamic `setLevel()`, `NOTSET`,
-  and the filter/`handle()` call-count contract.
-- [ ] Update `docs/users-guide.md` and `docs/v0-1-0-migration-guide.md`.
+- [x] (2026-10-14 16:05Z) Reproduced the defect with a focused test run (Red).
+  The six new threshold cases failed with the pre-fix `handle_record()`, which
+  confirmed they exercise the defect rather than restating existing behaviour;
+  the direct reproduction is recorded in `Artefacts and notes`.
+- [x] (2026-10-14 16:20Z) Implemented the level gate in `handle_record()`
+  (Green). All 38 tests in the two adapter suites and 45 doctests passed.
+- [x] (2026-10-14 16:35Z) Added the regression tests: level matrix, dynamic
+  `setLevel()`, `NOTSET`, and the filter/`handle()` call-count contract.
+- [x] (2026-10-14 17:00Z) Updated `docs/users-guide.md` and
+  `docs/v0-1-0-migration-guide.md`.
+- [x] (2026-10-14 18:10Z) Rebased onto `origin/main` after it advanced by four
+  commits (including `#418` and `#433`, both of which touch the adapter and its
+  tests). The rebase applied cleanly; the merged class docstring carries both
+  this change's two-thresholds paragraph and origin's `contextvars` paragraph.
+- [x] (2026-10-16 16:46Z) Split the two oversized modules to satisfy the
+  `too-many-lines` (400) lint gate, which `origin/main`'s `adapter.py` sat
+  exactly on at 400 lines. Extracted the record schema and translation into
+  `femtologging/_adapter_record.py`, re-exported through `femtologging.adapter`
+  so every existing import site is unchanged, and extracted the shared test
+  vocabulary into `tests/stdlib_adapter_support.py` with the threshold tests
+  moving to `tests/test_stdlib_adapter_levels.py`.
 - [ ] Run the full commit gates and a CodeRabbit review pass.
 - [ ] Push the branch and open a draft pull request referencing the issue.
 
@@ -125,39 +139,60 @@ Known uncertainties identified upfront, with mitigations.
 - Observation: neither `StdlibHandlerAdapter` documentation section has an
   explicit Markdown anchor; the migration guide relies on the generated GitHub
   anchor `#using-stdlib-logginghandler-subclasses` derived from the heading
-  text "Using standard library (stdlib) `logging.Handler` subclasses".
-  Impact: when adding a new subsection under that heading, avoid placing a new
-  heading whose text would change the existing generated anchor.
+  text "Using standard library (stdlib) `logging.Handler` subclasses". Impact:
+  when adding a new subsection under that heading, avoid placing a new heading
+  whose text would change the existing generated anchor.
+- Observation: `origin/main`'s `femtologging/adapter.py` is *exactly* 400 lines,
+  which is the `too-many-lines` ceiling enforced by Pylint's `max-module-lines`
+  and by AGENTS.md's 400-line rule. The baseline therefore had no headroom: the
+  two paragraphs this change documents could not be added without tripping the
+  gate. Impact: the documentation requirement forced a module split rather than
+  being satisfied in place, and the split had to preserve every import site.
+- Observation: the Pylint gate rejects an import block that interleaves aliased
+  re-exports with plain ones; Ruff's `unsorted-imports` autofix rewrites them
+  into one single-name `from … import (X as X)` block each. Impact: the
+  re-export style in `femtologging/adapter.py` is Ruff-authored, not a
+  hand-written choice, and should be left exactly as the autofix emits it.
 
 ## Decision log
 
 - Decision: Perform the red stage by adding the new tests first and confirming
   they fail against the unmodified adapter, rather than writing a throwaway
-  reproducer script.
-  Rationale: the tests are deliverables anyway, so the red stage doubles as
-  the regression evidence required by the issue's acceptance criteria, and it
-  avoids leaving scratch artefacts in the tree.
-  Date/Author: 2026-10-14, implementing agent.
+  reproducer script. Rationale: the tests are deliverables anyway, so the red
+  stage doubles as the regression evidence required by the issue's acceptance
+  criteria, and it avoids leaving scratch artefacts in the tree. Date/Author:
+  2026-10-14, implementing agent.
 - Decision: Do not add a `@pytest.mark.xfail(strict=True)` marker to force the
-  red stage.
-  Rationale: the tests are added in the same commit series as the fix; a
-  strict expected-failure marker would have to be added and then removed in the
-  green step, and it would falsely imply an unresolved defect to a later
+  red stage. Rationale: the tests are added in the same commit series as the
+  fix; a strict expected-failure marker would have to be added and then removed
+  in the green step, and it would falsely imply an unresolved defect to a later
   reader. Running the new tests before the production edit demonstrates the
   failure directly, and the failing output is captured in this plan's
-  `Artefacts and notes`.
-  Date/Author: 2026-10-14, implementing agent.
+  `Artefacts and notes`. Date/Author: 2026-10-14, implementing agent.
 - Decision: Read `handler.level` on every `handle_record()` call rather than
-  caching it at construction.
-  Rationale: a cached copy would break the documented stdlib pattern of
-  calling `setLevel()` after the handler is attached, which is one of the
-  issue's acceptance criteria.
-  Date/Author: 2026-10-14, implementing agent.
+  caching it at construction. Rationale: a cached copy would break the
+  documented stdlib pattern of calling `setLevel()` after the handler is
+  attached, which is one of the issue's acceptance criteria. Date/Author:
+  2026-10-14, implementing agent.
+- Decision: Split `femtologging/adapter.py` into a thin adapter module plus
+  `femtologging/_adapter_record.py`, re-exporting the schema and helpers from
+  `femtologging.adapter`, rather than trimming the added documentation to fit.
+  Rationale: the requirement is to document the two thresholds, so the
+  documentation is the deliverable and the code is what must move. Re-exporting
+  keeps `from femtologging.adapter import FemtoRecord` and
+  `from femtologging.adapter import TRACE_LEVEL_NUM` working for the five
+  existing import sites, so the split is invisible to every caller.
+  Date/Author: 2026-10-16, implementing agent.
+- Decision: Keep the record-translation half in a private `_`-prefixed module
+  and leave `femtologging/adapter.py` as the public import site. Rationale: the
+  repository already uses `_`-prefixed siblings for internal seams (`_compat`,
+  `_log_context`, `_config_filters`), so this matches local convention, and it
+  avoids widening the public surface with a new documented module for what is
+  an implementation detail. Date/Author: 2026-10-16, implementing agent.
 - Decision: Place the new user-guide prose inside the existing
   `StdlibHandlerAdapter` section rather than adding a new `###` heading.
   Rationale: preserving heading text preserves the migration guide's existing
-  cross-reference anchor.
-  Date/Author: 2026-10-14, implementing agent.
+  cross-reference anchor. Date/Author: 2026-10-14, implementing agent.
 
 ## Outcomes & retrospective
 
@@ -168,28 +203,41 @@ result against `Purpose / big picture` and reconcile every discovery with the
 ## Context and orientation
 
 `femtologging` is a Rust-backed Python logging library. Its Python-facing
-handlers are dispatched through a `handle_record(record)` method where
-`record` is a plain dictionary, and handler work runs on dedicated worker
-threads. The standard library's `logging.Handler` subclasses instead expect an
+handlers are dispatched through a `handle_record(record)` method where `record`
+is a plain dictionary, and handler work runs on dedicated worker threads. The
+standard library's `logging.Handler` subclasses instead expect an
 `emit(LogRecord)` method. `femtologging/adapter.py` provides
 `StdlibHandlerAdapter`, a Python class that bridges the two interfaces.
 
 The relevant files are:
 
 - `femtologging/adapter.py` — the adapter itself. `StdlibHandlerAdapter`
-  wraps a `logging.Handler`, `handle_record()` translates the femtologging
-  dictionary into a `logging.LogRecord` via the module-level helper
-  `_make_log_record()`, and `_stdlib_levelno()` maps the femtologging level to
-  a stdlib numeric level (TRACE 5, DEBUG 10, INFO 20, WARN 30, ERROR 40,
-  CRITICAL 50). The wrapped handler is stored as `self._handler`.
-- `tests/test_stdlib_adapter.py` — construction, dispatch, and level-mapping
-  tests. It builds an `AdapterProbe` fixture (a `StringIO` stream, a
-  `logging.StreamHandler` over it, and the adapter) and drives records through a
-  real `FemtoLogger` using the `_LogRequest` and `_HandlerSetup` dataclasses.
+  wraps a `logging.Handler`, and `handle_record()` applies the wrapped
+  handler's severity gate before translating the femtologging dictionary into a
+  `logging.LogRecord` and dispatching it. The wrapped handler is stored as
+  `self._handler`.
+- `femtologging/_adapter_record.py` — the record schema and translation,
+  extracted when `adapter.py` reached the 400-line ceiling. It owns the
+  `FemtoRecord`/`Frame`/`Metadata`/`ExcInfo`/`StackInfo` TypedDicts, the level
+  tables, `_stdlib_levelno()` (which maps the femtologging level to a stdlib
+  numeric level: TRACE 5, DEBUG 10, INFO 20, WARN 30, ERROR 40, CRITICAL 50),
+  and the `_make_log_record()` builder. `femtologging.adapter` re-exports all
+  of these, so it remains the single public import site.
+- `tests/stdlib_adapter_support.py` — the vocabulary the three adapter suites
+  share: the `LevelCase`/`LogRequest`/`HandlerSetup`/`HandlerLevelCase`
+  dataclasses, the `AdapterProbe` harness, the `CapturingHandler` /
+  `CountingHandler` / `CountingFilter` / `RejectingFilter` helpers, and the
+  synchronous `dispatch()` / `emitted_messages()` / `femto_logger()` helpers.
+- `tests/test_stdlib_adapter.py` — construction, dispatch, level mapping,
+  producer `contextvars` propagation, and exception/stack forwarding. It builds
+  an `AdapterProbe` fixture (a `StringIO` stream, a `logging.StreamHandler`
+  over it, and the adapter) and drives records through a real `FemtoLogger`.
+- `tests/test_stdlib_adapter_levels.py` — the wrapped handler's level gate:
+  the six-level matrix against an `ERROR` handler, the `NOTSET` cases, and the
+  filter/`handle()` call-count contract.
 - `tests/test_stdlib_adapter_records.py` — `LogRecord` attribute, delegation,
-  and export tests. It defines `CapturingHandler`, a `logging.Handler` subclass
-  that appends emitted records to `self.records`, plus the synchronous helpers
-  `_emit_femto_record()` and `_emit_via_logger()`.
+  dynamic `setLevel()`, level-fallback, and export tests. It defines the
+  synchronous helpers `_emit_femto_record()` and `_emit_via_logger()`.
 - `docs/users-guide.md` — the section "Using standard library (stdlib)
   `logging.Handler` subclasses" describes the adapter's behaviour and
   limitations, and later sections describe the restricted `dictConfig` and
@@ -233,9 +281,9 @@ technical-design document for this bug fix. The upstream artefacts are:
   stdlib parity work is sequenced in this project. Its "Non-goals" section
   explicitly defers handler-level stdlib filter parity; that restriction is
   about *filters*, not about *severity levels*, so this change does not
-  contradict it. ADR-003's technical requirement "Preserve current handler-level
-  filter constraints unless explicitly added in a separate decision" is
-  satisfied: this plan adds no handler-level filter support.
+  contradict it. ADR-003's technical requirement "Preserve current
+  handler-level filter constraints unless explicitly added in a separate
+  decision" is satisfied: this plan adds no handler-level filter support.
 
 Trace links:
 
@@ -258,14 +306,14 @@ a single comparison whose correctness is established exhaustively by a finite
 partition, because the input domain (six femtologging levels crossed with a
 small set of handler levels) is small enough to enumerate completely.
 
-Axiom A1: in CPython's `logging`, `Handler.handle()` applies
-`self.filters` and acquires `self.lock`, and does *not* consult `self.level`.
-Repository-owned code depends on this interaction, so it is verified at the
-contract boundary rather than assumed from documentation alone — by asserting
-observable call counts and lock acquisition through the real stdlib types. The
-environment assumption is the repository's pinned interpreter (Python 3.12+)
-with the stdlib `logging` module unmodified; no monkeypatching of `logging`
-occurs in these tests.
+Axiom A1: in CPython's `logging`, `Handler.handle()` applies `self.filters` and
+acquires `self.lock`, and does *not* consult `self.level`. Repository-owned
+code depends on this interaction, so it is verified at the contract boundary
+rather than assumed from documentation alone — by asserting observable call
+counts and lock acquisition through the real stdlib types. The environment
+assumption is the repository's pinned interpreter (Python 3.12+) with the stdlib
+`logging` module unmodified; no monkeypatching of `logging` occurs in these
+tests.
 
 Invariant I1 (level gate): for every constructed `LogRecord` with numeric level
 `L` and every wrapped-handler level `H`, the adapter emits the record if and
@@ -287,94 +335,84 @@ reconstructing the adapter.
 
 - Obligation: I1 for a handler fixed at `logging.ERROR`.
   Method: parameterized test over the finite partition of all six femtologging
-  levels.
-  Rationale: the partition is total over the adapter's level vocabulary and
-  each row has distinct semantic meaning (five rejects, one accept at the
+  levels. Rationale: the partition is total over the adapter's level vocabulary
+  and each row has distinct semantic meaning (five rejects, one accept at the
   boundary, plus `CRITICAL` above it), so enumeration is exhaustive rather than
-  a sample.
-  Domain: handler level `logging.ERROR`; logger level `"TRACE"`; record levels
-  `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
+  a sample. Domain: handler level `logging.ERROR`; logger level `"TRACE"`;
+  record levels `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
   Artefact: `tests/test_stdlib_adapter.py`,
   `TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold`.
   Evidence: before the change, every row emits and the five reject rows fail;
   after the change, all six rows pass. Discharge condition: the five
   below-`ERROR` rows produce empty captured output and the two at-or-above rows
-  produce exactly the expected formatted line.
-  Non-vacuity: the logger threshold is `"TRACE"`, the most permissive setting,
-  so no row is pre-filtered by the logger and every rejection is attributable
-  to the new handler-level gate. The `WARNING` row is the nearest miss
-  immediately below the boundary and the `ERROR` row is the boundary itself, so
-  both sides of the comparison are exercised. The negative control is the `red`
-  run recorded in `Artefacts and notes`, where the identical test body succeeds
-  only for rows whose expected outcome the broken code happens to match.
+  produce exactly the expected formatted line. Non-vacuity: the logger
+  threshold is `"TRACE"`, the most permissive setting, so no row is
+  pre-filtered by the logger and every rejection is attributable to the new
+  handler-level gate. The `WARNING` row is the nearest miss immediately below
+  the boundary and the `ERROR` row is the boundary itself, so both sides of the
+  comparison are exercised. The negative control is the `red` run recorded in
+  `Artefacts and notes`, where the identical test body succeeds only for rows
+  whose expected outcome the broken code happens to match.
 
 - Obligation: I1 at the `NOTSET` boundary, and the equivalence of "handler
-  level `NOTSET`" with "accept every mapped level".
-  Method: named test, plus a second named test asserting the pre-existing
-  default-handler case in the sibling module.
-  Rationale: `NOTSET` is the one value where a plausible "simplification" (for
-  example `if self._handler.level:` truthiness) would silently regress, because
-  `NOTSET` is numeric zero and therefore falsy. A named regression test is the
-  proportionate guard.
-  Domain: handler level `logging.NOTSET`; records at `TRACE` (stdlib level 5,
-  the lowest mapped level) and `INFO`; logger thresholds `"TRACE"` and default.
-  Artefact: `tests/test_stdlib_adapter.py`,
+  level `NOTSET`" with "accept every mapped level". Method: named test, plus a
+  second named test asserting the pre-existing default-handler case in the
+  sibling module. Rationale: `NOTSET` is the one value where a plausible
+  "simplification" (for example `if self._handler.level:` truthiness) would
+  silently regress, because `NOTSET` is numeric zero and therefore falsy. A
+  named regression test is the proportionate guard. Domain: handler level
+  `logging.NOTSET`; records at `TRACE` (stdlib level 5, the lowest mapped
+  level) and `INFO`; logger thresholds `"TRACE"` and default. Artefact:
+  `tests/test_stdlib_adapter.py`,
   `TestHandlerLevelThreshold::test_notset_handler_accepts_every_level`, and
   `tests/test_stdlib_adapter_records.py`,
   `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
   Evidence: all accepted records appear with stdlib level numbers 5 and 20
-  respectively.
-  Non-vacuity: `TRACE` maps to the lowest nonzero numeric level in the mapping,
-  so if `NOTSET` were treated as a hard threshold rather than as "no
-  threshold", this row is the first to fail. The truthiness hazard is a real
-  reachable defect, not a hypothetical one.
+  respectively. Non-vacuity: `TRACE` maps to the lowest nonzero numeric level
+  in the mapping, so if `NOTSET` were treated as a hard threshold rather than
+  as "no threshold", this row is the first to fail. The truthiness hazard is a
+  real reachable defect, not a hypothetical one.
 
 - Obligation: L1, covering both the "exactly once" and the "not at all" halves.
   Method: named tests using a counting handler subclass and a counting
-  `logging.Filter` subclass.
-  Rationale: this is a side-effect-ordering claim, not an input/output claim,
-  so counting observed invocations through the real stdlib objects is a direct
-  and stronger observation than inspecting output text.
-  Domain: handler level `logging.ERROR`; one accepted record (`ERROR`), one
-  rejected record (`DEBUG`), and one record that passes the level gate but is
-  rejected by a filter.
-  Artefact: `tests/test_stdlib_adapter.py` (or
+  `logging.Filter` subclass. Rationale: this is a side-effect-ordering claim,
+  not an input/output claim, so counting observed invocations through the real
+  stdlib objects is a direct and stronger observation than inspecting output
+  text. Domain: handler level `logging.ERROR`; one accepted record (`ERROR`),
+  one rejected record (`DEBUG`), and one record that passes the level gate but
+  is rejected by a filter. Artefact: `tests/test_stdlib_adapter.py` (or
   `tests/test_stdlib_adapter_records.py`),
-  `TestHandleRecordFilterAndLockContract`.
-  Evidence: after the folded-in rejection, a `DEBUG` record leaves the
-  `handle()` count and the filter-call count unchanged and emits nothing; an
-  `ERROR` record increments both by exactly one and emits exactly one record;
-  the filter-rejected `ERROR` record increments `handle()` once, increments the
-  filter count once, and emits nothing.
-  Non-vacuity: the test asserts counts rather than "not zero", so an
+  `TestHandleRecordFilterAndLockContract`. Evidence: after the folded-in
+  rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
+  count unchanged and emits nothing; an `ERROR` record increments both by
+  exactly one and emits exactly one record; the filter-rejected `ERROR` record
+  increments `handle()` once, increments the filter count once, and emits
+  nothing. Non-vacuity: the test asserts counts rather than "not zero", so an
   implementation that calls `handle()` twice or that skips filters entirely
   fails. The filter-rejected row proves the filter chain is genuinely reached
   through `Handler.handle()`, so "the gate ran but the filter never did" cannot
-  pass unnoticed.
-  Residual gap: the handler's I/O lock is exercised implicitly by the real
-  `Handler.handle()` implementation rather than asserted directly, because the
-  stdlib does not expose lock acquisition as a public observable. A test that
-  monkeypatched the lock would verify the monkeypatch, not the stdlib.
+  pass unnoticed. Residual gap: the handler's I/O lock is exercised implicitly
+  by the real `Handler.handle()` implementation rather than asserted directly,
+  because the stdlib does not expose lock acquisition as a public observable. A
+  test that monkeypatched the lock would verify the monkeypatch, not the stdlib.
 
 - Obligation: I2 for a live `setLevel()` sequence.
   Method: named test over an ordered sequence of three dispatches with two
-  intervening `setLevel()` calls.
-  Rationale: this is an ordering property over a short operation sequence
-  rather than a property over generated inputs; enumerating the three states
-  explicitly is clearer than generating them, and the sequence is short enough
-  to be read as a specification.
-  Domain: adapter constructed with a `NOTSET` handler; `INFO` dispatch;
+  intervening `setLevel()` calls. Rationale: this is an ordering property over
+  a short operation sequence rather than a property over generated inputs;
+  enumerating the three states explicitly is clearer than generating them, and
+  the sequence is short enough to be read as a specification. Domain: adapter
+  constructed with a `NOTSET` handler; `INFO` dispatch;
   `setLevel(logging.ERROR)` then `INFO` and `ERROR` dispatches;
-  `setLevel(logging.NOTSET)` then a `TRACE` dispatch.
-  Artefact: `tests/test_stdlib_adapter_records.py`,
+  `setLevel(logging.NOTSET)` then a `TRACE` dispatch. Artefact:
+  `tests/test_stdlib_adapter_records.py`,
   `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
   Evidence: discharges to exactly the records `INFO`, then `ERROR`, then
-  `TRACE`, with the final `TRACE` record reporting `levelno == 5`.
-  Non-vacuity: the sequence tests all three transitions that a cached level
-  could get wrong — loosening, tightening, and returning to `NOTSET`. A
-  construction-time cache fails the second dispatch; a construction-time cache
-  that happens to work because the handler was already `NOTSET` still fails the
-  third.
+  `TRACE`, with the final `TRACE` record reporting `levelno == 5`. Non-vacuity:
+  the sequence tests all three transitions that a cached level could get wrong
+  — loosening, tightening, and returning to `NOTSET`. A construction-time cache
+  fails the second dispatch; a construction-time cache that happens to work
+  because the handler was already `NOTSET` still fails the third.
 
 ## Plan of work
 
@@ -405,8 +443,8 @@ Changes:
 
 - `femtologging/adapter.py`: in `handle_record()`, after
   `log_record = _make_log_record(record)`, return early when
-  `log_record.levelno < self._handler.level`. Update the class docstring and
-  the `handle_record()` docstring to state that the adapter honours both the
+  `log_record.levelno < self._handler.level`. Update the class docstring and the
+  `handle_record()` docstring to state that the adapter honours both the
   femtologging logger threshold and the wrapped handler's level, that the
   comparison happens before `handle()` runs filters and takes the I/O lock, and
   that `setLevel()` changes apply to the next record.
@@ -420,9 +458,8 @@ Changes:
 - Add a counting handler and a counting filter helper where the call-count
   contract test lives.
 
-Acceptance evidence: the two focused test modules pass, and the red run for
-the same tests before the production change is recorded in `Artefacts and
-notes`.
+Acceptance evidence: the two focused test modules pass, and the red run for the
+same tests before the production change is recorded in `Artefacts and notes`.
 
 Conformance check:
 
@@ -441,10 +478,9 @@ commit restores the previous behaviour exactly.
 
 Remaining gaps: documentation (EP-M2).
 
-Compatibility decision: none required. The wrapped handler's `level` is
-public, documented stdlib surface, and the femtologging package is pre-1.0
-(`version = "0.1.0"` in `pyproject.toml`). No compatibility layer is
-introduced.
+Compatibility decision: none required. The wrapped handler's `level` is public,
+documented stdlib surface, and the femtologging package is pre-1.0
+(`version = "0.1.0"` in `pyproject.toml`). No compatibility layer is introduced.
 
 ### Milestone EP-M2: both thresholds are documented
 
@@ -458,8 +494,7 @@ Changes:
 - `docs/users-guide.md`: extend the `StdlibHandlerAdapter` section with prose
   and a short example showing a `"TRACE"` femtologging logger with a
   `logging.ERROR` handler, plus one sentence distinguishing the
-  configuration-schema handler-level restriction from wrapped-handler
-  behaviour.
+  configuration-schema handler-level restriction from wrapped-handler behaviour.
 - `docs/v0-1-0-migration-guide.md`: add one or two sentences stating that the
   adapter honours both thresholds and link to the users guide section for
   details.
@@ -487,8 +522,8 @@ Compatibility decision: none required.
 
 All commands run from the worktree root
 `/home/leynos/.lody/repos/github---leynos---femtologging/worktrees/e4b3b11d-b949-4f71-a492-dec71a2a10c7`.
-Prefix each gate with output capture as the repository conventions require, for
-example:
+Prefix each gate with output capture as the repository conventions require,
+for example:
 
 ```plaintext
 make <target> 2>&1 | tee /tmp/<action>-femtologging-$(git branch --show-current).out
