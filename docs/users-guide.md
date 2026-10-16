@@ -49,11 +49,16 @@ your process exits.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
-  operations never block the calling code.
-- When any queue is full, the record is dropped. Each component emits
-  rate-limited warnings and maintains drop counters
+  operations never block the calling code. The default `"drop"` policy keeps
+  that promise unconditionally; the opt-in `"block"` and `"timeout:N"` policies
+  trade it for back pressure, and a direct `handler.handle()` call then waits
+  in the calling thread. See
+  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
+- When any queue is full under the default policy, the record is dropped. Each
+  component emits rate-limited warnings and maintains drop counters
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
-  monitor pressure.
+  monitor pressure. A file handler whose policy is `"block"` or `"timeout:N"`
+  waits for room instead of dropping.
 - Record metadata tracks the logger name, level, message text, timestamps,
   thread identity, optional structured exception (`exc_info`) and call stack
   (`stack_info`) payloads, and validated inline structured fields (`extra`).
@@ -294,7 +299,9 @@ fields with safe defaults does not require a version bump.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
   Always close the handler when the application shuts down. `close()` is
   idempotent and safe to call multiple times; only the first call performs
-  shutdown work.
+  shutdown work. Prefer calling `close()` explicitly: the destructor performs
+  the same shutdown, but it runs with the interpreter lock held, so it cannot
+  offer the GIL release described below.
 - In Rust, `close()` requires exclusive mutable access (`&mut self`). If the
   handler is shared across threads, synchronize close calls externally (for
   example with a mutex) instead of invoking `close()` concurrently.
@@ -302,6 +309,40 @@ fields with safe defaults does not require a version bump.
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Pass a callable, a `FormatterBuilder`, or a named
   formatter registered on `ConfigBuilder` to customize output.
+
+#### Concurrency and the GIL for file handlers
+
+`handle()`, `flush()`, and `close()` release the interpreter lock (`GIL`) for
+the whole of any wait on the channel, on the worker's flush acknowledgement, or
+on the worker's shutdown. Another Python thread therefore keeps running while
+one thread is parked on back pressure, and slow file IO can no longer stall
+every thread in the interpreter. The rotating and timed-rotating handlers are
+built on the same worker and inherit this contract; see
+[FemtoRotatingFileHandler](#femtorotatingfilehandler) and
+[FemtoTimedRotatingFileHandler](#femtotimedrotatingfilehandler).
+
+Two consequences follow from that release, and both concern `"block"`:
+
+- A `"block"` wait is **unbounded**. It ends when the worker makes room or when
+  the channel closes, and nothing else ends it. If the worker has stopped
+  draining — a stalled filesystem, a full disk, a formatting callable that
+  never returns — the calling thread waits for as long as that lasts.
+- `close()` does **not** cancel a `handle()` call that is already blocked.
+  `close()` itself blocks for at most one second waiting for the worker to
+  acknowledge shutdown and then abandons it, but the blocked `handle()` is
+  waiting on queue capacity and stays blocked. A concurrent `close()` on the
+  same handler raises `RuntimeError`, because `close()` needs exclusive access.
+  Close the handler from the thread that is not blocked, or release the worker
+  first.
+
+Callers who need a wait that ends on its own must use `"timeout:N"`. They must
+also handle the `RuntimeError` it raises when the deadline expires and the
+record is dropped.
+
+Under the logger path there is no such choice to make: dispatch through
+`logger.log()` waits in the logger's worker thread, not in the thread that
+called `logger.log()`. The producer returns as soon as the logger's own queue
+accepts the record.
 
 ### FemtoRotatingFileHandler
 
@@ -318,6 +359,10 @@ fields with safe defaults does not require a version bump.
 - `handler.close()` follows the same contract as `FemtoFileHandler`: it is
   idempotent, only the first call performs shutdown work, and concurrent close
   calls must be synchronized by the caller.
+- `handle()`, `flush()`, and `close()` inherit the interpreter-lock contract
+  described in
+  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers),
+  including the unbounded `"block"` wait and its shutdown semantics.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 
@@ -332,6 +377,10 @@ fields with safe defaults does not require a version bump.
   `at_time` is only valid for daily, midnight, and weekday schedules.
 - Rotation runs on the worker thread. `backup_count == 0` keeps all timestamped
   backups instead of disabling rotation.
+- `handle()`, `flush()`, and `close()` inherit the interpreter-lock contract
+  described in
+  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers),
+  including the unbounded `"block"` wait and its shutdown semantics.
 - `TimedRotatingFileHandlerBuilder` mirrors the direct handler surface with
   `.with_when()`, `.with_interval()`, `.with_backup_count()`, `.with_utc()`, and
   `.with_at_time()`.
@@ -902,7 +951,8 @@ For upgrade steps covering handler filters and formatter builders, see the
 - Dispatch capacity is bounded. Each logger may hold at most half of its
   shard's depth in flight, capped at 1,024 records, and each handler queue
   holds 1,024 records by default. The stdlib blocks the emitting thread;
-  femtologging drops records and emits warnings instead.
+  femtologging can drop records and emit warnings; file handlers may instead
+  wait when configured with `block` or `timeout:N`.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
   string, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
@@ -920,9 +970,15 @@ For upgrade steps covering handler filters and formatter builders, see the
   or switch to blocking/timeout policies when drops are unacceptable.
 - File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
-- Blocking overflow policies affect the thread that calls `logger.log()`. Use
-  them only when you are comfortable with logging back pressure slowing the
-  producer because that is what will happen.
+- Blocking overflow policies slow whichever thread ends up waiting, and which
+  thread that is depends on how records are dispatched. A **direct**
+  `handler.handle()` call waits in the calling thread. Dispatch through
+  `logger.log()` does not: the producer only offers the record to the logger's
+  queue, and the logger's worker thread performs the handler call, so the wait
+  falls on that worker. Use a blocking policy only when you are comfortable
+  with the resulting back pressure, and see
+  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers)
+  for what the file handler does with the interpreter lock while it waits.
 - Socket handlers serialize to MessagePack with a one-megabyte default frame
   limit. Large payloads are silently dropped; consider truncating or chunking
   messages before logging.

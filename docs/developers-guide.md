@@ -435,6 +435,82 @@ send and receive operations keep their normal API shape, but Loom has no clock,
 so the heavy lane's outer timeout bounds waits that would otherwise remain
 blocked. The shard worker uses blocking `recv()` and has no idle polling tick.
 
+## Releasing the GIL at the Python boundary
+
+The file handlers are the one place where a Python caller can wait on a Rust
+channel directly, so the bindings have to give the interpreter lock back for
+the duration of that wait. `FemtoFileHandler`'s `#[pymethods]` block, and the
+rotating and timed-rotating wrappers that delegate to it, take a
+`py: Python<'_>` token and use `py.detach(...)` around the three operations
+that can block:
+
+- `handle()`, waiting on channel capacity under `OverflowPolicy::Block`
+  (unbounded `Sender::send`) or `OverflowPolicy::Timeout` (`send_timeout`);
+- `flush()`, waiting on the worker's flush acknowledgement with a one-second
+  deadline;
+- `close()`, waiting on the worker's shutdown acknowledgement and then on its
+  join.
+
+`py.detach` requires its closure and return type to be `Ungil` — that is,
+`Send` — which is what keeps the pattern honest: a closure that captured a
+`Bound<'_, PyAny>` or a `Python<'_>` token would not compile, so no Python
+object can be touched while the lock is released. The split is therefore
+mechanical rather than a matter of discipline:
+
+- argument parsing, `FemtoLevel::parse_py`, and record construction run
+  **before** the detach, because they can raise;
+- only the enqueue, the acknowledgement wait and the join run **inside** it;
+- `PyRuntimeError`/`PyValueError` construction runs **after** it returns, on the
+  GIL-owning side.
+
+Detaching does not branch on the overflow policy. `OverflowPolicy::Drop` uses
+`try_send` and never waits, but one uniform boundary is easier to audit than a
+policy-shaped one, and it keeps a future change to the drop path from silently
+reintroducing a wait on the locked side.
+
+Because `--cfg loom` builds `--no-default-features`, the `#[pymethods]` blocks
+still compile in that lane: PyO3 is an unconditional dependency, and the
+`python` feature only governs extension-module linking. Detaching here needs no
+`cfg(not(loom))` guard, unlike the logger worker's join: these methods receive
+their `Python<'_>` token from the caller and never attach, so a Loom model that
+somehow reached them would fail on the borrow or the token rather than
+initializing an interpreter on a Loom coroutine's small stack. The heavy lane's
+file model drives the Rust API (`with_writer_for_test`) and never reaches the
+bindings at all.
+
+### Testing the boundary
+
+Neither the Rust tests nor the Loom models can see this behaviour. The Rust
+tests call `FemtoHandlerTrait::handle` directly and never hold a GIL; the Loom
+models replace the channel and the thread with Loom's equivalents, so there is
+no interpreter to hold the lock in the first place. A Loom model that did drive
+the bindings would model nothing it is meant to explore.
+
+The evidence therefore comes from Python, in
+`tests/test_file_handler_gil_release.py`, which runs each scenario in its own
+subprocess. Isolation is the point: a binding that never releases the lock
+deadlocks rather than failing, and an in-process test would hang the suite
+instead of reporting. The parent applies a timeout and reports an expiry as a
+probable GIL deadlock.
+
+Each child parks the worker on a blocking formatter behind a capacity-1 queue,
+starts a watchdog thread that records a timestamp every few milliseconds, and
+then makes the blocking call from another thread. The verdict counts the
+watchdog's records that land *inside* the call's own window — between the
+calling thread entering the call and its returning:
+
+- a released wait of a second or more yields hundreds of records;
+- a wait that holds the GIL yields none, because a single spin of the
+  watchdog's loop is milliseconds of pure bytecode and the calling thread never
+  releases the lock for that long.
+
+Counting inside the window, rather than asking only whether the watchdog ran
+before the call returned, is what makes the bounded cases meaningful. A
+`"timeout:N"` or `close()` wait ends on its own deadline, so a GIL-holding
+implementation still lets the watchdog run afterwards; a bare ordering check
+would pass for the defect. The window also cannot be satisfied by progress made
+before the call started, because the caller records its boundary on entry.
+
 ## Producer/worker context propagation
 
 The logger's producer path snapshots the configured handler list while holding
