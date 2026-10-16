@@ -83,7 +83,12 @@ Observable outcomes:
       control below. Three tests fail, and only those three.
 - [x] Python gates: `make lint-python`, `make check-fmt`, `make fmt`,
       `make markdownlint`, `make nixie` all pass.
+- [x] Python lint lanes inside `make lint` (Ruff, interrogate, Pylint on PyPy
+      3.12 and CPython 3.14, df12-python-lints, ambrleaks, Skylos) all pass, and
+      `lint-lanes-test` passes 11/11.
 - [ ] Run the Rust gates (`make lint-rust`, `make typecheck`, `make test`).
+      Blocked by compile-admission contention; see the second blocker record
+      below.
 - [ ] Commit in atomic pieces, push, open the draft PR.
 
 ## Negative control (evidence that the tests detect the defect)
@@ -209,6 +214,40 @@ different conditions. The second is benign and the build still runs; the first
 is an admission refusal that stops the build before any of our code is
 compiled, and it must not be retried in a loop or bypassed.
 
+### Second refusal: `launch-failed` after a 21-minute queue
+
+A later `make lint` run reached the Rust lane and failed the same way, one
+state later in the supervisor's life cycle:
+
+```text
+[build-limits] clippy-driver: waiting for a compile slot (1 ahead, 1306s)
+build-limits: the supervisor refused: launch-failed
+
+# Rust lint lane failed: none (exit 101)
+make: *** [Makefile:178: lint-env-policy] Error 101
+```
+
+Two things make this an infrastructure result rather than a code result:
+
+- The refusal landed on a **version probe** --
+  `build-limits-rustc ... clippy-driver ... rustc -vV`, the `rustc --version`
+  handshake that runs before any of this repository's source is read. No crate
+  of ours was compiled, so no lint verdict exists either way.
+- The queue drained from 60 ahead to 1 ahead over 1306 s and then failed at
+  the last step, which is the supervisor losing the launch, not rejecting the
+  work.
+
+The whole Python half of the same `make lint` invocation passed beforehand:
+Ruff, `interrogate` at 100%, Pylint on PyPy 3.12 and Pylint+df12 on CPython
+3.14 (both 10.00/10), `ambrleaks`, and the strict Skylos dead-code gate, plus
+`lint-lanes-test` at 11/11. Only the compile-dependent lane is unproven.
+
+Machine state at the time: load average 7.85--11.90 against 6 cores, 58--62
+concurrent compiler processes from other agents, and the supervisor socket
+answering `EAGAIN`/`timed out`. `build-limits-status` could not be queried at
+all. Per the compile-admission rules this was left alone rather than retried in
+a loop or bypassed; the Rust gates are re-run once the machine drains.
+
 ## Outcomes & Retrospective
 
 The implementation is complete and the core claim is now backed by execution
@@ -216,10 +255,15 @@ rather than inspection: the fixed build passes 9/9, and a deliberately
 reintroduced defect fails exactly the three tests that cover it, with a
 discriminating margin (2 progress records against a 5-record bar).
 
-Four of the six gates are green. The Rust gates (`make lint-rust`,
-`make typecheck`, `make test`) compile and were blocked for a period by the
-compile-admission supervisor reporting `unhealthy`; that is an admission-layer
-failure, not a code failure, and is reported rather than worked around.
+Every gate that does not compile Rust is green: `make lint-python` (all six
+lanes), `make check-fmt`, `make fmt`, `make markdownlint`, `make nixie`, and
+`lint-lanes-test`. The Rust gates (`make lint-rust`, `make typecheck`,
+`make test`) are unproven rather than failing: each attempt died in the
+compile-admission layer -- once with `the supervisor refused: unhealthy`, once
+with `the supervisor refused: launch-failed` after a 1306-second queue -- on the
+`rustc -vV` version probe, before a single line of this repository was
+compiled. That is an admission-layer failure, not a code failure, and is
+reported rather than worked around.
 
 Two lessons worth carrying forward:
 
