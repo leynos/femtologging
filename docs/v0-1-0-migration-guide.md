@@ -255,5 +255,10 @@ logger.add_handler(adapter)
 logger.log("INFO", "hello")
 ```
 
+The adapter honours both thresholds that apply to a wrapped handler: the
+femtologging logger's own level, and the stdlib handler's level set with
+`logging.Handler.setLevel()`.  Records below the wrapped handler's level are
+discarded before reaching it, matching stdlib `Logger.callHandlers()`.
+
 See the [users guide](users-guide.md#using-stdlib-logginghandler-subclasses)
 for details and limitations.
