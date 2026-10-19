@@ -804,10 +804,10 @@ nothing on a public repository, and Dependabot opens many pull requests. The
 expression tests the pull request's author, not `github.actor`, because the
 actor is whoever triggered the run, so a person pushing to a Dependabot branch
 would flip the runner. A push and a dispatch have no pull request, so both
-values are null and they select Ubicloud; a Dependabot pull request therefore
-builds cold on the hosted pool. `ci.yml` runs on pull requests only, so there
-is no main-branch cache writer: Ubicloud's cache proxy is scoped by ref, and
-each pull request warms its own scope.
+values are null and the expression selects Ubicloud; a Dependabot pull request
+therefore builds cold on the hosted pool. `ci.yml` runs on pull requests only,
+so there is no main-branch cache writer: Ubicloud's cache proxy is scoped by
+ref, and each pull request warms its own scope.
 
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
