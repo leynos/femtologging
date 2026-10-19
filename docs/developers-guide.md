@@ -787,7 +787,10 @@ to the benchmarking phase design without losing context.
 with the runner-selection expression:
 
 ```yaml
-runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-4' }}
+runs-on: >-
+  ${{ (github.event.pull_request.head.repo.fork
+  || github.event.pull_request.user.login == 'dependabot[bot]')
+  && 'ubuntu-latest' || 'ubicloud-standard-4' }}
 ```
 
 It is `standard-4` rather than the estate's `standard-2` on a measured
@@ -796,8 +799,13 @@ and over 17 in the Rust tests, and was cancelled at its 55-minute ceiling (run
 36596547457), against a hosted median of 23.5 minutes.
 
 A pull request from a fork cannot obtain an Ubicloud runner, so it falls back to
-`ubuntu-latest`; a push and a dispatch have no pull request, so the fork value
-is null and they select Ubicloud. `ci.yml` runs on pull requests only, so there
+`ubuntu-latest`. So does a pull request Dependabot opened: hosted minutes cost
+nothing on a public repository, and Dependabot opens many pull requests. The
+expression tests the pull request's author, not `github.actor`, because the
+actor is whoever triggered the run, so a person pushing to a Dependabot branch
+would flip the runner. A push and a dispatch have no pull request, so both
+values are null and they select Ubicloud; a Dependabot pull request therefore
+builds cold on the hosted pool. `ci.yml` runs on pull requests only, so there
 is no main-branch cache writer: Ubicloud's cache proxy is scoped by ref, and
 each pull request warms its own scope.
 
@@ -819,13 +827,14 @@ the cached path, and `tests/test_uv_cache_contract.py` holds all three to the
 file.
 
 `tests/test_runner_placement_contract.py` holds this to the files. It evaluates
-the expression for a push or dispatch, a same-repository pull request and a
-fork, rejects a literal label, inverted arms, another label and another
-condition, refuses a workflow it cannot read by name, inventories and refuses a
-runner named through the matrix (`runs-on: ${{ matrix.runner }}` over an
-Ubicloud value), and asserts an exact inventory of the jobs that can land on
-Ubicloud with their runner class and ceiling. A change that adds, removes or
-re-times such a job fails it until the inventory is updated in the same commit.
+the expression for a push or dispatch, a same-repository pull request, a fork
+and a Dependabot pull request, rejects a literal label, inverted arms, another
+label, another condition, a missing Dependabot arm and an actor test, refuses a
+workflow it cannot read by name, inventories and refuses a runner named through
+the matrix (`runs-on: ${{ matrix.runner }}` over an Ubicloud value), and
+asserts an exact inventory of the jobs that can land on Ubicloud with their
+runner class and ceiling. A change that adds, removes or re-times such a job
+fails it until the inventory is updated in the same commit.
 
 ## Validation
 

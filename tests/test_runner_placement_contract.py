@@ -31,6 +31,13 @@ type Document = dict[str, typ.Any]
 WORKFLOWS_DIRECTORY: typ.Final = ".github/workflows"
 HOSTED_LABEL: typ.Final = "ubuntu-latest"
 FORK_CONDITION: typ.Final = "github.event.pull_request.head.repo.fork"
+#: The pull request's author, not `github.actor`: the actor is whoever
+#: triggered the run, so a person pushing to a Dependabot branch would flip
+#: the runner.
+DEPENDABOT_CONDITION: typ.Final = (
+    "github.event.pull_request.user.login == 'dependabot[bot]'"
+)
+HOSTED_CONDITION: typ.Final = f"({FORK_CONDITION} || {DEPENDABOT_CONDITION})"
 
 #: Every job that can land on Ubicloud: workflow, job, runner class and the
 #: ceiling it states in minutes. The inventory is exact, so a new Ubicloud lane
@@ -40,12 +47,18 @@ PLACEMENTS: typ.Final = (("ci.yml", "build-test", "ubicloud-standard-4", 40),)
 #: The runner-selection shape: a condition, a quoted hosted arm and a quoted
 #: other arm.
 _SHAPE: typ.Final = re.compile(
-    r"\$\{\{\s*(?P<condition>[^&|]+?)\s*&&\s*'(?P<hosted>[^']*)'"
+    r"\$\{\{\s*(?P<condition>\(.+?\))\s*&&\s*'(?P<hosted>[^']*)'"
     r"\s*\|\|\s*'(?P<other>[^']*)'\s*\}\}"
 )
 
-type Origin = typ.Literal["push", "same-repository", "fork"]
-ORIGINS: typ.Final[tuple[Origin, ...]] = ("push", "same-repository", "fork")
+type Origin = typ.Literal["push", "same-repository", "fork", "dependabot"]
+ORIGINS: typ.Final[tuple[Origin, ...]] = (
+    "push",
+    "same-repository",
+    "fork",
+    "dependabot",
+)
+HOSTED_ORIGINS: typ.Final[frozenset[Origin]] = frozenset({"fork", "dependabot"})
 
 
 class WorkflowReadError(AssertionError):
@@ -66,7 +79,7 @@ def estate_expression(label: str) -> str:
         A `${{ ... }}` expression selecting `label` unless the run is a pull
         request from a fork, which falls back to the hosted pool.
     """
-    return f"${{{{ {FORK_CONDITION} && '{HOSTED_LABEL}' || '{label}' }}}}"
+    return f"${{{{ {HOSTED_CONDITION} && '{HOSTED_LABEL}' || '{label}' }}}}"
 
 
 def selected_runner(runs_on: object, origin: Origin) -> str | None:
@@ -88,9 +101,9 @@ def selected_runner(runs_on: object, origin: Origin) -> str | None:
         cannot serve a fork.
     """
     shape = _SHAPE.fullmatch(runs_on.strip()) if isinstance(runs_on, str) else None
-    if shape is None or shape["condition"] != FORK_CONDITION:
+    if shape is None or shape["condition"] != HOSTED_CONDITION:
         return None
-    return shape["hosted" if origin == "fork" else "other"]
+    return shape["hosted" if origin in HOSTED_ORIGINS else "other"]
 
 
 def placement_faults(runs_on: object, label: str) -> list[str]:
@@ -109,7 +122,12 @@ def placement_faults(runs_on: object, label: str) -> list[str]:
         Empty when a fork falls back to hosted and every other run is on
         `label`.
     """
-    wanted = {"push": label, "same-repository": label, "fork": HOSTED_LABEL}
+    wanted = {
+        "push": label,
+        "same-repository": label,
+        "fork": HOSTED_LABEL,
+        "dependabot": HOSTED_LABEL,
+    }
     return [
         f"{origin} selects {selected_runner(runs_on, origin)}, wanted {wanted[origin]}"
         for origin in ORIGINS
@@ -238,6 +256,7 @@ def placed_jobs(
         ("push", "ubicloud-standard-2"),
         ("same-repository", "ubicloud-standard-2"),
         ("fork", "ubuntu-latest"),
+        ("dependabot", "ubuntu-latest"),
     ],
 )
 def test_the_expression_places_each_run(origin: Origin, wanted: str) -> None:
@@ -258,29 +277,46 @@ def test_the_expression_places_each_run(origin: Origin, wanted: str) -> None:
     ("runs_on", "expected"),
     [
         (estate_expression("ubicloud-standard-2"), 0),
-        ("ubuntu-latest", 3),
-        ("ubicloud-standard-2", 3),
+        ("ubuntu-latest", 4),
+        ("ubicloud-standard-2", 4),
         (
-            f"${{{{ {FORK_CONDITION} && 'ubicloud-standard-2' || 'ubuntu-latest' }}}}",
-            3,
+            (
+                f"${{{{ {HOSTED_CONDITION} && 'ubicloud-standard-2' "
+                "|| 'ubuntu-latest' }}"
+            ),
+            4,
         ),
         (estate_expression("ubicloud-standard-4"), 2),
         (
             (
-                "${{ github.event_name == 'pull_request' && 'ubuntu-latest' "
+                "${{ (github.event_name == 'pull_request') && 'ubuntu-latest' "
                 "|| 'ubicloud-standard-2' }}"
             ),
-            3,
+            4,
         ),
         (
             (
-                f"${{{{ {FORK_CONDITION} && 'ubicloud-standard-2' "
+                f"${{{{ {HOSTED_CONDITION} && 'ubicloud-standard-2' "
                 "|| 'ubicloud-standard-2' }}"
             ),
-            1,
+            2,
         ),
-        (["ubicloud-standard-2"], 3),
-        (None, 3),
+        (["ubicloud-standard-2"], 4),
+        (None, 4),
+        (
+            (
+                f"${{{{ {FORK_CONDITION} && 'ubuntu-latest' "
+                "|| 'ubicloud-standard-2' }}"
+            ),
+            4,
+        ),
+        (
+            (
+                f"${{{{ ({FORK_CONDITION} || github.actor == 'dependabot[bot]') "
+                "&& 'ubuntu-latest' || 'ubicloud-standard-2' }}"
+            ),
+            4,
+        ),
     ],
     ids=[
         "estate",
@@ -289,9 +325,11 @@ def test_the_expression_places_each_run(origin: Origin, wanted: str) -> None:
         "inverted-arms",
         "another-label",
         "another-condition",
-        "fork-kept-on-ubicloud",
+        "hosted-origins-kept-on-ubicloud",
         "sequence",
         "not-a-string",
+        "dependabot-arm-missing",
+        "actor-instead-of-author",
     ],
 )
 def test_a_misplaced_lane_is_reported(runs_on: object, expected: int) -> None:
