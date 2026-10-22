@@ -233,13 +233,13 @@ impl PyTimedRotatingFileHandler {
     }
 
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.inner.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.inner.flush())
     }
 
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.inner.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.inner.close());
     }
 }
 

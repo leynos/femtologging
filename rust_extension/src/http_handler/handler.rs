@@ -208,8 +208,8 @@ impl FemtoHTTPHandler {
     /// queued and then exits on its own, so those records are delivered only
     /// if the process outlives it.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.close());
     }
 }
 
