@@ -60,6 +60,13 @@ mod log_compat;
 #[cfg(all(feature = "python", feature = "tracing-compat"))]
 pub mod tracing_compat;
 
+// Compile the Rust examples in the users' guide as doctests, so the published
+// text cannot drift from the crate. `tests/test_documentation_examples.py`
+// checks that every document holding a Rust example is included here.
+#[cfg(doctest)]
+#[doc = include_str!("../../docs/users-guide.md")]
+pub struct UsersGuideExamples;
+
 // Test modules
 #[cfg(test)]
 mod test_utils;

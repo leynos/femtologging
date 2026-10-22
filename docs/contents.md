@@ -3,14 +3,21 @@
 This directory holds design notes for `femtologging` and references to relevant
 libraries. Use the links below to explore each topic.
 
+## Start here
+
+- [users-guide.md](./users-guide.md)
+  - Teaches femtologging from a first log message to production
+    configuration and Rust integration.
+- [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
+  - Upgrades an application from femtologging 0.1 to 0.2.0, breaking changes
+    first.
+
 ## Setup and Workflow
 
 - [dev-workflow.md](./dev-workflow.md)
   - Describes Makefile commands for building, linting, formatting and tests.
 - [developers-guide.md](./developers-guide.md)
   - Records developer toolchain ownership and validation boundaries.
-- [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes the next-minor structured logging additions and migration notes.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)
@@ -24,8 +31,8 @@ libraries. Use the links below to explore each topic.
   - Records the v0.1.0 renames from British to Oxford spelling across the
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes the breaking `BasicConfig` slotted-dataclass change in v0.2.0
-    and how to migrate.
+  - Lists the 0.2.0 breaking changes, each with its fix, then the new
+    features.
 
 ## Architecture decision records
 
