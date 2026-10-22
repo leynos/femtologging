@@ -10,7 +10,7 @@
     "name": "femtologging",
     "requires_dist": [],
     "requires_python": ">=3.12",
-    "version": "0.1.0"
+    "version": "0.2.0b1"
   },
   "wheel": {
     "root_is_purelib": "false",
