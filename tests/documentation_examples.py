@@ -1,28 +1,20 @@
 r"""Load fenced examples from femtologging's user-facing Markdown.
 
-``docs/documentation-style-guide.md`` asks for every example in a user-facing
-document to be tested as published. Each one sits directly beneath a
-``<!-- tested-example: <id> -->`` marker, and the tests load the published
-text through this module rather than keeping copied fixtures, so an example
-that drifts from the library fails the suite instead of misleading a reader.
-
-``scan_document()`` enforces the marker contract: a malformed marker, a marker
-with no fence directly beneath it, a fence without a language, an unterminated
-fence, or a repeated identifier raises ``DocumentationExampleError``. A fence
-with no marker is not an error here. It is reported by ``unmarked_fences()``,
-so a test can require every fence to be marked once a document has been
-brought up to that standard.
+Every fence in ``README.md``, ``docs/users-guide.md``, and
+``docs/v0-2-0-migration-guide.md`` must sit directly beneath a
+``<!-- tested-example: <id> -->`` marker. The documentation tests load the
+published text through this module rather than keeping copied fixtures, so an
+example that drifts from the library fails the suite instead of misleading a
+reader.
 
 Examples
 --------
 >>> examples = parse_document(
 ...     "doc.md",
-...     "<!-- tested-example: hello -->\n```python\nassert True\n```\n",
+...     "<!-- tested-example: hello -->\n\n```python\nassert True\n```\n",
 ... )
 >>> [(example.id, example.language, example.body) for example in examples]
 [('hello', 'python', 'assert True\n')]
->>> unmarked_fences("doc.md", "Intro.\n```bash\nls\n```\n")
-['doc.md:2: fence is missing a tested-example marker']
 """
 
 from __future__ import annotations
@@ -63,14 +55,6 @@ class DocumentedExample:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class DocumentScan:
-    """The marked examples and the unmarked fences found in one document."""
-
-    examples: tuple[DocumentedExample, ...]
-    unmarked: tuple[str, ...]
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class _Fence:
     """The opening line of a fenced code block."""
 
@@ -80,7 +64,7 @@ class _Fence:
     @classmethod
     def parse(cls, line: str) -> _Fence | None:
         """Return the fence ``line`` opens, or ``None`` when it opens none."""
-        match = FENCE.fullmatch(line.strip())
+        match = FENCE.fullmatch(line.rstrip())
         if match is None:
             return None
         return cls(match["delimiter"], match["info"].strip())
@@ -88,10 +72,8 @@ class _Fence:
     def is_closed_by(self, line: str) -> bool:
         """Report whether ``line`` closes this fence."""
         # A fence closes only on a run of its own character at least as long
-        # as the opening run, with nothing after it but whitespace. A line
-        # such as "```python" therefore stays in the body, as CommonMark
-        # requires, and a longer fence can quote a shorter one.
-        candidate = line.strip()
+        # as the opening run, so a longer fence can quote a shorter one.
+        candidate = line.rstrip()
         return len(candidate) >= len(self.delimiter) and set(candidate) == {
             self.delimiter[0]
         }
@@ -121,24 +103,22 @@ def _read_marker(source: str, lines: list[str], index: int) -> str | None:
 
 
 def _next_fence(source: str, lines: list[str], index: int) -> tuple[int, _Fence]:
-    """Return the fence opened on the line after the marker at ``index``."""
-    # The style guide places each marker immediately above its fence, and the
-    # Rust loader in build.rs enforces the same rule, so even a blank line
-    # between them is a breach rather than a layout choice.
-    candidate = index + 1
-    if candidate >= len(lines):
-        raise DocumentationExampleError(_located(source, index, "marker has no fence"))
-    line = lines[candidate]
-    fence = _Fence.parse(line)
-    if fence is None or line[:1].isspace():
-        raise DocumentationExampleError(
-            _located(source, index, "marker is not followed by a fence")
-        )
-    if not fence.info:
-        raise DocumentationExampleError(
-            _located(source, candidate, "fence should declare a language")
-        )
-    return candidate, fence
+    """Return the fence opened after the marker at ``index``."""
+    # Only blank lines may separate a marker from its fence.
+    for candidate in range(index + 1, len(lines)):
+        if not lines[candidate].strip():
+            continue
+        fence = _Fence.parse(lines[candidate])
+        if fence is None:
+            raise DocumentationExampleError(
+                _located(source, index, "marker is not followed by a fence")
+            )
+        if not fence.info:
+            raise DocumentationExampleError(
+                _located(source, candidate, "fence should declare a language")
+            )
+        return candidate, fence
+    raise DocumentationExampleError(_located(source, index, "marker has no fence"))
 
 
 def _read_body(
@@ -154,17 +134,8 @@ def _read_body(
     )
 
 
-def _unmarked_reason(line: str) -> str:
-    """Explain why the unmarked fence opened by ``line`` is not an example."""
-    # An indented fence would carry its indentation into the executed body,
-    # so a fence must start at column 0 before it can be marked at all.
-    if line[:1].isspace():
-        return "fence must start at column 0"
-    return "fence is missing a tested-example marker"
-
-
-def scan_document(source: str, text: str) -> DocumentScan:
-    """Return the marked examples and unmarked fences in ``text``.
+def parse_document(source: str, text: str) -> list[DocumentedExample]:
+    """Return every marked example in ``text``, rejecting unmarked fences.
 
     Parameters
     ----------
@@ -173,67 +144,43 @@ def scan_document(source: str, text: str) -> DocumentScan:
     text
         The document's Markdown text.
 
-    A malformed marker, a marker with no fence directly beneath it, a marked
-    fence with no language, an unterminated fence, or a repeated identifier
-    raises ``DocumentationExampleError``.
-
-    Returns
-    -------
-    DocumentScan
-        The examples in document order, and one located diagnostic for each
-        fence that has no marker.
-    """
-    lines = text.splitlines()
-    examples: list[DocumentedExample] = []
-    unmarked: list[str] = []
-    index = 0
-    while index < len(lines):
-        identifier = _read_marker(source, lines, index)
-        if identifier is not None:
-            opening, fence = _next_fence(source, lines, index)
-            index, body = _read_body(source, lines, opening, fence)
-            examples.append(
-                DocumentedExample(identifier, fence.info, body, source, opening + 1)
-            )
-            continue
-        fence = _Fence.parse(lines[index])
-        if fence is None:
-            index += 1
-            continue
-        # Skip the whole unmarked block, so text inside it that looks like a
-        # marker or a fence is never read as one.
-        unmarked.append(_located(source, index, _unmarked_reason(lines[index])))
-        index, _ = _read_body(source, lines, index, fence)
-    _reject_duplicates(examples)
-    return DocumentScan(tuple(examples), tuple(unmarked))
-
-
-def parse_document(source: str, text: str) -> list[DocumentedExample]:
-    """Return every marked example in ``text``, in document order.
-
-    A contract breach raises ``DocumentationExampleError``, as it does in
-    ``scan_document()``.
-
     Returns
     -------
     list[DocumentedExample]
-        The marked examples.
+        The examples in document order.
+
+    Raises
+    ------
+    DocumentationExampleError
+        When a marker is malformed or orphaned, a fence is unmarked,
+        unterminated, or has no language, or an identifier repeats.
     """
-    return list(scan_document(source, text).examples)
-
-
-def unmarked_fences(source: str, text: str) -> list[str]:
-    """Return a located diagnostic for every fence in ``text`` with no marker.
-
-    A contract breach raises ``DocumentationExampleError``, as it does in
-    ``scan_document()``.
-
-    Returns
-    -------
-    list[str]
-        One ``document:line: reason`` entry per unmarked fence.
-    """
-    return list(scan_document(source, text).unmarked)
+    lines = text.splitlines()
+    examples: list[DocumentedExample] = []
+    index = 0
+    while index < len(lines):
+        identifier = _read_marker(source, lines, index)
+        if identifier is None:
+            line = lines[index]
+            if line[:1].isspace() and _Fence.parse(line.lstrip()) is not None:
+                # An indented fence would carry its indentation into the
+                # executed body, so every example starts at column 0.
+                raise DocumentationExampleError(
+                    _located(source, index, "fence must start at column 0")
+                )
+            if _Fence.parse(line) is not None:
+                raise DocumentationExampleError(
+                    _located(source, index, "fence is missing a tested-example marker")
+                )
+            index += 1
+            continue
+        opening, fence = _next_fence(source, lines, index)
+        index, body = _read_body(source, lines, opening, fence)
+        examples.append(
+            DocumentedExample(identifier, fence.info, body, source, opening + 1)
+        )
+    _reject_duplicates(examples)
+    return examples
 
 
 def _reject_duplicates(examples: list[DocumentedExample]) -> None:
@@ -244,11 +191,6 @@ def _reject_duplicates(examples: list[DocumentedExample]) -> None:
             msg = f"duplicate tested-example identifier {example.id!r}"
             raise DocumentationExampleError(msg)
         seen.add(example.id)
-
-
-def read_document(path: str) -> str:
-    """Return the text of the published document at repository path ``path``."""
-    return (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
 
 
 def load_documented_examples() -> list[DocumentedExample]:
@@ -264,7 +206,8 @@ def load_documented_examples() -> list[DocumentedExample]:
     """
     examples: list[DocumentedExample] = []
     for path in DOCUMENTS:
-        examples.extend(parse_document(path, read_document(path)))
+        text = (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+        examples.extend(parse_document(path, text))
     _reject_duplicates(examples)
     return examples
 
@@ -275,7 +218,7 @@ def documented_example(identifier: str) -> DocumentedExample:
     Returns
     -------
     DocumentedExample
-        The example whose marker declares ``identifier``.
+        The first example whose marker declares ``identifier``.
 
     Raises
     ------
