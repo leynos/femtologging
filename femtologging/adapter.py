@@ -147,9 +147,8 @@ class StdlibHandlerAdapter:
 
         """
         log_record = _make_log_record(record)
-        if log_record.levelno < self._handler.level:
-            return
-        self._handler.handle(log_record)
+        if log_record.levelno >= self._handler.level:
+            self._handler.handle(log_record)
 
     # -- delegation -------------------------------------------------------
     # The forwarders below are part of the femtologging handler protocol, so
