@@ -4,7 +4,7 @@ use std::hint::black_box;
 
 use _femtologging_rs::{FemtoLevel, FemtoLogAdapter, get_logger_for_log_compat};
 use criterion::{Criterion, criterion_group, criterion_main};
-use log::{Level, Log, Metadata};
+use log::{Level, LevelFilter, Log, Metadata};
 use once_cell::sync::Lazy;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -83,6 +83,18 @@ fn bench_log_bridge(c: &mut Criterion) {
     group.bench_function("log_enabled_macro", |b| {
         b.iter(|| log::log_enabled!(target: "bench.rejected", Level::Debug));
     });
+
+    let level_change =
+        Python::attach(|py| set_logger_level(py, "bench.accepted", FemtoLevel::Warn));
+    if let Err(error) = level_change {
+        panic!("failed to disable Debug in the benchmark: {error}");
+    }
+    assert_eq!(
+        log::max_level(),
+        LevelFilter::Info,
+        "the expensive-argument case must be rejected by the macro prefilter",
+    );
+
     group.bench_function("disabled_debug_expensive_argument", |b| {
         b.iter(|| {
             log::debug!(
