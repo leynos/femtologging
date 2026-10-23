@@ -24,10 +24,11 @@ destinations such as email, syslog, files, or network sinks.
 Hard invariants that must hold throughout implementation. Violation requires
 escalation, not a workaround.
 
-- The wrapped handler's filters and its input-output (I/O) lock must be applied
-  exactly once for every accepted record, and not at all for a rejected record.
-  Concretely: `handle_record()` calls `logging.Handler.handle()` at most once,
-  and never calls `emit()` directly.
+- After translating a record, the handler-level threshold must gate entry to
+  `logging.Handler.handle()`. A level-rejected record must not enter the
+  handler's filter or emission path. A level-accepted record calls `handle()`
+  exactly once; its filters run once, and the I/O lock is acquired only if the
+  filters accept it. The adapter never calls `emit()` directly.
 - `logging.NOTSET` (numeric value `0`) semantics must be preserved. In stdlib,
   `Handler.setLevel(logging.NOTSET)` means "accept every record", because the
   `record.levelno >= handler.level` comparison is trivially true for a
@@ -159,8 +160,15 @@ Known uncertainties identified upfront, with mitigations.
   typecheck, tests (769 passed, 5 skipped; 66 snapshots passed), Markdown lint,
   and Mermaid validation passed. The original worktree's pytest teardown hang
   did not recur.
-- [ ] Commit the review-fix diff, then run CodeRabbit on that clean commit and
-  resolve any actionable findings.
+- [x] (2026-10-23) Reviewed commit `01d8e59` with `coderabbit review --agent`
+  after the full gates. The review returned eight findings, four of them
+  duplicates. The unique findings concerned missing NumPy-style field
+  documentation on re-exported TypedDicts and shared test dataclasses,
+  translation-versus-threshold ordering, and conditional filter/lock/emission
+  semantics. This diff corrects those descriptions and records field
+  requiredness.
+- [ ] Run the full gates on the current review-fix diff, commit it, then run
+  CodeRabbit on that clean commit and resolve any actionable findings.
 - [ ] Push the branch and open a draft pull request referencing the issue.
 
 ## Surprises & discoveries
@@ -252,9 +260,9 @@ standard library's `logging.Handler` subclasses instead expect an
 The relevant files are:
 
 - `femtologging/adapter.py` — the adapter itself. `StdlibHandlerAdapter`
-  wraps a `logging.Handler`, and `handle_record()` applies the wrapped
-  handler's severity gate before translating the femtologging dictionary into a
-  `logging.LogRecord` and dispatching it. The wrapped handler is stored as
+  wraps a `logging.Handler`, and `handle_record()` translates the femtologging
+  dictionary into a `logging.LogRecord`, applies the wrapped handler's severity
+  gate, then dispatches eligible records. The wrapped handler is stored as
   `self._handler`.
 - `femtologging/_adapter_record.py` — the record schema and translation,
   extracted when `adapter.py` reached the 400-line ceiling. It owns the
@@ -299,10 +307,10 @@ distinct:
 2. The wrapped stdlib handler threshold. `logging.Handler.setLevel(...)` sets
    `handler.level`. In the standard library this is enforced by
    `Logger.callHandlers()`, which checks `record.levelno >= handler.level`
-   before calling `handler.handle()`. `Handler.handle()` itself only applies
-   the handler's `filters` and its I/O lock; it never checks `level`. Because
-   the adapter calls `handler.handle()` directly, threshold (2) is currently
-   never enforced.
+   before calling `handler.handle()`. `Handler.handle()` itself applies the
+   handler's filters and acquires its I/O lock only when those filters accept
+   the record; it never checks `level`. The pre-change adapter called
+   `handler.handle()` directly without reproducing that threshold check.
 
 The term "wrapped handler" below always means the `logging.Handler` instance
 held by `StdlibHandlerAdapter` in `self._handler`.
@@ -332,7 +340,7 @@ Trace links:
 ```plaintext
 Issue#435-AC1 (reject below handler level)     -> EP-M1 -> TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold
 Issue#435-AC2 (preserve NOTSET semantics)      -> EP-M1 -> TestHandlerLevelThreshold::test_notset_handler_accepts_every_level
-Issue#435-AC3 (filters and lock exactly once)  -> EP-M1 -> TestHandleRecordFilterAndLockContract::test_handle_and_filter_counts_by_level
+Issue#435-AC3 (single handle/filter path)      -> EP-M1 -> TestHandleRecordFilterAndLockContract::test_handle_and_filter_counts_by_level
 Issue#435-AC4 (ERROR handler level matrix)     -> EP-M1 -> TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold
 Issue#435-AC5 (dynamic setLevel)               -> EP-M1 -> TestDynamicHandlerLevel::test_set_level_after_construction_applies
 Issue#435-AC6 (document both thresholds)       -> EP-M2 -> docs/users-guide.md, docs/v0-1-0-migration-guide.md
@@ -348,27 +356,28 @@ a single comparison whose correctness is established exhaustively by a finite
 partition, because the input domain (six femtologging levels crossed with a
 small set of handler levels) is small enough to enumerate completely.
 
-Axiom A1: in CPython's `logging`, `Handler.handle()` applies `self.filters` and
-acquires `self.lock`, and does *not* consult `self.level`. Repository-owned
-code depends on this interaction, so it is verified at the contract boundary
-rather than assumed from documentation alone — by asserting observable call
-counts and lock acquisition through the real stdlib types. The environment
-assumption is the repository's pinned interpreter (Python 3.12+) with the stdlib
-`logging` module unmodified; no monkeypatching of `logging` occurs in these
-tests.
+Axiom A1: in CPython's `logging`, `Handler.handle()` applies `self.filters`,
+does *not* consult `self.level`, and acquires `self.lock` only when its filters
+accept the record. Repository-owned code depends on this interaction, so it is
+verified at the contract boundary rather than assumed from documentation alone:
+tests count `handle()` and filter calls through real stdlib types. The lock
+path is exercised through the unmodified `Handler.handle()` implementation
+rather than counted directly. The environment assumption is the repository's
+pinned interpreter (Python 3.12+) with the stdlib `logging` module unmodified.
 
 Invariant I1 (level gate): for every constructed `LogRecord` with numeric level
-`L` and every wrapped-handler level `H`, the adapter emits the record if and
-only if `L >= H`; equivalently it never invokes `emit()` when `L < H`, and it
-never suppresses a record when `L >= H`. This is the complete specification of
-the change.
+`L` and every wrapped-handler level `H`, the adapter calls `handle()` exactly
+once if and only if `L >= H`. When `L < H`, it does not call `handle()`, so the
+handler's filters and emission path are not entered. Whether a level-accepted
+record is emitted remains subject to the handler's filters.
 
-Lemma L1 (ordering): the level test is evaluated before any other observable
-side effect of dispatch. Consequences: (a) the number of `Handler.handle()`
-invocations equals the number of accepted records; (b) `Handler.handle()`
-invocations for accepted records each apply the handler's filter chain exactly
-once; (c) the handler's I/O lock is acquired exactly once per accepted record
-and never for a rejected record.
+Lemma L1 (ordering): record translation precedes the handler-level test. The
+test then runs before any handler dispatch side effect. For `L < H`, no
+`Handler.handle()` call, filter call, lock acquisition, or emission occurs. For
+`L >= H`, `Handler.handle()` is called exactly once and applies the filter
+chain once. If the filters accept, the handler acquires its I/O lock and
+continues to emission; if they reject, the handler neither acquires the lock
+nor emits.
 
 Invariant I2 (live configuration): the gate reads `handler.level` at dispatch
 time, so for a fixed adapter instance a `setLevel()` call between two
@@ -415,14 +424,15 @@ reconstructing the adapter.
   as "no threshold", this row is the first to fail. The truthiness hazard is a
   real reachable defect, not a hypothetical one.
 
-- Obligation: L1, covering both the "exactly once" and the "not at all" halves.
-  Method: named tests using a counting handler subclass and a counting
-  `logging.Filter` subclass. Rationale: this is a side-effect-ordering claim,
-  not an input/output claim, so counting observed invocations through the real
-  stdlib objects is a direct and stronger observation than inspecting output
-  text. Domain: handler level `logging.ERROR`; one accepted record (`ERROR`),
-  one rejected record (`DEBUG`), and one record that passes the level gate but
-  is rejected by a filter. Artefact: `tests/test_stdlib_adapter_levels.py`,
+- Obligation: L1, covering one `handle()` call after a passing level gate and
+  no handler path after a rejected level gate. Method: named tests using a
+  counting handler subclass and a counting `logging.Filter` subclass.
+  Rationale: this is a side-effect-ordering claim, not an input/output claim,
+  so counting observed invocations through the real stdlib objects is a direct
+  and stronger observation than inspecting output text. Domain: handler level
+  `logging.ERROR`; one accepted record (`ERROR`), one rejected record
+  (`DEBUG`), and one record that passes the level gate but is rejected by a
+  filter. Artefact: `tests/test_stdlib_adapter_levels.py`,
   `TestHandleRecordFilterAndLockContract`. Evidence: after the folded-in
   rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
   count unchanged and emits nothing; an `ERROR` record increments both by
@@ -479,9 +489,10 @@ files and runs the full commit gates.
 ### Milestone EP-M1: the level gate is enforced and proven
 
 Outcome: `StdlibHandlerAdapter` rejects records below the wrapped handler's
-live level, accepts everything else, and applies filters and the lock exactly
-once to accepted records. The repository is coherent on its own: the adapter
-and its tests agree.
+live level and calls `handle()` once for records at or above it. The handler's
+filters run once; a filter rejection prevents both lock acquisition and
+emission. The repository is coherent on its own: the adapter and its tests
+agree.
 
 Changes:
 
@@ -490,8 +501,10 @@ Changes:
   `log_record.levelno < self._handler.level`. Update the class docstring and the
   `handle_record()` docstring to state that the adapter honours both the
   femtologging logger threshold and the wrapped handler's level, that the
-  comparison happens before `handle()` runs filters and takes the I/O lock, and
-  that `setLevel()` changes apply to the next record.
+  comparison happens after record translation but before `handle()` runs the
+  filters, and that `setLevel()` changes apply to the next record. The
+  `handle()` call applies filters once; its lock is acquired only if they
+  accept.
 - `tests/test_stdlib_adapter_levels.py`: add `TestHandlerLevelThreshold` with
   the six-row level matrix against an `ERROR` handler under a `"TRACE"` logger,
   and the `NOTSET` acceptance test.
@@ -699,11 +712,12 @@ class StdlibHandlerAdapter:
     def handle_record(self, record: FemtoRecord) -> None:
         """Translate a femtologging record and dispatch it if the handler accepts it.
 
-        Records whose mapped stdlib level is below the wrapped handler's
-        ``level`` are discarded before ``handle()`` runs, matching
-        ``logging.Logger.callHandlers()``.  Accepted records are passed to
-        ``self._handler.handle()`` exactly once, which applies the handler's
-        filters and I/O lock.
+        The record is translated before its mapped stdlib level is compared
+        with the wrapped handler's ``level``, matching the gate in
+        ``logging.Logger.callHandlers()``. Records below the level are
+        discarded before ``handle()``. A record that passes is passed to
+        ``self._handler.handle()`` exactly once, which applies filters once and
+        acquires the I/O lock only if those filters accept it.
         """
 ```
 

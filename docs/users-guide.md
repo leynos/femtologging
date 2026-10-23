@@ -505,7 +505,8 @@ incompatible with femtologging's `handle_record(dict)` protocol.
 `StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
 subclass, translates femtologging record dicts into `logging.LogRecord`
 instances, and delegates to the wrapped handler's `handle()` method so that
-attached filters and I/O locking apply.
+attached filters apply. The handler acquires its I/O lock only when those
+filters accept a record.
 
 ```python
 import logging
@@ -564,9 +565,12 @@ level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50). A
 custom `TRACE` level name is registered with stdlib's `logging` module so that
 formatters render it as `TRACE` rather than `Level 5`.
 
-Accepted records are passed through the wrapped handler's `handle()` once,
-which applies its filters and its I/O lock.  Records discarded by the level
-comparison never reach the handler at all, so its filters do not run for them.
+A record that passes the level comparison is passed through the wrapped
+handler's `handle()` once, which applies its filters once. If the filters
+accept the record, the handler acquires its I/O lock and emits it. A filter can
+reject a level-accepted record before emission or lock acquisition. Records
+discarded by the level comparison never enter `handle()`, so their filters do
+not run.
 
 The handler-level restrictions described under
 [dictConfig](#dictconfig-restricted-compatibility-layer) and
