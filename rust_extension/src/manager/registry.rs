@@ -22,6 +22,13 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "log-compat")]
+use std::sync::Arc;
+#[cfg(feature = "log-compat")]
+use std::sync::atomic::{AtomicU8, Ordering};
+
+#[cfg(feature = "log-compat")]
+use crate::level::FemtoLevel;
 
 #[cfg(feature = "python")]
 mod config;
@@ -64,6 +71,61 @@ pub(super) struct Manager {
 
 /// Process-wide registry lock for logger identities and runtime configuration.
 pub(super) static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
+
+/// Python-free mirror of registered logger thresholds.
+///
+/// The `log` bridge's enablement check must not attach to Python, so each
+/// registered logger's shared level handle is indexed here when the registry
+/// inserts it. The lock is always taken after [`MANAGER`] when both are held,
+/// which keeps the registry writer's ordering acyclic.
+#[cfg(feature = "log-compat")]
+static LOGGER_LEVEL_INDEX: Lazy<RwLock<HashMap<String, Arc<AtomicU8>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Add a registered logger's shared threshold to the Python-free index.
+///
+/// # Examples
+///
+/// ```ignore
+/// index_logger_level(py, "service.worker", &logger);
+/// ```
+#[cfg(feature = "log-compat")]
+pub(super) fn index_logger_level(py: Python<'_>, name: &str, logger: &Py<FemtoLogger>) {
+    let level = logger.borrow(py).level_handle();
+    LOGGER_LEVEL_INDEX.write().insert(name.to_string(), level);
+}
+
+/// Return a registered logger's live threshold without accessing Python.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(registered_logger_level("missing"), None);
+/// ```
+#[cfg(feature = "log-compat")]
+pub(crate) fn registered_logger_level(name: &str) -> Option<FemtoLevel> {
+    LOGGER_LEVEL_INDEX
+        .read()
+        .get(name)
+        .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+}
+
+/// Snapshot registered levels for conservative facade maximum calculation.
+///
+/// # Examples
+///
+/// ```ignore
+/// let levels = registered_logger_levels();
+/// assert!(levels.iter().all(|level| *level <= FemtoLevel::Critical));
+/// ```
+#[cfg(feature = "log-compat")]
+pub(crate) fn registered_logger_levels() -> Vec<FemtoLevel> {
+    LOGGER_LEVEL_INDEX
+        .read()
+        .values()
+        .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+        .collect()
+}
 
 /// Clear the Python-specific runtime configuration while preserving loggers.
 #[cfg(feature = "python")]
@@ -208,6 +270,8 @@ pub(crate) fn registry_has_room_for_test() -> bool {
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key(ROOT_LOGGER_NAME) {
         let root = Py::new(py, FemtoLogger::with_parent(ROOT_LOGGER_NAME.into(), None)?)?;
+        #[cfg(feature = "log-compat")]
+        index_logger_level(py, ROOT_LOGGER_NAME, &root);
         mgr.loggers.insert(ROOT_LOGGER_NAME.to_string(), root);
     }
     Ok(())
@@ -275,11 +339,15 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
             py,
             FemtoLogger::with_parent(candidate.clone(), parent_name)?,
         )?;
+        #[cfg(feature = "log-compat")]
+        index_logger_level(py, &candidate, &logger);
         mgr.loggers.insert(candidate, logger);
     }
 
     let parent_name = calculate_parent_name(name);
     let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name)?)?;
+    #[cfg(feature = "log-compat")]
+    index_logger_level(py, name, &logger);
     mgr.loggers.insert(name.to_string(), logger.clone_ref(py));
     Ok(logger)
 }
@@ -369,7 +437,13 @@ pub fn reset_manager() {
     let loggers = {
         let mut mgr = MANAGER.write();
         clear_runtime_state(&mut mgr);
+        #[cfg(feature = "log-compat")]
+        LOGGER_LEVEL_INDEX.write().clear();
         std::mem::take(&mut mgr.loggers)
     };
+    // Dropping the loggers outside the registry lock may wait for queued
+    // records, so refresh the facade maximum only after that drain.
     drop(loggers);
+    #[cfg(feature = "log-compat")]
+    crate::log_compat::refresh_global_max_level();
 }

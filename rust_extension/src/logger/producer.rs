@@ -117,6 +117,12 @@ impl FemtoLogger {
         u8::from(level) >= self.level.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Clone the level handle so the manager can index it without Python.
+    #[cfg(feature = "log-compat")]
+    pub(crate) fn level_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU8> {
+        std::sync::Arc::clone(&self.level)
+    }
+
     /// Return the logger's current minimum level.
     ///
     /// This method is thread-safe; the level is stored in an `AtomicU8` and
@@ -131,7 +137,12 @@ impl FemtoLogger {
     /// the only way to set it is through `set_level`, which accepts a typed
     /// `FemtoLevel` value.
     pub(super) fn load_level(&self) -> FemtoLevel {
-        match self.level.load(std::sync::atomic::Ordering::Relaxed) {
+        Self::level_from_raw(self.level.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Decode the logger's validated atomic representation.
+    pub(crate) fn level_from_raw(level: u8) -> FemtoLevel {
+        match level {
             0 => FemtoLevel::Trace,
             1 => FemtoLevel::Debug,
             2 => FemtoLevel::Info,

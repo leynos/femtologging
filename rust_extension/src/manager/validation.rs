@@ -121,6 +121,23 @@ pub fn validate_logger_name(name: &str) -> PyResult<()> {
     Ok(())
 }
 
+/// Return whether `name` would be accepted as a registry key.
+///
+/// The `log` bridge runs this on every enablement check, where the reason for a
+/// refusal is not reported and no error object is wanted. It is defined in
+/// terms of [`validate_logger_name`] so the bridge and the registry can never
+/// disagree about which targets are addressable.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(is_valid_logger_name("api.v1"));
+/// assert!(!is_valid_logger_name("api..v1"));
+/// ```
+pub(crate) fn is_valid_logger_name(name: &str) -> bool {
+    validate_logger_name(name).is_ok()
+}
+
 /// Return whether `ch` can end a line for a line-oriented consumer.
 ///
 /// Broader than [`char::is_ascii_control`]. C1 controls (`U+0080`–`U+009F`)

@@ -30,6 +30,40 @@ fn level_mapping_is_direct(#[case] level: log::Level, #[case] expected: FemtoLev
     assert_eq!(FemtoLevel::from(level), expected);
 }
 
+#[rstest]
+#[case::trace(FemtoLevel::Trace, log::LevelFilter::Trace)]
+#[case::debug(FemtoLevel::Debug, log::LevelFilter::Debug)]
+#[case::info(FemtoLevel::Info, log::LevelFilter::Info)]
+#[case::warn(FemtoLevel::Warn, log::LevelFilter::Warn)]
+#[case::error(FemtoLevel::Error, log::LevelFilter::Error)]
+#[case::critical(FemtoLevel::Critical, log::LevelFilter::Off)]
+fn femto_threshold_maps_to_its_broadest_rust_level(
+    #[case] level: FemtoLevel,
+    #[case] expected: log::LevelFilter,
+) {
+    assert_eq!(map_femto_to_log_filter(level), expected);
+}
+
+#[rstest]
+fn conservative_maximum_includes_default_and_live_logger_levels() {
+    assert_eq!(
+        conservative_max_level_from(std::iter::empty()),
+        log::LevelFilter::Info,
+    );
+    assert_eq!(
+        conservative_max_level_from([FemtoLevel::Warn].into_iter()),
+        log::LevelFilter::Info,
+    );
+    assert_eq!(
+        conservative_max_level_from([FemtoLevel::Debug].into_iter()),
+        log::LevelFilter::Debug,
+    );
+    assert_eq!(
+        conservative_max_level_from([FemtoLevel::Critical].into_iter()),
+        log::LevelFilter::Info,
+    );
+}
+
 #[fixture]
 fn log_max_level() {
     static INIT: Once = Once::new();
@@ -157,4 +191,91 @@ fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String)
         assert_eq!(records.len(), 1, "only WARN should pass threshold");
         assert_eq!(records[0].level_str(), "WARN");
     });
+}
+
+#[rstest]
+fn enabled_uses_the_registered_target_threshold(_log_max_level: (), unique_logger_name: String) {
+    let adapter = FemtoLogAdapter;
+
+    Python::attach(|py| {
+        let logger = manager::get_logger(py, &unique_logger_name).expect("logger created");
+        logger.borrow(py).set_level(FemtoLevel::Warn);
+    });
+
+    for (level, expected) in [
+        (log::Level::Trace, false),
+        (log::Level::Debug, false),
+        (log::Level::Info, false),
+        (log::Level::Warn, true),
+        (log::Level::Error, true),
+    ] {
+        let metadata = Metadata::builder()
+            .level(level)
+            .target(&unique_logger_name)
+            .build();
+        assert_eq!(adapter.enabled(&metadata), expected, "level {level}");
+    }
+}
+
+#[rstest]
+fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
+    _log_max_level: (),
+    unique_logger_name: String,
+) {
+    let adapter = FemtoLogAdapter;
+    let rust_target = unique_logger_name.replace('.', "::");
+
+    Python::attach(|py| {
+        let logger = manager::get_logger(py, &unique_logger_name).expect("logger created");
+        logger.borrow(py).set_level(FemtoLevel::Warn);
+    });
+
+    let normalized_metadata = Metadata::builder()
+        .level(log::Level::Debug)
+        .target(&rust_target)
+        .build();
+    assert!(!adapter.enabled(&normalized_metadata));
+
+    let unknown_target = format!("{unique_logger_name}.missing");
+    assert_eq!(manager::registered_logger_level(&unknown_target), None);
+    let unknown_metadata = Metadata::builder()
+        .level(log::Level::Info)
+        .target(&unknown_target)
+        .build();
+    assert!(adapter.enabled(&unknown_metadata));
+    assert_eq!(manager::registered_logger_level(&unknown_target), None);
+}
+
+#[rstest]
+fn enabled_uses_root_for_invalid_targets_and_default_when_root_is_absent(_log_max_level: ()) {
+    let adapter = FemtoLogAdapter;
+    manager::reset_manager();
+
+    let invalid_info = Metadata::builder()
+        .level(log::Level::Info)
+        .target("invalid..target")
+        .build();
+    assert!(adapter.enabled(&invalid_info));
+    assert_eq!(manager::registered_logger_level("root"), None);
+
+    Python::attach(|py| {
+        let root = manager::get_logger(py, "root").expect("root logger created");
+        root.borrow(py).set_level(FemtoLevel::Warn);
+    });
+
+    let invalid_debug = Metadata::builder()
+        .level(log::Level::Debug)
+        .target("invalid..target")
+        .build();
+    let invalid_warn = Metadata::builder()
+        .level(log::Level::Warn)
+        .target("invalid..target")
+        .build();
+    assert!(!adapter.enabled(&invalid_debug));
+    assert!(!adapter.enabled(&invalid_info));
+    assert!(adapter.enabled(&invalid_warn));
+    assert_eq!(
+        manager::registered_logger_level("root"),
+        Some(FemtoLevel::Warn)
+    );
 }

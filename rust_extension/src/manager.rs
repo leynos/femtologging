@@ -71,6 +71,13 @@ pub(crate) use registry::named_logger_count_for_test;
 #[cfg(feature = "log-compat")]
 pub(crate) use registry::flush_all_handlers;
 
+// The `log` bridge reads live thresholds and validates a target without
+// taking the manager lock or attaching to Python.
+#[cfg(feature = "log-compat")]
+pub(crate) use registry::{registered_logger_level, registered_logger_levels};
+#[cfg(feature = "log-compat")]
+pub(crate) use validation::is_valid_logger_name;
+
 #[cfg(test)]
 mod manager_tests;
 #[cfg(all(test, feature = "python"))]

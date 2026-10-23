@@ -16,10 +16,10 @@
 #[cfg(feature = "python")]
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 use crate::formatter::{DefaultFormatter, SharedFormatter};
-use crate::level::FemtoLevel;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::RwLock;
 
+use super::DEFAULT_LOGGER_LEVEL;
 use super::FemtoLogger;
 use super::HandlerAttachment;
 #[cfg(not(loom))]
@@ -283,7 +283,9 @@ impl FemtoLogger {
             name,
             parent,
             formatter: SharedFormatter::new(DefaultFormatter),
-            level: std::sync::atomic::AtomicU8::new(u8::from(FemtoLevel::Info)),
+            level: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(u8::from(
+                DEFAULT_LOGGER_LEVEL,
+            ))),
             propagate: std::sync::atomic::AtomicBool::new(true),
             handlers: std::sync::Arc::new(RwLock::new(Vec::<HandlerAttachment>::new())),
             filters: std::sync::Arc::new(RwLock::new(Vec::new())),
