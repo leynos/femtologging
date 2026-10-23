@@ -12,12 +12,12 @@ Status: DRAFT
 A femtologging handler that wraps a Python standard library (stdlib)
 `logging.Handler` currently forwards every record the femtologging logger
 accepts, ignoring the wrapped handler's own severity threshold. After this
-change, an operator who writes
-`StdlibHandlerAdapter(...). _handler.setLevel(logging.ERROR)` will see only
-`ERROR` and `CRITICAL` records reach that handler, exactly as they would when
-attaching the same handler to a stdlib `Logger`. The visible outcome is that
-verbose low-severity records no longer leak into sensitive, expensive, or
-high-severity-only destinations such as email, syslog, files, or network sinks.
+change, an operator who sets `logging.ERROR` on a stdlib handler before
+wrapping it with `StdlibHandlerAdapter` will see only `ERROR` and `CRITICAL`
+records reach that handler, exactly as they would when attaching the same
+handler to a stdlib `Logger`. The visible outcome is that verbose low-severity
+records no longer leak into sensitive, expensive, or high-severity-only
+destinations such as email, syslog, files, or network sinks.
 
 ## Constraints
 
@@ -73,7 +73,7 @@ Known uncertainties identified upfront, with mitigations.
 
 - Risk: existing tests may assert the current (permissive) behaviour, so the
   change could break an unrelated suite. Severity: medium. Likelihood:
-  low-medium. Mitigation: run the two adapter test modules plus the full
+  low-medium. Mitigation: run the three adapter test modules plus the full
   `make test` suite; treat any newly failing test as evidence to investigate
   rather than to weaken.
 - Risk: end-to-end adapter tests run through a worker thread and may be timing
@@ -137,8 +137,21 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-23 00:36Z) Ran the full gates sequentially: formatting check,
   lint, type check, full tests (769 passed, 5 skipped, 66 snapshots passed, one
   existing warning), Markdown lint, and Mermaid validation all passed.
-- [ ] Run `coderabbit review --agent` on the committed candidate and clear any
-  concerns.
+- [x] (2026-10-23 00:43Z) Ran `coderabbit review --agent` on commit `076bd39`.
+  It reported six findings: duplicate level-gate optimization suggestions,
+  duplicated test helper, a private-attribute example, spelling, and stale
+  module/test references. The explicit record-construction-first requirement
+  governs the optimization suggestions; the other four findings have been
+  corrected. The shared `CapturingHandler` now serves both test modules, and
+  the plan's examples, spelling, module references, and performance note match
+  the implementation.
+- [x] (2026-10-23 01:40Z) Reran all six gates sequentially after those fixes:
+  `check-fmt`, `lint`, `typecheck`, `test` (769 passed, 5 skipped; 66 snapshots
+  passed; one existing `PytestAssertRewriteWarning`), `markdownlint` (0
+  errors), and `nixie` (all diagrams validated).
+- [ ] Commit the review cleanup and run `coderabbit review --agent` against
+  that exact clean commit. Reconcile any new actionable findings before
+  publishing.
 - [ ] Push the branch and open a draft pull request referencing the issue.
 
 ## Surprises & discoveries
@@ -205,6 +218,12 @@ Known uncertainties identified upfront, with mitigations.
   `StdlibHandlerAdapter` section rather than adding a new `###` heading.
   Rationale: preserving heading text preserves the migration guide's existing
   cross-reference anchor. Date/Author: 2026-10-14, implementing agent.
+- Decision: Keep `_make_log_record(record)` as the first operation in
+  `handle_record()` before comparing `LogRecord.levelno` with the wrapped
+  handler's level. Rationale: the accepted implementation requirement
+  explicitly specifies that order and gates on the constructed record; the
+  comparison adds one integer check to the existing translation path.
+  Date/Author: 2026-10-23, implementing agent.
 
 ## Outcomes & retrospective
 
@@ -233,8 +252,10 @@ The relevant files are:
   `FemtoRecord`/`Frame`/`Metadata`/`ExcInfo`/`StackInfo` TypedDicts, the level
   tables, `_stdlib_levelno()` (which maps the femtologging level to a stdlib
   numeric level: TRACE 5, DEBUG 10, INFO 20, WARN 30, ERROR 40, CRITICAL 50),
-  and the `_make_log_record()` builder. `femtologging.adapter` re-exports all
-  of these, so it remains the single public import site.
+  and the `_make_log_record()` builder. `femtologging.adapter` re-exports the
+  five TypedDicts and `TRACE_LEVEL_NUM`; it also imports `_ensure_trace_level`
+  and `_make_log_record()` for internal use. The level tables and
+  `_stdlib_levelno()` remain private to this module.
 - `tests/stdlib_adapter_support.py` — the vocabulary the three adapter suites
   share: the `LevelCase`/`LogRequest`/`HandlerSetup`/`HandlerLevelCase`
   dataclasses, the `AdapterProbe` harness, the `CapturingHandler` /
@@ -352,7 +373,7 @@ reconstructing the adapter.
   boundary, plus `CRITICAL` above it), so enumeration is exhaustive rather than
   a sample. Domain: handler level `logging.ERROR`; logger level `"TRACE"`;
   record levels `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
-  Artefact: `tests/test_stdlib_adapter.py`,
+  Artefact: `tests/test_stdlib_adapter_levels.py`,
   `TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold`.
   Evidence: before the change, every row emits and the five reject rows fail;
   after the change, all six rows pass. Discharge condition: the five
@@ -375,7 +396,7 @@ reconstructing the adapter.
   named regression test is the proportionate guard. Domain: handler level
   `logging.NOTSET`; records at `TRACE` (stdlib level 5, the lowest mapped
   level) and `INFO`; logger thresholds `"TRACE"` and default. Artefact:
-  `tests/test_stdlib_adapter.py`,
+  `tests/test_stdlib_adapter_levels.py`,
   `TestHandlerLevelThreshold::test_notset_handler_accepts_every_level`, and
   `tests/test_stdlib_adapter_records.py`,
   `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
@@ -392,8 +413,7 @@ reconstructing the adapter.
   stdlib objects is a direct and stronger observation than inspecting output
   text. Domain: handler level `logging.ERROR`; one accepted record (`ERROR`),
   one rejected record (`DEBUG`), and one record that passes the level gate but
-  is rejected by a filter. Artefact: `tests/test_stdlib_adapter.py` (or
-  `tests/test_stdlib_adapter_records.py`),
+  is rejected by a filter. Artefact: `tests/test_stdlib_adapter_levels.py`,
   `TestHandleRecordFilterAndLockContract`. Evidence: after the folded-in
   rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
   count unchanged and emits nothing; an `ERROR` record increments both by
@@ -431,12 +451,15 @@ reconstructing the adapter.
 The change is small enough to be a single behavioural unit, so there are two
 implementation milestones with a documentation milestone alongside.
 
-Stage A (understanding) is complete: the defect, the two test modules, and the
-two documentation sections have been read, and the CPython reference behaviour
-(`Logger.callHandlers()`) has been identified as the specification to match.
+Stage A (understanding) is complete: the defect, the three adapter test
+modules, and the two documentation sections have been read, and the CPython
+reference behaviour (`Logger.callHandlers()`) has been identified as the
+specification to match.
 
-Stage B (red) adds the new tests to the two existing test modules and runs them
-against the unmodified adapter to confirm they fail for the intended reason.
+Stage B (red) adds the threshold matrix and filter-contract tests to
+`tests/test_stdlib_adapter_levels.py`, and the dynamic `setLevel()` test to
+`tests/test_stdlib_adapter_records.py`. Run them against the unmodified adapter
+to confirm they fail for the intended reason.
 
 Stage C (green) makes the smallest production change that satisfies the tests:
 one guard in `StdlibHandlerAdapter.handle_record()`.
@@ -460,15 +483,18 @@ Changes:
   femtologging logger threshold and the wrapped handler's level, that the
   comparison happens before `handle()` runs filters and takes the I/O lock, and
   that `setLevel()` changes apply to the next record.
-- `tests/test_stdlib_adapter.py`: add `TestHandlerLevelThreshold` with the
-  six-row level matrix against an `ERROR` handler under a `"TRACE"` logger, and
-  the `NOTSET` acceptance test.
+- `tests/test_stdlib_adapter_levels.py`: add `TestHandlerLevelThreshold` with
+  the six-row level matrix against an `ERROR` handler under a `"TRACE"` logger,
+  and the `NOTSET` acceptance test.
 - `tests/test_stdlib_adapter_records.py`: add `TestDynamicHandlerLevel` with
   the synchronous `setLevel()` sequence. This module is chosen for the dynamic
   test because `_emit_femto_record()` calls `handle_record()` directly, which
   makes the sequence deterministic with no worker-thread timing involvement.
-- Add a counting handler and a counting filter helper where the call-count
-  contract test lives.
+- `tests/stdlib_adapter_support.py`: share `CapturingHandler`,
+  `CountingHandler`, and counting/rejecting filter helpers with the adapter
+  test modules.
+- `tests/test_stdlib_adapter_levels.py`: keep the filter/`handle()` call-count
+  contract test beside the level threshold cases.
 
 Acceptance evidence: the two focused test modules pass, and the red run for the
 same tests before the production change is recorded in `Artefacts and notes`.
@@ -552,14 +578,14 @@ Step 2 — add the new tests, then run them *before* touching
 `femtologging/adapter.py`. Expect failures on the below-threshold rows:
 
 ```plaintext
-uv run pytest tests/test_stdlib_adapter.py tests/test_stdlib_adapter_records.py -v
+uv run pytest tests/test_stdlib_adapter_levels.py tests/test_stdlib_adapter_records.py -v
 ```
 
 Step 3 — apply the guard in `femtologging/adapter.py` and re-run the same two
 modules. Expect all tests to pass:
 
 ```plaintext
-uv run pytest tests/test_stdlib_adapter.py tests/test_stdlib_adapter_records.py -v
+uv run pytest tests/test_stdlib_adapter_levels.py tests/test_stdlib_adapter_records.py -v
 ```
 
 Step 4 — commit the production change and its tests as one atomic commit.
@@ -602,9 +628,11 @@ Quality criteria:
   in `Verification plan`; Axiom A1 is exercised at its real boundary.
 - Lint/typecheck: `make check-fmt`, `make lint` and `make typecheck` all pass
   with no warnings.
-- Performance: not applicable; the change adds one integer comparison and one
-  attribute read per dispatched record on a path that already builds a
-  `LogRecord`.
+- Performance: the guard adds one integer comparison and one attribute read
+  per dispatched record on the existing `LogRecord` construction path. The
+  comparison intentionally follows `_make_log_record(record)` because the
+  accepted implementation contract makes record construction the first step;
+  rejected records therefore still incur the existing translation cost.
 - Security: none; the change strictly reduces the set of records leaving the
   process.
 
@@ -670,10 +698,10 @@ class StdlibHandlerAdapter:
         """
 ```
 
-`FemtoRecord` is the existing `TypedDict` in `femtologging/adapter.py`; the
-method keeps returning `None`, and rejection is signalled by the absence of a
-side effect rather than by an exception or a return value, exactly as
-`logging.Logger` does.
+`FemtoRecord` is the existing `TypedDict` in `femtologging/_adapter_record.py`
+and is re-exported by `femtologging/adapter.py`; the method keeps returning
+`None`, and rejection is signalled by the absence of a side effect rather than
+by an exception or a return value, exactly as `logging.Logger` does.
 
 ## Revision note
 
