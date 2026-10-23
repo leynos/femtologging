@@ -17,7 +17,7 @@ import pytest
 
 import femtologging
 from femtologging import FemtoLogger, StdlibHandlerAdapter
-from tests.stdlib_adapter_support import CapturingHandler
+from tests.stdlib_adapter_support import CapturingHandler, emitted_messages
 
 if typ.TYPE_CHECKING:
     from femtologging.adapter import FemtoRecord
@@ -227,37 +227,29 @@ class TestDynamicHandlerLevel:
         adapter = StdlibHandlerAdapter(capturing)
 
         adapter.handle_record({"level": "INFO", "message": "before"})
-        assert [record.getMessage() for record in capturing.records] == ["before"], (
-            "a NOTSET handler should accept INFO: "
-            f"{[r.getMessage() for r in capturing.records]!r}"
+        assert emitted_messages(capturing) == ["before"], (
+            f"a NOTSET handler should accept INFO: {emitted_messages(capturing)!r}"
         )
 
         capturing.setLevel(logging.ERROR)
         adapter.handle_record({"level": "INFO", "message": "tightened-out"})
-        assert [record.getMessage() for record in capturing.records] == ["before"], (
+        assert emitted_messages(capturing) == ["before"], (
             "raising the handler level to ERROR should discard the INFO record: "
-            f"{[r.getMessage() for r in capturing.records]!r}"
+            f"{emitted_messages(capturing)!r}"
         )
 
         adapter.handle_record({"level": "ERROR", "message": "tightened-in"})
-        assert [record.getMessage() for record in capturing.records] == [
-            "before",
-            "tightened-in",
-        ], (
+        assert emitted_messages(capturing) == ["before", "tightened-in"], (
             "an ERROR record should pass the raised handler level: "
-            f"{[r.getMessage() for r in capturing.records]!r}"
+            f"{emitted_messages(capturing)!r}"
         )
 
         capturing.setLevel(logging.NOTSET)
         adapter.handle_record({"level": "TRACE", "message": "relaxed"})
 
-        assert [record.getMessage() for record in capturing.records] == [
-            "before",
-            "tightened-in",
-            "relaxed",
-        ], (
+        assert emitted_messages(capturing) == ["before", "tightened-in", "relaxed"], (
             "returning the handler level to NOTSET should re-admit TRACE: "
-            f"{[r.getMessage() for r in capturing.records]!r}"
+            f"{emitted_messages(capturing)!r}"
         )
         assert capturing.records[-1].levelno == 5, (
             f"TRACE should map to stdlib level 5: {capturing.records[-1].levelno!r}"

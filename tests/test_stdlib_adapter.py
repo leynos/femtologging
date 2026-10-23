@@ -26,7 +26,6 @@ from tests.stdlib_adapter_support import (
     HandlerSetup,
     LevelCase,
     LogRequest,
-    build_adapter_probe,
 )
 
 if typ.TYPE_CHECKING:
@@ -57,12 +56,6 @@ def _assert_eventually(
 ) -> None:
     """Assert that *predicate* succeeds before the monotonic deadline."""
     assert _wait_for(predicate, timeout), message
-
-
-@pytest.fixture
-def probe() -> AdapterProbe:
-    """Return an adapter wrapping a StreamHandler over a fresh StringIO."""
-    return build_adapter_probe()
 
 
 class TestStdlibHandlerAdapterConstruction:
