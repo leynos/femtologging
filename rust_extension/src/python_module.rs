@@ -135,6 +135,8 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
 pub(crate) fn register_log_compat_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::log_compat::setup_rust_logging, m)?)?;
     m.add_function(wrap_pyfunction!(crate::log_compat::emit_rust_log, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_enabled, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_max_level, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::log_compat::install_test_global_rust_logger,
         m

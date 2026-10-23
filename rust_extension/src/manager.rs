@@ -1,15 +1,20 @@
 //! Global registry mapping logger names to instances.
 //!
-//! Access is guarded by a `parking_lot::RwLock` and must only occur while the
-//! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
+//! The `Py<FemtoLogger>` registry is guarded by a `parking_lot::RwLock` and is
+//! accessed while the Python GIL is held. The log bridge reads a separate
+//! threshold index without the GIL.
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::{HashMap, hash_map::Entry};
+#[cfg(feature = "log-compat")]
+use std::sync::atomic::{AtomicU8, Ordering};
 #[cfg(feature = "python")]
 use std::{collections::BTreeMap, sync::Arc};
 
+#[cfg(feature = "log-compat")]
+use crate::level::FemtoLevel;
 use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
@@ -61,6 +66,10 @@ struct Manager {
 
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+#[cfg(feature = "log-compat")]
+static LOGGER_LEVEL_INDEX: Lazy<RwLock<HashMap<String, Arc<AtomicU8>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 #[cfg(feature = "python")]
 fn clear_runtime_state(mgr: &mut Manager) {
     mgr.runtime = RuntimeStateSnapshot::default();
@@ -69,20 +78,51 @@ fn clear_runtime_state(mgr: &mut Manager) {
 #[cfg(not(feature = "python"))]
 fn clear_runtime_state(_mgr: &mut Manager) {}
 
-/// Return `true` when the provided name is not a valid logger identifier.
+/// Return whether `name` is a valid dotted logger identifier.
 ///
 /// A name is considered invalid when it is empty, begins or ends with a dot,
 /// or contains consecutive dots which would create empty segments.
+pub(crate) fn is_valid_logger_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.ends_with('.')
+        && !name.split('.').any(str::is_empty)
+}
+
 fn is_invalid_logger_name(name: &str) -> bool {
-    name.is_empty()
-        || name.starts_with('.')
-        || name.ends_with('.')
-        || name.split('.').any(|s| s.is_empty())
+    !is_valid_logger_name(name)
+}
+
+#[cfg(feature = "log-compat")]
+fn index_logger_level(py: Python<'_>, name: &str, logger: &Py<FemtoLogger>) {
+    let level = logger.borrow(py).level_handle();
+    LOGGER_LEVEL_INDEX.write().insert(name.to_string(), level);
+}
+
+/// Return a registered logger's live threshold without accessing Python.
+#[cfg(feature = "log-compat")]
+pub(crate) fn registered_logger_level(name: &str) -> Option<FemtoLevel> {
+    LOGGER_LEVEL_INDEX
+        .read()
+        .get(name)
+        .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+}
+
+/// Snapshot registered levels for conservative facade maximum calculation.
+#[cfg(feature = "log-compat")]
+pub(crate) fn registered_logger_levels() -> Vec<FemtoLevel> {
+    LOGGER_LEVEL_INDEX
+        .read()
+        .values()
+        .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+        .collect()
 }
 
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
         let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
+        #[cfg(feature = "log-compat")]
+        index_logger_level(py, "root", &root);
         mgr.loggers.insert("root".to_string(), root);
     }
     Ok(())
@@ -110,6 +150,8 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
         Entry::Vacant(v) => {
             let parent_name = calculate_parent_name(name);
             let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
+            #[cfg(feature = "log-compat")]
+            index_logger_level(py, name, &logger);
             v.insert(logger.clone_ref(py));
             Ok(logger)
         }
@@ -146,7 +188,7 @@ pub(crate) fn stage_loggers<'a>(
     names
         .into_iter()
         .map(|name| {
-            if is_invalid_logger_name(name) {
+            if !is_valid_logger_name(name) {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "logger name cannot be empty, start or end with '.', or contain consecutive dots",
                 ));
@@ -170,7 +212,7 @@ pub(crate) fn commit_staged_loggers(
     staged: BTreeMap<String, Py<FemtoLogger>>,
 ) -> BTreeMap<String, Py<FemtoLogger>> {
     let mut mgr = MANAGER.write();
-    staged
+    let committed = staged
         .into_iter()
         .map(|(name, logger)| {
             let committed = mgr
@@ -178,9 +220,15 @@ pub(crate) fn commit_staged_loggers(
                 .entry(name.clone())
                 .or_insert(logger)
                 .clone_ref(py);
+            #[cfg(feature = "log-compat")]
+            index_logger_level(py, &name, &committed);
             (name, committed)
         })
-        .collect()
+        .collect();
+    drop(mgr);
+    #[cfg(feature = "log-compat")]
+    crate::log_compat::refresh_global_max_level();
+    committed
 }
 
 #[cfg(feature = "python")]
@@ -234,148 +282,13 @@ pub fn reset_manager() {
     let mut mgr = MANAGER.write();
     mgr.loggers.clear();
     clear_runtime_state(&mut mgr);
+    #[cfg(feature = "log-compat")]
+    LOGGER_LEVEL_INDEX.write().clear();
+    drop(mgr);
+    #[cfg(feature = "log-compat")]
+    crate::log_compat::refresh_global_max_level();
 }
 
 #[cfg(test)]
-mod tests {
-    //! Tests for the logger manager registry.
-
-    #[cfg(feature = "python")]
-    mod lookup {
-        //! Tests for read-only logger lookup.
-
-        use pyo3::Python;
-        use serial_test::serial;
-
-        use super::super::{MANAGER, get_logger, lookup_existing_logger, reset_manager};
-
-        #[test]
-        #[serial]
-        fn lookup_existing_logger_does_not_create_missing_loggers() {
-            Python::attach(|py| {
-                reset_manager();
-
-                assert!(
-                    lookup_existing_logger(py, "missing").is_err(),
-                    "a missing logger should return an explicit lookup error",
-                );
-                assert!(
-                    MANAGER.read().loggers.is_empty(),
-                    "a failed lookup must not create root or the requested logger",
-                );
-
-                assert!(
-                    get_logger(py, "existing").is_ok(),
-                    "logger setup should succeed before the lookup",
-                );
-                assert!(
-                    lookup_existing_logger(py, "existing").is_ok(),
-                    "an existing logger should be returned by the read-only lookup",
-                );
-            });
-        }
-    }
-
-    #[cfg(feature = "log-compat")]
-    mod log_compat {
-        //! Tests for the log-compat bridge integration.
-
-        use std::any::Any;
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        use pyo3::Python;
-        use serial_test::serial;
-
-        use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
-        use crate::handler::{FemtoHandlerTrait, HandlerError};
-        use crate::log_record::FemtoLogRecord;
-
-        #[derive(Clone)]
-        struct FlushCountingHandler {
-            flushes: Arc<AtomicUsize>,
-        }
-
-        impl FemtoHandlerTrait for FlushCountingHandler {
-            fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-                Ok(())
-            }
-
-            fn flush(&self) -> bool {
-                self.flushes.fetch_add(1, Ordering::SeqCst);
-                true
-            }
-
-            fn as_any(&self) -> &dyn Any {
-                self
-            }
-        }
-
-        // `#[serial]` wraps the test bodies below, so the expect lint cannot
-        // recognise them as tests; errors are propagated instead.
-        #[test]
-        #[serial]
-        fn flush_all_handlers_flushes_loggers_with_handlers() -> pyo3::PyResult<()> {
-            Python::attach(|py| -> pyo3::PyResult<()> {
-                reset_manager();
-
-                let flushes = Arc::new(AtomicUsize::new(0));
-                let handler = Arc::new(FlushCountingHandler {
-                    flushes: flushes.clone(),
-                }) as Arc<dyn FemtoHandlerTrait>;
-
-                let logger_a = get_logger(py, "bridge.flush.a")?;
-                let logger_b = get_logger(py, "bridge.flush.b")?;
-                logger_a.borrow(py).add_handler(handler.clone())?;
-                logger_b.borrow(py).add_handler(handler.clone())?;
-
-                flush_all_handlers(py);
-
-                assert_eq!(
-                    flushes.load(Ordering::SeqCst),
-                    2,
-                    "flush should be invoked once per logger with handlers",
-                );
-                Ok(())
-            })
-        }
-
-        #[test]
-        #[serial]
-        fn flush_all_handlers_invokes_flush_once_per_registered_logger() -> pyo3::PyResult<()> {
-            Python::attach(|py| -> pyo3::PyResult<()> {
-                reset_manager();
-
-                // Populate the manager with multiple loggers (including parents).
-                let _ = get_logger(py, "bridge.flush.a")?;
-                let _ = get_logger(py, "bridge.flush.b")?;
-
-                let flushes = Arc::new(AtomicUsize::new(0));
-                let handler = Arc::new(FlushCountingHandler {
-                    flushes: flushes.clone(),
-                }) as Arc<dyn FemtoHandlerTrait>;
-
-                let loggers = {
-                    let mgr = MANAGER.read();
-                    mgr.loggers
-                        .values()
-                        .map(|logger| logger.clone_ref(py))
-                        .collect::<Vec<_>>()
-                };
-
-                for logger in &loggers {
-                    logger.borrow(py).add_handler(handler.clone())?;
-                }
-
-                flush_all_handlers(py);
-
-                assert_eq!(
-                    flushes.load(Ordering::SeqCst),
-                    loggers.len(),
-                    "flush should be invoked once per registered logger",
-                );
-                Ok(())
-            })
-        }
-    }
-}
+#[path = "manager_tests.rs"]
+mod tests;
