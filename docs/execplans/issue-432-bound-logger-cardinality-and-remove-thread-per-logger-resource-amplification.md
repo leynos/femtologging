@@ -153,6 +153,7 @@ Milestone 2 detail:
       re-gated.
 - [x] Fixes committed in five atomic commits and pushed to `467f406`; PR #544
       description updated with the findings and the new verification figures.
+- [x] Third review round returned ten findings; all ten verified and fixed.
 
 Re-gated at `467f406`:
 
@@ -177,6 +178,40 @@ it, and therefore the global write lock, for every dotted record), two stale
 and a users-guide claim that the budget prevents *starvation* when it only
 bounds *admission* — a stuck handler still blocks the shard's sole worker until
 it returns.
+
+**Third review round (2026-10-23): ten findings, all fixed.** One was a real
+correctness defect and the rest were bound, wording and spelling issues.
+
+The correctness one: `should_ignore_target` dropped only `femtologging` and
+`femtologging.*`, but every `warn!` in this crate records the `log` crate's
+default target — the module path under the compiled crate name, e.g.
+`_femtologging_rs::logger::dispatcher::shard::worker`. With the bridge
+installed, the shard worker's "dropped N records" warning re-entered
+`FemtoLogAdapter::log`; if a root handler then failed, the bridge's own
+lookup-failure diagnostic would add another record to the stream it was
+diagnosing, with no bound on the cycle. The guard now covers the crate's own
+target family too, derived from `env!("CARGO_CRATE_NAME")` so it cannot drift
+from the manifest's `[lib] name`, and the existing
+`the_bridge_ignores_records_about_itself` test asserts both families.
+
+Three were the same class of bound at the other end. `warn_lookup_failure`
+printed the refused target twice with `{:?}` — caller-controlled, possibly
+never validated, and unbounded — so one warning could write megabytes to
+stderr, and `{:?}` escapes a newline but does not stop it being long. It now
+quotes both names through `describe_name`, the same bounded, control-escaped
+prefix the validator uses, re-exported `pub(crate)` for that purpose. The
+message is built by a named `lookup_failure_message`, so the bound is asserted
+without depending on the process-wide warner's state. And
+`classify_logger_error` plus `err.to_string()` moved inside the warner's
+closure: they ran on every refused record and were discarded by the rate
+limiter in nearly all of them, allocating a `String` per refusal on the path
+that exists because the process is short of a resource.
+
+The remaining six were the users' guide's shard bullet (which never stated the
+depth, and claimed the budget prevents peer drops when it bounds admission
+only), one inconsistent number format (10 000 versus 1,024), and four `-ise`
+spellings — `authorises` three times in `budget.rs`, `materialising` and
+`recognise` in `manager_tests.rs`, `recognisable` in `sync.rs`.
 
 **Discovery (2026-10-23): a `not(test)`-only item can be dead under Loom.**
 `LoggerBudget::in_flight` is read only by `FemtoLogger::drop`'s
@@ -628,7 +663,7 @@ Milestone 1 detail:
      (`dispatcher.rs`) and ADR 007 ("a per-logger in-flight bound"). Fixed
      with `LoggerBudget`: an `AtomicUsize` charged in `admit` and released by
      `Permit`'s drop, with the charge undone when the shard-wide take fails.
-     Covered by `one_stuck_logger_does_not_starve_another_on_its_shard`.
+     Covered by `one_stuck_logger_does_not_take_another_logger_s_slot`.
   4. **Minor, swallowed bridge diagnostic.** `warn_lookup_failure` emitted its
      warning with `log::warn!(target: "femtologging.log_compat")`, which
      `should_ignore_target` discards — so a registry at its cap produced no
@@ -648,6 +683,45 @@ Milestone 1 detail:
   9. **Minor, this plan.** Status and milestones reconciled with the delivered
      state; the 2026-10-14 `HandlerError::Capacity` decision is marked
      superseded.
+
+- 2026-10-23: second review round, **eight findings** (two substantive: the
+  GIL held across a flush barrier, and a per-logger budget equal to a
+  single-shard pool's depth). All eight fixed in five atomic commits and pushed
+  to `467f406`, with the Loom lane re-run for the first time on the fixes.
+- 2026-10-23: third review round, **ten findings — one correctness defect, nine
+  bound, wording or spelling issues**. Verified individually before changing
+  anything; all ten were real.
+  1. **Correctness, bridge re-entry.** `should_ignore_target` covered only
+     `femtologging` and `femtologging.*`. Every `warn!` in this crate records
+     the `log` crate's default target — the module path under the compiled
+     crate name, `_femtologging_rs::…` — so with the bridge installed the shard
+     worker's own "dropped N records" warning re-entered `FemtoLogAdapter::log`.
+     If a root handler then failed, the bridge's lookup diagnostic added
+     another record to the stream it was diagnosing. The guard now covers the
+     crate's own target family, built from `env!("CARGO_CRATE_NAME")` so it
+     cannot drift from `[lib] name`, and the existing
+     `the_bridge_ignores_records_about_itself` test asserts both families.
+  2. **Unbounded diagnostic.** `warn_lookup_failure` printed the refused target
+     twice with `{:?}` — caller-controlled, possibly never validated, and
+     unbounded — so one warning could write megabytes to stderr. Both names now
+     go through `describe_name`, the validator's bounded, control-escaped
+     prefix, re-exported `pub(crate)` for the bridge. The message is built by a
+     named `lookup_failure_message` so its bound is asserted directly rather
+     than through the process-wide warner's state.
+  3. **Work on every refusal.** `classify_logger_error` and `err.to_string()`
+     ran before the warner decided whether to warn, allocating a `String` per
+     refused record on the path that exists because the process is short of a
+     resource. Both moved inside the closure.
+  4. **Users' guide and ADR.** The shard bullet never stated the depth, and
+     claimed a per-logger budget prevents peer drops when it bounds admission
+     only — a stuck handler still holds its permits while blocking the shard's
+     single worker, so peers can exhaust their own allowances with the pool
+     still holding permits. Rewritten in both places. The depth is now stated
+     correctly as `1,024 × shard count` per shard, not in total.
+  5. **Number format.** `10 000` / `1 024` (the latter with a literal `U+202F`)
+     versus `1,024`; all normalized to the comma form in the guide and the ADR.
+  6. **Spelling.** `authorises` ×3 in `budget.rs`, `materialising` and
+     `recognise` in `manager_tests.rs`, `recognisable` in `sync.rs`.
 
 ## Outcomes & retrospective
 
