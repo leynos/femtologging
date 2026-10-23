@@ -8,6 +8,8 @@ libraries. Use the links below to explore each topic.
 - [users-guide.md](./users-guide.md)
   - Teaches femtologging from a first log message to production
     configuration and Rust integration.
+- [CHANGELOG.md](../CHANGELOG.md)
+  - Lists the consumer-facing changes in each release.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Upgrades an application from femtologging 0.1 to 0.2.0, breaking changes
     first.
