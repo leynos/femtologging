@@ -306,11 +306,13 @@ producer context.
 With the `tracing-compat` feature enabled, trace events mark producer context
 capture, handler-filter-chain evaluation, queue dispatch, and worker handler
 dispatch. Filter-chain events report `accepted`, `rejected`, or
-`callback_failed`; the events use bounded operation, handler-kind, and outcome
-fields, with elapsed microseconds. Record payloads and context values are never
-included. These events target `femtologging::internal`, which
-`FemtoTracingLayer` ignores to prevent tracing from recursively logging its own
-instrumentation.
+`callback_failed`. If all attached handler filters reject a record, the
+producer emits `producer_handler_dispatch` with `handler_kind=none` and
+`dispatch_outcome=no_handlers_accepted`. Events use bounded operation,
+handler-kind, and outcome fields; filter-chain events also include elapsed
+microseconds. Record payloads and context values are never included. They target
+`femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
+from recursively logging its own instrumentation.
 
 ## Configuration transaction
 

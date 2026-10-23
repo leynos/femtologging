@@ -188,6 +188,13 @@ impl FemtoLogger {
         }
         let handlers = handler_filters::filter_handlers(&mut record, attachments);
         if handlers.is_empty() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_handler_dispatch",
+                handler_kind = "none",
+                dispatch_outcome = "no_handlers_accepted",
+            );
             return;
         }
         #[cfg(feature = "tracing-compat")]

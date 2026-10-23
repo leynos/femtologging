@@ -305,7 +305,7 @@ fn assert_no_local_handler_events(events: &[CapturedEvent]) {
     let no_local_handler_events = events
         .iter()
         .filter(|event| {
-            event.fields.get("operation").map(String::as_str) == Some("producer_handler_dispatch")
+            event.fields.get("dispatch_outcome").map(String::as_str) == Some("no_local_handlers")
         })
         .collect::<Vec<_>>();
     assert_eq!(no_local_handler_events.len(), 2);
@@ -320,6 +320,30 @@ fn assert_no_local_handler_events(events: &[CapturedEvent]) {
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from(["dispatch_outcome", "handler_kind", "operation",]),
             "no-handler trace fields must stay bounded: {:?}",
+            event.fields,
+        );
+    }
+}
+
+fn assert_no_handlers_accepted_events(events: &[CapturedEvent]) {
+    let no_handlers_accepted_events = events
+        .iter()
+        .filter(|event| {
+            event.fields.get("dispatch_outcome").map(String::as_str) == Some("no_handlers_accepted")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(no_handlers_accepted_events.len(), 1);
+    for event in no_handlers_accepted_events {
+        assert_eq!(event.fields["operation"], "producer_handler_dispatch");
+        assert_eq!(event.fields["handler_kind"], "none");
+        assert_eq!(
+            event
+                .fields
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["dispatch_outcome", "handler_kind", "operation",]),
+            "all-rejected trace fields must stay bounded: {:?}",
             event.fields,
         );
     }
@@ -349,7 +373,7 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     let events = collector
         .captured()
         .expect("tracing events should be captured without mutex poisoning");
-    assert_eq!(events.len(), 22, "captured events: {events:?}");
+    assert_eq!(events.len(), 23, "captured events: {events:?}");
     assert!(
         events
             .iter()
@@ -363,4 +387,5 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     assert_events(&events, &EXPECTED_EVENTS);
     assert_filter_events(&events);
     assert_no_local_handler_events(&events);
+    assert_no_handlers_accepted_events(&events);
 }
