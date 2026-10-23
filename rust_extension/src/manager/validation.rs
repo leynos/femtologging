@@ -11,8 +11,12 @@
 //!   without being scanned;
 //! - a segment budget, because a name describes a component path and component
 //!   paths are shallow, whereas request-derived strings are not;
-//! - an ASCII-control-character ban, because names reach line-oriented output
-//!   and an embedded newline would let a caller forge a record boundary.
+//! - a line-break ban, because names reach line-oriented output and an
+//!   embedded newline would let a caller forge a record boundary. It covers
+//!   every control character — not only ASCII — plus the two Unicode line and
+//!   paragraph separators, because Python's `str.splitlines()` splits on all
+//!   of them: a consumer that splits first and parses second would see the
+//!   forged boundary even though it was not `\n`.
 //!
 //! The shape checks (empty, leading dot, trailing dot, empty segment) exist so
 //! that a name always has a well-defined parent chain.
@@ -103,14 +107,26 @@ pub fn validate_logger_name(name: &str) -> PyResult<()> {
             "logger name cannot exceed {MAX_LOGGER_NAME_SEGMENTS} dot-separated segments; got {segments}",
         )));
     }
-    if let Some(control) = name.chars().find(char::is_ascii_control) {
+    if let Some(control) = name.chars().find(|ch| is_line_breaking(*ch)) {
         return Err(invalid_name(format!(
-            "logger name cannot contain the ASCII control character {}: {}",
+            "logger name cannot contain the control character {}: {}",
             control.escape_debug(),
             describe_name(name),
         )));
     }
     Ok(())
+}
+
+/// Return whether `ch` can end a line for a line-oriented consumer.
+///
+/// Broader than [`char::is_ascii_control`]. C1 controls (`U+0080`–`U+009F`)
+/// include a next-line character, and Python's `str.splitlines()` breaks on
+/// `\x85` as well as on `\n`; it also breaks on `U+2028` and `U+2029`, which
+/// Unicode classifies as separators rather than controls. A name is refused for
+/// its effect on a consumer rather than for its character category, so the
+/// test is what the consumer does, not what the code point is called.
+fn is_line_breaking(ch: char) -> bool {
+    ch.is_control() || ch == '\u{2028}' || ch == '\u{2029}'
 }
 
 #[cfg(test)]
@@ -209,6 +225,34 @@ mod tests {
                 u32::from(control),
             );
         }
+    }
+
+    /// The C1 controls and the Unicode separator pair break lines for a Python
+    /// consumer even though they are not ASCII controls.
+    ///
+    /// `str.splitlines()` splits on `\x85`, `\u{2028}` and `\u{2029}` as
+    /// well as on `\n`, so a consumer that splits first sees a forged record
+    /// boundary regardless of which of them the name used. Refusing only ASCII
+    /// controls would leave the injection open on a path the original rule was
+    /// written to close.
+    #[test]
+    fn rejects_characters_python_splits_lines_on() {
+        for control in ('\u{80}'..='\u{9f}').chain(['\u{2028}', '\u{2029}']) {
+            let name = format!("api{control}v1");
+            let message = rejection(&name);
+            assert!(
+                message.contains("control character"),
+                "U+{:04X} breaks lines for str.splitlines() and must be refused, got {message}",
+                u32::from(control),
+            );
+        }
+    }
+
+    /// An ordinary non-ASCII letter is not a line break and stays valid.
+    #[test]
+    fn accepts_non_ascii_letters() {
+        validate_logger_name("données.événements")
+            .expect("a name with accented letters is a valid component path");
     }
 
     #[test]
