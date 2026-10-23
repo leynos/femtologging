@@ -86,9 +86,17 @@ Observable outcomes:
 - [x] Python lint lanes inside `make lint` (Ruff, interrogate, Pylint on PyPy
       3.12 and CPython 3.14, df12-python-lints, ambrleaks, Skylos) all pass, and
       `lint-lanes-test` passes 11/11.
-- [ ] Run the Rust gates (`make lint-rust`, `make typecheck`, `make test`).
-      Blocked by compile-admission contention; see the second blocker record
-      below.
+- [x] `make typecheck` passes on the fixed source (28 s, exit 0).
+- [x] `make lint-rust` **passes** (exit 0): `lint-lanes-test` 11/11,
+      `lint-env-policy` clean across every feature lane, and the Whitaker
+      Dylint suite clean. The whole gate log holds **zero** `error[E...]`,
+      **zero** `warning:` and **zero** admission refusals, with
+      `RUSTFLAGS="-D warnings"` in force and 13 `Finished` lane completions.
+      `femtologging_rs` itself is reported `Checking ...` clean in each lane.
+- [ ] Run `make test`. Attempted twice and died in the compile-admission
+      outage described below, not on a diagnostic; a partial run passed 1112
+      tests with zero failures before admission failed. The second attempt
+      never reached the test stage at all.
 - [ ] Commit in atomic pieces, push, open the draft PR.
 
 ## Negative control (evidence that the tests detect the defect)
@@ -248,6 +256,63 @@ answering `EAGAIN`/`timed out`. `build-limits-status` could not be queried at
 all. Per the compile-admission rules this was left alone rather than retried in
 a loop or bypassed; the Rust gates are re-run once the machine drains.
 
+### Root cause: the systemd user manager stopped answering
+
+The refusals are not contention and not code. The supervisor's own journal
+names the cause one level below:
+
+```text
+build-limits-supervisor: group g5948: cannot create
+  buildlimits-2867217-g5948.scope: Call failed: Connection timed out
+```
+
+Those lines repeat every 25 seconds for as long as the outage lasts. The
+supervisor cannot create the transient systemd scope each compiler group runs
+in, so no slot can ever be filled no matter how many are free.
+`Connection timed out` against the scope call is the **systemd user manager**
+failing to answer; the system manager still reports `running`.
+
+The tell in a gate log is `0 ahead`. A saturated pool shows `N ahead` with
+`N > 0` and drains monotonically. An outage shows requests sitting at the head
+of the queue forever:
+
+```text
+[build-limits] base64: waiting for a compile slot (0 ahead, 270s)
+build-limits: the supervisor refused: unhealthy
+```
+
+The failed `make test` attempt contains **621** `0 ahead` lines and 15
+`the supervisor refused: unhealthy` lines. It also contains **zero**
+`error[E...]`, zero `aborting due to`, and zero clippy diagnostics: every one
+of the 16 "could not compile" messages is an admission refusal, not a compiler
+complaint about this repository.
+
+Admission recovered by itself (the operator side of this is not ours to touch),
+at which point `make typecheck` passed in 28 seconds on the fixed source and a
+minimal `rustc -vV` through the wrapper was admitted.
+
+What the partial run does establish: **1112 tests passed and none failed**
+across 32 test binaries before admission failed, and Python lint was green in
+full. The refusals cost the `lib test` target and 15 integration targets.
+
+### A third attempt, which died one level earlier
+
+A later `make test` never reached the test stage at all. It failed in
+`make build`: maturin could not build the release extension because one crate's
+admission request lapsed while the pool was 63--65 deep.
+
+That attempt has to be read differently from the outage above, and the
+distinction is the `0 ahead` check. Here `0 ahead` appears only for single
+crates, while the same log shows 63--65 other crates still queued ahead -- so
+this is a request that outlived its own deadline in a working queue, not a
+head-of-line stall. It is still an admission failure and still not a
+diagnostic: the log has **zero** `error[E...]` lines and zero clippy output.
+
+The lesson is that `make test` re-runs `make build` first, so an admission
+refusal anywhere in the release build costs the whole test gate before a single
+test executes. `make typecheck` had already passed on the same source 28
+seconds earlier, which is independent evidence that the crate compiles.
+
 ## Outcomes & Retrospective
 
 The implementation is complete and the core claim is now backed by execution
@@ -255,15 +320,30 @@ rather than inspection: the fixed build passes 9/9, and a deliberately
 reintroduced defect fails exactly the three tests that cover it, with a
 discriminating margin (2 progress records against a 5-record bar).
 
-Every gate that does not compile Rust is green: `make lint-python` (all six
-lanes), `make check-fmt`, `make fmt`, `make markdownlint`, `make nixie`, and
-`lint-lanes-test`. The Rust gates (`make lint-rust`, `make typecheck`,
-`make test`) are unproven rather than failing: each attempt died in the
-compile-admission layer -- once with `the supervisor refused: unhealthy`, once
-with `the supervisor refused: launch-failed` after a 1306-second queue -- on the
-`rustc -vV` version probe, before a single line of this repository was
-compiled. That is an admission-layer failure, not a code failure, and is
-reported rather than worked around.
+All gates are green except `make test`, and the reason it is not green is
+infrastructure rather than code:
+
+| Gate                 | Result                                                |
+| -------------------- | ----------------------------------------------------- |
+| `make lint-python`   | pass (all six lanes)                                  |
+| `make check-fmt`     | pass                                                  |
+| `make fmt`           | pass                                                  |
+| `make markdownlint`  | pass (61 files, 0 issues, including `typos`)          |
+| `make nixie`         | pass                                                  |
+| `lint-lanes-test`    | pass (11/11)                                          |
+| `make typecheck`     | pass (28 s)                                           |
+| `make lint-rust`     | pass (0 errors, 0 warnings, Whitaker clean)           |
+| GIL regression suite | pass (9/9 on the fixed build; 3/9 fail on the defect) |
+| `make test`          | unproven -- admission died mid-run                    |
+
+`make test` was attempted twice. The first attempt ran 32 test binaries and
+recorded **1112 passes with zero failures**, then admission failed and refused
+the `lib test` target and 15 integration targets. The second attempt never
+reached the test stage: `make build` was refused while the pool was 63--65
+deep. Neither log contains a single `error[E...]` or clippy diagnostic, so
+neither is a verdict on this code. Per the compile-admission rules this was
+reported rather than worked around, and the gate is re-run when the host is
+healthy.
 
 Two lessons worth carrying forward:
 
