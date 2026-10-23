@@ -167,7 +167,6 @@ impl FemtoFileHandler {
     }
 }
 
-
 impl FemtoFileHandler {
     /// Create a handler writing to `path` with default settings.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
@@ -339,11 +338,9 @@ impl FemtoFileHandler {
     }
 }
 
-
 #[cfg(test)]
 mod flush_ack_tests;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod tests;
-// weave: run 'weave explain rust_extension/src/handlers/file/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
