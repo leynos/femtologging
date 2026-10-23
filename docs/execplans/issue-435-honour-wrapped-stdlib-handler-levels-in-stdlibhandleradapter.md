@@ -106,9 +106,9 @@ Known uncertainties identified upfront, with mitigations.
   sccache server was unreachable so the build ran uncached, which is expected
   and not a failure.
 - [x] (2026-10-14 16:05Z) Reproduced the defect with a focused test run (Red).
-  The six new threshold cases failed with the pre-fix `handle_record()`, which
-  confirmed they exercise the defect rather than restating existing behaviour;
-  the direct reproduction is recorded in `Artefacts and notes`.
+  The four below-threshold cases failed with the pre-fix `handle_record()`,
+  which confirmed they exercise the defect rather than restating existing
+  behaviour; the direct reproduction is recorded in `Artefacts and notes`.
 - [x] (2026-10-14 16:20Z) Implemented the level gate in `handle_record()`
   (Green). All 38 tests in the two adapter suites and 45 doctests passed.
 - [x] (2026-10-14 16:35Z) Added the regression tests: level matrix, dynamic
@@ -149,9 +149,18 @@ Known uncertainties identified upfront, with mitigations.
   `check-fmt`, `lint`, `typecheck`, `test` (769 passed, 5 skipped; 66 snapshots
   passed; one existing `PytestAssertRewriteWarning`), `markdownlint` (0
   errors), and `nixie` (all diagrams validated).
-- [ ] Commit the review cleanup and run `coderabbit review --agent` against
-  that exact clean commit. Reconcile any new actionable findings before
-  publishing.
+- [x] (2026-10-23 02:05Z) Reviewed cleanup commit `919c7a0` with
+  `coderabbit review --agent`. It found an incorrect count in the matrix
+  evidence, duplicate adapter-probe fixtures, and repeated message extraction.
+  Two findings duplicated the matrix and fixture concerns; all three unique
+  issues are corrected in the review-fix diff.
+- [x] (2026-10-23 04:03Z) Ran all seven gates sequentially on the exact
+  five-file review-fix diff in an independent worktree. Formatting, lint,
+  typecheck, tests (769 passed, 5 skipped; 66 snapshots passed), Markdown lint,
+  and Mermaid validation passed. The original worktree's pytest teardown hang
+  did not recur.
+- [ ] Commit the review-fix diff, then run CodeRabbit on that clean commit and
+  resolve any actionable findings.
 - [ ] Push the branch and open a draft pull request referencing the issue.
 
 ## Surprises & discoveries
@@ -369,14 +378,14 @@ reconstructing the adapter.
 - Obligation: I1 for a handler fixed at `logging.ERROR`.
   Method: parameterized test over the finite partition of all six femtologging
   levels. Rationale: the partition is total over the adapter's level vocabulary
-  and each row has distinct semantic meaning (five rejects, one accept at the
+  and each row has distinct semantic meaning (four rejects, one accept at the
   boundary, plus `CRITICAL` above it), so enumeration is exhaustive rather than
   a sample. Domain: handler level `logging.ERROR`; logger level `"TRACE"`;
   record levels `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
   Artefact: `tests/test_stdlib_adapter_levels.py`,
   `TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold`.
-  Evidence: before the change, every row emits and the five reject rows fail;
-  after the change, all six rows pass. Discharge condition: the five
+  Evidence: before the change, every row emits and the four reject rows fail;
+  after the change, all six rows pass. Discharge condition: the four
   below-`ERROR` rows produce empty captured output and the two at-or-above rows
   produce exactly the expected formatted line. Non-vacuity: the logger
   threshold is `"TRACE"`, the most permissive setting, so no row is

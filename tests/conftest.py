@@ -12,6 +12,7 @@ import pytest
 
 import femtologging
 from femtologging import FemtoFileHandler
+from tests.stdlib_adapter_support import AdapterProbe, build_adapter_probe
 
 # This BDD step module is loaded as a plugin during collection, so register it
 # before pytest imports it and the assertion-rewrite hook can process it.
@@ -29,6 +30,12 @@ warnings.filterwarnings(
 type FileHandlerFactory = cabc.Callable[
     [Path, int, int], AbstractContextManager[FemtoFileHandler]
 ]
+
+
+@pytest.fixture
+def probe() -> AdapterProbe:
+    """Return an adapter wrapping a StreamHandler over a fresh StringIO."""
+    return build_adapter_probe()
 
 
 @pytest.fixture

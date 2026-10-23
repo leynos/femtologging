@@ -23,16 +23,9 @@ from tests.stdlib_adapter_support import (
     HandlerSetup,
     LogRequest,
     RejectingFilter,
-    build_adapter_probe,
     dispatch,
     emitted_messages,
 )
-
-
-@pytest.fixture
-def probe() -> AdapterProbe:
-    """Return an adapter wrapping a StreamHandler over a fresh StringIO."""
-    return build_adapter_probe()
 
 
 class TestHandlerLevelThreshold:
