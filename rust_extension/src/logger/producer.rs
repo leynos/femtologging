@@ -305,6 +305,16 @@ impl FemtoLogger {
     /// record this logger logged first, and a shard that is gone or too slow
     /// answers `false` rather than waiting indefinitely.
     ///
+    /// A logger with nothing in flight has nothing of its own to drain, so it
+    /// answers immediately. The budget releases a record's charge only after
+    /// its handlers have run, so a count of zero means every record this
+    /// logger queued has been handled. Queuing a barrier anyway would cost more
+    /// than the round trip: the `log` bridge's `flush_all_handlers` sweeps
+    /// every registered logger, and a barrier takes a queue slot but no
+    /// permit, so barriers can crowd out the records they were meant to drain
+    /// and make `admit` refuse work the shard had room for. `Drop` already
+    /// skips its wait this way.
+    ///
     /// The wait is taken with the interpreter detached. `flush_handlers` is a
     /// Python method, so its caller holds the GIL, and a queued Python handler
     /// needs that same GIL to finish — holding it here would make the wait time
@@ -313,6 +323,12 @@ impl FemtoLogger {
     /// interpreter to detach from, which is also when no Python handler can be
     /// mid-call.
     fn wait_for_dispatch_to_drain(&self) -> bool {
+        // Loom has no interpreter, and a model's shard is its own, so the
+        // count is read only where there is a pool to share.
+        #[cfg(not(loom))]
+        if self.budget.in_flight() == 0 {
+            return true;
+        }
         // Loom has no interpreter, and a model's shard is its own.
         #[cfg(not(loom))]
         if let Some(drained) =
