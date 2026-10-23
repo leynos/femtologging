@@ -93,6 +93,17 @@ impl FemtoLogger {
         )
     }
 
+    /// Assemble a logger on a shard a test has chosen.
+    ///
+    /// Tests that assert what one logger's flush does to a shard it *shares*
+    /// have to place the logger on that shard; the process-wide pool assigns
+    /// round robin and gives no control over which logger lands where. Outside
+    /// Loom only, like the pool it borrows from.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn assembled_for_test(name: String, shard: ShardHandle) -> Self {
+        Self::assembled(name, None, shard)
+    }
+
     /// Assemble a logger around an already-chosen shard.
     ///
     /// The shard is the logger's whole relationship with dispatch: every record

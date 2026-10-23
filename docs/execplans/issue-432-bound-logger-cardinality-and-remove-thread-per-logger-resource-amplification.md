@@ -253,6 +253,70 @@ paragraphs that still split a number across a line (`1\n024-slot` in the ADR,
 `1 024-slot` and `10 000-name` in the execplan), both reflowed to the comma
 form.
 
+Re-gated at `849812d` after those fixes:
+
+- [x] `make fmt`, `make check-fmt`, `make markdownlint`, `make nixie`,
+      `make typecheck` — exit 0.
+- [x] `make lint` — exit 0, including Whitaker's module line limit after the
+      `flush_all_handlers` doc comment was compressed to keep `registry.rs`
+      under 400 lines (406 → 398).
+- [x] `make test` — exit 0: four cargo feature lanes and `760 passed,
+      5 skipped` in pytest, 66 snapshots.
+- [x] Loom lane — `cargo clippy --cfg loom --no-default-features --all-targets
+      -- -D warnings` exit 0, and `scripts/run_loom_models.py` reported
+      `expected: 6; passed: 6`, `6 passed; 0 failed`.
+
+**Discovery: the Whitaker module line limit has no headroom.** My own doc
+comment for `flush_all_handlers` grew `registry.rs` from 390 lines at HEAD to
+406, which failed `make lint-rust` with
+`error: Module registry spans 406 lines, exceeding the allowed 400` at
+`src/manager.rs:20:5`. Two compressions overshot (399, then 401 in the wrong
+direction), and the third landed exactly on 400 — passing, but leaving nothing
+for the next edit. The fourth reached 398 with the rationale intact. The
+practical lesson: when adding prose to a file near the limit, count the lines
+before writing, not after the gate fails.
+
+Delivered as commit `849812d`, pushed over SSH with the tracking ref refreshed
+and the upstream set; `ls-remote` and `rev-parse HEAD` both read `849812d`. The
+description on PR 544 carries the fourth round and the re-gate figures.
+
+**Fifth review round (2026-10-23): two findings, one defect, fixed.** Both
+reported the same gap, once as `major` and once as `trivial`, which is worth
+noting: the severity was argued from the same facts in both, so the pair is one
+defect and its impact is the `major` reading.
+
+`FemtoLogger::wait_for_dispatch_to_drain` queued a `Job::Barrier` on every
+flush, which includes the `log` bridge's `flush_all_handlers` sweep over every
+registered logger. `Drop` already skipped that wait when
+`self.budget.in_flight() == 0`, on the reasoning that a logger with nothing in
+flight has nothing of its own to drain — but the flush path did not, so the
+same reasoning applied one call away and had never been carried across.
+
+Two consequences, and the second is why this is `major`. A barrier takes a
+queue slot but **no permit**, so barriers can fill a queue while permits remain;
+`Shard::admit` then refuses a record the shard had room for, and a legitimate
+record is counted as dropped. And a barrier behind a stuck handler waits out
+`BARRIER_TIMEOUT`, which an idle logger pays for no reason.
+
+The guard now sits at the top of `wait_for_dispatch_to_drain`, exactly as in
+`Drop`, gated `#[cfg(not(loom))]` because the count is not read under Loom (the
+model's shard is the logger's own and its drop shuts it down).
+
+The regression test is
+`a_logger_with_nothing_in_flight_does_not_barrier_its_shard`. It was checked in
+both directions rather than only in the green one: with the guard replaced by
+`in_flight() == usize::MAX` the test fails, and fails after 4.00 s — two
+barrier timeouts — which is the cost the guard removes. Two idle loggers flush
+against a two-deep shard whose worker is stuck, then a third admits a record
+and must not be dropped. That requires placing loggers on a chosen shard, so
+`FemtoLogger::assembled_for_test` was added (`#[cfg(all(test, not(loom)))]`).
+
+Re-gated at this commit: `make fmt`, `make check-fmt`, `make lint`,
+`make typecheck`, `make markdownlint`, `make nixie` and `make test` all exit 0
+(`760 passed, 5 skipped`, 66 snapshots); the Loom lane is clean, with
+`cargo clippy --cfg loom --all-targets -- -D warnings` exit 0 and
+`expected: 6; passed: 6`.
+
 **Discovery (2026-10-23): a `not(test)`-only item can be dead under Loom.**
 `LoggerBudget::in_flight` is read only by `FemtoLogger::drop`'s
 `#[cfg(not(loom))]` arm, so the Loom build failed on `-D dead-code` even though
