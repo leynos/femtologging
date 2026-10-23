@@ -42,6 +42,7 @@ pub use worker::QueuedRecord;
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
+pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -52,7 +53,7 @@ pub struct FemtoLogger {
     #[pyo3(get)]
     parent: Option<String>,
     formatter: SharedFormatter,
-    level: AtomicU8,
+    level: Arc<AtomicU8>,
     propagate: AtomicBool,
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
@@ -86,10 +87,14 @@ impl FemtoLogger {
     /// Update the logger's minimum level.
     ///
     /// `level` accepts "TRACE", "DEBUG", "INFO", "WARN", "ERROR", or
-    /// "CRITICAL". The update is thread‑safe because the level is stored in an
-    /// `AtomicU8`.
+    /// "CRITICAL". The update is thread-safe because the level is stored in a
+    /// shared `AtomicU8`. With `log-compat`, it also refreshes the facade's
+    /// conservative process-wide maximum level.
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
+        #[cfg(feature = "log-compat")]
+        crate::log_compat::update_logger_level(&self.level, level);
+        #[cfg(not(feature = "log-compat"))]
         self.level.store(u8::from(level), Ordering::Relaxed);
     }
 

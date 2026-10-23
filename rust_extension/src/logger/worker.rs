@@ -13,7 +13,6 @@ use std::sync::Arc;
 use crate::filters::FemtoFilter;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::handler::FemtoHandlerTrait;
-use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{
@@ -22,7 +21,7 @@ use crate::sync::{
 
 #[cfg(feature = "python")]
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
-use super::{DEFAULT_CHANNEL_CAPACITY, FemtoLogger};
+use super::{DEFAULT_CHANNEL_CAPACITY, DEFAULT_LOGGER_LEVEL, FemtoLogger};
 
 /// Record queued for processing by the worker thread.
 pub struct QueuedRecord {
@@ -74,7 +73,9 @@ impl FemtoLogger {
             name,
             parent,
             formatter,
-            level: std::sync::atomic::AtomicU8::new(u8::from(FemtoLevel::Info)),
+            level: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(u8::from(
+                DEFAULT_LOGGER_LEVEL,
+            ))),
             propagate: std::sync::atomic::AtomicBool::new(true),
             handlers,
             filters,

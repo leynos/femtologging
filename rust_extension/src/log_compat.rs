@@ -10,13 +10,18 @@
 //! Rust bridge.
 
 use std::borrow::Cow;
-use std::sync::OnceLock;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicU8, Ordering},
+};
 
 use log::{Metadata, Record};
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 
 use crate::level::FemtoLevel;
 use crate::log_record::RecordMetadata;
+use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::manager;
 
 /// Adapter implementing the Rust `log::Log` trait.
@@ -102,13 +107,40 @@ fn is_enabled_by_global_max(level: log::Level) -> bool {
     log::max_level() >= level.to_level_filter()
 }
 
+fn effective_logger_level(target: &str) -> FemtoLevel {
+    let normalized = normalize_target(target);
+    let logger_name = if manager::is_valid_logger_name(normalized.as_ref()) {
+        normalized.as_ref()
+    } else {
+        "root"
+    };
+    manager::registered_logger_level(logger_name).unwrap_or(DEFAULT_LOGGER_LEVEL)
+}
+
+fn is_enabled_by_logger_level(level: log::Level, threshold: FemtoLevel) -> bool {
+    u8::from(FemtoLevel::from(level)) >= u8::from(threshold)
+}
+
 impl log::Log for FemtoLogAdapter {
+    /// Return whether the target's current level threshold accepts this record.
+    ///
+    /// Target names are normalized from Rust's `module::path` form to dotted
+    /// femtologging names. Unknown valid targets use the default logger level;
+    /// invalid names use the registered root logger level when available, then
+    /// the default. This check does not inherit parent levels or consult
+    /// filters and handlers, and it never creates a logger or accesses Python.
+    /// A `true` result means the level threshold accepts the record; filters
+    /// and handlers may still drop it during dispatch.
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         is_enabled_by_global_max(metadata.level())
+            && is_enabled_by_logger_level(
+                metadata.level(),
+                effective_logger_level(metadata.target()),
+            )
     }
 
     fn log(&self, record: &Record<'_>) {
-        if !is_enabled_by_global_max(record.level()) {
+        if !self.enabled(record.metadata()) {
             return;
         }
 
@@ -146,20 +178,83 @@ impl log::Log for FemtoLogAdapter {
 static FEMTO_LOG_ADAPTER: FemtoLogAdapter = FemtoLogAdapter;
 
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
+static MAX_LEVEL_UPDATE_LOCK: Mutex<()> = Mutex::new(());
+
+fn adapter_is_installed() -> bool {
+    INSTALL_RESULT.get().is_some_and(|installed| *installed)
+}
+
+fn map_femto_to_log_filter(level: FemtoLevel) -> log::LevelFilter {
+    match level {
+        FemtoLevel::Trace => log::LevelFilter::Trace,
+        FemtoLevel::Debug => log::LevelFilter::Debug,
+        FemtoLevel::Info => log::LevelFilter::Info,
+        FemtoLevel::Warn => log::LevelFilter::Warn,
+        FemtoLevel::Error => log::LevelFilter::Error,
+        FemtoLevel::Critical => log::LevelFilter::Off,
+    }
+}
+
+fn conservative_max_level_from(levels: impl Iterator<Item = FemtoLevel>) -> log::LevelFilter {
+    levels
+        .chain(std::iter::once(DEFAULT_LOGGER_LEVEL))
+        .map(map_femto_to_log_filter)
+        .fold(log::LevelFilter::Off, std::cmp::max)
+}
+
+fn conservative_max_level() -> log::LevelFilter {
+    conservative_max_level_from(manager::registered_logger_levels().into_iter())
+}
+
+fn refresh_global_max_level_locked() {
+    log::set_max_level(conservative_max_level());
+}
+
+/// Recompute the facade's broadest accepted level after registry changes.
+///
+/// The process-wide maximum includes the default level for unknown targets,
+/// so it can skip macro arguments only when every registered target and the
+/// default would reject that level. It is refreshed without taking the
+/// manager lock; the index's lock ordering is always manager then index.
+pub(crate) fn refresh_global_max_level() {
+    if !adapter_is_installed() {
+        return;
+    }
+
+    let _guard = MAX_LEVEL_UPDATE_LOCK.lock();
+    refresh_global_max_level_locked();
+}
+
+/// Update a logger threshold while keeping the global prefilter conservative.
+pub(crate) fn update_logger_level(level: &Arc<AtomicU8>, new_level: FemtoLevel) {
+    let _guard = MAX_LEVEL_UPDATE_LOCK.lock();
+    let installed = adapter_is_installed();
+    if installed {
+        let new_maximum = map_femto_to_log_filter(new_level);
+        if new_maximum > log::max_level() {
+            // Widen before lowering the logger threshold so a concurrent
+            // logging macro cannot suppress a newly accepted record.
+            log::set_max_level(new_maximum);
+        }
+    }
+
+    level.store(u8::from(new_level), Ordering::Relaxed);
+    if installed {
+        refresh_global_max_level_locked();
+    }
+}
 
 /// Install femtologging as the global Rust logger.
 ///
 /// Returns `true` on success. When a different global logger is already set,
 /// installation fails and `false` is returned. Subsequent calls return the
 /// cached outcome.
-pub(crate) fn install_global_logger() -> bool {
-    *INSTALL_RESULT.get_or_init(|| {
-        if log::set_logger(&FEMTO_LOG_ADAPTER).is_err() {
-            return false;
-        }
-        log::set_max_level(log::LevelFilter::Trace);
-        true
-    })
+pub fn install_global_logger() -> bool {
+    let installed = *INSTALL_RESULT.get_or_init(|| log::set_logger(&FEMTO_LOG_ADAPTER).is_ok());
+    if installed {
+        refresh_global_max_level();
+    }
+    installed
 }
 
 /// Python-facing entrypoint for enabling the `log` crate bridge.
@@ -196,6 +291,23 @@ pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&st
     }
 }
 
+/// Probe the public `log_enabled!` macro from Python behavioural tests.
+#[cfg(feature = "python")]
+#[pyfunction]
+#[pyo3(name = "_rust_log_enabled")]
+pub(crate) fn rust_log_enabled(level: FemtoLevel, target: &str) -> bool {
+    let mapped = map_femto_to_log_level(level);
+    log::log_enabled!(target: target, mapped)
+}
+
+/// Return the facade maximum for Python behavioural tests.
+#[cfg(feature = "python")]
+#[pyfunction]
+#[pyo3(name = "_rust_log_max_level")]
+pub(crate) fn rust_log_max_level() -> String {
+    log::max_level().to_string()
+}
+
 /// Install a dummy global Rust logger for behavioural tests.
 ///
 /// This helper is intended for subprocess-based test scenarios that need to
@@ -230,165 +342,5 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
 mod context_tests;
 
 #[cfg(test)]
-mod tests {
-    //! Unit tests for the `log` crate bridge.
-
-    use log::{LevelFilter, Log};
-
-    use super::*;
-    use crate::handler::FemtoHandlerTrait;
-    use crate::test_utils::collecting_handler::CollectingHandler;
-    use rstest::{fixture, rstest};
-    use std::sync::{
-        Arc, Once,
-        atomic::{AtomicUsize, Ordering},
-    };
-
-    static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    #[fixture]
-    fn unique_logger_name() -> String {
-        let base = "bridge.test";
-        let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
-        format!("{base}.{suffix}")
-    }
-
-    #[rstest]
-    #[case(log::Level::Trace, FemtoLevel::Trace)]
-    #[case(log::Level::Debug, FemtoLevel::Debug)]
-    #[case(log::Level::Info, FemtoLevel::Info)]
-    #[case(log::Level::Warn, FemtoLevel::Warn)]
-    #[case(log::Level::Error, FemtoLevel::Error)]
-    fn level_mapping_is_direct(#[case] level: log::Level, #[case] expected: FemtoLevel) {
-        assert_eq!(FemtoLevel::from(level), expected);
-    }
-
-    #[fixture]
-    fn log_max_level() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            log::set_max_level(LevelFilter::Trace);
-        });
-    }
-
-    #[rstest]
-    fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
-        let adapter = FemtoLogAdapter;
-        let logger_name = unique_logger_name;
-
-        Python::attach(|py| {
-            let logger = manager::get_logger(py, &logger_name).expect("logger created");
-            let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-            logger
-                .borrow(py)
-                .add_handler(handler.clone())
-                .expect("native test handler should register");
-
-            let record = log::Record::builder()
-                .args(format_args!("hello"))
-                .level(log::Level::Info)
-                .target(&logger_name)
-                .module_path(Some("bridge::test"))
-                .file(Some("lib.rs"))
-                .line(Some(42))
-                .build();
-
-            adapter.log(&record);
-
-            assert!(
-                logger.borrow(py).flush_handlers(),
-                "flush should drain the queue"
-            );
-
-            let records = handler
-                .as_any()
-                .downcast_ref::<CollectingHandler>()
-                .expect("handler downcast")
-                .collected();
-            assert_eq!(records.len(), 1);
-            let rec = &records[0];
-            assert_eq!(rec.logger(), logger_name.as_str());
-            assert_eq!(rec.level_str(), "INFO");
-            assert_eq!(rec.message(), "hello");
-            assert_eq!(rec.metadata().module_path, "bridge::test");
-            assert_eq!(rec.metadata().filename, "lib.rs");
-            assert_eq!(rec.metadata().line_number, 42);
-        });
-    }
-
-    #[rstest]
-    fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
-        let adapter = FemtoLogAdapter;
-        let logger_name = unique_logger_name;
-        let target = logger_name.replace('.', "::");
-
-        Python::attach(|py| {
-            let logger = manager::get_logger(py, &logger_name).expect("logger created");
-            let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-            logger
-                .borrow(py)
-                .add_handler(handler.clone())
-                .expect("native test handler should register");
-
-            let record = log::Record::builder()
-                .args(format_args!("normalized"))
-                .level(log::Level::Info)
-                .target(&target)
-                .build();
-
-            adapter.log(&record);
-            assert!(logger.borrow(py).flush_handlers());
-
-            let records = handler
-                .as_any()
-                .downcast_ref::<CollectingHandler>()
-                .expect("handler downcast")
-                .collected();
-            assert_eq!(records.len(), 1);
-            assert_eq!(records[0].logger(), logger_name.as_str());
-        });
-    }
-
-    #[rstest]
-    fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
-        let adapter = FemtoLogAdapter;
-        let logger_name = unique_logger_name;
-
-        Python::attach(|py| {
-            let logger = manager::get_logger(py, &logger_name).expect("logger created");
-            let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-            logger
-                .borrow(py)
-                .add_handler(handler.clone())
-                .expect("native test handler should register");
-            logger.borrow(py).set_level(FemtoLevel::Warn);
-
-            let info_record = log::Record::builder()
-                .args(format_args!("info"))
-                .level(log::Level::Info)
-                .target(&logger_name)
-                .build();
-            adapter.log(&info_record);
-
-            let warn_record = log::Record::builder()
-                .args(format_args!("warn"))
-                .level(log::Level::Warn)
-                .target(&logger_name)
-                .build();
-            adapter.log(&warn_record);
-
-            assert!(
-                logger.borrow(py).flush_handlers(),
-                "flush should drain the queue"
-            );
-
-            let records = handler
-                .as_any()
-                .downcast_ref::<CollectingHandler>()
-                .expect("handler downcast")
-                .collected();
-            assert_eq!(records.len(), 1, "only WARN should pass threshold");
-            assert_eq!(records[0].level_str(), "WARN");
-        });
-    }
-}
+#[path = "log_compat_tests.rs"]
+mod tests;
