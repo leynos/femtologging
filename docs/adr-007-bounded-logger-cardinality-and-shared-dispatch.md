@@ -73,7 +73,9 @@ formatted record, so a name containing a newline lets a caller forge a record
 boundary in line-oriented output — the injection a log consumer is least able
 to detect. The diagnostic for a rejected name quotes a bounded, control-escaped
 prefix for the same reason: a rejection message must not reintroduce the
-injection the rule exists to stop.
+injection the rule exists to stop. The `log` bridge's refusal warning applies
+the same quoting to the refused target, which is the more hostile of the two: a
+target need not have passed validation to reach it.
 
 The ban is stated in terms of line breaks a consumer recognizes, not in terms
 of ASCII. Python's `str.splitlines()` breaks on `U+0085`, `U+2028` and `U+2029`
@@ -86,7 +88,7 @@ hierarchy; it is a request-derived string wearing a hierarchy's punctuation.
 
 ### Bounded registry
 
-The registry holds at most 10 000 named loggers (`MAX_LOGGERS`) and **never
+The registry holds at most 10,000 named loggers (`MAX_LOGGERS`) and **never
 evicts**. Once the cap is reached, a request for a name that does not yet exist
 is refused with `RuntimeError`.
 
@@ -126,7 +128,9 @@ a single queue.
 
 Each shard bounds work twice:
 
-- a **bounded job queue**, so a burst cannot grow memory without limit;
+- a **bounded job queue**, so a burst cannot grow memory without limit. Its
+  depth is `1,024 × shard count`, so the pool scales with the machine while any
+  one shard's depth stays proportionate to the pool it belongs to;
 - a **pool of permits**, one per free in-flight slot, so a slow handler cannot
   turn a busy logger's backlog into an unbounded one. A bounded queue alone
   bounds memory but not latency: a logger that keeps logging while its handler
@@ -177,13 +181,14 @@ the target space bounded.
   change and the reason the users' guide documents the field-based alternative.
 - Loggers sharing a shard share a failure domain: a slow handler now delays
   other loggers on the same shard. Each logger's own in-flight budget is capped
-  below the shard's depth, so one logger can never take every permit and make
-  the others drop records. That bounds *admission*, not *delivery*: a handler
-  that never returns blocks the shard's single worker, and the other loggers'
-  records queue behind it until it returns. The shard count — derived from the
-  machine, and never one on a machine that reports more — is what keeps that
-  from stopping the whole process, so it is a real trade-off and the reason the
-  shard count is not fixed at one.
+  below the shard's depth, so one logger cannot consume every permit and crowd
+  the others out of the queue. That bounds *admission*, not *delivery*: a
+  handler that never returns blocks the shard's single worker while still
+  holding its permits, so the other loggers on that shard can exhaust their own
+  allowances and drop records even with permits left in the pool. The shard
+  count — derived from the machine, and never one on a machine that reports
+  more — is what keeps that from stopping the whole process, so it is a real
+  trade-off and the reason the shard count is not fixed at one.
 - Records dropped at the in-flight or queue bound are counted and warned about,
   so pressure is observable through `logger.get_dropped()`.
 - The Loom models keep the pre-change topology. Under `--cfg loom` a logger
@@ -221,7 +226,7 @@ the target space bounded.
   crate reads a capacity hint that could overflow. Propagating the spawn error
   discharges the "resource exhaustion without panicking" requirement directly.
 - **Keep one worker per logger and bound only the registry.** Rejected: it
-  bounds the wrong thing. The registry cap is 10 000, which at one thread each
+  bounds the wrong thing. The registry cap is 10,000, which at one thread each
   is still ten thousand threads — the amplification the issue exists to remove.
 - **Shard the queue by logger hash, one shard per core.** Considered in the
   form of "let available parallelism set the count", and rejected for the

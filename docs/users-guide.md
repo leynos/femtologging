@@ -35,14 +35,17 @@ your process exits.
   spends on logging follow the machine rather than the number of loggers it has
   created. Calls to `logger.log()` enqueue a record on the logger's shard and
   return immediately.
-- A shard holds at most 1,024 in-flight records for each shard in the pool,
-  and each logger may hold at most half of a shard's depth — never more than
-  1,024. The per-logger limit stops one logger from taking every queue slot, so
-  an over-active logger cannot make the loggers sharing its shard drop records.
-  It does *not* stop a handler that never returns from blocking the shard's
-  single worker: records from every logger on that shard wait until that
-  handler returns. Separate shards, and the machine-derived shard count, are
-  what keep one stuck handler from stopping the whole process.
+- Each shard's queue is 1,024 records deep for every shard in the pool, so a
+  four-shard pool gives each shard a depth of 4,096. Each logger may hold at
+  most half of its shard's depth, never more than 1,024, so the pool grows with
+  the machine while any one logger's share does not. The per-logger limit stops
+  one logger from consuming every permit, so an over-active logger cannot crowd
+  the loggers sharing its shard out of the queue. It does not stop a handler
+  that never returns from blocking the shard's single worker while holding its
+  permits: the other loggers on that shard can then exhaust their own
+  allowances and drop records even though the shard has permits left. Separate
+  shards, and the machine-derived shard count, are what keep one stuck handler
+  from stopping the whole process.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
@@ -87,7 +90,7 @@ your process exits.
   logger.info("handled", extra={"request_id": request_id})
   ```
 
-- The registry holds at most 10 000 named loggers and never evicts one, so a
+- The registry holds at most 10,000 named loggers and never evicts one, so a
   logger keeps its handlers, level, and drop counters for the life of the
   process. Once the cap is reached, a request for a name that does not yet
   exist is refused with `RuntimeError`. Names already registered keep working,
@@ -763,7 +766,9 @@ For upgrade steps covering handler filters and formatter builders, see the
 - The `dictConfig` schema lacks incremental updates and handler levels. It
   supports registered formatter attachment; `fileConfig` is still cut down and
   does not support formatter declarations.
-- Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
+- Logger dispatch queue capacity is capped at 1,024 records per shard. The
+  stdlib blocks the emitting thread; femtologging drops records and emits
+  warnings instead.
   emitting thread; femtologging drops records and emits warnings instead.
 - Only percent-style formatting is implemented. Brace and template styles are
   not available; supply a callable formatter for more complex output.
