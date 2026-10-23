@@ -533,7 +533,43 @@ Milestone 1 detail:
   and the full detached `make test` all exit 0 — four cargo feature lanes plus
   `755 passed, 5 skipped` in pytest — and the Loom heavy lane reports
   `6 passed; 0 failed`.
+- 2026-10-23: delivered as two commits — `2119087` (the implementation and its
+  tests) and `39839c2` (the ADR, the guides and this plan) — pushed over SSH to
+  `origin`, with the tracking ref refreshed and the upstream set. The remote
+  head and the local `HEAD` both read `39839c2`, confirmed by `ls-remote`
+  before the push was reported. Draft PR
+  [#544](https://github.com/leynos/femtologging/pull/544) carries the issue
+  number and `Closes #432`.
+- 2026-10-23: the first `coderabbit review --agent` attempt was rate-limited
+  ("Rate limit exceeded", 10 included reviews used, 2-minute wait). Retried
+  after a randomized 45–90 minute sleep, per the delivery instructions.
 
 ## Outcomes & retrospective
 
-Not yet complete.
+Complete pending review. All eight acceptance criteria in the issue are met and
+evidenced:
+
+1. **Name bounds** — 255 UTF-8 bytes and 32 segments, enforced at the single
+   point where a name becomes a registry key.
+2. **Control characters** — refused, including `0x7F`.
+3. **Cardinality policy** — decided and documented in ADR 007: a hard cap with
+   validation, rather than weak ownership or eviction, because a logger is a
+   stable component identity and evicting one would silently reset its level
+   and handlers.
+4. **Thread multiplier removed** — a fixed pool sized from available
+   parallelism, measured flat against logger count in
+   `test_thread_count_does_not_track_logger_count`.
+5. **Exhaustion without panic** — `DispatcherError` to `RuntimeError`, with a
+   later retry.
+6. **One policy for every entry point** — convenience functions and both Rust
+   bridges resolve through the same registry.
+7. **Stress tests** — many unique names, over-long names, and
+   high-cardinality bridge targets.
+8. **Guidance** — the guides state that names describe stable components, with
+   a do/don't example.
+
+The lasting lesson is about gates, not code: four green feature lanes made a
+branch look gated while the Loom lane had never run and did not compile. A lane
+that has never been executed is not evidence, and the `-D warnings` clippy run
+under `--cfg loom` catches dead code that the Loom heavy binary structurally
+cannot — because it is an integration test, not a unit test build.
