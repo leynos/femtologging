@@ -149,6 +149,8 @@ Milestone 2 detail:
 - [x] Delivered: gates green, commits pushed, draft PR #544 open.
 - [x] CodeRabbit review returned nine findings; all nine fixed and
       re-gated.
+- [x] Second review round returned eight findings; all eight fixed and
+      re-gated.
 - [x] Fixes committed in five atomic commits and pushed to `467f406`; PR #544
       description updated with the findings and the new verification figures.
 
@@ -163,6 +165,18 @@ Re-gated at `467f406`:
 - [x] Loom lane — `cargo clippy --cfg loom --no-default-features --all-targets
       -- -D warnings` exit 0, and all six models pass under
       `scripts/run_loom_models.py`.
+
+**Second review round (2026-10-23): eight findings, all fixed.** Two were
+substantive. `flush_handlers` held the GIL while waiting on a barrier that a
+Python handler needed the GIL to answer, so the wait could only time out; it
+now detaches. And a logger's budget equalled the shard depth whenever the pool
+had one shard, so one logger could take every permit on a single-core machine.
+The other six were a read-lock fast path for `get_logger` (propagation called
+it, and therefore the global write lock, for every dotted record), two stale
+"ASCII control character" docstrings, two stale `dispatcher/shard.rs` paths,
+and a users-guide claim that the budget prevents *starvation* when it only
+bounds *admission* — a stuck handler still blocks the shard's sole worker until
+it returns.
 
 **Discovery (2026-10-23): a `not(test)`-only item can be dead under Loom.**
 `LoggerBudget::in_flight` is read only by `FemtoLogger::drop`'s
