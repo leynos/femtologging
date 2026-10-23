@@ -186,12 +186,16 @@ Known uncertainties identified upfront, with mitigations.
   post-rebase `make check-fmt`, `make test`, `make typecheck`, and `make lint`
   gates passed; `make fmt`, `make markdownlint`, and `make nixie` passed too.
 - [x] (2026-10-23) CodeRabbit reviewed rebased commit `e07d31f` and identified
-  stale status, outcomes, and revision-note sections in this plan. Update those
-  sections and run a fresh review before pushing the rebased branch.
+  stale status, outcomes, and revision-note sections in this plan. These
+  sections were completed before the final review and push.
 - [x] (2026-10-23) CodeRabbit reviewed `38bdbe8` and found that the guide did
   not explain that level changes affect queued records not yet processed. The
   user guide now states when the live level is read and which records a change
-  affects; run docs gates and a fresh review before pushing.
+  affects. The documentation gates passed, the final CodeRabbit review on
+  `12cc9fc` returned zero findings, and the branch was force-pushed with a
+  lease to draft PR #546.
+- [x] (2026-10-23) Updated draft PR #546's validation summary for the rebased
+  candidate and moved the Lody session link to the final `References` section.
 
 ## Surprises & discoveries
 
@@ -297,8 +301,11 @@ skipped, with one `PytestAssertRewriteWarning`), `make typecheck`, `make lint`,
 pytest assertion rewriting for `tests.steps.logging_context_steps`; it did not
 fail the suite. CodeRabbit reviews found plan status and completion-note
 inconsistencies and ambiguity about when a live level change affects queued
-records. This revision addresses those findings. Draft PR #546 remains open;
-the rebased head still needs a fresh review and force-with-lease push.
+records. Those findings were corrected, and the final review returned zero
+findings. The rebased branch was force-pushed with a lease after confirming the
+remote still matched its expected prior head. Draft PR #546 remains open, with
+the issue-closing summary, final validation results, and Lody reference in
+place.
 
 ## Context and orientation
 
@@ -783,4 +790,5 @@ by an exception or a return value, exactly as `logging.Logger` does.
 Initial draft created 2026-10-14. Revised 2026-10-23 to record the rebase and
 post-rebase validation, complete the outcomes, and mark the active draft PR
 state. Clarified that `setLevel()` changes affect queued records not yet
-processed. Rerun CodeRabbit before force-pushing the rebased branch.
+processed, recorded the zero-finding final review, and noted the force-with-
+lease update to draft PR #546.
