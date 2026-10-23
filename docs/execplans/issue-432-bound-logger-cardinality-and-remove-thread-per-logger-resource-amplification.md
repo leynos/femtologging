@@ -1,6 +1,7 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: IN PROGRESS.
+Status: COMPLETE — delivered as draft PR #544; all gates green and the
+CodeRabbit findings addressed.
 
 ## Purpose and big picture
 
@@ -133,17 +134,21 @@ Milestone 2 detail:
       lib type-checks clean.
 - [x] `lib test` compiled after the admission outage lifted; the two real
       errors it had been hiding are fixed (see discoveries, 2026-10-16).
-- [ ] All feature lanes checked; test targets re-checked after the edits
+- [x] All feature lanes checked; test targets re-checked after the edits
       below.
-- [ ] Manager unit tests still to run (`--features python`).
+- [x] Manager unit tests run (`--features python`).
 
 ## Progress
 
 - [x] Rename branch, set the Lody session title, gather repository context.
-- [ ] Milestone 1: bounded names and registry cap.
-- [ ] Milestone 2: shared dispatch pool.
-- [ ] Milestone 3: dropped as speculative (see discoveries).
-- [ ] Milestone 4: public routes aligned, stresses, documentation, ADR.
+- [x] Milestone 1: bounded names and registry cap.
+- [x] Milestone 2: shared dispatch pool.
+- [x] Milestone 3: dropped as speculative (see discoveries).
+- [x] Milestone 4: bridges aligned, stress tests added, guides and ADR 007
+      written.
+- [x] Delivered: gates green, commits pushed, draft PR #544 open.
+- [x] CodeRabbit review returned nine findings; all nine fixed and
+      re-gated.
 
 Milestone 1 detail:
 
@@ -158,9 +163,9 @@ Milestone 1 detail:
 - [x] Crate compiles with no warnings in the `--no-default-features` lane
       after the fallible-constructor change; 48 test call sites updated with
       `expect(...)`, then `cargo fmt` on the changed files.
-- [ ] Remaining feature lanes (`python`, `log-compat`, `tracing-compat`, all)
-      still to check.
-- [ ] Manager unit tests still to run (`--features python`).
+- [x] Remaining feature lanes (`python`, `log-compat`, `tracing-compat`, all)
+      checked.
+- [x] Manager unit tests run (`--features python`).
 - [x] End-to-end cap test written (`tests/test_logger_cardinality.py`); it now
       walks the registry to `MAX_LOGGERS`, which the shared pool made possible.
 
@@ -376,7 +381,11 @@ Milestone 1 detail:
 - 2026-10-14: reuse the existing `HandlerError::Capacity` path rather than
   exporting a new exception type. Rationale: the project already maps handler
   capacity refusal to an exception subclass; a third Python-visible error for
-  the same class of event adds surface without adding information.
+  the same class of event adds surface without adding information. **Superseded
+  (2026-10-23).** This premise was wrong: the crate has no
+  `HandlerError::Capacity`, and none was ever reached from the registry. The
+  registry cap now raises the built-in `RuntimeError` directly, with no new
+  exception type exported. See the 2026-10-16 discovery above.
 - 2026-10-14: the registry cap is enforced only on the vacant insertion path
   and never for `"root"`; an existing logger's identity is always preserved.
   Rationale: the issue's acceptance criteria forbid unbounded growth, not
@@ -543,11 +552,56 @@ Milestone 1 detail:
 - 2026-10-23: the first `coderabbit review --agent` attempt was rate-limited
   ("Rate limit exceeded", 10 included reviews used, 2-minute wait). Retried
   after a randomized 45–90 minute sleep, per the delivery instructions.
+- 2026-10-23: the retried review completed (exit 0, 39 files reviewed) and
+  reported **nine findings — three major, six minor**. Each was verified
+  against the source before being accepted; all nine are genuine defects in
+  this change, and the three majors are in code this change introduced:
+  1. **Major, registry ancestors.** `get_logger` inserted only the requested
+     name, never its missing ancestors. `handle_parent_propagation`
+     (`producer.rs`) resolves the parent through `get_logger` and *ignores*
+     the error, so a full registry made a child stop propagating — silently
+     and permanently. Fixed by planning the whole chain with `chain_of`,
+     checking capacity for the chain as a unit before inserting any of it, and
+     applying the same rule to `stage_loggers` and `commit_staged_loggers`.
+     Covered by `an_ancestor_is_counted_before_its_descendant`,
+     `test_a_refused_chain_leaves_the_registry_unchanged` and
+     `test_propagation_still_reaches_root_at_the_cap`.
+  2. **Major, drain on drop.** `Drop` waited on the shared shard
+     unconditionally, so each logger's drop paid up to the barrier timeout on
+     *other* loggers' backlog, and `reset_manager` did it under the registry
+     write lock — ten thousand drops behind one lock. Fixed by tracking each
+     logger's in-flight count and waiting only when it is non-zero, and by
+     `std::mem::take`-ing the map and dropping it outside the lock.
+  3. **Major, per-logger in-flight bound was missing.** `admit` drew only on
+     the shard-wide permit pool, so one logger with a stuck handler could
+     consume every permit — contradicting this change's own documentation
+     (`dispatcher.rs`) and ADR 007 ("a per-logger in-flight bound"). Fixed
+     with `LoggerBudget`: an `AtomicUsize` charged in `admit` and released by
+     `Permit`'s drop, with the charge undone when the shard-wide take fails.
+     Covered by `one_stuck_logger_does_not_starve_another_on_its_shard`.
+  4. **Minor, swallowed bridge diagnostic.** `warn_lookup_failure` emitted its
+     warning with `log::warn!(target: "femtologging.log_compat")`, which
+     `should_ignore_target` discards — so a registry at its cap produced no
+     diagnostic at all on the bridge path. Now written to stderr.
+  5. **Minor, users' guide.** Two passages still described a per-logger queue
+     and worker thread; rewritten for shared shards, including that a slow
+     handler delays every logger on its shard.
+  6. **Minor, `get_logger` error docs.** `# Errors` named only `ValueError`;
+     `PyRuntimeError` is also raised (pool start failure, registry cap).
+  7. **Minor, control characters.** The ban covered ASCII only, but Python's
+     `str.splitlines()` also breaks on `U+0085`, `U+2028` and `U+2029`. Now
+     `is_line_breaking` covers every `char::is_control()` plus those two
+     separators, with the ADR table and guide updated to match.
+  8. **Minor, `#[serial]`.** Three `log_compat_tests.rs` cases created loggers
+     without serializing against the global registry; all three now carry
+     `#[serial]` (`tracing_compat/tests.rs` needed no change).
+  9. **Minor, this plan.** Status and milestones reconciled with the delivered
+     state; the 2026-10-14 `HandlerError::Capacity` decision is marked
+     superseded.
 
 ## Outcomes & retrospective
 
-Complete pending review. All eight acceptance criteria in the issue are met and
-evidenced:
+All eight acceptance criteria in the issue are met and evidenced:
 
 1. **Name bounds** — 255 UTF-8 bytes and 32 segments, enforced at the single
    point where a name becomes a registry key.
