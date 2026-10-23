@@ -137,8 +137,9 @@ APIs, and structured context are in place, and every example in this README and
 the guides is executed by the test suite. Some standard library features, such
 as `%`-style lazy formatting and named formatters, are not implemented yet, and
 the public API may still change before a stable release. Pin the version you
-depend on, and read the [migration guide][migration] when you upgrade. Journald
-and OpenTelemetry integrations are planned; see the [roadmap][roadmap].
+depend on, and read the [changelog][changelog] and [migration guide][migration]
+when you upgrade. Journald and OpenTelemetry integrations are planned; see the
+[roadmap][roadmap].
 
 ______________________________________________________________________
 
@@ -146,6 +147,7 @@ ______________________________________________________________________
 
 - [Users' guide][guide] — from a first log message to production
   configuration and Rust integration
+- [Changelog][changelog] — what changed in each release
 - [0.2.0 migration guide][migration] — upgrading an existing application
 - [Roadmap][roadmap] — planned features and progress
 - [Developers' guide][developers] — building, testing, and maintaining
@@ -179,6 +181,7 @@ not resolve, so every link to a repository file is absolute. -->
 [guide-python-handler]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#write-your-own-handler-in-python
 [guide-config]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#configure-logging
 [guide-rust]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#integrate-with-rust
+[changelog]: https://github.com/leynos/femtologging/blob/main/CHANGELOG.md
 [migration]: https://github.com/leynos/femtologging/blob/main/docs/v0-2-0-migration-guide.md
 [roadmap]: https://github.com/leynos/femtologging/blob/main/docs/roadmap.md
 [developers]: https://github.com/leynos/femtologging/blob/main/docs/developers-guide.md
