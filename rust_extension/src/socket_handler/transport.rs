@@ -33,6 +33,7 @@ pub struct TcpTransport {
 }
 
 impl TcpTransport {
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     fn socket_addrs(&self) -> io::Result<Vec<SocketAddr>> {
         (self.host.as_str(), self.port)
             .to_socket_addrs()
@@ -57,6 +58,7 @@ pub struct TlsOptions {
 }
 
 impl TlsOptions {
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     fn connector(&self) -> io::Result<TlsConnector> {
         let mut builder = TlsConnector::builder();
         if self.insecure_skip_verify {
@@ -69,8 +71,11 @@ impl TlsOptions {
 
 /// Active socket connection state.
 pub enum ActiveConnection {
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     PlainTcp(TcpStream),
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     Tls(Box<TlsStream<TcpStream>>),
+    /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     #[cfg(unix)]
     Unix(UnixStream),
 }
@@ -107,6 +112,7 @@ impl ActiveConnection {
     }
 }
 
+/// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
 fn connect_tcp(config: &TcpTransport, timeout: Duration) -> io::Result<TcpStream> {
     let addrs = config.socket_addrs()?;
     for addr in addrs {

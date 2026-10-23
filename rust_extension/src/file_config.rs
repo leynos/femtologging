@@ -13,9 +13,16 @@ use pyo3::prelude::*;
 use std::fs;
 use std::io::ErrorKind;
 
+/// Entries retained from one INI section, preserving the parser's key order.
 type SectionEntries = Vec<(String, String)>;
+/// Parsed INI sections paired with their entries, including the synthetic `DEFAULT` name.
 type ParsedSections = Vec<(String, SectionEntries)>;
 
+/// Read, decode, and parse a Python `fileConfig` INI file without changing logger state.
+///
+/// Missing files, unknown encodings, decoding failures, empty files, and invalid
+/// INI syntax are reported as Python exceptions before the caller can apply the
+/// returned sections.
 #[pyfunction]
 pub(crate) fn parse_ini_file(
     py: Python<'_>,
@@ -30,6 +37,7 @@ pub(crate) fn parse_ini_file(
     parse_sections(path, &text)
 }
 
+/// Read the raw bytes of `path`, mapping filesystem failures to Python I/O errors.
 fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
     match fs::read(path) {
         Ok(bytes) => Ok(bytes),
@@ -42,6 +50,7 @@ fn read_file_bytes(path: &str) -> PyResult<Vec<u8>> {
     }
 }
 
+/// Decode file bytes using the explicit encoding or Python's preferred encoding.
 fn decode_contents<'a>(py: Python<'a>, bytes: &[u8], encoding: Option<&str>) -> PyResult<String> {
     match encoding {
         Some(label) => decode_with_encoding(py, bytes, label),
@@ -52,12 +61,14 @@ fn decode_contents<'a>(py: Python<'a>, bytes: &[u8], encoding: Option<&str>) -> 
     }
 }
 
+/// Ask Python for the locale-preferred encoding used when `fileConfig` omits one.
 fn preferred_encoding(py: Python<'_>) -> PyResult<String> {
     let locale = py.import("locale")?;
     let func = locale.getattr("getpreferredencoding")?;
     func.call1((false,))?.extract::<String>()
 }
 
+/// Decodes UTF-8 directly so tests can exercise the same Python error shape as configured decoding.
 #[cfg_attr(
     not(test),
     expect(
@@ -85,6 +96,7 @@ fn decode_utf8(py: Python<'_>, bytes: &[u8]) -> PyResult<String> {
     }
 }
 
+/// Decode bytes with a named `encoding_rs` codec and preserve Unicode error details.
 fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<String> {
     let normalized_label = label.trim().to_ascii_lowercase();
     let encoding = Encoding::for_label(normalized_label.as_bytes())
@@ -107,14 +119,21 @@ fn decode_with_encoding(py: Python<'_>, bytes: &[u8], label: &str) -> PyResult<S
     Ok(decoded.into_owned())
 }
 
+/// Describe the byte range and codec needed to construct a Python decode error.
 struct UnicodeDecodeErrorInfo<'a> {
+    /// Codec name reported by Python in the exception.
     encoding: &'a str,
+    /// Original bytes retained for Python's `UnicodeDecodeError` payload.
     bytes: &'a [u8],
+    /// First byte offset of the reported decoding failure.
     start: usize,
+    /// Exclusive end offset, clamped when converted into the Python exception.
     end: usize,
+    /// Human-readable reason attached to the decode failure.
     reason: &'a str,
 }
 
+/// Convert decoding details into the Python `UnicodeDecodeError` shape.
 fn unicode_decode_err(_py: Python<'_>, info: UnicodeDecodeErrorInfo<'_>) -> PyErr {
     PyUnicodeDecodeError::new_err((
         info.encoding.to_string(),
@@ -125,6 +144,10 @@ fn unicode_decode_err(_py: Python<'_>, info: UnicodeDecodeErrorInfo<'_>) -> PyEr
     ))
 }
 
+/// Parse INI sections into owned entries while retaining section order.
+///
+/// The nameless section is exposed as `DEFAULT`; an empty nameless section is
+/// omitted because it carries no configuration.
 fn parse_sections(path: &str, text: &str) -> PyResult<ParsedSections> {
     let ini = Ini::load_from_str(text)
         .map_err(|err| PyRuntimeError::new_err(format!("{path} is invalid: {err}")))?;

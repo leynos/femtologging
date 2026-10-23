@@ -33,6 +33,7 @@ fn tcp_listener() -> io::Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", 0))
 }
 
+/// Receives the result of reading one length-prefixed frame from the mock server.
 type FrameRx = mpsc::Receiver<io::Result<Vec<u8>>>;
 
 fn spawn_single_frame_server(
@@ -92,10 +93,14 @@ fn builder_rejects_tls_for_unix() {
     assert!(matches!(err, HandlerBuildError::InvalidConfig(msg) if msg.contains("tls")));
 }
 
+/// Record payload decoded from the socket handler's serialized frame.
 #[derive(Debug, Deserialize)]
 struct Payload {
+    /// Name of the logger that emitted the record.
     logger: String,
+    /// Text form of the record's severity.
     level: String,
+    /// Message text emitted by the logger.
     message: String,
 }
 

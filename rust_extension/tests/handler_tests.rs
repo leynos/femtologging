@@ -8,8 +8,10 @@ use _femtologging_rs::{FemtoLevel, FemtoLogger};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
+/// Native handler double that records whether `flush` was dispatched.
 #[derive(Default)]
 struct DummyHandler {
+    /// Shared flag set by the trait's flush implementation.
     flushed: Mutex<bool>,
 }
 
@@ -45,9 +47,12 @@ fn overridden_flush_called_via_trait() {
     assert!(*handler.flushed.lock().expect("flushed flag mutex poisoned"));
 }
 
+/// Handler double for checking default context-aware dispatch behavior.
 #[cfg(feature = "python")]
 struct DefaultDispatchHandler {
+    /// Selects the Python-backed branch of the dispatch contract.
     python_backed: bool,
+    /// Counts ordinary `handle` calls made by dispatch.
     handled_records: AtomicUsize,
 }
 

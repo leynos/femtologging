@@ -13,8 +13,11 @@ use crate::handlers::{HTTPHandlerBuilder, HandlerBuilderTrait};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 
+use self::test_support::CapturedRequest;
 use super::FemtoHTTPHandler;
 use super::config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat};
+
+mod test_support;
 
 /// Spawn a mock HTTP server that captures the first request.
 fn spawn_mock_server(
@@ -35,14 +38,6 @@ fn status_text(code: u16) -> &'static str {
         503 => "Service Unavailable",
         _ => "Unknown",
     }
-}
-
-#[derive(Debug)]
-struct CapturedRequest {
-    method: String,
-    path: String,
-    headers: Vec<(String, String)>,
-    body: String,
 }
 
 /// Parses a single header line into a key-value pair.

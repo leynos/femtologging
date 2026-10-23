@@ -179,6 +179,7 @@ impl PyHandler {
         }
     }
 
+    /// Runs `handle_record` inside a copied Python context and maps Python failures.
     fn call_handle_record_in_context(
         &self,
         py: Python<'_>,
@@ -218,6 +219,7 @@ impl PyHandler {
         }
     }
 
+    /// Runs the legacy three-argument `handle` inside a copied Python context.
     fn call_legacy_handle_in_context(
         &self,
         py: Python<'_>,
@@ -243,6 +245,7 @@ impl PyHandler {
         )
     }
 
+    /// Looks up and invokes a named Python method, preserving lookup and call errors.
     fn call_direct_method<'py>(
         &self,
         py: Python<'py>,
@@ -260,6 +263,7 @@ impl PyHandler {
             .map_err(|err| map_py_err(py, err, method.call_operation))
     }
 
+    /// Copies the captured context and invokes a prepared methodcaller on the handler.
     fn call_methodcaller_in_context<'py>(
         &self,
         py: Python<'py>,
@@ -351,11 +355,13 @@ mod tests {
 /// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]
 pub struct PyHandler {
+    /// Python handler object retained by the feature-disabled wrapper.
     pub obj: Py<PyAny>,
 }
 
 #[cfg(not(feature = "python"))]
 impl PyHandler {
+    /// Wrap the Python object without feature-specific capability inspection.
     pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
         Self { obj }
     }

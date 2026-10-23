@@ -43,32 +43,46 @@ macro_rules! assert_output_contains {
 /// Test inputs for `should_capture_exc_info` parameterised testing.
 #[derive(Debug)]
 enum ExcInfoInput {
+    /// Boolean true requests exception capture.
     True,
+    /// Boolean false disables exception capture.
     False,
+    /// Python `None` disables exception capture.
     None,
+    /// A Python exception instance requests capture.
     ExceptionInstance,
+    /// A three-item exception tuple requests capture.
     Tuple3,
+    /// An integer is an invalid `exc_info` value.
     Integer,
 }
 
 /// Expected result from `should_capture_exc_info`.
 #[derive(Debug, PartialEq)]
 enum ExpectedCapture {
+    /// The input requests traceback capture.
     Capture,
+    /// The input does not request traceback capture.
     NoCapture,
 }
 
 /// Test inputs for py_log exc_info parameter tests.
 #[derive(Debug)]
 enum PyLogExcInfoInput {
+    /// The Python boolean false value.
     BoolFalse,
+    /// Python `None`.
     PythonNone,
+    /// An exception type and message used to construct an instance.
     ExceptionInstance {
+        /// Built-in exception class name.
         exc_type: &'static str,
+        /// Message passed to the exception constructor.
         exc_msg: &'static str,
     },
 }
 
+/// Test handler that advertises Python-backed context dispatch capabilities.
 struct SnapshotPythonHandler;
 
 impl FemtoHandlerTrait for SnapshotPythonHandler {

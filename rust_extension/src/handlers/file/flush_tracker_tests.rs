@@ -6,9 +6,12 @@ use rstest::*;
 use serial_test::serial;
 use std::io::{self, Write};
 
+/// Writer double that counts flushes and can return a controlled I/O error.
 #[derive(Default)]
 struct DummyWriter {
+    /// Number of flush calls observed by the test.
     flushed: usize,
+    /// Makes `flush` fail after recording the call.
     fail: bool,
 }
 

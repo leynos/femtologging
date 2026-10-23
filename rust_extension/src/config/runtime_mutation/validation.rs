@@ -6,6 +6,8 @@ use crate::{config::ConfigError, manager::LoggerAttachmentState};
 
 use super::{CollectionMutation, SharedFilters, SharedHandlers};
 
+/// Detects when a prior mutation differs from the new one, including same-mode
+/// mutations with different payloads; identical normalized mutations are accepted.
 pub(crate) fn collection_conflict(
     kind: &str,
     current: &CollectionMutation,
@@ -14,10 +16,13 @@ pub(crate) fn collection_conflict(
     match current {
         CollectionMutation::Unchanged => None,
         _ if current == new => None,
-        _ => Some(format!("multiple {kind} mutation modes were requested")),
+        _ => Some(format!(
+            "conflicting mutations to the {kind} collection were requested"
+        )),
     }
 }
 
+/// Verifies every handler and filter ID in a prospective state has a registry entry.
 pub(crate) fn resolve_attachment_ids(
     state: &LoggerAttachmentState,
     handlers: &SharedHandlers,
@@ -41,6 +46,7 @@ pub(crate) fn resolve_attachment_ids(
     }
 }
 
+/// Ensures a removal names only attachments present in the logger's current state.
 pub(crate) fn validate_remove_ids(
     existing: &[String],
     mutation: &CollectionMutation,

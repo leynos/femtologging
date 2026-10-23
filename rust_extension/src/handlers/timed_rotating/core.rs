@@ -29,15 +29,22 @@ use crate::{
 
 /// Rotation strategy for time-based file rollover.
 pub(crate) struct TimedFileRotationStrategy<C = SystemClock> {
+    /// Active log path renamed when a scheduled rollover occurs.
     path: PathBuf,
+    /// Validated cadence and timezone rules used to calculate deadlines.
     schedule: TimedRotationSchedule,
+    /// Maximum number of timestamped files retained after rotation.
     backup_count: usize,
+    /// Clock source owned by the worker, with a deterministic test implementation.
     clock: C,
+    /// Instant from which the current file's schedule was seeded.
     created_at: DateTime<Utc>,
+    /// Next deadline at which the worker must rotate before writing.
     next_rollover_at: DateTime<Utc>,
 }
 
 impl TimedFileRotationStrategy<SystemClock> {
+    /// Creates a system-clock strategy for the supplied schedule and retention.
     pub(crate) fn new(path: PathBuf, schedule: TimedRotationSchedule, backup_count: usize) -> Self {
         Self::new_with_clock(path, schedule, backup_count, SystemClock)
     }
@@ -47,6 +54,7 @@ impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
 {
+    /// Builds strategy state from a known seed so tests and mtime recovery share the same deadline calculation.
     fn from_seed(
         path: PathBuf,
         schedule: TimedRotationSchedule,
@@ -65,6 +73,7 @@ where
         }
     }
 
+    /// Samples the supplied clock and seeds the first rollover deadline from that instant.
     pub(crate) fn new_with_clock(
         path: PathBuf,
         schedule: TimedRotationSchedule,
@@ -75,8 +84,8 @@ where
         Self::from_seed(path, schedule, backup_count, clock, seed)
     }
 
-    /// Re-seed `next_rollover_at` from an externally determined instant
-    /// (e.g. an existing log file's modification time).
+    /// Re-seed `next_rollover_at` from an externally determined instant, such as
+    /// an existing log file's modification time.
     pub(crate) fn seed_rollover_from(&mut self, seed: DateTime<Utc>) {
         self.next_rollover_at = self.schedule.next_rollover(seed);
     }
@@ -86,6 +95,7 @@ where
         self.next_rollover_at
     }
 
+    /// Rotates the file at a deadline and restores the original writer if any rename or fresh-open step fails.
     fn rotate(
         &mut self,
         writer: &mut BufWriter<File>,
@@ -111,17 +121,15 @@ where
             Ok(fresh_writer) => {
                 let _ = original_file;
                 *writer = fresh_writer;
-                // Advance the rollover deadline before pruning so that a
-                // prune failure does not cause repeated rollovers on the
-                // next write.
+                // Advance the rollover deadline before pruning so a prune failure
+                // does not cause repeated rollovers on the next write.
                 self.next_rollover_at = self.schedule.next_rollover(now);
                 self.prune_backups()?;
                 Ok(())
             }
             Err(err) => {
-                // Restore the writer before attempting a filesystem
-                // rollback so that the handler remains usable even if the
-                // rename also fails.
+                // Restore the writer before filesystem rollback so the handler
+                // remains usable even if the rename also fails.
                 *writer = BufWriter::with_capacity(capacity, original_file);
                 if let Err(rollback_err) = fs::rename(&rotated_path, &self.path) {
                     return Err(io::Error::new(
@@ -136,6 +144,8 @@ where
         }
     }
 
+    /// Temporarily swaps in a placeholder writer so the active file can be
+    /// renamed without losing the original on extraction failure.
     fn swap_writer_with_temp(
         &self,
         writer: &mut BufWriter<File>,
@@ -158,6 +168,7 @@ where
         }
     }
 
+    /// Opens a truncated writer for the active path after a rollover.
     fn open_fresh_writer(path: &Path, capacity: usize) -> io::Result<BufWriter<File>> {
         let file = OpenOptions::new()
             .create(true)
@@ -167,6 +178,7 @@ where
         Ok(BufWriter::with_capacity(capacity, file))
     }
 
+    /// Builds the timestamped filename for a completed rotation period.
     fn rotated_path(&self, rollover_at: DateTime<Utc>) -> PathBuf {
         let suffix = self.schedule.suffix_for(rollover_at);
         let mut rotated = self.path.clone();
@@ -196,6 +208,7 @@ where
         self.schedule.is_valid_suffix(suffix)
     }
 
+    /// Removes timestamped files beyond the configured retention count.
     fn prune_backups(&self) -> io::Result<()> {
         if self.backup_count == 0 {
             return Ok(());
@@ -227,6 +240,8 @@ where
         Ok(())
     }
 
+    /// Treats an absent file as already removed while propagating other I/O
+    /// failures.
     fn remove_file_if_exists(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -251,6 +266,7 @@ where
     }
 }
 
+/// Compares encoded path prefixes without requiring UTF-8 conversion.
 pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
     value
         .as_os_str()
@@ -260,18 +276,24 @@ pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
 
 /// Bundles timed-rotation parameters passed to the handler constructor.
 pub(crate) struct TimedRotationConfig {
+    /// Validated schedule used by the worker before each record write.
     pub(crate) schedule: TimedRotationSchedule,
+    /// Number of timestamped backups retained by the timed handler.
     pub(crate) backup_count: usize,
 }
 
 /// File handler variant configured for timed rotation.
 pub struct FemtoTimedRotatingFileHandler {
+    /// Core file handler used for record delivery and lifecycle operations.
     inner: FemtoFileHandler,
+    /// Schedule retained for Python getters and worker construction.
     schedule: TimedRotationSchedule,
+    /// Retention count exposed by the Python-facing timed handler.
     backup_count: usize,
 }
 
 impl FemtoTimedRotatingFileHandler {
+    /// Wraps an existing file handler with timed-rotation metadata.
     pub(crate) fn new_with_schedule(
         inner: FemtoFileHandler,
         schedule: TimedRotationSchedule,
@@ -284,6 +306,7 @@ impl FemtoTimedRotatingFileHandler {
         }
     }
 
+    /// Returns the validated schedule used by this handler.
     #[cfg_attr(
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
@@ -292,6 +315,7 @@ impl FemtoTimedRotatingFileHandler {
         &self.schedule
     }
 
+    /// Returns the configured number of timestamped backups.
     #[cfg_attr(
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
@@ -299,7 +323,6 @@ impl FemtoTimedRotatingFileHandler {
     pub(crate) fn backup_count(&self) -> usize {
         self.backup_count
     }
-
     /// Build a timed rotating handler with the supplied configuration.
     pub(crate) fn with_capacity_flush_policy<P, F>(
         path: P,
@@ -350,7 +373,6 @@ impl FemtoTimedRotatingFileHandler {
             rotation.backup_count,
         ))
     }
-
     delegate! {
         to self.inner {
             /// Flush any queued log records.
@@ -360,7 +382,6 @@ impl FemtoTimedRotatingFileHandler {
         }
     }
 }
-
 impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
     delegate! {
         to self.inner {
@@ -368,12 +389,10 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
             fn flush(&self) -> bool;
         }
     }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
-
 impl Drop for FemtoTimedRotatingFileHandler {
     fn drop(&mut self) {
         self.close();

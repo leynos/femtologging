@@ -21,8 +21,12 @@ pub(super) use crate::test_utils::collecting_handler::CollectingHandler;
 
 const RECORD_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Non-owning pointer to a worker join handle protected by a mutex.
 #[derive(Clone, Copy)]
-pub(super) struct HandlePtr(pub(super) *const Mutex<Option<std::thread::JoinHandle<()>>>);
+pub(super) struct HandlePtr(
+    /// Mutex containing the worker's optional join handle.
+    pub(super) *const Mutex<Option<std::thread::JoinHandle<()>>>,
+);
 
 impl HandlePtr {
     pub(super) unsafe fn as_ref<'a>(self) -> &'a Mutex<Option<std::thread::JoinHandle<()>>> {
@@ -36,6 +40,7 @@ impl HandlePtr {
 // the mutex for interior mutability. Callers must also guarantee the pointee
 // outlives any use of `HandlePtr`.
 unsafe impl Send for HandlePtr {}
+
 unsafe impl Sync for HandlePtr {}
 
 #[fixture]
@@ -46,8 +51,9 @@ pub(super) fn collecting_handler() -> Arc<CollectingHandler> {
 /// Enqueue one `QueuedRecord` per entry in `messages` on `tx`, all
 /// addressed to `handler`.
 ///
-/// Fallible so callers can `.expect()` at the panic boundary; the send
-/// only fails if the receiving end has been dropped.
+/// Fallible so callers can `.expect()` at the panic boundary; the send only
+/// fails if the receiving end has been dropped. Box the returned error because
+/// it owns the unsent record and would otherwise inflate every test's result.
 pub(super) fn enqueue_records(
     tx: &Sender<QueuedRecord>,
     handler: &Arc<dyn FemtoHandlerTrait>,
@@ -74,9 +80,12 @@ pub(super) fn collected_messages(handler: &CollectingHandler) -> Vec<String> {
         .collect()
 }
 
+/// Handler that stores records and signals after each successful capture.
 #[derive(Clone)]
 pub(super) struct SignallingCollectingHandler {
+    /// Shared collector that retains the handled records.
     inner: Arc<CollectingHandler>,
+    /// Notifies the test that a record was captured.
     record_tx: Sender<()>,
 }
 
@@ -106,9 +115,12 @@ pub(super) fn wait_for_record_signal(
     record_rx.recv_timeout(RECORD_WAIT_TIMEOUT)
 }
 
+/// Handler that counts records and can signal when the first arrives.
 #[derive(Clone, Default)]
 pub(super) struct CountingHandler {
+    /// Shared number of records handled by this value and its clones.
     pub(super) count: Arc<AtomicUsize>,
+    /// Optional one-shot notification sent after the first record.
     pub(super) first_tx: Option<crossbeam_channel::Sender<()>>,
 }
 

@@ -80,9 +80,11 @@ where
 /// would drain records as fast as they are queued and the queue would never
 /// fill.
 struct OverflowHarness {
+    /// Shared output bytes captured from the worker's writer.
     buffer: Arc<Mutex<Vec<u8>>>,
     /// Released by the test to let the worker thread begin draining.
     start: Arc<Barrier>,
+    /// Handler configured with the queue capacity and overflow policy under test.
     handler: FemtoFileHandler,
 }
 

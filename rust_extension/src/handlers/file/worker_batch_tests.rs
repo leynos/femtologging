@@ -7,9 +7,12 @@ use crossbeam_channel::bounded;
 use std::io::{self, Cursor, Seek, SeekFrom, Write};
 use std::time::Duration;
 
+/// In-memory writer that exposes bytes and flush count to batch tests.
 #[derive(Default)]
 struct RecordingWriter {
+    /// Captures the byte stream emitted by the worker.
     buffer: Cursor<Vec<u8>>,
+    /// Counts worker flushes independently of record writes.
     flushes: usize,
 }
 

@@ -151,6 +151,7 @@ const DROPPED_RECORD_WARNING: &str = "log records dropped in the last interval";
 /// answer with the interval, so supplying the time is what makes the interval
 /// boundary a decision this test makes rather than one the scheduler makes.
 struct TestClock {
+    /// Current test-controlled timestamp in milliseconds.
     now_ms: AtomicU64,
 }
 

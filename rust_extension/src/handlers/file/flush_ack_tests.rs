@@ -11,16 +11,24 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
+/// Cloneable writer whose flush calls wait for explicit test release.
 #[derive(Clone)]
 struct BlockingFlushWriter {
+    /// Shared state keeps write and flush observations consistent across clones.
     state: Arc<BlockingFlushState>,
 }
 
+/// Coordination shared between the writer and the test controlling flushes.
 struct BlockingFlushState {
+    /// Bytes accepted by `write`, protected because worker and test inspect it.
     buffer: Mutex<Vec<u8>>,
+    /// Number assigned to each flush invocation.
     flush_calls: Mutex<usize>,
+    /// Highest flush number the test has released.
     released_flushes: Mutex<usize>,
+    /// Wakes blocked flush calls when the test advances `released_flushes`.
     release_cvar: Condvar,
+    /// Reports each started flush to the coordinating test.
     started_tx: mpsc::Sender<usize>,
 }
 

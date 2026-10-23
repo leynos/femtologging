@@ -79,13 +79,21 @@ pub fn create_frame_dict_with_locals<'py>(
 /// Groups related frame attributes and provides chainable setters for optional
 /// fields, reducing parameter count and improving readability at call sites.
 pub struct MockFrameBuilder {
+    /// Source filename shown in the synthetic frame.
     filename: String,
+    /// Line number at which the synthetic frame begins.
     lineno: u32,
+    /// Function name shown in the synthetic frame.
     name: String,
+    /// Optional final line number for a multi-line frame.
     end_lineno: Option<u32>,
+    /// Optional starting column offset.
     colno: Option<u32>,
+    /// Optional ending column offset.
     end_colno: Option<u32>,
+    /// Optional source text associated with the frame.
     line: Option<String>,
+    /// Optional local names and their rendered values.
     locals: Option<Vec<(String, String)>>,
 }
 
@@ -175,7 +183,9 @@ impl MockFrameBuilder {
 /// Keys starting with digits are parsed as integers; others are strings.
 #[derive(Debug, Clone)]
 pub struct LocalEntry {
+    /// Source spelling used for the local's key.
     key: &'static str,
+    /// Rendered value assigned to the local.
     value: &'static str,
 }
 

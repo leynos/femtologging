@@ -28,8 +28,11 @@ use super::{
 /// Uses exponential backoff for transient failures (5xx, 429, network errors)
 /// and drops records on permanent failures (4xx except 429).
 pub struct FemtoHTTPHandler {
+    /// Sender for records and flush/shutdown commands; taking it closes new delivery.
     tx: Option<crossbeam_channel::Sender<HTTPCommand>>,
+    /// Join handle retained behind a mutex so close and drop can consume it once.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Counts records rejected after shutdown or queue failure for rate-limited warnings.
     warner: RateLimitedWarner,
     /// Timeout for flush and shutdown operations.
     ///
@@ -81,6 +84,7 @@ impl FemtoHTTPHandler {
         }
     }
 
+    /// Clones the live queue sender, or returns `None` once shutdown has taken it.
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
@@ -126,6 +130,7 @@ impl FemtoHTTPHandler {
         }
     }
 
+    /// Takes and joins the worker handle, warning if the worker panicked.
     fn join_worker(&mut self) {
         let Some(handle) = self.handle.lock().take() else {
             return;
@@ -166,6 +171,7 @@ enum ShutdownOutcome {
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoHTTPHandler {
+    /// Parses the Python level, queues one record, and maps handler failures to `PyRuntimeError`.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;

@@ -13,9 +13,14 @@ use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
 use crate::log_record::RecordMetadata;
+
+/// Filter fixture whose decision and enrichment can be inspected by tests.
 struct TestFilter {
+    /// Result returned for each record.
     accepted: bool,
+    /// Fields merged into the record when accepted.
     enrichment: BTreeMap<String, String>,
+    /// Shared count of evaluations across test references.
     calls: Arc<AtomicUsize>,
 }
 
@@ -171,9 +176,12 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     assert_eq!(collected[0].message(), "queued");
 }
 
+/// Injectable context source that counts captures and can return a Python error.
 #[cfg(feature = "python")]
 struct TestContextSnapshotProvider {
+    /// Shared count of snapshot requests.
     captures: Arc<AtomicUsize>,
+    /// Makes capture return a deterministic Python exception.
     fail: bool,
 }
 
@@ -191,9 +199,12 @@ impl ContextSnapshotProvider for TestContextSnapshotProvider {
     }
 }
 
+/// Python-backed handler fixture that observes captured context delivery.
 #[cfg(feature = "python")]
 struct ContextAwareTestHandler {
+    /// Shared count of records delivered to this handler.
     handled_records: Arc<AtomicUsize>,
+    /// Shared count of records delivered with a context snapshot.
     records_with_context: Arc<AtomicUsize>,
 }
 
@@ -229,11 +240,16 @@ impl FemtoHandlerTrait for ContextAwareTestHandler {
     }
 }
 
+/// Bundle of logger, provider and counters for context-dispatch tests.
 #[cfg(feature = "python")]
 struct ContextCaptureFixture {
+    /// Logger configured with the injected context provider and handler.
     logger: FemtoLogger,
+    /// Count of context snapshots captured before dispatch.
     captures: Arc<AtomicUsize>,
+    /// Count of records received by the Python-backed handler.
     handled_records: Arc<AtomicUsize>,
+    /// Count of received records carrying captured context.
     records_with_context: Arc<AtomicUsize>,
 }
 

@@ -75,11 +75,13 @@ impl BackoffOverrides {
 
 #[pymethods]
 impl SocketHandlerBuilder {
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[new]
     fn py_new() -> PyResult<Self> {
         Ok(Self::new())
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_tcp")]
     #[pyo3(signature = (host, port))]
     fn py_with_tcp<'py>(
@@ -92,6 +94,7 @@ impl SocketHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_unix_path")]
     #[pyo3(signature = (path))]
     fn py_with_unix_path<'py>(mut slf: PyRefMut<'py, Self>, path: String) -> PyRefMut<'py, Self> {
@@ -100,6 +103,7 @@ impl SocketHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_capacity")]
     #[pyo3(signature = (capacity))]
     fn py_with_capacity<'py>(
@@ -111,6 +115,7 @@ impl SocketHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_connect_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
     fn py_with_connect_timeout<'py>(
@@ -122,6 +127,7 @@ impl SocketHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_write_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
     fn py_with_write_timeout<'py>(
@@ -133,6 +139,7 @@ impl SocketHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_max_frame_size")]
     #[pyo3(signature = (size))]
     fn py_with_max_frame_size<'py>(
@@ -149,6 +156,7 @@ impl SocketHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_tls")]
     #[pyo3(signature = (domain=None, *, insecure=false))]
     fn py_with_tls<'py>(
@@ -161,6 +169,7 @@ impl SocketHandlerBuilder {
         slf
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_backoff")]
     fn py_with_backoff<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -171,6 +180,7 @@ impl SocketHandlerBuilder {
         Ok(slf)
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "as_dict")]
     fn py_as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
@@ -178,6 +188,7 @@ impl SocketHandlerBuilder {
         Ok(dict.into())
     }
 
+    /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "build")]
     fn py_build(&self) -> PyResult<FemtoSocketHandler> {
         self.build_inner().map_err(Into::into)

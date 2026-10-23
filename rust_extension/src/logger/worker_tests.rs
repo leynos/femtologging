@@ -11,6 +11,7 @@ use super::*;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 
+/// Handler fixture that makes worker error logging observable.
 #[derive(Default)]
 struct FailingHandler;
 

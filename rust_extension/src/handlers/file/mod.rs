@@ -55,9 +55,15 @@ use worker::{FileCommand, WorkerConfig, spawn_worker};
 /// configuration provided at construction time.
 #[pyclass]
 pub struct FemtoFileHandler {
+    /// Sends records and lifecycle commands to the worker; `None` means the
+    /// handler has begun closing and can no longer accept new commands.
     tx: Option<Sender<FileCommand>>,
+    /// Owns the worker join handle so shutdown waits for buffered writes and
+    /// rotation work to finish.
     handle: Option<JoinHandle<()>>,
+    /// Receives the worker's final completion signal after its terminal flush.
     done_rx: Receiver<()>,
+    /// Selects the producer-side queue behaviour when delivery cannot proceed.
     overflow_policy: OverflowPolicy,
 }
 
@@ -105,6 +111,8 @@ impl FemtoFileHandler {
         ))
     }
 
+    /// Parses a Python record, enqueues it according to the configured
+    /// overflow policy, and maps delivery failures to a Python runtime error.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -141,6 +149,8 @@ impl FemtoFileHandler {
         self.flush()
     }
 
+    /// Closes the handler, signals worker shutdown, and waits briefly for
+    /// completion before joining the worker when it reports that it has exited.
     #[pyo3(name = "close")]
     fn py_close(&mut self) {
         self.close();
@@ -190,6 +200,8 @@ impl FemtoFileHandler {
         Ok(Self::from_file(file, formatter, config))
     }
 
+    /// Starts a worker that owns the buffered file, formatter, and validated
+    /// configuration, then returns the handler connected to that worker.
     fn from_file<F>(file: File, formatter: F, config: HandlerConfig) -> Self
     where
         F: FemtoFormatter + Send + 'static,
@@ -214,6 +226,8 @@ impl FemtoFileHandler {
         }
     }
 
+    /// Waits for the worker's flush acknowledgement without taking ownership of
+    /// the worker thread.
     fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = bounded(1);
@@ -227,6 +241,8 @@ impl FemtoFileHandler {
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
+    /// Returns true only when the worker acknowledges the flush successfully
+    /// before the caller's deadline.
     fn wait_for_flush_completion(
         &self,
         ack_rx: &Receiver<io::Result<()>>,
@@ -259,6 +275,8 @@ impl FemtoFileHandler {
         }
     }
 
+    /// Builds a handler from an existing worker writer and publishes its
+    /// channels only after all configuration has been validated.
     pub(crate) fn build_from_worker<W, F, R>(
         writer: W,
         formatter: F,

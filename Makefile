@@ -1,5 +1,5 @@
 .PHONY: help all clean build release lint lint-python lint-rust lint-rust-clippy \
-        lint-env-policy lint-lanes-test loom-runner-test fmt \
+        lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
 
@@ -170,7 +170,7 @@ ENV_POLICY_FEATURE_LANES ?= none extension-module python test-util log-compat tr
 ENV_POLICY_CARGO_ARGS ?= --all-targets
 ENV_POLICY_LINT_ARGS ?= -A clippy::all -D clippy::disallowed_methods
 
-RUST_LINT_FEATURE_LANES ?= none python log-compat tracing-compat all
+RUST_LINT_FEATURE_LANES ?= none extension-module python log-compat tracing-compat test-util default all
 RUST_LINT_CARGO_ARGS ?= --all-targets
 RUST_LINT_ARGS ?= -D warnings
 
@@ -219,7 +219,17 @@ lint-rust-clippy: ## Run standard Rust Clippy feature lanes across every target
 		INPUT_LINT_ARGS="$(RUST_LINT_ARGS)" \
 		uv run --script $(LINT_LANES_SCRIPT)
 
-lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+lint-rust-test-docs: ## Check Rust test-support type and field documentation
+	@$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) \
+		--test test_support_docs --all-features
+
+lint-rust-private-docs-policy-test: ## Exercise private-doc policy through Make's Clippy lanes
+	@$(UV_ENV) uv run --no-project --python 3.13 \
+		--with pytest==9.0.2 --with pytest-timeout==2.4.0 \
+		python -m pytest tests/test_private_docs_lint_contract.py \
+		-c /dev/null --rootdir=. --noconftest -p no:cacheprovider
+
+lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy lint-rust-test-docs lint-rust-private-docs-policy-test ## Run Rust lint lanes, private-doc policy, and the Whitaker Dylint suite
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling

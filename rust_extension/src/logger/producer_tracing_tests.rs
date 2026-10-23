@@ -25,12 +25,18 @@ use helpers::{
     emit_capture_failure, emit_python_handler_dispatch, emit_rejected_native_dispatch,
 };
 
+/// Collects bounded internal tracing events from explicitly permitted threads.
 #[derive(Clone)]
 struct InternalEventCollector {
+    /// Captured events retained for assertions.
     events: Arc<Mutex<Vec<CapturedEvent>>>,
+    /// Threads currently allowed to contribute captured events.
     permitted_threads: Arc<Mutex<Vec<ThreadId>>>,
+    /// Notifies waiters when a matching event is recorded.
     events_changed: Arc<Condvar>,
+    /// Test thread retained so its permission is not revoked after an event.
     test_thread: ThreadId,
+    /// Stops collection once the test has captured its expected outcomes.
     is_recording: Arc<AtomicBool>,
 }
 
@@ -128,7 +134,9 @@ where
     }
 }
 
+/// Context provider fixture that can return a controlled Python exception.
 struct TestSnapshotProvider {
+    /// Makes snapshot capture fail instead of returning Python `None`.
     fail: bool,
 }
 
@@ -142,8 +150,11 @@ impl ContextSnapshotProvider for TestSnapshotProvider {
     }
 }
 
+/// Python-backed handler fixture that emits internal events and can fail.
 struct PythonTestHandler {
+    /// Collector used to whitelist the worker thread and observe event output.
     collector: InternalEventCollector,
+    /// Makes record handling return a controlled handler error.
     fail: bool,
 }
 
@@ -180,7 +191,9 @@ impl FemtoHandlerTrait for PythonTestHandler {
     }
 }
 
+/// Native handler fixture with an optional controlled failure.
 struct NativeTestHandler {
+    /// Makes record handling return a controlled handler error.
     fail: bool,
 }
 

@@ -33,9 +33,13 @@ use crossbeam_channel::{
 
 /// The queue and the endpoint counts every operation reads.
 struct State<T> {
+    /// Messages sent but not yet received, in FIFO order.
     queue: VecDeque<T>,
+    /// Effective queue bound, clamped to at least one by `bounded`.
     capacity: usize,
+    /// Number of live sender handles used to detect disconnection.
     senders: usize,
+    /// Number of live receiver handles used to detect disconnection.
     receivers: usize,
     /// Threads parked in `recv_either` until this channel changes.
     selectors: Vec<Thread>,
@@ -45,7 +49,9 @@ struct State<T> {
 
 /// State shared by every endpoint of one channel.
 struct Shared<T> {
+    /// Protects the queue, endpoint counts and waiter bookkeeping.
     state: Mutex<State<T>>,
+    /// Wakes senders and receivers after another endpoint changes the state.
     changed: Condvar,
 }
 
@@ -83,11 +89,13 @@ impl<T> Shared<T> {
 
 /// The sending half of a Loom-scheduled bounded channel.
 pub struct Sender<T> {
+    /// Shared queue and lifecycle state for this channel's endpoints.
     shared: Arc<Shared<T>>,
 }
 
 /// The receiving half of a Loom-scheduled bounded channel.
 pub struct Receiver<T> {
+    /// Shared queue and lifecycle state for this channel's endpoints.
     shared: Arc<Shared<T>>,
 }
 
@@ -274,6 +282,7 @@ impl<T> Drop for Receiver<T> {
 
 /// Iterates over received messages until the channel disconnects.
 pub struct IntoIter<T> {
+    /// Owned receiver that yields queued messages until all senders are dropped.
     receiver: Receiver<T>,
 }
 
