@@ -8,6 +8,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, BufWriter},
     path::Path,
+    time::Instant,
 };
 
 use delegate::delegate;
@@ -188,8 +189,15 @@ impl FemtoHandlerTrait for FemtoRotatingFileHandler {
     delegate! {
         to self.inner {
             fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
-            fn flush(&self) -> bool;
         }
+    }
+
+    fn flush(&self) -> bool {
+        self.inner.flush()
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        self.inner.flush_by(deadline)
     }
 
     fn as_any(&self) -> &dyn Any {

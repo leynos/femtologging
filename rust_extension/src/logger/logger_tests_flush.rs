@@ -29,7 +29,7 @@ use super::*;
 /// wake-up that follows a timed wait, and several agents build here at once.
 /// The defect this guards against is waiting *without* a bound, which no
 /// finite allowance could mask, so a generous one still separates the two.
-fn flush_bound() -> Duration {
+pub(super) fn flush_bound() -> Duration {
     Duration::from_millis(2 * LOGGER_FLUSH_TIMEOUT_MS)
 }
 

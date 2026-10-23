@@ -37,6 +37,6 @@ fn default_handler_flush_returns_true() {
 fn overridden_flush_called_via_trait() {
     let handler = DummyHandler::default();
     let trait_obj: &dyn FemtoHandlerTrait = &handler;
-    assert!(trait_obj.flush());
+    assert!(trait_obj.flush_until(std::time::Instant::now() + std::time::Duration::from_secs(1)));
     assert!(*handler.flushed.lock().expect("flushed flag mutex poisoned"));
 }

@@ -88,14 +88,16 @@ class FemtoLogger:
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Queues a marker behind every record already accepted and waits for
-        the worker to reach it, then calls ``flush()`` on every handler.
-        One 2 s deadline covers enqueueing the marker and waiting for its
-        acknowledgement, and the wait releases the interpreter so a worker
-        blocked on a Python handler can still make progress.  Returns
-        ``False`` when the marker cannot be enqueued in time, when the
-        worker does not acknowledge it in time, when the worker has exited,
-        or when any handler flush fails.
+        Queues a marker behind every record already accepted, waits for the
+        worker to reach it, then calls ``flush()`` on every handler.  One
+        2 s deadline covers the whole barrier -- enqueueing the marker,
+        waiting for its acknowledgement, and flushing each handler -- and
+        the wait releases the interpreter so a worker blocked on a Python
+        handler can still make progress.  Each handler caps its share at its
+        own configured timeout, so the deadline can shorten a handler's wait
+        but not lengthen the barrier.  Returns ``False`` when the marker
+        cannot be enqueued in time, when the worker does not acknowledge it
+        in time, when the worker has exited, or when any handler flush fails.
 
         """
         ...

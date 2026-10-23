@@ -184,12 +184,20 @@ impl FemtoLogger {
     ///
     /// Queues a marker behind every record the logger has already accepted
     /// and waits for the worker to reach it, then calls ``flush()`` on every
-    /// attached handler (each handler applies its own timeout).
+    /// attached handler.
     ///
-    /// One 2 second deadline covers the whole barrier: enqueueing the marker
-    /// and waiting for the worker to acknowledge it. The wait releases the
-    /// Python GIL, so a worker blocked on a Python handler can run and
-    /// acknowledge rather than deadlocking against the flushing thread.
+    /// One 2 second deadline covers the whole barrier: enqueueing the marker,
+    /// waiting for the worker to acknowledge it, and flushing each handler.
+    /// Each handler receives the deadline through its deadline-aware flush
+    /// hook and caps it at its own timeout; the deadline can therefore
+    /// shorten a handler's wait but not lengthen the barrier. The queue wait
+    /// releases the Python GIL, so a worker blocked on a Python handler can
+    /// run and acknowledge rather than deadlocking against the flushing
+    /// thread.
+    ///
+    /// The deadline is advisory for a handler outside this crate: its
+    /// deadline-aware flush hook is synchronous, so the barrier cannot
+    /// preempt an implementation that ignores the instant it is handed.
     ///
     /// Returns
     /// -------
@@ -310,6 +318,9 @@ mod producer_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests_flush.rs"]
 mod logger_tests_flush;
+#[cfg(all(test, not(loom)))]
+#[path = "logger_tests_flush_deadline.rs"]
+mod logger_tests_flush_deadline;
 #[cfg(all(test, not(loom)))]
 #[path = "worker_tests.rs"]
 mod worker_tests;

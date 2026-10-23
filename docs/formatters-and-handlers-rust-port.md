@@ -59,6 +59,10 @@ common trait:
 pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
     fn flush(&self) -> bool { true }
+    fn flush_until(&self, deadline: std::time::Instant) -> bool {
+        let _ = deadline;
+        self.flush()
+    }
 }
 
 /// Base Python-exposed class. Methods are no-ops by default.

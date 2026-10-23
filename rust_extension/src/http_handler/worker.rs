@@ -3,10 +3,7 @@
 //! The worker maintains a ureq Agent for connection pooling and handles
 //! retries with exponential backoff for transient failures.
 
-use std::{
-    io, thread,
-    time::{Duration, Instant},
-};
+use std::{io, thread, time::Instant};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
@@ -14,7 +11,9 @@ use log::warn;
 use ureq::{Agent, AgentBuilder};
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
+    handler::{HandlerError, remaining},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
     socket_handler::backoff::BackoffState,
 };
 
@@ -346,28 +345,27 @@ pub fn enqueue_record(
 
 /// Sends a flush command to the HTTP worker and waits for acknowledgment.
 ///
-/// Uses a deadline-based approach to ensure the total wait time does not
-/// exceed `timeout`, even if the send operation consumes part of the budget.
+/// Uses the caller's absolute deadline for both sending and receiving, so time
+/// spent waiting to send also comes out of the acknowledgement wait.
 ///
 /// # Arguments
 ///
 /// * `tx` - Sender channel to the HTTP worker thread
-/// * `timeout` - Maximum time to wait for both sending and receiving the ack
+/// * `deadline` - The instant by which both sending and receiving the ack must
+///   finish
 ///
 /// # Returns
 ///
-/// `true` if the flush was acknowledged within the timeout, `false` otherwise.
-pub fn flush_queue(tx: &Sender<HTTPCommand>, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
+/// `true` if the flush was acknowledged by the deadline, `false` otherwise.
+pub fn flush_queue(tx: &Sender<HTTPCommand>, deadline: Instant) -> bool {
     let (ack_tx, ack_rx) = bounded(1);
     if tx
-        .send_timeout(HTTPCommand::Flush(ack_tx), timeout)
+        .send_timeout(HTTPCommand::Flush(ack_tx), remaining(deadline))
         .is_err()
     {
         return false;
     }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    ack_rx.recv_timeout(remaining).is_ok()
+    ack_rx.recv_timeout(remaining(deadline)).is_ok()
 }
 
 #[cfg(test)]

@@ -232,10 +232,24 @@ through acknowledging it to flushing each handler, with the transitions on
 which it fails._
 
 A single absolute deadline covers the whole barrier, so the states above cannot
-each spend the advertised budget: everything from `EnqueueMarker` to the exit
-from `AwaitAcknowledgement` shares one timeout. Both wait states release the
-Python GIL while they block, so a worker that needs the GIL to reach the marker
-can still run.
+each spend the advertised budget: everything from `EnqueueMarker` through
+`FlushHandlers` shares one timeout. The deadline reaches the handler flushes as
+well as the two wait states, because `FemtoHandlerTrait::flush_until()` takes
+it as an argument; each handler caps that at its own configured timeout, so the
+deadline can shorten a handler's wait but not lengthen the barrier.
+
+`EnqueueMarker` and `AwaitAcknowledgement` release the Python GIL while they
+block, so a worker that needs the GIL to reach the marker can still run. The
+`FlushHandlers` state releases nothing, because no handler's flush needs the
+GIL: a Python handler is reached through a wrapper that takes the default no-op
+flush rather than calling back into Python.
+
+The deadline is advisory for a handler outside this crate. The barrier calls
+the deadline-aware hook synchronously, so it cannot preempt an implementation
+that ignores the instant it is handed. The default hook preserves existing
+implementations by calling `flush()`; a custom handler with a blocking flush
+should override it. Every handler shipped here honours the deadline, and
+nothing the logger itself waits on can overshoot it.
 
 ### 3.3 `FemtoLogRecord` Structure
 

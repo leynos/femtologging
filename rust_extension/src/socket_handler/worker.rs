@@ -1,15 +1,14 @@
 //! Worker thread driving socket I/O.
 
-use std::{
-    io, thread,
-    time::{Duration, Instant},
-};
+use std::{io, thread, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
+    handler::{HandlerError, remaining},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
 };
 
 use super::{
@@ -239,13 +238,18 @@ pub fn enqueue_record(
     }
 }
 
-pub fn flush_queue(tx: &Sender<SocketCommand>, timeout: Duration) -> bool {
+/// Ask the worker to drain, waiting no longer than `deadline`.
+///
+/// Both waits come out of the one deadline: charging the timeout to the send
+/// and again to the receive would let a single flush spend it twice, which is
+/// the overrun the flush barrier exists to prevent.
+pub fn flush_queue(tx: &Sender<SocketCommand>, deadline: Instant) -> bool {
     let (ack_tx, ack_rx) = bounded(1);
     if tx
-        .send_timeout(SocketCommand::Flush(ack_tx), timeout)
+        .send_timeout(SocketCommand::Flush(ack_tx), remaining(deadline))
         .is_err()
     {
         return false;
     }
-    ack_rx.recv_timeout(timeout).is_ok()
+    ack_rx.recv_timeout(remaining(deadline)).is_ok()
 }
