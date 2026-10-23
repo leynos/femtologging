@@ -11,10 +11,6 @@ from femtologging import get_logger, reset_manager
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-_INVALID_NAME_MATCH = (
-    "logger name cannot be empty, start or end with '\\.', or contain consecutive dots"
-)
-
 
 @pytest.fixture(autouse=True)
 def _clean_manager() -> cabc.Iterator[None]:
@@ -76,15 +72,21 @@ def test_get_logger_auto_creates_root() -> None:
 
 
 @pytest.mark.parametrize(
-    "name",
+    ("name", "expected"),
     [
-        pytest.param("", id="empty"),
-        pytest.param(".bad", id="leading_dot"),
-        pytest.param("bad.", id="trailing_dot"),
-        pytest.param("a..b", id="consecutive_dots"),
+        pytest.param("", "cannot be empty", id="empty"),
+        pytest.param(".bad", "cannot start or end with", id="leading_dot"),
+        pytest.param("bad.", "cannot start or end with", id="trailing_dot"),
+        pytest.param("a..b", "consecutive dots", id="consecutive_dots"),
     ],
 )
-def test_get_logger_invalid_names(name: str) -> None:
-    """Invalid names should raise ValueError."""
-    with pytest.raises(ValueError, match=_INVALID_NAME_MATCH):
+def test_get_logger_invalid_names(name: str, expected: str) -> None:
+    """Invalid names should raise ValueError naming the rule they broke.
+
+    The message is matched per case rather than against one combined sentence
+    because validation now reports the first rule a name breaks, cheapest rule
+    first: the shape rules are separate checks, and a name can only ever be
+    refused by one of them.
+    """
+    with pytest.raises(ValueError, match=expected):
         get_logger(name)

@@ -22,7 +22,7 @@ use loom::thread;
 use _femtologging_rs::{FemtoHandlerTrait, FemtoLevel, FemtoLogger};
 
 use crate::loom_sink::SinkHandler;
-use crate::shared_buffer_loom::read_output;
+use crate::shared_buffer::loom::read_output;
 
 /// A loom-instrumented byte buffer shared with a stream handler.
 type LoomBuffer = LoomArc<LoomMutex<Vec<u8>>>;
@@ -54,13 +54,10 @@ fn loom_single_logger_multi_handlers() {
         let buf2 = fresh_buffer();
         let h1 = handler_for(&buf1);
         let h2 = handler_for(&buf2);
-        let logger = FemtoLogger::new("core".to_string());
-        logger
-            .add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
-        logger
-            .add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
+        let logger =
+            FemtoLogger::new("core".to_string()).expect("test logger should be constructible");
+        logger.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
+        logger.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
         let logger = Arc::new(logger);
         let l = Arc::clone(&logger);
         let t = thread::spawn(move || {
@@ -81,12 +78,10 @@ fn loom_shared_handler_multi_loggers() {
     loom::model(|| {
         let buffer = fresh_buffer();
         let handler = handler_for(&buffer);
-        let l1 = FemtoLogger::new("a".to_string());
-        let l2 = FemtoLogger::new("b".to_string());
-        l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
-        l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
+        let l1 = FemtoLogger::new("a".to_string()).expect("test logger should be constructible");
+        let l2 = FemtoLogger::new("b".to_string()).expect("test logger should be constructible");
+        l1.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        l2.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
         let l1 = Arc::new(l1);
         let l2 = Arc::new(l2);
         let t = thread::spawn({
@@ -113,16 +108,12 @@ fn loom_multiple_loggers_multiple_handlers() {
         let shared_handler = handler_for(&shared_buf);
         let h1 = handler_for(&buf1);
         let h2 = handler_for(&buf2);
-        let l1 = FemtoLogger::new("l1".to_string());
-        l1.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
-        l1.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
-        let l2 = FemtoLogger::new("l2".to_string());
-        l2.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
-        l2.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native test handler should register");
+        let l1 = FemtoLogger::new("l1".to_string()).expect("test logger should be constructible");
+        l1.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        l1.add_handler(h1.clone() as Arc<dyn FemtoHandlerTrait>);
+        let l2 = FemtoLogger::new("l2".to_string()).expect("test logger should be constructible");
+        l2.add_handler(shared_handler.clone() as Arc<dyn FemtoHandlerTrait>);
+        l2.add_handler(h2.clone() as Arc<dyn FemtoHandlerTrait>);
         let l1 = Arc::new(l1);
         let l2 = Arc::new(l2);
         let t = thread::spawn({
@@ -156,7 +147,9 @@ fn loom_concurrent_handler_addition() {
         let h1 = handler_for(&buf1);
         let h2 = handler_for(&buf2);
         let h3 = handler_for(&buf3);
-        let logger = Arc::new(FemtoLogger::new("core".to_string()));
+        let logger = Arc::new(
+            FemtoLogger::new("core".to_string()).expect("test logger should be constructible"),
+        );
 
         let adders: Vec<_> = [
             h1.clone() as Arc<dyn FemtoHandlerTrait>,
@@ -167,8 +160,7 @@ fn loom_concurrent_handler_addition() {
         .map(|h| {
             let l = Arc::clone(&logger);
             thread::spawn(move || {
-                l.add_handler(h)
-                    .expect("native test handler should register");
+                l.add_handler(h);
             })
         })
         .collect();

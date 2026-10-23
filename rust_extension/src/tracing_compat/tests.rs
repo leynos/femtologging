@@ -253,3 +253,61 @@ fn events_outside_spans_do_not_gain_span_metadata() {
 fn fallback_message_constant_is_human_readable() {
     assert_eq!(FALLBACK_EVENT_MESSAGE, "tracing event");
 }
+
+/// A high-cardinality target stream is refused, not accumulated.
+///
+/// The tracing bridge resolves each event's target through the same bounded
+/// registry lookup as every other route, so a caller whose targets come from
+/// request identifiers cannot make the registry grow once per identifier. The
+/// macro cannot express this: `tracing` bakes a target into a `static`, so a
+/// runtime target is only reachable through the resolver. Resolution is
+/// asserted directly for that reason, and the fallback is asserted to be
+/// `root` so a refused target degrades to a known logger instead of being
+/// dropped.
+#[test]
+#[serial]
+fn a_high_cardinality_target_stream_resolves_to_root() {
+    manager::reset_manager();
+
+    Python::attach(|py| {
+        let refused = [
+            // Past the byte budget.
+            format!(
+                "stress.{}",
+                "a".repeat(crate::manager::MAX_LOGGER_NAME_BYTES)
+            ),
+            // A newline could forge a record boundary in line-oriented output.
+            "stress.forged\nfake [ERROR] injected".to_string(),
+            // Past the segment budget.
+            ["deep"; crate::manager::MAX_LOGGER_NAME_SEGMENTS + 1].join("."),
+        ];
+
+        for target in &refused {
+            let (name, logger) = FemtoTracingLayer::resolve_logger(py, target)
+                .expect("the bridge must always resolve a logger");
+            assert_eq!(
+                name.as_ref(),
+                "root",
+                "target {target:?} is invalid and must fall back to root"
+            );
+            // Identity, not just equality: the fallback must be the registry's
+            // root, not a fresh logger the bridge quietly registered.
+            let root = manager::get_logger(py, "root").expect("root is always resolvable");
+            assert_eq!(
+                logger.as_ptr(),
+                root.as_ptr(),
+                "the fallback for {target:?} must be the registered root logger"
+            );
+        }
+
+        // None of the refused targets may have become a registry key: a bridge
+        // that inserted before validating would still be unbounded.
+        assert_eq!(
+            crate::manager::named_logger_count_for_test(),
+            0,
+            "a refused target must not leave a logger in the registry"
+        );
+    });
+
+    manager::reset_manager();
+}

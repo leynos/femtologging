@@ -1,24 +1,22 @@
 //! Producer-path filtering and dispatch for [`FemtoLogger`].
 //!
 //! These helpers keep the hot logging path focused and separate it from the
-//! worker-thread lifecycle code.
-
-use std::time::Duration;
+//! dispatch pool. Nothing here waits: a record is either handed to the shard or
+//! counted as dropped, so a slow handler slows the loggers sharing its shard
+//! rather than the code doing the logging.
 
 use log::warn;
 
-use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
-use crate::sync::bounded;
 
 mod handler_filters;
 
 #[cfg(test)]
 use super::HandlerAttachment;
-use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+use super::{FemtoLogger, QueuedRecord};
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -51,9 +49,10 @@ impl FemtoLogger {
 
     /// Log a message with explicit source location metadata.
     ///
-    /// Used by the [`femtolog_info!`] family of macros and Rust compatibility
-    /// bridges to attach source information (filename, line number, module
-    /// path) before filtering and dispatch.
+    /// Used by the [`femtolog_info!`] family of macros and the Python
+    /// convenience functions to attach caller-captured source information
+    /// (filename, line number, module path) to the record before filtering
+    /// and dispatch.
     ///
     /// # Examples
     ///
@@ -91,11 +90,10 @@ impl FemtoLogger {
         self.log_record(record)
     }
 
-    /// Log a record with metadata that has already been scoped by the caller.
+    /// Log a record whose context was captured by the Python caller.
     ///
-    /// Python entrypoints use this path after capturing their task-local
-    /// `ContextVar` fields. Rust thread-local context is deliberately not
-    /// merged here; Rust callers should use [`Self::log_with_metadata`].
+    /// Python task-local context is already present in `metadata`; Rust
+    /// thread-local context is deliberately not merged a second time.
     #[cfg(feature = "python")]
     pub(crate) fn log_with_explicit_metadata(
         &self,
@@ -149,12 +147,10 @@ impl FemtoLogger {
             == handler_filters::FilterChainOutcome::Accepted
     }
 
-    /// Return whether this logger currently propagates to an existing parent.
     fn should_propagate_to_parent(&self) -> bool {
         self.propagate.load(std::sync::atomic::Ordering::SeqCst) && self.parent.is_some()
     }
 
-    /// Re-enter Python to find the parent and enqueue a cloned record there.
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {
         let Some(parent_name) = &self.parent else {
             return;
@@ -166,15 +162,7 @@ impl FemtoLogger {
         });
     }
 
-    /// Capture context through the logger's provider and enqueue the snapshot.
-    ///
-    /// Context capture is attempted only when this exact handler snapshot
-    /// contains a Python-backed handler; capture failures use a separate
-    /// counter from queue-full drops.
     fn send_to_local_handlers(&self, mut record: FemtoLogRecord) {
-        let Some(tx) = &self.tx else {
-            return;
-        };
         let attachments = self.handlers.read().clone();
         if attachments.is_empty() {
             #[cfg(feature = "tracing-compat")]
@@ -206,44 +194,51 @@ impl FemtoLogger {
             handler_kind,
         ) {
             Ok(context) => context,
-            Err(err) => {
-                self.record_context_capture_failure(err);
+            Err(error) => {
+                self.record_context_capture_failure(error);
                 return;
             }
         };
         #[cfg(feature = "tracing-compat")]
         let dispatch_started = std::time::Instant::now();
-        let dispatch_result = tx.try_send(QueuedRecord {
+        let queued = Box::new(QueuedRecord {
             record,
             handlers,
             #[cfg(feature = "python")]
             context,
         });
-        let was_queued = dispatch_result.is_ok();
+        if self.shard.admit(queued).is_ok() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_queue_dispatch",
+                handler_kind,
+                dispatch_outcome = "queued",
+                elapsed_us = dispatch_started.elapsed().as_micros(),
+            );
+            return;
+        }
         #[cfg(feature = "tracing-compat")]
         tracing::trace!(
             target: "femtologging::internal",
             operation = "producer_queue_dispatch",
             handler_kind,
-            dispatch_outcome = if was_queued { "queued" } else { "rejected" },
+            dispatch_outcome = "rejected",
             elapsed_us = dispatch_started.elapsed().as_micros(),
         );
-        if was_queued {
-            return;
-        }
         self.dropped_records
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.drop_warner.record_drop();
         self.drop_warner.warn_if_due(|count| {
-            warn!("FemtoLogger: dropped {count} records; queue full or shutting down");
+            warn!("FemtoLogger: dropped {count} records; dispatch queue full");
         });
     }
 
-    /// Capture context for the handler snapshot and trace the bounded outcome.
+    /// Capture Python context for the exact handler snapshot being queued.
     #[cfg(feature = "python")]
     fn capture_context_for_dispatch(
         &self,
-        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+        handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
         #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
     ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
         #[cfg(feature = "tracing-compat")]
@@ -267,28 +262,23 @@ impl FemtoLogger {
         context
     }
 
-    /// Record a failed context snapshot without counting it as a queue drop.
+    /// Count a failed context snapshot separately from queue-capacity drops.
     #[cfg(feature = "python")]
-    fn record_context_capture_failure(&self, err: pyo3::PyErr) {
+    fn record_context_capture_failure(&self, error: pyo3::PyErr) {
         self.context_capture_failures
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.context_capture_warner.record_drop();
         self.context_capture_warner.warn_if_due(|count| {
-            warn!(
-                "operation=producer_context_capture handler_kind=python outcome=failed failures={count}"
-            );
-            pyo3::Python::attach(|py| err.print(py));
+            warn!("FemtoLogger: dropped {count} records after context capture failed");
+            pyo3::Python::attach(|py| error.print(py));
         });
     }
 
-    /// Capture the emitting thread's context when the queued handlers need it.
-    ///
-    /// Inspecting `handlers` rather than logger-wide mutable state keeps the
-    /// context paired with the exact handler snapshot that the worker receives.
+    /// Capture the current Python context only when a queued handler needs it.
     #[cfg(feature = "python")]
     pub(super) fn capture_python_context(
         &self,
-        handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>],
+        handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
     ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
         if !handlers.iter().any(|handler| handler.is_python_backed()) {
             return Ok(None);
@@ -296,12 +286,8 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
-    /// Acknowledge the worker reaching a queue marker, then flush current handlers.
-    ///
-    /// The acknowledgement orders flushing after all records already queued;
-    /// handler flushing then covers output buffered inside each live handler.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
-        self.wait_for_worker_idle() && self.flush_configured_handlers()
+        self.wait_for_dispatch_to_drain() && self.flush_configured_handlers()
     }
 
     /// Exercise the production handler-filter chain without starting a worker.
@@ -309,36 +295,19 @@ impl FemtoLogger {
     pub(super) fn filter_handlers_for_test(
         record: &mut FemtoLogRecord,
         handlers: Vec<HandlerAttachment>,
-    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
+    ) -> Vec<std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>> {
         handler_filters::filter_handlers(record, handlers)
     }
 
-    /// Wait for the worker to process a marker after all earlier queued records.
-    fn wait_for_worker_idle(&self) -> bool {
-        let Some(tx) = &self.tx else {
-            return true;
-        };
-        let (ack_tx, ack_rx) = bounded(1);
-        let ack_handler: std::sync::Arc<dyn FemtoHandlerTrait> =
-            std::sync::Arc::new(FlushAckHandler::new(ack_tx));
-        let record = FemtoLogRecord::new("__femtologging__", FemtoLevel::Info, "__flush__");
-        if tx
-            .send(QueuedRecord {
-                record,
-                handlers: vec![ack_handler],
-                #[cfg(feature = "python")]
-                context: None,
-            })
-            .is_err()
-        {
-            return false;
-        }
-        ack_rx
-            .recv_timeout(Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS))
-            .is_ok()
+    /// Wait for the logger's shard to finish the records queued ahead.
+    ///
+    /// The barrier travels the shard's own queue, so it cannot overtake a
+    /// record this logger logged first, and a shard that is gone or too slow
+    /// answers `false` rather than waiting indefinitely.
+    fn wait_for_dispatch_to_drain(&self) -> bool {
+        self.shard.wait_for_drain()
     }
 
-    /// Flush handlers visible under the read lock after queue delivery is idle.
     fn flush_configured_handlers(&self) -> bool {
         self.handlers
             .read()
@@ -346,12 +315,10 @@ impl FemtoLogger {
             .all(|attachment| attachment.handler.flush())
     }
 
-    /// Dispatch a record to the logger's handlers via the background queue.
+    /// Dispatch a record to the logger's handlers through its dispatch shard.
     ///
-    /// The record is sent to the worker thread if a channel is configured.
-    /// When the queue is full or the logger is shutting down, the record is
-    /// dropped; a drop counter increments and a rate-limited warning is
-    /// emitted.
+    /// When the shard is full the record is dropped; a drop counter increments
+    /// and a rate-limited warning is emitted. Nothing here blocks.
     pub(super) fn dispatch_to_handlers(&self, record: FemtoLogRecord) {
         let parent_record = self.should_propagate_to_parent().then(|| record.clone());
         self.send_to_local_handlers(record);

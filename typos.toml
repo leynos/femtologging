@@ -31,8 +31,9 @@ extend-exclude = [
 [default]
 locale = "en-gb"
 extend-ignore-re = [
-    "(?:^|[^A-Za-z0-9_-])(?:--color-primary|--tw-color-red-500)(?:$|[^A-Za-z0-9_-])",
     "(?s)```.*?```",
+    "--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\\b|_)",
+    "(?:^|[^A-Za-z0-9_-])(?:--color-primary|--tw-color-red-500)(?:$|[^A-Za-z0-9_-])",
     "Azure\\s+Architecture\\s+Center\\s*\\|\\s*Microsoft\\s+Learn\\b",
     "GitHub\\s+Flavored\\s+Markdown\\b(?:\\s\\(GFM\\))?",
     "HashiCorp",

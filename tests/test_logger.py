@@ -28,15 +28,9 @@ LEVELS = ("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL")
     [
         ("core", "INFO", "hello", "core [INFO] hello"),
         ("sys", "ERROR", "fail", "sys [ERROR] fail"),
-        ("", "INFO", "empty name", " [INFO] empty name"),
         ("core", "INFO", "", "core [INFO] "),
         ("i18n", "INFO", "こんにちは世界", "i18n [INFO] こんにちは世界"),
-        (
-            "n" * 1000,
-            "INFO",
-            "m" * 1000,
-            f"{'n' * 1000} [INFO] {'m' * 1000}",
-        ),
+        ("api.v1.widgets", "INFO", "hello", "api.v1.widgets [INFO] hello"),
     ],
 )
 def test_log_formats_message(
@@ -47,6 +41,34 @@ def test_log_formats_message(
     assert logger.log(level, message) == expected, (
         f"unexpected format for name={name!r}, level={level!r}, message={message!r}"
     )
+
+
+def test_a_long_message_is_formatted_in_full() -> None:
+    """Message length is not part of the logger-name bound.
+
+    This used to ride along in the message-formatting table with a 1000-byte
+    logger name, which the name bound now refuses. A message has no length
+    limit, so the case is kept — with a legal name — so the formatting path is
+    still exercised at size.
+    """
+    logger = FemtoLogger("core")
+    message = "m" * 1000
+    assert logger.log("INFO", message) == f"core [INFO] {message}", (
+        "a 1000-byte message must be formatted in full; the logger-name bound "
+        "does not truncate messages"
+    )
+
+
+def test_an_over_long_logger_name_is_refused() -> None:
+    """The byte bound is on the name, and the diagnostic says so.
+
+    A name is a registry key that lives for the life of the process, so its
+    length is a resource bound rather than formatting preference. The refusal
+    has to name the bound to be actionable: a caller told only "invalid" would
+    keep trimming by guesswork.
+    """
+    with pytest.raises(ValueError, match="cannot exceed 255 bytes"):
+        FemtoLogger("n" * 1000)
 
 
 def test_log_respects_logger_level() -> None:

@@ -53,7 +53,8 @@ fn apply_filters_merges_enrichment_and_short_circuits(
 ) {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
-    let logger = FemtoLogger::new("producer".to_string());
+    let logger = FemtoLogger::new("producer".to_string())
+        .expect("test logger should be constructible");
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
     let third_calls = Arc::new(AtomicUsize::new(0));
@@ -120,7 +121,8 @@ fn apply_filters_merges_enrichment_and_short_circuits(
 fn apply_filters_conflicting_enrichment_prefers_later() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
-    let logger = FemtoLogger::new("producer".to_string());
+    let logger = FemtoLogger::new("producer".to_string())
+        .expect("test logger should be constructible");
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
 
@@ -163,7 +165,8 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
 fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
-    let logger = FemtoLogger::new("producer".to_string());
+    let logger = FemtoLogger::new("producer".to_string())
+        .expect("test logger should be constructible");
     logger
         .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
         .expect("native test handler should register");

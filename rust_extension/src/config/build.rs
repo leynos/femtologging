@@ -89,7 +89,8 @@ impl ConfigBuilder {
                 self.extend_keep_names_with_ancestors(&mut names);
                 names
             });
-            let committed_loggers = manager::commit_staged_loggers(py, staged_loggers);
+            let committed_loggers = manager::commit_staged_loggers(py, staged_loggers)
+                .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
 
             if let Some(keep_names) = &keep_names {
                 manager::disable_existing_loggers(py, keep_names);
