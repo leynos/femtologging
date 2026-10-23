@@ -4,8 +4,8 @@
 //! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
 //!
 //! The registry is bounded on two axes. A name is validated against
-//! [`MAX_LOGGER_NAME_BYTES`], [`MAX_LOGGER_NAME_SEGMENTS`] and an
-//! ASCII-control-character ban before it can become a key, and the registry
+//! [`MAX_LOGGER_NAME_BYTES`], [`MAX_LOGGER_NAME_SEGMENTS`] and a ban on
+//! line-breaking characters before it can become a key, and the registry
 //! retains at most [`MAX_LOGGERS`] distinct loggers. Both bounds exist because
 //! a logger name is often derived from caller-supplied data; without them a
 //! request identifier becomes an unbounded registry key.

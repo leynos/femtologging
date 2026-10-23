@@ -107,7 +107,8 @@ impl FemtoLogger {
         >,
     ) -> Self {
         // The budget belongs to this logger and is enforced by the shard it
-        // was given, so it is created from that shard's depth.
+        // was given, so it is derived from that shard. The shard sizes the
+        // budget below its depth so one logger can never take every permit.
         let budget = shard.budget();
         Self {
             name,

@@ -91,12 +91,12 @@ impl Permits {
 impl LoggerBudget {
     /// Create a budget for one logger, holding nothing in flight.
     ///
-    /// Production always passes
-    /// [`RECORDS_PER_LOGGER`](super::super::RECORDS_PER_LOGGER), so the limit
-    /// does not vary with the shard's depth. A shard shallower than that
-    /// refuses at its own permit pool first, which is the tighter bound of the
-    /// two. The parameter exists so a test can size a budget small enough to
-    /// reach in a shard it can afford to build.
+    /// The limit is chosen by [`Shard::budget`](super::Shard::budget): half the
+    /// shard's depth, never more than
+    /// [`RECORDS_PER_LOGGER`](super::super::RECORDS_PER_LOGGER). It is always
+    /// below the depth, so a logger cannot take every permit. The parameter
+    /// also lets a test size a budget small enough to reach in a shard it can
+    /// afford to build.
     pub(crate) fn new(limit: usize) -> Self {
         Self {
             limit,
@@ -107,6 +107,16 @@ impl LoggerBudget {
     /// Return the number of unhandled records this logger may hold.
     fn limit(&self) -> usize {
         self.limit
+    }
+
+    /// Return the limit a test can compare against a shard's depth.
+    ///
+    /// The invariant that matters — a budget is always *below* its shard's
+    /// depth — is arithmetic, so it is asserted directly rather than by
+    /// building a shard deep enough to reach a production-sized limit.
+    #[cfg(test)]
+    pub(crate) fn limit_for_test(&self) -> usize {
+        self.limit()
     }
 
     /// Return how many of this logger's records the shard has not finished.

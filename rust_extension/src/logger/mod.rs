@@ -126,9 +126,10 @@ impl FemtoLogger {
     /// at most
     /// [`MAX_LOGGER_NAME_SEGMENTS`](crate::manager::MAX_LOGGER_NAME_SEGMENTS)
     /// dot-separated segments, no leading or trailing dot, no empty segment,
-    /// and no ASCII control characters. A logger built this way is not
-    /// registered in the global manager, so it does not count against the
-    /// registry limit.
+    /// and no line-breaking character: any control character (C0, DEL or C1),
+    /// or the Unicode line and paragraph separators. A logger built this way
+    /// is not registered in the global manager, so it does not count against
+    /// the registry limit.
     ///
     /// Raises
     /// ------
