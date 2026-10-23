@@ -48,7 +48,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(loom))]
 use once_cell::sync::{Lazy, OnceCell};
 
-pub(crate) use shard::Shard;
+pub(crate) use shard::{LoggerBudget, Shard};
 
 /// Threads a dispatcher starts when the machine reports no useful limit.
 ///
@@ -62,10 +62,15 @@ const MIN_SHARD_COUNT: usize = 1;
 
 /// Records one shard will hold in flight per point of shard count.
 ///
-/// A shard serves every logger assigned to it, so the depth is multiplied by
-/// the shard count: the pool holds as much queued work in total as the
-/// per-logger queues it replaced, while a single logger still cannot overrun
-/// its share.
+/// The depth is multiplied by the shard count, so the pool holds as much queued
+/// work in total as the per-logger queues it replaced.
+///
+/// It doubles as one logger's in-flight allowance on a shard, which is the
+/// bound that makes sharing safe: the shard-wide pool alone bounds what the
+/// shard holds, not what one logger takes from it, so a single logger whose
+/// handler never returns could otherwise consume every permit. Both uses are
+/// this constant so the total the pool holds and the share one logger may take
+/// are stated in one place.
 pub(crate) const RECORDS_PER_LOGGER: usize = 1024;
 
 /// The depth a Loom model's shard is built with.

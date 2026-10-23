@@ -7,22 +7,34 @@
 //! logger's flush travel the same path as its records, so an acknowledgement
 //! cannot overtake one.
 //!
-//! Work is bounded twice. The queue is bounded, so a burst cannot grow memory
-//! without limit, and the permits bound how much work a shard holds *in
-//! flight*, so a slow handler cannot turn a busy logger's backlog into an
-//! unbounded one. Both refusals are returned to the caller, which counts the
-//! drop and warns about it: the logging call itself never waits.
+//! Work is bounded three times, and the third bound is the one that keeps a
+//! shard shared rather than merely multiplexed. The queue is bounded, so a
+//! burst cannot grow memory without limit. A shard-wide permit pool bounds how
+//! much work it holds *in flight*, so a slow handler cannot turn a busy
+//! logger's backlog into an unbounded one. And each logger has its own
+//! in-flight budget within that pool, so one logger whose handler never
+//! returns cannot consume every permit and starve the loggers sharing its
+//! shard. All three refusals are returned to the caller, which counts the drop
+//! and warns about it: the logging call itself never waits.
+//!
+//! The two in-flight bounds live in [`budget`] and the drain loop in
+//! [`worker`]; this module defines the job type, the shard handle, and the
+//! admission and barrier operations a producer calls.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
+mod budget;
+mod worker;
+
 use std::sync::Arc;
 use std::time::Duration;
-
-use log::warn;
 
 use crate::logger::QueuedRecord;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
-use crate::sync::{Receiver, Sender, bounded, recv_timeout};
+use crate::sync::{Sender, bounded, recv_timeout};
+
+pub(crate) use budget::LoggerBudget;
+use budget::{Permit, Permits};
+use worker::run_worker;
 
 /// How long the shard worker waits for a job before looking around again.
 ///
@@ -87,75 +99,6 @@ pub(crate) struct Shard {
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
-/// The permits bounding how much work one shard holds.
-struct Permits {
-    /// One token per free in-flight slot, taken non-blockingly by a producer.
-    available: Receiver<()>,
-    /// Where a used token goes back.
-    ///
-    /// Kept alongside `available` so the channel's senders are never all
-    /// dropped: a disconnected channel is not an exhausted pool, and the two
-    /// would otherwise be indistinguishable to `try_recv`.
-    returned: Sender<()>,
-}
-
-/// Permission to hold one record in flight on a shard.
-///
-/// It travels to the worker inside the job it authorises, and returns to the
-/// pool when that job is dropped — after the handlers have run, or while a
-/// panicking handler unwinds. A permit therefore counts its record as in flight
-/// for exactly as long as the record is unhandled, on every path out.
-struct Permit {
-    permits: Arc<Permits>,
-}
-
-impl Permits {
-    /// Build a pool holding `capacity` free permits.
-    ///
-    /// Every send fills one of the channel's own slots, so the loop cannot
-    /// block. The result is discarded rather than expected: the only way to
-    /// lose a token is for the channel to be full or gone, and in both cases
-    /// the pool ends up smaller than asked for — it refuses more work, never
-    /// accepts more — so degrading quietly is the safe direction. Panicking
-    /// instead would take down a process that is merely short of a resource.
-    fn new(capacity: usize) -> Self {
-        let (returned, available) = bounded::<()>(capacity);
-        for _ in 0..capacity {
-            let _ = returned.send(());
-        }
-        Self {
-            available,
-            returned,
-        }
-    }
-}
-
-impl Permit {
-    /// Take a permit if the shard has one free.
-    ///
-    /// Never waits: a shard that has handed out every permit is already holding
-    /// as much work as it will, so the caller counts a dropped record rather
-    /// than blocking the logging call.
-    fn take(permits: &Arc<Permits>) -> Option<Self> {
-        permits.available.try_recv().ok().map(|()| Self {
-            permits: Arc::clone(permits),
-        })
-    }
-}
-
-impl Drop for Permit {
-    /// Return the permit to its pool.
-    ///
-    /// Releasing from `Drop` rather than a named method is what makes the
-    /// accounting hold on every path out of a job, including one where a
-    /// handler panics and unwinds through it.
-    fn drop(&mut self) {
-        // A failed send can only mean the pool is already full, which would be
-        // a double release; ignoring it keeps the count from inflating.
-        let _ = self.permits.returned.try_send(());
-    }
-}
-
 impl Shard {
     /// Start a shard that holds at most `depth` records in flight.
     ///
@@ -181,6 +124,31 @@ impl Shard {
         })
     }
 
+    /// Create the in-flight budget a logger assigned to this shard draws from.
+    ///
+    /// One budget per logger, not per shard: it is what stops one logger's slow
+    /// handler consuming the whole shard. The limit is
+    /// [`RECORDS_PER_LOGGER`](super::RECORDS_PER_LOGGER) whatever the shard's
+    /// depth, because that is the per-logger bound ADR 007 states; a shard
+    /// shallower than it simply refuses at its own pool first, which is a
+    /// tighter bound and not a weaker one.
+    pub(crate) fn budget(&self) -> Arc<LoggerBudget> {
+        Arc::new(LoggerBudget::new(super::RECORDS_PER_LOGGER))
+    }
+
+    /// Create a budget with an explicit limit, for a test.
+    ///
+    /// The production limit is a thousand times larger than a test shard can
+    /// hold, so a test cannot reach it without either a thousand-deep shard or
+    /// a thousand blocked handlers. Sizing the budget directly lets a shallow
+    /// shard exercise the same refusal: the property under test is that the
+    /// shard-wide pool and a logger's own allowance are separate bounds, which
+    /// does not depend on either number's magnitude.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn budget_with_limit_for_test(&self, limit: usize) -> Arc<LoggerBudget> {
+        Arc::new(LoggerBudget::new(limit))
+    }
+
     /// Accept a record for dispatch, without waiting.
     ///
     /// The record is taken and returned boxed, which is the shape the queue
@@ -193,11 +161,16 @@ impl Shard {
     /// # Errors
     ///
     /// Returns the record back, still boxed and untouched, when the shard is
-    /// full or gone, so the caller can count the drop and warn about it without
-    /// paying for an allocation on the path that runs when the process is
-    /// already short of a resource.
-    pub(crate) fn admit(&self, queued: Box<QueuedRecord>) -> Result<(), Box<QueuedRecord>> {
-        let Some(permit) = Permit::take(&self.permits) else {
+    /// full or gone, or when `budget` says this logger already holds its
+    /// allowance. Either way the caller can count the drop and warn about it
+    /// without paying for an allocation on the path that runs when the process
+    /// is already short of a resource.
+    pub(crate) fn admit(
+        &self,
+        queued: Box<QueuedRecord>,
+        budget: &Arc<LoggerBudget>,
+    ) -> Result<(), Box<QueuedRecord>> {
+        let Some(permit) = Permit::take(&self.permits, budget) else {
             return Err(queued);
         };
         match self.queue.try_send(Job::Record { queued, permit }) {
@@ -258,101 +231,5 @@ impl Shard {
         if let Some(handle) = self.worker.lock().take() {
             let _ = handle.join();
         }
-    }
-}
-
-/// Drain a shard's queue, handling each job.
-///
-/// A panicking handler must not stop the shard, so [`handle_job`] catches a
-/// panic per handler and the loop continues: one logger's misbehaving handler
-/// neither silences the loggers sharing the shard nor deprives its own record's
-/// other handlers. The catch here is a backstop for a panic outside a handler
-/// call — a failure in the shard's own bookkeeping — so the worker survives
-/// that too rather than ending the shard for every logger on it.
-fn run_worker(jobs: Receiver<Job>) {
-    loop {
-        let job = match recv_timeout(&jobs, IDLE_TICK) {
-            Ok(job) => job,
-            // A timeout is the liveness tick, not the end of the shard.
-            // Ending the loop here would retire every worker the first time
-            // the process logged nothing for `IDLE_TICK`, and every later
-            // flush would wait on a barrier nobody was left to answer.
-            Err(crate::sync::RecvTimeoutError::Timeout) => continue,
-            // Only a dropped queue — every sender gone — ends a worker.
-            Err(crate::sync::RecvTimeoutError::Disconnected) => break,
-        };
-        #[cfg(loom)]
-        if matches!(job, Job::Stop) {
-            break;
-        }
-        if catch_unwind(AssertUnwindSafe(|| handle_job(job))).is_err() {
-            warn!("FemtoLogger: dispatch worker recovered from a panic while handling a job");
-        }
-    }
-}
-
-/// Perform one job.
-fn handle_job(job: Job) {
-    match job {
-        Job::Record { queued, permit } => {
-            let QueuedRecord {
-                record,
-                handlers,
-                #[cfg(feature = "python")]
-                context,
-            } = *queued;
-            // Caught per handler, not around the whole loop: a handler that
-            // panics is one handler's bug, and the record is still the other
-            // handlers' to receive. Catching only around the job would make the
-            // panicking handler's neighbours lose a record they had every
-            // reason to expect.
-            for handler in &handlers {
-                #[cfg(feature = "tracing-compat")]
-                let dispatch_started = std::time::Instant::now();
-                #[cfg(feature = "tracing-compat")]
-                let handler_kind = if handler.is_python_backed() {
-                    "python"
-                } else {
-                    "native"
-                };
-                #[cfg(feature = "python")]
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    handler.handle_with_context(record.clone(), context.as_ref())
-                }));
-                #[cfg(not(feature = "python"))]
-                let result = catch_unwind(AssertUnwindSafe(|| handler.handle(record.clone())));
-                #[cfg(feature = "tracing-compat")]
-                let dispatch_outcome = match &result {
-                    Ok(Ok(())) => "success",
-                    Ok(Err(_)) => "failed",
-                    Err(_) => "panicked",
-                };
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => warn!("FemtoLogger: handler reported an error: {error}"),
-                    Err(_) => {
-                        warn!("FemtoLogger: dispatch worker recovered from a panicking handler")
-                    }
-                }
-                #[cfg(feature = "tracing-compat")]
-                tracing::trace!(
-                    target: "femtologging::internal",
-                    operation = "worker_handler_dispatch",
-                    handler_kind,
-                    dispatch_outcome,
-                    elapsed_us = dispatch_started.elapsed().as_micros(),
-                );
-            }
-            // Released only now: the permit counts this record as in flight
-            // until its handlers are done with it. A panic that escapes the
-            // per-handler catch unwinds through here and drops the permit
-            // anyway, so the accounting survives that path too.
-            drop(permit);
-        }
-        Job::Barrier { ack } => {
-            let _ = ack.try_send(());
-        }
-        #[cfg(loom)]
-        Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
 }

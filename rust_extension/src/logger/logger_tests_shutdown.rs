@@ -37,6 +37,7 @@ fn every_shard_a_pool_hands_out_is_live() {
 
     for _ in 0..2 {
         let shard = dispatcher.assign_shard();
+        let budget = shard.budget();
         let queued = QueuedRecord {
             record: FemtoLogRecord::new("pool", FemtoLevel::Info, "dispatched"),
             handlers: vec![handler.clone() as Arc<dyn FemtoHandlerTrait>],
@@ -44,7 +45,7 @@ fn every_shard_a_pool_hands_out_is_live() {
             context: None,
         };
         assert!(
-            shard.admit(Box::new(queued)).is_ok(),
+            shard.admit(Box::new(queued), &budget).is_ok(),
             "a fresh shard should accept a record"
         );
         assert!(
@@ -78,6 +79,7 @@ fn an_idle_worker_keeps_answering() {
     let shard = dispatcher.assign_shard();
     let idle_tick = crate::logger::dispatcher::idle_tick_for_test();
 
+    let budget = shard.budget();
     std::thread::sleep(idle_tick * 2);
 
     let handler = Arc::new(CollectingHandler::new());
@@ -88,7 +90,7 @@ fn an_idle_worker_keeps_answering() {
         context: None,
     };
     assert!(
-        shard.admit(Box::new(queued)).is_ok(),
+        shard.admit(Box::new(queued), &budget).is_ok(),
         "a shard whose worker idled must still accept a record"
     );
     assert!(
@@ -113,6 +115,7 @@ fn one_shard_refuses_records_beyond_its_bound() {
     // is the only input the bound depends on, so a one-deep shard exercises
     // the same refusal path.
     let shard = Shard::start(0, 1).expect("a test shard should start");
+    let budget = shard.budget();
     // A handler that never returns, so the single in-flight permit the shard
     // hands out is never given back: the bound is reached without a race.
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -147,14 +150,14 @@ fn one_shard_refuses_records_beyond_its_bound() {
         context: None,
     };
     assert!(
-        shard.admit(Box::new(queued("held"))).is_ok(),
+        shard.admit(Box::new(queued("held")), &budget).is_ok(),
         "the first record fits"
     );
     started_rx
         .recv_timeout(std::time::Duration::from_secs(2))
         .expect("the worker should start handling the first record");
 
-    let refused = shard.admit(Box::new(queued("refused")));
+    let refused = shard.admit(Box::new(queued("refused")), &budget);
     assert!(
         refused.is_err(),
         "a shard holding its whole budget must refuse the next record instead of queueing it"
@@ -165,4 +168,106 @@ fn one_shard_refuses_records_beyond_its_bound() {
     release_tx
         .send(())
         .expect("the worker should still be waiting");
+}
+
+/// A handler that blocks until released, reporting when it has started.
+///
+/// Shared by the starvation tests below: one logger's handler is held inside
+/// `handle`, which is what makes the difference between a shard that is merely
+/// shared and one where one logger can consume every permit.
+struct HeldHandler {
+    started: std::sync::mpsc::Sender<()>,
+    release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl FemtoHandlerTrait for HeldHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let _ = self.started.send(());
+        let _ = self.release.lock().recv();
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// One logger at its in-flight bound must not starve another on its shard.
+///
+/// The shard-wide permit pool alone does not give this: a logger whose handler
+/// never returns takes every permit the shard holds, and the other loggers
+/// assigned to that shard are then refused records they could have handled.
+/// The per-logger budget is what makes sharing a shard mean sharing, and the
+/// assertion is that a *different* logger still gets its record delivered
+/// while the first is stuck.
+#[test]
+fn one_stuck_logger_does_not_starve_another_on_its_shard() {
+    // A shard deep enough for the other logger's record to still fit after the
+    // stuck logger spends its allowance. The per-logger limit is set to one so
+    // a two-deep shard can demonstrate the separation: the stuck logger takes
+    // its one permit, the shard keeps one, and the other logger is served from
+    // the pool the stuck logger could not drain.
+    let shard = Shard::start(0, 2).expect("a test shard should start");
+    let stuck_budget = shard.budget_with_limit_for_test(1);
+    let other_budget = shard.budget();
+
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let stuck_handler = Arc::new(HeldHandler {
+        started: started_tx,
+        release: parking_lot::Mutex::new(release_rx),
+    }) as Arc<dyn FemtoHandlerTrait>;
+
+    let queued = |name: &'static str, message: &str, handler: &Arc<dyn FemtoHandlerTrait>| {
+        Box::new(QueuedRecord {
+            record: FemtoLogRecord::new(name, FemtoLevel::Info, message),
+            handlers: vec![Arc::clone(handler)],
+        })
+    };
+
+    // Spend the stuck logger's whole allowance. Its handler never returns, so
+    // the permit it took is not coming back while the test runs.
+    assert!(
+        shard
+            .admit(queued("stuck", "first", &stuck_handler), &stuck_budget)
+            .is_ok(),
+        "the first record fits"
+    );
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the worker should start handling the first record");
+    assert!(
+        shard
+            .admit(queued("stuck", "second", &stuck_handler), &stuck_budget)
+            .is_err(),
+        "a logger at its own in-flight allowance must be refused even though \
+         the shard still has permits"
+    );
+
+    // The other logger's record is refused only if one logger could take the
+    // whole shard. It must be accepted: the stuck logger has spent its own
+    // allowance, not every logger's.
+    let collector = Arc::new(CollectingHandler::new());
+    let other_handler = Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>;
+    assert!(
+        shard
+            .admit(queued("other", "delivered", &other_handler), &other_budget)
+            .is_ok(),
+        "a logger must not be refused because a different logger filled its own \
+         in-flight budget"
+    );
+
+    // Let the stuck handler finish so the test does not leak a blocked worker.
+    release_tx
+        .send(())
+        .expect("the worker should still be waiting for its first record");
+    assert!(
+        shard.wait_for_drain(),
+        "the shard should answer a barrier once its handlers return"
+    );
+    assert_eq!(
+        collected_messages(&collector),
+        vec!["delivered"],
+        "the other logger's record must be handled by the same shard"
+    );
 }

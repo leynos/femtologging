@@ -106,6 +106,9 @@ impl FemtoLogger {
             dyn ContextSnapshotProvider,
         >,
     ) -> Self {
+        // The budget belongs to this logger and is enforced by the shard it
+        // was given, so it is created from that shard's depth.
+        let budget = shard.budget();
         Self {
             name,
             parent,
@@ -124,6 +127,7 @@ impl FemtoLogger {
             #[cfg(feature = "python")]
             context_capture_warner: RateLimitedWarner::default(),
             shard,
+            budget,
         }
     }
 }
