@@ -1,120 +1,168 @@
-//! Two-phase shutdown tests for the FemtoLogger worker loop.
-//!
-//! Exercises `should_shutdown_now`, `shutdown_and_drain`, and the
-//! `worker_thread_loop` drain-on-shutdown guarantee.
+//! Drain-on-drop and pool-shape tests for the shared dispatch pool.
 
+use super::logger_tests_helpers::{CollectingHandler, collected_messages};
 use super::*;
-use rstest::rstest;
+use crate::logger::dispatcher::{Dispatcher, Shard, shared_with_shards_for_test};
 use std::sync::Arc;
 
-use super::super::logger_tests_helpers::{collected_messages, collecting_handler, enqueue_records};
-
-// ------------------------------------------------------------------
-// should_shutdown_now
-// ------------------------------------------------------------------
-
-/// Channel state variants exercised by the parametrized shutdown
-/// detection test.
-enum ShutdownState {
-    /// A shutdown message has been sent on the channel.
-    MessageSent,
-    /// The sender has been dropped, disconnecting the channel.
-    Disconnected,
-    /// The channel is open but empty.
-    Empty,
+/// Return a pool a test owns, with its workers already running.
+///
+/// The pool is returned rather than installed as the process-wide one, so the
+/// shard count a test chooses does not change what other tests see.
+fn pool_with(shards: usize) -> Dispatcher {
+    shared_with_shards_for_test(shards).expect("a test pool should start")
 }
-
-#[rstest(
-    state,
-    expected,
-    case::message_sent(ShutdownState::MessageSent, true),
-    case::disconnected(ShutdownState::Disconnected, true),
-    case::empty(ShutdownState::Empty, false)
-)]
-fn should_shutdown_now_cases(state: ShutdownState, expected: bool) {
-    let (tx, rx) = crossbeam_channel::bounded::<()>(1);
-    match state {
-        ShutdownState::MessageSent => {
-            tx.send(()).expect("Failed to send shutdown signal");
-        }
-        ShutdownState::Disconnected => drop(tx),
-        ShutdownState::Empty => { /* keep tx alive, channel stays open */ }
-    }
-    assert_eq!(FemtoLogger::should_shutdown_now(&rx), expected);
-}
-
-// ------------------------------------------------------------------
-// shutdown_and_drain
-// ------------------------------------------------------------------
-
-#[rstest]
-fn shutdown_and_drain_processes_all_records_in_order(collecting_handler: Arc<CollectingHandler>) {
-    let (tx, rx) = crossbeam_channel::bounded(8);
-    let handler = collecting_handler.clone() as Arc<dyn FemtoHandlerTrait>;
-    enqueue_records(
-        &tx,
-        &handler,
-        &["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"],
-    )
-    .expect("Failed to enqueue records");
-
-    FemtoLogger::shutdown_and_drain(&rx);
-
-    assert_eq!(
-        collected_messages(&collecting_handler),
-        vec!["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"]
-    );
-}
-
-#[rstest]
-fn shutdown_and_drain_leaves_channel_empty(collecting_handler: Arc<CollectingHandler>) {
-    let (tx, rx) = crossbeam_channel::bounded(4);
-    let handler: Arc<dyn FemtoHandlerTrait> = collecting_handler as Arc<dyn FemtoHandlerTrait>;
-    enqueue_records(&tx, &handler, &["a", "b"]).expect("Failed to enqueue records");
-
-    FemtoLogger::shutdown_and_drain(&rx);
-
-    assert!(
-        rx.try_recv().is_err(),
-        "expected channel to be empty after drain"
-    );
-}
-
-// ------------------------------------------------------------------
-// worker_thread_loop — stress / behavioural
-// ------------------------------------------------------------------
 
 #[test]
-fn worker_loop_drains_all_queued_records_on_shutdown() {
-    let (tx, rx) = crossbeam_channel::bounded(128);
-    let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
-    let handler = Arc::new(CollectingHandler::new());
-    let handler_trait: Arc<dyn FemtoHandlerTrait> = handler.clone();
+fn a_pool_hands_out_every_shard_in_turn() {
+    let dispatcher = pool_with(3);
 
-    // Pre-fill the channel with a known sequence *before* starting
-    // the worker so every record is guaranteed to be queued when the
-    // shutdown signal arrives.
-    let record_count: usize = 50;
-    let messages: Vec<String> = (0..record_count).map(|i| i.to_string()).collect();
-    let message_refs: Vec<&str> = messages.iter().map(String::as_str).collect();
-    enqueue_records(&tx, &handler_trait, &message_refs).expect("Failed to enqueue records");
-    // Send the shutdown signal before the worker even starts so
-    // Phase 1 picks it up immediately.
-    shutdown_tx
-        .send(())
-        .expect("Failed to send shutdown signal");
+    let first = dispatcher.assign_shard() as *const Shard;
+    let second = dispatcher.assign_shard() as *const Shard;
+    let third = dispatcher.assign_shard() as *const Shard;
+    let fourth = dispatcher.assign_shard() as *const Shard;
 
-    let worker = std::thread::spawn(move || {
-        FemtoLogger::worker_thread_loop(rx, shutdown_rx);
-    });
-
-    worker.join().expect("Worker thread panicked");
-
-    let msgs = collected_messages(&handler);
+    assert_ne!(first, second, "consecutive loggers must not share a shard");
+    assert_ne!(second, third, "consecutive loggers must not share a shard");
     assert_eq!(
-        msgs.len(),
-        record_count,
-        "all pre-queued records must be drained on shutdown"
+        first, fourth,
+        "a pool of three must come back to its first shard on the fourth logger"
     );
-    assert_eq!(msgs, messages, "records must be drained in FIFO order");
+}
+
+#[test]
+fn every_shard_a_pool_hands_out_is_live() {
+    let dispatcher = pool_with(2);
+    let handler = Arc::new(CollectingHandler::new());
+
+    for _ in 0..2 {
+        let shard = dispatcher.assign_shard();
+        let queued = QueuedRecord {
+            record: FemtoLogRecord::new("pool", FemtoLevel::Info, "dispatched"),
+            handlers: vec![handler.clone() as Arc<dyn FemtoHandlerTrait>],
+            #[cfg(feature = "python")]
+            context: None,
+        };
+        assert!(
+            shard.admit(Box::new(queued)).is_ok(),
+            "a fresh shard should accept a record"
+        );
+        assert!(
+            shard.wait_for_drain(),
+            "every shard in a pool must have a worker to answer it"
+        );
+    }
+
+    assert_eq!(
+        collected_messages(&handler).len(),
+        2,
+        "each shard's worker must dispatch what it was given"
+    );
+}
+
+/// A worker that has been idle survives being idle.
+///
+/// The worker waits for work with a bounded `recv_timeout`, which is a liveness
+/// tick so the loop notices a dropped queue. Treating the tick's timeout as the
+/// end of the shard rather than looping retires every pool worker the first
+/// time the process logs nothing for that long, and the damage lands on the
+/// *next* flush: its barrier waits for a worker that is no longer running. That
+/// made the bug invisible to tests that log, flush and finish, because none of
+/// them ever let a worker idle.
+///
+/// The wait is deliberately longer than the tick. It is the only test that
+/// spends real time idle, and it is what makes the difference observable.
+#[test]
+fn an_idle_worker_keeps_answering() {
+    let dispatcher = pool_with(1);
+    let shard = dispatcher.assign_shard();
+    let idle_tick = crate::logger::dispatcher::idle_tick_for_test();
+
+    std::thread::sleep(idle_tick * 2);
+
+    let handler = Arc::new(CollectingHandler::new());
+    let queued = QueuedRecord {
+        record: FemtoLogRecord::new("idle", FemtoLevel::Info, "after idling"),
+        handlers: vec![handler.clone() as Arc<dyn FemtoHandlerTrait>],
+        #[cfg(feature = "python")]
+        context: None,
+    };
+    assert!(
+        shard.admit(Box::new(queued)).is_ok(),
+        "a shard whose worker idled must still accept a record"
+    );
+    assert!(
+        shard.wait_for_drain(),
+        "a worker that has been idle must still answer a barrier; a worker that \
+         exited on its idle tick leaves the flush waiting for nobody"
+    );
+    assert_eq!(
+        collected_messages(&handler),
+        vec!["after idling"],
+        "an idled worker must dispatch the record it is next given"
+    );
+}
+
+#[test]
+fn one_shard_refuses_records_beyond_its_bound() {
+    // Started directly at depth 1 rather than taken from a pool. A pool
+    // shard's depth is `RECORDS_PER_LOGGER * shard_count`, so a pool-based
+    // test cannot reach the bound without a race against its own worker: the
+    // first version of this test asserted the bound while holding one permit
+    // out of 1024, and passed only because it never reached the refusal. Depth
+    // is the only input the bound depends on, so a one-deep shard exercises
+    // the same refusal path.
+    let shard = Shard::start(0, 1).expect("a test shard should start");
+    // A handler that never returns, so the single in-flight permit the shard
+    // hands out is never given back: the bound is reached without a race.
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+    struct BlockingHandler {
+        started: std::sync::mpsc::Sender<()>,
+        release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl FemtoHandlerTrait for BlockingHandler {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            let _ = self.started.send(());
+            let _ = self.release.lock().recv();
+            Ok(())
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    let handler = Arc::new(BlockingHandler {
+        started: started_tx,
+        release: parking_lot::Mutex::new(release_rx),
+    }) as Arc<dyn FemtoHandlerTrait>;
+
+    let queued = |message: &str| QueuedRecord {
+        record: FemtoLogRecord::new("bounded", FemtoLevel::Info, message),
+        handlers: vec![Arc::clone(&handler)],
+        #[cfg(feature = "python")]
+        context: None,
+    };
+    assert!(
+        shard.admit(Box::new(queued("held"))).is_ok(),
+        "the first record fits"
+    );
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the worker should start handling the first record");
+
+    let refused = shard.admit(Box::new(queued("refused")));
+    assert!(
+        refused.is_err(),
+        "a shard holding its whole budget must refuse the next record instead of queueing it"
+    );
+    let refused = refused.expect_err("refusal was asserted above");
+    assert_eq!(refused.record.message(), "refused");
+
+    release_tx
+        .send(())
+        .expect("the worker should still be waiting");
 }

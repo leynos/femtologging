@@ -10,7 +10,7 @@
 //! Rust bridge.
 
 use std::borrow::Cow;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use log::{Metadata, Record};
 use pyo3::prelude::*;
@@ -18,6 +18,7 @@ use pyo3::prelude::*;
 use crate::level::FemtoLevel;
 use crate::log_record::RecordMetadata;
 use crate::manager;
+use crate::rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner};
 
 /// Adapter implementing the Rust `log::Log` trait.
 ///
@@ -26,7 +27,6 @@ use crate::manager;
 /// logger's handler queue.
 pub struct FemtoLogAdapter;
 
-/// Maps facade levels without changing the ordering used by logger enablement checks.
 fn map_log_level(level: log::Level) -> FemtoLevel {
     match level {
         log::Level::Trace => FemtoLevel::Trace,
@@ -37,7 +37,6 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
     }
 }
 
-/// Maps internal levels back to the facade for callers that observe forwarded records.
 fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
@@ -54,7 +53,6 @@ impl From<log::Level> for FemtoLevel {
     }
 }
 
-/// Normalises the global facade target before it selects a Python-owned logger.
 fn normalize_target(target: &str) -> Cow<'_, str> {
     if target.contains("::") {
         Cow::Owned(target.replace("::", "."))
@@ -63,14 +61,57 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
     }
 }
 
-/// Distinguishes a missing Python logger from an error that must not be swallowed.
+/// Return whether a target belongs to femtologging itself.
+///
+/// The adapter is the global Rust logger, so a record it logs about its own
+/// work would be routed straight back into the adapter. The lookup-failure
+/// diagnostic is the concrete case: it reports a target the registry refused,
+/// which means the diagnostic describes a high-cardinality stream — and an
+/// unguarded warning would add one more record per refusal to it. The tracing
+/// bridge ignores its own targets for the same reason.
+fn should_ignore_target(target: &str) -> bool {
+    let normalized = normalize_target(target);
+    normalized == "femtologging" || normalized.starts_with("femtologging.")
+}
+
 fn is_unknown_logger_error(py: Python<'_>, err: &PyErr) -> bool {
     err.is_instance_of::<pyo3::exceptions::PyKeyError>(py)
 }
 
-/// Recognises invalid names so facade records can be rejected without masking Python faults.
 fn is_invalid_logger_error(py: Python<'_>, err: &PyErr) -> bool {
     err.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+}
+
+/// True when the registry refused the target because it is at [`MAX_LOGGERS`].
+///
+/// The refusal shares `RuntimeError` with genuine faults, so it is recognized
+/// by the message the registry builds rather than by its class.
+fn is_registry_full_error(py: Python<'_>, err: &PyErr) -> bool {
+    err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py)
+        && err.value(py).str().is_ok_and(|text| {
+            text.to_string_lossy()
+                .contains(manager::REGISTRY_FULL_MARKER)
+        })
+}
+
+/// Warn at most once per [`DEFAULT_WARN_INTERVAL`] for repeated bridge failures.
+///
+/// A high-cardinality target keeps failing for every record it emits, so an
+/// unthrottled warning would make the diagnostic itself a record amplifier.
+static LOOKUP_WARNER: LazyLock<RateLimitedWarner> =
+    LazyLock::new(|| RateLimitedWarner::new(DEFAULT_WARN_INTERVAL));
+
+fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &str) {
+    LOOKUP_WARNER.record_drop();
+    let reason = classify_logger_error(py, err);
+    let detail = err.to_string();
+    LOOKUP_WARNER.warn_if_due(|count| {
+        log::warn!(
+            target: "femtologging.log_compat",
+            "femtologging: {reason} {target:?} (normalized {normalized:?}); \
+             falling back to root: {detail}; {count} further record(s) affected"
+        );
+    });
 }
 
 /// Classify a logger resolution error for diagnostic logging.
@@ -79,32 +120,27 @@ fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
         "unknown logger target"
     } else if is_invalid_logger_error(py, err) {
         "invalid logger target"
+    } else if is_registry_full_error(py, err) {
+        "logger registry is full"
     } else {
         "unexpected error resolving logger"
     }
 }
 
-/// Resolves a facade target while attached to the GIL, returning an owned logger for later use.
 fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
     match manager::get_logger(py, normalized.as_ref()) {
         Ok(logger) => Some((normalized.into_owned(), logger)),
         Err(err) => {
-            let reason = classify_logger_error(py, &err);
-            log::warn!(
-                target: "femtologging.log_compat",
-                "femtologging: {reason} {:?} (normalized {:?}); falling back to root: {}",
-                target,
-                normalized.as_ref(),
-                err
-            );
+            warn_lookup_failure(py, &err, target, normalized.as_ref());
+            // Root is always resolvable: it is exempt from the registry cap, so
+            // this fallback cannot itself be refused.
             let logger = manager::get_logger(py, "root").ok()?;
             Some(("root".to_string(), logger))
         }
     }
 }
 
-/// Applies the facade's global maximum before crossing into Python logger resolution.
 fn is_enabled_by_global_max(level: log::Level) -> bool {
     log::max_level() >= level.to_level_filter()
 }
@@ -116,6 +152,9 @@ impl log::Log for FemtoLogAdapter {
 
     fn log(&self, record: &Record<'_>) {
         if !is_enabled_by_global_max(record.level()) {
+            return;
+        }
+        if should_ignore_target(record.target()) {
             return;
         }
 
@@ -136,10 +175,11 @@ impl log::Log for FemtoLogAdapter {
                 ..Default::default()
             };
 
-            let _ =
-                logger
-                    .borrow(py)
-                    .log_with_metadata(level, &record.args().to_string(), metadata);
+            let _ = logger.borrow(py).log_with_metadata(
+                level,
+                &record.args().to_string(),
+                metadata,
+            );
         });
     }
 
@@ -150,10 +190,7 @@ impl log::Log for FemtoLogAdapter {
     }
 }
 
-/// Provides the single global adapter required by the `log` facade installation contract.
 static FEMTO_LOG_ADAPTER: FemtoLogAdapter = FemtoLogAdapter;
-
-/// Records the one-time installation result so competing initialisers observe a stable outcome.
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
 
 /// Install femtologging as the global Rust logger.
@@ -234,10 +271,12 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
     Ok(())
 }
 
+// Bridge stress tests live in a sibling module to respect
+// the 400-line limit.
 #[cfg(test)]
 #[path = "log_compat_context_tests.rs"]
 mod context_tests;
 
 #[cfg(test)]
-#[path = "log_compat/tests.rs"]
+#[path = "log_compat_tests.rs"]
 mod tests;

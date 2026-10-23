@@ -117,8 +117,8 @@ pub use log_context::{
 };
 /// Re-export log record types.
 pub use log_record::{FemtoLogRecord, RecordMetadata};
-/// Re-export the logger and queued record handle.
-pub use logger::{FemtoLogger, QueuedRecord};
+/// Re-export the logger, its queued-record handle, and the pool-start error.
+pub use logger::{DispatcherError, FemtoLogger, QueuedRecord};
 use manager::{get_logger as manager_get_logger, reset_manager};
 pub use socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
@@ -159,8 +159,10 @@ mod py_api {
     /// # Parameters
     ///
     /// - `py`: Python GIL token for creating Python objects.
-    /// - `name`: Logger name; must not be empty, start or end with '.', or
-    ///   contain consecutive dots.
+    /// - `name`: Logger name. It must not be empty, start or end with '.',
+    ///   contain consecutive dots, exceed 255 UTF-8 bytes or 32 dot-separated
+    ///   segments, or contain an ASCII control character. The bounds apply
+    ///   because every distinct name is retained for the life of the process.
     ///
     /// # Returns
     ///

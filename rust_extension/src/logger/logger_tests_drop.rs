@@ -1,123 +1,87 @@
-//! Tests verifying `FemtoLogger::drop` releases the handle mutex
-//! before joining the worker thread.
+//! Tests for what `FemtoLogger::drop` waits for and what it must not wait on.
+//!
+//! A logger's drop drains its shard and joins nothing, so the two things worth
+//! asserting are that a record logged immediately before the drop is still
+//! delivered, and that the drop does not hold a lock the record's own path
+//! needs.
 
-use super::logger_tests_helpers::HandlePtr;
+use super::logger_tests_helpers::{CollectingHandler, collected_messages};
 use super::*;
 
-fn setup_logger_for_drop_test() -> Result<FemtoLogger, String> {
-    let mut logger = FemtoLogger::new("drop-lock".to_string());
-    if let Some(shutdown_tx) = logger.shutdown_tx.take() {
-        let _ = shutdown_tx.send(());
-    }
-    logger.tx.take();
-    let original_handle = { logger.handle.lock().take() };
-    if let Some(handle) = original_handle {
-        handle
-            .join()
-            .map_err(|_| "initial worker thread panicked".to_string())?;
-    }
-    Ok(logger)
-}
+#[test]
+fn drop_delivers_records_queued_before_it() {
+    let handler = Arc::new(CollectingHandler::new());
+    let logger =
+        FemtoLogger::new("drop-drain".to_string()).expect("test logger should be constructible");
+    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
 
-fn spawn_lock_attempt_worker(
-    handle_ptr: HandlePtr,
-    start_signal: std::sync::mpsc::Receiver<()>,
-    result_tx: std::sync::mpsc::Sender<bool>,
-    release_signal: std::sync::mpsc::Receiver<()>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        use std::time::{Duration, Instant};
+    logger.log(FemtoLevel::Info, "before drop");
+    drop(logger);
 
-        // A closed channel means the test has already failed, so the worker
-        // exits quietly and the test times out with context.
-        if start_signal.recv().is_err() {
-            return;
-        }
-        // SAFETY: The logger outlives the worker, and the mutex guards access.
-        let handle_mutex = unsafe { handle_ptr.as_ref() };
-        let start = Instant::now();
-        let mut acquired = false;
-        while start.elapsed() < Duration::from_millis(200) {
-            if let Some(_guard) = handle_mutex.try_lock() {
-                acquired = true;
-                break;
-            }
-            std::thread::yield_now();
-        }
-        let _ = result_tx.send(acquired);
-        let _ = release_signal.recv();
-    })
-}
-
-/// Poll `handle_ptr` until the drop thread has taken the handle mutex, or
-/// return an error describing the timeout.
-///
-/// Fallible so the calling test can `.expect()` at the panic boundary,
-/// keeping the descriptive message attached to the caller's line.
-fn wait_for_drop_to_acquire_lock(
-    handle_ptr: HandlePtr,
-    timeout: std::time::Duration,
-) -> Result<(), String> {
-    use std::time::Instant;
-
-    // SAFETY: The logger outlives the drop thread and mutex guards access.
-    let handle_mutex = unsafe { handle_ptr.as_ref() };
-    let probe_start = Instant::now();
-    while probe_start.elapsed() < timeout {
-        if let Some(guard) = handle_mutex.try_lock()
-            && guard.is_none()
-        {
-            return Ok(());
-        }
-        std::thread::yield_now();
-    }
-    Err("timed out waiting for drop thread to take handle mutex".to_string())
+    assert_eq!(
+        collected_messages(&handler),
+        vec!["before drop"],
+        "a record logged before the drop must still be dispatched"
+    );
 }
 
 #[test]
-fn drop_releases_handle_lock_before_join() {
-    use std::sync::mpsc;
-    use std::time::Duration;
-
+fn drop_delivers_every_record_queued_before_it_in_order() {
+    let handler = Arc::new(CollectingHandler::new());
     let logger =
-        Box::new(setup_logger_for_drop_test().expect("drop-test logger arrangement must succeed"));
+        FemtoLogger::new("drop-order".to_string()).expect("test logger should be constructible");
+    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
 
-    let handle_ptr = HandlePtr(&logger.handle as *const Mutex<Option<std::thread::JoinHandle<()>>>);
+    for index in 0..8 {
+        logger.log(FemtoLevel::Info, &format!("msg-{index}"));
+    }
+    drop(logger);
 
-    let (start_lock_tx, start_lock_rx) = mpsc::channel();
-    let (attempt_done_tx, attempt_done_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    let (drop_started_tx, drop_started_rx) = mpsc::channel();
+    let expected: Vec<String> = (0..8).map(|index| format!("msg-{index}")).collect();
+    assert_eq!(
+        collected_messages(&handler),
+        expected,
+        "the shard must drain a logger's records in the order it queued them"
+    );
+}
 
-    let worker_handle =
-        spawn_lock_attempt_worker(handle_ptr, start_lock_rx, attempt_done_tx, release_rx);
+/// A handler that takes a second handler's lock while the drop runs its own.
+///
+/// The drop drains its shard, so anything the shard calls while draining must
+/// not need a lock the drop is holding: if it did, this handler would block
+/// until the drain's barrier timed out and the record would be lost.
+#[test]
+fn drop_does_not_hold_the_handler_list_while_draining() {
+    use parking_lot::Mutex as PoisonlessMutex;
 
-    *logger.handle.lock() = Some(worker_handle);
+    struct LockTakingHandler {
+        lock: Arc<PoisonlessMutex<usize>>,
+    }
 
-    let drop_thread = std::thread::spawn(move || {
-        drop_started_tx
-            .send(())
-            .expect("Failed to signal drop start");
-        drop(logger);
-    });
+    impl FemtoHandlerTrait for LockTakingHandler {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            *self.lock.lock() += 1;
+            Ok(())
+        }
 
-    drop_started_rx
-        .recv()
-        .expect("Failed to wait for drop start");
-    wait_for_drop_to_acquire_lock(handle_ptr, Duration::from_millis(200))
-        .expect("drop thread should take the handle mutex before joining");
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
 
-    start_lock_tx
-        .send(())
-        .expect("Failed to start lock attempt");
-    let acquired = attempt_done_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("Failed to receive lock attempt result");
-    release_tx.send(()).expect("Failed to release worker");
-    drop_thread.join().expect("Drop thread panicked");
+    let lock = Arc::new(PoisonlessMutex::new(0));
+    let logger =
+        FemtoLogger::new("drop-lock".to_string()).expect("test logger should be constructible");
+    logger.add_handler(Arc::new(LockTakingHandler {
+        lock: Arc::clone(&lock),
+    }) as Arc<dyn FemtoHandlerTrait>);
 
-    assert!(
-        acquired,
-        "expected drop to release handle mutex before joining"
+    logger.log(FemtoLevel::Info, "guarded");
+    drop(logger);
+
+    assert_eq!(
+        *lock.lock(),
+        1,
+        "the drop must let the dispatch worker reach the handlers"
     );
 }

@@ -31,7 +31,7 @@ fn call_py_log_method(
 
 #[test]
 fn is_enabled_for_respects_logger_level() {
-    let logger = FemtoLogger::new("test".to_string());
+    let logger = FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
     logger.set_level(FemtoLevel::Warn);
     assert!(!logger.is_enabled_for(FemtoLevel::Debug));
     assert!(!logger.is_enabled_for(FemtoLevel::Info));
@@ -43,7 +43,8 @@ fn is_enabled_for_respects_logger_level() {
 #[test]
 fn py_is_enabled_for_mirrors_internal_method() {
     Python::attach(|_py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         logger.set_level(FemtoLevel::Error);
         assert!(!logger.py_is_enabled_for(FemtoLevel::Info));
         assert!(logger.py_is_enabled_for(FemtoLevel::Error));
@@ -59,7 +60,8 @@ fn py_is_enabled_for_mirrors_internal_method() {
 #[case::critical("py_critical", "test [CRITICAL] hello")]
 fn convenience_method_logs_at_correct_level(#[case] method_name: &str, #[case] expected: &str) {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         logger.set_level(FemtoLevel::Trace);
         let result = call_py_log_method(&logger, py, method_name, "hello")
             .expect("convenience method should not fail");
@@ -78,7 +80,8 @@ fn convenience_methods_respect_level_filtering(
     #[case] should_emit: bool,
 ) {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         logger.set_level(FemtoLevel::Error);
         let result =
             call_py_log_method(&logger, py, method_name, "filtered").expect("should not fail");
@@ -97,7 +100,8 @@ fn exception_omitted_exc_info_defaults_to_true() {
     // With no active Python exception the output is a plain ERROR message
     // (capture finds nothing to attach).
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let result = logger
             .py_exception_impl(py, "no active exc", None, None)
             .expect("exception() with omitted exc_info should not fail");
@@ -108,7 +112,8 @@ fn exception_omitted_exc_info_defaults_to_true() {
 #[test]
 fn exception_with_explicit_exc_info_false() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let false_val = PyBool::new(py, false).to_owned().into_any();
         let result = logger
             .py_exception_impl(py, "no capture", Some(&false_val.as_borrowed()), None)
@@ -124,7 +129,8 @@ fn exception_with_explicit_python_none_suppresses_capture() {
     // This path is only reachable from Rust tests — in Python, PyO3 maps
     // both omitted and explicit None to Rust None.
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let none_val = py.None().into_bound(py).into_any();
         let result = logger
             .py_exception_impl(py, "none passed", Some(&none_val.as_borrowed()), None)
@@ -137,7 +143,8 @@ fn exception_with_explicit_python_none_suppresses_capture() {
 fn convenience_methods_do_not_merge_rust_scoped_context() {
     Python::attach(|py| {
         log_context::clear_log_context_for_test();
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         logger.set_level(FemtoLevel::Info);
         let handler = Arc::new(CollectingHandler::default());
         logger

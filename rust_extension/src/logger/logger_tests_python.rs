@@ -226,7 +226,8 @@ fn should_capture_exc_info_cases(
 #[test]
 fn py_log_basic_message() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let result = logger
             .py_log(py, FemtoLevel::Info, "hello", None, None, None)
             .expect("py_log should not fail");
@@ -237,7 +238,8 @@ fn py_log_basic_message() {
 #[test]
 fn py_log_filtered_by_level() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         logger.set_level(FemtoLevel::Error);
         let result = logger
             .py_log(py, FemtoLevel::Info, "ignored", None, None, None)
@@ -281,7 +283,8 @@ fn py_log_exc_info_variation_cases(
     #[case] expected: &str,
 ) {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let exc_info: Option<pyo3::Bound<'_, pyo3::PyAny>> = match &input {
             PyLogExcInfoInput::BoolFalse => Some(PyBool::new(py, false).to_owned().into_any()),
             PyLogExcInfoInput::PythonNone => Some(py.None().into_bound(py)),
@@ -315,7 +318,8 @@ fn py_log_exc_info_variation_cases(
 #[test]
 fn py_log_with_stack_info_false() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let result = logger
             .py_log(py, FemtoLevel::Info, "no stack", None, Some(false), None)
             .expect("py_log should not fail with stack_info=false");
@@ -326,7 +330,8 @@ fn py_log_with_stack_info_false() {
 #[test]
 fn py_log_with_stack_info_true() {
     Python::attach(|py| {
-        let logger = FemtoLogger::new("test".to_string());
+        let logger =
+            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
         let result = logger
             .py_log(py, FemtoLevel::Info, "with stack", None, Some(true), None)
             .expect("py_log should not fail with stack_info=true");

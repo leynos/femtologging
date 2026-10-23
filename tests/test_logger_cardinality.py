@@ -1,0 +1,259 @@
+"""Bounded-cardinality tests for the logger registry and dispatch pool.
+
+Purpose
+-------
+Verify the bounds recorded in ADR 007: logger names are rejected past a byte
+and segment budget, the registry refuses new names once it is full instead of
+growing without limit, and the number of operating-system threads the logging
+system uses depends on the machine rather than on how many loggers exist.
+
+Notes
+-----
+The thread-count case reads ``/proc/self/status`` and is therefore Linux-only;
+it is skipped elsewhere rather than asserting a bound it cannot measure.
+
+The registry-cap case registers `MAX_LOGGERS` distinct loggers, which is
+deliberately the largest thing these tests do. Before the shared dispatch pool
+existed that would have started ten thousand threads -- the defect itself --
+so this test could not be written until the pool landed.
+
+Examples
+--------
+>>> from femtologging import get_logger
+>>> get_logger("demo") is not None
+True
+
+"""
+
+from __future__ import annotations
+
+import gc
+import os
+import sys
+import typing as typ
+from pathlib import Path
+
+import pytest
+
+import femtologging
+from femtologging import get_logger, reset_manager
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+# Mirrors `MAX_LOGGERS` in `rust_extension/src/manager/registry.rs`.
+MAX_LOGGERS = 10_000
+
+# Mirrors `MAX_LOGGER_NAME_BYTES` and `MAX_LOGGER_NAME_SEGMENTS` in
+# `rust_extension/src/manager/validation.rs`.
+MAX_LOGGER_NAME_BYTES = 255
+MAX_LOGGER_NAME_SEGMENTS = 32
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry() -> cabc.Iterator[None]:
+    """Start and end each test from an empty registry."""
+    reset_manager()
+    yield
+    reset_manager()
+    gc.collect()
+
+
+def test_a_name_at_the_byte_budget_is_accepted() -> None:
+    """The byte budget is inclusive, so a name of exactly the limit fits."""
+    name = "a" * MAX_LOGGER_NAME_BYTES
+
+    assert get_logger(name) is not None, (
+        f"a name of exactly {MAX_LOGGER_NAME_BYTES} bytes must be accepted"
+    )
+
+
+def test_a_name_one_byte_over_the_budget_is_rejected() -> None:
+    """One byte past the limit is refused, so the budget is not off by one."""
+    name = "a" * (MAX_LOGGER_NAME_BYTES + 1)
+
+    with pytest.raises(ValueError, match="255"):
+        get_logger(name)
+
+
+def test_a_megabyte_name_is_rejected_quickly() -> None:
+    """A hostile name is refused without being scanned.
+
+    The byte check runs before the character and segment checks precisely so
+    that a megabyte-long name costs a length comparison rather than a walk
+    over a megabyte of attacker-supplied text.
+    """
+    name = "a" * (1024 * 1024)
+
+    with pytest.raises(ValueError, match="255"):
+        get_logger(name)
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        "\x00",
+        "\n",
+        "\r",
+        "\t",
+        "\x1b",
+        "\x7f",
+    ],
+)
+def test_control_characters_are_rejected(control: str) -> None:
+    """A control character in a name is refused.
+
+    The newline case is the one that matters most: a name is rendered into
+    every formatted record, so an embedded newline would let a caller forge a
+    record boundary in line-oriented output.
+    """
+    with pytest.raises(ValueError, match="control"):
+        get_logger(f"safe{control}name")
+
+
+def test_a_rejected_name_cannot_forge_a_record_boundary() -> None:
+    """The rejection diagnostic escapes the name it quotes back.
+
+    A rejected name is untrusted by definition, so the message describing the
+    rejection must not reintroduce the injection the rule exists to stop.
+    """
+    with pytest.raises(ValueError, match="control") as caught:
+        get_logger("forged\nfake [CRITICAL] injected")
+
+    assert "\n" not in str(caught.value), (
+        "the diagnostic must not carry a raw newline from the rejected name"
+    )
+
+
+def test_segment_budget_rejects_a_deep_name() -> None:
+    """A name deeper than the segment budget is refused.
+
+    The segments are one byte each so the name stays well inside the byte
+    budget. Otherwise the length check would fire first and this test would be
+    asserting the wrong rule: the checks run cheapest-first, and "refused for
+    some reason" is not what the segment rule is about.
+    """
+    name = ".".join(["a"] * (MAX_LOGGER_NAME_SEGMENTS + 1))
+
+    assert len(name) < MAX_LOGGER_NAME_BYTES, (
+        "this case must exercise the segment rule, not the byte rule"
+    )
+    with pytest.raises(ValueError, match="segments"):
+        get_logger(name)
+
+
+def test_convenience_name_argument_is_validated_too() -> None:
+    """The module-level ``name=`` route is bounded like ``get_logger``.
+
+    This is the route folded into issue #432: a ``name`` argument that looks
+    like a parameter accepted unbounded distinct values.
+    """
+    with pytest.raises(ValueError, match="255"):
+        femtologging.info("hello", name="a" * (MAX_LOGGER_NAME_BYTES + 1))
+
+    with pytest.raises(ValueError, match="control"):
+        femtologging.debug("hello", name="bad\nname")
+
+
+def test_registry_refuses_new_names_at_the_cap() -> None:
+    """The registry stops growing at the cap and says so.
+
+    The refusal is a ``RuntimeError`` rather than an eviction: a logger owns
+    handlers, a level and drop counters that a caller may still be using, so
+    displacing one would silently redirect its records.
+    """
+    for index in range(MAX_LOGGERS):
+        get_logger(f"cardinality.{index}")
+
+    with pytest.raises(RuntimeError, match=str(MAX_LOGGERS)):
+        get_logger("cardinality.one-too-many")
+
+
+def test_names_already_registered_still_resolve_at_the_cap() -> None:
+    """Reaching the cap does not break the loggers already in the registry."""
+    for index in range(MAX_LOGGERS):
+        get_logger(f"existing.{index}")
+
+    assert get_logger("existing.0") is get_logger("existing.0"), (
+        "an already-registered name must keep resolving to the same logger"
+    )
+    assert get_logger("existing.9999") is not None, (
+        "the last name registered before the cap must still resolve"
+    )
+
+
+def test_root_is_always_available_at_the_cap() -> None:
+    """``root`` is exempt from the cap so the bridges keep a fallback target."""
+    for index in range(MAX_LOGGERS):
+        get_logger(f"filled.{index}")
+
+    assert get_logger("root") is not None, (
+        "the Rust bridges fall back to root, so it must never be refused"
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="thread counting reads /proc/self/status, which is Linux-only",
+)
+def test_thread_count_does_not_track_logger_count() -> None:
+    """Logger cardinality no longer implies thread cardinality.
+
+    Before the shared dispatch pool each logger owned a worker thread, so this
+    assertion could not hold at any count: registering a thousand loggers
+    meant a thousand threads. The pool's size is a function of the machine,
+    so the growth here must be small and, crucially, must not scale with the
+    number of loggers created.
+    """
+    baseline = _thread_count()
+    registrations = 1_000
+
+    for index in range(registrations):
+        get_logger(f"threads.{index}")
+
+    growth = _thread_count() - baseline
+
+    assert growth < registrations, (
+        f"creating {registrations} loggers grew the thread count by {growth}; "
+        f"logger cardinality must not drive thread cardinality"
+    )
+    assert growth <= _dispatch_pool_ceiling(), (
+        f"creating {registrations} loggers grew the thread count by {growth}, "
+        f"beyond the dispatch pool's own ceiling"
+    )
+
+
+def _dispatch_pool_ceiling() -> int:
+    """Return the most dispatch threads the pool can start on this machine.
+
+    Mirrors the clamp in `rust_extension/src/logger/dispatcher.rs`: at least
+    one shard, at most four, otherwise one per available core. A little slack
+    is allowed for threads the interpreter itself creates while the loggers
+    are registered.
+
+    Returns
+    -------
+    int
+        The dispatch thread count a logger count cannot exceed, plus slack.
+
+    """
+    cores = _available_cores()
+    shards = min(max(cores, 1), 4)
+    return shards + 4
+
+
+def _available_cores() -> int:
+    """Return the machine's available parallelism, or 0 when unknown."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):  # pragma: no cover - non-Linux
+        return 0
+
+
+def _thread_count() -> int:
+    """Return this process's thread count from ``/proc/self/status``."""
+    for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+        if line.startswith("Threads:"):
+            return int(line.split()[1])
+    message = "/proc/self/status did not report a Threads line"
+    raise AssertionError(message)

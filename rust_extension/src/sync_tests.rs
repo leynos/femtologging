@@ -4,60 +4,15 @@
 //! under `--cfg loom`, where they check the hand-built channel inside a Loom
 //! model; the heavy lane's models then rely on it.
 
-use super::*;
-
-#[cfg(not(loom))]
-mod ordinary {
-    //! The seam's ordinary arm: `crossbeam_channel` and its `select!`.
-
-    use rstest::rstest;
-
-    use super::*;
-
-    /// `recv_either` reports whichever receiver holds a message.
-    #[rstest]
-    #[case::first(true)]
-    #[case::second(false)]
-    fn recv_either_takes_the_ready_receiver(#[case] is_first_ready: bool) {
-        let (first_tx, first_rx) = bounded::<u8>(1);
-        let (second_tx, second_rx) = bounded::<u8>(1);
-        let sender = if is_first_ready {
-            &first_tx
-        } else {
-            &second_tx
-        };
-        sender
-            .send(7)
-            .expect("an empty channel accepts one message");
-
-        let expected = if is_first_ready {
-            Either::First(Ok(7))
-        } else {
-            Either::Second(Ok(7))
-        };
-        assert_eq!(recv_either(&first_rx, &second_rx), expected);
-    }
-
-    /// A dropped sender makes its receiver ready, so a worker waiting on a
-    /// shutdown channel notices the logger going away.
-    #[test]
-    fn recv_either_treats_disconnection_as_ready() {
-        let (first_tx, first_rx) = bounded::<u8>(1);
-        let (_second_tx, second_rx) = bounded::<u8>(1);
-        drop(first_tx);
-
-        assert_eq!(
-            recv_either(&first_rx, &second_rx),
-            Either::First(Err(RecvError))
-        );
-    }
-}
-
 #[cfg(loom)]
 mod loom_arm {
     //! The seam's Loom arm: the hand-built bounded channel.
 
-    use super::*;
+    // Named rather than globbed from the seam: this module is the only place
+    // that exercises the Loom arm, so its inputs are worth stating. The
+    // ordinary arm has no tests left here, and a file-level glob would
+    // otherwise have to exist for the sake of five names.
+    use crate::sync::{TrySendError, bounded, spawn};
 
     /// A full channel refuses `try_send` and hands the message back.
     #[test]
@@ -133,16 +88,16 @@ mod loom_arm {
         });
     }
 
-    /// `recv_either` wakes for whichever channel another thread fills.
+    /// A receiver wakes for a message another thread sends after it began
+    /// waiting, so a worker blocked on an empty queue still sees work arrive.
     #[test]
-    fn loom_recv_either_waits_for_another_thread() {
+    fn loom_recv_waits_for_another_thread() {
         loom::model(|| {
-            let (_first_tx, first_rx) = bounded::<u8>(1);
-            let (second_tx, second_rx) = bounded::<u8>(1);
+            let (tx, rx) = bounded::<u8>(1);
             let producer = spawn(move || {
-                second_tx.send(9).expect("the receiver is alive");
+                tx.send(9).expect("the receiver is alive");
             });
-            assert_eq!(recv_either(&first_rx, &second_rx), Either::Second(Ok(9)));
+            assert_eq!(rx.recv(), Ok(9));
             producer.join().expect("the producer does not panic");
         });
     }

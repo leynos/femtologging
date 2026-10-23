@@ -1,6 +1,9 @@
 //! Commit preparation and application for runtime mutations.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 use pyo3::{Py, Python};
 
@@ -52,6 +55,14 @@ impl RuntimeConfigBuilder {
         let impacted = self.collect_impacted(&before);
 
         self.apply_logger_mutations(&mut logger_states, &handler_registry, &filter_registry)?;
+
+        // A mutation may name a logger that does not exist yet, and
+        // `get_logger` registers it. Check the whole set before fetching any
+        // of them: refusing part-way would leave the registry holding loggers
+        // belonging to a transaction that never applied.
+        let requested = impacted.iter().cloned().collect::<HashSet<_>>();
+        manager::ensure_registry_capacity(&requested)
+            .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
 
         let impacted_loggers = impacted
             .into_iter()
