@@ -360,17 +360,20 @@ pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
     }
 }
 
-/// Flush handlers attached to every registered logger.
-///
-/// Intended for use by the Rust `log` crate bridge; failures are ignored.
+/// Flush every registered logger's handlers, for the Rust `log` bridge;
+/// failures are ignored. Loggers are snapshotted under the lock and flushed
+/// outside it: a flush waits on a shard barrier with the GIL released, so
+/// holding the lock across it would let a GIL-holding `get_logger` caller
+/// waiting for the write lock starve the queued handler the flush awaits.
+/// `reset_manager` does the same.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
-    let loggers = MANAGER
+    let loggers: Vec<Py<FemtoLogger>> = MANAGER
         .read()
         .loggers
         .values()
         .map(|logger| logger.clone_ref(py))
-        .collect::<Vec<_>>();
+        .collect();
     for logger in loggers {
         let _ = logger.borrow(py).flush_handlers();
     }

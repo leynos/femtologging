@@ -63,24 +63,24 @@ fn every_shard_a_pool_hands_out_is_live() {
 
 /// A worker that has been idle survives being idle.
 ///
-/// The worker waits for work with a bounded `recv_timeout`, which is a liveness
-/// tick so the loop notices a dropped queue. Treating the tick's timeout as the
-/// end of the shard rather than looping retires every pool worker the first
-/// time the process logs nothing for that long, and the damage lands on the
-/// *next* flush: its barrier waits for a worker that is no longer running. That
-/// made the bug invisible to tests that log, flush and finish, because none of
-/// them ever let a worker idle.
+/// The worker blocks on its queue, so an idle shard is a blocked receiver, not
+/// a polling loop. That is the property this pins: silence from the queue must
+/// not end the worker. A worker that retired while idle leaves the *next*
+/// flush waiting on a barrier nobody answers, which is a failure that appears
+/// long after the shard fell silent and in a different call — the reason it is
+/// worth an explicit test rather than relying on tests that log, flush and
+/// finish without pausing.
 ///
-/// The wait is deliberately longer than the tick. It is the only test that
-/// spends real time idle, and it is what makes the difference observable.
+/// The pause is short and fixed. It is not racing a bound; it only has to
+/// outlast the worker's transition from "has not started" to "blocked on an
+/// empty queue", which happens as soon as the pool is constructed.
 #[test]
 fn an_idle_worker_keeps_answering() {
     let dispatcher = pool_with(1);
     let shard = dispatcher.assign_shard();
-    let idle_tick = crate::logger::dispatcher::idle_tick_for_test();
 
     let budget = shard.budget();
-    std::thread::sleep(idle_tick * 2);
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let handler = Arc::new(CollectingHandler::new());
     let queued = QueuedRecord {
@@ -96,7 +96,7 @@ fn an_idle_worker_keeps_answering() {
     assert!(
         shard.wait_for_drain(),
         "a worker that has been idle must still answer a barrier; a worker that \
-         exited on its idle tick leaves the flush waiting for nobody"
+         retired while idle leaves the flush waiting for nobody"
     );
     assert_eq!(
         collected_messages(&handler),

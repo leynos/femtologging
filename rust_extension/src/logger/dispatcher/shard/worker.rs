@@ -11,23 +11,23 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use log::warn;
 
-use super::{IDLE_TICK, Job};
+use super::Job;
 use crate::logger::QueuedRecord;
-use crate::sync::{Receiver, recv_timeout};
+use crate::sync::Receiver;
 
 /// Drain a shard's queue, handling each job.
+///
+/// The receive blocks until a job arrives or the queue is gone. A bounded
+/// wait would add a timeout arm that means nothing — a quiet queue is not a
+/// stopped shard — and treating that arm as shutdown retires every worker the
+/// first time the process logs nothing for the bound, leaving the next flush
+/// to wait on a barrier nobody is left to answer. Blocking leaves only one way
+/// out, so that mistake cannot be written here.
 pub(super) fn run_worker(jobs: Receiver<Job>) {
-    loop {
-        let job = match recv_timeout(&jobs, IDLE_TICK) {
-            Ok(job) => job,
-            // A timeout is the liveness tick, not the end of the shard.
-            // Ending the loop here would retire every worker the first time
-            // the process logged nothing for `IDLE_TICK`, and every later
-            // flush would wait on a barrier nobody was left to answer.
-            Err(crate::sync::RecvTimeoutError::Timeout) => continue,
-            // Only a dropped queue — every sender gone — ends a worker.
-            Err(crate::sync::RecvTimeoutError::Disconnected) => break,
-        };
+    // `recv` fails only once the queue is empty *and* every sender is gone:
+    // crossbeam wakes a blocked receiver when the last sender drops, so the
+    // end of the shard is still noticed without a tick to poll for it.
+    while let Ok(job) = jobs.recv() {
         #[cfg(loom)]
         if matches!(job, Job::Stop) {
             break;

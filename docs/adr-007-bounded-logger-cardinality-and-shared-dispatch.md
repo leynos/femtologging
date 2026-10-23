@@ -24,8 +24,8 @@ exit. Name validation rejected only empty, leading-dot, trailing-dot and
 consecutive-dot names, so it bounded the *shape* of a name and not its size or
 its number.
 
-**Every logger owned an operating-system thread.** Construction built a 1
-024-slot queue and unconditionally called `thread::spawn()`, so registry
+**Every logger owned an operating-system thread.** Construction built a
+1,024-slot queue and unconditionally called `thread::spawn()`, so registry
 cardinality *was* thread cardinality. Ten thousand loggers meant ten thousand
 threads, each with its own stack.
 

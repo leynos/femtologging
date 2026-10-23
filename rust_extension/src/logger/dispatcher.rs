@@ -210,15 +210,6 @@ pub(crate) fn shard_count() -> usize {
 #[cfg(all(test, not(loom)))]
 pub(crate) use test_support::shared_with_shards_for_test;
 
-/// The idle tick a shard's worker waits for, for tests that must outlast it.
-///
-/// Outside Loom only: the one caller is the drain-on-drop test, and a Loom
-/// model has no clock to outlast.
-#[cfg(all(test, not(loom)))]
-pub(crate) fn idle_tick_for_test() -> std::time::Duration {
-    shard::idle_tick_for_test()
-}
-
 #[cfg(all(test, not(loom)))]
 mod test_support {
     //! Test-only entry points into the process-wide pool.
