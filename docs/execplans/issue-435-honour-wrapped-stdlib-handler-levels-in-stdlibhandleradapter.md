@@ -167,6 +167,10 @@ Known uncertainties identified upfront, with mitigations.
   translation-versus-threshold ordering, and conditional filter/lock/emission
   semantics. This diff corrects those descriptions and records field
   requiredness.
+- [x] (2026-10-23) The implementation exceeded the five-file stop condition:
+  the docs and adapter/test module size required updates and extraction, and
+  `main` had advanced. Worktree and rebase review were completed; the full
+  gates passed on the resulting candidate.
 - [ ] Run the full gates on the current review-fix diff, commit it, then run
   CodeRabbit on that clean commit and resolve any actionable findings.
 - [ ] Push the branch and open a draft pull request referencing the issue.
@@ -241,6 +245,12 @@ Known uncertainties identified upfront, with mitigations.
   explicitly specifies that order and gates on the constructed record; the
   comparison adds one integer check to the existing translation path.
   Date/Author: 2026-10-23, implementing agent.
+- Decision: Extend the touched-file set beyond the five-file stop condition.
+  Approver: the user, in the supplied Issue #435 implementation request.
+  Rationale: that request covers production code, tests, and docs; the 400-line
+  module constraint required extraction, and `main` had advanced, so the
+  resulting candidate necessarily touched a broader file set. Date/Author:
+  2026-10-23, implementing agent.
 
 ## Outcomes & retrospective
 
