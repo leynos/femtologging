@@ -106,8 +106,15 @@ fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &s
     let reason = classify_logger_error(py, err);
     let detail = err.to_string();
     LOOKUP_WARNER.warn_if_due(|count| {
-        log::warn!(
-            target: "femtologging.log_compat",
+        // Stderr, not `log::warn!`. This diagnostic's whole subject is a target
+        // the bridge could not resolve, and the adapter is the global Rust
+        // logger: routing the warning through it would send a record whose
+        // target is `femtologging.log_compat` straight back into the adapter.
+        // `should_ignore_target` discards exactly that target, so a `log::warn!`
+        // here is written and immediately dropped — leaving a registry at its
+        // cap with no visible diagnostic at all on the bridge path. Writing to
+        // stderr bypasses the logger being diagnosed.
+        eprintln!(
             "femtologging: {reason} {target:?} (normalized {normalized:?}); \
              falling back to root: {detail}; {count} further record(s) affected"
         );

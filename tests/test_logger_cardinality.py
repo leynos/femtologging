@@ -30,13 +30,14 @@ from __future__ import annotations
 import gc
 import os
 import sys
+import time
 import typing as typ
 from pathlib import Path
 
 import pytest
 
 import femtologging
-from femtologging import get_logger, reset_manager
+from femtologging import StreamHandlerBuilder, basicConfig, get_logger, reset_manager
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -98,6 +99,13 @@ def test_a_megabyte_name_is_rejected_quickly() -> None:
         "\t",
         "\x1b",
         "\x7f",
+        # C1 controls and the Unicode separators: `str.splitlines()` breaks on
+        # these too, so a ban stated in terms of ASCII would leave the forgery
+        # available through a character the consumer still treats as a
+        # boundary.
+        "\x85",
+        "\u2028",
+        "\u2029",
     ],
 )
 def test_control_characters_are_rejected(control: str) -> None:
@@ -155,6 +163,23 @@ def test_convenience_name_argument_is_validated_too() -> None:
         femtologging.debug("hello", name="bad\nname")
 
 
+def _fill_registry(prefix: str, *, room: int = 0) -> None:
+    """Fill the registry to the cap with loggers under *prefix*.
+
+    Registering ``prefix.0`` also registers ``prefix``, so one entry of the
+    budget is spent on the shared ancestor. Filling from zero therefore stops
+    one short of the cap unless the ancestor is counted.
+
+    ``room`` is the number of slots the caller has already spent on loggers it
+    registered before calling this, so the fill still stops exactly at the cap.
+    Counting the registry's own size would make the helper depend on a bound it
+    is meant to be testing.
+    """
+    get_logger(prefix)  # the ancestor the numbered names hang below
+    for index in range(MAX_LOGGERS - 1 - room):
+        get_logger(f"{prefix}.{index}")
+
+
 def test_registry_refuses_new_names_at_the_cap() -> None:
     """The registry stops growing at the cap and says so.
 
@@ -162,33 +187,90 @@ def test_registry_refuses_new_names_at_the_cap() -> None:
     handlers, a level and drop counters that a caller may still be using, so
     displacing one would silently redirect its records.
     """
-    for index in range(MAX_LOGGERS):
-        get_logger(f"cardinality.{index}")
+    _fill_registry("cardinality")
 
     with pytest.raises(RuntimeError, match=str(MAX_LOGGERS)):
         get_logger("cardinality.one-too-many")
 
 
+def test_a_refused_chain_leaves_the_registry_unchanged() -> None:
+    """A name whose ancestors do not fit is refused before anything is added.
+
+    A dotted name registers its whole chain, so the refusal has to be decided
+    for the chain as a unit. Refusing halfway would leave a parent registered
+    with no child, and the next attempt would be refused for a different reason
+    than the caller saw.
+    """
+    _fill_registry("crowded")
+
+    with pytest.raises(RuntimeError, match=str(MAX_LOGGERS)):
+        # Two entries are needed: "fresh" and "fresh.child". Neither fits, and
+        # neither may be inserted.
+        get_logger("fresh.child")
+
+    assert get_logger("crowded.0") is not None, (
+        "the refusal must not have disturbed an existing logger"
+    )
+
+
 def test_names_already_registered_still_resolve_at_the_cap() -> None:
     """Reaching the cap does not break the loggers already in the registry."""
-    for index in range(MAX_LOGGERS):
-        get_logger(f"existing.{index}")
+    _fill_registry("existing")
 
     assert get_logger("existing.0") is get_logger("existing.0"), (
         "an already-registered name must keep resolving to the same logger"
     )
-    assert get_logger("existing.9999") is not None, (
+    assert get_logger(f"existing.{MAX_LOGGERS - 2}") is not None, (
         "the last name registered before the cap must still resolve"
     )
 
 
 def test_root_is_always_available_at_the_cap() -> None:
     """``root`` is exempt from the cap so the bridges keep a fallback target."""
-    for index in range(MAX_LOGGERS):
-        get_logger(f"filled.{index}")
+    _fill_registry("filled")
 
     assert get_logger("root") is not None, (
         "the Rust bridges fall back to root, so it must never be refused"
+    )
+
+
+def test_propagation_still_reaches_root_at_the_cap() -> None:
+    """A child's records still reach a root handler once the registry is full.
+
+    Propagation resolves the parent through the registry, and the lookup's
+    error is deliberately ignored — a parent that cannot be resolved must not
+    turn a log call into an exception. That makes a missing parent *silent*,
+    which is why registration has to create the whole chain: at the cap, a
+    child whose parent was never registered would stop propagating with no
+    diagnostic at all.
+    """
+    records: list[dict[str, object]] = []
+
+    def capture(record: dict[str, object]) -> str:
+        records.append(record)
+        return "captured"
+
+    handler = StreamHandlerBuilder.stderr().with_formatter(capture).build()
+    basicConfig(level="INFO", force=True, handlers=[handler])
+
+    # A dotted name registers its ancestors too, so this spends two of the
+    # budget's slots: "propagating" and "propagating.child".
+    child = get_logger("propagating.child")
+    _fill_registry("filler", room=2)
+
+    with pytest.raises(RuntimeError, match=str(MAX_LOGGERS)):
+        get_logger("filler.one-too-many")
+
+    child.info("still reaches root")
+    assert child.flush_handlers(), "the child logger did not flush"
+    for _ in range(20):
+        if records:
+            break
+        time.sleep(0.01)
+
+    assert records, (
+        "a full registry must not break propagation for a child whose parent "
+        "already exists"
     )
 
 

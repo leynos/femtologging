@@ -40,6 +40,7 @@ fn log_max_level() {
 }
 
 #[rstest]
+#[serial]
 fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
     let adapter = FemtoLogAdapter;
     let logger_name = unique_logger_name;
@@ -82,6 +83,7 @@ fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger
 }
 
 #[rstest]
+#[serial]
 fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
     let adapter = FemtoLogAdapter;
     let logger_name = unique_logger_name;
@@ -112,6 +114,7 @@ fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name
 }
 
 #[rstest]
+#[serial]
 fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
     let adapter = FemtoLogAdapter;
     let logger_name = unique_logger_name;
