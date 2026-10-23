@@ -149,6 +149,42 @@ Milestone 2 detail:
 - [x] Delivered: gates green, commits pushed, draft PR #544 open.
 - [x] CodeRabbit review returned nine findings; all nine fixed and
       re-gated.
+- [x] Fixes committed in five atomic commits and pushed to `467f406`; PR #544
+      description updated with the findings and the new verification figures.
+
+Re-gated at `467f406`:
+
+- [x] `make fmt`, `make check-fmt`, `make markdownlint`, `make nixie`,
+      `make typecheck` — exit 0.
+- [x] `make lint` — exit 0, including the Whitaker module line limit after the
+      `shard` and `manager_tests` splits.
+- [x] `make test` — exit 0: four cargo feature lanes and `760 passed,
+      5 skipped` in pytest.
+- [x] Loom lane — `cargo clippy --cfg loom --no-default-features --all-targets
+      -- -D warnings` exit 0, and all six models pass under
+      `scripts/run_loom_models.py`.
+
+**Discovery (2026-10-23): a `not(test)`-only item can be dead under Loom.**
+`LoggerBudget::in_flight` is read only by `FemtoLogger::drop`'s
+`#[cfg(not(loom))]` arm, so the Loom build failed on `-D dead-code` even though
+every ordinary lane compiled it. Gating the accessor `#[cfg(not(loom))]` with
+its only caller is the fix; the alternative — an `#[allow(dead_code)]` — would
+have hidden the fact that the Loom drop path deliberately does not read it.
+
+**Discovery (2026-10-23): the off-by-one was invisible below the cap.** The
+capacity predicate meant "one more fits", but every projected call site passed
+the post-insertion total, so each path reserved a slot twice and the name that
+would have filled the last free slot was refused. Nothing failed until a
+registry was actually full, which is why the boundary is now asserted as pure
+arithmetic in `a_projected_insertion_may_fill_the_last_slot` as well as by the
+end-to-end test that fills the registry. A test that only ever fills to
+`MAX_LOGGERS - 1` would have passed throughout.
+
+**Discovery (2026-10-23): literal U+2028/U+2029 in source are a trap.** A doc
+comment describing the separators originally contained the characters themselves
+(`cat -A` shows `M-bM-^@M-(`). They are invisible, they can make the source
+line itself a line break for tooling, and Ruff rejects them in Python source.
+Write them as `\u{2028}` in Rust and as the `\u2028` escape in Python source.
 
 Milestone 1 detail:
 
