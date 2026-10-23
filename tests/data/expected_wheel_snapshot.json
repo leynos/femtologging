@@ -2,6 +2,7 @@
   "generator": "<maturin-version>",
   "metadata": {
     "classifiers": [
+      "Development Status :: 4 - Beta",
       "License :: OSI Approved :: ISC License (ISCL)",
       "Operating System :: OS Independent",
       "Programming Language :: Python :: 3",
@@ -10,7 +11,7 @@
     "name": "femtologging",
     "requires_dist": [],
     "requires_python": ">=3.12",
-    "version": "0.1.0"
+    "version": "0.2.0b1"
   },
   "wheel": {
     "root_is_purelib": "false",

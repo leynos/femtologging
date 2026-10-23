@@ -145,15 +145,15 @@ impl FemtoFileHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush())
     }
 
     /// Closes the handler, signals worker shutdown, and waits briefly for
     /// completion before joining the worker when it reports that it has exited.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.close());
     }
 }
 

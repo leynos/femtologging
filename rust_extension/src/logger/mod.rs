@@ -207,9 +207,11 @@ impl FemtoLogger {
     /// --------
     /// >>> logger.flush_handlers()
     /// True
-    #[pyo3(text_signature = "(self)")]
-    pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
+    #[pyo3(name = "flush_handlers", text_signature = "(self)")]
+    fn py_flush_handlers(&self, py: Python<'_>) -> bool {
+        // The worker needs the GIL to dispatch to handlers attached from
+        // Python, so waiting while holding it would stall until the timeout.
+        py.detach(|| self.flush_handlers())
     }
 
     /// Capture handler addresses for tests that verify attachment replacement.
@@ -223,6 +225,18 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Flush all handlers attached to this logger.
+    ///
+    /// Waits up to 2 seconds for the worker thread to drain its queue, then
+    /// flushes every attached handler. Returns `true` when both succeed.
+    ///
+    /// Callers holding the GIL must release it first, as the Python
+    /// `flush_handlers` method does, because the worker acquires the GIL to
+    /// dispatch to handlers attached from Python.
+    pub fn flush_handlers(&self) -> bool {
+        self.flush_handlers_blocking()
+    }
+
     /// Attach a handler to this logger.
     ///
     /// # Errors

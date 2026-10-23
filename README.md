@@ -1,97 +1,191 @@
-# femtologging
+# 🪵 femtologging
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](
-https://deepwiki.com/leynos/femtologging)
+[![Ask DeepWiki][dw]][deepwiki] [![PyPI Version][pypi]][package]
 
-**femtologging** is an experiment in building a fast, thread-friendly logging
-library for Python using Rust. The project ports core ideas from [picologging]
-(<https://github.com/microsoft/picologging>) and exposes them through a small
-[PyO3](https://pyo3.rs/) extension. Log records travel over `crossbeam-channel`
-queues to dedicated worker threads, ensuring the application remains responsive
-even when log output is slow.
+[dw]: https://deepwiki.com/badge.svg
+[deepwiki]: https://deepwiki.com/leynos/femtologging
+[pypi]: https://img.shields.io/pypi/v/femtologging "PyPI package"
+[package]: https://pypi.org/project/femtologging/
 
-The goals are:
+*Python logging that never waits for the disk: the API you know, with Rust
+threads doing the writing.*
 
-- CPython logging API compatibility
-- strong compile-time guarantees from Rust
-- minimal overhead through a producer–consumer model
+Femtologging gives Python applications familiar loggers whose records are
+formatted and written by Rust worker threads. A log call queues a record and
+returns, so slow terminals, files, and networks stay out of your hot path.
 
-For a deeper dive into the architecture and the crates involved, see the
-documents in [`docs/`](./docs), especially
+Website: <https://df12.studio/femtologging>
 
-<!-- markdownlint-disable-next-line MD013 -->
+______________________________________________________________________
 
-[`rust-multithreaded-logging-framework-for-python-design.md`](docs/rust-multithreaded-logging-framework-for-python-design.md)
-and [`dependency-analysis.md`](docs/dependency-analysis.md).
+## Why femtologging?
 
-## Installation
+If you have ever watched a busy service slow down because it was logging, you
+know the trade-off: more detail, more waiting. Femtologging moves the waiting
+somewhere else.
 
-Ensure the [Rust toolchain](https://www.rust-lang.org/tools/install) is
-available, then run:
+- **Calls return immediately**: Records go onto a bounded queue, and Rust
+  worker threads handle formatting and I/O.
+- **Familiar from the first line**: `get_logger()` (or `getLogger()`),
+  `info()`, `exception()`, `basicConfig()`, `dictConfig()`, and `fileConfig()`
+  work much as they do in the standard library.
+- **Structured context built in**: Attach fields per call with `extra`, or for
+  a whole block with `log_context()`, which is safe across `await`.
+- **Bring your own handlers**: Plain Python objects can be handlers, and
+  `StdlibHandlerAdapter` reuses standard `logging` handlers as they are.
+- **Honest under pressure**: Full queues drop and count records instead of
+  growing without limit or stalling your threads.
+
+______________________________________________________________________
+
+## Quick start
+
+### Installation
+
+Femtologging needs Python 3.12 or newer.
+
+This README and the guides describe femtologging 0.2.0, which is currently in
+beta. Installers skip pre-releases unless asked, so request the beta explicitly
+with pip:
+
+<!-- tested-example: readme-install-pip -->
 
 ```bash
-pip install .
+python -m pip install "femtologging>=0.2.0b1"
 ```
 
-This compiles the extension with [maturin](https://maturin.rs/). Alternatively,
-running `make build` yields the same result.
+Or add it to a [uv](https://docs.astral.sh/uv/) project:
 
-## Quick example
+<!-- tested-example: readme-install-uv -->
+
+```bash
+uv add "femtologging>=0.2.0b1"
+```
+
+The same requirement keeps working once 0.2.0 itself is released. Where no
+pre-built wheel fits your platform, the installer compiles the extension from
+source, which needs the
+[Rust toolchain](https://www.rust-lang.org/tools/install).
+
+### Quick taste
+
+<!-- tested-example: readme-quick-start -->
 
 ```python
-from femtologging import get_logger
+from femtologging import FemtoStreamHandler, get_logger
 
-log = get_logger("demo")
-log.log("INFO", "hello from femtologging")
+logger = get_logger("demo")
+handler = FemtoStreamHandler.stdout()
+logger.add_handler(handler)
 
-# Attach a second handler
-from femtologging import FemtoStreamHandler
+message = logger.info("hello from femtologging")
+assert message == "demo [INFO] hello from femtologging"
 
-log.add_handler(FemtoStreamHandler.stdout())
-
-# Handlers can be added or removed at any time, even when the logger is
-# shared. Newly added handlers only see subsequent records.
-
-
-# Attach a custom Python handler
-class Collector:
-    def __init__(self) -> None:
-        self.records: list[tuple[str, str, str]] = []
-
-    def handle(self, logger: str, level: str, message: str) -> None:
-        self.records.append((logger, level, message))
-
-
-collector = Collector()
-log.add_handler(collector)
-log.remove_handler(collector)
+assert logger.flush_handlers()  # let the worker threads catch up
+handler.close()
 ```
 
-`FemtoStreamHandler` and `FemtoFileHandler` are available for basic output.
-Each runs its I/O in a separate thread, so logging calls return immediately.
+It prints:
 
-## Journald and OpenTelemetry status
+<!-- tested-example: readme-quick-start-output -->
 
-Planned Journald and OpenTelemetry integrations are explicit opt-in features.
-No application sends records to Journald or OpenTelemetry unless you enable the
-relevant feature and configure the corresponding handler/layer yourself.
+```text
+demo [INFO] hello from femtologging
+```
 
-- Journald support is Linux/systemd-specific and is unavailable on Windows and
-  macOS. On non-systemd Unix environments, use stream/file/socket handlers (or
-  route logs to a local syslog/collector endpoint).
-- Treat external observability sinks as potentially sensitive destinations:
-  review message text and contextual keys before forwarding logs.
-- Until the structured logging milestones in Phase 3 land, planned Journald and
-  OpenTelemetry outputs are limited to message text plus basic metadata (for
-  example logger name and level).
+`logger.info()` queued the record and returned its rendered text at once; a
+worker thread wrote it to standard output. Because the writing happens in the
+background, flush and close handlers before your program exits.
 
-## Development
+### Where next?
 
-The [`Makefile`](./Makefile) defines tasks for formatting, linting, type
-checking and tests. See [`docs/dev-workflow.md`](docs/dev-workflow.md) for
-details.
+- **New to femtologging?** The [users' guide][guide] picks up where this
+  example stops: loggers, context, handlers, configuration, and running in
+  production.
+- **Coming from `logging`?** Keep
+  [Differences from the standard library][guide-differences] to hand; a few
+  behaviours differ on purpose.
+- **Upgrading from 0.1?** The [0.2.0 migration guide][migration] lists the
+  changes that can need an edit first.
 
-For structured exception and stack payload compatibility rules (including
-schema version mismatch handling), see the
-[`Exception schema versioning`](docs/users-guide.md#exception-schema-versioning)
-section in the user guide.
+______________________________________________________________________
+
+## Features
+
+- **Stream, file, and rotating file handlers**, rotating by size or on a
+  schedule ([send records somewhere][guide-handlers]).
+- **Socket and HTTP handlers** with background reconnection, backoff, TLS,
+  and JSON output ([send records over a socket][guide-socket]).
+- **Structured fields** per call or per scope, propagated through `asyncio`
+  tasks via `contextvars` ([add context to records][guide-context]).
+- **Exception and stack capture** with `exc_info`, `stack_info`, and
+  `exception()` ([record exceptions][guide-exceptions]).
+- **Python handlers and filters**, including enrichment filters and reuse of
+  standard `logging` handlers ([write your own handler][guide-python-handler]).
+- **Configuration your way**: `basicConfig()`, the `ConfigBuilder` API,
+  runtime reconfiguration, and restricted `dictConfig()` and `fileConfig()`
+  ([configure logging][guide-config]).
+- **Rust integration**: bridges for the `log` and `tracing` crates, and
+  versioned exception payloads ([integrate with Rust][guide-rust]).
+
+______________________________________________________________________
+
+## Status
+
+Femtologging 0.2.0 is in beta. The logging runtime, handlers, configuration
+APIs, and structured context are in place, and every example in this README and
+the guides is executed by the test suite. Some standard library features, such
+as `%`-style lazy formatting and named formatters, are not implemented yet, and
+the public API may still change before a stable release. Pin the version you
+depend on, and read the [changelog][changelog] and [migration guide][migration]
+when you upgrade. Journald and OpenTelemetry integrations are planned; see the
+[roadmap][roadmap].
+
+______________________________________________________________________
+
+## Learn more
+
+- [Users' guide][guide] — from a first log message to production
+  configuration and Rust integration
+- [Changelog][changelog] — what changed in each release
+- [0.2.0 migration guide][migration] — upgrading an existing application
+- [Roadmap][roadmap] — planned features and progress
+- [Developers' guide][developers] — building, testing, and maintaining
+  femtologging
+- [Design notes][design] — the architecture behind the Rust runtime, which
+  ports core ideas from [picologging](https://github.com/microsoft/picologging)
+
+______________________________________________________________________
+
+## Licence
+
+ISC — see [LICENSE][licence] for details.
+
+______________________________________________________________________
+
+## Contributing
+
+Contributions are welcome! Start with the [developers' guide][developers] and
+the [development workflow][workflow] for how to build and test the project;
+automated contributors should also follow [AGENTS.md][agents].
+
+<!-- This README is also the PyPI project description, where relative links do
+not resolve, so every link to a repository file is absolute. -->
+
+[guide]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md
+[guide-differences]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#differences-from-the-standard-library
+[guide-handlers]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#send-records-somewhere
+[guide-socket]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#send-records-over-a-socket
+[guide-context]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#add-context-to-records
+[guide-exceptions]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#record-exceptions-and-call-stacks
+[guide-python-handler]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#write-your-own-handler-in-python
+[guide-config]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#configure-logging
+[guide-rust]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#integrate-with-rust
+[changelog]: https://github.com/leynos/femtologging/blob/main/CHANGELOG.md
+[migration]: https://github.com/leynos/femtologging/blob/main/docs/v0-2-0-migration-guide.md
+[roadmap]: https://github.com/leynos/femtologging/blob/main/docs/roadmap.md
+[developers]: https://github.com/leynos/femtologging/blob/main/docs/developers-guide.md
+[workflow]: https://github.com/leynos/femtologging/blob/main/docs/dev-workflow.md
+[design]: https://github.com/leynos/femtologging/blob/main/docs/rust-multithreaded-logging-framework-for-python-design.md
+[licence]: https://github.com/leynos/femtologging/blob/main/LICENSE
+[agents]: https://github.com/leynos/femtologging/blob/main/AGENTS.md

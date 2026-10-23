@@ -1,7 +1,9 @@
 [project]
 name = "femtologging"
-version = "0.1.0"
-description = "femtologging package"
+# When updating version, also update rust_extension/Cargo.toml to match so the
+# Python package and the native crate report the same release.
+version = "0.2.0-beta1"
+description = "Python logging that hands formatting and I/O to Rust worker threads"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "ISC" }
@@ -13,12 +15,20 @@ keywords = [
     "async",
 ]
 classifiers = [
+    # Move to "5 - Production/Stable" with the first stable release.
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
     "License :: OSI Approved :: ISC License (ISCL)",
     "Operating System :: OS Independent",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://df12.studio/femtologging"
+Repository = "https://github.com/leynos/femtologging"
+Documentation = "https://github.com/leynos/femtologging/blob/main/docs/users-guide.md"
+Changelog = "https://github.com/leynos/femtologging/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

@@ -310,6 +310,17 @@ payloads and context values are never included. These events target
 `femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
 from recursively logging its own instrumentation.
 
+### Waiting on a worker from Python
+
+Every handler registered from Python is a `PyHandler`, which takes the GIL to
+dispatch, and a handler worker takes the GIL to run a Python formatter. A
+Python-facing method that blocks on a worker, such as
+`FemtoLogger.flush_handlers()` or a handler's `flush()` or `close()`, must
+therefore release the GIL with `py.detach()` while it waits. Holding it stalls
+the worker until the wait times out, so the call reports failure, and `close()`
+abandons the records still queued. `tests/test_flush_releases_gil.py` pins this
+for each built-in handler.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` applies a complete configuration through one
