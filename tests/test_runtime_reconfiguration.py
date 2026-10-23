@@ -196,42 +196,43 @@ def test_runtime_mutation_preserves_handler_filter_enrichment_and_rejection(
     )
 
 
+def _context_filter_callback(
+    messages: list[str], context_value: str, *, reject_rejected: bool
+) -> cabc.Callable[[object], bool]:
+    """Build a filter that records messages and adds contextual enrichment."""
+
+    def callback(record: object) -> bool:
+        attributes = vars(record)
+        message = typ.cast("str", attributes["msg"])
+        messages.append(message)
+        attributes["runtime_context"] = context_value
+        return not reject_rejected or message != "rejected"
+
+    return callback
+
+
 def test_runtime_filter_override_updates_only_referencing_handler(
     tmp_path: Path,
 ) -> None:
     """A registry-only override updates attached filters without logger mutations."""
-    original_messages: list[str] = []
-    replacement_messages: list[str] = []
-    unaffected_messages: list[str] = []
-
-    def original_context(record: object) -> bool:
-        """Mark records handled before the filter registry changes."""
-        attributes = vars(record)
-        original_messages.append(typ.cast("str", attributes["msg"]))
-        attributes["runtime_context"] = "original"
-        return True
-
-    def replacement_context(record: object) -> bool:
-        """Replace enrichment and reject records through the overridden filter."""
-        attributes = vars(record)
-        message = typ.cast("str", attributes["msg"])
-        replacement_messages.append(message)
-        attributes["runtime_context"] = "replacement"
-        return message != "rejected"
-
-    def unaffected_context(record: object) -> bool:
-        """Keep the other handler's enrichment and rejection policy intact."""
-        attributes = vars(record)
-        message = typ.cast("str", attributes["msg"])
-        unaffected_messages.append(message)
-        attributes["runtime_context"] = "unaffected"
-        return message != "rejected"
+    messages = {name: [] for name in ("original", "replacement", "unaffected")}
+    callbacks = {
+        "original": _context_filter_callback(
+            messages["original"], "original", reject_rejected=False
+        ),
+        "replacement": _context_filter_callback(
+            messages["replacement"], "replacement", reject_rejected=True
+        ),
+        "unaffected": _context_filter_callback(
+            messages["unaffected"], "unaffected", reject_rejected=True
+        ),
+    }
 
     config = (
         ConfigBuilder()
         .with_version(1)
-        .with_filter("context", PythonCallbackFilterBuilder(original_context))
-        .with_filter("other", PythonCallbackFilterBuilder(unaffected_context))
+        .with_filter("context", PythonCallbackFilterBuilder(callbacks["original"]))
+        .with_filter("other", PythonCallbackFilterBuilder(callbacks["unaffected"]))
         .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
     )
     formatter = FormatterBuilder().with_format("%(runtime_context)s %(message)s")
@@ -244,35 +245,36 @@ def test_runtime_filter_override_updates_only_referencing_handler(
             .with_formatter(formatter),
         ).with_logger(logger_name, LoggerConfigBuilder().with_handlers([logger_name]))
     config.build_and_init()
-    service = get_logger("service")
-    other = get_logger("other")
-    service.info("before")
-    other.info("before")
-    assert service.flush_handlers(), "initial service records should flush"
-    assert other.flush_handlers(), "initial unaffected records should flush"
+    loggers = {name: get_logger(name) for name in ("service", "other")}
+    loggers["service"].info("before")
+    loggers["other"].info("before")
+    assert loggers["service"].flush_handlers(), "initial service records should flush"
+    assert loggers["other"].flush_handlers(), "initial unaffected records should flush"
 
     RuntimeConfigBuilder().with_filter(
-        "context", PythonCallbackFilterBuilder(replacement_context)
+        "context", PythonCallbackFilterBuilder(callbacks["replacement"])
     ).apply()
 
-    service.info("accepted")
-    service.info("rejected")
-    other.info("accepted")
-    other.info("rejected")
-    assert service.flush_handlers(), "replacement-filter records should flush"
-    assert other.flush_handlers(), "unaffected-filter records should flush"
+    loggers["service"].info("accepted")
+    loggers["service"].info("rejected")
+    loggers["other"].info("accepted")
+    loggers["other"].info("rejected")
+    assert loggers["service"].flush_handlers(), (
+        "replacement-filter records should flush"
+    )
+    assert loggers["other"].flush_handlers(), "unaffected-filter records should flush"
 
     service_output = poll_file_for_text(
         tmp_path / "service.log", "replacement accepted"
     )
     other_output = poll_file_for_text(tmp_path / "other.log", "unaffected accepted")
-    assert original_messages == ["before"], (
+    assert messages["original"] == ["before"], (
         "the old callback must stop receiving records"
     )
-    assert replacement_messages == ["accepted", "rejected"], (
+    assert messages["replacement"] == ["accepted", "rejected"], (
         "a filter registry override must reattach the replacement to existing handlers"
     )
-    assert unaffected_messages == ["before", "accepted", "rejected"], (
+    assert messages["unaffected"] == ["before", "accepted", "rejected"], (
         "handlers using another filter ID must keep their original callback"
     )
     assert service_output.splitlines() == ["original before", "replacement accepted"], (
