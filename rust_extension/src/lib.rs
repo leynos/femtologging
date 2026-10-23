@@ -111,6 +111,9 @@ pub use http_handler::{
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
+#[cfg(feature = "log-compat")]
+#[doc(hidden)]
+pub use log_compat::{FemtoLogAdapter, install_global_logger};
 pub use log_context::{
     LogContextError, LogContextGuard, pop_log_context, push_log_context, push_log_context_map,
     with_log_context,
@@ -119,6 +122,9 @@ pub use log_context::{
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 /// Re-export the logger and queued record handle.
 pub use logger::{FemtoLogger, QueuedRecord};
+#[cfg(feature = "log-compat")]
+#[doc(hidden)]
+pub use manager::get_logger as get_logger_for_log_compat;
 use manager::{get_logger as manager_get_logger, reset_manager};
 pub use socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,

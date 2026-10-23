@@ -1,15 +1,20 @@
 //! Global registry mapping logger names to instances.
 //!
-//! Access is guarded by a `parking_lot::RwLock` and must only occur while the
-//! Python GIL is held. This ensures `Py<FemtoLogger>` objects remain valid.
+//! The `Py<FemtoLogger>` registry is guarded by a `parking_lot::RwLock` and is
+//! accessed while the Python GIL is held. The log bridge reads a separate
+//! threshold index without the GIL.
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::{HashMap, hash_map::Entry};
+#[cfg(feature = "log-compat")]
+use std::sync::atomic::{AtomicU8, Ordering};
 #[cfg(feature = "python")]
 use std::{collections::BTreeMap, sync::Arc};
 
+#[cfg(feature = "log-compat")]
+use crate::level::FemtoLevel;
 use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
@@ -79,27 +84,62 @@ struct Manager {
 /// Process-wide logger registry; callers hold its lock during registry access.
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+#[cfg(feature = "log-compat")]
+static LOGGER_LEVEL_INDEX: Lazy<RwLock<HashMap<String, Arc<AtomicU8>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 /// Take runtime attachment snapshots while leaving an empty registry behind.
 #[cfg(feature = "python")]
 fn take_runtime_state(mgr: &mut Manager) -> RuntimeStateSnapshot {
     std::mem::take(&mut mgr.runtime)
 }
 
-/// Return `true` when the provided name is not a valid logger identifier.
+/// Return whether `name` is a valid dotted logger identifier.
 ///
 /// A name is considered invalid when it is empty, begins or ends with a dot,
 /// or contains consecutive dots which would create empty segments.
+pub(crate) fn is_valid_logger_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.ends_with('.')
+        && !name.split('.').any(str::is_empty)
+}
+
 fn is_invalid_logger_name(name: &str) -> bool {
-    name.is_empty()
-        || name.starts_with('.')
-        || name.ends_with('.')
-        || name.split('.').any(|s| s.is_empty())
+    !is_valid_logger_name(name)
+}
+
+#[cfg(feature = "log-compat")]
+fn index_logger_level(py: Python<'_>, name: &str, logger: &Py<FemtoLogger>) {
+    let level = logger.borrow(py).level_handle();
+    LOGGER_LEVEL_INDEX.write().insert(name.to_string(), level);
+}
+
+/// Return a registered logger's live threshold without accessing Python.
+#[cfg(feature = "log-compat")]
+pub(crate) fn registered_logger_level(name: &str) -> Option<FemtoLevel> {
+    LOGGER_LEVEL_INDEX
+        .read()
+        .get(name)
+        .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+}
+
+/// Snapshot registered levels for conservative facade maximum calculation.
+#[cfg(feature = "log-compat")]
+pub(crate) fn registered_logger_levels() -> Vec<FemtoLevel> {
+    LOGGER_LEVEL_INDEX
+        .read()
+        .values()
+        .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+        .collect()
 }
 
 /// Ensure the implicit root logger exists before resolving named loggers.
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
         let root = Py::new(py, FemtoLogger::with_parent("root".into(), None))?;
+        #[cfg(feature = "log-compat")]
+        index_logger_level(py, "root", &root);
         mgr.loggers.insert("root".to_string(), root);
     }
     Ok(())
@@ -128,6 +168,8 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
         Entry::Vacant(v) => {
             let parent_name = calculate_parent_name(name);
             let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name))?;
+            #[cfg(feature = "log-compat")]
+            index_logger_level(py, name, &logger);
             v.insert(logger.clone_ref(py));
             Ok(logger)
         }
@@ -164,7 +206,7 @@ pub(crate) fn stage_loggers<'a>(
     names
         .into_iter()
         .map(|name| {
-            if is_invalid_logger_name(name) {
+            if !is_valid_logger_name(name) {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "logger name cannot be empty, start or end with '.', or contain consecutive dots",
                 ));
@@ -188,7 +230,7 @@ pub(crate) fn commit_staged_loggers(
     staged: BTreeMap<String, Py<FemtoLogger>>,
 ) -> BTreeMap<String, Py<FemtoLogger>> {
     let mut mgr = MANAGER.write();
-    staged
+    let committed = staged
         .into_iter()
         .map(|(name, logger)| {
             let committed = mgr
@@ -196,9 +238,15 @@ pub(crate) fn commit_staged_loggers(
                 .entry(name.clone())
                 .or_insert(logger)
                 .clone_ref(py);
+            #[cfg(feature = "log-compat")]
+            index_logger_level(py, &name, &committed);
             (name, committed)
         })
-        .collect()
+        .collect();
+    drop(mgr);
+    #[cfg(feature = "log-compat")]
+    crate::log_compat::refresh_global_max_level();
+    committed
 }
 
 /// Clone the runtime registries while holding the manager read lock.
@@ -266,21 +314,27 @@ pub fn reset_manager() {
     #[cfg(feature = "python")]
     let (loggers, runtime) = {
         let mut mgr = MANAGER.write();
-        (
-            std::mem::take(&mut mgr.loggers),
-            take_runtime_state(&mut mgr),
-        )
+        let loggers = std::mem::take(&mut mgr.loggers);
+        let runtime = take_runtime_state(&mut mgr);
+        #[cfg(feature = "log-compat")]
+        LOGGER_LEVEL_INDEX.write().clear();
+        (loggers, runtime)
     };
 
     #[cfg(not(feature = "python"))]
     let loggers = {
         let mut mgr = MANAGER.write();
-        std::mem::take(&mut mgr.loggers)
+        let loggers = std::mem::take(&mut mgr.loggers);
+        #[cfg(feature = "log-compat")]
+        LOGGER_LEVEL_INDEX.write().clear();
+        loggers
     };
 
     drop(loggers);
     #[cfg(feature = "python")]
     drop(runtime);
+    #[cfg(feature = "log-compat")]
+    crate::log_compat::refresh_global_max_level();
 }
 
 #[cfg(test)]

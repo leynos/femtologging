@@ -15,10 +15,15 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import (
+    ConfigBuilder,
     FemtoLogger,
     FemtoStreamHandler,
+    LoggerConfigBuilder,
+    LoggerMutationBuilder,
+    RuntimeConfigBuilder,
     StreamHandlerBuilder,
     get_logger,
+    reset_manager,
     rust,
     setup_rust_logging,
 )
@@ -33,6 +38,8 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 REQUIRED_RUST_ATTRS = (
     "setup_rust_logging",
     "_emit_rust_log",
+    "_rust_log_enabled",
+    "_rust_log_max_level",
     "_install_test_global_rust_logger",
 )
 
@@ -78,6 +85,69 @@ def when_set_logger_level(name: str, level: str) -> None:
     """Change the named logger's minimum level for the scenario."""
     logger = get_logger(name)
     logger.set_level(level)
+
+
+@when("I reset the logger manager")
+def when_reset_logger_manager() -> None:
+    """Clear registered loggers and restore the bridge's default maximum."""
+    reset_manager()
+
+
+@when(parsers.parse('I configure logger "{name}" to "{level}" via build_and_init'))
+def when_configure_logger_level(name: str, level: str) -> None:
+    """Set a logger threshold through the configuration builder."""
+    (
+        ConfigBuilder()
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_logger(name, LoggerConfigBuilder().with_level(level))
+        .build_and_init()
+    )
+
+
+@when(parsers.parse('I set logger "{name}" level to "{level}" via runtime mutation'))
+def when_mutate_logger_level(name: str, level: str) -> None:
+    """Set a logger threshold through the runtime mutation API."""
+    RuntimeConfigBuilder().with_logger(
+        name,
+        LoggerMutationBuilder().with_level(level),
+    ).apply()
+
+
+@then(
+    parsers.parse('the Rust log levels "{levels}" are disabled for target "{target}"')
+)
+def then_log_levels_are_disabled(levels: str, target: str) -> None:
+    """Assert the Rust log facade rejects every listed target level."""
+    enabled_levels = [
+        level
+        for level in levels.split(",")
+        if rust._rust_log_enabled(level.strip(), target)
+    ]
+    assert not enabled_levels, (
+        f"expected the target {target!r} to reject {levels}, "
+        f"but enabled {enabled_levels!r}"
+    )
+
+
+@then(parsers.parse('the Rust log levels "{levels}" are enabled for target "{target}"'))
+def then_log_levels_are_enabled(levels: str, target: str) -> None:
+    """Assert the Rust log facade accepts every listed target level."""
+    disabled_levels = [
+        level
+        for level in levels.split(",")
+        if not rust._rust_log_enabled(level.strip(), target)
+    ]
+    assert not disabled_levels, (
+        f"expected the target {target!r} to accept {levels}, "
+        f"but disabled {disabled_levels!r}"
+    )
+
+
+@then(parsers.parse('the Rust log facade maximum is "{level}"'))
+def then_rust_log_max_level_is(level: str) -> None:
+    """Assert the process-wide Rust log macro prefilter threshold."""
+    actual = rust._rust_log_max_level()
+    assert actual == level, f"expected facade maximum {level!r}, got {actual!r}"
 
 
 @dc.dataclass(slots=True, frozen=True)
