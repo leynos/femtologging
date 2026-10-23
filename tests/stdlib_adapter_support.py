@@ -1,11 +1,12 @@
-"""Shared record and handler vocabulary for the ``StdlibHandlerAdapter`` suites.
+"""Shared record and adapter vocabulary for the ``StdlibHandlerAdapter`` suites.
 
 The adapter's tests are split across construction and dispatch
 (``tests/test_stdlib_adapter.py``), the wrapped handler's level threshold
 (``tests/test_stdlib_adapter_levels.py``), and ``LogRecord`` population and
 delegation (``tests/test_stdlib_adapter_records.py``).  Everything all three
-need lives here, so a change to the record schema or to a counting helper is
-made once rather than kept consistent across three files by hand.
+need lives here, so a change to the record schema is made once rather than kept
+consistent across three files by hand. Handler and filter probes are defined
+in ``tests.stdlib_adapter_handler_support`` and re-exported here.
 """
 
 from __future__ import annotations
@@ -13,9 +14,31 @@ from __future__ import annotations
 import dataclasses
 import io
 import logging
-import typing as typ
 
 from femtologging import FemtoLogger, StdlibHandlerAdapter
+from tests.stdlib_adapter_handler_support import (
+    CapturingHandler,
+    CountingFilter,
+    CountingHandler,
+    RejectingFilter,
+    emitted_messages,
+)
+
+__all__ = [
+    "AdapterProbe",
+    "CapturingHandler",
+    "CountingFilter",
+    "CountingHandler",
+    "HandlerLevelCase",
+    "HandlerSetup",
+    "LevelCase",
+    "LogRequest",
+    "RejectingFilter",
+    "build_adapter_probe",
+    "dispatch",
+    "emitted_messages",
+    "femto_logger",
+]
 
 # -- Record requests and handler setup ------------------------------------
 
@@ -225,74 +248,6 @@ def femto_logger(request: LogRequest) -> FemtoLogger:
     return logger
 
 
-# -- Counting and capturing handlers --------------------------------------
-
-
-class CapturingHandler(logging.Handler):
-    """Handler that captures emitted LogRecords for test inspection."""
-
-    def __init__(self) -> None:
-        """Initialize with an empty records list."""
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    @typ.override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-class CountingHandler(logging.Handler):
-    """Handler that counts ``handle()`` calls and captures emitted records.
-
-    ``Handler.handle()`` is overridden rather than ``emit()`` so a test can
-    observe how many times the adapter entered the handler's filter path.
-    ``emit()`` is reached only when that filter path accepts the record.
-    """
-
-    def __init__(self) -> None:
-        """Initialize with zero handle calls and no captured records."""
-        super().__init__()
-        self.handle_calls = 0
-        self.records: list[logging.LogRecord] = []
-
-    @typ.override
-    def handle(self, record: logging.LogRecord) -> bool:
-        self.handle_calls += 1
-        return super().handle(record)
-
-    @typ.override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-class CountingFilter(logging.Filter):
-    """Filter that counts how often the handler consults it."""
-
-    def __init__(self) -> None:
-        """Initialize with a zero filter-call count."""
-        super().__init__()
-        self.calls = 0
-
-    @typ.override
-    def filter(self, record: logging.LogRecord) -> bool:
-        self.calls += 1
-        return True
-
-
-class RejectingFilter(logging.Filter):
-    """Filter that rejects every record and counts the consultations."""
-
-    def __init__(self) -> None:
-        """Initialize with a zero filter-call count."""
-        super().__init__()
-        self.calls = 0
-
-    @typ.override
-    def filter(self, record: logging.LogRecord) -> bool:
-        self.calls += 1
-        return False
-
-
 def dispatch(adapter: StdlibHandlerAdapter, level: str, message: str) -> None:
     """Send one record straight to *adapter* without a worker thread.
 
@@ -319,21 +274,3 @@ def dispatch(adapter: StdlibHandlerAdapter, level: str, message: str) -> None:
 
     """
     adapter.handle_record({"logger": "app", "level": level, "message": message})
-
-
-def emitted_messages(handler: CapturingHandler | CountingHandler) -> list[str]:
-    """Return the messages of every record *handler* emitted.
-
-    Returns
-    -------
-    list[str]
-        One message per emitted record, in emission order.
-
-    Examples
-    --------
-    >>> handler = CapturingHandler()
-    >>> emitted_messages(handler)
-    []
-
-    """
-    return [record.getMessage() for record in handler.records]
