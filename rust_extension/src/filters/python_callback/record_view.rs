@@ -144,18 +144,29 @@ pub(super) fn apply_enrichment_to_record_view(
     Ok(())
 }
 
+/// Shares the callback snapshot and accumulation maps during enrichment extraction.
+struct EnrichmentInsertionContext<'py, 'a> {
+    /// Python token used for value comparisons.
+    py: Python<'py>,
+    /// Callback label included in rejected-enrichment warnings.
+    description: &'a str,
+    /// Original callback attributes used to detect changed values.
+    before: &'a BTreeMap<String, Py<PyAny>>,
+    /// String values accepted for Rust-side structured metadata.
+    enrichment: &'a mut SerializedEnrichment,
+    /// Original Python values retained for the callback record view.
+    typed_enrichment: &'a mut TypedEnrichment,
+}
+
 /// Validates one changed callback attribute before adding it to enrichment maps.
 fn try_validate_and_insert_enrichment(
-    py: Python<'_>,
-    description: &str,
+    context: &mut EnrichmentInsertionContext<'_, '_>,
     key: String,
     value: &Bound<'_, PyAny>,
-    previous: Option<&Py<PyAny>>,
-    enrichment: &mut SerializedEnrichment,
-    typed_enrichment: &mut TypedEnrichment,
 ) -> PyResult<bool> {
+    let previous = context.before.get(&key);
     let has_changed = match previous {
-        Some(previous) => !python_values_equal(py, previous, value)?,
+        Some(previous) => !python_values_equal(context.py, previous, value)?,
         None => true,
     };
     if !has_changed {
@@ -164,24 +175,38 @@ fn try_validate_and_insert_enrichment(
     let candidate = match extract_supported_value(&key, value) {
         Ok(candidate) => candidate,
         Err(err) => {
-            warn!("Python filter callback '{description}' ignored enrichment: {err}");
+            warn!(
+                "Python filter callback '{}' ignored enrichment: {err}",
+                context.description
+            );
             return Ok(false);
         }
     };
     if let Err(err) = validate_enrichment_key(&key) {
-        warn!("Python filter callback '{description}' ignored enrichment: {err}");
+        warn!(
+            "Python filter callback '{}' ignored enrichment: {err}",
+            context.description
+        );
         return Ok(false);
     }
     if let Err(err) = validate_enrichment_value(&key, &candidate) {
-        warn!("Python filter callback '{description}' ignored enrichment: {err}");
+        warn!(
+            "Python filter callback '{}' ignored enrichment: {err}",
+            context.description
+        );
         return Ok(false);
     }
-    enrichment.insert(key.clone(), candidate);
-    typed_enrichment.insert(key.clone(), value.clone().unbind());
-    if let Err(err) = validate_enrichment_total(enrichment) {
-        enrichment.remove(&key);
-        typed_enrichment.remove(&key);
-        warn!("Python filter callback '{description}' ignored enrichment: {err}");
+    context.enrichment.insert(key.clone(), candidate);
+    context
+        .typed_enrichment
+        .insert(key.clone(), value.clone().unbind());
+    if let Err(err) = validate_enrichment_total(context.enrichment) {
+        context.enrichment.remove(&key);
+        context.typed_enrichment.remove(&key);
+        warn!(
+            "Python filter callback '{}' ignored enrichment: {err}",
+            context.description
+        );
         return Ok(false);
     }
     Ok(true)
@@ -198,21 +223,21 @@ pub(super) fn extract_enrichment(
     let after = binding.cast::<PyDict>()?;
     let mut enrichment = SerializedEnrichment::new();
     let mut typed_enrichment = TypedEnrichment::new();
-    for (key, value) in after.iter() {
-        let key = key.extract::<String>()?;
-        if is_reserved_enrichment_key(&key) {
-            continue;
-        }
-        let previous = before.get(&key);
-        let _ = try_validate_and_insert_enrichment(
+    {
+        let mut context = EnrichmentInsertionContext {
             py,
             description,
-            key,
-            &value,
-            previous,
-            &mut enrichment,
-            &mut typed_enrichment,
-        )?;
+            before,
+            enrichment: &mut enrichment,
+            typed_enrichment: &mut typed_enrichment,
+        };
+        for (key, value) in after.iter() {
+            let key = key.extract::<String>()?;
+            if is_reserved_enrichment_key(&key) {
+                continue;
+            }
+            let _ = try_validate_and_insert_enrichment(&mut context, key, &value)?;
+        }
     }
     Ok((enrichment, typed_enrichment))
 }

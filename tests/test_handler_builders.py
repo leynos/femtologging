@@ -311,8 +311,9 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
             raise TypeError(msg)
 
     builder = FileHandlerBuilder(str(tmp_path / "formatter_error_chain.log"))
+    invalid_formatter = typ.cast("typ.Any", NotFormatter())
     with pytest.raises(TypeError) as excinfo:
-        builder.with_formatter(NotFormatter())
+        builder.with_formatter(invalid_formatter)
 
     # The error message now consolidates both failure causes inline
     error_message = str(excinfo.value)

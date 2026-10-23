@@ -106,7 +106,7 @@ impl LoggerConfigBuilder {
     }
 
     /// Set filters by identifier, replacing any existing filters.
-    /// IDs are deduplicated and order may be normalized; see `normalize_vec`.
+    /// IDs are deduplicated while preserving first-seen order; see `normalize_vec`.
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,

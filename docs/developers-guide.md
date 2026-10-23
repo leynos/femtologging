@@ -343,9 +343,10 @@ stdlib handler's filters, formatter, and emission.
 Handler filter IDs are resolved during configuration using the same filter
 registry as logger filters. `ConfigBuilder` resolves builder filter IDs before
 attaching handlers, and `dictConfig` translates each handler's `filters` list
-through that configuration path. Unknown and duplicate IDs fail validation
-before the live logger state is changed. Standalone handler builds reject
-unresolved filter IDs because they do not have a configuration registry.
+through that configuration path. Duplicate handler filter IDs collapse in
+first-seen order, while unknown IDs fail validation before the live logger
+state is changed. Standalone handler builds reject unresolved filter IDs
+because they do not have a configuration registry.
 
 Formatter resolution has two paths. Passing a `FormatterBuilder` directly to a
 handler builder compiles that formatter for the handler. Passing a formatter ID

@@ -1,4 +1,4 @@
-//! Python dictionary serialisation for the socket handler builder.
+//! Python dictionary serialization for the socket handler builder.
 
 use pyo3::{
     Bound, PyResult,
