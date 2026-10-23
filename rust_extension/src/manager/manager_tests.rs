@@ -3,7 +3,7 @@
 //! These cover the read-only lookup path, the cardinality bound, and the `log`
 //! bridge's flush sweep. The cap is asserted through the registry's own
 //! arithmetic rather than by building ten thousand loggers: the boundary is
-//! what matters, and materialising the population would cost ten thousand live
+//! what matters, and materializing the population would cost ten thousand live
 //! loggers — which, before the shared dispatch pool lands, is one thread each.
 //!
 //! The module is compiled in every feature lane so the `log-compat` flush
@@ -230,7 +230,7 @@ mod log_compat {
     }
 
     // `#[serial]` wraps the test bodies below, so the expect lint cannot
-    // recognise them as tests; errors are propagated instead.
+    // recognize them as tests; errors are propagated instead.
     #[test]
     #[serial]
     fn flush_all_handlers_flushes_loggers_with_handlers() -> pyo3::PyResult<()> {
