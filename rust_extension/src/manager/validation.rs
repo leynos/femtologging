@@ -44,7 +44,11 @@ const QUOTED_NAME_BYTES: usize = 64;
 /// Only a short, control-escaped prefix is quoted: a rejected name is by
 /// definition untrusted, and a line-oriented log consumer must not be able to
 /// forge a record boundary from the diagnostic itself.
-fn describe_name(name: &str) -> String {
+///
+/// Crate-visible because the `log` bridge quotes a refused *target* in the same
+/// way and for the same reason. A target is caller-controlled and need not have
+/// passed these rules, so it is the more hostile of the two.
+pub(crate) fn describe_name(name: &str) -> String {
     let mut quoted = String::with_capacity(QUOTED_NAME_BYTES + 2);
     quoted.push('"');
     let mut used = 0;
