@@ -1,11 +1,11 @@
 """Adapter bridging stdlib ``logging.Handler`` subclasses to femtologging.
 
 Femtologging passes plain-dict records to ``handle_record``; this adapter
-applies the wrapped handler's own severity threshold and translates accepted
-records into ``LogRecord`` instances for stdlib handlers.  The record schema
-and the translation itself live in :mod:`femtologging._adapter_record` and are
-re-exported here, so ``femtologging.adapter`` remains the single import site
-for everything the adapter family exposes.
+translates them into ``LogRecord`` instances, then applies the wrapped
+handler's severity threshold before dispatching eligible records.  The record
+schema and the translation itself live in :mod:`femtologging._adapter_record`
+and are re-exported here, so ``femtologging.adapter`` remains the single import
+site for everything the adapter family exposes.
 """
 
 from __future__ import annotations
@@ -43,12 +43,15 @@ class StdlibHandlerAdapter:
     record, the adapter constructs a ``logging.LogRecord``, discards it
     when its level falls below the wrapped handler's configured level,
     and otherwise calls the wrapped handler's ``handle()`` method so
-    that attached filters and I/O locking are applied.
+    that attached filters and stdlib locking semantics are applied. Filters
+    may still reject a record that passes the level check; the handler acquires
+    its I/O lock only when its filters accept the record.
 
     Two thresholds therefore apply.  The femtologging logger's own level
     decides whether a record is dispatched at all.  The wrapped stdlib
-    handler's level, set with ``logging.Handler.setLevel()``, then
-    decides whether that handler emits it.
+    handler's level, set with ``logging.Handler.setLevel()``, then decides
+    whether the record enters that handler's ``handle()`` path. Its filters
+    can further reject the record before emission.
 
     Femtologging dispatches asynchronously on a dedicated worker thread. It
     captures the producer's ``contextvars`` context before queueing and runs the
@@ -119,20 +122,22 @@ class StdlibHandlerAdapter:
     def handle_record(self, record: FemtoRecord) -> None:
         """Translate a femtologging record dict and dispatch via the stdlib handler.
 
-        Two independent thresholds decide whether the record is emitted.
-        Femtologging's own logger threshold is applied before dispatch and
-        is not this method's concern.  The wrapped handler's ``level`` is
-        applied here, mirroring ``logging.Logger.callHandlers()``: a
-        record whose mapped stdlib level is below that level is discarded
-        without entering the handler.  Because the level is read on every
-        call, a ``setLevel()`` on the wrapped handler affects the next
-        record.
+        Two independent thresholds decide whether a record enters the wrapped
+        handler. Femtologging's own logger threshold is applied before dispatch
+        and is not this method's concern. This method first constructs a
+        ``LogRecord``, then applies the wrapped handler's ``level``, mirroring
+        ``logging.Logger.callHandlers()``: a record whose mapped stdlib level is
+        below that level is discarded without calling ``handle()``. Because the
+        level is read on every call, a ``setLevel()`` on the wrapped handler
+        affects the next record.
 
-        Accepted records are passed through ``self._handler.handle()``
-        rather than ``emit()`` directly, so any attached
-        ``logging.Filter`` instances and the handler's I/O lock are
-        applied exactly once.  ``logging.NOTSET`` needs no special case:
-        it is numeric zero, so every mapped level clears the comparison.
+        A record that passes the level check is passed through
+        ``self._handler.handle()`` exactly once rather than ``emit()`` directly.
+        ``Handler.handle()`` applies attached ``logging.Filter`` instances once
+        and acquires the I/O lock only when those filters accept the record.
+        Filters may therefore reject a level-accepted record before emission.
+        ``logging.NOTSET`` needs no special case: it is numeric zero, so every
+        mapped level clears the comparison.
 
         Parameters
         ----------

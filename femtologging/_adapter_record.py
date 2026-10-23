@@ -22,7 +22,20 @@ if typ.TYPE_CHECKING:
 
 
 class Frame(typ.TypedDict):
-    """A single stack frame in an exception or stack payload."""
+    """A single stack frame in an exception or stack payload.
+
+    Attributes
+    ----------
+    filename : str
+        Source file that contains the frame.
+    lineno : int
+        One-based source line number for the frame.
+    function : str
+        Name of the function executing in the frame.
+    source_line : str, optional
+        Source text for the frame when it was available during capture.
+
+    """
 
     filename: str
     lineno: int
@@ -31,7 +44,24 @@ class Frame(typ.TypedDict):
 
 
 class Metadata(typ.TypedDict, total=False):
-    """The ``metadata`` sub-dictionary of a femtologging record."""
+    """The optional ``metadata`` sub-dictionary of a femtologging record.
+
+    Attributes
+    ----------
+    filename : str, optional
+        Source file that produced the record.
+    line_number : int, optional
+        One-based source line number that produced the record.
+    timestamp : float, optional
+        Record creation time in seconds since the Unix epoch.
+    thread_name : str, optional
+        Name of the thread that produced the record.
+    thread_id : int or str, optional
+        Identifier of the thread that produced the record.
+    key_values : dict of str to object, optional
+        Structured context values attached to the record.
+
+    """
 
     filename: str
     line_number: int
@@ -42,7 +72,20 @@ class Metadata(typ.TypedDict, total=False):
 
 
 class ExcInfo(typ.TypedDict, total=False):
-    """The ``exc_info`` sub-dictionary of a femtologging record."""
+    """The optional ``exc_info`` sub-dictionary of a femtologging record.
+
+    Attributes
+    ----------
+    schema_version : int
+        Required version used to interpret the exception payload.
+    type_name : str, optional
+        Name of the captured exception type.
+    message : str, optional
+        Text of the captured exception message.
+    frames : list of Frame, optional
+        Stack frames captured for the exception.
+
+    """
 
     schema_version: typ.Required[int]
     type_name: str
@@ -51,13 +94,42 @@ class ExcInfo(typ.TypedDict, total=False):
 
 
 class StackInfo(typ.TypedDict, total=False):
-    """The ``stack_info`` sub-dictionary of a femtologging record."""
+    """The optional ``stack_info`` sub-dictionary of a femtologging record.
+
+    Attributes
+    ----------
+    frames : list of Frame, optional
+        Stack frames captured for the current call stack.
+
+    """
 
     frames: list[Frame]
 
 
 class FemtoRecord(typ.TypedDict, total=False):
-    """Schema for the record dict passed to ``handle_record``."""
+    """Schema for the record dictionary passed to ``handle_record``.
+
+    All fields are optional in the dictionary type so partial records can be
+    translated using the adapter's documented fallbacks.
+
+    Attributes
+    ----------
+    logger : str, optional
+        Name of the femtologging logger that produced the record.
+    level : str, optional
+        Name of the femtologging severity level.
+    levelno : int, optional
+        Numeric femtologging severity, from 0 (TRACE) through 5 (CRITICAL).
+    message : str, optional
+        Formatted message text for the record.
+    metadata : Metadata, optional
+        Source, timestamp, thread, and structured context information.
+    exc_info : ExcInfo, optional
+        Structured exception details when exception capture was requested.
+    stack_info : StackInfo, optional
+        Structured call-stack details when stack capture was requested.
+
+    """
 
     logger: str
     level: str
