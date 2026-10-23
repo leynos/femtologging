@@ -28,6 +28,7 @@ dependencies = []
 Homepage = "https://df12.studio/femtologging"
 Repository = "https://github.com/leynos/femtologging"
 Documentation = "https://github.com/leynos/femtologging/blob/main/docs/users-guide.md"
+Changelog = "https://github.com/leynos/femtologging/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
