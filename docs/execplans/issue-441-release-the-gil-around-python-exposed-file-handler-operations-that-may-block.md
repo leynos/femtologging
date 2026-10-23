@@ -97,6 +97,14 @@ Observable outcomes:
       outage described below, not on a diagnostic; a partial run passed 1112
       tests with zero failures before admission failed. The second attempt
       never reached the test stage at all.
+- [x] Rebase onto `origin/main`, which had moved six commits and brought
+      **pyo3 0.29.3 → 0.30.1**, a deny-level `missing_docs_in_private_items`
+      lint, and a Clippy feature matrix widened from 5 lanes to 8. All nine
+      commits replayed; the three handler files conflicted and were resolved by
+      hand (see below).
+- [ ] Re-run every Rust gate on the rebased base. The gate runs recorded above
+      were made against pyo3 0.29.3 and a narrower feature matrix, so they no
+      longer prove anything about the committed tree.
 - [ ] Commit in atomic pieces, push, open the draft PR.
 
 ## Negative control (evidence that the tests detect the defect)
@@ -159,6 +167,43 @@ interpreter reproduces the freeze.
   channel and the thread, so there is no interpreter holding a lock to release.
   The regression evidence has to come from Python, which is why Task 3 spawns
   subprocesses.
+
+## Rebase onto a moved `origin/main`
+
+While the gates were running, `origin/main` advanced six commits, including a
+pyo3 upgrade and a new lint. The branch had to be rebased before it could be
+reviewed, let alone merged.
+
+| Upstream change                                       | Effect on this branch                                                                                |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `pyo3` 0.29.3 → 0.30.1 (Dependabot #542)              | None in source. `Python::detach` keeps the same signature and `Ungil` bounds in 0.30.1.               |
+| Deny `missing_docs_in_private_items` (#422, #453)     | Every item on this branch already carries a doc comment, including the three `py_handle` methods.     |
+| Clippy feature lanes 5 → 8 (`extension-module`, `test-util`, `default`) | Widens the matrix each lane is checked under; no source change.        |
+
+The three conflicted files were `handlers/file/mod.rs`,
+`handlers/rotating/python.rs` and `handlers/timed_rotating/python.rs`; upstream
+had attached doc comments to the very methods this branch rewrote. Both sides
+only ever added prose, so each hunk was resolved by keeping upstream's
+description and appending this branch's GIL contract to it, then re-applying
+the three-method change. Nothing was dropped from either side.
+
+Two artefacts came out of the resolution and were removed in their own commit:
+the merge tool appended a `// weave: run 'weave explain ...'` hint to the end of
+each resolved file, and doubled two blank lines in `handlers/file/mod.rs`.
+`rust_extension/src/logger/mod.rs` carries the same hint on `origin/main`; it is
+upstream's, and untouched here.
+
+After the rebase, `git rev-list --left-right --count origin/main...HEAD` reports
+`0 9`, so the branch is a strict fast-forward from main, and the diff against
+main is the intended ten files.
+
+**Consequence for the evidence above.** The Python and Rust gate results were
+all produced against pyo3 0.29.3 with a five-lane Clippy matrix. They do not
+carry over to the rebased tree: pyo3 0.30 removed the blanket
+`FromPyObject for T: PyClass + Clone` impl and stopped emitting `FromPyObject`
+by default, and the new deny-level private-docs lint applies to every feature
+lane. Every Rust gate is therefore re-run against the new base before the
+branch is pushed.
 
 ## Decision Log
 
