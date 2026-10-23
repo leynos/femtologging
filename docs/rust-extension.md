@@ -71,9 +71,11 @@ now splits responsibilities between:
 4. `dispatcher.rs` — the process-wide pool of dispatch shards, its fallible
    startup, round-robin shard assignment, and the bound on how many shards a
    machine may have.
-5. `dispatcher/shard.rs` — one shard: its bounded job queue, the permits that
-   bound work in flight, the drain barrier that `Drop` and `flush()` wait on,
-   and the worker loop that runs each job under `catch_unwind`.
+5. `dispatcher/shard/` — one shard: its bounded job queue and drain barrier
+   (`mod.rs`), the shard-wide permits and the per-logger in-flight budget
+   (`budget.rs`), and the worker loop that runs each handler under
+   `catch_unwind` (`worker.rs`). The drain barrier is what `Drop` and `flush()`
+   wait on.
 
 The split matters beyond file size: shard cardinality is now a property of the
 machine rather than of the logger count, so `dispatcher.rs` is where the

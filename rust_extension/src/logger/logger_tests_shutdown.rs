@@ -192,16 +192,20 @@ impl FemtoHandlerTrait for HeldHandler {
     }
 }
 
-/// One logger at its in-flight bound must not starve another on its shard.
+/// One logger at its in-flight bound must not take another's queue slot.
 ///
-/// The shard-wide permit pool alone does not give this: a logger whose handler
-/// never returns takes every permit the shard holds, and the other loggers
-/// assigned to that shard are then refused records they could have handled.
-/// The per-logger budget is what makes sharing a shard mean sharing, and the
-/// assertion is that a *different* logger still gets its record delivered
-/// while the first is stuck.
+/// The shard-wide permit pool alone does not give this: a logger that keeps
+/// logging would take every permit the shard holds, and the other loggers
+/// assigned to that shard would then be refused records they could have
+/// handled. The per-logger budget is what makes sharing a shard mean sharing.
+///
+/// The assertion is about *admission*, and deliberately not about delivery: a
+/// shard runs its queue on one worker, so a handler that never returns stops
+/// delivery for every logger on that shard until it does. This test releases
+/// the stuck handler before it checks delivery, and asserts only that the other
+/// logger's record was *accepted* while the first was stuck.
 #[test]
-fn one_stuck_logger_does_not_starve_another_on_its_shard() {
+fn one_stuck_logger_does_not_take_another_logger_s_slot() {
     // A shard deep enough for the other logger's record to still fit after the
     // stuck logger spends its allowance. The per-logger limit is set to one so
     // a two-deep shard can demonstrate the separation: the stuck logger takes
@@ -265,9 +269,14 @@ fn one_stuck_logger_does_not_starve_another_on_its_shard() {
         shard.wait_for_drain(),
         "the shard should answer a barrier once its handlers return"
     );
+    // Delivery is asserted only now, after the stuck handler was released: a
+    // shard has one worker, so nothing behind the stuck record could have been
+    // handled any earlier. What the budget bought was the slot, not the
+    // delivery.
     assert_eq!(
         collected_messages(&collector),
         vec!["delivered"],
-        "the other logger's record must be handled by the same shard"
+        "the other logger's record must be handled by the same shard once the \
+         stuck handler returns"
     );
 }

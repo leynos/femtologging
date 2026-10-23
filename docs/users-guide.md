@@ -35,10 +35,14 @@ your process exits.
   spends on logging follow the machine rather than the number of loggers it has
   created. Calls to `logger.log()` enqueue a record on the logger's shard and
   return immediately.
-- A shard holds at most 1 024 in-flight records per shard count, and each
-  logger has its own share of that within the shard: one logger whose handler
-  never returns consumes its own share and no more, so it cannot starve the
-  loggers sharing its shard.
+- A shard holds at most 1,024 in-flight records for each shard in the pool,
+  and each logger may hold at most half of a shard's depth — never more than
+  1,024. The per-logger limit stops one logger from taking every queue slot, so
+  an over-active logger cannot make the loggers sharing its shard drop records.
+  It does *not* stop a handler that never returns from blocking the shard's
+  single worker: records from every logger on that shard wait until that
+  handler returns. Separate shards, and the machine-derived shard count, are
+  what keep one stuck handler from stopping the whole process.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
@@ -273,7 +277,7 @@ fields with safe defaults does not require a version bump.
 
 - Constructor signature:
   `FemtoFileHandler(path, capacity=1024, flush_interval=1, policy="drop")`. The
-  flush interval counts _records_, not seconds.
+  flush interval counts *records*, not seconds.
 - `policy` controls queue overflow handling:
   - `"drop"` (default) discards records and raises `RuntimeError`.
   - `"block"` blocks the caller until the worker makes room.
@@ -296,7 +300,7 @@ fields with safe defaults does not require a version bump.
   `FemtoRotatingFileHandler(path, options=HandlerOptions(…))`.
 - `HandlerOptions` fields:
   - `capacity`, `flush_interval`, and `policy` mirror `FemtoFileHandler`.
-  - `rotation=(max_bytes, backup_count)` enables rollover when _both_ values
+  - `rotation=(max_bytes, backup_count)` enables rollover when *both* values
     are greater than zero. Set `(0, 0)` to disable rotation entirely.
 - Rotation renames the active log file to `.1`, shifts older backups up to
   `backup_count`, and truncates the live file. If opening a fresh file fails
@@ -449,8 +453,8 @@ sequenceDiagram
     end
 ```
 
-_Figure 1: Capability detection at registration and dispatch based on cached
-result._
+*Figure 1: Capability detection at registration and dispatch based on cached
+result.*
 
 This next diagram illustrates why mutating the handler after registration has
 no effect—the capability was already cached:
@@ -479,8 +483,8 @@ sequenceDiagram
     Note over PyHandler,PythonHandlerObject: New handle_record is not used because capability was cached at registration
 ```
 
-_Figure 2: Mutating the handler after registration does not change dispatch
-behaviour._
+*Figure 2: Mutating the handler after registration does not change dispatch
+behaviour.*
 
 ### Using standard library (stdlib) `logging.Handler` subclasses
 
@@ -776,7 +780,7 @@ For upgrade steps covering handler filters and formatter builders, see the
   reduce Rust context fields and explicit metadata that contributes to
   validation. For queue-full/back-pressure drops, increase handler capacities
   or switch to blocking/timeout policies when drops are unacceptable.
-- File-based handlers count `flush_interval` in _records_. If you need
+- File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
   them only when you are comfortable with logging back pressure slowing the

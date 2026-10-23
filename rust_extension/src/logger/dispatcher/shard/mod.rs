@@ -88,6 +88,12 @@ pub(crate) struct Shard {
     queue: Sender<Job>,
     /// One free token per slot of in-flight work.
     permits: Arc<Permits>,
+    /// How many records this shard will hold at once.
+    ///
+    /// Kept so a logger's budget can be sized *below* it. A budget equal to the
+    /// depth would let one logger take every permit on a shallow shard, which
+    /// is exactly the starvation the budget exists to prevent.
+    depth: usize,
     /// The shard's worker, under Loom only.
     ///
     /// A process shares one pool of shards that lives as long as the process,
@@ -119,6 +125,7 @@ impl Shard {
         Ok(Self {
             queue,
             permits,
+            depth,
             #[cfg(loom)]
             worker: Mutex::new(Some(_worker)),
         })
@@ -127,13 +134,27 @@ impl Shard {
     /// Create the in-flight budget a logger assigned to this shard draws from.
     ///
     /// One budget per logger, not per shard: it is what stops one logger's slow
-    /// handler consuming the whole shard. The limit is
-    /// [`RECORDS_PER_LOGGER`](super::RECORDS_PER_LOGGER) whatever the shard's
-    /// depth, because that is the per-logger bound ADR 007 states; a shard
-    /// shallower than it simply refuses at its own pool first, which is a
-    /// tighter bound and not a weaker one.
+    /// handler consuming the whole shard.
+    ///
+    /// The limit is capped *below* the shard's depth, because a budget equal to
+    /// it would be no bound at all. A single-core machine, or a cgroup quota of
+    /// one CPU, gives a shard count of one, and then the pool's depth is
+    /// [`RECORDS_PER_LOGGER`](super::RECORDS_PER_LOGGER) exactly — the figure
+    /// ADR 007 names as one logger's share. Granting it in full would let one
+    /// logger take every permit and every other logger on that shard be
+    /// refused, which is the starvation this budget exists to prevent.
+    ///
+    /// Half the depth, so a shard can always serve at least two loggers, and
+    /// never zero: a shard too shallow to halve still admits one record at a
+    /// time rather than none.
     pub(crate) fn budget(&self) -> Arc<LoggerBudget> {
-        Arc::new(LoggerBudget::new(super::RECORDS_PER_LOGGER))
+        // `max(1)` first: a one-deep shard halves to zero, and a budget of zero
+        // would refuse every record on a shard that can still hold one.
+        let share = (self.depth / 2).max(1);
+        // Then the documented ceiling, which a deep pool shard reaches: the
+        // depth is `RECORDS_PER_LOGGER * count`, so half of it exceeds the
+        // per-logger figure whenever the pool has more than two shards.
+        Arc::new(LoggerBudget::new(share.min(super::RECORDS_PER_LOGGER)))
     }
 
     /// Create a budget with an explicit limit, for a test.

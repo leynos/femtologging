@@ -176,10 +176,14 @@ the target space bounded.
   without eventually seeing `RuntimeError`. This is a deliberate behaviour
   change and the reason the users' guide documents the field-based alternative.
 - Loggers sharing a shard share a failure domain: a slow handler now delays
-  other loggers on the same shard. Four shards make that a bounded delay rather
-  than a queue that grows without limit, and each logger's own in-flight budget
-  keeps one stuck handler from consuming the shard's whole permit pool, but it
-  is a real trade-off and the reason the shard count is not one.
+  other loggers on the same shard. Each logger's own in-flight budget is capped
+  below the shard's depth, so one logger can never take every permit and make
+  the others drop records. That bounds *admission*, not *delivery*: a handler
+  that never returns blocks the shard's single worker, and the other loggers'
+  records queue behind it until it returns. The shard count — derived from the
+  machine, and never one on a machine that reports more — is what keeps that
+  from stopping the whole process, so it is a real trade-off and the reason the
+  shard count is not fixed at one.
 - Records dropped at the in-flight or queue bound are counted and warned about,
   so pressure is observable through `logger.get_dropped()`.
 - The Loom models keep the pre-change topology. Under `--cfg loom` a logger
@@ -232,7 +236,7 @@ the target space bounded.
 - `rust_extension/src/manager/validation.rs` — the name rules.
 - `rust_extension/src/manager/registry.rs` — the registry cap.
 - `rust_extension/src/logger/dispatcher.rs` and
-  `rust_extension/src/logger/dispatcher/shard.rs` — the shared pool.
+  `rust_extension/src/logger/dispatcher/shard/` — the shared pool.
 - `docs/users-guide.md` — the caller-facing naming guidance.
 - ADR 004 (batching optimizations in consumer threads) — the equivalent
   single-consumer design for the file handler.

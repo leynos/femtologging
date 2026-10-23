@@ -264,11 +264,20 @@ fn calculate_parent_name(name: &str) -> Option<String> {
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     validate_logger_name(name)?;
 
+    // The common path, and the one every propagated record takes: a registered
+    // name needs only the shared lock. Taking the write lock for it would
+    // serialize every logging thread on one process-global lock for a lookup
+    // that changes nothing — parent propagation calls this for each dotted
+    // record.
+    if let Some(logger) = MANAGER.read().loggers.get(name) {
+        return Ok(logger.clone_ref(py));
+    }
+
     let mut mgr = MANAGER.write();
     ensure_root_logger(py, &mut mgr)?;
 
-    // The common path: a name already registered costs one lookup and
-    // nothing is created.
+    // Re-checked under the write lock: another caller may have registered the
+    // name between the read above and this acquisition.
     if let Some(logger) = mgr.loggers.get(name) {
         return Ok(logger.clone_ref(py));
     }

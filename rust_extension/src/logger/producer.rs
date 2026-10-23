@@ -304,7 +304,22 @@ impl FemtoLogger {
     /// The barrier travels the shard's own queue, so it cannot overtake a
     /// record this logger logged first, and a shard that is gone or too slow
     /// answers `false` rather than waiting indefinitely.
+    ///
+    /// The wait is taken with the interpreter detached. `flush_handlers` is a
+    /// Python method, so its caller holds the GIL, and a queued Python handler
+    /// needs that same GIL to finish — holding it here would make the wait time
+    /// out against a handler that could not run. Detaching releases the GIL for
+    /// the duration, and the wait is taken directly when there is no
+    /// interpreter to detach from, which is also when no Python handler can be
+    /// mid-call.
     fn wait_for_dispatch_to_drain(&self) -> bool {
+        // Loom has no interpreter, and a model's shard is its own.
+        #[cfg(not(loom))]
+        if let Some(drained) =
+            pyo3::Python::try_attach(|py| py.detach(|| self.shard.wait_for_drain()))
+        {
+            return drained;
+        }
         self.shard.wait_for_drain()
     }
 
