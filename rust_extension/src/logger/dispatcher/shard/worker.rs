@@ -11,6 +11,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use log::warn;
 
+use crate::handler::{FemtoHandlerTrait, remaining};
 use super::Job;
 use crate::logger::QueuedRecord;
 use crate::sync::Receiver;
@@ -99,7 +100,32 @@ fn handle_job(job: Job) {
         Job::Barrier { ack } => {
             let _ = ack.try_send(());
         }
+        Job::Flush {
+            handlers,
+            deadline,
+            start,
+            ack,
+        } => {
+            let result = start
+                .recv_timeout(remaining(deadline))
+                .is_ok()
+                && flush_handlers(&handlers, deadline);
+            let _ = ack.try_send(result);
+        }
         #[cfg(loom)]
         Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
+}
+
+/// Flush each captured handler while the caller's deadline remains live.
+fn flush_handlers(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>], deadline: std::time::Instant) -> bool {
+    for handler in handlers {
+        if remaining(deadline).is_zero() || !handler.flush_until(deadline) {
+            return false;
+        }
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+    }
+    std::time::Instant::now() <= deadline
 }

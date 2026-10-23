@@ -201,6 +201,7 @@ mod log_compat {
     use std::any::Any;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
 
     use pyo3::Python;
     use serial_test::serial;
@@ -224,6 +225,10 @@ mod log_compat {
         fn flush(&self) -> bool {
             self.flushes.fetch_add(1, Ordering::SeqCst);
             true
+        }
+
+        fn flush_until(&self, _deadline: Instant) -> bool {
+            self.flush()
         }
 
         fn as_any(&self) -> &dyn Any {

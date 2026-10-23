@@ -10,6 +10,7 @@
 mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
+mod flush;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
@@ -60,7 +61,7 @@ pub(crate) use runtime_mutation::DetachedOwners;
 /// Threshold applied to loggers when the manager creates them.
 pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
 
-/// Maximum time a flush spends inserting and waiting for its shard barrier.
+/// Maximum time a logger flush spends across its complete barrier.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
@@ -126,19 +127,27 @@ pub struct FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// Shares one deadline across the snapshot, shard marker, and handler
+    /// flushes. Python entry points release the GIL; native callers do not.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use _femtologging_rs::FemtoLogger;
+    ///
+    /// let logger = FemtoLogger::new("example".into()).expect("logger starts");
+    /// let _ = logger.flush_handlers();
+    /// ```
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
 
-    /// Attach a handler to this logger.
+    /// Attach a handler.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] if a Python-backed
-    /// handler does not provide contextual dispatch support.
+    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] when a
+    /// Python-backed handler lacks contextual dispatch support.
     pub fn add_handler(
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,
@@ -259,7 +268,11 @@ impl FemtoLogger {
             .map(|filter| Arc::as_ptr(filter) as *const () as usize)
             .collect()
     }
+
+// refused_by: container_member · collision: none (no common ancestor text)
 }
+
+// refused_by: modify_delete_guard · collision: none (no common ancestor text)
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {

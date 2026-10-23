@@ -11,13 +11,13 @@ use std::{
     any::Any,
     io::{self, Write},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use log::warn;
 use pyo3::prelude::*;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, HandlerError, capped_deadline, remaining};
 use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
 use crate::{
@@ -314,7 +314,37 @@ impl FemtoStreamHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        self.flush_by(Instant::now() + self.flush_timeout)
+    }
+
+    /// Flush any pending log records, waiting no longer than `deadline`.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare [`FemtoStreamHandler::flush`] keeps the bound it documents and a
+    /// barrier flush cannot outlive the deadline it was given.
+    fn flush_by(&self, deadline: Instant) -> bool {
+        // Whichever comes first — the caller's deadline or this handler's own
+        // budget — bounds the flush as a whole. Giving each wait the budget
+        // afresh let one flush spend it twice over.
+        let effective = capped_deadline(deadline, self.flush_timeout);
+        // Bind first: a guard in the `match` scrutinee lives through the send.
+        let tx = self.tx.lock().clone();
+        match tx {
+            Some(tx) => {
+                self.warner.flush(|count| {
+                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+                });
+                let (ack_tx, ack_rx) = bounded(1);
+                if tx
+                    .send_timeout(StreamCommand::Flush(ack_tx), remaining(effective))
+                    .is_err()
+                {
+                    return false;
+                }
+                matches!(ack_rx.recv_timeout(remaining(effective)), Ok(Ok(())))
+            }
+            None => false,
+        }
     }
 
     /// Close the handler and wait for the worker thread to exit.
@@ -366,24 +396,11 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
-        // Bind first: a guard in the `match` scrutinee lives through the send.
-        let tx = self.tx.lock().clone();
-        match tx {
-            Some(tx) => {
-                self.warner.flush(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                let (ack_tx, ack_rx) = bounded(1);
-                if tx
-                    .send_timeout(StreamCommand::Flush(ack_tx), self.flush_timeout)
-                    .is_err()
-                {
-                    return false;
-                }
-                matches!(ack_rx.recv_timeout(self.flush_timeout), Ok(Ok(())))
-            }
-            None => false,
-        }
+        FemtoStreamHandler::flush(self)
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        self.flush_by(deadline)
     }
 
     fn as_any(&self) -> &dyn Any {

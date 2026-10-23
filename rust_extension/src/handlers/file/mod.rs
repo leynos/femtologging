@@ -32,7 +32,7 @@ use std::{
 
 use pyo3::prelude::*;
 
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{DEFAULT_FLUSH_TIMEOUT, FemtoHandlerTrait, capped_deadline, remaining};
 #[cfg(test)]
 use crate::level::FemtoLevel;
 use crate::shutdown::ShutdownCompletion;
@@ -269,22 +269,32 @@ impl FemtoFileHandler {
     /// Flush the worker's buffer, waiting up to one second. Returns `true` only when the flush
     /// is confirmed in time; `false` if the handler is closed, unreachable or the flush fails.
     pub fn flush(&self) -> bool {
+        self.flush_by(Instant::now() + DEFAULT_FLUSH_TIMEOUT)
+    }
+
+    /// Flush the worker, waiting no longer than `deadline`.
+    ///
+    /// The wait also stops at [`DEFAULT_FLUSH_TIMEOUT`], so a bare `flush()`
+    /// keeps the second it documents and a barrier flush cannot outlive the
+    /// deadline it was given.
+    pub(super) fn flush_by(&self, deadline: Instant) -> bool {
+        // Whichever comes first — the caller's deadline or this handler's own
+        // budget — is the one instant both waits below share.
+        let effective = capped_deadline(deadline, DEFAULT_FLUSH_TIMEOUT);
         // Bind first: a guard in the `match` scrutinee lives through the send.
         let tx = self.tx.lock().clone();
         match tx {
-            Some(tx) => self.perform_flush(&tx),
+            Some(tx) => self.perform_flush(&tx, effective),
             None => false,
         }
     }
 
     /// Waits for the worker's flush acknowledgement without taking ownership of
     /// the worker thread.
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(1);
+    fn perform_flush(&self, tx: &Sender<FileCommand>, deadline: Instant) -> bool {
         let (ack_tx, ack_rx) = bounded(1);
-        let remaining = deadline.saturating_duration_since(Instant::now());
         if tx
-            .send_timeout(FileCommand::Flush(ack_tx), remaining)
+            .send_timeout(FileCommand::Flush(ack_tx), remaining(deadline))
             .is_err()
         {
             return false;
@@ -299,8 +309,7 @@ impl FemtoFileHandler {
         ack_rx: &Receiver<io::Result<()>>,
         deadline: Instant,
     ) -> bool {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
+        matches!(ack_rx.recv_timeout(remaining(deadline)), Ok(Ok(())))
     }
 
     /// Close the handler and wait for the worker to stop.

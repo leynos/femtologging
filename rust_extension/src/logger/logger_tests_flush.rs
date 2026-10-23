@@ -14,10 +14,9 @@ use crate::logger::{FemtoLogger, Shard};
 use crate::log_record::FemtoLogRecord;
 use crate::sync::{Receiver, Sender, bounded};
 
-use super::logger_tests_helpers::CollectingHandler;
 
 /// The bound a flush is given, as a multiple of its own timeout.
-fn flush_bound() -> Duration {
+pub(super) fn flush_bound() -> Duration {
     Duration::from_millis(2 * super::super::LOGGER_FLUSH_TIMEOUT_MS)
 }
 
@@ -41,6 +40,10 @@ impl FemtoHandlerTrait for StallingHandler {
         Ok(())
     }
 
+    fn flush_until(&self, _deadline: Instant) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -54,8 +57,32 @@ impl FemtoHandlerTrait for FailingFlushHandler {
         Ok(())
     }
 
-    fn flush(&self) -> bool {
+    fn flush_until(&self, _deadline: Instant) -> bool {
         false
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A legacy handler whose synchronous `flush` blocks until the test releases it.
+struct BlockingLegacyFlushHandler {
+    /// Signals if the compatibility default calls the legacy method.
+    started: Sender<()>,
+    /// Keeps the legacy flush blocked until cleanup sends or drops the sender.
+    release: Receiver<()>,
+}
+
+impl FemtoHandlerTrait for BlockingLegacyFlushHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> bool {
+        let _ = self.started.try_send(());
+        let _ = self.release.recv();
+        true
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -77,7 +104,7 @@ impl StallGuard {
         let (done_tx, done_rx) = bounded(1);
         let watchdog_release = release.clone();
         std::thread::spawn(move || {
-            if done_rx.recv_timeout(flush_bound()).is_err() {
+            if done_rx.recv_timeout(3 * flush_bound()).is_err() {
                 let _ = watchdog_release.send(());
             }
         });
@@ -154,6 +181,26 @@ fn flush_handlers_gives_up_when_a_full_queue_rejects_its_marker() {
             "flush waited {elapsed:?} on a full queue; the bound is {:?}",
             flush_bound()
         );
+        assert_eq!(
+            shard.queued_jobs_for_test(),
+            1,
+            "a timed-out marker must stay within the shard's one-slot bound"
+        );
+
+        let repeated_started = Instant::now();
+        assert!(
+            !logger.flush_handlers(),
+            "a repeated flush must fail while the stale marker occupies the queue"
+        );
+        assert!(
+            repeated_started.elapsed() < flush_bound(),
+            "a repeated full-queue flush must remain bounded"
+        );
+        assert_eq!(
+            shard.queued_jobs_for_test(),
+            1,
+            "repeated timeouts must not add jobs beyond the bounded queue"
+        );
 
         drop(guard);
         let _ = first_flush
@@ -183,6 +230,40 @@ fn flush_handlers_gives_up_on_a_stalled_handler_within_the_deadline() {
 }
 
 #[test]
+fn a_legacy_blocking_flush_cannot_hold_the_caller_open() {
+    let shard = Box::leak(Box::new(
+        Shard::start(0, 2).expect("a test shard should start"),
+    ));
+    let logger = FemtoLogger::assembled_for_test("legacy-flush".to_string(), shard);
+    let (started_tx, started_rx) = bounded(1);
+    let (release_tx, release_rx) = bounded(1);
+    logger
+        .add_handler(Arc::new(BlockingLegacyFlushHandler {
+            started: started_tx,
+            release: release_rx,
+        }))
+        .expect("the legacy handler should register");
+    let guard = StallGuard::new(release_tx);
+
+    let started_at = Instant::now();
+    let flushed = logger.flush_handlers();
+    let elapsed = started_at.elapsed();
+
+    assert!(!flushed, "a legacy handler cannot confirm a bounded flush");
+    assert!(
+        elapsed < flush_bound(),
+        "flush waited {elapsed:?} for legacy synchronous code; the bound is {:?}",
+        flush_bound()
+    );
+    assert!(
+        started_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "the fail-closed compatibility default must not call legacy flush()"
+    );
+
+    drop(guard);
+}
+
+#[test]
 fn flush_handlers_succeeds_once_the_worker_is_moving_again() {
     let (logger, _shard, guard) = stalled_logger();
     let _ = guard.release.send(());
@@ -205,11 +286,7 @@ fn flush_handlers_reports_a_handler_whose_flush_fails() {
         Shard::start(0, 2).expect("a test shard should start"),
     ));
     let logger = FemtoLogger::assembled_for_test("flush".to_string(), shard);
-    let handler = Arc::new(CollectingHandler::new()) as Arc<dyn FemtoHandlerTrait>;
     let failing = Arc::new(FailingFlushHandler) as Arc<dyn FemtoHandlerTrait>;
-    logger
-        .add_handler(handler)
-        .expect("the collecting handler should register");
     logger
         .add_handler(failing)
         .expect("the failing handler should register");
