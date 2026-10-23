@@ -126,7 +126,19 @@ Known uncertainties identified upfront, with mitigations.
   so every existing import site is unchanged, and extracted the shared test
   vocabulary into `tests/stdlib_adapter_support.py` with the threshold tests
   moving to `tests/test_stdlib_adapter_levels.py`.
-- [ ] Run the full commit gates and a CodeRabbit review pass.
+- [x] (2026-10-22 23:13Z) Refreshed `origin/main` to `da1d82e` and rebased
+  the four issue commits from `4ff883a` onto the five newer main commits. The
+  file sets did not overlap and the rebase completed cleanly; pre-rebase head,
+  base, and target refs were preserved for recovery.
+- [x] (2026-10-23 00:11Z) Full gates found one stale wheel-layout expectation:
+  the existing extraction of `_adapter_record.py` was absent from
+  `expected_wheel_snapshot.json`. Rebuilt the wheel and confirmed this was the
+  only snapshot difference; the expected entry is now recorded.
+- [x] (2026-10-23 00:36Z) Ran the full gates sequentially: formatting check,
+  lint, type check, full tests (769 passed, 5 skipped, 66 snapshots passed, one
+  existing warning), Markdown lint, and Mermaid validation all passed.
+- [ ] Run `coderabbit review --agent` on the committed candidate and clear any
+  concerns.
 - [ ] Push the branch and open a draft pull request referencing the issue.
 
 ## Surprises & discoveries

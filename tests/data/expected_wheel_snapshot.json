@@ -23,6 +23,7 @@
     "femtologging-<version>.dist-info/licenses/LICENSE",
     "femtologging-<version>.dist-info/sboms/<sbom>.cyclonedx.json",
     "femtologging/__init__.py",
+    "femtologging/_adapter_record.py",
     "femtologging/_basic_config.py",
     "femtologging/_compat.py",
     "femtologging/_config_filters.py",
