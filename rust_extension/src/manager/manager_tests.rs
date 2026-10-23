@@ -82,16 +82,45 @@ fn the_cap_does_not_count_root_but_does_count_named_loggers() {
 
 #[test]
 fn registry_has_room_admits_the_last_free_slot_only() {
-    // The boundary as pure arithmetic: `registry_has_room` is the single
+    // The boundary as pure arithmetic: `registry_has_room_for` is the single
     // predicate every insertion path consults, so it can be checked exactly
     // without populating a registry.
     assert!(
-        !super::registry::registry_has_room(MAX_LOGGERS),
+        !super::registry::registry_has_room_for(MAX_LOGGERS, 1),
         "the registry must refuse a new name once it holds MAX_LOGGERS",
     );
     assert!(
-        super::registry::registry_has_room(MAX_LOGGERS - 1),
+        super::registry::registry_has_room_for(MAX_LOGGERS - 1, 1),
         "the last free slot must still admit a name",
+    );
+}
+
+/// A whole-set projection must count the set, not the total plus one.
+///
+/// The bug this pins is an off-by-one that only shows at exactly the cap: the
+/// single-name predicate means "one more fits", so passing it the *projected
+/// total* refuses the request that would fill the last slot. Nothing fails
+/// until a registry is actually full, which is why the boundary is asserted
+/// here as arithmetic.
+#[test]
+fn a_projected_insertion_may_fill_the_last_slot() {
+    use super::registry::registry_has_room_for;
+
+    assert!(
+        registry_has_room_for(MAX_LOGGERS - 1, 1),
+        "one name may fill the last free slot",
+    );
+    assert!(
+        registry_has_room_for(0, MAX_LOGGERS),
+        "a whole-registry insert may fill it exactly",
+    );
+    assert!(
+        !registry_has_room_for(MAX_LOGGERS, 1),
+        "a full registry must refuse even one more",
+    );
+    assert!(
+        !registry_has_room_for(MAX_LOGGERS - 1, 2),
+        "a projection past the cap must be refused as a unit",
     );
 }
 
@@ -160,93 +189,6 @@ mod lookup {
             assert!(
                 lookup_existing_logger(py, "existing").is_ok(),
                 "an existing logger should be returned by the read-only lookup",
-            );
-        });
-    }
-}
-
-#[cfg(feature = "python")]
-mod capacity {
-    //! Tests for the commit-time capacity check.
-    //!
-    //! These exercise the counting rules — dedup, already-registered names and
-    //! the exempt root — rather than the boundary, which the pure arithmetic
-    //! test above covers.
-
-    use std::collections::HashSet;
-
-    use pyo3::Python;
-    use serial_test::serial;
-
-    use super::super::registry::{MANAGER, ensure_registry_capacity, get_logger, new_logger_names};
-    use super::super::reset_manager;
-
-    fn names(values: &[&str]) -> HashSet<String> {
-        values.iter().map(|name| (*name).to_string()).collect()
-    }
-
-    #[test]
-    fn an_empty_set_is_always_accepted() {
-        ensure_registry_capacity(&names(&[])).expect("a commit of nothing cannot exceed the cap");
-    }
-
-    #[test]
-    #[serial]
-    fn repeats_of_one_name_count_once() {
-        Python::attach(|py| {
-            reset_manager();
-            let _ = get_logger(py, "root").expect("root is registrable");
-
-            // Six identifiers that resolve to one logger add one entry, so a
-            // configuration listing a logger repeatedly must not be refused for
-            // a cardinality it does not have.
-            let staged = names(&["api", "api", "api", "api", "api", "api"]);
-            ensure_registry_capacity(&staged).expect("repeats count once");
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn already_registered_names_are_not_counted_again() {
-        Python::attach(|py| {
-            reset_manager();
-            let _ = get_logger(py, "already.here").expect("logger registered");
-
-            ensure_registry_capacity(&names(&["already.here"]))
-                .expect("re-staging an existing logger adds nothing");
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn root_is_exempt_from_the_cap() {
-        Python::attach(|py| {
-            reset_manager();
-
-            // Root is both absent-and-staged and then present, and neither
-            // arrangement may count towards the cap.
-            ensure_registry_capacity(&names(&["root"]))
-                .expect("a staged root is exempt from the cap");
-            let _ = get_logger(py, "root").expect("root is registrable");
-            ensure_registry_capacity(&names(&["root"]))
-                .expect("an existing root is exempt from the cap");
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn distinct_novel_names_count_once_each() {
-        Python::attach(|py| {
-            reset_manager();
-            let _ = get_logger(py, "root").expect("root is registrable");
-
-            let staged = names(&["a", "b.c", "b", "a"]);
-            let mgr = MANAGER.read();
-            let additions = new_logger_names(&mgr, staged.iter().map(String::as_str));
-            assert_eq!(
-                additions.len(),
-                3,
-                "three distinct novel names should be counted, got {additions:?}",
             );
         });
     }

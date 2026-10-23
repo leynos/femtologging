@@ -17,14 +17,20 @@
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{HashMap, HashSet};
+
+#[cfg(feature = "python")]
+mod config;
+
+#[cfg(feature = "python")]
+pub(crate) use config::{commit_staged_loggers, stage_loggers};
 
 use super::validation::validate_logger_name;
 use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
 #[cfg(feature = "python")]
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 #[cfg(feature = "python")]
 use std::sync::Arc;
 
@@ -102,12 +108,17 @@ pub(super) fn named_logger_count(mgr: &Manager) -> usize {
     mgr.loggers.len() - usize::from(mgr.loggers.contains_key(ROOT_LOGGER_NAME))
 }
 
-/// Return whether one more named logger may be registered.
+/// Return whether the registry would fit `incoming` further named loggers.
+///
+/// The argument is the number to be *added*, not the total afterwards. Taking
+/// the total invites the off-by-one this signature exists to prevent: every
+/// caller computes `named_logger_count(&mgr) + incoming`, so a predicate that
+/// also reserved a slot would refuse the ten-thousandth logger.
 ///
 /// Kept separate from the registry so the boundary can be exercised without
 /// building ten thousand loggers.
-pub(super) fn registry_has_room(named_loggers: usize) -> bool {
-    named_loggers < MAX_LOGGERS
+pub(super) fn registry_has_room_for(named_loggers: usize, incoming: usize) -> bool {
+    named_loggers.saturating_add(incoming) <= MAX_LOGGERS
 }
 
 /// Opening words of the refusal a full registry reports.
@@ -130,30 +141,62 @@ pub(crate) fn registry_full_error() -> PyErr {
 }
 
 /// Return whether the registry already holds a logger with this name.
-#[cfg(feature = "python")]
 fn has_logger(mgr: &Manager, name: &str) -> bool {
     mgr.loggers.contains_key(name)
 }
 
-/// Return the names in `names` that a commit would newly register.
+/// The dotted ancestor chain of `name`, `name` itself included.
 ///
-/// Names already in the registry, repeats within `names` itself, and the
-/// exempt `"root"` are not counted: staging several identifiers that resolve
-/// to one logger adds one entry.
+/// Yields the innermost name first and stops before `"root"`: the registry's
+/// own logger is created on demand and never counts against the cap, so no
+/// caller needs to plan for it.
 ///
-/// Only the configuration paths need this: `get_logger` inspects a single name
-/// under the write lock it already holds.
-#[cfg(feature = "python")]
+/// This is the unit of registration. A logger is never registered without its
+/// ancestors, because propagation resolves a parent through the same
+/// [`get_logger`] a caller uses, and a parent that does not exist yet is a
+/// lookup that can fail later.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let chain: Vec<&str> = chain_of("api.v1.handlers").collect();
+/// assert_eq!(chain, ["api.v1.handlers", "api.v1", "api"]);
+/// ```
+fn chain_of(name: &str) -> impl Iterator<Item = &str> {
+    std::iter::successors(Some(name), |current| {
+        current.rsplit_once('.').map(|(parent, _)| parent)
+    })
+    .take_while(|current| *current != ROOT_LOGGER_NAME)
+}
+
+/// Return the names in `names`' chains that a commit would newly register.
+///
+/// Ancestors are included: registering `"a.b.c"` also registers `"a"` and
+/// `"a.b"`, so a commit has to account for all three. Names already in the
+/// registry, repeats within `names` itself, and the exempt `"root"` are not
+/// counted, and the result is ordered so an ancestor precedes its descendants.
+///
+/// Not gated on `python`: `get_logger` is compiled in every lane and plans
+/// its own registration through this, so the same bound holds whether or not
+/// the Python extension is built.
 pub(crate) fn new_logger_names<'a>(
     mgr: &Manager,
     names: impl IntoIterator<Item = &'a str>,
-) -> Vec<&'a str> {
-    let mut seen = HashSet::new();
-    names
-        .into_iter()
-        .filter(|name| *name != ROOT_LOGGER_NAME)
-        .filter(|name| !has_logger(mgr, name) && seen.insert(*name))
-        .collect()
+) -> Vec<String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut novel = Vec::new();
+    for name in names {
+        // Outermost first, so a caller inserting in this order creates a
+        // parent before the child that names it.
+        let chain: Vec<&str> = chain_of(name).collect();
+        for candidate in chain.into_iter().rev() {
+            if has_logger(mgr, candidate) || !seen.insert(candidate) {
+                continue;
+            }
+            novel.push(candidate.to_string());
+        }
+    }
+    novel
 }
 
 /// Refuse a commit that would carry the registry past [`MAX_LOGGERS`].
@@ -165,7 +208,7 @@ pub(crate) fn new_logger_names<'a>(
 pub(crate) fn ensure_registry_capacity(names: &HashSet<String>) -> PyResult<()> {
     let mgr = MANAGER.read();
     let additions = new_logger_names(&mgr, names.iter().map(String::as_str)).len();
-    if !registry_has_room(named_logger_count(&mgr) + additions) {
+    if !registry_has_room_for(named_logger_count(&mgr), additions) {
         return Err(registry_full_error());
     }
     Ok(())
@@ -186,7 +229,7 @@ pub(crate) fn named_logger_count_for_test() -> usize {
 /// wrong, so it is worth asserting without building ten thousand loggers.
 #[cfg(test)]
 pub(crate) fn registry_has_room_for_test() -> bool {
-    registry_has_room(named_logger_count_for_test())
+    registry_has_room_for(named_logger_count_for_test(), 1)
 }
 
 /// Create the root logger if the registry does not already hold it.
@@ -205,34 +248,59 @@ fn calculate_parent_name(name: &str) -> Option<String> {
         .or_else(|| (name != ROOT_LOGGER_NAME).then(|| ROOT_LOGGER_NAME.to_string()))
 }
 
-/// Retrieve an existing logger or create one with a dotted-name parent.
+/// Retrieve an existing logger, creating it and its ancestors if needed.
 ///
-/// The registry holds at most [`MAX_LOGGERS`] distinct loggers. A vacant name
-/// arriving once the cap is reached is refused with a `RuntimeError` rather
-/// than evicting an existing logger, because a logger's handlers, level and
-/// drop counters are process state a caller may still be using.
+/// Registering `"a.b.c"` registers `"a"` and `"a.b"` too: propagation resolves
+/// a parent through this same function, so an ancestor left out would be a
+/// lookup that fails — silently, since the propagation path ignores the error.
+/// On a dotted name, the parent a logger stores is then always present.
+///
+/// The registry holds at most [`MAX_LOGGERS`] distinct loggers. A request whose
+/// chain does not fit is refused with a `RuntimeError` *before* anything is
+/// inserted, so a refusal never leaves a half-created hierarchy behind, and
+/// never evicts an existing logger: a logger's handlers, level and drop
+/// counters are process state a caller may still be using.
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     validate_logger_name(name)?;
 
     let mut mgr = MANAGER.write();
     ensure_root_logger(py, &mut mgr)?;
 
-    // Count before taking the entry borrow: the vacant arm holds a mutable
-    // borrow of `mgr` for as long as it lives, so it cannot also read `mgr`.
-    let has_room = registry_has_room(named_logger_count(&mgr));
-
-    match mgr.loggers.entry(name.to_string()) {
-        Entry::Occupied(o) => Ok(o.get().clone_ref(py)),
-        Entry::Vacant(v) => {
-            if name != ROOT_LOGGER_NAME && !has_room {
-                return Err(registry_full_error());
-            }
-            let parent_name = calculate_parent_name(name);
-            let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name)?)?;
-            v.insert(logger.clone_ref(py));
-            Ok(logger)
-        }
+    // The common path: a name already registered costs one lookup and
+    // nothing is created.
+    if let Some(logger) = mgr.loggers.get(name) {
+        return Ok(logger.clone_ref(py));
     }
+
+    // The name is absent, so its whole chain is planned before anything is
+    // built. The planner yields ancestors outermost-first; `name` itself is
+    // excluded so it can be created last and returned directly rather than
+    // looked up again, and so nothing here depends on the planner's ordering
+    // invariant to avoid a panic.
+    let ancestors: Vec<String> = new_logger_names(&mgr, std::iter::once(name))
+        .into_iter()
+        .filter(|candidate| candidate != name)
+        .collect();
+    // One check for the whole chain: a refusal must not leave a partly created
+    // hierarchy behind, which it would if the bound were tested per insertion.
+    // The `+ 1` is the requested name itself, which the filter above removed.
+    if !registry_has_room_for(named_logger_count(&mgr), ancestors.len() + 1) {
+        return Err(registry_full_error());
+    }
+
+    for candidate in ancestors {
+        let parent_name = calculate_parent_name(&candidate);
+        let logger = Py::new(
+            py,
+            FemtoLogger::with_parent(candidate.clone(), parent_name)?,
+        )?;
+        mgr.loggers.insert(candidate, logger);
+    }
+
+    let parent_name = calculate_parent_name(name);
+    let logger = Py::new(py, FemtoLogger::with_parent(name.to_string(), parent_name)?)?;
+    mgr.loggers.insert(name.to_string(), logger.clone_ref(py));
+    Ok(logger)
 }
 
 /// Return an existing logger without changing the manager registry.
@@ -246,63 +314,6 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
         .get(name)
         .map(|logger| logger.clone_ref(py))
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("logger {name:?} not found")))
-}
-
-/// Build logger objects without adding them to the global registry.
-///
-/// Configuration validation uses this to ensure every requested logger can be
-/// created before it changes any live logging state.
-#[cfg(feature = "python")]
-pub(crate) fn stage_loggers<'a>(
-    py: Python<'_>,
-    names: impl IntoIterator<Item = &'a str>,
-) -> PyResult<BTreeMap<String, Py<FemtoLogger>>> {
-    let mgr = MANAGER.read();
-    names
-        .into_iter()
-        .map(|name| {
-            validate_logger_name(name)?;
-            let logger = match mgr.loggers.get(name) {
-                Some(logger) => logger.clone_ref(py),
-                None => Py::new(
-                    py,
-                    FemtoLogger::with_parent(name.to_string(), calculate_parent_name(name))?,
-                )?,
-            };
-            Ok((name.to_string(), logger))
-        })
-        .collect()
-}
-
-/// Add fully staged loggers to the registry and return the committed objects.
-///
-/// The capacity check is repeated here under the write lock, so a refused
-/// commit inserts nothing: the registry cannot be left holding part of a
-/// configuration that was not accepted.
-#[cfg(feature = "python")]
-pub(crate) fn commit_staged_loggers(
-    py: Python<'_>,
-    staged: BTreeMap<String, Py<FemtoLogger>>,
-) -> PyResult<BTreeMap<String, Py<FemtoLogger>>> {
-    let mut mgr = MANAGER.write();
-    // Re-check under the write lock: another caller may have filled the last
-    // slot since `stage_loggers` ran. Nothing has been inserted yet, so a
-    // refusal here leaves the registry exactly as it was.
-    let additions = new_logger_names(&mgr, staged.keys().map(String::as_str)).len();
-    if !registry_has_room(named_logger_count(&mgr) + additions) {
-        return Err(registry_full_error());
-    }
-    Ok(staged
-        .into_iter()
-        .map(|(name, logger)| {
-            let committed = mgr
-                .loggers
-                .entry(name.clone())
-                .or_insert(logger)
-                .clone_ref(py);
-            (name, committed)
-        })
-        .collect())
 }
 
 #[cfg(feature = "python")]
@@ -357,9 +368,19 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
 }
 
 /// Drop every logger and all attached runtime state.
+///
+/// The loggers are removed under the lock and dropped outside it. Clearing the
+/// map in place would run each `FemtoLogger`'s drop — and, for a logger with
+/// records still in flight, its bounded wait for the shard — while holding the
+/// registry write lock, so a process resetting a full registry would serialize
+/// every drop behind one lock. Taking the map out keeps the reset itself O(1)
+/// under the lock and lets the drops overlap.
 #[pyfunction]
 pub fn reset_manager() {
-    let mut mgr = MANAGER.write();
-    mgr.loggers.clear();
-    clear_runtime_state(&mut mgr);
+    let loggers = {
+        let mut mgr = MANAGER.write();
+        clear_runtime_state(&mut mgr);
+        std::mem::take(&mut mgr.loggers)
+    };
+    drop(loggers);
 }
