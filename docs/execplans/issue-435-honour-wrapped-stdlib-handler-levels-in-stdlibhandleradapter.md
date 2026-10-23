@@ -188,6 +188,10 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-23) CodeRabbit reviewed rebased commit `e07d31f` and identified
   stale status, outcomes, and revision-note sections in this plan. Update those
   sections and run a fresh review before pushing the rebased branch.
+- [x] (2026-10-23) CodeRabbit reviewed `38bdbe8` and found that the guide did
+  not explain that level changes affect queued records not yet processed. The
+  user guide now states when the live level is read and which records a change
+  affects; run docs gates and a fresh review before pushing.
 
 ## Surprises & discoveries
 
@@ -282,17 +286,19 @@ path. The regression tests cover the level matrix, `NOTSET`, dynamic
 `setLevel()` changes, filter rejection, and handle/filter call counts. The user
 and migration guides explain how the femtologging logger threshold and wrapped
 handler threshold combine. This meets the intended outcome: low-severity
-records no longer reach a higher-severity-only destination.
+records no longer reach a higher-severity-only destination. The user guide also
+states that `setLevel()` changes apply when records are processed, including
+records already queued but not yet handled.
 
 The 12 issue commits rebased onto `main` without conflicts or patch changes.
 All post-rebase validation passed: `make check-fmt`, `make test` (770 passed, 5
 skipped, with one `PytestAssertRewriteWarning`), `make typecheck`, `make lint`,
 `make fmt`, `make markdownlint`, and `make nixie`. The test warning is from
 pytest assertion rewriting for `tests.steps.logging_context_steps`; it did not
-fail the suite. CodeRabbit review of the rebased candidate found only plan
-status and completion-note inconsistencies, which this revision addresses.
-Draft PR #546 remains open; the rebased head still needs a fresh review and
-force-with-lease push.
+fail the suite. CodeRabbit reviews found plan status and completion-note
+inconsistencies and ambiguity about when a live level change affects queued
+records. This revision addresses those findings. Draft PR #546 remains open;
+the rebased head still needs a fresh review and force-with-lease push.
 
 ## Context and orientation
 
@@ -776,4 +782,5 @@ by an exception or a return value, exactly as `logging.Logger` does.
 
 Initial draft created 2026-10-14. Revised 2026-10-23 to record the rebase and
 post-rebase validation, complete the outcomes, and mark the active draft PR
-state. Rerun CodeRabbit before force-pushing the rebased branch.
+state. Clarified that `setLevel()` changes affect queued records not yet
+processed. Rerun CodeRabbit before force-pushing the rebased branch.
