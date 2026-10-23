@@ -200,14 +200,25 @@ def test_a_refused_chain_leaves_the_registry_unchanged() -> None:
     for the chain as a unit. Refusing halfway would leave a parent registered
     with no child, and the next attempt would be refused for a different reason
     than the caller saw.
+
+    One slot is deliberately left free. Filling the registry completely would
+    make the partial-insert case unreachable — nothing could be inserted before
+    the refusal either way — and the test could not tell a whole-chain refusal
+    from an implementation that inserted ``fresh`` and then refused
+    ``fresh.child``. With one slot free, registering an unrelated name
+    afterwards is only possible if the refused chain consumed nothing.
     """
-    _fill_registry("crowded")
+    # One slot stays free: the chain below needs two and must be refused whole.
+    _fill_registry("crowded", room=1)
 
     with pytest.raises(RuntimeError, match=str(MAX_LOGGERS)):
-        # Two entries are needed: "fresh" and "fresh.child". Neither fits, and
-        # neither may be inserted.
+        # Two entries are needed: "fresh" and "fresh.child". Only one slot is
+        # free, so the chain is refused and nothing may be inserted.
         get_logger("fresh.child")
 
+    assert get_logger("single") is not None, (
+        "the refusal must not have consumed the one free slot"
+    )
     assert get_logger("crowded.0") is not None, (
         "the refusal must not have disturbed an existing logger"
     )

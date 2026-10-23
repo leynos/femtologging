@@ -6,7 +6,7 @@ CodeRabbit findings addressed.
 ## Purpose and big picture
 
 `get_logger(name)` retains every distinct name for the life of the process, and
-every `FemtoLogger` starts a dedicated worker thread with a 1 024-slot queue. A
+every `FemtoLogger` starts a dedicated worker thread with a 1,024-slot queue. A
 caller that derives logger names from request, tenant, user, or plug-in
 identifiers therefore converts attacker-influenced input into monotonically
 increasing memory and OS-thread use.
@@ -154,6 +154,7 @@ Milestone 2 detail:
 - [x] Fixes committed in five atomic commits and pushed to `467f406`; PR #544
       description updated with the findings and the new verification figures.
 - [x] Third review round returned ten findings; all ten verified and fixed.
+- [x] Fourth review round returned seven findings (five distinct); all fixed.
 
 Re-gated at `467f406`:
 
@@ -209,9 +210,48 @@ that exists because the process is short of a resource.
 
 The remaining six were the users' guide's shard bullet (which never stated the
 depth, and claimed the budget prevents peer drops when it bounds admission
-only), one inconsistent number format (10 000 versus 1,024), and four `-ise`
-spellings — `authorises` three times in `budget.rs`, `materialising` and
-`recognise` in `manager_tests.rs`, `recognisable` in `sync.rs`.
+only), one inconsistent number format (space-grouped versus comma-grouped
+thousands), and four `-ise` spellings — `authorises` three times in `budget.rs`,
+`materialising` and `recognise` in `manager_tests.rs`, `recognisable` in
+`sync.rs`.
+
+**Fourth review round (2026-10-23): seven findings, five distinct, all fixed.**
+Two pairs were duplicates of one defect each, reported once as `minor` and once
+as `trivial`.
+
+The substantive pair is the idle tick. `run_worker` looped on
+`recv_timeout(&jobs, IDLE_TICK)`, and the tick's own doc justified it as "how
+long an idle shard waits before noticing that its queue has been dropped" —
+which is not true of `crossbeam_channel`, whose `recv` wakes as soon as the
+last sender drops and reports disconnection then, with no timeout needed. So
+the tick bought nothing and cost two things: every pool worker woke every two
+seconds for the life of the process even when nothing was logged, and it
+created the very defect the third review round's ledger records as the task's
+most serious — a loop arm that meant "nothing happened" being read as
+"shutdown". `run_worker` now blocks on `recv()`, where `Err` can only mean
+disconnection, so that whole class of mistake cannot be written. `IDLE_TICK`,
+its two `idle_tick_for_test` re-exports, and `an_idle_worker_keeps_answering`'s
+dependence on it are gone; the test keeps a fixed 50 ms pause and now pins the
+real property — silence from the queue must not end a worker — without tracking
+a bound that no longer exists.
+
+The other substantive pair: `flush_all_handlers` held `MANAGER.read()` across
+every logger's `flush_handlers()`, and each of those waits up to two seconds on
+a shard barrier with the GIL released so a queued Python handler can run. That
+closes a cycle — the flusher holds the read lock, the handler needs the GIL, a
+thread holding the GIL may be waiting for the write lock in `get_logger`, and a
+waiting `parking_lot` writer also blocks new readers such as parent
+propagation. Only the barrier timeout ended it, once per logger in the sweep.
+The loggers are now snapshotted under the lock and flushed outside it, matching
+what `reset_manager` already did for drops.
+
+The remaining three were: `test_a_refused_chain_leaves_the_registry_unchanged`
+filled the registry completely, which made partial insertion unreachable and
+therefore undetectable — it now leaves exactly one slot free and registers an
+unrelated name after the refusal, so a partial insert fails the test; and two
+paragraphs that still split a number across a line (`1\n024-slot` in the ADR,
+`1 024-slot` and `10 000-name` in the execplan), both reflowed to the comma
+form.
 
 **Discovery (2026-10-23): a `not(test)`-only item can be dead under Loom.**
 `LoggerBudget::in_flight` is read only by `FemtoLogger::drop`'s
@@ -260,7 +300,7 @@ Milestone 1 detail:
   written: capacity checks that pre-allocate reject excess loggers as
   `MemoryError` (`HandlerError::Capacity`), and the independent per-handler
   capacity is fed from the logger count. A test that demanded `RuntimeError`
-  for a 10 000-name configuration would contradict the capacity contract.
+  for a 10,000-name configuration would contradict the capacity contract.
   Resolved in favour of the ledger with the cap semantics adjusted (see
   Decision log).
 - 2026-10-14: `docs/execplans/issue-470-execute-loom-models.md` is not what the
@@ -275,7 +315,7 @@ Milestone 1 detail:
   facade. Splitting is therefore mandatory, not optional tidying: any file that
   crosses 400 lines fails the gate.
 - 2026-10-16: the end-to-end cap test cannot be written before Milestone 2.
-  Registering `MAX_LOGGERS` distinct loggers currently starts 10 000 OS threads
+  Registering `MAX_LOGGERS` distinct loggers currently starts 10,000 OS threads
   — which is the defect itself. The Python cardinality test that walks the
   registry to the cap must land after the shared dispatch pool exists, or it
   will exhaust the machine instead of asserting a bound. The boundary
@@ -427,10 +467,13 @@ Milestone 1 detail:
   `make lint-rust` compiles but never runs. Under `--cfg loom` the seam's
   `recv_timeout` ignores its bound and blocks, so the Loom models cannot time
   out either — the lane that would otherwise have found it is blind to it by
-  construction. Fixed by matching the error: `Timeout` continues the loop,
-  `Disconnected` ends it. Added `an_idle_worker_keeps_answering`, which sleeps
-  past `IDLE_TICK` and then flushes — the only test in the suite that
-  deliberately idles a worker, and the reason the tick's meaning is now pinned.
+  construction. Added `an_idle_worker_keeps_answering`, which idles a worker
+  and then flushes — the only test in the suite that deliberately does so.
+  Superseded by the fourth review round, which removed the tick altogether:
+  `recv_timeout` was never needed to notice a dropped queue, so `run_worker`
+  now blocks on `recv()` and `Err` has exactly one meaning. Matching the error
+  made the loop correct; removing the timeout makes it impossible to write the
+  wrong arm again.
 - 2026-10-16: `log`'s global max level defaults to `Off`, so a bridge test
   written as a plain `#[test]` passes vacuously: `log()` returns at
   `is_enabled_by_global_max` before reaching the ignore list or the registry.

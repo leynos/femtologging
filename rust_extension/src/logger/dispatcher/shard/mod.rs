@@ -36,29 +36,13 @@ pub(crate) use budget::LoggerBudget;
 use budget::{Permit, Permits};
 use worker::run_worker;
 
-/// How long the shard worker waits for a job before looking around again.
-///
-/// A liveness tick, not a job deadline: queued work is returned by
-/// `recv_timeout` as soon as it arrives, so this only bounds how long an idle
-/// shard waits before noticing that its queue has been dropped. Under Loom the
-/// bound is ignored, and Loom's scheduler decides when the worker looks.
-const IDLE_TICK: Duration = Duration::from_millis(2_000);
-
-/// Expose the idle tick so a test can deliberately outlast it.
-///
-/// Outside Loom only, for the same reason as the re-export above it.
-#[cfg(all(test, not(loom)))]
-pub(crate) fn idle_tick_for_test() -> Duration {
-    IDLE_TICK
-}
-
 /// How long a barrier waits for the shard to acknowledge it.
 ///
 /// Bounded because a barrier is waited on from `Drop` and from
 /// `flush_handlers`: a handler that never returns must delay those calls, not
 /// hang them. A timed-out barrier loses the queued records, which is what the
-/// per-logger worker did when its own flush timed out. As with the tick, the
-/// bound is ignored under Loom, so no model depends on it firing.
+/// per-logger worker did when its own flush timed out. The bound is ignored
+/// under Loom, so no model depends on it firing.
 const BARRIER_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 /// A job for a shard.
